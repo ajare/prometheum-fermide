@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <set>
 #include <iterator>
+#include <stdexcept>
 #include <utility>
 
 #include "core/Defines.h"
@@ -104,13 +105,7 @@ namespace core
 		mOrchestrator = make_shared<Orchestrator>();
 	}
 
-	Building::~Building()
-	{
-		for (auto agent : mAgents)
-		{
-			delete agent;
-		}
-	}
+	Building::~Building() = default;
 
 	string const& Building::getName() const
 	{
@@ -2217,42 +2212,91 @@ namespace core
 		}
 	}
 
-	void Building::addAgentToSector(Agent* agent, uint32_t sectorId, uint32_t deckOffset, float xOffset)
+	AgentId Building::addOwnedAgentToSector(unique_ptr<Agent> agent, uint32_t sectorId, uint32_t deckOffset, float xOffset)
 	{
-		auto sector = _getSector(sectorId);
+		if (!agent)
+		{
+			throw invalid_argument("Building cannot own a null Agent");
+		}
+		if (mAgentIds.contains(agent.get()))
+		{
+			throw invalid_argument("Agent is already owned by this Building");
+		}
 
-		sector->enterAgent(agent, deckOffset, xOffset);
-		mAgents.push_back(agent);
-		mAgentIds.emplace(agent, AgentId{ mNextAgentId++ });
+		auto sector = _getSector(sectorId);
+		auto rawAgent = agent.get();
+		sector->enterAgent(rawAgent, deckOffset, xOffset);
+		auto id = mAgents.add(std::move(agent));
+		mAgentIds.emplace(rawAgent, id);
 
 		SimulationEvent event;
 		event.sequence = mNextEventSequence++;
 		event.tick = mSimulationTick;
 		event.type = SimulationEventType::AgentAdded;
-		event.agent = makeAgentSnapshot(agent);
+		event.agent = makeAgentSnapshot(rawAgent);
 		mEvents.push_back(std::move(event));
+		return id;
+	}
+
+	AgentId Building::addOwnedAgentToSector(unique_ptr<Agent> agent, uint32_t sectorId)
+	{
+		if (!agent)
+		{
+			throw invalid_argument("Building cannot own a null Agent");
+		}
+		if (mAgentIds.contains(agent.get()))
+		{
+			throw invalid_argument("Agent is already owned by this Building");
+		}
+
+		auto sector = _getSector(sectorId);
+		auto rawAgent = agent.get();
+		sector->enterAgent(rawAgent);
+		auto id = mAgents.add(std::move(agent));
+		mAgentIds.emplace(rawAgent, id);
+
+		SimulationEvent event;
+		event.sequence = mNextEventSequence++;
+		event.tick = mSimulationTick;
+		event.type = SimulationEventType::AgentAdded;
+		event.agent = makeAgentSnapshot(rawAgent);
+		mEvents.push_back(std::move(event));
+		return id;
+	}
+
+	AgentId Building::createAgent(string const& name, uint32_t sectorId, uint32_t deckOffset, float xOffset)
+	{
+		return addOwnedAgentToSector(make_unique<Agent>(name), sectorId, deckOffset, xOffset);
+	}
+
+	AgentId Building::createAgent(string const& name, uint32_t sectorId)
+	{
+		return addOwnedAgentToSector(make_unique<Agent>(name), sectorId);
+	}
+
+	void Building::addAgentToSector(Agent* agent, uint32_t sectorId, uint32_t deckOffset, float xOffset)
+	{
+		if (agent && mAgentIds.contains(agent))
+		{
+			throw invalid_argument("Agent is already owned by this Building");
+		}
+		(void)addOwnedAgentToSector(unique_ptr<Agent>(agent), sectorId, deckOffset, xOffset);
 	}
 
 	void Building::addAgentToSector(Agent* agent, uint32_t sectorId)
 	{
-		auto sector = _getSector(sectorId);
-		
-		sector->enterAgent(agent);
-		mAgents.push_back(agent);
-		mAgentIds.emplace(agent, AgentId{ mNextAgentId++ });
-
-		SimulationEvent event;
-		event.sequence = mNextEventSequence++;
-		event.tick = mSimulationTick;
-		event.type = SimulationEventType::AgentAdded;
-		event.agent = makeAgentSnapshot(agent);
-		mEvents.push_back(std::move(event));
+		if (agent && mAgentIds.contains(agent))
+		{
+			throw invalid_argument("Agent is already owned by this Building");
+		}
+		(void)addOwnedAgentToSector(unique_ptr<Agent>(agent), sectorId);
 	}
 
 	void Building::wakeAllAgents()
 	{
-		for (auto agent : mAgents)
+		for (auto const& [id, agent] : mAgents.entries())
 		{
+			(void)id;
 			agent->wake();
 		}
 	}
@@ -2285,23 +2329,255 @@ namespace core
 		return result;
 	}
 
+	InteractionPointSnapshot Building::makeInteractionPointSnapshot(InteractionPointId id, InteractionPoint const& point) const
+	{
+		return { id, point.getName() };
+	}
+
+	DeviceOperationSnapshot Building::makeDeviceOperationSnapshot(DeviceOperationId id, DeviceOperation const& operation) const
+	{
+		return { id, operation.getName(), operation.getRequester(), operation.getState() };
+	}
+
+	TraversalResourceSnapshot Building::makeTraversalResourceSnapshot(TraversalResourceId id, TraversalResource const& resource) const
+	{
+		return { id, resource.getName() };
+	}
+
 	AgentId Building::getAgentId(Agent const* agent) const
 	{
 		auto found = mAgentIds.find(agent);
 		return found == mAgentIds.end() ? AgentId{} : found->second;
 	}
 
+	EntityLookup<Agent> Building::lookupAgent(AgentId id)
+	{
+		auto entity = mAgents.find(id);
+		return entity ? EntityLookup<Agent>{ entity, {} }
+			: EntityLookup<Agent>{ nullptr, format("Agent handle {} is invalid or has been removed", id.value) };
+	}
+
+	EntityLookup<Agent const> Building::lookupAgent(AgentId id) const
+	{
+		auto entity = mAgents.find(id);
+		return entity ? EntityLookup<Agent const>{ entity, {} }
+			: EntityLookup<Agent const>{ nullptr, format("Agent handle {} is invalid or has been removed", id.value) };
+	}
+
+	EntityRemovalResult Building::removeAgent(AgentId id)
+	{
+		auto found = lookupAgent(id);
+		if (!found)
+		{
+			return { false, found.diagnostic };
+		}
+		if (found.entity->getState() != Agent::State::Idle)
+		{
+			return { false, format("Agent handle {} is active and cannot be removed safely", id.value) };
+		}
+
+		vector<DeviceOperationId> ownedOperations;
+		for (auto const& [operationId, operation] : mDeviceOperations.entries())
+		{
+			if (operation->getRequester() == id)
+			{
+				ownedOperations.push_back(operationId);
+			}
+		}
+		for (auto operationId : ownedOperations)
+		{
+			auto operation = mDeviceOperations.find(operationId);
+			if (operation->getState() == DeviceOperationState::Pending
+				|| operation->getState() == DeviceOperationState::Running)
+			{
+				operation->setState(DeviceOperationState::Cancelled);
+			}
+			(void)removeDeviceOperation(operationId);
+		}
+
+		auto snapshot = makeAgentSnapshot(found.entity);
+		if (auto sector = const_cast<Sector*>(found.entity->getSector()))
+		{
+			sector->exitAgent(found.entity);
+		}
+		mAgentIds.erase(found.entity);
+		mAgents.remove(id);
+
+		SimulationEvent event;
+		event.sequence = mNextEventSequence++;
+		event.tick = mSimulationTick;
+		event.type = SimulationEventType::AgentRemoved;
+		event.agent = std::move(snapshot);
+		mEvents.push_back(std::move(event));
+		return { true, {} };
+	}
+
+	InteractionPointId Building::createInteractionPoint(string const& name)
+	{
+		auto id = mInteractionPoints.add(unique_ptr<InteractionPoint>(new InteractionPoint(name)));
+		SimulationEvent event;
+		event.sequence = mNextEventSequence++;
+		event.tick = mSimulationTick;
+		event.type = SimulationEventType::InteractionPointAdded;
+		event.interactionPoint = makeInteractionPointSnapshot(id, *mInteractionPoints.find(id));
+		mEvents.push_back(std::move(event));
+		return id;
+	}
+
+	EntityLookup<InteractionPoint> Building::lookupInteractionPoint(InteractionPointId id)
+	{
+		auto entity = mInteractionPoints.find(id);
+		return entity ? EntityLookup<InteractionPoint>{ entity, {} }
+			: EntityLookup<InteractionPoint>{ nullptr, format("InteractionPoint handle {} is invalid or has been removed", id.value) };
+	}
+
+	EntityLookup<InteractionPoint const> Building::lookupInteractionPoint(InteractionPointId id) const
+	{
+		auto entity = mInteractionPoints.find(id);
+		return entity ? EntityLookup<InteractionPoint const>{ entity, {} }
+			: EntityLookup<InteractionPoint const>{ nullptr, format("InteractionPoint handle {} is invalid or has been removed", id.value) };
+	}
+
+	EntityRemovalResult Building::removeInteractionPoint(InteractionPointId id)
+	{
+		auto found = lookupInteractionPoint(id);
+		if (!found)
+		{
+			return { false, found.diagnostic };
+		}
+		auto snapshot = makeInteractionPointSnapshot(id, *found.entity);
+		mInteractionPoints.remove(id);
+
+		SimulationEvent event;
+		event.sequence = mNextEventSequence++;
+		event.tick = mSimulationTick;
+		event.type = SimulationEventType::InteractionPointRemoved;
+		event.interactionPoint = std::move(snapshot);
+		mEvents.push_back(std::move(event));
+		return { true, {} };
+	}
+
+	DeviceOperationId Building::createDeviceOperation(string const& name, AgentId requester)
+	{
+		auto agent = lookupAgent(requester);
+		if (!agent)
+		{
+			throw invalid_argument(format("Cannot create DeviceOperation: {}", agent.diagnostic));
+		}
+
+		auto id = mDeviceOperations.add(unique_ptr<DeviceOperation>(new DeviceOperation(name, requester)));
+		SimulationEvent event;
+		event.sequence = mNextEventSequence++;
+		event.tick = mSimulationTick;
+		event.type = SimulationEventType::DeviceOperationAdded;
+		event.deviceOperation = makeDeviceOperationSnapshot(id, *mDeviceOperations.find(id));
+		mEvents.push_back(std::move(event));
+		return id;
+	}
+
+	EntityLookup<DeviceOperation> Building::lookupDeviceOperation(DeviceOperationId id)
+	{
+		auto entity = mDeviceOperations.find(id);
+		return entity ? EntityLookup<DeviceOperation>{ entity, {} }
+			: EntityLookup<DeviceOperation>{ nullptr, format("DeviceOperation handle {} is invalid or has been removed", id.value) };
+	}
+
+	EntityLookup<DeviceOperation const> Building::lookupDeviceOperation(DeviceOperationId id) const
+	{
+		auto entity = mDeviceOperations.find(id);
+		return entity ? EntityLookup<DeviceOperation const>{ entity, {} }
+			: EntityLookup<DeviceOperation const>{ nullptr, format("DeviceOperation handle {} is invalid or has been removed", id.value) };
+	}
+
+	EntityRemovalResult Building::removeDeviceOperation(DeviceOperationId id)
+	{
+		auto found = lookupDeviceOperation(id);
+		if (!found)
+		{
+			return { false, found.diagnostic };
+		}
+		auto snapshot = makeDeviceOperationSnapshot(id, *found.entity);
+		mDeviceOperations.remove(id);
+
+		SimulationEvent event;
+		event.sequence = mNextEventSequence++;
+		event.tick = mSimulationTick;
+		event.type = SimulationEventType::DeviceOperationRemoved;
+		event.deviceOperation = std::move(snapshot);
+		mEvents.push_back(std::move(event));
+		return { true, {} };
+	}
+
+	TraversalResourceId Building::createTraversalResource(string const& name)
+	{
+		auto id = mTraversalResources.add(unique_ptr<TraversalResource>(new TraversalResource(name)));
+		SimulationEvent event;
+		event.sequence = mNextEventSequence++;
+		event.tick = mSimulationTick;
+		event.type = SimulationEventType::TraversalResourceAdded;
+		event.traversalResource = makeTraversalResourceSnapshot(id, *mTraversalResources.find(id));
+		mEvents.push_back(std::move(event));
+		return id;
+	}
+
+	EntityLookup<TraversalResource> Building::lookupTraversalResource(TraversalResourceId id)
+	{
+		auto entity = mTraversalResources.find(id);
+		return entity ? EntityLookup<TraversalResource>{ entity, {} }
+			: EntityLookup<TraversalResource>{ nullptr, format("TraversalResource handle {} is invalid or has been removed", id.value) };
+	}
+
+	EntityLookup<TraversalResource const> Building::lookupTraversalResource(TraversalResourceId id) const
+	{
+		auto entity = mTraversalResources.find(id);
+		return entity ? EntityLookup<TraversalResource const>{ entity, {} }
+			: EntityLookup<TraversalResource const>{ nullptr, format("TraversalResource handle {} is invalid or has been removed", id.value) };
+	}
+
+	EntityRemovalResult Building::removeTraversalResource(TraversalResourceId id)
+	{
+		auto found = lookupTraversalResource(id);
+		if (!found)
+		{
+			return { false, found.diagnostic };
+		}
+		auto snapshot = makeTraversalResourceSnapshot(id, *found.entity);
+		mTraversalResources.remove(id);
+
+		SimulationEvent event;
+		event.sequence = mNextEventSequence++;
+		event.tick = mSimulationTick;
+		event.type = SimulationEventType::TraversalResourceRemoved;
+		event.traversalResource = std::move(snapshot);
+		mEvents.push_back(std::move(event));
+		return { true, {} };
+	}
+
 	SimulationSnapshot Building::getSimulationSnapshot() const
 	{
 		SimulationSnapshot result;
 		result.tick = mSimulationTick;
-		result.agents.reserve(mAgents.size());
+		result.agents.reserve(mAgents.entries().size());
+		result.interactionPoints.reserve(mInteractionPoints.entries().size());
+		result.deviceOperations.reserve(mDeviceOperations.entries().size());
+		result.traversalResources.reserve(mTraversalResources.entries().size());
 
-		// mAgents is insertion ordered and IDs are monotonic, so snapshots and
-		// same-tick agent execution use the same stable order.
-		for (auto agent : mAgents)
+		for (auto const& [id, agent] : mAgents.entries())
 		{
-			result.agents.push_back(makeAgentSnapshot(agent));
+			(void)id;
+			result.agents.push_back(makeAgentSnapshot(agent.get()));
+		}
+		for (auto const& [id, point] : mInteractionPoints.entries())
+		{
+			result.interactionPoints.push_back(makeInteractionPointSnapshot(id, *point));
+		}
+		for (auto const& [id, operation] : mDeviceOperations.entries())
+		{
+			result.deviceOperations.push_back(makeDeviceOperationSnapshot(id, *operation));
+		}
+		for (auto const& [id, resource] : mTraversalResources.entries())
+		{
+			result.traversalResources.push_back(makeTraversalResourceSnapshot(id, *resource));
 		}
 
 		return result;
@@ -2328,8 +2604,9 @@ namespace core
 			break;
 
 		case SimulationPhase::Movement:
-			for (auto agent : mAgents)
+			for (auto const& [id, agent] : mAgents.entries())
 			{
+				(void)id;
 				agent->update(timestep);
 			}
 
@@ -2365,10 +2642,18 @@ namespace core
 		}
 
 		auto after = getSimulationSnapshot();
-		for (size_t i = 0; i < after.agents.size(); ++i)
+		for (auto const& current : after.agents)
 		{
-			auto const& current = after.agents[i];
-			auto const& previous = before.agents[i];
+			auto previousIt = find_if(before.agents.begin(), before.agents.end(), [&](AgentSnapshot const& candidate)
+			{
+				return candidate.id == current.id;
+			});
+			if (previousIt == before.agents.end())
+			{
+				continue;
+			}
+
+			auto const& previous = *previousIt;
 			auto changed = current.sectorId != previous.sectorId
 				|| current.localPosition != previous.localPosition
 				|| current.globalPosition != previous.globalPosition
@@ -2387,6 +2672,24 @@ namespace core
 				event.hasPreviousAgent = true;
 				event.previousAgent = previous;
 				event.agent = current;
+				mEvents.push_back(std::move(event));
+			}
+		}
+
+		for (auto const& current : after.deviceOperations)
+		{
+			auto previousIt = find_if(before.deviceOperations.begin(), before.deviceOperations.end(), [&](DeviceOperationSnapshot const& candidate)
+			{
+				return candidate.id == current.id;
+			});
+			if (previousIt != before.deviceOperations.end() && previousIt->state != current.state)
+			{
+				SimulationEvent event;
+				event.sequence = mNextEventSequence++;
+				event.tick = mSimulationTick;
+				event.type = SimulationEventType::DeviceOperationChanged;
+				event.phase = SimulationPhase::CleanupAndEventPublication;
+				event.deviceOperation = current;
 				mEvents.push_back(std::move(event));
 			}
 		}

@@ -467,6 +467,15 @@
     <ClInclude Include="..\include\core\Building.h">
       <Filter>Header Files\core</Filter>
     </ClInclude>
+    <ClInclude Include="..\include\core\Coordination.h">
+      <Filter>Header Files\core</Filter>
+    </ClInclude>
+    <ClInclude Include="..\include\core\EntityId.h">
+      <Filter>Header Files\core</Filter>
+    </ClInclude>
+    <ClInclude Include="..\include\core\EntityRegistry.h">
+      <Filter>Header Files\core</Filter>
+    </ClInclude>
     <ClInclude Include="..\include\core\Simulation.h">
       <Filter>Header Files\core</Filter>
     </ClInclude>

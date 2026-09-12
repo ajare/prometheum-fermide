@@ -4,31 +4,12 @@
 #include <string>
 #include <vector>
 
+#include "core/Coordination.h"
 #include "core/Vector2.h"
 
 
 namespace core
 {
-	// Stable value identities used at the public simulation boundary.  Zero is
-	// reserved for "no entity"; IDs are assigned monotonically by Building.
-	struct AgentId
-	{
-		uint64_t value{ 0 };
-
-		friend bool operator==(AgentId const&, AgentId const&) = default;
-		friend bool operator<(AgentId const& lhs, AgentId const& rhs)
-		{
-			return lhs.value < rhs.value;
-		}
-	};
-
-	struct SectorId
-	{
-		uint64_t value{ 0 };
-
-		friend bool operator==(SectorId const&, SectorId const&) = default;
-	};
-
 	enum struct AgentPathState
 	{
 		Idle,
@@ -49,10 +30,33 @@ namespace core
 		uint32_t pathNodeCount{ 0 };
 	};
 
+	struct InteractionPointSnapshot
+	{
+		InteractionPointId id;
+		std::string name;
+	};
+
+	struct DeviceOperationSnapshot
+	{
+		DeviceOperationId id;
+		std::string name;
+		AgentId requester;
+		DeviceOperationState state{ DeviceOperationState::Pending };
+	};
+
+	struct TraversalResourceSnapshot
+	{
+		TraversalResourceId id;
+		std::string name;
+	};
+
 	struct SimulationSnapshot
 	{
 		uint64_t tick{ 0 };
 		std::vector<AgentSnapshot> agents;
+		std::vector<InteractionPointSnapshot> interactionPoints;
+		std::vector<DeviceOperationSnapshot> deviceOperations;
+		std::vector<TraversalResourceSnapshot> traversalResources;
 	};
 
 	// These phases are always entered in declaration order for each fixed tick.
@@ -71,7 +75,15 @@ namespace core
 	{
 		AgentAdded,
 		AgentChanged,
-		PhaseCompleted
+		PhaseCompleted,
+		AgentRemoved,
+		InteractionPointAdded,
+		InteractionPointRemoved,
+		DeviceOperationAdded,
+		DeviceOperationChanged,
+		DeviceOperationRemoved,
+		TraversalResourceAdded,
+		TraversalResourceRemoved
 	};
 
 	// Events contain values only.  They are collected during a tick and become
@@ -85,6 +97,9 @@ namespace core
 		bool hasPreviousAgent{ false };
 		AgentSnapshot previousAgent;
 		AgentSnapshot agent;
+		InteractionPointSnapshot interactionPoint;
+		DeviceOperationSnapshot deviceOperation;
+		TraversalResourceSnapshot traversalResource;
 	};
 
 } // core

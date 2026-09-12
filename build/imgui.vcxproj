@@ -270,6 +270,9 @@ COPY $(ProjectDir)..\resources\*.* $(OutDir)</Command>
     <ClInclude Include="..\include\core\Agent.h" />
     <ClInclude Include="..\include\core\Area.h" />
     <ClInclude Include="..\include\core\Building.h" />
+    <ClInclude Include="..\include\core\Coordination.h" />
+    <ClInclude Include="..\include\core\EntityId.h" />
+    <ClInclude Include="..\include\core\EntityRegistry.h" />
     <ClInclude Include="..\include\core\Simulation.h" />
     <ClInclude Include="..\include\core\BulkheadDoor.h" />
     <ClInclude Include="..\include\core\BulkheadDoorEdge.h" />

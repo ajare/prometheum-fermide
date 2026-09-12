@@ -18,6 +18,8 @@
 #include "core/Orchestrator.h"
 #include "core/Log.h"
 #include "core/Simulation.h"
+#include "core/Coordination.h"
+#include "core/EntityRegistry.h"
 
 
 namespace core
@@ -141,11 +143,17 @@ namespace core
 
 		std::shared_ptr<Graph> mGraph;
 
-		std::vector<Agent*> mAgents;
+		EntityRegistry<AgentId, Agent> mAgents;
 
+		// Legacy pointer-facing APIs use this reverse index only to recover an ID;
+		// the registry above remains the sole owner.
 		std::map<Agent const*, AgentId> mAgentIds;
 
-		uint64_t mNextAgentId{ 1 };
+		EntityRegistry<InteractionPointId, InteractionPoint> mInteractionPoints;
+
+		EntityRegistry<DeviceOperationId, DeviceOperation> mDeviceOperations;
+
+		EntityRegistry<TraversalResourceId, TraversalResource> mTraversalResources;
 
 		uint64_t mSimulationTick{ 0 };
 
@@ -255,7 +263,17 @@ namespace core
 
 		void buildGraph();
 
+		AgentId addOwnedAgentToSector(std::unique_ptr<Agent> agent, uint32_t sectorId, uint32_t deckOffset, float xOffset);
+
+		AgentId addOwnedAgentToSector(std::unique_ptr<Agent> agent, uint32_t sectorId);
+
 		AgentSnapshot makeAgentSnapshot(Agent const* agent) const;
+
+		InteractionPointSnapshot makeInteractionPointSnapshot(InteractionPointId id, InteractionPoint const& point) const;
+
+		DeviceOperationSnapshot makeDeviceOperationSnapshot(DeviceOperationId id, DeviceOperation const& operation) const;
+
+		TraversalResourceSnapshot makeTraversalResourceSnapshot(TraversalResourceId id, TraversalResource const& resource) const;
 
 		void runSimulationPhase(SimulationPhase phase);
 
@@ -329,9 +347,45 @@ namespace core
 
 		std::shared_ptr<Useable> getUseableObjectAtPosition(uint32_t layerIndex, float x, float y, bool includeDisabled, std::shared_ptr<SectorObject>* sectorObject = nullptr) const;
 
+		// Building-owned replacement APIs. Callers retain typed IDs, not ownership.
+		AgentId createAgent(std::string const& name, uint32_t sectorId, uint32_t deckOffset, float xOffset);
+
+		AgentId createAgent(std::string const& name, uint32_t sectorId);
+
+		// Legacy adoption seam. Ownership transfers to Building on entry.
 		void addAgentToSector(Agent* agent, uint32_t sectorId, uint32_t deckOffset, float xOffset);
 
 		void addAgentToSector(Agent* agent, uint32_t sectorId);
+
+		EntityLookup<Agent> lookupAgent(AgentId id);
+
+		EntityLookup<Agent const> lookupAgent(AgentId id) const;
+
+		EntityRemovalResult removeAgent(AgentId id);
+
+		InteractionPointId createInteractionPoint(std::string const& name);
+
+		EntityLookup<InteractionPoint> lookupInteractionPoint(InteractionPointId id);
+
+		EntityLookup<InteractionPoint const> lookupInteractionPoint(InteractionPointId id) const;
+
+		EntityRemovalResult removeInteractionPoint(InteractionPointId id);
+
+		DeviceOperationId createDeviceOperation(std::string const& name, AgentId requester);
+
+		EntityLookup<DeviceOperation> lookupDeviceOperation(DeviceOperationId id);
+
+		EntityLookup<DeviceOperation const> lookupDeviceOperation(DeviceOperationId id) const;
+
+		EntityRemovalResult removeDeviceOperation(DeviceOperationId id);
+
+		TraversalResourceId createTraversalResource(std::string const& name);
+
+		EntityLookup<TraversalResource> lookupTraversalResource(TraversalResourceId id);
+
+		EntityLookup<TraversalResource const> lookupTraversalResource(TraversalResourceId id) const;
+
+		EntityRemovalResult removeTraversalResource(TraversalResourceId id);
 
 		void wakeAllAgents();
 

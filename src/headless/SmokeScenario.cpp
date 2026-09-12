@@ -4,6 +4,7 @@
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 #include "core/Agent.h"
@@ -11,6 +12,9 @@
 #include "core/Graph.h"
 #include "core/Simulation.h"
 #include "core/Vector2.h"
+
+static_assert(!std::is_convertible_v<core::AgentId, core::InteractionPointId>);
+static_assert(!std::is_convertible_v<core::DeviceOperationId, core::TraversalResourceId>);
 
 namespace
 {
@@ -102,6 +106,48 @@ namespace
 		return building.getSimulationTick() == 1;
 	}
 
+	bool buildingOwnsTypedEntitiesAndInvalidatesHandles()
+	{
+		core::Building building("Ownership check", 3, 2);
+		auto corridor = building.addCorridor(0, 0, 2);
+		building.finishBuild();
+
+		auto agentId = building.createAgent("Owned idle agent", corridor, 0, 0.5f);
+		auto pointId = building.createInteractionPoint("Light switch");
+		auto operationId = building.createDeviceOperation("Turn lights on", agentId);
+		auto resourceId = building.createTraversalResource("Ordinary passage");
+
+		auto snapshot = building.getSimulationSnapshot();
+		if (snapshot.agents.size() != 1 || snapshot.agents.front().id != agentId
+			|| snapshot.interactionPoints.size() != 1 || snapshot.interactionPoints.front().id != pointId
+			|| snapshot.deviceOperations.size() != 1 || snapshot.deviceOperations.front().id != operationId
+			|| snapshot.deviceOperations.front().requester != agentId
+			|| snapshot.traversalResources.size() != 1 || snapshot.traversalResources.front().id != resourceId)
+		{
+			return false;
+		}
+
+		if (!building.removeAgent(agentId)
+			|| building.lookupAgent(agentId)
+			|| building.lookupAgent(agentId).diagnostic.empty()
+			|| building.lookupDeviceOperation(operationId)
+			|| building.lookupDeviceOperation(operationId).diagnostic.empty())
+		{
+			return false;
+		}
+		if (!building.removeInteractionPoint(pointId) || !building.removeTraversalResource(resourceId))
+		{
+			return false;
+		}
+
+		building.advanceTick();
+		auto afterRemoval = building.getSimulationSnapshot();
+		return afterRemoval.agents.empty()
+			&& afterRemoval.interactionPoints.empty()
+			&& afterRemoval.deviceOperations.empty()
+			&& afterRemoval.traversalResources.empty();
+	}
+
 	ScenarioResult runOrdinaryPathScenario()
 	{
 		core::Building building("Headless smoke building", 7, 2);
@@ -113,8 +159,13 @@ namespace
 		building.addSectorMarker(corridor, 0, 5.5f, &destinationVertexId);
 		building.finishBuild();
 
-		auto agent = new core::Agent("Headless smoke agent");
-		building.addAgentToSector(agent, corridor, 0, 0.5f);
+		auto agentId = building.createAgent("Headless smoke agent", corridor, 0, 0.5f);
+		auto agentLookup = building.lookupAgent(agentId);
+		if (!agentLookup)
+		{
+			return {};
+		}
+		auto agent = agentLookup.entity;
 
 		auto graph = building.getGraph();
 		auto source = graph->getVertexByIdentifier(sourceVertexId);
@@ -151,6 +202,11 @@ int main()
 		if (!accumulatedRenderTimeAdvancesWholeTicksOnly())
 		{
 			std::cerr << "FAIL: render-time accumulation did not advance exactly one whole tick\n";
+			return 1;
+		}
+		if (!buildingOwnsTypedEntitiesAndInvalidatesHandles())
+		{
+			std::cerr << "FAIL: typed building ownership or handle invalidation failed\n";
 			return 1;
 		}
 
