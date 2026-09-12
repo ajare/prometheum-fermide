@@ -70,6 +70,23 @@ namespace core
 
 	enum struct DoorSnapshotState { NotADoor, Closed, Opening, Open, Closing };
 
+	struct QueuePositionSnapshot
+	{
+		uint32_t index{ 0 };
+		Vector2 position;
+		TraversalRequestId owner;
+	};
+
+	struct DoorQueueLaneSnapshot
+	{
+		SectorId sector;
+		Vector2 origin;
+		Vector2 direction;
+		float extent{ 0.0f };
+		std::vector<TraversalRequestId> queue;
+		std::vector<QueuePositionSnapshot> positions;
+	};
+
 	struct TraversalResourceSnapshot
 	{
 		TraversalResourceId id;
@@ -83,6 +100,8 @@ namespace core
 		std::vector<InteractionPointId> controls;
 		InteractionRequestId activePreparation;
 		TraversalRequestId preparationOperator;
+		TraversalRequestId crossingOwner;
+		std::vector<DoorQueueLaneSnapshot> queueLanes;
 	};
 
 	struct TraversalRequestSnapshot
@@ -99,6 +118,12 @@ namespace core
 		DeviceOperationId preparationOperation;
 		TraversalPermitId permit;
 		TraversalFailureReason failureReason{ TraversalFailureReason::None };
+		QueueTicketId queueTicket;
+		uint64_t queuedAtTick{ 0 };
+		uint32_t queueApproach{ ~0u };
+		bool hasQueuePosition{ false };
+		uint32_t queuePosition{ ~0u };
+		Vector2 queuePositionTarget;
 	};
 
 	struct TraversalPermitSnapshot

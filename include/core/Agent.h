@@ -80,6 +80,10 @@ namespace core
 
 		std::optional<TraversalTask> mTraversalTask;
 
+		// Traversal resources assign local goals; the Agent remains the sole owner
+		// of walking and advances itself during the movement phase.
+		std::optional<Vector2> mTraversalLocalGoal;
+
 	private:
 
 		// Overridden from Useable

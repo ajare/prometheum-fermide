@@ -519,6 +519,126 @@ namespace
 			&& snapshot.deviceOperations.empty() && snapshot.interactionRequests.empty();
 	}
 
+	bool fairDoorQueuesServeBothSidesInStableOrder()
+	{
+		core::Building building("Fair two-sided door", 8, 2);
+		auto fore = building.addRoom("Fore queue", CORE_LAYER_FORE, 0, 0, 7, 1);
+		auto back = building.addRoom("Back queue", CORE_LAYER_BACK, 0, 0, 7, 1);
+		core::Building::CreateDoorOptions options;
+		options.activationMode = core::DoorActivationMode::Manual;
+		auto created = building.addSectorDoor(0, 3, options);
+		building.finishBuild();
+		auto edge = *std::find_if(building.getGraph()->getEdges().begin(), building.getGraph()->getEdges().end(),
+			[](auto const& candidate) { return candidate->getType() == core::EdgeType::Door; });
+		auto foreVertex = edge->getVertex(0)->getSector()->getIndex() == fore ? edge->getVertex(0) : edge->getVertex(1);
+		auto backVertex = edge->getOtherVertex(foreVertex);
+
+		std::vector<core::AgentId> ids = {
+			building.createAgent("Fore first", fore, 0, 3.5f),
+			building.createAgent("Back first", back, 0, 3.5f),
+			building.createAgent("Fore second", fore, 0, 3.5f),
+			building.createAgent("Back second", back, 0, 3.5f)
+		};
+		for (size_t i = 0; i < ids.size(); ++i)
+		{
+			auto source = i % 2 == 0 ? foreVertex : backVertex;
+			auto destination = i % 2 == 0 ? backVertex : foreVertex;
+			building.lookupAgent(ids[i]).entity->setPath(twoNodePath(source, destination, edge), true);
+		}
+
+		bool observedSeparatedPositions = false;
+		bool observedQueueDiagnostics = false;
+		std::vector<core::AgentId> completionOrder;
+		for (uint32_t tick = 0; tick < MaximumSimulationTicks * 2 && completionOrder.size() < ids.size(); ++tick)
+		{
+			building.advanceTick();
+			auto snapshot = building.getSimulationSnapshot();
+			if (snapshot.traversalPermits.size() > 1)
+			{
+				return false;
+			}
+			auto const& resource = snapshot.traversalResources.front();
+			observedQueueDiagnostics = observedQueueDiagnostics
+				|| (resource.queueLanes.size() == 2 && resource.crossingOwner);
+			for (auto const& lane : resource.queueLanes)
+			{
+				std::vector<core::Vector2> occupied;
+				for (auto const& position : lane.positions)
+				{
+					if (!position.owner)
+					{
+						continue;
+					}
+					for (auto const& other : occupied)
+					{
+						if (position.position.distanceTo(other) < CORE_DOOR_QUEUE_STOP_WIDTH - 0.001f)
+						{
+							return false;
+						}
+					}
+					occupied.push_back(position.position);
+				}
+				observedSeparatedPositions = observedSeparatedPositions || occupied.size() >= 2;
+			}
+			for (auto id : ids)
+			{
+				if (std::find(completionOrder.begin(), completionOrder.end(), id) == completionOrder.end()
+					&& building.lookupAgent(id).entity->getState() == core::Agent::State::Idle)
+				{
+					completionOrder.push_back(id);
+				}
+			}
+		}
+		return completionOrder == ids && observedSeparatedPositions && observedQueueDiagnostics
+			&& building.getSimulationSnapshot().traversalResources.front().crossingOwner == core::TraversalRequestId{};
+	}
+
+	bool queuedCancellationReleasesAndAdvancesPositions()
+	{
+		core::Building building("Queue cancellation", 8, 2);
+		auto fore = building.addRoom("Queue room", CORE_LAYER_FORE, 0, 0, 7, 1);
+		building.addRoom("Destination", CORE_LAYER_BACK, 0, 0, 7, 1);
+		auto created = building.addSectorDoor(0, 3);
+		building.finishBuild();
+		auto edge = *std::find_if(building.getGraph()->getEdges().begin(), building.getGraph()->getEdges().end(),
+			[](auto const& candidate) { return candidate->getType() == core::EdgeType::Door; });
+		auto source = edge->getVertex(0)->getSector()->getIndex() == fore ? edge->getVertex(0) : edge->getVertex(1);
+		auto destination = edge->getOtherVertex(source);
+		auto firstId = building.createAgent("First", fore, 0, 3.5f);
+		auto cancelledId = building.createAgent("Cancelled", fore, 0, 3.5f);
+		auto lastId = building.createAgent("Last", fore, 0, 3.5f);
+		for (auto id : { firstId, cancelledId, lastId })
+		{
+			building.lookupAgent(id).entity->setPath(twoNodePath(source, destination, edge), true);
+		}
+		building.advanceTicks(3);
+		auto before = building.getSimulationSnapshot();
+		if (before.traversalRequests.size() != 3
+			|| std::count_if(before.traversalRequests.begin(), before.traversalRequests.end(),
+				[](auto const& request) { return request.queueTicket && request.hasQueuePosition; }) != 3)
+		{
+			return false;
+		}
+		building.lookupAgent(cancelledId).entity->clearPath();
+		auto after = building.getSimulationSnapshot();
+		if (after.traversalRequests.size() != 2
+			|| after.traversalResources.front().queueLanes.front().queue.size() != 2)
+		{
+			return false;
+		}
+		for (auto const& position : after.traversalResources.front().queueLanes.front().positions)
+		{
+			if (position.owner && position.owner == before.traversalRequests[1].id)
+			{
+				return false;
+			}
+		}
+		building.advanceTicks(MaximumSimulationTicks);
+		return building.lookupAgent(firstId).entity->getState() == core::Agent::State::Idle
+			&& building.lookupAgent(lastId).entity->getState() == core::Agent::State::Idle
+			&& building.lookupAgent(cancelledId).entity->getSector() == building.getSector(fore).get();
+	}
+
 	bool unavailableDoorRejectsTraversal()
 	{
 		core::Building building("Unavailable door", 6, 2);
@@ -697,6 +817,16 @@ int main()
 		if (!remoteDoorWithoutReachableControlIsUnavailable())
 		{
 			std::cerr << "FAIL: remote door without a reachable control was not reported unavailable\n";
+			return 1;
+		}
+		if (!fairDoorQueuesServeBothSidesInStableOrder())
+		{
+			std::cerr << "FAIL: two-sided door queues were not separated, FIFO, or fair\n";
+			return 1;
+		}
+		if (!queuedCancellationReleasesAndAdvancesPositions())
+		{
+			std::cerr << "FAIL: queued cancellation leaked a ticket or physical position\n";
 			return 1;
 		}
 		if (!unavailableDoorRejectsTraversal())

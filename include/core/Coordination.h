@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <set>
@@ -176,6 +177,17 @@ namespace core
 		std::vector<std::pair<DeviceOperationId, InteractionBindingRequirement>> const& getOperations() const { return mOperations; }
 	};
 
+	struct DoorQueueLane
+	{
+		SectorId sector;
+		Vector2 origin;
+		Vector2 direction;
+		float extent{ 0.0f };
+		std::vector<Vector2> positions;
+		std::vector<TraversalRequestId> positionOwners;
+		std::vector<TraversalRequestId> queue;
+	};
+
 	class TraversalResource
 	{
 		friend class Building;
@@ -190,6 +202,8 @@ namespace core
 		DeviceOperationId mSharedPreparationOperation;
 		uint32_t mPreparationAttempts{ 0 };
 		uint64_t mNextPreparationTick{ 0 };
+		std::array<DoorQueueLane, 2> mQueueLanes;
+		TraversalRequestId mCrossingOwner;
 		explicit TraversalResource(std::string name) : mName(std::move(name)) {}
 		TraversalResource(std::string name, std::shared_ptr<Door> door,
 			DoorActivationMode mode, uint64_t holdOpenTicks)
@@ -229,6 +243,10 @@ namespace core
 		DeviceOperationId mPreparationOperation;
 		TraversalPermitId mPermit;
 		TraversalFailureReason mFailureReason{ TraversalFailureReason::None };
+		QueueTicketId mQueueTicket;
+		uint64_t mQueuedAtTick{ 0 };
+		uint32_t mQueueApproach{ ~0u };
+		uint32_t mQueuePosition{ ~0u };
 		TraversalRequest(AgentId owner, EdgeType edgeType, SectorId sourceSector,
 			SectorId destinationSector, Vector2 sourceEndpoint, Vector2 destinationEndpoint)
 			: mOwner(owner), mEdgeType(edgeType), mSourceSector(sourceSector),
@@ -249,6 +267,11 @@ namespace core
 		DeviceOperationId getPreparationOperation() const { return mPreparationOperation; }
 		TraversalPermitId getPermit() const { return mPermit; }
 		TraversalFailureReason getFailureReason() const { return mFailureReason; }
+		QueueTicketId getQueueTicket() const { return mQueueTicket; }
+		uint64_t getQueuedAtTick() const { return mQueuedAtTick; }
+		uint32_t getQueueApproach() const { return mQueueApproach; }
+		bool hasQueuePosition() const { return mQueuePosition != ~0u; }
+		uint32_t getQueuePosition() const { return mQueuePosition; }
 	};
 
 	enum struct TraversalPermitState { Active, Committed, Cancelled };

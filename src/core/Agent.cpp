@@ -384,7 +384,8 @@ namespace core
 			// locomotion task visible for a short deterministic crossing instead
 			// of committing in the permit-allocation tick.
 			mTraversalTask->traversalTicksRemaining =
-				requestLookup.entity->getEdgeType() == EdgeType::Door ? 6 : 0;
+				requestLookup.entity->getEdgeType() == EdgeType::Door
+				&& getGlobalPosition().distanceTo(mTraversalTask->destinationVertex->getPosition()) < 0.001f ? 6 : 0;
 			mState = State::TraversingEdge;
 		}
 	}
@@ -418,6 +419,7 @@ namespace core
 		{
 			mBuilding->releaseTraversal(mTraversalTask->request, mTraversalTask->permit);
 			mTraversalTask.reset();
+			mTraversalLocalGoal.reset();
 		}
 	}
 
@@ -434,6 +436,7 @@ namespace core
 			mBuilding->releaseTraversal(mTraversalTask->request, mTraversalTask->permit);
 		}
 		mTraversalTask.reset();
+		mTraversalLocalGoal.reset();
 	}
 
 	bool Agent::moveToVertexOffset(int dim, float offset, float frameTime)
@@ -497,6 +500,12 @@ namespace core
 			break;
 
 		case State::WaitingForTraversal:
+			if (mTraversalLocalGoal)
+			{
+				moveToPosition(*mTraversalLocalGoal, frameTime);
+			}
+			break;
+
 		case State::AwaitingTraversalCommit:
 		case State::UnderVertexControl:
 			break;

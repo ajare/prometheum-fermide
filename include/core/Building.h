@@ -169,6 +169,8 @@ namespace core
 
 		uint64_t mNextEventSequence{ 1 };
 
+		uint64_t mNextQueueTicketValue{ 1 };
+
 		double mAccumulatedTime{ 0.0 };
 
 		SimulationPhase mCurrentPhase{ SimulationPhase::None };
@@ -300,6 +302,14 @@ namespace core
 		InteractionRequestId requestInteractionForTraversal(InteractionPointId point, AgentId actor);
 
 		void allocateRemoteDoorPreparation(TraversalRequestId requestId, TraversalResource& resource);
+
+		void attachDoorQueueTicket(TraversalRequestId requestId, TraversalResource& resource);
+
+		void refreshDoorQueuePositions(TraversalResource& resource);
+
+		void tryGrantDoorQueue(TraversalResource& resource);
+
+		void releaseDoorQueueOwnership(TraversalRequestId requestId, TraversalResource& resource);
 
 		TraversalResourceSnapshot makeTraversalResourceSnapshot(TraversalResourceId id, TraversalResource const& resource) const;
 
@@ -444,6 +454,12 @@ namespace core
 
 		TraversalResourceId createDoorTraversalResource(std::string const& name,
 			std::shared_ptr<Door> door, DoorActivationMode mode, float holdOpenSeconds);
+
+		// Defines one physical waiting lane. The direction is normalized and
+		// positions are generated at agent-safe spacing from origin through extent.
+		// A door accepts at most two lanes, one per source sector.
+		bool configureDoorQueueLane(TraversalResourceId resource, SectorId sector,
+			Vector2 origin, Vector2 direction, float extent);
 
 		// Registers a physical control as applicable from its interaction point's sector.
 		// Remote-controlled traversal never falls back to opening the Door directly.

@@ -8,14 +8,14 @@
 
 **Blocked by:** 07 — Operate a remote-controlled door through its button
 
-**Status:** ready-for-agent
+**Status:** complete
 
-- [ ] Each door approach defines and validates a queue lane by origin, direction, and extent.
-- [ ] Logical queue tickets are distinct from physical queue-position reservations.
-- [ ] Waiting agents occupy non-overlapping generated positions and move themselves when reassigned.
-- [ ] FIFO order is preserved within each approach side.
-- [ ] The oldest eligible queue head across both sides receives the next crossing lane, with stable-ID tie-breaking.
-- [ ] An assigned operator can leave its queue position without losing logical priority.
-- [ ] Cancelling or removing a queued agent releases every physical reservation and advances the remaining queue.
-- [ ] Two-sided contention eventually serves both sides without starvation.
-- [ ] Queue and crossing ownership are visible in read-only diagnostics.
+- [x] Each door approach defines and validates a queue lane by origin, direction, and extent.
+- [x] Logical queue tickets are distinct from physical queue-position reservations.
+- [x] Waiting agents occupy non-overlapping generated positions and move themselves when reassigned.
+- [x] FIFO order is preserved within each approach side.
+- [x] The oldest eligible queue head across both sides receives the next crossing lane, with stable-ID tie-breaking.
+- [x] An assigned operator can leave its queue position without losing logical priority.
+- [x] Cancelling or removing a queued agent releases every physical reservation and advances the remaining queue.
+- [x] Two-sided contention eventually serves both sides without starvation.
+- [x] Queue and crossing ownership are visible in read-only diagnostics.

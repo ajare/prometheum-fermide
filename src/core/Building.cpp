@@ -1563,6 +1563,23 @@ namespace core
 			format("Door at {},{}", x, y), door, options.activationMode, options.holdOpenSeconds);
 		door->configureTraversal(options.activationMode, traversalResource, options.holdOpenSeconds);
 
+		// Door approaches are explicit resource geometry. Prefer the longer clear
+		// horizontal run in each source sector and place the first waiter one safe
+		// spacing away from the threshold whenever the room permits it.
+		auto const threshold = Vector2{ x + cellsWide * 0.5f, (float)y };
+		for (auto const& sector : sectors)
+		{
+			auto const leftExtent = threshold.x - (sector->getCellX0() + CORE_AGENT_MAX_WIDTH * 0.5f);
+			auto const rightExtent = (sector->getCellX1() + 1.0f - CORE_AGENT_MAX_WIDTH * 0.5f) - threshold.x;
+			auto const direction = rightExtent > leftExtent ? Vector2::UNIT_X : Vector2::NEGATIVE_UNIT_X;
+			auto const available = max(0.0f, max(leftExtent, rightExtent));
+			auto const firstDistance = min((float)CORE_DOOR_QUEUE_STOP_WIDTH, available);
+			auto const origin = threshold + direction * firstDistance;
+			configureDoorQueueLane(traversalResource,
+				SectorId{ (uint64_t)sector->getIndex() + 1 }, origin, direction,
+				max(0.0f, available - firstDistance));
+		}
+
 		// Set layers
 		for (uint32_t ix = x; ix < x + cellsWide; ++ix)
 		{
@@ -2423,6 +2440,25 @@ namespace core
 		result.controls = resource.mControls;
 		result.activePreparation = resource.mActivePreparation;
 		result.preparationOperator = resource.mPreparationOperator;
+		result.crossingOwner = resource.mCrossingOwner;
+		for (auto const& lane : resource.mQueueLanes)
+		{
+			if (!lane.sector)
+			{
+				continue;
+			}
+			DoorQueueLaneSnapshot laneSnapshot;
+			laneSnapshot.sector = lane.sector;
+			laneSnapshot.origin = lane.origin;
+			laneSnapshot.direction = lane.direction;
+			laneSnapshot.extent = lane.extent;
+			laneSnapshot.queue = lane.queue;
+			for (uint32_t i = 0; i < lane.positions.size(); ++i)
+			{
+				laneSnapshot.positions.push_back({ i, lane.positions[i], lane.positionOwners[i] });
+			}
+			result.queueLanes.push_back(std::move(laneSnapshot));
+		}
 		if (resource.mDoor)
 		{
 			result.doorOpenPercentage = resource.mDoor->getOpenPercentage();
@@ -2439,10 +2475,25 @@ namespace core
 
 	TraversalRequestSnapshot Building::makeTraversalRequestSnapshot(TraversalRequestId id, TraversalRequest const& request) const
 	{
-		return { id, request.getOwner(), request.getEdgeType(), request.getSourceSector(),
+		TraversalRequestSnapshot result{ id, request.getOwner(), request.getEdgeType(), request.getSourceSector(),
 			request.getDestinationSector(), request.getSourceEndpoint(), request.getDestinationEndpoint(),
 			request.getState(), request.getResource(), request.getPreparationOperation(), request.getPermit(),
 			request.getFailureReason() };
+		result.queueTicket = request.mQueueTicket;
+		result.queuedAtTick = request.mQueuedAtTick;
+		result.queueApproach = request.mQueueApproach;
+		result.hasQueuePosition = request.mQueuePosition != ~0u;
+		result.queuePosition = request.mQueuePosition;
+		if (result.hasQueuePosition)
+		{
+			if (auto resource = mTraversalResources.find(request.mResource);
+				resource && request.mQueueApproach < resource->mQueueLanes.size()
+				&& request.mQueuePosition < resource->mQueueLanes[request.mQueueApproach].positions.size())
+			{
+				result.queuePositionTarget = resource->mQueueLanes[request.mQueueApproach].positions[request.mQueuePosition];
+			}
+		}
+		return result;
 	}
 
 	TraversalPermitSnapshot Building::makeTraversalPermitSnapshot(TraversalPermitId id, TraversalPermit const& permit) const
@@ -2463,7 +2514,12 @@ namespace core
 		auto destinationSector = SectorId{ (uint64_t)destination->getSector()->getIndex() + 1 };
 		auto id = mTraversalRequests.add(unique_ptr<TraversalRequest>(new TraversalRequest(owner,
 			edge->getType(), sourceSector, destinationSector, source->getPosition(), destination->getPosition())));
-		mTraversalRequests.find(id)->mResource = edge->getTraversalResourceId();
+		auto request = mTraversalRequests.find(id);
+		request->mResource = edge->getTraversalResourceId();
+		if (auto resource = mTraversalResources.find(request->mResource); resource && resource->mDoor)
+		{
+			attachDoorQueueTicket(id, *resource);
+		}
 
 		SimulationEvent event;
 		event.sequence = mNextEventSequence++;
@@ -2473,6 +2529,145 @@ namespace core
 		event.traversalRequest = makeTraversalRequestSnapshot(id, *mTraversalRequests.find(id));
 		mEvents.push_back(std::move(event));
 		return id;
+	}
+
+	void Building::attachDoorQueueTicket(TraversalRequestId requestId, TraversalResource& resource)
+	{
+		auto request = mTraversalRequests.find(requestId);
+		if (!request || request->mQueueTicket)
+		{
+			return;
+		}
+		for (uint32_t i = 0; i < resource.mQueueLanes.size(); ++i)
+		{
+			if (resource.mQueueLanes[i].sector != request->mSourceSector)
+			{
+				continue;
+			}
+			request->mQueueTicket = QueueTicketId{ mNextQueueTicketValue++ };
+			request->mQueuedAtTick = mSimulationTick;
+			request->mQueueApproach = i;
+			resource.mQueueLanes[i].queue.push_back(requestId);
+			refreshDoorQueuePositions(resource);
+			return;
+		}
+	}
+
+	void Building::refreshDoorQueuePositions(TraversalResource& resource)
+	{
+		for (auto& lane : resource.mQueueLanes)
+		{
+			fill(lane.positionOwners.begin(), lane.positionOwners.end(), TraversalRequestId{});
+			uint32_t position = 0;
+			for (auto requestId : lane.queue)
+			{
+				auto request = mTraversalRequests.find(requestId);
+				if (!request || request->mState != TraversalRequestState::Pending)
+				{
+					continue;
+				}
+				request->mQueuePosition = ~0u;
+				if (auto agent = mAgents.find(request->mOwner))
+				{
+					agent->mTraversalLocalGoal.reset();
+				}
+				// The selected operator temporarily leaves the physical line but its
+				// ticket remains in lane.queue at exactly the same logical position.
+				if (resource.mPreparationOperator == requestId)
+				{
+					continue;
+				}
+				if (position < lane.positionOwners.size())
+				{
+					lane.positionOwners[position] = requestId;
+					request->mQueuePosition = position;
+					if (auto agent = mAgents.find(request->mOwner))
+					{
+						agent->mTraversalLocalGoal = lane.positions[position];
+					}
+					++position;
+				}
+			}
+		}
+	}
+
+	void Building::tryGrantDoorQueue(TraversalResource& resource)
+	{
+		if (resource.mCrossingOwner || !resource.mDoor || !resource.mDoor->isOpen())
+		{
+			return;
+		}
+
+		TraversalRequestId selected;
+		for (auto const& lane : resource.mQueueLanes)
+		{
+			if (lane.queue.empty())
+			{
+				continue;
+			}
+			auto candidateId = lane.queue.front();
+			auto candidate = mTraversalRequests.find(candidateId);
+			if (!candidate || candidate->mState != TraversalRequestState::Pending
+				|| candidate->mQueuePosition == ~0u || resource.mPreparationOperator == candidateId)
+			{
+				continue;
+			}
+			auto agent = mAgents.find(candidate->mOwner);
+			if (!agent || agent->getGlobalPosition().distanceTo(
+				lane.positions[candidate->mQueuePosition]) > 0.001f)
+			{
+				continue;
+			}
+			if (!selected)
+			{
+				selected = candidateId;
+				continue;
+			}
+			auto current = mTraversalRequests.find(selected);
+			if (candidate->mQueuedAtTick < current->mQueuedAtTick
+				|| (candidate->mQueuedAtTick == current->mQueuedAtTick
+					&& candidate->mOwner < current->mOwner))
+			{
+				selected = candidateId;
+			}
+		}
+		if (!selected)
+		{
+			return;
+		}
+
+		auto selectedRequest = mTraversalRequests.find(selected);
+		auto& lane = resource.mQueueLanes[selectedRequest->mQueueApproach];
+		lane.queue.erase(remove(lane.queue.begin(), lane.queue.end(), selected), lane.queue.end());
+		selectedRequest->mQueuePosition = ~0u;
+		if (auto agent = mAgents.find(selectedRequest->mOwner))
+		{
+			agent->mTraversalLocalGoal.reset();
+		}
+		resource.mCrossingOwner = selected;
+		refreshDoorQueuePositions(resource);
+		grantTraversalRequest(selected);
+	}
+
+	void Building::releaseDoorQueueOwnership(TraversalRequestId requestId, TraversalResource& resource)
+	{
+		for (auto& lane : resource.mQueueLanes)
+		{
+			lane.queue.erase(remove(lane.queue.begin(), lane.queue.end(), requestId), lane.queue.end());
+		}
+		if (resource.mCrossingOwner == requestId)
+		{
+			resource.mCrossingOwner = {};
+		}
+		if (auto request = mTraversalRequests.find(requestId))
+		{
+			request->mQueuePosition = ~0u;
+			if (auto agent = mAgents.find(request->mOwner))
+			{
+				agent->mTraversalLocalGoal.reset();
+			}
+		}
+		refreshDoorQueuePositions(resource);
 	}
 
 	TraversalPermitId Building::grantTraversalRequest(TraversalRequestId requestId)
@@ -2540,7 +2735,7 @@ namespace core
 			}
 			if (resource->mDoor->isOpen())
 			{
-				grantTraversalRequest(requestId);
+				tryGrantDoorQueue(*resource);
 				return;
 			}
 			if (!request->mPreparationRequested)
@@ -2651,7 +2846,8 @@ namespace core
 					resource.mActivePreparation = {};
 					resource.mPreparationOperator = {};
 					resource.mSharedPreparationOperation = {};
-					grantTraversalRequest(requestId);
+					refreshDoorQueuePositions(resource);
+					tryGrantDoorQueue(resource);
 				}
 				return;
 			}
@@ -2679,12 +2875,13 @@ namespace core
 			resource.mActivePreparation = {};
 			resource.mPreparationOperator = {};
 			resource.mSharedPreparationOperation = {};
+			refreshDoorQueuePositions(resource);
 		}
 
 		if (resource.mDoor->isOpen() && !failedPreparation
 			&& (resource.mPreparationAttempts == 0 || completedPreparation))
 		{
-			grantTraversalRequest(requestId);
+			tryGrantDoorQueue(resource);
 			return;
 		}
 
@@ -2736,6 +2933,7 @@ namespace core
 
 		resource.mActivePreparation = interactionId;
 		resource.mPreparationOperator = requestId;
+		refreshDoorQueuePositions(resource);
 		resource.mSharedPreparationOperation = interaction->mOperations.front().first;
 		for (auto const& [candidateId, candidate] : mTraversalRequests.entries())
 		{
@@ -2767,6 +2965,10 @@ namespace core
 		}
 		request->mState = TraversalRequestState::Denied;
 		request->mFailureReason = reason;
+		if (auto resource = mTraversalResources.find(request->mResource); resource && resource->mDoor)
+		{
+			releaseDoorQueueOwnership(requestId, *resource);
+		}
 
 		SimulationEvent event;
 		event.sequence = mNextEventSequence++;
@@ -2846,6 +3048,10 @@ namespace core
 				resource->mSharedPreparationOperation = {};
 				resource->mNextPreparationTick = mSimulationTick + 1;
 			}
+			if (auto resource = mTraversalResources.find(request->mResource); resource && resource->mDoor)
+			{
+				releaseDoorQueueOwnership(requestId, *resource);
+			}
 		}
 
 		if (auto permit = mTraversalPermits.find(permitId);
@@ -2879,10 +3085,13 @@ namespace core
 	{
 		if (auto request = mTraversalRequests.find(requestId))
 		{
-			if (auto resource = mTraversalResources.find(request->mResource);
-				resource && resource->mOpenLeases.erase(requestId) && resource->mDoor)
+			if (auto resource = mTraversalResources.find(request->mResource); resource && resource->mDoor)
 			{
-				resource->mDoor->releaseOpenLease();
+				if (resource->mOpenLeases.erase(requestId))
+				{
+					resource->mDoor->releaseOpenLease();
+				}
+				releaseDoorQueueOwnership(requestId, *resource);
 			}
 			if (request->mState == TraversalRequestState::Cancelled && request->mPreparationOperation)
 			{
@@ -2958,6 +3167,13 @@ namespace core
 		if (!found)
 		{
 			return { false, found.diagnostic };
+		}
+		if (found.entity->getState() == Agent::State::WaitingForTraversal
+			&& !found.entity->getTraversalPermitId())
+		{
+			// Removing a waiter is cancellation, not an exceptional state. Its
+			// queue ticket and physical reservation are released by clearPath().
+			found.entity->clearPath();
 		}
 		if (found.entity->getState() != Agent::State::Idle)
 		{
@@ -3331,6 +3547,77 @@ namespace core
 		event.traversalResource = makeTraversalResourceSnapshot(id, *mTraversalResources.find(id));
 		mEvents.push_back(std::move(event));
 		return id;
+	}
+
+	bool Building::configureDoorQueueLane(TraversalResourceId resourceId, SectorId sectorId,
+		Vector2 origin, Vector2 direction, float extent)
+	{
+		auto resource = mTraversalResources.find(resourceId);
+		if (!resource || !resource->mDoor || !sectorId || sectorId.value > mSectors.size()
+			|| extent < 0.0f || direction.length() < 0.001f)
+		{
+			throw invalid_argument("A door queue lane requires a door, source sector, direction, and non-negative extent");
+		}
+		direction.normalise();
+		auto sector = mSectors[(size_t)sectorId.value - 1];
+		auto const halfWidth = CORE_AGENT_MAX_WIDTH * 0.5f;
+		auto positionFits = [&](Vector2 const& position)
+		{
+			if (position.x - halfWidth < sector->getCellX0() - 0.001f
+				|| position.x + halfWidth > sector->getCellX1() + 1.0f + 0.001f
+				|| position.y < sector->getCellY0() - 0.001f
+				|| position.y + CORE_AGENT_MAX_HEIGHT > sector->getCellY1() + 1.0f + 0.001f)
+			{
+				return false;
+			}
+			auto const cellX = min(sector->getCellX1(), (uint32_t)floor(position.x));
+			auto const cellY = min(sector->getCellY1(), (uint32_t)floor(position.y));
+			return mLayers[sector->getLayerIndex()]->getCellDefinition(cellX, cellY).isTraversableOnFoot();
+		};
+		if (!positionFits(origin) || !positionFits(origin + direction * extent))
+		{
+			throw invalid_argument("Door queue lane does not fit inside its source sector");
+		}
+
+		DoorQueueLane* lane = nullptr;
+		for (auto& candidate : resource->mQueueLanes)
+		{
+			if (candidate.sector == sectorId)
+			{
+				lane = &candidate;
+				break;
+			}
+			if (!candidate.sector && !lane)
+			{
+				lane = &candidate;
+			}
+		}
+		if (!lane)
+		{
+			throw invalid_argument("A door traversal resource supports exactly two approach lanes");
+		}
+		if (!lane->queue.empty())
+		{
+			throw invalid_argument("An active door queue lane cannot be reconfigured");
+		}
+		lane->sector = sectorId;
+		lane->origin = origin;
+		lane->direction = direction;
+		lane->extent = extent;
+		lane->positions.clear();
+		lane->positionOwners.clear();
+		auto const spacing = (float)CORE_DOOR_QUEUE_STOP_WIDTH;
+		for (float distance = 0.0f; distance <= extent + 0.001f; distance += spacing)
+		{
+			auto position = origin + direction * distance;
+			if (!positionFits(position))
+			{
+				throw invalid_argument("A generated door queue position is outside its source sector");
+			}
+			lane->positions.push_back(position);
+			lane->positionOwners.push_back({});
+		}
+		return true;
 	}
 
 	bool Building::addTraversalControl(TraversalResourceId resourceId, InteractionPointId controlId)

@@ -25,6 +25,7 @@ namespace core
 	CORE_DEFINE_ENTITY_ID(InteractionRequestId);
 	CORE_DEFINE_ENTITY_ID(DeviceOperationId);
 	CORE_DEFINE_ENTITY_ID(TraversalResourceId);
+	CORE_DEFINE_ENTITY_ID(QueueTicketId);
 	CORE_DEFINE_ENTITY_ID(TraversalRequestId);
 	CORE_DEFINE_ENTITY_ID(TraversalPermitId);
 
