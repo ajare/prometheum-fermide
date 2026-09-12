@@ -1,0 +1,11 @@
+# Visual Studio and generated build output
+.vs/
+build/.vs/
+build/x64/
+bin/
+obj/
+*.vcxproj.user
+
+# OS/editor files
+.DS_Store
+Thumbs.db

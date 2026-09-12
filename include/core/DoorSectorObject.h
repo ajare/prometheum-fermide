@@ -1,0 +1,32 @@
+#pragma once
+
+#include <cstdint>
+#include <memory>
+
+#include "core/Door.h"
+#include "core/SectorObject.h"
+
+
+namespace core
+{
+
+	class DoorSectorObject : public SectorObject
+	{
+		std::vector<float> calculateDoorQueueStopOffsets(Building const* building, std::shared_ptr<Vertex> vertex, uint32_t x, uint32_t y, uint32_t doorWidth) const;
+
+	public:
+
+		DoorSectorObject(uint32_t cellX, uint32_t cellY, uint32_t cellsWide, std::shared_ptr<const Sector> sectors[2], uint32_t* vertexIdentifer = nullptr);
+
+		~DoorSectorObject() = default;
+
+		std::shared_ptr<Door> getDoor() const;
+
+		// Overridden from SectorObject
+		[[nodiscard]] std::shared_ptr<VertexController> createVertexController(Building const* building, std::vector<std::shared_ptr<Vertex>> const& vertices, std::map<std::shared_ptr<Controller>, std::shared_ptr<Vertex>> const& controllerVertexLookup) const override;
+
+		// Overridden from SectorObject
+		[[nodiscard]] std::shared_ptr<Vertex> createVertex(std::shared_ptr<SectorObject> object, std::shared_ptr<Sector> sector, void* user = nullptr) const override;
+	};
+
+} // core

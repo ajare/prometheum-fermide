@@ -1,0 +1,418 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|Win32">
+      <Configuration>Debug</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|Win32">
+      <Configuration>Release</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>17.0</VCProjectVersion>
+    <Keyword>Win32Proj</Keyword>
+    <ProjectGuid>{ed4c17dc-8ab4-4c83-810d-bd4020aa9279}</ProjectGuid>
+    <RootNamespace>imgui</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+  </ImportGroup>
+  <ImportGroup Label="Shared">
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <OutDir>$(ProjectDir)..\bin\$(Platform)\$(Configuration)\</OutDir>
+    <IntDir>$(ProjectDir)..\obj\$(Platform)\$(Configuration)\</IntDir>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <OutDir>$(ProjectDir)..\bin\$(Platform)\$(Configuration)\</OutDir>
+    <IntDir>$(ProjectDir)..\obj\$(Platform)\$(Configuration)\</IntDir>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>WIN32;_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>_DEBUG;_CONSOLE;_SILENCE_STDEXT_ARR_ITERS_DEPRECATION_WARNING;YAML_CPP_STATIC_DEFINE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <AdditionalIncludeDirectories>$(ProjectDir)..\include;$(ProjectDir)..\include\imgui;$(SolutionDir)..\vendor\include</AdditionalIncludeDirectories>
+      <RuntimeTypeInfo>true</RuntimeTypeInfo>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalLibraryDirectories>$(SolutionDir)..\vendor\lib\$(Platform)\$(Configuration);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>opengl32.lib;glew32.lib;spdlogd.lib;nfd.lib;yaml-cppd.lib;SDL2d.lib;SDL2maind.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+    <PostBuildEvent>
+      <Command>COPY $(SolutionDir)..\vendor\bin\$(Platform)\$(Configuration)\*.* $(OutDir)
+COPY $(ProjectDir)..\resources\*.* $(OutDir)</Command>
+    </PostBuildEvent>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>NDEBUG;_SILENCE_STDEXT_ARR_ITERS_DEPRECATION_WARNING;YAML_CPP_STATIC_DEFINE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <AdditionalIncludeDirectories>$(ProjectDir)..\include;$(ProjectDir)..\include\imgui;$(SolutionDir)..\vendor\include</AdditionalIncludeDirectories>
+      <RuntimeTypeInfo>true</RuntimeTypeInfo>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalLibraryDirectories>$(SolutionDir)..\vendor\lib\$(Platform)\$(Configuration);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>opengl32.lib;glew32.lib;spdlog.lib;nfd.lib;yaml-cpp.lib;SDL2.lib;SDL2main.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+    <PostBuildEvent>
+      <Command>COPY $(SolutionDir)..\vendor\bin\$(Platform)\$(Configuration)\*.* $(OutDir)
+COPY $(ProjectDir)..\resources\*.* $(OutDir)</Command>
+    </PostBuildEvent>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="..\src\core\Agent.cpp" />
+    <ClCompile Include="..\src\core\Area.cpp" />
+    <ClCompile Include="..\src\core\Building.cpp" />
+    <ClCompile Include="..\src\core\BulkheadDoor.cpp" />
+    <ClCompile Include="..\src\core\BulkheadDoorEdge.cpp" />
+    <ClCompile Include="..\src\core\BulkheadDoorOrchestratedSystem.cpp" />
+    <ClCompile Include="..\src\core\BulkheadDoorSectorObject.cpp" />
+    <ClCompile Include="..\src\core\BulkheadDoorVertex.cpp" />
+    <ClCompile Include="..\src\core\BulkheadDoorVertexController.cpp" />
+    <ClCompile Include="..\src\core\Button.cpp" />
+    <ClCompile Include="..\src\core\ButtonDoorOrchestratedSystem.cpp" />
+    <ClCompile Include="..\src\core\ButtonExtensibleObjectOrchestratedSystem.cpp" />
+    <ClCompile Include="..\src\core\ButtonSectorObject.cpp" />
+    <ClCompile Include="..\src\core\CarLift.cpp" />
+    <ClCompile Include="..\src\core\CellDefinition.cpp" />
+    <ClCompile Include="..\src\core\Controllable.cpp" />
+    <ClCompile Include="..\src\core\ControllableActionStatus.cpp" />
+    <ClCompile Include="..\src\core\ControllableActionType.cpp" />
+    <ClCompile Include="..\src\core\Controller.cpp" />
+    <ClCompile Include="..\src\core\DependentPathControllable.cpp" />
+    <ClCompile Include="..\src\core\Door.cpp" />
+    <ClCompile Include="..\src\core\DoorEdge.cpp" />
+    <ClCompile Include="..\src\core\DoorSectorObject.cpp" />
+    <ClCompile Include="..\src\core\DoorVertexController.cpp" />
+    <ClCompile Include="..\src\core\Edge.cpp" />
+    <ClCompile Include="..\src\core\ExtensibleObject.cpp" />
+    <ClCompile Include="..\src\core\ForceBridge.cpp" />
+    <ClCompile Include="..\src\core\ForceBridgeEdge.cpp" />
+    <ClCompile Include="..\src\core\ForceBridgeSectorObject.cpp" />
+    <ClCompile Include="..\src\core\GapEdge.cpp" />
+    <ClCompile Include="..\src\core\Graph.cpp" />
+    <ClCompile Include="..\src\core\Helpers.cpp" />
+    <ClCompile Include="..\src\core\ControllerSectorObject.cpp" />
+    <ClCompile Include="..\src\core\ControllerVertex.cpp" />
+    <ClCompile Include="..\src\core\Ladder.cpp" />
+    <ClCompile Include="..\src\core\LadderEdge.cpp" />
+    <ClCompile Include="..\src\core\LadderMountEdge.cpp" />
+    <ClCompile Include="..\src\core\LadderSectorObject.cpp" />
+    <ClCompile Include="..\src\core\LadderTransit.cpp" />
+    <ClCompile Include="..\src\core\LadderVertex.cpp" />
+    <ClCompile Include="..\src\core\Layer.cpp" />
+    <ClCompile Include="..\src\core\Lift.cpp" />
+    <ClCompile Include="..\src\core\LiftEdge.cpp" />
+    <ClCompile Include="..\src\core\LiftOrchestratedSystem.cpp" />
+    <ClCompile Include="..\src\core\LiftSectorObject.cpp" />
+    <ClCompile Include="..\src\core\LiftMountEdge.cpp" />
+    <ClCompile Include="..\src\core\LiftTransit.cpp" />
+    <ClCompile Include="..\src\core\LiftVertex.cpp" />
+    <ClCompile Include="..\src\core\LightingOrchestratedSystem.cpp" />
+    <ClCompile Include="..\src\core\Location.cpp" />
+    <ClCompile Include="..\src\core\DoorVertex.cpp" />
+    <ClCompile Include="..\src\core\Log.cpp" />
+    <ClCompile Include="..\src\core\Marker.cpp" />
+    <ClCompile Include="..\src\core\MarkerSectorObject.cpp" />
+    <ClCompile Include="..\src\core\Object.cpp" />
+    <ClCompile Include="..\src\core\OrchestratedSystem.cpp" />
+    <ClCompile Include="..\src\core\Orchestrator.cpp" />
+    <ClCompile Include="..\src\core\PlatformLift.cpp" />
+    <ClCompile Include="..\src\core\PlatformLiftOrchestratedSystem.cpp" />
+    <ClCompile Include="..\src\core\QueuedVertexControllerArea.cpp" />
+    <ClCompile Include="..\src\core\SectorObjectType.cpp" />
+    <ClCompile Include="..\src\core\SectorPosition.cpp" />
+    <ClCompile Include="..\src\core\SectorType.cpp" />
+    <ClCompile Include="..\src\core\OpenableObject.cpp" />
+    <ClCompile Include="..\src\core\Pathing.cpp" />
+    <ClCompile Include="..\src\core\PlatformLiftVertex.cpp" />
+    <ClCompile Include="..\src\core\RailedTransport.cpp" />
+    <ClCompile Include="..\src\core\SectorEdge.cpp" />
+    <ClCompile Include="..\src\core\SectorObject.cpp" />
+    <ClCompile Include="..\src\core\SectorObjectVertex.cpp" />
+    <ClCompile Include="..\src\core\SensorType.cpp" />
+    <ClCompile Include="..\src\core\Shape.cpp" />
+    <ClCompile Include="..\src\core\Shuttle.cpp" />
+    <ClCompile Include="..\src\core\ShuttleEdge.cpp" />
+    <ClCompile Include="..\src\core\ShuttleMountEdge.cpp" />
+    <ClCompile Include="..\src\core\ShuttleOrchestratedSystem.cpp" />
+    <ClCompile Include="..\src\core\ShuttleTransit.cpp" />
+    <ClCompile Include="..\src\core\ShuttleVertex.cpp" />
+    <ClCompile Include="..\src\core\Staircase.cpp" />
+    <ClCompile Include="..\src\core\StaircaseEdge.cpp" />
+    <ClCompile Include="..\src\core\StaircaseLocationVertex.cpp" />
+    <ClCompile Include="..\src\core\StaircaseMountEdge.cpp" />
+    <ClCompile Include="..\src\core\StaircaseTransit.cpp" />
+    <ClCompile Include="..\src\core\StaircaseVertex.cpp" />
+    <ClCompile Include="..\src\core\SectorMarkerVertex.cpp" />
+    <ClCompile Include="..\src\core\Useable.cpp" />
+    <ClCompile Include="..\src\core\VertexActionType.cpp" />
+    <ClCompile Include="..\src\core\VertexController.cpp" />
+    <ClCompile Include="..\src\core\VertexControllerArea.cpp" />
+    <ClCompile Include="..\src\core\VertexType.cpp" />
+    <ClCompile Include="..\src\core\Walkway.cpp" />
+    <ClCompile Include="..\src\core\Transit.cpp" />
+    <ClCompile Include="..\src\core\WalkwaySectorObject.cpp" />
+    <ClCompile Include="..\src\core\WindowSectorObject.cpp" />
+    <ClCompile Include="..\src\core\WindowVertex.cpp" />
+    <ClCompile Include="..\src\core\Sector.cpp" />
+    <ClCompile Include="..\src\core\Vector2.cpp" />
+    <ClCompile Include="..\src\core\Vertex.cpp" />
+    <ClCompile Include="..\src\core\Window.cpp" />
+    <ClCompile Include="..\src\core\WindowVertexController.cpp" />
+    <ClCompile Include="..\src\imgui\imgui-knobs.cpp" />
+    <ClCompile Include="..\src\imgui\imgui.cpp" />
+    <ClCompile Include="..\src\imgui\imgui_demo.cpp" />
+    <ClCompile Include="..\src\imgui\imgui_draw.cpp" />
+    <ClCompile Include="..\src\imgui\imgui_impl_opengl3.cpp" />
+    <ClCompile Include="..\src\imgui\imgui_impl_sdl2.cpp" />
+    <ClCompile Include="..\src\imgui\imgui_tables.cpp" />
+    <ClCompile Include="..\src\imgui\imgui_widgets.cpp" />
+    <ClCompile Include="..\src\imgui\imnodes.cpp" />
+    <ClCompile Include="..\src\Main.cpp" />
+    <ClCompile Include="..\src\Render.cpp" />
+    <ClCompile Include="..\src\UI.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\include\core\Agent.h" />
+    <ClInclude Include="..\include\core\Area.h" />
+    <ClInclude Include="..\include\core\Building.h" />
+    <ClInclude Include="..\include\core\Simulation.h" />
+    <ClInclude Include="..\include\core\BulkheadDoor.h" />
+    <ClInclude Include="..\include\core\BulkheadDoorEdge.h" />
+    <ClInclude Include="..\include\core\BulkheadDoorOrchestratedSystem.h" />
+    <ClInclude Include="..\include\core\BulkheadDoorSectorObject.h" />
+    <ClInclude Include="..\include\core\BulkheadDoorVertex.h" />
+    <ClInclude Include="..\include\core\BulkheadDoorVertexController.h" />
+    <ClInclude Include="..\include\core\Button.h" />
+    <ClInclude Include="..\include\core\ButtonDoorOrchestratedSystem.h" />
+    <ClInclude Include="..\include\core\ButtonExtensibleObjectOrchestratedSystem.h" />
+    <ClInclude Include="..\include\core\ButtonSectorObject.h" />
+    <ClInclude Include="..\include\core\CarLift.h" />
+    <ClInclude Include="..\include\core\CellDefinition.h" />
+    <ClInclude Include="..\include\core\CellPosition.h" />
+    <ClInclude Include="..\include\core\Controllable.h" />
+    <ClInclude Include="..\include\core\ControllableAction.h" />
+    <ClInclude Include="..\include\core\ControllableActionCallback.h" />
+    <ClInclude Include="..\include\core\ControllableActionData.h" />
+    <ClInclude Include="..\include\core\ControllableActionType.h" />
+    <ClInclude Include="..\include\core\ControllableActionStatus.h" />
+    <ClInclude Include="..\include\core\Controller.h" />
+    <ClInclude Include="..\include\core\ControllerActionType.h" />
+    <ClInclude Include="..\include\core\Defines.h" />
+    <ClInclude Include="..\include\core\DependentPathControllable.h" />
+    <ClInclude Include="..\include\core\DependentPathObject.h" />
+    <ClInclude Include="..\include\core\Door.h" />
+    <ClInclude Include="..\include\core\DoorEdge.h" />
+    <ClInclude Include="..\include\core\DoorSectorObject.h" />
+    <ClInclude Include="..\include\core\DoorVertexController.h" />
+    <ClInclude Include="..\include\core\Edge.h" />
+    <ClInclude Include="..\include\core\ExecuteControllableActionStatus.h" />
+    <ClInclude Include="..\include\core\LiftOrchestratedSystem.h" />
+    <ClInclude Include="..\include\core\LightingOrchestratedSystem.h" />
+    <ClInclude Include="..\include\core\Marker.h" />
+    <ClInclude Include="..\include\core\MarkerSectorObject.h" />
+    <ClInclude Include="..\include\core\Object.h" />
+    <ClInclude Include="..\include\core\OrchestratedSystem.h" />
+    <ClInclude Include="..\include\core\Orchestrator.h" />
+    <ClInclude Include="..\include\core\PlatformLiftOrchestratedSystem.h" />
+    <ClInclude Include="..\include\core\QueuedVertexControllerArea.h" />
+    <ClInclude Include="..\include\core\SectorObjectVertex.h" />
+    <ClInclude Include="..\include\core\SensorSource.h" />
+    <ClInclude Include="..\include\core\SensorType.h" />
+    <ClInclude Include="..\include\core\ShuttleOrchestratedSystem.h" />
+    <ClInclude Include="..\include\core\Lift.h" />
+    <ClInclude Include="..\include\core\LiftEdge.h" />
+    <ClInclude Include="..\include\core\LiftSectorObject.h" />
+    <ClInclude Include="..\include\core\LiftMountEdge.h" />
+    <ClInclude Include="..\include\core\LiftTransit.h" />
+    <ClInclude Include="..\include\core\LiftVertex.h" />
+    <ClInclude Include="..\include\core\PlatformLift.h" />
+    <ClInclude Include="..\include\core\OpenableObject.h" />
+    <ClInclude Include="..\include\core\Path.h" />
+    <ClInclude Include="..\include\core\Pathing.h" />
+    <ClInclude Include="..\include\core\PlatformLiftVertex.h" />
+    <ClInclude Include="..\include\core\PriorityQueue.h" />
+    <ClInclude Include="..\include\core\RailedTransport.h" />
+    <ClInclude Include="..\include\core\Shuttle.h" />
+    <ClInclude Include="..\include\core\ShuttleEdge.h" />
+    <ClInclude Include="..\include\core\ShuttleMountEdge.h" />
+    <ClInclude Include="..\include\core\ShuttleTransit.h" />
+    <ClInclude Include="..\include\core\ShuttleVertex.h" />
+    <ClInclude Include="..\include\core\Staircase.h" />
+    <ClInclude Include="..\include\core\StaircaseEdge.h" />
+    <ClInclude Include="..\include\core\StaircaseLocationVertex.h" />
+    <ClInclude Include="..\include\core\StaircaseMountEdge.h" />
+    <ClInclude Include="..\include\core\StaircaseTransit.h" />
+    <ClInclude Include="..\include\core\StaircaseVertex.h" />
+    <ClInclude Include="..\include\core\SectorMarkerVertex.h" />
+    <ClInclude Include="..\include\core\Useable.h" />
+    <ClInclude Include="..\include\core\VertexActionType.h" />
+    <ClInclude Include="..\include\core\VertexController.h" />
+    <ClInclude Include="..\include\core\VertexControllerArea.h" />
+    <ClInclude Include="..\include\core\VertexControllerNotificationType.h" />
+    <ClInclude Include="..\include\core\VerticalEdgeCreator.h" />
+    <ClInclude Include="..\include\core\EdgeTraversalRequestResult.h" />
+    <ClInclude Include="..\include\core\EdgeType.h" />
+    <ClInclude Include="..\include\core\Exceptions.h" />
+    <ClInclude Include="..\include\core\ExtensibleObject.h" />
+    <ClInclude Include="..\include\core\ForceBridge.h" />
+    <ClInclude Include="..\include\core\ForceBridgeEdge.h" />
+    <ClInclude Include="..\include\core\ForceBridgeSectorObject.h" />
+    <ClInclude Include="..\include\core\GapEdge.h" />
+    <ClInclude Include="..\include\core\Graph.h" />
+    <ClInclude Include="..\include\core\ControllerSectorObject.h" />
+    <ClInclude Include="..\include\core\ControllerVertex.h" />
+    <ClInclude Include="..\include\core\Ladder.h" />
+    <ClInclude Include="..\include\core\LadderEdge.h" />
+    <ClInclude Include="..\include\core\LadderMountEdge.h" />
+    <ClInclude Include="..\include\core\LadderSectorObject.h" />
+    <ClInclude Include="..\include\core\LadderTransit.h" />
+    <ClInclude Include="..\include\core\LadderVertex.h" />
+    <ClInclude Include="..\include\core\Layer.h" />
+    <ClInclude Include="..\include\core\Location.h" />
+    <ClInclude Include="..\include\core\DoorVertex.h" />
+    <ClInclude Include="..\include\core\SectorEnd.h" />
+    <ClInclude Include="..\include\core\SectorEdge.h" />
+    <ClInclude Include="..\include\core\SectorObject.h" />
+    <ClInclude Include="..\include\core\SectorObjectType.h" />
+    <ClInclude Include="..\include\core\Shape.h" />
+    <ClInclude Include="..\include\core\Transit.h" />
+    <ClInclude Include="..\include\core\Walkway.h" />
+    <ClInclude Include="..\include\core\WalkwaySectorObject.h" />
+    <ClInclude Include="..\include\core\WindowSectorObject.h" />
+    <ClInclude Include="..\include\core\WindowVertex.h" />
+    <ClInclude Include="..\include\core\Log.h" />
+    <ClInclude Include="..\include\core\Sector.h" />
+    <ClInclude Include="..\include\core\SectorType.h" />
+    <ClInclude Include="..\include\core\Vector2.h" />
+    <ClInclude Include="..\include\core\Vertex.h" />
+    <ClInclude Include="..\include\core\VertexType.h" />
+    <ClInclude Include="..\include\core\Window.h" />
+    <ClInclude Include="..\include\core\SectorPosition.h" />
+    <ClInclude Include="..\include\core\WindowVertexController.h" />
+    <ClInclude Include="..\include\Exceptions.h" />
+    <ClInclude Include="..\include\Helpers.h" />
+    <ClInclude Include="..\include\imgui\IconsFontAwesome5.h" />
+    <ClInclude Include="..\include\imgui\imconfig.h" />
+    <ClInclude Include="..\include\imgui\imgui-knobs.h" />
+    <ClInclude Include="..\include\imgui\imgui.h" />
+    <ClInclude Include="..\include\imgui\imgui_impl_opengl3.h" />
+    <ClInclude Include="..\include\imgui\imgui_impl_opengl3_loader.h" />
+    <ClInclude Include="..\include\imgui\imgui_impl_sdl2.h" />
+    <ClInclude Include="..\include\imgui\imgui_internal.h" />
+    <ClInclude Include="..\include\imgui\imnodes.h" />
+    <ClInclude Include="..\include\imgui\imnodes_internal.h" />
+    <ClInclude Include="..\include\imgui\imstb_rectpack.h" />
+    <ClInclude Include="..\include\imgui\imstb_textedit.h" />
+    <ClInclude Include="..\include\imgui\imstb_truetype.h" />
+    <ClInclude Include="..\include\Main.h" />
+    <ClInclude Include="..\include\MouseButtonStatus.h" />
+    <ClInclude Include="..\include\Render.h" />
+    <ClInclude Include="..\include\stb_image.h" />
+    <ClInclude Include="..\include\UI.h" />
+    <ClInclude Include="..\include\UISettings.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\include\imgui\imgui.natstepfilter" />
+  </ItemGroup>
+  <ItemGroup>
+    <Natvis Include="..\include\imgui\imgui.natvis" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+  </ImportGroup>
+</Project>

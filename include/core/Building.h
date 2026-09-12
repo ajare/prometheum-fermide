@@ -1,0 +1,363 @@
+#pragma once
+
+#include <string>
+#include <array>
+#include <vector>
+#include <memory>
+#include <map>
+
+
+#include "core/Defines.h"
+#include "core/Layer.h"
+#include "core/Location.h"
+#include "core/SectorType.h"
+#include "core/Door.h"
+#include "core/Window.h"
+#include "core/Button.h"
+#include "core/Graph.h"
+#include "core/Orchestrator.h"
+#include "core/Log.h"
+#include "core/Simulation.h"
+
+
+namespace core
+{
+
+	class Building
+	{
+		friend class Graph;
+
+	public:
+
+		struct CreateObjectResult
+		{
+			uint32_t index{ ~0u };
+			SectorObjectType type{ SectorObjectType::None };
+			std::shared_ptr<Sector> sector;
+		};
+
+		struct CreateDoorOptions
+		{
+			uint32_t width{ 1 };
+			bool controllers[2] = { false, false };
+			bool orchestrate{ false };
+		};
+
+		struct CreateDoorResult
+		{
+			CreateObjectResult door;
+			CreateObjectResult controllers[2];
+			std::shared_ptr<OrchestratedSystem> orchSystem;
+		};
+
+		struct CreateBulkheadDoorResult
+		{
+			CreateObjectResult door;
+			CreateObjectResult controllers[2];
+		};
+
+		struct CreateForceBridgeOptions
+		{
+			uint32_t width{ 1 };
+			int fromSide{ CORE_SIDE_LEFT };
+			bool extensible{ true };  // implies controlled
+			bool startExtended{ true };
+			uint32_t controllerCount{ 0 };
+		};
+
+		struct CreateForceBridgeResult
+		{
+			CreateObjectResult forceBridge;
+			CreateObjectResult controllers[2];
+		};
+
+		struct CreateLadderOptions
+		{
+			uint32_t decksHigh;
+			bool extensible;  // implies controlled
+			bool startExtended;
+		};
+
+		struct CreateLadderResult
+		{
+			CreateObjectResult ladder;
+			CreateObjectResult controllers[2];
+		};
+
+		struct CreateLiftOptions
+		{
+			uint32_t cellsWide{ 1 };
+			std::vector<uint32_t> stopOffsets;
+		};
+
+		struct CreateLiftResult
+		{
+			CreateObjectResult lift;
+			std::vector<CreateDoorResult> doors;
+			std::shared_ptr<OrchestratedSystem> orchSystem;
+		};
+
+		struct CreatePlatformLiftResult
+		{
+			CreateObjectResult lift;
+			std::vector<CreateObjectResult> buttons;
+			std::shared_ptr<OrchestratedSystem> orchSystem;
+		};
+
+		struct CreateShuttleOptions
+		{
+			uint32_t numCars;
+			uint32_t carWidth;
+			std::vector<uint32_t> stopOffsets;
+			uint32_t initialStop;
+		};
+
+		struct CreateShuttleResult
+		{
+			CreateObjectResult shuttle;
+			std::vector<CreateDoorResult> doors;
+			std::shared_ptr<OrchestratedSystem> orchSystem;
+		};
+
+	public:
+
+		static CreateDoorOptions ManualDoor1Options, OrchButtonDoor1Options, NonOrchButtonDoor1Options;
+
+		static CreateDoorOptions ManualDoor2Options, OrchButtonDoor2Options, NonOrchButtonDoor2Options;
+
+	private:
+
+		std::string mName;
+
+		uint32_t mCellsWide, mDecksHigh;
+
+		std::array<std::shared_ptr<Layer>, CORE_NUM_LAYERS> mLayers;
+
+		std::vector<std::shared_ptr<Sector>> mSectors;
+
+		std::shared_ptr<Orchestrator> mOrchestrator;
+
+		std::vector<std::shared_ptr<VertexController>> mVertexControllers;
+
+		std::shared_ptr<Graph> mGraph;
+
+		std::vector<Agent*> mAgents;
+
+		std::map<Agent const*, AgentId> mAgentIds;
+
+		uint64_t mNextAgentId{ 1 };
+
+		uint64_t mSimulationTick{ 0 };
+
+		uint64_t mNextEventSequence{ 1 };
+
+		double mAccumulatedTime{ 0.0 };
+
+		SimulationPhase mCurrentPhase{ SimulationPhase::None };
+
+		std::vector<SimulationEvent> mEvents;
+
+		Log mBuildLog;
+
+	private:
+
+		void validateCellOccupied(std::string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y) const;
+
+		void validateCellUnoccupied(std::string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y) const;
+
+		void validateCellIsInSector(std::string const& caller, uint32_t x, uint32_t y, std::shared_ptr<const Sector> sector) const;
+
+		void validateCellHasObject(std::string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y) const;
+
+		void validateCellHasNoObject(std::string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y) const;
+
+		void validateCellIsType(std::string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y, SectorType sectorType) const;
+
+		void validateCellHasDoor(std::string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y) const;
+
+		void validateCellHasNoDoor(std::string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y) const;
+
+		void validateCellHasController(std::string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y, int side) const;
+
+		void validateCellHasNoController(std::string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y, int side) const;
+
+		void validateCellHasNoFloorType(std::string const& caller, std::string const& desiredObject, uint32_t layerIndex, uint32_t x, uint32_t y) const;
+
+		void validateCellTraversableOnFoot(std::string const& caller, std::string const& desiredObject, uint32_t layerIndex, uint32_t x, uint32_t y) const;
+
+		void validateLayer(std::string const& caller, uint32_t layerIndex) const;
+
+		void validateBounds(std::string const& caller, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh) const;
+
+		void validateLayerSpace(std::string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh) const;
+
+		void validateObjectAllowedInSector(std::string const& caller, SectorObjectType type, uint32_t sectorIndex) const;
+
+		void validateSpaceOnlyInOneSector(std::string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh) const;
+
+		void validateSectorDoorOptions(std::string const& caller, CreateDoorOptions const& options) const;
+
+		void validateSectorForceBridgeOptions(std::string const& caller, CreateForceBridgeOptions const& options) const;
+
+		void validateSectorLadderOptions(std::string const& caller, CreateLadderOptions const& options) const;
+
+		void validateLiftOptions(std::string const& caller, CreateLiftOptions const& options) const;
+
+		void validateShuttleOptions(std::string const& caller, CreateShuttleOptions const& options) const;
+
+		std::shared_ptr<Sector> _getSector(uint32_t index);
+
+		std::shared_ptr<Layer> getLayer(uint32_t layerIndex);
+
+		uint32_t createLocation(std::string const& name, SectorType type, uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh, float topDeckHeight);
+
+		uint32_t createLadder(uint32_t x, uint32_t y, CreateLadderOptions const& options);
+
+		uint32_t createStaircase(uint32_t x, uint32_t y, uint32_t decksHigh, int mountSide);
+
+		CreateObjectResult createLift(uint32_t x, uint32_t y, uint32_t cellsWide, std::vector<uint32_t> const& stopOffsets);
+
+		CreateObjectResult createShuttle(uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t numCars, uint32_t carWidth, std::vector<uint32_t> const& stopOffsets);
+
+		CreateObjectResult createDoor(uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t* vertexIdentifier = nullptr);
+
+		CreateObjectResult createWindow(uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh, uint32_t* vertexIdentifier = nullptr);
+
+		CreateObjectResult createBulkheadDoor(uint32_t layerIndex, uint32_t x, uint32_t y, int side);
+
+		CreateObjectResult createController(std::string const& name, uint32_t layerIndex, uint32_t x, uint32_t y, int side, uint32_t flags, uint32_t* vertexIdentifier = nullptr);
+
+		CreateObjectResult createWalkway(uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t* vertexIdentifier = nullptr);
+
+		CreateObjectResult createMarker(uint32_t layerIndex, uint32_t x, uint32_t y, float xOffset, uint32_t* vertexIdentifier = nullptr);
+
+		CreateObjectResult createForceBridge(uint32_t layerIndex, uint32_t x, uint32_t y, CreateForceBridgeOptions const& options);
+
+		CreateObjectResult createLadderSectorObject(uint32_t layerIndex, uint32_t x, uint32_t y, CreateLadderOptions const& options, uint32_t* vertexIdentifier = nullptr);
+
+		CreateObjectResult createPlatformLiftSectorObject(uint32_t layerIndex, uint32_t x, uint32_t y, CreateLiftOptions const& options, uint32_t* vertexIdentifier = nullptr);
+
+		CreateDoorResult _addSectorDoor(uint32_t y, uint32_t x, CreateDoorOptions const& options);
+
+		CreateObjectResult _createSectorButton(std::string const& name, std::shared_ptr<const Sector> sector, uint32_t x, uint32_t y, uint32_t flags, uint32_t* index = nullptr);
+
+		CreateObjectResult _createDoorButton(std::shared_ptr<const Sector> sector, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t flags, uint32_t* index = nullptr);
+
+		CreateObjectResult _createBulkheadDoorButton(std::shared_ptr<const Sector> sector, uint32_t y, int side, uint32_t* index = nullptr);
+
+		CreateObjectResult _createForceBridgeButton(std::shared_ptr<const Sector> sector, uint32_t x, uint32_t y, uint32_t cellsWide, int side, uint32_t flags, uint32_t* index = nullptr);
+
+		CreateObjectResult _createLadderButton(std::shared_ptr<const Sector> sector, uint32_t x, uint32_t y, int side, uint32_t flags, uint32_t* index = nullptr);
+
+		CreateObjectResult _createPlatformLiftButton(std::shared_ptr<const Sector> sector, uint32_t x, uint32_t y, uint32_t cellsWide, int side, uint32_t flags, uint32_t* index = nullptr);
+
+		uint32_t addLocation(std::string const& name, SectorType type, uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh, float topDeckHeight);
+
+		void buildGraph();
+
+		AgentSnapshot makeAgentSnapshot(Agent const* agent) const;
+
+		void runSimulationPhase(SimulationPhase phase);
+
+		void publishTickEvents(SimulationSnapshot const& before);
+
+	public:
+
+		Building(std::string const& name, uint32_t cellsWide, uint32_t decksHigh);
+
+		virtual ~Building();
+
+		std::string const& getName() const;
+
+		uint32_t getCellsWide() const;
+
+		uint32_t getDecksHigh() const;
+
+		uint32_t getNumSectors() const;
+
+		std::shared_ptr<const Layer> getLayer(uint32_t layerIndex) const;
+
+		std::shared_ptr<const Sector> getSector(uint32_t index) const;
+
+		std::vector<std::shared_ptr<const Sector>> getSectorsInBounds(uint32_t layerIndex, float x, float y, float width, float height) const;
+
+		std::vector<std::shared_ptr<const Sector>> getSectors(uint32_t layerIndex) const;
+
+		std::shared_ptr<const Graph> getGraph() const;
+
+		Log const& getBuildLog() const;
+
+		// Sector types
+		uint32_t addCorridor(uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t decksHigh = 1);
+
+		uint32_t addRoom(std::string const& name, uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t decksHigh, float topDeckHeight = CORE_ROOM_MAX_HEIGHT);
+	
+		CreateLadderResult addLadder(uint32_t y, uint32_t x, CreateLadderOptions const& options);
+
+		uint32_t addStaircase(uint32_t y, uint32_t x, uint32_t decksHigh, int mountSide);
+
+		CreateLiftResult addLift(uint32_t y, uint32_t x, CreateLiftOptions const& options);
+
+		CreateShuttleResult addShuttle(uint32_t y, uint32_t x, uint32_t cellsWide, CreateShuttleOptions const& options);
+
+		// Sector object types
+		CreateDoorResult addSectorDoor(uint32_t y, uint32_t x, CreateDoorOptions const& options = {});
+
+		uint32_t addSectorWindow(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t decksHigh);
+
+		CreateBulkheadDoorResult addSectorBulkheadDoor(uint32_t layerIndex, uint32_t y, uint32_t x, int side);
+
+		CreateObjectResult addSectorLightSwitch(uint32_t sectorIndex, uint32_t xOffset);
+
+		CreateForceBridgeResult addSectorForceBridge(uint32_t sectorIndex, uint32_t deckIndex, uint32_t xOffset, CreateForceBridgeOptions const& options = {});
+
+		CreateLadderResult addSectorLadder(uint32_t sectorIndex, uint32_t deckIndex, uint32_t xOffset, CreateLadderOptions const& options);
+
+		CreatePlatformLiftResult addSectorPlatformLift(uint32_t sectorIndex, uint32_t deckIndex, uint32_t xOffset, CreateLiftOptions const& options);
+
+		void addSectorWalkway(uint32_t sectorIndex, uint32_t deckIndex, uint32_t xOffset);
+
+		void addSectorMarker(uint32_t sectorIndex, uint32_t deckIndex, float xOffset, uint32_t* vertexIdentifier = nullptr);
+
+		void removeLocationWall(uint32_t sectorIndex, uint32_t deckIndex, int side);
+
+		void finishBuild();
+
+		std::shared_ptr<const Sector> getSectorAtPosition(uint32_t layerIndex, float x, float y) const;
+
+		Agent* getAgentAtPosition(uint32_t layerIndex, float x, float y) const;
+
+		std::shared_ptr<Useable> getUseableObjectAtPosition(uint32_t layerIndex, float x, float y, bool includeDisabled, std::shared_ptr<SectorObject>* sectorObject = nullptr) const;
+
+		void addAgentToSector(Agent* agent, uint32_t sectorId, uint32_t deckOffset, float xOffset);
+
+		void addAgentToSector(Agent* agent, uint32_t sectorId);
+
+		void wakeAllAgents();
+
+		// Rendering supplies elapsed wall time here.  It is accumulated and only
+		// whole fixed simulation ticks are executed.
+		void update(float elapsedSeconds);
+
+		// Headless deterministic seam.  These methods never use render timing.
+		void advanceTick();
+
+		void advanceTicks(uint64_t count);
+
+		static constexpr float getFixedTimestep()
+		{
+			return 1.0f / 60.0f;
+		}
+
+		uint64_t getSimulationTick() const;
+
+		SimulationPhase getCurrentSimulationPhase() const;
+
+		AgentId getAgentId(Agent const* agent) const;
+
+		SimulationSnapshot getSimulationSnapshot() const;
+
+		std::vector<SimulationEvent> consumeSimulationEvents();
+	};
+
+} // core
