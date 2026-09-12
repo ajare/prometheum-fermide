@@ -10,14 +10,14 @@
 - 04 — Execute ordinary edges through the traversal protocol
 - 05 — Prove typed interaction and device operations
 
-**Status:** ready-for-agent
+**Status:** complete
 
-- [ ] Door construction selects an explicit automatic, manual, remote-controlled, or unavailable activation mode.
-- [ ] A manual-door journey makes the agent reach and operate the door before crossing.
-- [ ] An automatic-door journey turns coordinated presence into an opening request.
-- [ ] An unavailable door rejects traversal and cannot be bypassed by path execution.
-- [ ] Crossing permission is granted only after the door is fully open.
-- [ ] The door remains open for the complete visible crossing.
-- [ ] The door closes after a configurable hold-open period once no traversal requires it.
-- [ ] Path completion, sector membership, door state, and operation status are externally observable.
-- [ ] The migrated door edge has no simultaneous legacy movement authority.
+- [x] Door construction selects an explicit automatic, manual, remote-controlled, or unavailable activation mode.
+- [x] A manual-door journey makes the agent reach and operate the door before crossing.
+- [x] An automatic-door journey turns coordinated presence into an opening request.
+- [x] An unavailable door rejects traversal and cannot be bypassed by path execution.
+- [x] Crossing permission is granted only after the door is fully open.
+- [x] The door remains open for the complete visible crossing.
+- [x] The door closes after a configurable hold-open period once no traversal requires it.
+- [x] Path completion, sector membership, door state, and operation status are externally observable.
+- [x] The migrated door edge has no simultaneous legacy movement authority.

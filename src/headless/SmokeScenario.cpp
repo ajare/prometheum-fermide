@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <bit>
 #include <cstdint>
 #include <exception>
@@ -370,6 +371,102 @@ namespace
 			&& snapshot.interactionPoints.front().activeRequest == core::InteractionRequestId{};
 	}
 
+	bool singleAgentDoorJourney(core::DoorActivationMode mode)
+	{
+		core::Building building("Single-agent door", 6, 2);
+		auto fore = building.addRoom("Fore", CORE_LAYER_FORE, 0, 0, 5, 1);
+		auto back = building.addRoom("Back", CORE_LAYER_BACK, 0, 0, 5, 1);
+		core::Building::CreateDoorOptions options;
+		options.activationMode = mode;
+		options.holdOpenSeconds = core::Building::getFixedTimestep() * 8.0f;
+		auto created = building.addSectorDoor(0, 2, options);
+		building.finishBuild();
+
+		auto edgeIt = std::find_if(building.getGraph()->getEdges().begin(), building.getGraph()->getEdges().end(),
+			[](auto const& edge) { return edge->getType() == core::EdgeType::Door; });
+		if (edgeIt == building.getGraph()->getEdges().end() || !created.traversalResource)
+		{
+			return false;
+		}
+		auto edge = *edgeIt;
+		auto source = edge->getVertex(0)->getSector()->getIndex() == fore ? edge->getVertex(0) : edge->getVertex(1);
+		auto destination = edge->getOtherVertex(source);
+		auto agentId = building.createAgent("Door traveller", fore, 0, 0.5f);
+		auto agent = building.lookupAgent(agentId).entity;
+		agent->setPath(twoNodePath(source, destination, edge), true);
+
+		bool observedWaitingForFullOpen = false;
+		bool observedVisibleCrossingLease = false;
+		for (uint32_t i = 0; i < MaximumSimulationTicks && agent->getState() != core::Agent::State::Idle; ++i)
+		{
+			building.advanceTick();
+			auto snapshot = building.getSimulationSnapshot();
+			auto const& resource = snapshot.traversalResources.front();
+			if (resource.doorState == core::DoorSnapshotState::Opening
+				&& snapshot.traversalPermits.empty()
+				&& agent->getSector() == building.getSector(fore).get())
+			{
+				observedWaitingForFullOpen = true;
+			}
+			if (agent->getState() == core::Agent::State::TraversingEdge
+				&& resource.doorState == core::DoorSnapshotState::Open
+				&& resource.openLeaseCount == 1
+				&& agent->getSector() == building.getSector(fore).get())
+			{
+				observedVisibleCrossingLease = true;
+			}
+		}
+
+		auto completed = building.getSimulationSnapshot();
+		if (!observedWaitingForFullOpen || !observedVisibleCrossingLease
+			|| agent->getState() != core::Agent::State::Idle
+			|| agent->getSector() != building.getSector(back).get()
+			|| completed.deviceOperations.size() != 1
+			|| completed.deviceOperations.front().command.type != core::DeviceCommandType::OpenDoor
+			|| completed.deviceOperations.front().state != core::DeviceOperationState::Succeeded
+			|| completed.traversalResources.front().doorActivationMode != mode
+			|| completed.traversalResources.front().openLeaseCount != 0)
+		{
+			return false;
+		}
+
+		for (uint32_t i = 0; i < 120
+			&& building.getSimulationSnapshot().traversalResources.front().doorState != core::DoorSnapshotState::Closed; ++i)
+		{
+			building.advanceTick();
+		}
+		return building.getSimulationSnapshot().traversalResources.front().doorState == core::DoorSnapshotState::Closed;
+	}
+
+	bool unavailableDoorRejectsTraversal()
+	{
+		core::Building building("Unavailable door", 6, 2);
+		auto fore = building.addRoom("Fore", CORE_LAYER_FORE, 0, 0, 5, 1);
+		auto back = building.addRoom("Back", CORE_LAYER_BACK, 0, 0, 5, 1);
+		core::Building::CreateDoorOptions options;
+		options.activationMode = core::DoorActivationMode::Unavailable;
+		building.addSectorDoor(0, 2, options);
+		building.finishBuild();
+		auto edge = *std::find_if(building.getGraph()->getEdges().begin(), building.getGraph()->getEdges().end(),
+			[](auto const& candidate) { return candidate->getType() == core::EdgeType::Door; });
+		auto source = edge->getVertex(0)->getSector()->getIndex() == fore ? edge->getVertex(0) : edge->getVertex(1);
+		auto destination = edge->getOtherVertex(source);
+		auto agentId = building.createAgent("Rejected traveller", fore, 0, 0.5f);
+		auto agent = building.lookupAgent(agentId).entity;
+		agent->setPath(twoNodePath(source, destination, edge), true);
+		for (uint32_t i = 0; i < MaximumSimulationTicks
+			&& building.getSimulationSnapshot().traversalRequests.empty(); ++i)
+		{
+			building.advanceTick();
+		}
+		auto snapshot = building.getSimulationSnapshot();
+		return agent->getSector() == building.getSector(fore).get()
+			&& agent->getState() == core::Agent::State::WaitingForTraversal
+			&& snapshot.traversalRequests.size() == 1
+			&& snapshot.traversalRequests.front().state == core::TraversalRequestState::Denied
+			&& snapshot.deviceOperations.empty() && snapshot.traversalPermits.empty();
+	}
+
 	bool interactionBindingAggregationIsMeaningful()
 	{
 		core::Building building("Binding aggregation", 3, 2);
@@ -499,6 +596,21 @@ int main()
 		if (!interactionBindingAggregationIsMeaningful())
 		{
 			std::cerr << "FAIL: required and best-effort interaction aggregation failed\n";
+			return 1;
+		}
+		if (!singleAgentDoorJourney(core::DoorActivationMode::Manual))
+		{
+			std::cerr << "FAIL: manual door journey or hold-open safety failed\n";
+			return 1;
+		}
+		if (!singleAgentDoorJourney(core::DoorActivationMode::Automatic))
+		{
+			std::cerr << "FAIL: automatic door journey or hold-open safety failed\n";
+			return 1;
+		}
+		if (!unavailableDoorRejectsTraversal())
+		{
+			std::cerr << "FAIL: unavailable door did not reject traversal\n";
 			return 1;
 		}
 

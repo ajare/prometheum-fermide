@@ -37,12 +37,12 @@ namespace core
 
 	using namespace std;
 
-	Building::CreateDoorOptions Building::ManualDoor1Options{ 1, { false, false }, false };
-	Building::CreateDoorOptions Building::OrchButtonDoor1Options{ 1, { true, true }, true };
-	Building::CreateDoorOptions Building::NonOrchButtonDoor1Options{ 1, { true, true }, false };
-	Building::CreateDoorOptions Building::ManualDoor2Options{ 2, { false, false }, false };
-	Building::CreateDoorOptions Building::OrchButtonDoor2Options{ 2, { true, true }, true };
-	Building::CreateDoorOptions Building::NonOrchButtonDoor2Options{ 2, { true, true }, false };
+	Building::CreateDoorOptions Building::ManualDoor1Options{ 1, { false, false }, false, DoorActivationMode::Manual };
+	Building::CreateDoorOptions Building::OrchButtonDoor1Options{ 1, { true, true }, true, DoorActivationMode::RemoteControlled };
+	Building::CreateDoorOptions Building::NonOrchButtonDoor1Options{ 1, { true, true }, false, DoorActivationMode::Unavailable };
+	Building::CreateDoorOptions Building::ManualDoor2Options{ 2, { false, false }, false, DoorActivationMode::Manual };
+	Building::CreateDoorOptions Building::OrchButtonDoor2Options{ 2, { true, true }, true, DoorActivationMode::RemoteControlled };
+	Building::CreateDoorOptions Building::NonOrchButtonDoor2Options{ 2, { true, true }, false, DoorActivationMode::Unavailable };
 
 	/*
 	Building
@@ -358,6 +358,10 @@ namespace core
 		if (options.orchestrate && !options.controllers[CORE_LAYER_FORE] && !options.controllers[CORE_LAYER_BACK])
 		{
 			throw BuildingException(this, format("{} - Orchestration requested but no Controllers requested.", caller));
+		}
+		if (options.holdOpenSeconds < 0.0f)
+		{
+			throw BuildingException(this, format("{} - Door hold-open time cannot be negative.", caller));
 		}
 	}
 
@@ -1214,7 +1218,7 @@ namespace core
 		// Create Doors and Buttons
 		for (auto stopOffset : options.stopOffsets)
 		{
-			auto doorRes = _addSectorDoor(y + stopOffset, x, { options.cellsWide, { true, false }, false });
+			auto doorRes = _addSectorDoor(y + stopOffset, x, { options.cellsWide, { true, false }, false, DoorActivationMode::Unavailable });
 			
 			auto door = static_pointer_cast<DoorSectorObject>(doorRes.door.sector->_getObject(doorRes.door.index))->getDoor();
 			
@@ -1348,7 +1352,7 @@ namespace core
 			for (uint32_t door_i = 0; door_i < options.numCars; ++door_i)
 			{
 				uint32_t doorX = door_i * options.carWidth + door_i + 1;
-				auto doorRes = _addSectorDoor(y, x + stopOffset + doorX, { doorWidth, { true, false }, false });
+				auto doorRes = _addSectorDoor(y, x + stopOffset + doorX, { doorWidth, { true, false }, false, DoorActivationMode::Unavailable });
 
 				auto door = static_pointer_cast<DoorSectorObject>(doorRes.door.sector->_getObject(doorRes.door.index))->getDoor();
 				stopDoors.push_back(door);
@@ -1553,6 +1557,11 @@ namespace core
 		// If there is a button, then a stateful button will control a stateless door - the state
 		// can only be in one object.
 		auto doorObject = createDoor(x, y, cellsWide);
+		auto doorSectorObject = dynamic_pointer_cast<DoorSectorObject>(doorObject.sector->_getObject(doorObject.index));
+		auto door = doorSectorObject->getDoor();
+		auto traversalResource = createDoorTraversalResource(
+			format("Door at {},{}", x, y), door, options.activationMode, options.holdOpenSeconds);
+		door->configureTraversal(options.activationMode, traversalResource, options.holdOpenSeconds);
 
 		// Set layers
 		for (uint32_t ix = x; ix < x + cellsWide; ++ix)
@@ -1590,9 +1599,6 @@ namespace core
 
 		if (options.orchestrate)
 		{
-			auto doorSectorObject = dynamic_pointer_cast<DoorSectorObject>(doorObject.sector->_getObject(doorObject.index));
-			auto door = doorSectorObject->getDoor();
-			
 			orchSystem = make_shared<ButtonDoorOrchestratedSystem>(mOrchestrator);
 
 			orchSystem->setDoor(door);
@@ -1616,7 +1622,8 @@ namespace core
 		return {
 			doorObject,
 			{ createdCtrls[0], createdCtrls[1] },
-			orchSystem
+			orchSystem,
+			traversalResource
 		};
 	}
 
@@ -2392,14 +2399,32 @@ namespace core
 
 	TraversalResourceSnapshot Building::makeTraversalResourceSnapshot(TraversalResourceId id, TraversalResource const& resource) const
 	{
-		return { id, resource.getName() };
+		TraversalResourceSnapshot result;
+		result.id = id;
+		result.name = resource.getName();
+		result.isDoor = resource.mDoor != nullptr;
+		result.doorActivationMode = resource.mDoorActivationMode;
+		result.holdOpenTicks = resource.mHoldOpenTicks;
+		result.openLeaseCount = (uint32_t)resource.mOpenLeases.size();
+		if (resource.mDoor)
+		{
+			result.doorOpenPercentage = resource.mDoor->getOpenPercentage();
+			switch (resource.mDoor->getState())
+			{
+			case OpenableObject::State::Closed: result.doorState = DoorSnapshotState::Closed; break;
+			case OpenableObject::State::Opening: result.doorState = DoorSnapshotState::Opening; break;
+			case OpenableObject::State::Open: result.doorState = DoorSnapshotState::Open; break;
+			case OpenableObject::State::Closing: result.doorState = DoorSnapshotState::Closing; break;
+			}
+		}
+		return result;
 	}
 
 	TraversalRequestSnapshot Building::makeTraversalRequestSnapshot(TraversalRequestId id, TraversalRequest const& request) const
 	{
 		return { id, request.getOwner(), request.getEdgeType(), request.getSourceSector(),
 			request.getDestinationSector(), request.getSourceEndpoint(), request.getDestinationEndpoint(),
-			request.getState(), request.getPermit() };
+			request.getState(), request.getResource(), request.getPreparationOperation(), request.getPermit() };
 	}
 
 	TraversalPermitSnapshot Building::makeTraversalPermitSnapshot(TraversalPermitId id, TraversalPermit const& permit) const
@@ -2420,6 +2445,7 @@ namespace core
 		auto destinationSector = SectorId{ (uint64_t)destination->getSector()->getIndex() + 1 };
 		auto id = mTraversalRequests.add(unique_ptr<TraversalRequest>(new TraversalRequest(owner,
 			edge->getType(), sourceSector, destinationSector, source->getPosition(), destination->getPosition())));
+		mTraversalRequests.find(id)->mResource = edge->getTraversalResourceId();
 
 		SimulationEvent event;
 		event.sequence = mNextEventSequence++;
@@ -2443,6 +2469,11 @@ namespace core
 			new TraversalPermit(requestId, request->mOwner)));
 		request->mPermit = permitId;
 		request->mState = TraversalRequestState::Granted;
+		if (auto resource = mTraversalResources.find(request->mResource); resource && resource->mDoor)
+		{
+			resource->mOpenLeases.insert(requestId);
+			resource->mDoor->acquireOpenLease();
+		}
 
 		SimulationEvent requestEvent;
 		requestEvent.sequence = mNextEventSequence++;
@@ -2462,6 +2493,83 @@ namespace core
 		return permitId;
 	}
 
+	void Building::allocateTraversalRequest(TraversalRequestId requestId,
+		shared_ptr<const Edge> const& edge, shared_ptr<const Vertex> const& destination)
+	{
+		auto request = mTraversalRequests.find(requestId);
+		if (!request || request->mState != TraversalRequestState::Pending || !edge || !destination)
+		{
+			return;
+		}
+
+		if (request->mResource)
+		{
+			auto resource = mTraversalResources.find(request->mResource);
+			if (!resource || !resource->mDoor)
+			{
+				denyTraversalRequest(requestId);
+				return;
+			}
+			if (resource->mDoorActivationMode == DoorActivationMode::Unavailable)
+			{
+				denyTraversalRequest(requestId);
+				return;
+			}
+			if (resource->mDoor->isOpen())
+			{
+				grantTraversalRequest(requestId);
+				return;
+			}
+			if (resource->mDoorActivationMode == DoorActivationMode::RemoteControlled)
+			{
+				denyTraversalRequest(requestId);
+				return;
+			}
+			if (!request->mPreparationRequested)
+			{
+				request->mPreparationRequested = true;
+				DeviceCommand command;
+				command.type = DeviceCommandType::OpenDoor;
+				command.desiredState = true;
+				command.traversalResource = request->mResource;
+				request->mPreparationOperation = findOrCreateDeviceOperation(command, request->mOwner);
+				if (auto operation = mDeviceOperations.find(request->mPreparationOperation))
+				{
+					// Presence activates an automatic door; reaching the threshold and
+					// requesting traversal is the manual interaction for a manual door.
+					operation->mActivated = true;
+				}
+			}
+			if (auto operation = mDeviceOperations.find(request->mPreparationOperation);
+				!operation || operation->mState == DeviceOperationState::Failed
+				|| operation->mState == DeviceOperationState::Cancelled)
+			{
+				denyTraversalRequest(requestId);
+			}
+			return;
+		}
+
+		shared_ptr<const Agent> agentView(mAgents.find(request->mOwner), [](Agent const*) {});
+		if (edge->isTraversable(destination, agentView))
+		{
+			grantTraversalRequest(requestId);
+			return;
+		}
+		if (!request->mPreparationRequested)
+		{
+			request->mPreparationRequested = true;
+			auto result = edge->requestTraversal(destination, agentView);
+			if (result == EdgeTraversalRequestResult::Failed)
+			{
+				denyTraversalRequest(requestId);
+			}
+			else if (edge->isTraversable(destination, agentView))
+			{
+				grantTraversalRequest(requestId);
+			}
+		}
+	}
+
 	void Building::denyTraversalRequest(TraversalRequestId requestId)
 	{
 		auto request = mTraversalRequests.find(requestId);
@@ -2478,14 +2586,6 @@ namespace core
 		event.phase = mCurrentPhase;
 		event.traversalRequest = makeTraversalRequestSnapshot(requestId, *request);
 		mEvents.push_back(std::move(event));
-	}
-
-	void Building::setTraversalPreparationRequested(TraversalRequestId requestId)
-	{
-		if (auto request = mTraversalRequests.find(requestId))
-		{
-			request->mPreparationRequested = true;
-		}
 	}
 
 	bool Building::commitTraversal(Agent& agent, TraversalRequestId requestId, TraversalPermitId permitId,
@@ -2572,6 +2672,19 @@ namespace core
 
 	void Building::releaseTraversal(TraversalRequestId requestId, TraversalPermitId permitId)
 	{
+		if (auto request = mTraversalRequests.find(requestId))
+		{
+			if (auto resource = mTraversalResources.find(request->mResource);
+				resource && resource->mOpenLeases.erase(requestId) && resource->mDoor)
+			{
+				resource->mDoor->releaseOpenLease();
+			}
+			if (request->mState == TraversalRequestState::Cancelled && request->mPreparationOperation)
+			{
+				cancelDeviceOperation(request->mPreparationOperation, request->mOwner);
+			}
+		}
+
 		if (auto permit = mTraversalPermits.find(permitId))
 		{
 			auto snapshot = makeTraversalPermitSnapshot(permitId, *permit);
@@ -2703,7 +2816,10 @@ namespace core
 		}
 		for (auto const& binding : bindings)
 		{
-			if (!binding.command.target || binding.command.target.value > mSectors.size())
+			bool validTarget = binding.command.type == DeviceCommandType::SetSectorLights
+				? binding.command.target && binding.command.target.value <= mSectors.size()
+				: binding.command.traversalResource && mTraversalResources.find(binding.command.traversalResource);
+			if (!validTarget)
 			{
 				throw invalid_argument("An interaction binding requires a valid command target");
 			}
@@ -2777,7 +2893,8 @@ namespace core
 			}
 		}
 		auto name = command.type == DeviceCommandType::SetSectorLights
-			? string("Set sector lights ") + (command.desiredState ? "on" : "off") : "Device command";
+			? string("Set sector lights ") + (command.desiredState ? "on" : "off")
+			: command.type == DeviceCommandType::OpenDoor ? "Open door" : "Device command";
 		auto id = mDeviceOperations.add(unique_ptr<DeviceOperation>(new DeviceOperation(name, requester, command)));
 		SimulationEvent event;
 		event.sequence = mNextEventSequence++;
@@ -2970,6 +3087,25 @@ namespace core
 		return id;
 	}
 
+	TraversalResourceId Building::createDoorTraversalResource(string const& name,
+		shared_ptr<Door> door, DoorActivationMode mode, float holdOpenSeconds)
+	{
+		if (!door || holdOpenSeconds < 0.0f)
+		{
+			throw invalid_argument("A door traversal resource requires a Door and non-negative hold time");
+		}
+		auto holdTicks = (uint64_t)ceil(holdOpenSeconds / getFixedTimestep());
+		auto id = mTraversalResources.add(unique_ptr<TraversalResource>(
+			new TraversalResource(name, std::move(door), mode, holdTicks)));
+		SimulationEvent event;
+		event.sequence = mNextEventSequence++;
+		event.tick = mSimulationTick;
+		event.type = SimulationEventType::TraversalResourceAdded;
+		event.traversalResource = makeTraversalResourceSnapshot(id, *mTraversalResources.find(id));
+		mEvents.push_back(std::move(event));
+		return id;
+	}
+
 	EntityLookup<TraversalResource> Building::lookupTraversalResource(TraversalResourceId id)
 	{
 		auto entity = mTraversalResources.find(id);
@@ -3074,6 +3210,15 @@ namespace core
 			if (operation->mState == DeviceOperationState::Pending)
 			{
 				operation->mState = DeviceOperationState::Running;
+				if (operation->mCommand.type == DeviceCommandType::OpenDoor)
+				{
+					auto resource = mTraversalResources.find(operation->mCommand.traversalResource);
+					if (!resource || !resource->mDoor
+						|| resource->mDoor->handleAction(ControllableActionType::Open) == ~0u)
+					{
+						operation->mState = DeviceOperationState::Failed;
+					}
+				}
 				continue;
 			}
 			if (operation->mState != DeviceOperationState::Running)
@@ -3087,6 +3232,18 @@ namespace core
 				auto sector = mSectors[(size_t)operation->mCommand.target.value - 1];
 				bool succeeded = operation->mCommand.desiredState ? sector->lightsOn() : sector->lightsOff();
 				operation->mState = succeeded ? DeviceOperationState::Succeeded : DeviceOperationState::Failed;
+			}
+			else if (operation->mCommand.type == DeviceCommandType::OpenDoor)
+			{
+				auto resource = mTraversalResources.find(operation->mCommand.traversalResource);
+				if (!resource || !resource->mDoor)
+				{
+					operation->mState = DeviceOperationState::Failed;
+				}
+				else if (resource->mDoor->isOpen())
+				{
+					operation->mState = DeviceOperationState::Succeeded;
+				}
 			}
 			else
 			{

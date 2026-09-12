@@ -30,6 +30,8 @@ namespace core
 		float getWeight(std::shared_ptr<const Vertex> targetVertex, Agent const* agent, bool edgeVisible) const override;
 	
 		std::shared_ptr<Controller> getDependingController(int side, uint32_t layerIndex) const override;
+
+		TraversalResourceId getTraversalResourceId() const override;
 	};
 
 } // core

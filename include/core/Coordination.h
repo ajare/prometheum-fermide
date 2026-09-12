@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <set>
 #include <string>
 #include <utility>
@@ -14,10 +15,20 @@
 namespace core
 {
 	class Building;
+	class Door;
+
+	enum struct DoorActivationMode
+	{
+		Automatic,
+		Manual,
+		RemoteControlled,
+		Unavailable
+	};
 
 	enum struct DeviceCommandType
 	{
-		SetSectorLights
+		SetSectorLights,
+		OpenDoor
 	};
 
 	// A command says which state is desired. It is intentionally not a toggle:
@@ -27,6 +38,7 @@ namespace core
 		DeviceCommandType type{ DeviceCommandType::SetSectorLights };
 		SectorId target;
 		bool desiredState{ false };
+		TraversalResourceId traversalResource;
 
 		friend bool operator==(DeviceCommand const&, DeviceCommand const&) = default;
 	};
@@ -166,11 +178,21 @@ namespace core
 	{
 		friend class Building;
 		std::string mName;
+		std::shared_ptr<Door> mDoor;
+		DoorActivationMode mDoorActivationMode{ DoorActivationMode::Unavailable };
+		uint64_t mHoldOpenTicks{ 0 };
+		std::set<TraversalRequestId> mOpenLeases;
 		explicit TraversalResource(std::string name) : mName(std::move(name)) {}
+		TraversalResource(std::string name, std::shared_ptr<Door> door,
+			DoorActivationMode mode, uint64_t holdOpenTicks)
+			: mName(std::move(name)), mDoor(std::move(door)),
+			  mDoorActivationMode(mode), mHoldOpenTicks(holdOpenTicks) {}
 	public:
 		TraversalResource(TraversalResource const&) = delete;
 		TraversalResource& operator=(TraversalResource const&) = delete;
 		std::string const& getName() const { return mName; }
+		bool isDoor() const { return mDoor != nullptr; }
+		DoorActivationMode getDoorActivationMode() const { return mDoorActivationMode; }
 	};
 
 	enum struct TraversalRequestState { Pending, Granted, Denied, Cancelled, Committed };
@@ -186,6 +208,8 @@ namespace core
 		Vector2 mDestinationEndpoint;
 		TraversalRequestState mState{ TraversalRequestState::Pending };
 		bool mPreparationRequested{ false };
+		TraversalResourceId mResource;
+		DeviceOperationId mPreparationOperation;
 		TraversalPermitId mPermit;
 		TraversalRequest(AgentId owner, EdgeType edgeType, SectorId sourceSector,
 			SectorId destinationSector, Vector2 sourceEndpoint, Vector2 destinationEndpoint)
@@ -203,6 +227,8 @@ namespace core
 		Vector2 const& getDestinationEndpoint() const { return mDestinationEndpoint; }
 		TraversalRequestState getState() const { return mState; }
 		bool wasPreparationRequested() const { return mPreparationRequested; }
+		TraversalResourceId getResource() const { return mResource; }
+		DeviceOperationId getPreparationOperation() const { return mPreparationOperation; }
 		TraversalPermitId getPermit() const { return mPermit; }
 	};
 

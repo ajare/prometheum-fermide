@@ -74,4 +74,9 @@ namespace core
 		return mDoor->getDependingController(layerIndex);
 	}
 
+	TraversalResourceId DoorEdge::getTraversalResourceId() const
+	{
+		return mDoor->getTraversalResourceId();
+	}
+
 } // core

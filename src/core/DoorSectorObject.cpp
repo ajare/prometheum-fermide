@@ -112,6 +112,12 @@ namespace core
 	{
 		auto door = static_pointer_cast<Door>(_getObject());
 
+		// Migrated doors are governed exclusively by their TraversalResource.
+		if (door->getTraversalResourceId())
+		{
+			return nullptr;
+		}
+
 		auto vcPos = vertices[CORE_LAYER_FORE]->getPosition();
 		auto vcSize = getSize();
 

@@ -61,6 +61,7 @@ namespace core
 			std::shared_ptr<const Edge> edge;
 			std::shared_ptr<const Vertex> sourceVertex;
 			std::shared_ptr<const Vertex> destinationVertex;
+			uint64_t traversalTicksRemaining{ 0 };
 		};
 
 	private:

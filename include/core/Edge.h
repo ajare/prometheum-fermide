@@ -8,6 +8,7 @@
 #include "core/EdgeType.h"
 #include "core/EdgeTraversalRequestResult.h"
 #include "core/Controller.h"
+#include "core/EntityId.h"
 
 
 namespace core
@@ -78,6 +79,10 @@ namespace core
 	
 		// To be implemented by subclasses.
 		[[nodiscard]] virtual std::shared_ptr<Controller> getDependingController(int side, uint32_t layerIndex) const;
+
+		// A non-zero handle selects the replacement traversal authority. Legacy
+		// edge and vertex-controller preparation must not also authorize it.
+		[[nodiscard]] virtual TraversalResourceId getTraversalResourceId() const { return {}; }
 	};
 
 } // core

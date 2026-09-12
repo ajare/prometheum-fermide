@@ -81,6 +81,31 @@ namespace core
 		return mSectors[layerIndex];
 	}
 
+	void Door::configureTraversal(DoorActivationMode mode, TraversalResourceId resource, float holdOpenTime)
+	{
+		mActivationMode = mode;
+		mTraversalResource = resource;
+		mHoldOpenTime = max(0.0f, holdOpenTime);
+	}
+
+	void Door::acquireOpenLease()
+	{
+		++mOpenLeaseCount;
+	}
+
+	void Door::releaseOpenLease()
+	{
+		if (mOpenLeaseCount == 0)
+		{
+			return;
+		}
+		--mOpenLeaseCount;
+		if (mOpenLeaseCount == 0 && isOpen())
+		{
+			mOpenWaitTime = mHoldOpenTime;
+		}
+	}
+
 	/***
 
 	getDescription()
@@ -116,7 +141,7 @@ namespace core
 	*/
 	float Door::getTimeBeforeClosing() const
 	{
-		return CORE_DOOR_STAY_OPEN_TIME;
+		return mHoldOpenTime;
 	}
 
 	/***
@@ -202,7 +227,8 @@ namespace core
 		{
 			mOpenWaitTime -= frameTime;
 
-			if (mOpenWaitTime <= 0.0f && !canSense(SensorType::AgentBlocking))
+			if (mOpenWaitTime <= 0.0f && mOpenLeaseCount == 0
+				&& (mTraversalResource || !canSense(SensorType::AgentBlocking)))
 			{
 				handleAction(ControllableActionType::Close);
 			}

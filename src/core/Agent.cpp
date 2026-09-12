@@ -374,37 +374,18 @@ namespace core
 			return;
 		}
 
-		// Edge's legacy API takes a shared_ptr, but the view below is explicitly
-		// non-owning and exists only for this synchronous policy query.
-		shared_ptr<const Agent> agentView(this, [](Agent const*) {});
-		if (mTraversalTask->edge->isTraversable(mTraversalTask->destinationVertex, agentView))
+		mBuilding->allocateTraversalRequest(mTraversalTask->request,
+			mTraversalTask->edge, mTraversalTask->destinationVertex);
+		requestLookup = mBuilding->lookupTraversalRequest(mTraversalTask->request);
+		if (requestLookup && requestLookup.entity->getState() == TraversalRequestState::Granted)
 		{
-			mTraversalTask->permit = mBuilding->grantTraversalRequest(mTraversalTask->request);
-			if (mTraversalTask->permit)
-			{
-				mState = State::TraversingEdge;
-			}
-			return;
-		}
-
-		if (!requestLookup.entity->wasPreparationRequested())
-		{
-			mBuilding->setTraversalPreparationRequested(mTraversalTask->request);
-			auto result = mTraversalTask->edge->requestTraversal(mTraversalTask->destinationVertex, agentView);
-			if (result == EdgeTraversalRequestResult::Failed)
-			{
-				mBuilding->denyTraversalRequest(mTraversalTask->request);
-				return;
-			}
-
-			if (mTraversalTask->edge->isTraversable(mTraversalTask->destinationVertex, agentView))
-			{
-				mTraversalTask->permit = mBuilding->grantTraversalRequest(mTraversalTask->request);
-				if (mTraversalTask->permit)
-				{
-					mState = State::TraversingEdge;
-				}
-			}
+			mTraversalTask->permit = requestLookup.entity->getPermit();
+			// Inter-layer thresholds have coincident 2D endpoints. Keep the
+			// locomotion task visible for a short deterministic crossing instead
+			// of committing in the permit-allocation tick.
+			mTraversalTask->traversalTicksRemaining =
+				requestLookup.entity->getEdgeType() == EdgeType::Door ? 6 : 0;
+			mState = State::TraversingEdge;
 		}
 	}
 
@@ -503,6 +484,11 @@ namespace core
 			break;
 
 		case State::TraversingEdge:
+			if (mTraversalTask && mTraversalTask->traversalTicksRemaining > 0)
+			{
+				--mTraversalTask->traversalTicksRemaining;
+				break;
+			}
 			if (mTraversalTask
 				&& moveToPosition(mTraversalTask->destinationVertex->getPosition(), frameTime))
 			{

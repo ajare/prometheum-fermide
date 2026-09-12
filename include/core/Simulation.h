@@ -68,10 +68,18 @@ namespace core
 		DeviceOperationState state{ DeviceOperationState::Pending };
 	};
 
+	enum struct DoorSnapshotState { NotADoor, Closed, Opening, Open, Closing };
+
 	struct TraversalResourceSnapshot
 	{
 		TraversalResourceId id;
 		std::string name;
+		bool isDoor{ false };
+		DoorActivationMode doorActivationMode{ DoorActivationMode::Unavailable };
+		DoorSnapshotState doorState{ DoorSnapshotState::NotADoor };
+		float doorOpenPercentage{ 0.0f };
+		uint32_t openLeaseCount{ 0 };
+		uint64_t holdOpenTicks{ 0 };
 	};
 
 	struct TraversalRequestSnapshot
@@ -84,6 +92,8 @@ namespace core
 		Vector2 sourceEndpoint;
 		Vector2 destinationEndpoint;
 		TraversalRequestState state{ TraversalRequestState::Pending };
+		TraversalResourceId resource;
+		DeviceOperationId preparationOperation;
 		TraversalPermitId permit;
 	};
 

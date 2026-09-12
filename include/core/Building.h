@@ -44,6 +44,8 @@ namespace core
 			uint32_t width{ 1 };
 			bool controllers[2] = { false, false };
 			bool orchestrate{ false };
+			DoorActivationMode activationMode{ DoorActivationMode::Manual };
+			float holdOpenSeconds{ CORE_DOOR_STAY_OPEN_TIME };
 		};
 
 		struct CreateDoorResult
@@ -51,6 +53,7 @@ namespace core
 			CreateObjectResult door;
 			CreateObjectResult controllers[2];
 			std::shared_ptr<OrchestratedSystem> orchSystem;
+			TraversalResourceId traversalResource;
 		};
 
 		struct CreateBulkheadDoorResult
@@ -305,9 +308,10 @@ namespace core
 
 		TraversalPermitId grantTraversalRequest(TraversalRequestId requestId);
 
-		void denyTraversalRequest(TraversalRequestId requestId);
+		void allocateTraversalRequest(TraversalRequestId requestId,
+			std::shared_ptr<const Edge> const& edge, std::shared_ptr<const Vertex> const& destination);
 
-		void setTraversalPreparationRequested(TraversalRequestId requestId);
+		void denyTraversalRequest(TraversalRequestId requestId);
 
 		bool commitTraversal(Agent& agent, TraversalRequestId requestId, TraversalPermitId permitId,
 			std::shared_ptr<const Vertex> const& destination);
@@ -432,6 +436,9 @@ namespace core
 		EntityRemovalResult removeDeviceOperation(DeviceOperationId id);
 
 		TraversalResourceId createTraversalResource(std::string const& name);
+
+		TraversalResourceId createDoorTraversalResource(std::string const& name,
+			std::shared_ptr<Door> door, DoorActivationMode mode, float holdOpenSeconds);
 
 		EntityLookup<TraversalResource> lookupTraversalResource(TraversalResourceId id);
 

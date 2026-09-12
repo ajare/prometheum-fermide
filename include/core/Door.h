@@ -5,6 +5,7 @@
 
 #include "core/Defines.h"
 #include "core/OpenableObject.h"
+#include "core/Coordination.h"
 
 
 namespace core
@@ -31,6 +32,14 @@ namespace core
 		OpenStyle mOpenStyle;
 
 		std::shared_ptr<const Sector> mSectors[2];
+
+		DoorActivationMode mActivationMode{ DoorActivationMode::Manual };
+
+		TraversalResourceId mTraversalResource;
+
+		float mHoldOpenTime{ CORE_DOOR_STAY_OPEN_TIME };
+
+		uint32_t mOpenLeaseCount{ 0 };
 
 	private:
 
@@ -59,6 +68,18 @@ namespace core
 		[[nodiscard]] OpenStyle getOpenStyle() const;
 
 		[[nodiscard]] std::shared_ptr<const Sector> getSector(uint32_t layerIndex) const;
+
+		[[nodiscard]] DoorActivationMode getActivationMode() const { return mActivationMode; }
+
+		[[nodiscard]] TraversalResourceId getTraversalResourceId() const { return mTraversalResource; }
+
+		void configureTraversal(DoorActivationMode mode, TraversalResourceId resource, float holdOpenTime);
+
+		void acquireOpenLease();
+
+		void releaseOpenLease();
+
+		[[nodiscard]] uint32_t getOpenLeaseCount() const { return mOpenLeaseCount; }
 
 		// Overridden from Object
 		[[nodiscard]] std::string getDescription() const override;
