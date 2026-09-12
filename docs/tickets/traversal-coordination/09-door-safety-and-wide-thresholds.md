@@ -8,14 +8,14 @@
 
 **Blocked by:** 08 — Queue agents fairly on both sides of a door
 
-**Status:** ready-for-agent
+**Status:** complete
 
-- [ ] Preparation, active crossings, and external hold-open state use independently owned open leases.
-- [ ] A close command is rejected while any open lease or obstruction remains.
-- [ ] Presence and obstruction sensors publish observations to the coordinator rather than commanding the door directly.
-- [ ] An ordinary closing door reopens for a new valid request or obstruction.
-- [ ] Configured wide thresholds expose the correct number of independent crossing lanes.
-- [ ] Concurrent crossings never exceed lane count and all lanes share the door safety state.
-- [ ] Disabling the door rejects new permits while allowing already-active crossings to finish safely.
-- [ ] After active crossings finish, pending requests fail with reasons that allow replanning.
-- [ ] Repeated scenarios produce deterministic lane allocation and event order.
+- [x] Preparation, active crossings, and external hold-open state use independently owned open leases.
+- [x] A close command is rejected while any open lease or obstruction remains.
+- [x] Presence and obstruction sensors publish observations to the coordinator rather than commanding the door directly.
+- [x] An ordinary closing door reopens for a new valid request or obstruction.
+- [x] Configured wide thresholds expose the correct number of independent crossing lanes.
+- [x] Concurrent crossings never exceed lane count and all lanes share the door safety state.
+- [x] Disabling the door rejects new permits while allowing already-active crossings to finish safely.
+- [x] After active crossings finish, pending requests fail with reasons that allow replanning.
+- [x] Repeated scenarios produce deterministic lane allocation and event order.

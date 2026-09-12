@@ -167,6 +167,15 @@ namespace core
 			|| type == ControllableActionType::None;
 	}
 
+	bool Door::modifyAndReject(ControllableActionType type, ControllableActionData const& data)
+	{
+		CORE_VAR_UNUSED(data);
+		// Safety commands are never queued behind an active crossing. The caller
+		// receives rejection and may retry after every independently owned lease
+		// and obstruction observation has gone away.
+		return type == ControllableActionType::Close && (mOpenLeaseCount != 0 || mObstructed);
+	}
+
 	ControllableActionStatus Door::startAction(ControllableAction const& action)
 	{
 		switch (action.type)
@@ -227,7 +236,7 @@ namespace core
 		{
 			mOpenWaitTime -= frameTime;
 
-			if (mOpenWaitTime <= 0.0f && mOpenLeaseCount == 0
+			if (mOpenWaitTime <= 0.0f && mOpenLeaseCount == 0 && !mObstructed
 				&& (mTraversalResource || !canSense(SensorType::AgentBlocking)))
 			{
 				handleAction(ControllableActionType::Close);

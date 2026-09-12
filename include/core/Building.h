@@ -46,6 +46,8 @@ namespace core
 			bool orchestrate{ false };
 			DoorActivationMode activationMode{ DoorActivationMode::Manual };
 			float holdOpenSeconds{ CORE_DOOR_STAY_OPEN_TIME };
+			// Zero derives one lane per cell of usable threshold width.
+			uint32_t crossingLanes{ 0 };
 		};
 
 		struct CreateDoorResult
@@ -170,6 +172,8 @@ namespace core
 		uint64_t mNextEventSequence{ 1 };
 
 		uint64_t mNextQueueTicketValue{ 1 };
+
+		uint64_t mNextDoorOpenLeaseValue{ 1 };
 
 		double mAccumulatedTime{ 0.0 };
 
@@ -308,6 +312,13 @@ namespace core
 		void refreshDoorQueuePositions(TraversalResource& resource);
 
 		void tryGrantDoorQueue(TraversalResource& resource);
+
+		DoorOpenLeaseId acquireDoorOpenLease(TraversalResource& resource,
+			DoorOpenLeaseKind kind, TraversalRequestId request = {});
+
+		bool releaseDoorOpenLease(TraversalResource& resource, DoorOpenLeaseId lease);
+
+		void advanceDoorResources();
 
 		void releaseDoorQueueOwnership(TraversalRequestId requestId, TraversalResource& resource);
 
@@ -460,6 +471,23 @@ namespace core
 		// A door accepts at most two lanes, one per source sector.
 		bool configureDoorQueueLane(TraversalResourceId resource, SectorId sector,
 			Vector2 origin, Vector2 direction, float extent);
+
+		// Configures independent threshold slots. Reconfiguration is rejected
+		// while a crossing owns a lane.
+		bool configureDoorCrossingLanes(TraversalResourceId resource, uint32_t laneCount);
+
+		// External systems hold doors open through the same scoped safety protocol.
+		DoorOpenLeaseId acquireDoorOpenLease(TraversalResourceId resource,
+			DoorOpenLeaseKind kind = DoorOpenLeaseKind::ExternalHoldOpen);
+
+		bool releaseDoorOpenLease(TraversalResourceId resource, DoorOpenLeaseId lease);
+
+		// Sensors report facts; only the traversal coordinator issues door actions.
+		bool setDoorSensorObservation(TraversalResourceId resource, DoorSensorId sensor,
+			DoorSensorObservation observation);
+
+		// Disabling rejects future admission but never revokes active crossings.
+		bool setTraversalResourceEnabled(TraversalResourceId resource, bool enabled);
 
 		// Registers a physical control as applicable from its interaction point's sector.
 		// Remote-controlled traversal never falls back to opening the Door directly.

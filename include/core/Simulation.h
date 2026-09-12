@@ -87,20 +87,33 @@ namespace core
 		std::vector<QueuePositionSnapshot> positions;
 	};
 
+	struct DoorCrossingLaneSnapshot
+	{
+		uint32_t index{ 0 };
+		TraversalRequestId owner;
+	};
+
 	struct TraversalResourceSnapshot
 	{
 		TraversalResourceId id;
 		std::string name;
 		bool isDoor{ false };
+		bool enabled{ true };
 		DoorActivationMode doorActivationMode{ DoorActivationMode::Unavailable };
 		DoorSnapshotState doorState{ DoorSnapshotState::NotADoor };
 		float doorOpenPercentage{ 0.0f };
 		uint32_t openLeaseCount{ 0 };
+		uint32_t preparationLeaseCount{ 0 };
+		uint32_t crossingLeaseCount{ 0 };
+		uint32_t externalOpenLeaseCount{ 0 };
+		bool presenceObserved{ false };
+		bool obstructionObserved{ false };
 		uint64_t holdOpenTicks{ 0 };
 		std::vector<InteractionPointId> controls;
 		InteractionRequestId activePreparation;
 		TraversalRequestId preparationOperator;
 		TraversalRequestId crossingOwner;
+		std::vector<DoorCrossingLaneSnapshot> crossingLanes;
 		std::vector<DoorQueueLaneSnapshot> queueLanes;
 	};
 
@@ -124,6 +137,8 @@ namespace core
 		bool hasQueuePosition{ false };
 		uint32_t queuePosition{ ~0u };
 		Vector2 queuePositionTarget;
+		bool hasCrossingLane{ false };
+		uint32_t crossingLane{ ~0u };
 	};
 
 	struct TraversalPermitSnapshot

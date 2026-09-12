@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <set>
 #include <string>
@@ -30,6 +31,26 @@ namespace core
 	{
 		SetSectorLights,
 		OpenDoor
+	};
+
+	enum struct DoorOpenLeaseKind
+	{
+		Preparation,
+		Crossing,
+		ExternalHoldOpen
+	};
+
+	enum struct DoorSensorObservation
+	{
+		Clear,
+		Presence,
+		Obstruction
+	};
+
+	struct DoorOpenLease
+	{
+		DoorOpenLeaseKind kind{ DoorOpenLeaseKind::ExternalHoldOpen };
+		TraversalRequestId request;
 	};
 
 	// A command says which state is desired. It is intentionally not a toggle:
@@ -195,7 +216,9 @@ namespace core
 		std::shared_ptr<Door> mDoor;
 		DoorActivationMode mDoorActivationMode{ DoorActivationMode::Unavailable };
 		uint64_t mHoldOpenTicks{ 0 };
-		std::set<TraversalRequestId> mOpenLeases;
+		bool mEnabled{ true };
+		std::map<DoorOpenLeaseId, DoorOpenLease> mOpenLeases;
+		std::map<DoorSensorId, DoorSensorObservation> mSensorObservations;
 		std::vector<InteractionPointId> mControls;
 		InteractionRequestId mActivePreparation;
 		TraversalRequestId mPreparationOperator;
@@ -203,7 +226,7 @@ namespace core
 		uint32_t mPreparationAttempts{ 0 };
 		uint64_t mNextPreparationTick{ 0 };
 		std::array<DoorQueueLane, 2> mQueueLanes;
-		TraversalRequestId mCrossingOwner;
+		std::vector<TraversalRequestId> mCrossingOwners;
 		explicit TraversalResource(std::string name) : mName(std::move(name)) {}
 		TraversalResource(std::string name, std::shared_ptr<Door> door,
 			DoorActivationMode mode, uint64_t holdOpenTicks)
@@ -214,6 +237,7 @@ namespace core
 		TraversalResource& operator=(TraversalResource const&) = delete;
 		std::string const& getName() const { return mName; }
 		bool isDoor() const { return mDoor != nullptr; }
+		bool isEnabled() const { return mEnabled; }
 		DoorActivationMode getDoorActivationMode() const { return mDoorActivationMode; }
 		std::vector<InteractionPointId> const& getControls() const { return mControls; }
 	};
@@ -225,7 +249,8 @@ namespace core
 		None,
 		NoReachableControl,
 		ControlRejected,
-		PreparationFailed
+		PreparationFailed,
+		ResourceDisabled
 	};
 
 	class TraversalRequest
@@ -247,6 +272,9 @@ namespace core
 		uint64_t mQueuedAtTick{ 0 };
 		uint32_t mQueueApproach{ ~0u };
 		uint32_t mQueuePosition{ ~0u };
+		uint32_t mCrossingLane{ ~0u };
+		DoorOpenLeaseId mPreparationLease;
+		DoorOpenLeaseId mCrossingLease;
 		TraversalRequest(AgentId owner, EdgeType edgeType, SectorId sourceSector,
 			SectorId destinationSector, Vector2 sourceEndpoint, Vector2 destinationEndpoint)
 			: mOwner(owner), mEdgeType(edgeType), mSourceSector(sourceSector),
@@ -272,6 +300,8 @@ namespace core
 		uint32_t getQueueApproach() const { return mQueueApproach; }
 		bool hasQueuePosition() const { return mQueuePosition != ~0u; }
 		uint32_t getQueuePosition() const { return mQueuePosition; }
+		bool hasCrossingLane() const { return mCrossingLane != ~0u; }
+		uint32_t getCrossingLane() const { return mCrossingLane; }
 	};
 
 	enum struct TraversalPermitState { Active, Committed, Cancelled };

@@ -639,6 +639,109 @@ namespace
 			&& building.lookupAgent(cancelledId).entity->getSector() == building.getSector(fore).get();
 	}
 
+	bool wideDoorLanesAndGracefulDisableAreSafe()
+	{
+		core::Building building("Wide safe door", 9, 2);
+		auto fore = building.addRoom("Wide fore", CORE_LAYER_FORE, 0, 0, 8, 1);
+		auto back = building.addRoom("Wide back", CORE_LAYER_BACK, 0, 0, 8, 1);
+		core::Building::CreateDoorOptions options;
+		options.width = 2;
+		options.crossingLanes = 2;
+		options.activationMode = core::DoorActivationMode::Manual;
+		auto created = building.addSectorDoor(0, 3, options);
+		building.finishBuild();
+		auto edge = *std::find_if(building.getGraph()->getEdges().begin(), building.getGraph()->getEdges().end(),
+			[](auto const& candidate) { return candidate->getType() == core::EdgeType::Door; });
+		auto source = edge->getVertex(0)->getSector()->getIndex() == fore ? edge->getVertex(0) : edge->getVertex(1);
+		auto destination = edge->getOtherVertex(source);
+		std::vector<core::AgentId> ids = {
+			building.createAgent("Wide first", fore, 0, 4.0f),
+			building.createAgent("Wide second", fore, 0, 4.0f),
+			building.createAgent("Disabled waiter", fore, 0, 4.0f)
+		};
+		for (auto id : ids) building.lookupAgent(id).entity->setPath(twoNodePath(source, destination, edge), true);
+
+		bool disabledWithTwoCrossings = false;
+		for (uint32_t i = 0; i < MaximumSimulationTicks; ++i)
+		{
+			building.advanceTick();
+			auto snapshot = building.getSimulationSnapshot();
+			if (snapshot.traversalPermits.size() > 2 || snapshot.traversalResources.front().crossingLanes.size() != 2)
+				return false;
+			if (!disabledWithTwoCrossings && snapshot.traversalPermits.size() == 2)
+			{
+				auto const& lanes = snapshot.traversalResources.front().crossingLanes;
+				if (!lanes[0].owner || !lanes[1].owner || lanes[0].owner == lanes[1].owner
+					|| snapshot.traversalResources.front().crossingLeaseCount != 2)
+					return false;
+				disabledWithTwoCrossings = building.setTraversalResourceEnabled(created.traversalResource, false);
+			}
+			if (disabledWithTwoCrossings
+				&& building.lookupAgent(ids[0]).entity->getState() == core::Agent::State::Idle
+				&& building.lookupAgent(ids[1]).entity->getState() == core::Agent::State::Idle)
+				break;
+		}
+		building.advanceTicks(3);
+		auto snapshot = building.getSimulationSnapshot();
+		auto denied = std::find_if(snapshot.traversalRequests.begin(), snapshot.traversalRequests.end(),
+			[&](auto const& request) { return request.owner == ids[2]; });
+		return disabledWithTwoCrossings
+			&& building.lookupAgent(ids[0]).entity->getSector() == building.getSector(back).get()
+			&& building.lookupAgent(ids[1]).entity->getSector() == building.getSector(back).get()
+			&& building.lookupAgent(ids[2]).entity->getSector() == building.getSector(fore).get()
+			&& denied != snapshot.traversalRequests.end()
+			&& denied->state == core::TraversalRequestState::Denied
+			&& denied->failureReason == core::TraversalFailureReason::ResourceDisabled
+			&& snapshot.traversalResources.front().crossingLeaseCount == 0;
+	}
+
+	bool doorLeasesAndSensorObservationsPreventUnsafeClosure()
+	{
+		core::Building building("Door observation safety", 7, 2);
+		auto fore = building.addRoom("Sensor fore", CORE_LAYER_FORE, 0, 0, 6, 1);
+		building.addRoom("Sensor back", CORE_LAYER_BACK, 0, 0, 6, 1);
+		core::Building::CreateDoorOptions options;
+		options.activationMode = core::DoorActivationMode::Automatic;
+		options.holdOpenSeconds = core::Building::getFixedTimestep() * 2.0f;
+		auto created = building.addSectorDoor(0, 3, options);
+		building.finishBuild();
+		auto sensor = core::DoorSensorId{ 1 };
+		if (!building.setDoorSensorObservation(created.traversalResource, sensor,
+			core::DoorSensorObservation::Presence)) return false;
+		building.advanceTicks(90);
+		auto lease = building.acquireDoorOpenLease(created.traversalResource);
+		building.setDoorSensorObservation(created.traversalResource, sensor, core::DoorSensorObservation::Clear);
+		building.advanceTicks(30);
+		auto snapshot = building.getSimulationSnapshot();
+		if (!lease || snapshot.traversalResources.front().doorState != core::DoorSnapshotState::Open
+			|| snapshot.traversalResources.front().externalOpenLeaseCount != 1) return false;
+
+		auto actor = building.createAgent("Close operator", fore, 0, 3.5f);
+		core::DeviceCommand close;
+		close.type = core::DeviceCommandType::OpenDoor;
+		close.desiredState = false;
+		close.traversalResource = created.traversalResource;
+		auto point = building.createInteractionPoint("Close door", core::SectorId{ (uint64_t)fore + 1 },
+			{ 3.5f, 0.0f }, 1.0f, 0.0f, { { close, core::InteractionBindingRequirement::Required } });
+		auto closeRequest = building.requestInteraction(point, actor);
+		building.advanceTicks(4);
+		if (building.lookupInteractionRequest(closeRequest).entity->getResult() != core::InteractionResult::Rejected
+			|| !building.releaseDoorOpenLease(created.traversalResource, lease)) return false;
+
+		building.setDoorSensorObservation(created.traversalResource, sensor, core::DoorSensorObservation::Obstruction);
+		building.advanceTicks(20);
+		if (building.getSimulationSnapshot().traversalResources.front().doorState != core::DoorSnapshotState::Open) return false;
+		building.setDoorSensorObservation(created.traversalResource, sensor, core::DoorSensorObservation::Clear);
+		for (uint32_t i = 0; i < 10 && building.getSimulationSnapshot().traversalResources.front().doorState
+			!= core::DoorSnapshotState::Closing; ++i) building.advanceTick();
+		if (building.getSimulationSnapshot().traversalResources.front().doorState != core::DoorSnapshotState::Closing) return false;
+		building.setDoorSensorObservation(created.traversalResource, sensor, core::DoorSensorObservation::Obstruction);
+		building.advanceTick();
+		snapshot = building.getSimulationSnapshot();
+		return snapshot.traversalResources.front().obstructionObserved
+			&& snapshot.traversalResources.front().doorState == core::DoorSnapshotState::Opening;
+	}
+
 	bool unavailableDoorRejectsTraversal()
 	{
 		core::Building building("Unavailable door", 6, 2);
@@ -827,6 +930,16 @@ int main()
 		if (!queuedCancellationReleasesAndAdvancesPositions())
 		{
 			std::cerr << "FAIL: queued cancellation leaked a ticket or physical position\n";
+			return 1;
+		}
+		if (!wideDoorLanesAndGracefulDisableAreSafe())
+		{
+			std::cerr << "FAIL: wide door lanes exceeded capacity or deactivation was unsafe\n";
+			return 1;
+		}
+		if (!doorLeasesAndSensorObservationsPreventUnsafeClosure())
+		{
+			std::cerr << "FAIL: door leases or sensor observations allowed unsafe closure\n";
 			return 1;
 		}
 		if (!unavailableDoorRejectsTraversal())

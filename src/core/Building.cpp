@@ -1562,6 +1562,10 @@ namespace core
 		auto traversalResource = createDoorTraversalResource(
 			format("Door at {},{}", x, y), door, options.activationMode, options.holdOpenSeconds);
 		door->configureTraversal(options.activationMode, traversalResource, options.holdOpenSeconds);
+		if (options.crossingLanes != 0)
+		{
+			configureDoorCrossingLanes(traversalResource, options.crossingLanes);
+		}
 
 		// Door approaches are explicit resource geometry. Prefer the longer clear
 		// horizontal run in each source sector and place the first waiter one safe
@@ -2434,13 +2438,37 @@ namespace core
 		result.id = id;
 		result.name = resource.getName();
 		result.isDoor = resource.mDoor != nullptr;
+		result.enabled = resource.mEnabled;
 		result.doorActivationMode = resource.mDoorActivationMode;
 		result.holdOpenTicks = resource.mHoldOpenTicks;
 		result.openLeaseCount = (uint32_t)resource.mOpenLeases.size();
+		for (auto const& [leaseId, lease] : resource.mOpenLeases)
+		{
+			(void)leaseId;
+			switch (lease.kind)
+			{
+			case DoorOpenLeaseKind::Preparation: ++result.preparationLeaseCount; break;
+			case DoorOpenLeaseKind::Crossing: ++result.crossingLeaseCount; break;
+			case DoorOpenLeaseKind::ExternalHoldOpen: ++result.externalOpenLeaseCount; break;
+			}
+		}
+		for (auto const& [sensor, observation] : resource.mSensorObservations)
+		{
+			(void)sensor;
+			result.presenceObserved = result.presenceObserved || observation == DoorSensorObservation::Presence;
+			result.obstructionObserved = result.obstructionObserved || observation == DoorSensorObservation::Obstruction;
+		}
 		result.controls = resource.mControls;
 		result.activePreparation = resource.mActivePreparation;
 		result.preparationOperator = resource.mPreparationOperator;
-		result.crossingOwner = resource.mCrossingOwner;
+		for (uint32_t i = 0; i < resource.mCrossingOwners.size(); ++i)
+		{
+			result.crossingLanes.push_back({ i, resource.mCrossingOwners[i] });
+			if (!result.crossingOwner && resource.mCrossingOwners[i])
+			{
+				result.crossingOwner = resource.mCrossingOwners[i];
+			}
+		}
 		for (auto const& lane : resource.mQueueLanes)
 		{
 			if (!lane.sector)
@@ -2484,6 +2512,8 @@ namespace core
 		result.queueApproach = request.mQueueApproach;
 		result.hasQueuePosition = request.mQueuePosition != ~0u;
 		result.queuePosition = request.mQueuePosition;
+		result.hasCrossingLane = request.mCrossingLane != ~0u;
+		result.crossingLane = request.mCrossingLane;
 		if (result.hasQueuePosition)
 		{
 			if (auto resource = mTraversalResources.find(request.mResource);
@@ -2593,60 +2623,58 @@ namespace core
 
 	void Building::tryGrantDoorQueue(TraversalResource& resource)
 	{
-		if (resource.mCrossingOwner || !resource.mDoor || !resource.mDoor->isOpen())
+		if (!resource.mEnabled || !resource.mDoor || !resource.mDoor->isOpen())
 		{
 			return;
 		}
 
-		TraversalRequestId selected;
-		for (auto const& lane : resource.mQueueLanes)
+		for (uint32_t crossingLane = 0; crossingLane < resource.mCrossingOwners.size(); ++crossingLane)
 		{
-			if (lane.queue.empty())
+			if (resource.mCrossingOwners[crossingLane])
 			{
 				continue;
 			}
-			auto candidateId = lane.queue.front();
-			auto candidate = mTraversalRequests.find(candidateId);
-			if (!candidate || candidate->mState != TraversalRequestState::Pending
-				|| candidate->mQueuePosition == ~0u || resource.mPreparationOperator == candidateId)
+			TraversalRequestId selected;
+			for (auto const& lane : resource.mQueueLanes)
 			{
-				continue;
+				if (lane.queue.empty()) continue;
+				auto candidateId = lane.queue.front();
+				auto candidate = mTraversalRequests.find(candidateId);
+				if (!candidate || candidate->mState != TraversalRequestState::Pending
+					|| candidate->mQueuePosition == ~0u || resource.mPreparationOperator == candidateId)
+				{
+					continue;
+				}
+				auto agent = mAgents.find(candidate->mOwner);
+				if (!agent || agent->getGlobalPosition().distanceTo(
+					lane.positions[candidate->mQueuePosition]) > 0.001f)
+				{
+					continue;
+				}
+				if (!selected)
+				{
+					selected = candidateId;
+					continue;
+				}
+				auto current = mTraversalRequests.find(selected);
+				if (candidate->mQueuedAtTick < current->mQueuedAtTick
+					|| (candidate->mQueuedAtTick == current->mQueuedAtTick && candidate->mOwner < current->mOwner))
+				{
+					selected = candidateId;
+				}
 			}
-			auto agent = mAgents.find(candidate->mOwner);
-			if (!agent || agent->getGlobalPosition().distanceTo(
-				lane.positions[candidate->mQueuePosition]) > 0.001f)
-			{
-				continue;
-			}
-			if (!selected)
-			{
-				selected = candidateId;
-				continue;
-			}
-			auto current = mTraversalRequests.find(selected);
-			if (candidate->mQueuedAtTick < current->mQueuedAtTick
-				|| (candidate->mQueuedAtTick == current->mQueuedAtTick
-					&& candidate->mOwner < current->mOwner))
-			{
-				selected = candidateId;
-			}
-		}
-		if (!selected)
-		{
-			return;
-		}
+			if (!selected) break;
 
-		auto selectedRequest = mTraversalRequests.find(selected);
-		auto& lane = resource.mQueueLanes[selectedRequest->mQueueApproach];
-		lane.queue.erase(remove(lane.queue.begin(), lane.queue.end(), selected), lane.queue.end());
-		selectedRequest->mQueuePosition = ~0u;
-		if (auto agent = mAgents.find(selectedRequest->mOwner))
-		{
-			agent->mTraversalLocalGoal.reset();
+			auto selectedRequest = mTraversalRequests.find(selected);
+			auto& queueLane = resource.mQueueLanes[selectedRequest->mQueueApproach];
+			queueLane.queue.erase(remove(queueLane.queue.begin(), queueLane.queue.end(), selected), queueLane.queue.end());
+			selectedRequest->mQueuePosition = ~0u;
+			selectedRequest->mCrossingLane = crossingLane;
+			resource.mCrossingOwners[crossingLane] = selected;
+			if (auto agent = mAgents.find(selectedRequest->mOwner)) agent->mTraversalLocalGoal.reset();
+			refreshDoorQueuePositions(resource);
+			grantTraversalRequest(selected);
 		}
-		resource.mCrossingOwner = selected;
-		refreshDoorQueuePositions(resource);
-		grantTraversalRequest(selected);
 	}
 
 	void Building::releaseDoorQueueOwnership(TraversalRequestId requestId, TraversalResource& resource)
@@ -2655,13 +2683,14 @@ namespace core
 		{
 			lane.queue.erase(remove(lane.queue.begin(), lane.queue.end(), requestId), lane.queue.end());
 		}
-		if (resource.mCrossingOwner == requestId)
+		for (auto& owner : resource.mCrossingOwners)
 		{
-			resource.mCrossingOwner = {};
+			if (owner == requestId) owner = {};
 		}
 		if (auto request = mTraversalRequests.find(requestId))
 		{
 			request->mQueuePosition = ~0u;
+			request->mCrossingLane = ~0u;
 			if (auto agent = mAgents.find(request->mOwner))
 			{
 				agent->mTraversalLocalGoal.reset();
@@ -2684,8 +2713,12 @@ namespace core
 		request->mState = TraversalRequestState::Granted;
 		if (auto resource = mTraversalResources.find(request->mResource); resource && resource->mDoor)
 		{
-			resource->mOpenLeases.insert(requestId);
-			resource->mDoor->acquireOpenLease();
+			request->mCrossingLease = acquireDoorOpenLease(*resource, DoorOpenLeaseKind::Crossing, requestId);
+			if (request->mPreparationLease)
+			{
+				releaseDoorOpenLease(*resource, request->mPreparationLease);
+				request->mPreparationLease = {};
+			}
 		}
 
 		SimulationEvent requestEvent;
@@ -2723,10 +2756,19 @@ namespace core
 				denyTraversalRequest(requestId);
 				return;
 			}
+			if (!resource->mEnabled)
+			{
+				return; // deactivation cleanup denies waiters after active lanes drain
+			}
 			if (resource->mDoorActivationMode == DoorActivationMode::Unavailable)
 			{
 				denyTraversalRequest(requestId);
 				return;
+			}
+			if (!request->mPreparationLease)
+			{
+				request->mPreparationLease = acquireDoorOpenLease(*resource,
+					DoorOpenLeaseKind::Preparation, requestId);
 			}
 			if (resource->mDoorActivationMode == DoorActivationMode::RemoteControlled)
 			{
@@ -2967,6 +3009,8 @@ namespace core
 		request->mFailureReason = reason;
 		if (auto resource = mTraversalResources.find(request->mResource); resource && resource->mDoor)
 		{
+			if (request->mPreparationLease) releaseDoorOpenLease(*resource, request->mPreparationLease);
+			request->mPreparationLease = {};
 			releaseDoorQueueOwnership(requestId, *resource);
 		}
 
@@ -3087,10 +3131,10 @@ namespace core
 		{
 			if (auto resource = mTraversalResources.find(request->mResource); resource && resource->mDoor)
 			{
-				if (resource->mOpenLeases.erase(requestId))
-				{
-					resource->mDoor->releaseOpenLease();
-				}
+				if (request->mPreparationLease) releaseDoorOpenLease(*resource, request->mPreparationLease);
+				if (request->mCrossingLease) releaseDoorOpenLease(*resource, request->mCrossingLease);
+				request->mPreparationLease = {};
+				request->mCrossingLease = {};
 				releaseDoorQueueOwnership(requestId, *resource);
 			}
 			if (request->mState == TraversalRequestState::Cancelled && request->mPreparationOperation)
@@ -3538,8 +3582,10 @@ namespace core
 			throw invalid_argument("A door traversal resource requires a Door and non-negative hold time");
 		}
 		auto holdTicks = (uint64_t)ceil(holdOpenSeconds / getFixedTimestep());
+		auto laneCount = max(1u, door->getCellsWide());
 		auto id = mTraversalResources.add(unique_ptr<TraversalResource>(
 			new TraversalResource(name, std::move(door), mode, holdTicks)));
+		mTraversalResources.find(id)->mCrossingOwners.resize(laneCount);
 		SimulationEvent event;
 		event.sequence = mNextEventSequence++;
 		event.tick = mSimulationTick;
@@ -3617,6 +3663,81 @@ namespace core
 			lane->positions.push_back(position);
 			lane->positionOwners.push_back({});
 		}
+		return true;
+	}
+
+	bool Building::configureDoorCrossingLanes(TraversalResourceId resourceId, uint32_t laneCount)
+	{
+		auto resource = mTraversalResources.find(resourceId);
+		if (!resource || !resource->mDoor || laneCount == 0)
+		{
+			throw invalid_argument("A door crossing requires at least one lane");
+		}
+		if (laneCount > resource->mDoor->getCellsWide())
+		{
+			throw invalid_argument("Door crossing lane count exceeds usable threshold width");
+		}
+		if (any_of(resource->mCrossingOwners.begin(), resource->mCrossingOwners.end(),
+			[](TraversalRequestId owner) { return (bool)owner; }))
+		{
+			return false;
+		}
+		resource->mCrossingOwners.assign(laneCount, {});
+		return true;
+	}
+
+	DoorOpenLeaseId Building::acquireDoorOpenLease(TraversalResource& resource,
+		DoorOpenLeaseKind kind, TraversalRequestId request)
+	{
+		auto id = DoorOpenLeaseId{ mNextDoorOpenLeaseValue++ };
+		resource.mOpenLeases.emplace(id, DoorOpenLease{ kind, request });
+		resource.mDoor->acquireOpenLease();
+		// Safety and locally activated preparation have priority over a close.
+		// Remote preparation still has to reach its configured physical control.
+		if (resource.mDoor->isClosing()
+			&& (kind != DoorOpenLeaseKind::Preparation
+				|| resource.mDoorActivationMode != DoorActivationMode::RemoteControlled))
+		{
+			resource.mDoor->handleAction(ControllableActionType::Open);
+		}
+		return id;
+	}
+
+	bool Building::releaseDoorOpenLease(TraversalResource& resource, DoorOpenLeaseId lease)
+	{
+		if (!lease || resource.mOpenLeases.erase(lease) == 0) return false;
+		resource.mDoor->releaseOpenLease();
+		return true;
+	}
+
+	DoorOpenLeaseId Building::acquireDoorOpenLease(TraversalResourceId resourceId, DoorOpenLeaseKind kind)
+	{
+		auto resource = mTraversalResources.find(resourceId);
+		if (!resource || !resource->mDoor || !resource->mEnabled) return {};
+		return acquireDoorOpenLease(*resource, kind);
+	}
+
+	bool Building::releaseDoorOpenLease(TraversalResourceId resourceId, DoorOpenLeaseId lease)
+	{
+		auto resource = mTraversalResources.find(resourceId);
+		return resource && resource->mDoor && releaseDoorOpenLease(*resource, lease);
+	}
+
+	bool Building::setDoorSensorObservation(TraversalResourceId resourceId, DoorSensorId sensor,
+		DoorSensorObservation observation)
+	{
+		auto resource = mTraversalResources.find(resourceId);
+		if (!resource || !resource->mDoor || !sensor) return false;
+		if (observation == DoorSensorObservation::Clear) resource->mSensorObservations.erase(sensor);
+		else resource->mSensorObservations[sensor] = observation;
+		return true;
+	}
+
+	bool Building::setTraversalResourceEnabled(TraversalResourceId resourceId, bool enabled)
+	{
+		auto resource = mTraversalResources.find(resourceId);
+		if (!resource) return false;
+		resource->mEnabled = enabled;
 		return true;
 	}
 
@@ -3728,6 +3849,42 @@ namespace core
 		return result;
 	}
 
+	void Building::advanceDoorResources()
+	{
+		for (auto const& [resourceId, resourcePtr] : mTraversalResources.entries())
+		{
+			auto& resource = *resourcePtr;
+			if (!resource.mDoor) continue;
+			bool presence = false;
+			bool obstruction = false;
+			for (auto const& [sensor, observation] : resource.mSensorObservations)
+			{
+				(void)sensor;
+				presence = presence || observation == DoorSensorObservation::Presence;
+				obstruction = obstruction || observation == DoorSensorObservation::Obstruction;
+			}
+			resource.mDoor->setObstructed(obstruction);
+			if ((obstruction || (presence && resource.mDoorActivationMode == DoorActivationMode::Automatic))
+				&& resource.mEnabled && !resource.mDoor->isOpen() && !resource.mDoor->isOpening())
+			{
+				resource.mDoor->handleAction(ControllableActionType::Open);
+			}
+
+			bool activeCrossing = any_of(resource.mCrossingOwners.begin(), resource.mCrossingOwners.end(),
+				[](TraversalRequestId owner) { return (bool)owner; });
+			if (!resource.mEnabled && !activeCrossing)
+			{
+				vector<TraversalRequestId> pending;
+				for (auto const& [requestId, request] : mTraversalRequests.entries())
+				{
+					if (request->mResource == resourceId && request->mState == TraversalRequestState::Pending)
+						pending.push_back(requestId);
+				}
+				for (auto requestId : pending) denyTraversalRequest(requestId, TraversalFailureReason::ResourceDisabled);
+			}
+		}
+	}
+
 	void Building::advanceDeviceOperations()
 	{
 		for (auto const& [id, operation] : mDeviceOperations.entries())
@@ -3743,10 +3900,12 @@ namespace core
 				if (operation->mCommand.type == DeviceCommandType::OpenDoor)
 				{
 					auto resource = mTraversalResources.find(operation->mCommand.traversalResource);
-					if (!resource || !resource->mDoor
-						|| resource->mDoor->handleAction(ControllableActionType::Open) == ~0u)
+					auto action = operation->mCommand.desiredState
+						? ControllableActionType::Open : ControllableActionType::Close;
+					if (!resource || !resource->mDoor || !resource->mEnabled
+						|| resource->mDoor->handleAction(action) == ~0u)
 					{
-						operation->mState = DeviceOperationState::Failed;
+						operation->mState = DeviceOperationState::Rejected;
 					}
 				}
 				continue;
@@ -3770,7 +3929,12 @@ namespace core
 				{
 					operation->mState = DeviceOperationState::Failed;
 				}
-				else if (resource->mDoor->isOpen())
+				else if (!resource->mEnabled)
+				{
+					operation->mState = DeviceOperationState::Rejected;
+				}
+				else if ((operation->mCommand.desiredState && resource->mDoor->isOpen())
+					|| (!operation->mCommand.desiredState && resource->mDoor->isClosed()))
 				{
 					operation->mState = DeviceOperationState::Succeeded;
 				}
@@ -3943,6 +4107,7 @@ namespace core
 			{
 				sector->advanceResources(timestep);
 			}
+			advanceDoorResources();
 			advanceDeviceOperations();
 			break;
 

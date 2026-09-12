@@ -41,10 +41,14 @@ namespace core
 
 		uint32_t mOpenLeaseCount{ 0 };
 
+		bool mObstructed{ false };
+
 	private:
 
 		// Overridden from Controllable
 		bool validateAction(ControllableActionType type) const override;
+
+		bool modifyAndReject(ControllableActionType type, ControllableActionData const& data) override;
 
 		// Overridden from Controllable
 		void updateImpl(float frameTime, ControllableActionType action, ControllableActionStatus status) override;
@@ -80,6 +84,10 @@ namespace core
 		void releaseOpenLease();
 
 		[[nodiscard]] uint32_t getOpenLeaseCount() const { return mOpenLeaseCount; }
+
+		void setObstructed(bool obstructed) { mObstructed = obstructed; }
+
+		[[nodiscard]] bool isObstructed() const { return mObstructed; }
 
 		// Overridden from Object
 		[[nodiscard]] std::string getDescription() const override;
