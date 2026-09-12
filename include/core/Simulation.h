@@ -14,6 +14,9 @@ namespace core
 	{
 		Idle,
 		MovingToVertex,
+		WaitingForTraversal,
+		TraversingEdge,
+		AwaitingTraversalCommit,
 		UnderVertexControl
 	};
 
@@ -28,6 +31,9 @@ namespace core
 		bool hasPath{ false };
 		uint32_t targetPathNode{ 0 };
 		uint32_t pathNodeCount{ 0 };
+		bool hasLocomotionTask{ false };
+		TraversalRequestId traversalRequest;
+		TraversalPermitId traversalPermit;
 	};
 
 	struct InteractionPointSnapshot
@@ -50,6 +56,27 @@ namespace core
 		std::string name;
 	};
 
+	struct TraversalRequestSnapshot
+	{
+		TraversalRequestId id;
+		AgentId owner;
+		EdgeType edgeType{ EdgeType::Location };
+		SectorId sourceSector;
+		SectorId destinationSector;
+		Vector2 sourceEndpoint;
+		Vector2 destinationEndpoint;
+		TraversalRequestState state{ TraversalRequestState::Pending };
+		TraversalPermitId permit;
+	};
+
+	struct TraversalPermitSnapshot
+	{
+		TraversalPermitId id;
+		TraversalRequestId request;
+		AgentId owner;
+		TraversalPermitState state{ TraversalPermitState::Active };
+	};
+
 	struct SimulationSnapshot
 	{
 		uint64_t tick{ 0 };
@@ -57,6 +84,8 @@ namespace core
 		std::vector<InteractionPointSnapshot> interactionPoints;
 		std::vector<DeviceOperationSnapshot> deviceOperations;
 		std::vector<TraversalResourceSnapshot> traversalResources;
+		std::vector<TraversalRequestSnapshot> traversalRequests;
+		std::vector<TraversalPermitSnapshot> traversalPermits;
 	};
 
 	// These phases are always entered in declaration order for each fixed tick.
@@ -83,7 +112,13 @@ namespace core
 		DeviceOperationChanged,
 		DeviceOperationRemoved,
 		TraversalResourceAdded,
-		TraversalResourceRemoved
+		TraversalResourceRemoved,
+		TraversalRequestAdded,
+		TraversalRequestChanged,
+		TraversalRequestRemoved,
+		TraversalPermitAdded,
+		TraversalPermitChanged,
+		TraversalPermitRemoved
 	};
 
 	// Events contain values only.  They are collected during a tick and become
@@ -100,6 +135,8 @@ namespace core
 		InteractionPointSnapshot interactionPoint;
 		DeviceOperationSnapshot deviceOperation;
 		TraversalResourceSnapshot traversalResource;
+		TraversalRequestSnapshot traversalRequest;
+		TraversalPermitSnapshot traversalPermit;
 	};
 
 } // core

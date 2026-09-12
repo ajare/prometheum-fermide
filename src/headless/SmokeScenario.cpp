@@ -9,7 +9,10 @@
 
 #include "core/Agent.h"
 #include "core/Building.h"
+#include "core/GapEdge.h"
 #include "core/Graph.h"
+#include "core/Path.h"
+#include "core/SectorEdge.h"
 #include "core/Simulation.h"
 #include "core/Vector2.h"
 
@@ -38,6 +41,17 @@ namespace
 			<< agent.targetPathNode << ':' << agent.pathNodeCount;
 	}
 
+	void appendTraversalRequest(std::ostringstream& output, core::TraversalRequestSnapshot const& request)
+	{
+		output << request.id.value << ':' << request.owner.value << ':' << (int)request.edgeType << ':'
+			<< request.sourceSector.value << ':' << request.destinationSector.value << ':'
+			<< std::bit_cast<uint32_t>(request.sourceEndpoint.x) << ':'
+			<< std::bit_cast<uint32_t>(request.sourceEndpoint.y) << ':'
+			<< std::bit_cast<uint32_t>(request.destinationEndpoint.x) << ':'
+			<< std::bit_cast<uint32_t>(request.destinationEndpoint.y) << ':'
+			<< (int)request.state << ':' << request.permit.value;
+	}
+
 	std::string canonicalResult(ScenarioResult const& result)
 	{
 		std::ostringstream output;
@@ -57,9 +71,26 @@ namespace
 				appendAgent(output, event.previousAgent);
 			}
 			output << ':';
-			if (event.type != core::SimulationEventType::PhaseCompleted)
+			switch (event.type)
 			{
+			case core::SimulationEventType::AgentAdded:
+			case core::SimulationEventType::AgentChanged:
+			case core::SimulationEventType::AgentRemoved:
 				appendAgent(output, event.agent);
+				break;
+			case core::SimulationEventType::TraversalRequestAdded:
+			case core::SimulationEventType::TraversalRequestChanged:
+			case core::SimulationEventType::TraversalRequestRemoved:
+				appendTraversalRequest(output, event.traversalRequest);
+				break;
+			case core::SimulationEventType::TraversalPermitAdded:
+			case core::SimulationEventType::TraversalPermitChanged:
+			case core::SimulationEventType::TraversalPermitRemoved:
+				output << event.traversalPermit.id.value << ':' << event.traversalPermit.request.value
+					<< ':' << event.traversalPermit.owner.value << ':' << (int)event.traversalPermit.state;
+				break;
+			default:
+				break;
 			}
 			output << '|';
 		}
@@ -148,6 +179,130 @@ namespace
 			&& afterRemoval.traversalResources.empty();
 	}
 
+	std::shared_ptr<core::Path> twoNodePath(std::shared_ptr<const core::Vertex> source,
+		std::shared_ptr<const core::Vertex> destination, std::shared_ptr<const core::Edge> edge)
+	{
+		auto path = std::make_shared<core::Path>();
+		path->nodes.push_back({ nullptr, std::move(source), 0.0f });
+		path->nodes.push_back({ std::move(edge), std::move(destination), 1.0f });
+		return path;
+	}
+
+	bool ordinaryTraversalCommitsOnlyAtDestination()
+	{
+		core::Building building("Ordinary transition", 10, 2);
+		auto sourceSector = building.addCorridor(0, 0, 3);
+		auto destinationSector = building.addCorridor(0, 5, 3);
+		uint32_t sourceVertexId;
+		uint32_t destinationVertexId;
+		building.addSectorMarker(sourceSector, 0, 0.5f, &sourceVertexId);
+		building.addSectorMarker(destinationSector, 0, 1.5f, &destinationVertexId);
+		building.finishBuild();
+
+		auto source = building.getGraph()->getVertexByIdentifier(sourceVertexId);
+		auto destination = building.getGraph()->getVertexByIdentifier(destinationVertexId);
+		auto agentId = building.createAgent("Ordinary traveller", sourceSector, 0, 0.5f);
+		auto agent = building.lookupAgent(agentId).entity;
+		agent->setPath(twoNodePath(source, destination, std::make_shared<core::SectorEdge>()), true);
+
+		bool observedPermit = false;
+		while (agent->getState() != core::Agent::State::Idle
+			&& building.getSimulationTick() < MaximumSimulationTicks)
+		{
+			building.advanceTick();
+			auto snapshot = building.getSimulationSnapshot();
+			if (!snapshot.traversalPermits.empty())
+			{
+				observedPermit = snapshot.traversalPermits.size() == 1
+					&& snapshot.traversalRequests.size() == 1
+					&& snapshot.agents.front().hasLocomotionTask;
+			}
+
+			if (agent->getState() != core::Agent::State::Idle
+				&& agent->getSector() != building.getSector(sourceSector).get())
+			{
+				return false;
+			}
+		}
+
+		auto snapshot = building.getSimulationSnapshot();
+		return observedPermit
+			&& agent->getState() == core::Agent::State::Idle
+			&& agent->getSector() == building.getSector(destinationSector).get()
+			&& agent->getGlobalPosition().distanceTo(destination->getPosition()) < 0.001f
+			&& snapshot.traversalRequests.empty()
+			&& snapshot.traversalPermits.empty();
+	}
+
+	bool deniedTraversalCannotBeCrossed()
+	{
+		core::Building building("Denied transition", 7, 2);
+		auto corridor = building.addCorridor(0, 0, 6);
+		uint32_t sourceVertexId;
+		uint32_t destinationVertexId;
+		building.addSectorMarker(corridor, 0, 0.5f, &sourceVertexId);
+		building.addSectorMarker(corridor, 0, 5.5f, &destinationVertexId);
+		building.finishBuild();
+
+		auto source = building.getGraph()->getVertexByIdentifier(sourceVertexId);
+		auto destination = building.getGraph()->getVertexByIdentifier(destinationVertexId);
+		auto agentId = building.createAgent("Blocked traveller", corridor, 0, 0.5f);
+		auto agent = building.lookupAgent(agentId).entity;
+		agent->setPath(twoNodePath(source, destination, std::make_shared<core::GapEdge>()), true);
+		building.advanceTicks(30);
+
+		auto snapshot = building.getSimulationSnapshot();
+		if (agent->getGlobalPosition().distanceTo(source->getPosition()) >= 0.001f
+			|| agent->getSector() != building.getSector(corridor).get()
+			|| agent->getState() != core::Agent::State::WaitingForTraversal
+			|| snapshot.traversalRequests.size() != 1
+			|| snapshot.traversalRequests.front().state != core::TraversalRequestState::Denied
+			|| !snapshot.traversalPermits.empty())
+		{
+			return false;
+		}
+
+		agent->clearPath();
+		snapshot = building.getSimulationSnapshot();
+		return snapshot.traversalRequests.empty() && snapshot.traversalPermits.empty()
+			&& agent->getSector() == building.getSector(corridor).get();
+	}
+
+	bool cancellationReleasesPermitWithoutCommitting()
+	{
+		core::Building building("Cancelled transition", 10, 2);
+		auto sourceSector = building.addCorridor(0, 0, 3);
+		auto destinationSector = building.addCorridor(0, 5, 3);
+		uint32_t sourceVertexId;
+		uint32_t destinationVertexId;
+		building.addSectorMarker(sourceSector, 0, 0.5f, &sourceVertexId);
+		building.addSectorMarker(destinationSector, 0, 1.5f, &destinationVertexId);
+		building.finishBuild();
+
+		auto source = building.getGraph()->getVertexByIdentifier(sourceVertexId);
+		auto destination = building.getGraph()->getVertexByIdentifier(destinationVertexId);
+		auto agentId = building.createAgent("Cancelling traveller", sourceSector, 0, 0.5f);
+		auto agent = building.lookupAgent(agentId).entity;
+		agent->setPath(twoNodePath(source, destination, std::make_shared<core::SectorEdge>()), true);
+
+		for (uint32_t i = 0; i < 10 && !agent->getTraversalPermitId(); ++i)
+		{
+			building.advanceTick();
+		}
+		if (!agent->getTraversalPermitId() || agent->getSector() != building.getSector(sourceSector).get())
+		{
+			return false;
+		}
+
+		agent->clearPath();
+		building.advanceTicks(10);
+		auto snapshot = building.getSimulationSnapshot();
+		return agent->getState() == core::Agent::State::Idle
+			&& agent->getSector() == building.getSector(sourceSector).get()
+			&& snapshot.traversalRequests.empty()
+			&& snapshot.traversalPermits.empty();
+	}
+
 	ScenarioResult runOrdinaryPathScenario()
 	{
 		core::Building building("Headless smoke building", 7, 2);
@@ -207,6 +362,21 @@ int main()
 		if (!buildingOwnsTypedEntitiesAndInvalidatesHandles())
 		{
 			std::cerr << "FAIL: typed building ownership or handle invalidation failed\n";
+			return 1;
+		}
+		if (!ordinaryTraversalCommitsOnlyAtDestination())
+		{
+			std::cerr << "FAIL: ordinary traversal did not hold a permit through atomic commit\n";
+			return 1;
+		}
+		if (!deniedTraversalCannotBeCrossed())
+		{
+			std::cerr << "FAIL: denied traversal was crossed or leaked its request\n";
+			return 1;
+		}
+		if (!cancellationReleasesPermitWithoutCommitting())
+		{
+			std::cerr << "FAIL: traversal cancellation leaked or committed membership\n";
 			return 1;
 		}
 

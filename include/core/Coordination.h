@@ -1,9 +1,12 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <utility>
 
+#include "core/EdgeType.h"
 #include "core/EntityId.h"
+#include "core/Vector2.h"
 
 
 namespace core
@@ -100,6 +103,88 @@ namespace core
 		{
 			return mName;
 		}
+	};
+
+	enum struct TraversalRequestState
+	{
+		Pending,
+		Granted,
+		Denied,
+		Cancelled,
+		Committed
+	};
+
+	// Requests and permits are Building-owned transaction records. They contain
+	// no owning pointers: the path keeps topology alive while the transaction is
+	// active, and snapshots expose only stable IDs and endpoint values.
+	class TraversalRequest
+	{
+		friend class Building;
+
+		AgentId mOwner;
+		EdgeType mEdgeType;
+		SectorId mSourceSector;
+		SectorId mDestinationSector;
+		Vector2 mSourceEndpoint;
+		Vector2 mDestinationEndpoint;
+		TraversalRequestState mState{ TraversalRequestState::Pending };
+		bool mPreparationRequested{ false };
+		TraversalPermitId mPermit;
+
+		TraversalRequest(AgentId owner, EdgeType edgeType, SectorId sourceSector,
+			SectorId destinationSector, Vector2 sourceEndpoint, Vector2 destinationEndpoint)
+			: mOwner(owner)
+			, mEdgeType(edgeType)
+			, mSourceSector(sourceSector)
+			, mDestinationSector(destinationSector)
+			, mSourceEndpoint(sourceEndpoint)
+			, mDestinationEndpoint(destinationEndpoint)
+		{
+		}
+
+	public:
+		TraversalRequest(TraversalRequest const&) = delete;
+		TraversalRequest& operator=(TraversalRequest const&) = delete;
+
+		AgentId getOwner() const { return mOwner; }
+		EdgeType getEdgeType() const { return mEdgeType; }
+		SectorId getSourceSector() const { return mSourceSector; }
+		SectorId getDestinationSector() const { return mDestinationSector; }
+		Vector2 const& getSourceEndpoint() const { return mSourceEndpoint; }
+		Vector2 const& getDestinationEndpoint() const { return mDestinationEndpoint; }
+		TraversalRequestState getState() const { return mState; }
+		bool wasPreparationRequested() const { return mPreparationRequested; }
+		TraversalPermitId getPermit() const { return mPermit; }
+	};
+
+	enum struct TraversalPermitState
+	{
+		Active,
+		Committed,
+		Cancelled
+	};
+
+	class TraversalPermit
+	{
+		friend class Building;
+
+		TraversalRequestId mRequest;
+		AgentId mOwner;
+		TraversalPermitState mState{ TraversalPermitState::Active };
+
+		TraversalPermit(TraversalRequestId request, AgentId owner)
+			: mRequest(request)
+			, mOwner(owner)
+		{
+		}
+
+	public:
+		TraversalPermit(TraversalPermit const&) = delete;
+		TraversalPermit& operator=(TraversalPermit const&) = delete;
+
+		TraversalRequestId getRequest() const { return mRequest; }
+		AgentId getOwner() const { return mOwner; }
+		TraversalPermitState getState() const { return mState; }
 	};
 
 	// A lookup result keeps failure handling explicit. The returned pointer is a

@@ -3,16 +3,19 @@
 #include <string>
 #include <cstdint>
 #include <memory>
+#include <optional>
 
 #include "core/Controller.h"
 #include "core/SectorPosition.h"
 #include "core/Shape.h"
 #include "core/Path.h"
 #include "core/VertexControllerNotificationType.h"
+#include "core/EntityId.h"
 
 
 namespace core
 {
+	class Building;
 	class Sector;
 	class VertexController;
 
@@ -23,12 +26,13 @@ namespace core
 
 		bool atEnd() const
 		{
-			return targetNode == (uint32_t)path->nodes.size();
+			return !path || targetNode >= (uint32_t)path->nodes.size();
 		}
 	};
 
 	class Agent : public Controller
 	{
+		friend class Building;
 		friend class Sector;
 		friend class VertexControllerArea;
 
@@ -44,12 +48,26 @@ namespace core
 		{
 			Idle,
 			MovingToVertex,
+			WaitingForTraversal,
+			TraversingEdge,
+			AwaitingTraversalCommit,
 			UnderVertexControl
+		};
+
+		struct TraversalTask
+		{
+			TraversalRequestId request;
+			TraversalPermitId permit;
+			std::shared_ptr<const Edge> edge;
+			std::shared_ptr<const Vertex> sourceVertex;
+			std::shared_ptr<const Vertex> destinationVertex;
 		};
 
 	private:
 
 		std::string mName;
+
+		Building* mBuilding{ nullptr };
 
 		SectorPosition mPosition;
 
@@ -59,12 +77,16 @@ namespace core
 
 		PathIterator mPath;
 
+		std::optional<TraversalTask> mTraversalTask;
+
 	private:
 
 		// Overridden from Useable
 		ControllableActionStatus useImpl(Controller* controller, ControllableActionCallback callback);
 
 		void setPosition(SectorPosition pos);
+
+		void attachToBuilding(Building* building);
 
 		bool moveToPosition(Vector2 const& pos, float frameTime);
 
@@ -75,6 +97,16 @@ namespace core
 		bool traversePathEdge(bool skipVertex);
 
 		void moveToVertex(float frameTime);
+
+		void collectTraversalIntent();
+
+		void allocateTraversal();
+
+		void commitTraversal();
+
+		void cleanupTraversal();
+
+		void cancelTraversal();
 
 		bool moveToVertexOffset(int dim, float offset, float frameTime);
 
@@ -127,6 +159,12 @@ namespace core
 		std::shared_ptr<Path> const& getPath() const;
 
 		uint32_t getPathTargetNodeIndex() const;
+
+		bool hasActiveLocomotionTask() const;
+
+		TraversalRequestId getTraversalRequestId() const;
+
+		TraversalPermitId getTraversalPermitId() const;
 
 		EdgeTraversalData getEdgeTraversalData() const;
 

@@ -896,6 +896,18 @@ void renderAgent(core::Agent const* agent, ImDrawList* drawList)
 			drawList->AddText({ pos0.x, pos0.y - 13 }, textColour, "MTV");
 			break;
 
+		case core::Agent::State::WaitingForTraversal:
+			drawList->AddText({ pos0.x, pos0.y - 13 }, textColour, "WTP");
+			break;
+
+		case core::Agent::State::TraversingEdge:
+			drawList->AddText({ pos0.x, pos0.y - 13 }, textColour, "TRE");
+			break;
+
+		case core::Agent::State::AwaitingTraversalCommit:
+			drawList->AddText({ pos0.x, pos0.y - 13 }, textColour, "ATC");
+			break;
+
 		case core::Agent::State::UnderVertexControl:
 			drawList->AddText({ pos0.x, pos0.y - 13 }, textColour, "UVC");
 			break;

@@ -27,6 +27,7 @@ namespace core
 
 	class Building
 	{
+		friend class Agent;
 		friend class Graph;
 
 	public:
@@ -155,6 +156,10 @@ namespace core
 
 		EntityRegistry<TraversalResourceId, TraversalResource> mTraversalResources;
 
+		EntityRegistry<TraversalRequestId, TraversalRequest> mTraversalRequests;
+
+		EntityRegistry<TraversalPermitId, TraversalPermit> mTraversalPermits;
+
 		uint64_t mSimulationTick{ 0 };
 
 		uint64_t mNextEventSequence{ 1 };
@@ -275,6 +280,26 @@ namespace core
 
 		TraversalResourceSnapshot makeTraversalResourceSnapshot(TraversalResourceId id, TraversalResource const& resource) const;
 
+		TraversalRequestSnapshot makeTraversalRequestSnapshot(TraversalRequestId id, TraversalRequest const& request) const;
+
+		TraversalPermitSnapshot makeTraversalPermitSnapshot(TraversalPermitId id, TraversalPermit const& permit) const;
+
+		TraversalRequestId createTraversalRequest(Agent const& agent, std::shared_ptr<const Edge> const& edge,
+			std::shared_ptr<const Vertex> const& source, std::shared_ptr<const Vertex> const& destination);
+
+		TraversalPermitId grantTraversalRequest(TraversalRequestId requestId);
+
+		void denyTraversalRequest(TraversalRequestId requestId);
+
+		void setTraversalPreparationRequested(TraversalRequestId requestId);
+
+		bool commitTraversal(Agent& agent, TraversalRequestId requestId, TraversalPermitId permitId,
+			std::shared_ptr<const Vertex> const& destination);
+
+		void cancelTraversal(TraversalRequestId requestId, TraversalPermitId permitId);
+
+		void releaseTraversal(TraversalRequestId requestId, TraversalPermitId permitId);
+
 		void runSimulationPhase(SimulationPhase phase);
 
 		void publishTickEvents(SimulationSnapshot const& before);
@@ -386,6 +411,10 @@ namespace core
 		EntityLookup<TraversalResource const> lookupTraversalResource(TraversalResourceId id) const;
 
 		EntityRemovalResult removeTraversalResource(TraversalResourceId id);
+
+		EntityLookup<TraversalRequest const> lookupTraversalRequest(TraversalRequestId id) const;
+
+		EntityLookup<TraversalPermit const> lookupTraversalPermit(TraversalPermitId id) const;
 
 		void wakeAllAgents();
 

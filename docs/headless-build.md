@@ -1,6 +1,6 @@
 # Headless simulation smoke scenario
 
-The `headless` target builds the simulation core and a deterministic smoke scenario without SDL, ImGui, OpenGL, rendering, or audio dependencies. The scenario creates one corridor through the public `Building` API, routes one agent between two ordinary marker vertices, advances the building in fixed ticks, and exits unsuccessfully if the destination is not reached or two identical runs produce different snapshots or events.
+The `headless` target builds the simulation core and deterministic smoke scenarios without SDL, ImGui, OpenGL, rendering, or audio dependencies. The scenarios route agents between marker vertices, verify ordinary request/permit/commit behavior, denial and cancellation, advance buildings in fixed ticks, and exit unsuccessfully if an invariant fails or two identical runs produce different snapshots or events.
 
 ## Deterministic simulation API
 
@@ -13,9 +13,9 @@ The `headless` target builds the simulation core and a deterministic smoke scena
 5. commit;
 6. cleanup and event publication.
 
-The intent, allocation, and commit phases are explicit migration seams; legacy movement still performs those parts synchronously during movement until the replacement traversal protocol is introduced. Resource updates and stable-ID-ordered agent updates are already separated.
+The traversal protocol now uses those seams directly. On reaching an edge, an agent creates one building-owned request during intent collection. Allocation grants an immediate permit for an unconstrained edge, movement advances the agent between the edge's path vertices while it remains a source-sector occupant, commit transfers sector membership at the destination endpoint, and cleanup releases the transaction records. Denied requests remain blocked, and cancelling a path releases its request and permit without committing. Resource updates and stable-ID-ordered agent updates remain separated.
 
-`Building::getSimulationSnapshot()` returns a value snapshot containing the tick and stable agent IDs, sectors, positions, path state, and path progress. It also exposes the building-owned interaction points, device operations, and traversal resources by stable typed ID. `Building::consumeSimulationEvents()` returns and clears value events; no event callback runs during a simulation phase. Phase-completion events make tick ordering observable.
+`Building::getSimulationSnapshot()` returns a value snapshot containing the tick and stable agent IDs, sectors, positions, path state, path progress, active locomotion task, traversal request, and traversal permit. It also exposes the building-owned interaction points, device operations, traversal resources, requests, and permits by stable typed ID. `Building::consumeSimulationEvents()` returns and clears value events; no event callback runs during a simulation phase. Phase-completion and traversal-lifecycle events make tick ordering observable.
 
 Agents can be created with `Building::createAgent()` and resolved with `lookupAgent()`. Replacement interaction points, device operations, and traversal resources follow the same create/lookup/remove pattern. Each category has a distinct handle type, lookups return an explicit diagnostic on invalid or removed handles, and IDs are never reused. The raw-pointer `addAgentToSector()` overload remains only as a legacy ownership-transfer seam during migration.
 

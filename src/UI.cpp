@@ -1023,6 +1023,18 @@ void renderAgentView(shared_ptr<const core::Building> building)
 						ImGui::Text("Moving to Vertex");
 						break;
 
+					case core::Agent::State::WaitingForTraversal:
+						ImGui::Text("Waiting for traversal");
+						break;
+
+					case core::Agent::State::TraversingEdge:
+						ImGui::Text("Traversing edge");
+						break;
+
+					case core::Agent::State::AwaitingTraversalCommit:
+						ImGui::Text("Awaiting traversal commit");
+						break;
+
 					case core::Agent::State::UnderVertexControl:
 						ImGui::Text("Under Vertex control");
 						break;

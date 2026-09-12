@@ -2225,6 +2225,7 @@ namespace core
 
 		auto sector = _getSector(sectorId);
 		auto rawAgent = agent.get();
+		rawAgent->attachToBuilding(this);
 		sector->enterAgent(rawAgent, deckOffset, xOffset);
 		auto id = mAgents.add(std::move(agent));
 		mAgentIds.emplace(rawAgent, id);
@@ -2251,6 +2252,7 @@ namespace core
 
 		auto sector = _getSector(sectorId);
 		auto rawAgent = agent.get();
+		rawAgent->attachToBuilding(this);
 		sector->enterAgent(rawAgent);
 		auto id = mAgents.add(std::move(agent));
 		mAgentIds.emplace(rawAgent, id);
@@ -2312,6 +2314,9 @@ namespace core
 		result.hasPath = (bool)agent->getPath();
 		result.targetPathNode = agent->getPathTargetNodeIndex();
 		result.pathNodeCount = result.hasPath ? (uint32_t)agent->getPath()->nodes.size() : 0;
+		result.hasLocomotionTask = agent->hasActiveLocomotionTask();
+		result.traversalRequest = agent->getTraversalRequestId();
+		result.traversalPermit = agent->getTraversalPermitId();
 
 		switch (agent->getState())
 		{
@@ -2320,6 +2325,15 @@ namespace core
 			break;
 		case Agent::State::MovingToVertex:
 			result.state = AgentPathState::MovingToVertex;
+			break;
+		case Agent::State::WaitingForTraversal:
+			result.state = AgentPathState::WaitingForTraversal;
+			break;
+		case Agent::State::TraversingEdge:
+			result.state = AgentPathState::TraversingEdge;
+			break;
+		case Agent::State::AwaitingTraversalCommit:
+			result.state = AgentPathState::AwaitingTraversalCommit;
 			break;
 		case Agent::State::UnderVertexControl:
 			result.state = AgentPathState::UnderVertexControl;
@@ -2342,6 +2356,210 @@ namespace core
 	TraversalResourceSnapshot Building::makeTraversalResourceSnapshot(TraversalResourceId id, TraversalResource const& resource) const
 	{
 		return { id, resource.getName() };
+	}
+
+	TraversalRequestSnapshot Building::makeTraversalRequestSnapshot(TraversalRequestId id, TraversalRequest const& request) const
+	{
+		return { id, request.getOwner(), request.getEdgeType(), request.getSourceSector(),
+			request.getDestinationSector(), request.getSourceEndpoint(), request.getDestinationEndpoint(),
+			request.getState(), request.getPermit() };
+	}
+
+	TraversalPermitSnapshot Building::makeTraversalPermitSnapshot(TraversalPermitId id, TraversalPermit const& permit) const
+	{
+		return { id, permit.getRequest(), permit.getOwner(), permit.getState() };
+	}
+
+	TraversalRequestId Building::createTraversalRequest(Agent const& agent, shared_ptr<const Edge> const& edge,
+		shared_ptr<const Vertex> const& source, shared_ptr<const Vertex> const& destination)
+	{
+		auto owner = getAgentId(&agent);
+		if (!owner || !edge || !source || !destination)
+		{
+			throw invalid_argument("A traversal request requires an owned Agent, Edge, and two endpoints");
+		}
+
+		auto sourceSector = SectorId{ (uint64_t)source->getSector()->getIndex() + 1 };
+		auto destinationSector = SectorId{ (uint64_t)destination->getSector()->getIndex() + 1 };
+		auto id = mTraversalRequests.add(unique_ptr<TraversalRequest>(new TraversalRequest(owner,
+			edge->getType(), sourceSector, destinationSector, source->getPosition(), destination->getPosition())));
+
+		SimulationEvent event;
+		event.sequence = mNextEventSequence++;
+		event.tick = mSimulationTick;
+		event.type = SimulationEventType::TraversalRequestAdded;
+		event.phase = mCurrentPhase;
+		event.traversalRequest = makeTraversalRequestSnapshot(id, *mTraversalRequests.find(id));
+		mEvents.push_back(std::move(event));
+		return id;
+	}
+
+	TraversalPermitId Building::grantTraversalRequest(TraversalRequestId requestId)
+	{
+		auto request = mTraversalRequests.find(requestId);
+		if (!request || request->mState != TraversalRequestState::Pending)
+		{
+			return {};
+		}
+
+		auto permitId = mTraversalPermits.add(unique_ptr<TraversalPermit>(
+			new TraversalPermit(requestId, request->mOwner)));
+		request->mPermit = permitId;
+		request->mState = TraversalRequestState::Granted;
+
+		SimulationEvent requestEvent;
+		requestEvent.sequence = mNextEventSequence++;
+		requestEvent.tick = mSimulationTick;
+		requestEvent.type = SimulationEventType::TraversalRequestChanged;
+		requestEvent.phase = mCurrentPhase;
+		requestEvent.traversalRequest = makeTraversalRequestSnapshot(requestId, *request);
+		mEvents.push_back(std::move(requestEvent));
+
+		SimulationEvent permitEvent;
+		permitEvent.sequence = mNextEventSequence++;
+		permitEvent.tick = mSimulationTick;
+		permitEvent.type = SimulationEventType::TraversalPermitAdded;
+		permitEvent.phase = mCurrentPhase;
+		permitEvent.traversalPermit = makeTraversalPermitSnapshot(permitId, *mTraversalPermits.find(permitId));
+		mEvents.push_back(std::move(permitEvent));
+		return permitId;
+	}
+
+	void Building::denyTraversalRequest(TraversalRequestId requestId)
+	{
+		auto request = mTraversalRequests.find(requestId);
+		if (!request || request->mState != TraversalRequestState::Pending)
+		{
+			return;
+		}
+		request->mState = TraversalRequestState::Denied;
+
+		SimulationEvent event;
+		event.sequence = mNextEventSequence++;
+		event.tick = mSimulationTick;
+		event.type = SimulationEventType::TraversalRequestChanged;
+		event.phase = mCurrentPhase;
+		event.traversalRequest = makeTraversalRequestSnapshot(requestId, *request);
+		mEvents.push_back(std::move(event));
+	}
+
+	void Building::setTraversalPreparationRequested(TraversalRequestId requestId)
+	{
+		if (auto request = mTraversalRequests.find(requestId))
+		{
+			request->mPreparationRequested = true;
+		}
+	}
+
+	bool Building::commitTraversal(Agent& agent, TraversalRequestId requestId, TraversalPermitId permitId,
+		shared_ptr<const Vertex> const& destination)
+	{
+		auto request = mTraversalRequests.find(requestId);
+		auto permit = mTraversalPermits.find(permitId);
+		auto owner = getAgentId(&agent);
+		if (!request || !permit || !destination || request->mOwner != owner || permit->mOwner != owner
+			|| permit->mRequest != requestId || request->mPermit != permitId
+			|| request->mState != TraversalRequestState::Granted
+			|| permit->mState != TraversalPermitState::Active
+			|| agent.getGlobalPosition().distanceTo(request->mDestinationEndpoint) > 0.001f)
+		{
+			return false;
+		}
+
+		auto sourceSector = const_cast<Sector*>(agent.getSector());
+		auto destinationSector = destination->getSector();
+		if (!sourceSector
+			|| request->mSourceSector != SectorId{ (uint64_t)sourceSector->getIndex() + 1 }
+			|| request->mDestinationSector != SectorId{ (uint64_t)destinationSector->getIndex() + 1 })
+		{
+			return false;
+		}
+
+		// The transfer is deliberately confined to the commit phase. Until this
+		// point movement changed only the source-relative position.
+		if (sourceSector != destinationSector.get())
+		{
+			sourceSector->exitAgent(&agent);
+			destinationSector->enterAgent(&agent, destination);
+		}
+
+		permit->mState = TraversalPermitState::Committed;
+		request->mState = TraversalRequestState::Committed;
+
+		SimulationEvent permitEvent;
+		permitEvent.sequence = mNextEventSequence++;
+		permitEvent.tick = mSimulationTick;
+		permitEvent.type = SimulationEventType::TraversalPermitChanged;
+		permitEvent.phase = mCurrentPhase;
+		permitEvent.traversalPermit = makeTraversalPermitSnapshot(permitId, *permit);
+		mEvents.push_back(std::move(permitEvent));
+
+		SimulationEvent requestEvent;
+		requestEvent.sequence = mNextEventSequence++;
+		requestEvent.tick = mSimulationTick;
+		requestEvent.type = SimulationEventType::TraversalRequestChanged;
+		requestEvent.phase = mCurrentPhase;
+		requestEvent.traversalRequest = makeTraversalRequestSnapshot(requestId, *request);
+		mEvents.push_back(std::move(requestEvent));
+		return true;
+	}
+
+	void Building::cancelTraversal(TraversalRequestId requestId, TraversalPermitId permitId)
+	{
+		if (auto permit = mTraversalPermits.find(permitId);
+			permit && permit->mState == TraversalPermitState::Active)
+		{
+			permit->mState = TraversalPermitState::Cancelled;
+			SimulationEvent event;
+			event.sequence = mNextEventSequence++;
+			event.tick = mSimulationTick;
+			event.type = SimulationEventType::TraversalPermitChanged;
+			event.phase = mCurrentPhase;
+			event.traversalPermit = makeTraversalPermitSnapshot(permitId, *permit);
+			mEvents.push_back(std::move(event));
+		}
+
+		if (auto request = mTraversalRequests.find(requestId);
+			request && request->mState != TraversalRequestState::Committed)
+		{
+			request->mState = TraversalRequestState::Cancelled;
+			SimulationEvent event;
+			event.sequence = mNextEventSequence++;
+			event.tick = mSimulationTick;
+			event.type = SimulationEventType::TraversalRequestChanged;
+			event.phase = mCurrentPhase;
+			event.traversalRequest = makeTraversalRequestSnapshot(requestId, *request);
+			mEvents.push_back(std::move(event));
+		}
+	}
+
+	void Building::releaseTraversal(TraversalRequestId requestId, TraversalPermitId permitId)
+	{
+		if (auto permit = mTraversalPermits.find(permitId))
+		{
+			auto snapshot = makeTraversalPermitSnapshot(permitId, *permit);
+			mTraversalPermits.remove(permitId);
+			SimulationEvent event;
+			event.sequence = mNextEventSequence++;
+			event.tick = mSimulationTick;
+			event.type = SimulationEventType::TraversalPermitRemoved;
+			event.phase = mCurrentPhase;
+			event.traversalPermit = std::move(snapshot);
+			mEvents.push_back(std::move(event));
+		}
+
+		if (auto request = mTraversalRequests.find(requestId))
+		{
+			auto snapshot = makeTraversalRequestSnapshot(requestId, *request);
+			mTraversalRequests.remove(requestId);
+			SimulationEvent event;
+			event.sequence = mNextEventSequence++;
+			event.tick = mSimulationTick;
+			event.type = SimulationEventType::TraversalRequestRemoved;
+			event.phase = mCurrentPhase;
+			event.traversalRequest = std::move(snapshot);
+			mEvents.push_back(std::move(event));
+		}
 	}
 
 	AgentId Building::getAgentId(Agent const* agent) const
@@ -2553,6 +2771,20 @@ namespace core
 		return { true, {} };
 	}
 
+	EntityLookup<TraversalRequest const> Building::lookupTraversalRequest(TraversalRequestId id) const
+	{
+		auto entity = mTraversalRequests.find(id);
+		return entity ? EntityLookup<TraversalRequest const>{ entity, {} }
+			: EntityLookup<TraversalRequest const>{ nullptr, format("TraversalRequest handle {} is invalid or has been released", id.value) };
+	}
+
+	EntityLookup<TraversalPermit const> Building::lookupTraversalPermit(TraversalPermitId id) const
+	{
+		auto entity = mTraversalPermits.find(id);
+		return entity ? EntityLookup<TraversalPermit const>{ entity, {} }
+			: EntityLookup<TraversalPermit const>{ nullptr, format("TraversalPermit handle {} is invalid or has been released", id.value) };
+	}
+
 	SimulationSnapshot Building::getSimulationSnapshot() const
 	{
 		SimulationSnapshot result;
@@ -2561,6 +2793,8 @@ namespace core
 		result.interactionPoints.reserve(mInteractionPoints.entries().size());
 		result.deviceOperations.reserve(mDeviceOperations.entries().size());
 		result.traversalResources.reserve(mTraversalResources.entries().size());
+		result.traversalRequests.reserve(mTraversalRequests.entries().size());
+		result.traversalPermits.reserve(mTraversalPermits.entries().size());
 
 		for (auto const& [id, agent] : mAgents.entries())
 		{
@@ -2578,6 +2812,14 @@ namespace core
 		for (auto const& [id, resource] : mTraversalResources.entries())
 		{
 			result.traversalResources.push_back(makeTraversalResourceSnapshot(id, *resource));
+		}
+		for (auto const& [id, request] : mTraversalRequests.entries())
+		{
+			result.traversalRequests.push_back(makeTraversalRequestSnapshot(id, *request));
+		}
+		for (auto const& [id, permit] : mTraversalPermits.entries())
+		{
+			result.traversalPermits.push_back(makeTraversalPermitSnapshot(id, *permit));
 		}
 
 		return result;
@@ -2598,9 +2840,19 @@ namespace core
 			break;
 
 		case SimulationPhase::IntentCollection:
+			for (auto const& [id, agent] : mAgents.entries())
+			{
+				(void)id;
+				agent->collectTraversalIntent();
+			}
+			break;
+
 		case SimulationPhase::Allocation:
-			// Explicit seams for replacement traversal tasks. Legacy agents collect
-			// and allocate synchronously during the movement phase for now.
+			for (auto const& [id, agent] : mAgents.entries())
+			{
+				(void)id;
+				agent->allocateTraversal();
+			}
 			break;
 
 		case SimulationPhase::Movement:
@@ -2617,11 +2869,21 @@ namespace core
 			break;
 
 		case SimulationPhase::Commit:
-			// Reserved for atomic transition commits introduced by the traversal
-			// protocol. Legacy movement commits synchronously.
+			for (auto const& [id, agent] : mAgents.entries())
+			{
+				(void)id;
+				agent->commitTraversal();
+			}
 			break;
 
 		case SimulationPhase::CleanupAndEventPublication:
+			for (auto const& [id, agent] : mAgents.entries())
+			{
+				(void)id;
+				agent->cleanupTraversal();
+			}
+			break;
+
 		case SimulationPhase::None:
 			break;
 		}
@@ -2660,7 +2922,10 @@ namespace core
 				|| current.state != previous.state
 				|| current.hasPath != previous.hasPath
 				|| current.targetPathNode != previous.targetPathNode
-				|| current.pathNodeCount != previous.pathNodeCount;
+				|| current.pathNodeCount != previous.pathNodeCount
+				|| current.hasLocomotionTask != previous.hasLocomotionTask
+				|| current.traversalRequest != previous.traversalRequest
+				|| current.traversalPermit != previous.traversalPermit;
 
 			if (changed)
 			{

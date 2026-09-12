@@ -1,4 +1,6 @@
 #include "core/Agent.h"
+#include "core/Building.h"
+#include "core/Edge.h"
 #include "core/Location.h"
 #include "core/Path.h"
 #include "core/Pathing.h"
@@ -117,6 +119,15 @@ namespace core
 		mPosition = pos;
 	}
 
+	void Agent::attachToBuilding(Building* building)
+	{
+		if (mBuilding && mBuilding != building)
+		{
+			throw Exception("Agent is already attached to another Building");
+		}
+		mBuilding = building;
+	}
+
 	shared_ptr<Path> const& Agent::getPath() const
 	{
 		return mPath.path;
@@ -125,6 +136,21 @@ namespace core
 	uint32_t Agent::getPathTargetNodeIndex() const
 	{
 		return mPath.targetNode;
+	}
+
+	bool Agent::hasActiveLocomotionTask() const
+	{
+		return mTraversalTask.has_value();
+	}
+
+	TraversalRequestId Agent::getTraversalRequestId() const
+	{
+		return mTraversalTask ? mTraversalTask->request : TraversalRequestId{};
+	}
+
+	TraversalPermitId Agent::getTraversalPermitId() const
+	{
+		return mTraversalTask ? mTraversalTask->permit : TraversalPermitId{};
 	}
 
 	Agent::EdgeTraversalData Agent::getEdgeTraversalData() const
@@ -183,7 +209,8 @@ namespace core
 
 	void Agent::setPath(shared_ptr<Path> path, bool startPathing)
 	{
-		mPath.path = path;
+		clearPath();
+		mPath.path = std::move(path);
 		mPath.targetNode = 0;
 
 		if (startPathing)
@@ -194,20 +221,29 @@ namespace core
 
 	void Agent::clearPath()
 	{
+		cancelTraversal();
 		mPath.path = nullptr;
 		mPath.targetNode = 0;
+		mState = State::Idle;
 	}
 
 	void Agent::startPathing()
 	{
+		if (!mPath.path || mPath.path->nodes.empty())
+		{
+			startIdling();
+			return;
+		}
+
+		cancelTraversal();
 		mState = State::MovingToVertex;
-		mPath.targetNode = 0;
 
 		addLogMessage(getDescription(), 0, LogLevel::Debug, format("Started pathing"));
 	}
 
 	void Agent::pausePathing()
 	{
+		cancelTraversal();
 		mState = State::Idle;
 
 		addLogMessage(getDescription(), 0, LogLevel::Debug, format("Paused pathing"));
@@ -215,46 +251,33 @@ namespace core
 
 	bool Agent::nextPathNode()
 	{
-		mPath.targetNode++;
+		++mPath.targetNode;
 
-		if (atEndOfPath())
+		if (!mPath.path || mPath.targetNode >= mPath.path->nodes.size() - 1)
 		{
-			startIdling();
+			mState = State::Idle;
+			mPath.path = nullptr;
+			mPath.targetNode = 0;
+			addLogMessage(getDescription(), 0, LogLevel::Debug, format("Started idling"));
 			return true;
 		}
-		else
-		{
-			return false;
-		}
+
+		mState = State::WaitingForTraversal;
+		return false;
 	}
 
 	bool Agent::traversePathEdge(bool skipVertex)
 	{
-		auto nextVertex = mPath.path->nodes[mPath.targetNode + 1].targetVertex;
-
-		auto curSector = mPath.path->nodes[mPath.targetNode].targetVertex->getSector();
-		auto nextSector = nextVertex->getSector();
-
-		curSector->exitAgent(this);
-
-		Vector2 vertexOffset = getGlobalPosition() - nextVertex->getPosition();
-
-		nextSector->enterAgent(this, nextVertex, vertexOffset);
-
-		bool ended = nextPathNode();
-
-		if (skipVertex && !ended)
-		{
-			return nextPathNode();
-		}
-		else
-		{
-			return ended;
-		}
+		// Legacy vertex controllers are not traversal authorities for an Agent
+		// executing the replacement protocol. A sector transfer is legal only in
+		// Building's commit phase while this Agent owns a live permit.
+		CORE_VAR_UNUSED(skipVertex);
+		return false;
 	}
 
 	void Agent::startIdling()
 	{
+		cancelTraversal();
 		mState = State::Idle;
 		mPath.path = nullptr;
 		mPath.targetNode = 0;
@@ -291,17 +314,145 @@ namespace core
 
 	void Agent::moveToVertex(float frameTime)
 	{
-		auto const& targetPos = mPath.path->nodes[mPath.targetNode].targetVertex->getPosition();
-
-		if (moveToPosition(targetPos, frameTime))
+		if (!mPath.path || mPath.targetNode >= mPath.path->nodes.size())
 		{
-			if (nextPathNode())
-			{
-				return;
-			}
+			startIdling();
+			return;
 		}
 
-		checkMovedUnderVertexControl();
+		auto const& targetPos = mPath.path->nodes[mPath.targetNode].targetVertex->getPosition();
+		if (!moveToPosition(targetPos, frameTime))
+		{
+			return;
+		}
+
+		if (mPath.targetNode + 1 >= mPath.path->nodes.size())
+		{
+			startIdling();
+			return;
+		}
+
+		// The Agent has reached the source endpoint. Request creation is deferred
+		// to the next intent-collection phase rather than changing membership here.
+		mState = State::WaitingForTraversal;
+	}
+
+	void Agent::collectTraversalIntent()
+	{
+		if (mState != State::WaitingForTraversal || mTraversalTask || !mBuilding
+			|| !mPath.path || mPath.targetNode + 1 >= mPath.path->nodes.size())
+		{
+			return;
+		}
+
+		auto const& sourceNode = mPath.path->nodes[mPath.targetNode];
+		auto const& destinationNode = mPath.path->nodes[mPath.targetNode + 1];
+		if (!destinationNode.edge || !sourceNode.targetVertex || !destinationNode.targetVertex)
+		{
+			return;
+		}
+
+		TraversalTask task;
+		task.edge = destinationNode.edge;
+		task.sourceVertex = sourceNode.targetVertex;
+		task.destinationVertex = destinationNode.targetVertex;
+		task.request = mBuilding->createTraversalRequest(*this, task.edge,
+			task.sourceVertex, task.destinationVertex);
+		mTraversalTask = std::move(task);
+	}
+
+	void Agent::allocateTraversal()
+	{
+		if (mState != State::WaitingForTraversal || !mTraversalTask || !mBuilding)
+		{
+			return;
+		}
+
+		auto requestLookup = mBuilding->lookupTraversalRequest(mTraversalTask->request);
+		if (!requestLookup || requestLookup.entity->getState() != TraversalRequestState::Pending)
+		{
+			return;
+		}
+
+		// Edge's legacy API takes a shared_ptr, but the view below is explicitly
+		// non-owning and exists only for this synchronous policy query.
+		shared_ptr<const Agent> agentView(this, [](Agent const*) {});
+		if (mTraversalTask->edge->isTraversable(mTraversalTask->destinationVertex, agentView))
+		{
+			mTraversalTask->permit = mBuilding->grantTraversalRequest(mTraversalTask->request);
+			if (mTraversalTask->permit)
+			{
+				mState = State::TraversingEdge;
+			}
+			return;
+		}
+
+		if (!requestLookup.entity->wasPreparationRequested())
+		{
+			mBuilding->setTraversalPreparationRequested(mTraversalTask->request);
+			auto result = mTraversalTask->edge->requestTraversal(mTraversalTask->destinationVertex, agentView);
+			if (result == EdgeTraversalRequestResult::Failed)
+			{
+				mBuilding->denyTraversalRequest(mTraversalTask->request);
+				return;
+			}
+
+			if (mTraversalTask->edge->isTraversable(mTraversalTask->destinationVertex, agentView))
+			{
+				mTraversalTask->permit = mBuilding->grantTraversalRequest(mTraversalTask->request);
+				if (mTraversalTask->permit)
+				{
+					mState = State::TraversingEdge;
+				}
+			}
+		}
+	}
+
+	void Agent::commitTraversal()
+	{
+		if (mState != State::AwaitingTraversalCommit || !mTraversalTask || !mBuilding)
+		{
+			return;
+		}
+
+		if (!mBuilding->commitTraversal(*this, mTraversalTask->request,
+			mTraversalTask->permit, mTraversalTask->destinationVertex))
+		{
+			return;
+		}
+
+		nextPathNode();
+	}
+
+	void Agent::cleanupTraversal()
+	{
+		if (!mTraversalTask || !mBuilding)
+		{
+			return;
+		}
+
+		auto request = mBuilding->lookupTraversalRequest(mTraversalTask->request);
+		if (request && (request.entity->getState() == TraversalRequestState::Committed
+			|| request.entity->getState() == TraversalRequestState::Cancelled))
+		{
+			mBuilding->releaseTraversal(mTraversalTask->request, mTraversalTask->permit);
+			mTraversalTask.reset();
+		}
+	}
+
+	void Agent::cancelTraversal()
+	{
+		if (!mTraversalTask)
+		{
+			return;
+		}
+
+		if (mBuilding)
+		{
+			mBuilding->cancelTraversal(mTraversalTask->request, mTraversalTask->permit);
+			mBuilding->releaseTraversal(mTraversalTask->request, mTraversalTask->permit);
+		}
+		mTraversalTask.reset();
 	}
 
 	bool Agent::moveToVertexOffset(int dim, float offset, float frameTime)
@@ -351,6 +502,16 @@ namespace core
 			moveToVertex(frameTime);
 			break;
 
+		case State::TraversingEdge:
+			if (mTraversalTask
+				&& moveToPosition(mTraversalTask->destinationVertex->getPosition(), frameTime))
+			{
+				mState = State::AwaitingTraversalCommit;
+			}
+			break;
+
+		case State::WaitingForTraversal:
+		case State::AwaitingTraversalCommit:
 		case State::UnderVertexControl:
 			break;
 
