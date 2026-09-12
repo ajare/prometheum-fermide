@@ -61,6 +61,7 @@ namespace core
 		Succeeded,
 		SucceededWithBestEffortFailure,
 		Failed,
+		Rejected,
 		Cancelled
 	};
 
@@ -112,6 +113,7 @@ namespace core
 		Running,
 		Succeeded,
 		Failed,
+		Rejected,
 		Cancelled
 	};
 
@@ -182,6 +184,12 @@ namespace core
 		DoorActivationMode mDoorActivationMode{ DoorActivationMode::Unavailable };
 		uint64_t mHoldOpenTicks{ 0 };
 		std::set<TraversalRequestId> mOpenLeases;
+		std::vector<InteractionPointId> mControls;
+		InteractionRequestId mActivePreparation;
+		TraversalRequestId mPreparationOperator;
+		DeviceOperationId mSharedPreparationOperation;
+		uint32_t mPreparationAttempts{ 0 };
+		uint64_t mNextPreparationTick{ 0 };
 		explicit TraversalResource(std::string name) : mName(std::move(name)) {}
 		TraversalResource(std::string name, std::shared_ptr<Door> door,
 			DoorActivationMode mode, uint64_t holdOpenTicks)
@@ -193,9 +201,18 @@ namespace core
 		std::string const& getName() const { return mName; }
 		bool isDoor() const { return mDoor != nullptr; }
 		DoorActivationMode getDoorActivationMode() const { return mDoorActivationMode; }
+		std::vector<InteractionPointId> const& getControls() const { return mControls; }
 	};
 
 	enum struct TraversalRequestState { Pending, Granted, Denied, Cancelled, Committed };
+
+	enum struct TraversalFailureReason
+	{
+		None,
+		NoReachableControl,
+		ControlRejected,
+		PreparationFailed
+	};
 
 	class TraversalRequest
 	{
@@ -211,6 +228,7 @@ namespace core
 		TraversalResourceId mResource;
 		DeviceOperationId mPreparationOperation;
 		TraversalPermitId mPermit;
+		TraversalFailureReason mFailureReason{ TraversalFailureReason::None };
 		TraversalRequest(AgentId owner, EdgeType edgeType, SectorId sourceSector,
 			SectorId destinationSector, Vector2 sourceEndpoint, Vector2 destinationEndpoint)
 			: mOwner(owner), mEdgeType(edgeType), mSourceSector(sourceSector),
@@ -230,6 +248,7 @@ namespace core
 		TraversalResourceId getResource() const { return mResource; }
 		DeviceOperationId getPreparationOperation() const { return mPreparationOperation; }
 		TraversalPermitId getPermit() const { return mPermit; }
+		TraversalFailureReason getFailureReason() const { return mFailureReason; }
 	};
 
 	enum struct TraversalPermitState { Active, Committed, Cancelled };

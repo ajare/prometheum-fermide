@@ -8,14 +8,14 @@
 
 **Blocked by:** 06 — Traverse manual and automatic doors safely
 
-**Status:** ready-for-agent
+**Status:** complete
 
-- [ ] A remote-controlled door cannot be opened directly by traversal execution.
-- [ ] The traversal resource selects the earliest eligible waiting agent able to reach an applicable control.
-- [ ] The selected operator reserves the control position and retains logical traversal priority.
-- [ ] Other agents reuse the active open request without pressing the button.
-- [ ] If the door becomes open while the operator approaches, the redundant interaction is cancelled cleanly.
-- [ ] Temporary blocking retries deterministically; bounded execution failure and permanent rejection produce distinct outcomes.
-- [ ] A multi-command control succeeds only when every required binding succeeds.
-- [ ] Cancelling one waiting agent does not cancel an opening operation still needed by others.
-- [ ] If no applicable control is reachable, the edge is reported unavailable for execution and replanning.
+- [x] A remote-controlled door cannot be opened directly by traversal execution.
+- [x] The traversal resource selects the earliest eligible waiting agent able to reach an applicable control.
+- [x] The selected operator reserves the control position and retains logical traversal priority.
+- [x] Other agents reuse the active open request without pressing the button.
+- [x] If the door becomes open while the operator approaches, the redundant interaction is cancelled cleanly.
+- [x] Temporary blocking retries deterministically; bounded execution failure and permanent rejection produce distinct outcomes.
+- [x] A multi-command control succeeds only when every required binding succeeds.
+- [x] Cancelling one waiting agent does not cancel an opening operation still needed by others.
+- [x] If no applicable control is reachable, the edge is reported unavailable for execution and replanning.

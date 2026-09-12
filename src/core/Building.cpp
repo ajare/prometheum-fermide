@@ -1591,6 +1591,20 @@ namespace core
 				auto buttonObject = _createDoorButton(sectors[i], x, y, cellsWide, CORE_BUTTON_F_AUTO_REENABLE, &createdCtrls[i].index);
 				createdCtrls[i].type = SectorObjectType::Controller;
 				createdCtrls[i].sector = sectors[i];
+
+				if (options.activationMode == DoorActivationMode::RemoteControlled)
+				{
+					auto controlObject = sectors[i]->_getObject(createdCtrls[i].index);
+					auto controlPosition = controlObject->getPosition() + controlObject->getSize() * 0.5f;
+					DeviceCommand command;
+					command.type = DeviceCommandType::OpenDoor;
+					command.desiredState = true;
+					command.traversalResource = traversalResource;
+					auto point = createInteractionPoint("Door button",
+						SectorId{ (uint64_t)sectors[i]->getIndex() + 1 }, controlPosition,
+						0.15f, getFixedTimestep(), { { command, InteractionBindingRequirement::Required } });
+					addTraversalControl(traversalResource, point);
+				}
 			}
 		}
 
@@ -2406,6 +2420,9 @@ namespace core
 		result.doorActivationMode = resource.mDoorActivationMode;
 		result.holdOpenTicks = resource.mHoldOpenTicks;
 		result.openLeaseCount = (uint32_t)resource.mOpenLeases.size();
+		result.controls = resource.mControls;
+		result.activePreparation = resource.mActivePreparation;
+		result.preparationOperator = resource.mPreparationOperator;
 		if (resource.mDoor)
 		{
 			result.doorOpenPercentage = resource.mDoor->getOpenPercentage();
@@ -2424,7 +2441,8 @@ namespace core
 	{
 		return { id, request.getOwner(), request.getEdgeType(), request.getSourceSector(),
 			request.getDestinationSector(), request.getSourceEndpoint(), request.getDestinationEndpoint(),
-			request.getState(), request.getResource(), request.getPreparationOperation(), request.getPermit() };
+			request.getState(), request.getResource(), request.getPreparationOperation(), request.getPermit(),
+			request.getFailureReason() };
 	}
 
 	TraversalPermitSnapshot Building::makeTraversalPermitSnapshot(TraversalPermitId id, TraversalPermit const& permit) const
@@ -2515,14 +2533,14 @@ namespace core
 				denyTraversalRequest(requestId);
 				return;
 			}
+			if (resource->mDoorActivationMode == DoorActivationMode::RemoteControlled)
+			{
+				allocateRemoteDoorPreparation(requestId, *resource);
+				return;
+			}
 			if (resource->mDoor->isOpen())
 			{
 				grantTraversalRequest(requestId);
-				return;
-			}
-			if (resource->mDoorActivationMode == DoorActivationMode::RemoteControlled)
-			{
-				denyTraversalRequest(requestId);
 				return;
 			}
 			if (!request->mPreparationRequested)
@@ -2542,9 +2560,11 @@ namespace core
 			}
 			if (auto operation = mDeviceOperations.find(request->mPreparationOperation);
 				!operation || operation->mState == DeviceOperationState::Failed
+				|| operation->mState == DeviceOperationState::Rejected
 				|| operation->mState == DeviceOperationState::Cancelled)
 			{
-				denyTraversalRequest(requestId);
+				denyTraversalRequest(requestId, operation && operation->mState == DeviceOperationState::Rejected
+					? TraversalFailureReason::ControlRejected : TraversalFailureReason::PreparationFailed);
 			}
 			return;
 		}
@@ -2570,7 +2590,175 @@ namespace core
 		}
 	}
 
-	void Building::denyTraversalRequest(TraversalRequestId requestId)
+	void Building::allocateRemoteDoorPreparation(TraversalRequestId requestId, TraversalResource& resource)
+	{
+		constexpr uint32_t MaximumPreparationAttempts = 2;
+		constexpr uint64_t RetryDelayTicks = 3;
+
+		auto request = mTraversalRequests.find(requestId);
+		if (!request || request->mState != TraversalRequestState::Pending)
+		{
+			return;
+		}
+
+		auto applicableControl = [&](TraversalRequest const& candidate) -> InteractionPointId
+		{
+			for (auto pointId : resource.mControls)
+			{
+				auto point = mInteractionPoints.find(pointId);
+				if (point && point->mSector == candidate.mSourceSector)
+				{
+					return pointId;
+				}
+			}
+			return {};
+		};
+
+		if (!applicableControl(*request))
+		{
+			denyTraversalRequest(requestId, TraversalFailureReason::NoReachableControl);
+			return;
+		}
+
+		bool failedPreparation = false;
+		bool completedPreparation = false;
+		if (resource.mActivePreparation)
+		{
+			auto active = mInteractionRequests.find(resource.mActivePreparation);
+			if (active && active->mResult == InteractionResult::Pending)
+			{
+				bool interactionStarted = false;
+				for (auto const& [operationId, requirement] : active->mOperations)
+				{
+					(void)requirement;
+					if (auto operation = mDeviceOperations.find(operationId))
+					{
+						interactionStarted = interactionStarted || operation->mActivated;
+						operation->mRequesters.insert(request->mOwner);
+						if (!request->mPreparationOperation)
+						{
+							request->mPreparationOperation = operationId;
+						}
+					}
+				}
+				request->mPreparationRequested = true;
+
+				// If some other source achieved the desired state before the operator
+				// touched the control, release its physical reservation immediately.
+				if (resource.mDoor->isOpen() && !interactionStarted)
+				{
+					cancelInteraction(resource.mActivePreparation);
+					resource.mActivePreparation = {};
+					resource.mPreparationOperator = {};
+					resource.mSharedPreparationOperation = {};
+					grantTraversalRequest(requestId);
+				}
+				return;
+			}
+
+			if (active && active->mResult == InteractionResult::Rejected)
+			{
+				resource.mActivePreparation = {};
+				resource.mPreparationOperator = {};
+				resource.mSharedPreparationOperation = {};
+				denyTraversalRequest(requestId, TraversalFailureReason::ControlRejected);
+				return;
+			}
+			if (active && (active->mResult == InteractionResult::Succeeded
+				|| active->mResult == InteractionResult::SucceededWithBestEffortFailure))
+			{
+				completedPreparation = true;
+				resource.mPreparationAttempts = 0;
+			}
+			if (active && active->mResult == InteractionResult::Failed)
+			{
+				failedPreparation = true;
+				++resource.mPreparationAttempts;
+				resource.mNextPreparationTick = mSimulationTick + RetryDelayTicks;
+			}
+			resource.mActivePreparation = {};
+			resource.mPreparationOperator = {};
+			resource.mSharedPreparationOperation = {};
+		}
+
+		if (resource.mDoor->isOpen() && !failedPreparation
+			&& (resource.mPreparationAttempts == 0 || completedPreparation))
+		{
+			grantTraversalRequest(requestId);
+			return;
+		}
+
+		if (resource.mPreparationAttempts >= MaximumPreparationAttempts)
+		{
+			denyTraversalRequest(requestId, TraversalFailureReason::PreparationFailed);
+			return;
+		}
+		if (mSimulationTick < resource.mNextPreparationTick)
+		{
+			return; // A temporary block uses a stable, tick-based retry delay.
+		}
+
+		TraversalRequestId selected;
+		InteractionPointId selectedControl;
+		for (auto const& [candidateId, candidate] : mTraversalRequests.entries())
+		{
+			if (candidate->mResource != request->mResource
+				|| candidate->mState != TraversalRequestState::Pending)
+			{
+				continue;
+			}
+			auto control = applicableControl(*candidate);
+			if (control && (!selected || candidateId < selected))
+			{
+				selected = candidateId;
+				selectedControl = control;
+			}
+		}
+		if (selected != requestId)
+		{
+			return;
+		}
+
+		auto interactionId = requestInteractionForTraversal(selectedControl, request->mOwner);
+		if (!interactionId)
+		{
+			// Another locomotion/interaction task can make the control temporarily
+			// busy. Do not turn that scheduling condition into permanent rejection.
+			resource.mNextPreparationTick = mSimulationTick + RetryDelayTicks;
+			return;
+		}
+		auto interaction = mInteractionRequests.find(interactionId);
+		if (!interaction || interaction->mOperations.empty())
+		{
+			denyTraversalRequest(requestId, TraversalFailureReason::ControlRejected);
+			return;
+		}
+
+		resource.mActivePreparation = interactionId;
+		resource.mPreparationOperator = requestId;
+		resource.mSharedPreparationOperation = interaction->mOperations.front().first;
+		for (auto const& [candidateId, candidate] : mTraversalRequests.entries())
+		{
+			(void)candidateId;
+			if (candidate->mResource != request->mResource
+				|| candidate->mState != TraversalRequestState::Pending)
+			{
+				continue;
+			}
+			candidate->mPreparationRequested = true;
+			candidate->mPreparationOperation = resource.mSharedPreparationOperation;
+			for (auto const& [operationId, requirement] : interaction->mOperations)
+			{
+				(void)requirement;
+				if (auto operation = mDeviceOperations.find(operationId))
+				{
+					operation->mRequesters.insert(candidate->mOwner);
+				}
+			}
+		}
+	}
+
+	void Building::denyTraversalRequest(TraversalRequestId requestId, TraversalFailureReason reason)
 	{
 		auto request = mTraversalRequests.find(requestId);
 		if (!request || request->mState != TraversalRequestState::Pending)
@@ -2578,6 +2766,7 @@ namespace core
 			return;
 		}
 		request->mState = TraversalRequestState::Denied;
+		request->mFailureReason = reason;
 
 		SimulationEvent event;
 		event.sequence = mNextEventSequence++;
@@ -2643,6 +2832,22 @@ namespace core
 
 	void Building::cancelTraversal(TraversalRequestId requestId, TraversalPermitId permitId)
 	{
+		if (auto request = mTraversalRequests.find(requestId))
+		{
+			if (auto resource = mTraversalResources.find(request->mResource);
+				resource && resource->mPreparationOperator == requestId)
+			{
+				if (resource->mActivePreparation)
+				{
+					cancelInteraction(resource->mActivePreparation);
+				}
+				resource->mActivePreparation = {};
+				resource->mPreparationOperator = {};
+				resource->mSharedPreparationOperation = {};
+				resource->mNextPreparationTick = mSimulationTick + 1;
+			}
+		}
+
 		if (auto permit = mTraversalPermits.find(permitId);
 			permit && permit->mState == TraversalPermitState::Active)
 		{
@@ -2681,7 +2886,22 @@ namespace core
 			}
 			if (request->mState == TraversalRequestState::Cancelled && request->mPreparationOperation)
 			{
-				cancelDeviceOperation(request->mPreparationOperation, request->mOwner);
+				if (auto resource = mTraversalResources.find(request->mResource);
+					resource && resource->mActivePreparation)
+				{
+					if (auto interaction = mInteractionRequests.find(resource->mActivePreparation))
+					{
+						for (auto const& [operationId, requirement] : interaction->mOperations)
+						{
+							(void)requirement;
+							cancelDeviceOperation(operationId, request->mOwner);
+						}
+					}
+				}
+				else
+				{
+					cancelDeviceOperation(request->mPreparationOperation, request->mOwner);
+				}
 			}
 		}
 
@@ -2910,7 +3130,9 @@ namespace core
 	{
 		auto point = mInteractionPoints.find(pointId);
 		auto actor = mAgents.find(actorId);
-		if (!point || !actor || !point->mSector || actor->getState() != Agent::State::Idle
+		if (!point || !actor || !point->mSector
+			|| (actor->getState() != Agent::State::Idle
+				&& actor->getState() != Agent::State::WaitingForTraversal)
 			|| actor->getSector() != mSectors[(size_t)point->mSector.value - 1].get())
 		{
 			return {};
@@ -2938,6 +3160,11 @@ namespace core
 		event.interactionRequest = makeInteractionRequestSnapshot(id, *request);
 		mEvents.push_back(std::move(event));
 		return id;
+	}
+
+	InteractionRequestId Building::requestInteractionForTraversal(InteractionPointId point, AgentId actor)
+	{
+		return requestInteraction(point, actor);
 	}
 
 	EntityLookup<InteractionRequest const> Building::lookupInteractionRequest(InteractionRequestId id) const
@@ -3106,6 +3333,22 @@ namespace core
 		return id;
 	}
 
+	bool Building::addTraversalControl(TraversalResourceId resourceId, InteractionPointId controlId)
+	{
+		auto resource = mTraversalResources.find(resourceId);
+		auto control = mInteractionPoints.find(controlId);
+		if (!resource || !resource->mDoor || !control)
+		{
+			return false;
+		}
+		if (find(resource->mControls.begin(), resource->mControls.end(), controlId) == resource->mControls.end())
+		{
+			resource->mControls.push_back(controlId);
+			sort(resource->mControls.begin(), resource->mControls.end());
+		}
+		return true;
+	}
+
 	EntityLookup<TraversalResource> Building::lookupTraversalResource(TraversalResourceId id)
 	{
 		auto entity = mTraversalResources.find(id);
@@ -3259,7 +3502,13 @@ namespace core
 			(void)pointId;
 			if (point->mActiveRequest)
 			{
-				continue;
+				auto active = mInteractionRequests.find(point->mActiveRequest);
+				if (active && active->mResult == InteractionResult::Pending)
+				{
+					continue;
+				}
+				point->mActiveRequest = {};
+				point->mInteractionTicksRemaining = 0;
 			}
 			while (!point->mQueue.empty())
 			{
@@ -3344,11 +3593,23 @@ namespace core
 			}
 			bool waiting = false;
 			bool requiredFailure = false;
+			bool requiredRejection = false;
 			bool bestEffortFailure = false;
 			for (auto const& [operationId, requirement] : request->mOperations)
 			{
 				auto operation = mDeviceOperations.find(operationId);
-				if (!operation || operation->mState == DeviceOperationState::Failed
+				if (operation && operation->mState == DeviceOperationState::Rejected)
+				{
+					if (requirement == InteractionBindingRequirement::Required)
+					{
+						requiredRejection = true;
+					}
+					else
+					{
+						bestEffortFailure = true;
+					}
+				}
+				else if (!operation || operation->mState == DeviceOperationState::Failed
 					|| operation->mState == DeviceOperationState::Cancelled)
 				{
 					(requirement == InteractionBindingRequirement::Required ? requiredFailure : bestEffortFailure) = true;
@@ -3358,7 +3619,11 @@ namespace core
 					waiting = true;
 				}
 			}
-			if (requiredFailure)
+			if (requiredRejection)
+			{
+				request->mResult = InteractionResult::Rejected;
+			}
+			else if (requiredFailure)
 			{
 				request->mResult = InteractionResult::Failed;
 			}

@@ -297,6 +297,10 @@ namespace core
 
 		void detachInteractionRequester(InteractionRequest& request);
 
+		InteractionRequestId requestInteractionForTraversal(InteractionPointId point, AgentId actor);
+
+		void allocateRemoteDoorPreparation(TraversalRequestId requestId, TraversalResource& resource);
+
 		TraversalResourceSnapshot makeTraversalResourceSnapshot(TraversalResourceId id, TraversalResource const& resource) const;
 
 		TraversalRequestSnapshot makeTraversalRequestSnapshot(TraversalRequestId id, TraversalRequest const& request) const;
@@ -311,7 +315,8 @@ namespace core
 		void allocateTraversalRequest(TraversalRequestId requestId,
 			std::shared_ptr<const Edge> const& edge, std::shared_ptr<const Vertex> const& destination);
 
-		void denyTraversalRequest(TraversalRequestId requestId);
+		void denyTraversalRequest(TraversalRequestId requestId,
+			TraversalFailureReason reason = TraversalFailureReason::None);
 
 		bool commitTraversal(Agent& agent, TraversalRequestId requestId, TraversalPermitId permitId,
 			std::shared_ptr<const Vertex> const& destination);
@@ -439,6 +444,10 @@ namespace core
 
 		TraversalResourceId createDoorTraversalResource(std::string const& name,
 			std::shared_ptr<Door> door, DoorActivationMode mode, float holdOpenSeconds);
+
+		// Registers a physical control as applicable from its interaction point's sector.
+		// Remote-controlled traversal never falls back to opening the Door directly.
+		bool addTraversalControl(TraversalResourceId resource, InteractionPointId control);
 
 		EntityLookup<TraversalResource> lookupTraversalResource(TraversalResourceId id);
 

@@ -438,6 +438,87 @@ namespace
 		return building.getSimulationSnapshot().traversalResources.front().doorState == core::DoorSnapshotState::Closed;
 	}
 
+	bool remoteDoorUsesOnePhysicalOperatorAndSharedOperation()
+	{
+		core::Building building("Shared remote door", 7, 2);
+		auto fore = building.addRoom("Fore", CORE_LAYER_FORE, 0, 0, 6, 1);
+		auto back = building.addRoom("Back", CORE_LAYER_BACK, 0, 0, 6, 1);
+		core::Building::CreateDoorOptions options;
+		options.activationMode = core::DoorActivationMode::RemoteControlled;
+		options.controllers[0] = true;
+		options.controllers[1] = true;
+		options.orchestrate = true;
+		auto created = building.addSectorDoor(0, 3, options);
+		building.finishBuild();
+
+		auto edge = *std::find_if(building.getGraph()->getEdges().begin(), building.getGraph()->getEdges().end(),
+			[](auto const& candidate) { return candidate->getType() == core::EdgeType::Door; });
+		auto source = edge->getVertex(0)->getSector()->getIndex() == fore ? edge->getVertex(0) : edge->getVertex(1);
+		auto destination = edge->getOtherVertex(source);
+		auto firstId = building.createAgent("First remote waiter", fore, 0, 0.4f);
+		auto secondId = building.createAgent("Second remote waiter", fore, 0, 0.6f);
+		auto first = building.lookupAgent(firstId).entity;
+		auto second = building.lookupAgent(secondId).entity;
+		first->setPath(twoNodePath(source, destination, edge), true);
+		second->setPath(twoNodePath(source, destination, edge), true);
+
+		bool observedSharedPreparation = false;
+		bool cancelledFirst = false;
+		for (uint32_t i = 0; i < MaximumSimulationTicks
+			&& second->getState() != core::Agent::State::Idle; ++i)
+		{
+			building.advanceTick();
+			auto snapshot = building.getSimulationSnapshot();
+			if (!cancelledFirst && snapshot.traversalRequests.size() == 2
+				&& snapshot.interactionRequests.size() == 1
+				&& snapshot.deviceOperations.size() == 1
+				&& snapshot.deviceOperations.front().requesters.size() == 2
+				&& snapshot.traversalResources.front().preparationOperator
+				&& snapshot.traversalResources.front().activePreparation)
+			{
+				observedSharedPreparation = true;
+				first->clearPath();
+				cancelledFirst = true;
+			}
+		}
+
+		auto snapshot = building.getSimulationSnapshot();
+		return observedSharedPreparation && cancelledFirst
+			&& first->getSector() == building.getSector(fore).get()
+			&& second->getState() == core::Agent::State::Idle
+			&& second->getSector() == building.getSector(back).get()
+			&& snapshot.deviceOperations.size() >= 1
+			&& std::any_of(snapshot.deviceOperations.begin(), snapshot.deviceOperations.end(), [](auto const& operation)
+				{ return operation.command.type == core::DeviceCommandType::OpenDoor
+					&& operation.state == core::DeviceOperationState::Succeeded; });
+	}
+
+	bool remoteDoorWithoutReachableControlIsUnavailable()
+	{
+		core::Building building("Uncontrolled remote door", 6, 2);
+		auto fore = building.addRoom("Fore", CORE_LAYER_FORE, 0, 0, 5, 1);
+		building.addRoom("Back", CORE_LAYER_BACK, 0, 0, 5, 1);
+		core::Building::CreateDoorOptions options;
+		options.activationMode = core::DoorActivationMode::RemoteControlled;
+		options.controllers[0] = false;
+		options.controllers[1] = false;
+		auto created = building.addSectorDoor(0, 2, options);
+		building.finishBuild();
+		auto edge = *std::find_if(building.getGraph()->getEdges().begin(), building.getGraph()->getEdges().end(),
+			[](auto const& candidate) { return candidate->getType() == core::EdgeType::Door; });
+		auto source = edge->getVertex(0)->getSector()->getIndex() == fore ? edge->getVertex(0) : edge->getVertex(1);
+		auto destination = edge->getOtherVertex(source);
+		auto agentId = building.createAgent("Stranded remote waiter", fore, 0, 0.5f);
+		auto agent = building.lookupAgent(agentId).entity;
+		agent->setPath(twoNodePath(source, destination, edge), true);
+		building.advanceTicks(400);
+		auto snapshot = building.getSimulationSnapshot();
+		return snapshot.traversalRequests.size() == 1
+			&& snapshot.traversalRequests.front().state == core::TraversalRequestState::Denied
+			&& snapshot.traversalRequests.front().failureReason == core::TraversalFailureReason::NoReachableControl
+			&& snapshot.deviceOperations.empty() && snapshot.interactionRequests.empty();
+	}
+
 	bool unavailableDoorRejectsTraversal()
 	{
 		core::Building building("Unavailable door", 6, 2);
@@ -606,6 +687,16 @@ int main()
 		if (!singleAgentDoorJourney(core::DoorActivationMode::Automatic))
 		{
 			std::cerr << "FAIL: automatic door journey or hold-open safety failed\n";
+			return 1;
+		}
+		if (!remoteDoorUsesOnePhysicalOperatorAndSharedOperation())
+		{
+			std::cerr << "FAIL: remote door did not share physical preparation or survive operator cancellation\n";
+			return 1;
+		}
+		if (!remoteDoorWithoutReachableControlIsUnavailable())
+		{
+			std::cerr << "FAIL: remote door without a reachable control was not reported unavailable\n";
 			return 1;
 		}
 		if (!unavailableDoorRejectsTraversal())

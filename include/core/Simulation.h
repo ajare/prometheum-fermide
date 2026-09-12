@@ -80,6 +80,9 @@ namespace core
 		float doorOpenPercentage{ 0.0f };
 		uint32_t openLeaseCount{ 0 };
 		uint64_t holdOpenTicks{ 0 };
+		std::vector<InteractionPointId> controls;
+		InteractionRequestId activePreparation;
+		TraversalRequestId preparationOperator;
 	};
 
 	struct TraversalRequestSnapshot
@@ -95,6 +98,7 @@ namespace core
 		TraversalResourceId resource;
 		DeviceOperationId preparationOperation;
 		TraversalPermitId permit;
+		TraversalFailureReason failureReason{ TraversalFailureReason::None };
 	};
 
 	struct TraversalPermitSnapshot
