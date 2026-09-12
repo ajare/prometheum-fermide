@@ -303,6 +303,118 @@ namespace
 			&& snapshot.traversalPermits.empty();
 	}
 
+	bool typedLightingInteractionCoalescesAndCancelsByRequester()
+	{
+		core::Building building("Typed lighting interaction", 6, 2);
+		auto corridorIndex = building.addCorridor(0, 0, 5);
+		building.finishBuild();
+		auto sectorId = core::SectorId{ (uint64_t)corridorIndex + 1 };
+		auto firstAgent = building.createAgent("First operator", corridorIndex, 0, 0.5f);
+		auto secondAgent = building.createAgent("Dependent operator", corridorIndex, 0, 0.7f);
+
+		core::InteractionBinding binding;
+		binding.command = { core::DeviceCommandType::SetSectorLights, sectorId, false };
+		binding.requirement = core::InteractionBindingRequirement::Required;
+		auto point = building.createInteractionPoint("Typed light control", sectorId,
+			{ 3.5f, 0.5f }, 0.1f, core::Building::getFixedTimestep() * 3.0f, { binding });
+		auto firstRequest = building.requestInteraction(point, firstAgent);
+		auto secondRequest = building.requestInteraction(point, secondAgent);
+		if (!firstRequest || !secondRequest)
+		{
+			return false;
+		}
+
+		auto first = building.lookupInteractionRequest(firstRequest);
+		auto second = building.lookupInteractionRequest(secondRequest);
+		if (!first || !second || first.entity->getOperations().size() != 1
+			|| second.entity->getOperations().size() != 1
+			|| first.entity->getOperations().front().first != second.entity->getOperations().front().first)
+		{
+			return false;
+		}
+		auto operationId = first.entity->getOperations().front().first;
+
+		for (uint32_t i = 0; i < MaximumSimulationTicks; ++i)
+		{
+			building.advanceTick();
+			auto operation = building.lookupDeviceOperation(operationId);
+			if (operation && operation.entity->getState() == core::DeviceOperationState::Running)
+			{
+				break;
+			}
+		}
+		auto firstPosition = building.lookupAgent(firstAgent).entity->getGlobalPosition();
+		if (firstPosition.distanceTo({ 3.5f, 0.5f }) > 0.101f || !building.cancelInteraction(firstRequest))
+		{
+			return false;
+		}
+		auto operation = building.lookupDeviceOperation(operationId);
+		if (!operation || operation.entity->getState() == core::DeviceOperationState::Cancelled
+			|| operation.entity->getRequesters().size() != 1
+			|| !operation.entity->getRequesters().contains(secondAgent))
+		{
+			return false;
+		}
+
+		building.advanceTicks(3);
+		first = building.lookupInteractionRequest(firstRequest);
+		second = building.lookupInteractionRequest(secondRequest);
+		auto snapshot = building.getSimulationSnapshot();
+		return first && first.entity->getResult() == core::InteractionResult::Cancelled
+			&& second && second.entity->getResult() == core::InteractionResult::Succeeded
+			&& !building.getSector(corridorIndex)->areLightsOn()
+			&& snapshot.deviceOperations.size() == 1
+			&& snapshot.deviceOperations.front().hasCommand
+			&& snapshot.deviceOperations.front().command.type == core::DeviceCommandType::SetSectorLights
+			&& snapshot.deviceOperations.front().state == core::DeviceOperationState::Succeeded
+			&& snapshot.interactionPoints.front().activeRequest == core::InteractionRequestId{};
+	}
+
+	bool interactionBindingAggregationIsMeaningful()
+	{
+		core::Building building("Binding aggregation", 3, 2);
+		auto corridorIndex = building.addCorridor(0, 0, 2);
+		building.finishBuild();
+		auto sectorId = core::SectorId{ (uint64_t)corridorIndex + 1 };
+		auto actor = building.createAgent("Binding operator", corridorIndex, 0, 0.5f);
+
+		core::InteractionBinding required{ { core::DeviceCommandType::SetSectorLights, sectorId, false },
+			core::InteractionBindingRequirement::Required };
+		core::InteractionBinding bestEffort{ { core::DeviceCommandType::SetSectorLights, sectorId, true },
+			core::InteractionBindingRequirement::BestEffort };
+		auto point = building.createInteractionPoint("Multi-binding control", sectorId,
+			{ 0.5f, 0.0f }, 0.6f, 0.0f, { required, bestEffort });
+		auto requestId = building.requestInteraction(point, actor);
+		auto request = building.lookupInteractionRequest(requestId);
+		if (!request || request.entity->getOperations().size() != 2)
+		{
+			return false;
+		}
+		auto failedBestEffort = request.entity->getOperations()[1].first;
+		building.lookupDeviceOperation(failedBestEffort).entity->setState(core::DeviceOperationState::Failed);
+		building.advanceTicks(4);
+		request = building.lookupInteractionRequest(requestId);
+		if (!request || request.entity->getResult() != core::InteractionResult::SucceededWithBestEffortFailure)
+		{
+			return false;
+		}
+
+		core::InteractionBinding failingRequired{ { core::DeviceCommandType::SetSectorLights, sectorId, true },
+			core::InteractionBindingRequirement::Required };
+		auto requiredPoint = building.createInteractionPoint("Required control", sectorId,
+			{ 0.5f, 0.0f }, 0.6f, 0.0f, { failingRequired });
+		auto failedRequestId = building.requestInteraction(requiredPoint, actor);
+		auto failedRequest = building.lookupInteractionRequest(failedRequestId);
+		if (!failedRequest)
+		{
+			return false;
+		}
+		building.lookupDeviceOperation(failedRequest.entity->getOperations().front().first).entity->setState(
+			core::DeviceOperationState::Failed);
+		building.advanceTick();
+		return building.lookupInteractionRequest(failedRequestId).entity->getResult() == core::InteractionResult::Failed;
+	}
+
 	ScenarioResult runOrdinaryPathScenario()
 	{
 		core::Building building("Headless smoke building", 7, 2);
@@ -377,6 +489,16 @@ int main()
 		if (!cancellationReleasesPermitWithoutCommitting())
 		{
 			std::cerr << "FAIL: traversal cancellation leaked or committed membership\n";
+			return 1;
+		}
+		if (!typedLightingInteractionCoalescesAndCancelsByRequester())
+		{
+			std::cerr << "FAIL: typed lighting interaction, coalescing, or requester cancellation failed\n";
+			return 1;
+		}
+		if (!interactionBindingAggregationIsMeaningful())
+		{
+			std::cerr << "FAIL: required and best-effort interaction aggregation failed\n";
 			return 1;
 		}
 

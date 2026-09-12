@@ -152,6 +152,8 @@ namespace core
 
 		EntityRegistry<InteractionPointId, InteractionPoint> mInteractionPoints;
 
+		EntityRegistry<InteractionRequestId, InteractionRequest> mInteractionRequests;
+
 		EntityRegistry<DeviceOperationId, DeviceOperation> mDeviceOperations;
 
 		EntityRegistry<TraversalResourceId, TraversalResource> mTraversalResources;
@@ -276,7 +278,21 @@ namespace core
 
 		InteractionPointSnapshot makeInteractionPointSnapshot(InteractionPointId id, InteractionPoint const& point) const;
 
+		InteractionRequestSnapshot makeInteractionRequestSnapshot(InteractionRequestId id, InteractionRequest const& request) const;
+
 		DeviceOperationSnapshot makeDeviceOperationSnapshot(DeviceOperationId id, DeviceOperation const& operation) const;
+
+		DeviceOperationId findOrCreateDeviceOperation(DeviceCommand const& command, AgentId requester);
+
+		void advanceDeviceOperations();
+
+		void allocateInteractions();
+
+		void moveInteractions(float frameTime);
+
+		void updateInteractionResults();
+
+		void detachInteractionRequester(InteractionRequest& request);
 
 		TraversalResourceSnapshot makeTraversalResourceSnapshot(TraversalResourceId id, TraversalResource const& resource) const;
 
@@ -390,17 +406,28 @@ namespace core
 
 		InteractionPointId createInteractionPoint(std::string const& name);
 
+		InteractionPointId createInteractionPoint(std::string const& name, SectorId sector,
+			Vector2 position, float reach, float durationSeconds, std::vector<InteractionBinding> bindings);
+
 		EntityLookup<InteractionPoint> lookupInteractionPoint(InteractionPointId id);
 
 		EntityLookup<InteractionPoint const> lookupInteractionPoint(InteractionPointId id) const;
 
 		EntityRemovalResult removeInteractionPoint(InteractionPointId id);
 
+		InteractionRequestId requestInteraction(InteractionPointId point, AgentId actor);
+
+		EntityLookup<InteractionRequest const> lookupInteractionRequest(InteractionRequestId id) const;
+
+		bool cancelInteraction(InteractionRequestId id);
+
 		DeviceOperationId createDeviceOperation(std::string const& name, AgentId requester);
 
 		EntityLookup<DeviceOperation> lookupDeviceOperation(DeviceOperationId id);
 
 		EntityLookup<DeviceOperation const> lookupDeviceOperation(DeviceOperationId id) const;
+
+		bool cancelDeviceOperation(DeviceOperationId id, AgentId requester);
 
 		EntityRemovalResult removeDeviceOperation(DeviceOperationId id);
 

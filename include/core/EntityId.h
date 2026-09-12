@@ -22,6 +22,7 @@ namespace core
 	CORE_DEFINE_ENTITY_ID(AgentId);
 	CORE_DEFINE_ENTITY_ID(SectorId);
 	CORE_DEFINE_ENTITY_ID(InteractionPointId);
+	CORE_DEFINE_ENTITY_ID(InteractionRequestId);
 	CORE_DEFINE_ENTITY_ID(DeviceOperationId);
 	CORE_DEFINE_ENTITY_ID(TraversalResourceId);
 	CORE_DEFINE_ENTITY_ID(TraversalRequestId);

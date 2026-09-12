@@ -34,12 +34,27 @@ namespace core
 		bool hasLocomotionTask{ false };
 		TraversalRequestId traversalRequest;
 		TraversalPermitId traversalPermit;
+		InteractionRequestId interactionRequest;
 	};
 
 	struct InteractionPointSnapshot
 	{
 		InteractionPointId id;
 		std::string name;
+		SectorId sectorId;
+		Vector2 position;
+		float reach{ 0.0f };
+		uint64_t durationTicks{ 0 };
+		InteractionRequestId activeRequest;
+	};
+
+	struct InteractionRequestSnapshot
+	{
+		InteractionRequestId id;
+		InteractionPointId point;
+		AgentId actor;
+		InteractionResult result{ InteractionResult::Pending };
+		std::vector<DeviceOperationId> operations;
 	};
 
 	struct DeviceOperationSnapshot
@@ -47,6 +62,9 @@ namespace core
 		DeviceOperationId id;
 		std::string name;
 		AgentId requester;
+		std::vector<AgentId> requesters;
+		bool hasCommand{ false };
+		DeviceCommand command;
 		DeviceOperationState state{ DeviceOperationState::Pending };
 	};
 
@@ -82,6 +100,7 @@ namespace core
 		uint64_t tick{ 0 };
 		std::vector<AgentSnapshot> agents;
 		std::vector<InteractionPointSnapshot> interactionPoints;
+		std::vector<InteractionRequestSnapshot> interactionRequests;
 		std::vector<DeviceOperationSnapshot> deviceOperations;
 		std::vector<TraversalResourceSnapshot> traversalResources;
 		std::vector<TraversalRequestSnapshot> traversalRequests;
@@ -108,6 +127,9 @@ namespace core
 		AgentRemoved,
 		InteractionPointAdded,
 		InteractionPointRemoved,
+		InteractionRequestAdded,
+		InteractionRequestChanged,
+		InteractionRequestRemoved,
 		DeviceOperationAdded,
 		DeviceOperationChanged,
 		DeviceOperationRemoved,
@@ -133,6 +155,7 @@ namespace core
 		AgentSnapshot previousAgent;
 		AgentSnapshot agent;
 		InteractionPointSnapshot interactionPoint;
+		InteractionRequestSnapshot interactionRequest;
 		DeviceOperationSnapshot deviceOperation;
 		TraversalResourceSnapshot traversalResource;
 		TraversalRequestSnapshot traversalRequest;

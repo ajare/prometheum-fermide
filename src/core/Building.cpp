@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cmath>
 #include <set>
 #include <iterator>
 #include <stdexcept>
@@ -2317,6 +2318,15 @@ namespace core
 		result.hasLocomotionTask = agent->hasActiveLocomotionTask();
 		result.traversalRequest = agent->getTraversalRequestId();
 		result.traversalPermit = agent->getTraversalPermitId();
+		for (auto const& [requestId, request] : mInteractionRequests.entries())
+		{
+			if (request->getActor() == result.id && request->getResult() == InteractionResult::Pending)
+			{
+				result.interactionRequest = requestId;
+				result.hasLocomotionTask = true;
+				break;
+			}
+		}
 
 		switch (agent->getState())
 		{
@@ -2345,12 +2355,39 @@ namespace core
 
 	InteractionPointSnapshot Building::makeInteractionPointSnapshot(InteractionPointId id, InteractionPoint const& point) const
 	{
-		return { id, point.getName() };
+		return { id, point.getName(), point.getSector(), point.getPosition(), point.getReach(),
+			point.getDurationTicks(), point.getActiveRequest() };
+	}
+
+	InteractionRequestSnapshot Building::makeInteractionRequestSnapshot(InteractionRequestId id, InteractionRequest const& request) const
+	{
+		InteractionRequestSnapshot result;
+		result.id = id;
+		result.point = request.getPoint();
+		result.actor = request.getActor();
+		result.result = request.getResult();
+		for (auto const& [operation, requirement] : request.getOperations())
+		{
+			(void)requirement;
+			result.operations.push_back(operation);
+		}
+		return result;
 	}
 
 	DeviceOperationSnapshot Building::makeDeviceOperationSnapshot(DeviceOperationId id, DeviceOperation const& operation) const
 	{
-		return { id, operation.getName(), operation.getRequester(), operation.getState() };
+		DeviceOperationSnapshot result;
+		result.id = id;
+		result.name = operation.getName();
+		result.requester = operation.getRequester();
+		result.requesters.assign(operation.getRequesters().begin(), operation.getRequesters().end());
+		result.hasCommand = operation.hasCommand();
+		if (result.hasCommand)
+		{
+			result.command = operation.getCommand();
+		}
+		result.state = operation.getState();
+		return result;
 	}
 
 	TraversalResourceSnapshot Building::makeTraversalResourceSnapshot(TraversalResourceId id, TraversalResource const& resource) const
@@ -2594,23 +2631,34 @@ namespace core
 			return { false, format("Agent handle {} is active and cannot be removed safely", id.value) };
 		}
 
+		vector<InteractionRequestId> ownedRequests;
+		for (auto const& [requestId, request] : mInteractionRequests.entries())
+		{
+			if (request->getActor() == id && request->getResult() == InteractionResult::Pending)
+			{
+				ownedRequests.push_back(requestId);
+			}
+		}
+		for (auto requestId : ownedRequests)
+		{
+			cancelInteraction(requestId);
+		}
+
 		vector<DeviceOperationId> ownedOperations;
 		for (auto const& [operationId, operation] : mDeviceOperations.entries())
 		{
-			if (operation->getRequester() == id)
+			if (operation->getRequesters().contains(id))
 			{
 				ownedOperations.push_back(operationId);
 			}
 		}
 		for (auto operationId : ownedOperations)
 		{
-			auto operation = mDeviceOperations.find(operationId);
-			if (operation->getState() == DeviceOperationState::Pending
-				|| operation->getState() == DeviceOperationState::Running)
+			cancelDeviceOperation(operationId, id);
+			if (auto operation = mDeviceOperations.find(operationId); operation && operation->getRequesters().empty())
 			{
-				operation->setState(DeviceOperationState::Cancelled);
+				(void)removeDeviceOperation(operationId);
 			}
-			(void)removeDeviceOperation(operationId);
 		}
 
 		auto snapshot = makeAgentSnapshot(found.entity);
@@ -2642,6 +2690,36 @@ namespace core
 		return id;
 	}
 
+	InteractionPointId Building::createInteractionPoint(string const& name, SectorId sector,
+		Vector2 position, float reach, float durationSeconds, vector<InteractionBinding> bindings)
+	{
+		if (!sector || sector.value > mSectors.size())
+		{
+			throw invalid_argument("An interaction point requires a valid sector");
+		}
+		if (reach < 0.0f || durationSeconds < 0.0f || bindings.empty())
+		{
+			throw invalid_argument("An interaction point requires non-negative timing and at least one binding");
+		}
+		for (auto const& binding : bindings)
+		{
+			if (!binding.command.target || binding.command.target.value > mSectors.size())
+			{
+				throw invalid_argument("An interaction binding requires a valid command target");
+			}
+		}
+		auto durationTicks = max<uint64_t>(1, (uint64_t)ceil(durationSeconds / getFixedTimestep()));
+		auto id = mInteractionPoints.add(unique_ptr<InteractionPoint>(new InteractionPoint(
+			name, sector, position, reach, durationTicks, std::move(bindings))));
+		SimulationEvent event;
+		event.sequence = mNextEventSequence++;
+		event.tick = mSimulationTick;
+		event.type = SimulationEventType::InteractionPointAdded;
+		event.interactionPoint = makeInteractionPointSnapshot(id, *mInteractionPoints.find(id));
+		mEvents.push_back(std::move(event));
+		return id;
+	}
+
 	EntityLookup<InteractionPoint> Building::lookupInteractionPoint(InteractionPointId id)
 	{
 		auto entity = mInteractionPoints.find(id);
@@ -2663,6 +2741,18 @@ namespace core
 		{
 			return { false, found.diagnostic };
 		}
+		vector<InteractionRequestId> requests;
+		for (auto const& [requestId, request] : mInteractionRequests.entries())
+		{
+			if (request->getPoint() == id && request->getResult() == InteractionResult::Pending)
+			{
+				requests.push_back(requestId);
+			}
+		}
+		for (auto requestId : requests)
+		{
+			cancelInteraction(requestId);
+		}
 		auto snapshot = makeInteractionPointSnapshot(id, *found.entity);
 		mInteractionPoints.remove(id);
 
@@ -2673,6 +2763,116 @@ namespace core
 		event.interactionPoint = std::move(snapshot);
 		mEvents.push_back(std::move(event));
 		return { true, {} };
+	}
+
+	DeviceOperationId Building::findOrCreateDeviceOperation(DeviceCommand const& command, AgentId requester)
+	{
+		for (auto const& [id, operation] : mDeviceOperations.entries())
+		{
+			if (operation->mHasCommand && operation->mCommand == command
+				&& (operation->mState == DeviceOperationState::Pending || operation->mState == DeviceOperationState::Running))
+			{
+				operation->mRequesters.insert(requester);
+				return id;
+			}
+		}
+		auto name = command.type == DeviceCommandType::SetSectorLights
+			? string("Set sector lights ") + (command.desiredState ? "on" : "off") : "Device command";
+		auto id = mDeviceOperations.add(unique_ptr<DeviceOperation>(new DeviceOperation(name, requester, command)));
+		SimulationEvent event;
+		event.sequence = mNextEventSequence++;
+		event.tick = mSimulationTick;
+		event.type = SimulationEventType::DeviceOperationAdded;
+		event.phase = mCurrentPhase;
+		event.deviceOperation = makeDeviceOperationSnapshot(id, *mDeviceOperations.find(id));
+		mEvents.push_back(std::move(event));
+		return id;
+	}
+
+	InteractionRequestId Building::requestInteraction(InteractionPointId pointId, AgentId actorId)
+	{
+		auto point = mInteractionPoints.find(pointId);
+		auto actor = mAgents.find(actorId);
+		if (!point || !actor || !point->mSector || actor->getState() != Agent::State::Idle
+			|| actor->getSector() != mSectors[(size_t)point->mSector.value - 1].get())
+		{
+			return {};
+		}
+		for (auto const& [id, request] : mInteractionRequests.entries())
+		{
+			if (request->mActor == actorId && request->mResult == InteractionResult::Pending)
+			{
+				return request->mPoint == pointId ? id : InteractionRequestId{};
+			}
+		}
+		auto id = mInteractionRequests.add(unique_ptr<InteractionRequest>(new InteractionRequest(pointId, actorId)));
+		auto request = mInteractionRequests.find(id);
+		for (auto const& binding : point->mBindings)
+		{
+			request->mOperations.emplace_back(findOrCreateDeviceOperation(binding.command, actorId), binding.requirement);
+		}
+		point->mQueue.push_back(id);
+
+		SimulationEvent event;
+		event.sequence = mNextEventSequence++;
+		event.tick = mSimulationTick;
+		event.type = SimulationEventType::InteractionRequestAdded;
+		event.phase = mCurrentPhase;
+		event.interactionRequest = makeInteractionRequestSnapshot(id, *request);
+		mEvents.push_back(std::move(event));
+		return id;
+	}
+
+	EntityLookup<InteractionRequest const> Building::lookupInteractionRequest(InteractionRequestId id) const
+	{
+		auto entity = mInteractionRequests.find(id);
+		return entity ? EntityLookup<InteractionRequest const>{ entity, {} }
+			: EntityLookup<InteractionRequest const>{ nullptr, format("InteractionRequest handle {} is invalid", id.value) };
+	}
+
+	void Building::detachInteractionRequester(InteractionRequest& request)
+	{
+		for (auto const& [operationId, requirement] : request.mOperations)
+		{
+			(void)requirement;
+			if (auto operation = mDeviceOperations.find(operationId))
+			{
+				operation->mRequesters.erase(request.mActor);
+				if (operation->mRequesters.empty() && (operation->mState == DeviceOperationState::Pending
+					|| operation->mState == DeviceOperationState::Running))
+				{
+					operation->mState = DeviceOperationState::Cancelled;
+				}
+			}
+		}
+	}
+
+	bool Building::cancelInteraction(InteractionRequestId id)
+	{
+		auto request = mInteractionRequests.find(id);
+		if (!request || request->mResult != InteractionResult::Pending)
+		{
+			return false;
+		}
+		request->mResult = InteractionResult::Cancelled;
+		detachInteractionRequester(*request);
+		if (auto point = mInteractionPoints.find(request->mPoint))
+		{
+			if (point->mActiveRequest == id)
+			{
+				point->mActiveRequest = {};
+				point->mInteractionTicksRemaining = 0;
+			}
+			point->mQueue.erase(remove(point->mQueue.begin(), point->mQueue.end(), id), point->mQueue.end());
+		}
+		SimulationEvent event;
+		event.sequence = mNextEventSequence++;
+		event.tick = mSimulationTick;
+		event.type = SimulationEventType::InteractionRequestChanged;
+		event.phase = mCurrentPhase;
+		event.interactionRequest = makeInteractionRequestSnapshot(id, *request);
+		mEvents.push_back(std::move(event));
+		return true;
 	}
 
 	DeviceOperationId Building::createDeviceOperation(string const& name, AgentId requester)
@@ -2705,6 +2905,38 @@ namespace core
 		auto entity = mDeviceOperations.find(id);
 		return entity ? EntityLookup<DeviceOperation const>{ entity, {} }
 			: EntityLookup<DeviceOperation const>{ nullptr, format("DeviceOperation handle {} is invalid or has been removed", id.value) };
+	}
+
+	bool Building::cancelDeviceOperation(DeviceOperationId id, AgentId requester)
+	{
+		auto operation = mDeviceOperations.find(id);
+		if (!operation || !operation->mRequesters.erase(requester))
+		{
+			return false;
+		}
+		vector<InteractionRequestId> affectedRequests;
+		for (auto const& [requestId, request] : mInteractionRequests.entries())
+		{
+			if (request->mActor != requester || request->mResult != InteractionResult::Pending)
+			{
+				continue;
+			}
+			if (find_if(request->mOperations.begin(), request->mOperations.end(), [id](auto const& binding)
+				{ return binding.first == id; }) != request->mOperations.end())
+			{
+				affectedRequests.push_back(requestId);
+			}
+		}
+		for (auto requestId : affectedRequests)
+		{
+			cancelInteraction(requestId);
+		}
+		if (operation->mRequesters.empty() && (operation->mState == DeviceOperationState::Pending
+			|| operation->mState == DeviceOperationState::Running))
+		{
+			operation->mState = DeviceOperationState::Cancelled;
+		}
+		return true;
 	}
 
 	EntityRemovalResult Building::removeDeviceOperation(DeviceOperationId id)
@@ -2791,6 +3023,7 @@ namespace core
 		result.tick = mSimulationTick;
 		result.agents.reserve(mAgents.entries().size());
 		result.interactionPoints.reserve(mInteractionPoints.entries().size());
+		result.interactionRequests.reserve(mInteractionRequests.entries().size());
 		result.deviceOperations.reserve(mDeviceOperations.entries().size());
 		result.traversalResources.reserve(mTraversalResources.entries().size());
 		result.traversalRequests.reserve(mTraversalRequests.entries().size());
@@ -2804,6 +3037,10 @@ namespace core
 		for (auto const& [id, point] : mInteractionPoints.entries())
 		{
 			result.interactionPoints.push_back(makeInteractionPointSnapshot(id, *point));
+		}
+		for (auto const& [id, request] : mInteractionRequests.entries())
+		{
+			result.interactionRequests.push_back(makeInteractionRequestSnapshot(id, *request));
 		}
 		for (auto const& [id, operation] : mDeviceOperations.entries())
 		{
@@ -2825,6 +3062,166 @@ namespace core
 		return result;
 	}
 
+	void Building::advanceDeviceOperations()
+	{
+		for (auto const& [id, operation] : mDeviceOperations.entries())
+		{
+			(void)id;
+			if (!operation->mHasCommand || !operation->mActivated)
+			{
+				continue;
+			}
+			if (operation->mState == DeviceOperationState::Pending)
+			{
+				operation->mState = DeviceOperationState::Running;
+				continue;
+			}
+			if (operation->mState != DeviceOperationState::Running)
+			{
+				continue;
+			}
+			if (operation->mCommand.type == DeviceCommandType::SetSectorLights
+				&& operation->mCommand.target
+				&& operation->mCommand.target.value <= mSectors.size())
+			{
+				auto sector = mSectors[(size_t)operation->mCommand.target.value - 1];
+				bool succeeded = operation->mCommand.desiredState ? sector->lightsOn() : sector->lightsOff();
+				operation->mState = succeeded ? DeviceOperationState::Succeeded : DeviceOperationState::Failed;
+			}
+			else
+			{
+				operation->mState = DeviceOperationState::Failed;
+			}
+		}
+	}
+
+	void Building::allocateInteractions()
+	{
+		for (auto const& [pointId, point] : mInteractionPoints.entries())
+		{
+			(void)pointId;
+			if (point->mActiveRequest)
+			{
+				continue;
+			}
+			while (!point->mQueue.empty())
+			{
+				auto requestId = point->mQueue.front();
+				auto request = mInteractionRequests.find(requestId);
+				if (!request || request->mResult != InteractionResult::Pending)
+				{
+					point->mQueue.erase(point->mQueue.begin());
+					continue;
+				}
+				bool reusedActiveWork = false;
+				for (auto const& [operationId, requirement] : request->mOperations)
+				{
+					(void)requirement;
+					if (auto operation = mDeviceOperations.find(operationId); operation && operation->mActivated)
+					{
+						reusedActiveWork = true;
+						break;
+					}
+				}
+				if (reusedActiveWork)
+				{
+					point->mQueue.erase(point->mQueue.begin());
+					continue;
+				}
+				point->mActiveRequest = requestId;
+				point->mInteractionTicksRemaining = point->mDurationTicks;
+				break;
+			}
+		}
+	}
+
+	void Building::moveInteractions(float frameTime)
+	{
+		for (auto const& [pointId, point] : mInteractionPoints.entries())
+		{
+			(void)pointId;
+			auto request = mInteractionRequests.find(point->mActiveRequest);
+			if (!request || request->mResult != InteractionResult::Pending)
+			{
+				continue;
+			}
+			auto actor = mAgents.find(request->mActor);
+			if (!actor || actor->getSector() != mSectors[(size_t)point->mSector.value - 1].get())
+			{
+				cancelInteraction(point->mActiveRequest);
+				continue;
+			}
+			if (actor->getGlobalPosition().distanceTo(point->mPosition) > point->mReach)
+			{
+				actor->moveToPosition(point->mPosition, frameTime);
+				continue;
+			}
+			if (point->mInteractionTicksRemaining > 0)
+			{
+				--point->mInteractionTicksRemaining;
+			}
+			if (point->mInteractionTicksRemaining == 0)
+			{
+				for (auto const& [operationId, requirement] : request->mOperations)
+				{
+					(void)requirement;
+					if (auto operation = mDeviceOperations.find(operationId);
+						operation && operation->mState == DeviceOperationState::Pending)
+					{
+						operation->mActivated = true;
+					}
+				}
+				point->mQueue.erase(remove(point->mQueue.begin(), point->mQueue.end(), point->mActiveRequest), point->mQueue.end());
+				point->mActiveRequest = {};
+			}
+		}
+	}
+
+	void Building::updateInteractionResults()
+	{
+		for (auto const& [id, request] : mInteractionRequests.entries())
+		{
+			if (request->mResult != InteractionResult::Pending)
+			{
+				continue;
+			}
+			bool waiting = false;
+			bool requiredFailure = false;
+			bool bestEffortFailure = false;
+			for (auto const& [operationId, requirement] : request->mOperations)
+			{
+				auto operation = mDeviceOperations.find(operationId);
+				if (!operation || operation->mState == DeviceOperationState::Failed
+					|| operation->mState == DeviceOperationState::Cancelled)
+				{
+					(requirement == InteractionBindingRequirement::Required ? requiredFailure : bestEffortFailure) = true;
+				}
+				else if (operation->mState == DeviceOperationState::Pending || operation->mState == DeviceOperationState::Running)
+				{
+					waiting = true;
+				}
+			}
+			if (requiredFailure)
+			{
+				request->mResult = InteractionResult::Failed;
+			}
+			else if (!waiting)
+			{
+				request->mResult = bestEffortFailure ? InteractionResult::SucceededWithBestEffortFailure : InteractionResult::Succeeded;
+			}
+			if (request->mResult != InteractionResult::Pending)
+			{
+				SimulationEvent event;
+				event.sequence = mNextEventSequence++;
+				event.tick = mSimulationTick;
+				event.type = SimulationEventType::InteractionRequestChanged;
+				event.phase = mCurrentPhase;
+				event.interactionRequest = makeInteractionRequestSnapshot(id, *request);
+				mEvents.push_back(std::move(event));
+			}
+		}
+	}
+
 	void Building::runSimulationPhase(SimulationPhase phase)
 	{
 		mCurrentPhase = phase;
@@ -2837,6 +3234,7 @@ namespace core
 			{
 				sector->advanceResources(timestep);
 			}
+			advanceDeviceOperations();
 			break;
 
 		case SimulationPhase::IntentCollection:
@@ -2853,6 +3251,7 @@ namespace core
 				(void)id;
 				agent->allocateTraversal();
 			}
+			allocateInteractions();
 			break;
 
 		case SimulationPhase::Movement:
@@ -2861,6 +3260,7 @@ namespace core
 				(void)id;
 				agent->update(timestep);
 			}
+			moveInteractions(timestep);
 
 			for (auto const& vertexController : mVertexControllers)
 			{
@@ -2882,6 +3282,7 @@ namespace core
 				(void)id;
 				agent->cleanupTraversal();
 			}
+			updateInteractionResults();
 			break;
 
 		case SimulationPhase::None:
@@ -2925,7 +3326,8 @@ namespace core
 				|| current.pathNodeCount != previous.pathNodeCount
 				|| current.hasLocomotionTask != previous.hasLocomotionTask
 				|| current.traversalRequest != previous.traversalRequest
-				|| current.traversalPermit != previous.traversalPermit;
+				|| current.traversalPermit != previous.traversalPermit
+				|| current.interactionRequest != previous.interactionRequest;
 
 			if (changed)
 			{
