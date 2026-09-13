@@ -1,4 +1,5 @@
 #include <cassert>
+#include <cfloat>
 #include <set>
 #include <algorithm>
 
@@ -39,6 +40,7 @@ extern std::shared_ptr<const core::SectorObject> gHoveredSectorObject, gSelected
 extern GLuint gCellsTexture;
 extern int gCellsTextureWidth;
 extern int gCellsTextureHeight;
+extern ImFont* gAgentIconFont;
 
 using namespace std;
 
@@ -749,8 +751,21 @@ void renderAgent(core::Agent const* agent, ImDrawList* drawList)
 	transformPosition(pos0);
 	transformPosition(pos1);
 
-	auto colour = gSelectedAgent == agent ? ImColor(0.9f, 0.6f, 0.6f) : ImColor(0.7f, 0.3f, 0.3f);
-	drawList->AddRectFilled({ pos0.x, pos0.y }, { pos1.x, pos1.y }, colour);
+	auto colour = gSelectedAgent == agent ? ImColor(251, 188, 4) : ImColor(0.7f, 0.3f, 0.3f);
+	ImFont* font = gAgentIconFont ? gAgentIconFont : ImGui::GetFont();
+	float sourceSize = font->FontSize;
+	auto sourceBounds = font->CalcTextSizeA(sourceSize, FLT_MAX, 0.0f, ICON_FA_MALE);
+	float availableWidth = pos1.x - pos0.x;
+	float availableHeight = pos0.y - pos1.y;
+	float scale = min(availableWidth / max(sourceBounds.x, 1.0f),
+		availableHeight / max(sourceBounds.y, 1.0f));
+	float fontSize = sourceSize * scale;
+	auto iconSize = font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, ICON_FA_MALE);
+	ImVec2 iconPosition{
+		(pos0.x + pos1.x - iconSize.x) * 0.5f,
+		pos0.y - iconSize.y
+	};
+	drawList->AddText(font, fontSize, iconPosition, colour, ICON_FA_MALE);
 
 	if (gUISettings.renderAgentDebug)
 	{

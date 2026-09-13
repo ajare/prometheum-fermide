@@ -39,7 +39,7 @@
 extern spdlog::logger* gLogger;
 
 extern UISettings gUISettings;
-extern ImFont* gPegmanFont;
+extern ImFont* gAgentIconFont;
 
 core::InteractionPointId gHoveredInteractionPoint;
 core::Agent *gHoveredAgent{ nullptr }, *gSelectedAgent{ nullptr };
@@ -157,7 +157,7 @@ namespace
 
 	float fittedPegmanFontSize(float maximumWidth, float maximumHeight, ImVec2& renderedSize)
 	{
-		ImFont* font = gPegmanFont ? gPegmanFont : ImGui::GetFont();
+		ImFont* font = gAgentIconFont ? gAgentIconFont : ImGui::GetFont();
 		float sourceSize = font->FontSize;
 		auto sourceBounds = font->CalcTextSizeA(sourceSize, FLT_MAX, 0.0f, ICON_FA_STREET_VIEW);
 		float scale = min(maximumWidth / max(sourceBounds.x, 1.0f),
@@ -173,7 +173,7 @@ namespace
 		ImVec2 size;
 		float fontSize = fittedPegmanFontSize(maximumWidth, maximumHeight, size);
 		ImVec2 topLeft{ feet.x - size.x * 0.5f, feet.y - size.y };
-		drawList->AddText(gPegmanFont ? gPegmanFont : ImGui::GetFont(), fontSize,
+		drawList->AddText(gAgentIconFont ? gAgentIconFont : ImGui::GetFont(), fontSize,
 			topLeft, colour, ICON_FA_STREET_VIEW);
 	}
 
@@ -206,6 +206,8 @@ namespace
 			auto created = building->lookupAgent(id).entity;
 			setSelectionMode(UISettings::SelectionMode::Object);
 			gSelectedAgent = created;
+			gSelectedSector.reset();
+			gSelectedSectorObject.reset();
 		}
 		resetPegman();
 	}
@@ -328,7 +330,7 @@ MouseButtonStatus getMouseButtonStatus()
 
 	static ImVec2 frameDragDelta[2];
 
-	if (!io.WantCaptureMouse)
+	if (!io.WantCaptureMouse || mouseInteractingWithBackground())
 	{
 		for (int i = 0; i < 2; ++i)
 		{
@@ -430,6 +432,26 @@ void handleShortcuts(shared_ptr<core::Building> building)
 		}
 	}
 
+	// Delete selected Agent. Stop any active path/traversal first so Building can
+	// release its coordination state before destroying the entity.
+	if (ImGui::Shortcut(ImGuiKey_Delete, 0, ImGuiInputFlags_RouteGlobalLow))
+	{
+		if (!ImGui::IsAnyItemActive() && !ImGui::IsAnyItemFocused() && gSelectedAgent)
+		{
+			auto id = building->getAgentId(gSelectedAgent);
+			if (id)
+			{
+				auto selected = gSelectedAgent;
+				selected->clearPath();
+				if (building->removeAgent(id))
+				{
+					if (gHoveredAgent == selected) gHoveredAgent = nullptr;
+					gSelectedAgent = nullptr;
+				}
+			}
+		}
+	}
+
 	// Object selection mode
 	if (ImGui::Shortcut(ImGuiKey_O, 0, ImGuiInputFlags_RouteGlobalLow))
 	{
@@ -472,6 +494,8 @@ void handleWorldInteraction(shared_ptr<core::Building> building,
 		if (gHoveredAgent)
 		{
 			gSelectedAgent = gHoveredAgent;
+			gSelectedSector.reset();
+			gSelectedSectorObject.reset();
 		}
 		else if (gHoveredInteractionPoint)
 		{
@@ -1205,6 +1229,11 @@ void renderAgentView(shared_ptr<const core::Building> building)
 			}
 		}
 
+		if (newSelectedAgent != gSelectedAgent)
+		{
+			gSelectedSector.reset();
+			gSelectedSectorObject.reset();
+		}
 		gSelectedAgent = newSelectedAgent;
 	
 		ImGui::EndTable();
@@ -1251,6 +1280,7 @@ void renderObjectView(shared_ptr<const core::Building> building)
 				if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
 				{
 					selectedNode = (void*)sector.get();
+					gSelectedAgent = nullptr;
 					gSelectedSector = sector;
 					gSelectedSectorObject = nullptr;
 				}
@@ -1274,6 +1304,7 @@ void renderObjectView(shared_ptr<const core::Building> building)
 						if (ImGui::IsItemClicked())
 						{
 							selectedNode = (void*)object.get();
+							gSelectedAgent = nullptr;
 							gSelectedSector = nullptr;
 							gSelectedSectorObject = object;
 						}
@@ -1337,6 +1368,64 @@ void renderObjectView(shared_ptr<const core::Building> building)
 }
 
 
+void renderSelectedAgentPanel(shared_ptr<const core::Building> building)
+{
+	if (!gSelectedAgent || !ImGui::CollapsingHeader("Selection")) return;
+
+	auto id = building->getAgentId(gSelectedAgent);
+	auto sector = gSelectedAgent->getSector();
+	auto localPosition = gSelectedAgent->getLocalPosition();
+	auto globalPosition = gSelectedAgent->getGlobalPosition();
+
+	ImGui::Text("Agent: %s", gSelectedAgent->getName().c_str());
+	ImGui::Text("ID: %llu", (unsigned long long)id.value);
+	ImGui::Text("Sector: %s", sector ? sector->getDescription().c_str() : "<none>");
+	if (sector) ImGui::Text("Layer: %u", sector->getLayerIndex());
+	ImGui::Text("Local position: %.2f, %.2f", localPosition.x, localPosition.y);
+	ImGui::Text("World position: %.2f, %.2f", globalPosition.x, globalPosition.y);
+
+	const char* state = "Unknown";
+	switch (gSelectedAgent->getState())
+	{
+	case core::Agent::State::Idle: state = "Idle"; break;
+	case core::Agent::State::MovingToVertex: state = "Moving to Vertex"; break;
+	case core::Agent::State::WaitingForTraversal: state = "Waiting for traversal"; break;
+	case core::Agent::State::TraversingEdge: state = "Traversing edge"; break;
+	case core::Agent::State::AwaitingTraversalCommit: state = "Awaiting traversal commit"; break;
+	}
+	ImGui::Text("State: %s", state);
+
+	auto const& path = gSelectedAgent->getPath();
+	if (path)
+	{
+		ImGui::Text("Path: vertex %u of %u", gSelectedAgent->getPathTargetNodeIndex(),
+			(uint32_t)path->nodes.size());
+		if (!path->nodes.empty() && path->nodes.back().targetVertex)
+			ImGui::Text("Destination: %s", path->nodes.back().targetVertex->getDescription().c_str());
+	}
+	else
+	{
+		ImGui::Text("Path: <none>");
+	}
+
+	if (gSelectedVertex)
+	{
+		ImGui::Text("Selected vertex: %s", gSelectedVertex->getDescription().c_str());
+		if (ImGui::Button("Path to selected vertex"))
+		{
+			auto newPath = building->getGraph()->calculatePath(gSelectedAgent, gSelectedVertex);
+			if (newPath)
+			{
+				// Explicitly cancel the old route first. Agent::setPath may retain an
+				// active traversal permit, but this command promises replacement.
+				gSelectedAgent->clearPath();
+				gSelectedAgent->setPath(newPath, true);
+			}
+		}
+	}
+}
+
+
 void renderBuildingPanel(shared_ptr<const core::Building> building)
 {
 	if (ImGui::CollapsingHeader("Objects"))
@@ -1348,6 +1437,8 @@ void renderBuildingPanel(shared_ptr<const core::Building> building)
 	{
 		renderAgentView(building);
 	}
+
+	renderSelectedAgentPanel(building);
 }
 
 
