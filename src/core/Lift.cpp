@@ -23,7 +23,7 @@ namespace core
 	{
 		return to_vector(views::transform(stopOffsets, [cellX, cellY](uint32_t offset)
 		{
-			return CellPosition(cellX, offset);
+			return CellPosition(cellX, cellY + offset);
 		}));
 	}
 
@@ -43,11 +43,6 @@ namespace core
 	Lift::Lift(uint32_t cellX, uint32_t cellY, float xOffset, float yOffset, float transportWidth, float transportHeight, float speed, vector<uint32_t> stopOffsets)
 		: RailedTransport(xOffset, yOffset, transportWidth, transportHeight, speed, liftStops(cellX, cellY, stopOffsets), false)
 	{
-	}
-
-	uint32_t Lift::getStopRefIndex(uint32_t index) const
-	{
-		return getStopDeckIndex(index);
 	}
 
 } // core

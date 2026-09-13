@@ -58,33 +58,6 @@ namespace core
             // seeing if anything needs to go before it.
             nodes.push_back({ edge, vertex, cost });
 
-            // If the Edge has "controller(s)", then these need to be interacted with first.
-            // So get the controller(s) and the required interaction with them.  We only
-            // care about the Interactables from the side or layer we're coming from.
-            // 
-            // NOTE: this has been removed for now as all Interactable are handled by VertexControllers
-            /*
-            auto toSide = vertex->getPosition().x > nextVertex->getPosition().x ? CORE_SIDE_LEFT : CORE_SIDE_RIGHT;
-            auto toLayerIndex = vertex->getSector()->getLayerIndex();
-            auto dependingController = edge->getDependingController(toSide, 1 - toLayerIndex);
-
-            if (!dependingController)
-            {
-                return;
-            }
-
-            auto interVertex = graph->getVertexForController(dependingController);
-            auto nextNextVertex = cameFrom.at(nextVertex);
-
-            if (!nextNextVertex->sameAs(interVertex))
-            {
-                auto interEdge = graph->getEdgeForInteractableVertex(interVertex);
-
-                // We're not passing by the Interactable Vertex on our path, so add it in.
-                nodes.push_back({ interEdge, nextVertex, interEdge->getWeight(nextVertex, agent, true) });
-                nodes.push_back({ interEdge, interVertex, interEdge->getWeight(interVertex, agent, true) });
-            }
-            */
         }
 
         shared_ptr<Path> reconstructPath(

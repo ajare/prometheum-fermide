@@ -2,7 +2,7 @@
 
 #include "core/Defines.h"
 #include "core/ButtonSectorObject.h"
-#include "core/ControllerVertex.h"
+#include "core/SectorObjectVertex.h"
 #include "core/Exceptions.h"
 
 
@@ -23,7 +23,8 @@ namespace core
 	- cellX and cellY are global, not relative to the Location that it's in.
 	*/
 	ButtonSectorObject::ButtonSectorObject(string const& name, uint32_t cellX, uint32_t cellY, float xOffset, float yOffset, ButtonAnchorType anchorType, shared_ptr<const Sector> sector, uint32_t buttonFlags, uint32_t* vertexIdentifer)
-		: ControllerSectorObject(cellX, cellY, 1, 1, sector, make_shared<Button>(name, cellX, cellY, xOffset, yOffset, buttonFlags), vertexIdentifer)
+		: SectorObject(SectorObjectType::InteractionPoint, sector, cellX, cellY, 1, 1,
+			make_shared<Button>(name, cellX, cellY, xOffset, yOffset, buttonFlags), vertexIdentifer)
 		, mAnchorType(anchorType)
 	{
 	}
@@ -44,8 +45,7 @@ namespace core
 	{
 		ASSERT_PTR_EQ_THIS(object);
 
-		auto button = static_pointer_cast<Object>(_getObject());
-		auto buttonController = dynamic_pointer_cast<Controller>(button);
+		auto button = _getObject();
 
 		auto const& pos = button->getPosition();
 		auto const& size = button->getSize();
@@ -70,13 +70,8 @@ namespace core
 			throw UnhandledException(mAnchorType, "ButtonAnchorType");
 		}
 
-		auto vertex = make_shared<ControllerVertex>(
-			VertexType::Location,
-			VertexSubType::Interactable,
-			sector,
-			buttonController,
-			xOffset,
-			yOffset);
+		auto vertex = make_shared<SectorObjectVertex>(
+			VertexSubType::Interactable, sector, object, xOffset, yOffset);
 
 		vertex->setObject(object->_getObject());
 		return vertex;

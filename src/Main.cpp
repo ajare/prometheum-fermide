@@ -49,8 +49,6 @@ GLuint gCellsTexture{ 0 };
 int gCellsTextureWidth{ 0 };
 int gCellsTextureHeight{ 0 };
 
-std::map<std::shared_ptr<core::Object>, std::shared_ptr<core::VertexController>> gObjectVertexControllerMap;
-
 using namespace std;
 
 vector<LogMessage> gLogMessages;
@@ -333,7 +331,7 @@ std::shared_ptr<core::Building> createTestBuilding()
 
 		building->addSectorDoor(ReactorDeck, 6);
 		
-		//building->addSectorDoor(ReactorDeck, 2, core::Building::OrchButtonDoor1Options);
+		//building->addSectorDoor(ReactorDeck, 2, core::Building::RemoteControlledDoor1Options);
 		building->addSectorDoor(ReactorDeck, 2);
 
 		building->addSectorWindow(CORE_LAYER_FORE, ReactorDeck, 7, 1, 1);
@@ -474,8 +472,6 @@ std::shared_ptr<core::Building> createTestBuilding()
 		building->finishBuild();
 
 		// Add agents
-		//building->addAgentToSector(new core::Agent("TestAgent 1"), corr2Index);
-		//building->addAgentToSector(new core::Agent("TestAgent 2"), storageCorrIndex);
 
 		// Door test agents
 		for (int i = 0; i < 4; ++i)
@@ -485,8 +481,9 @@ std::shared_ptr<core::Building> createTestBuilding()
 			int xx = i & 1 ? 9 - i : i / 2;
 			
 			// Fore
-			auto agent = new core::Agent(format("PathAgentF {}", i + 1));
-			building->addAgentToSector(agent, morgueCorrIndex, 0, xx + 0.5f);
+			auto agentId = building->createAgent(format("PathAgentF {}", i + 1),
+				morgueCorrIndex, 0, xx + 0.5f);
+			auto agent = building->lookupAgent(agentId).entity;
 
 			// Generate path
 			auto graph = building->getGraph();
@@ -496,7 +493,6 @@ std::shared_ptr<core::Building> createTestBuilding()
 
 			// Back
 			//agent = new core::Agent(format("PathAgentB {}", i + 1));
-			//building->addAgentToSector(agent, morgueIndex, 0, xx + 0.5f);
 
 			//vertex = graph->getVertexByIdentifier(vertexIdentifiers[i * 2]);
 			//path = core::pathing::findPath(agent, graph.get(), nullptr, vertex);
@@ -504,7 +500,6 @@ std::shared_ptr<core::Building> createTestBuilding()
 		}
 
 		//auto agent = new core::Agent(format("PathAgent-ButtonTest"));
-		//building->addAgentToSector(agent, reactorCorr1, 0, 3.0f);
 
 		// Generate path
 		//auto graph = building->getGraph();
@@ -559,18 +554,6 @@ void run()
 
 	shared_ptr<core::Building> building = createTestBuilding();
 	std::shared_ptr<core::Agent> pathingAgent = make_shared<core::Agent>("Pather");
-	//pathingAgent->setFlags(CORE_AGENT_F_FORCE_USEABLE);
-
-	// Get Door->QueueStopOffets
-	auto allVertices = building->getGraph()->getVertices();
-
-	for (auto vertex : allVertices)
-	{
-		auto object = vertex->getObject();
-		auto controller = vertex->getController();
-
-		gObjectVertexControllerMap[object] = controller;
-	}
 
 	// Render settings
 	ImVec4 clearColour = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
@@ -624,7 +607,7 @@ void run()
 		auto mouseButtonStatus = getMouseButtonStatus();
 
 		handleShortcuts(building);
-		handleWorldInteraction(building, building->getGraph(), pathingAgent, mouseButtonStatus);
+		handleWorldInteraction(building, building->getGraph(), mouseButtonStatus);
 		handleContinuousKeyboardInput(building, updateTimeMicros);
 
 		if (ImGui::IsKeyPressed(ImGui::GetKeyIndex(ImGuiKey_F11)))

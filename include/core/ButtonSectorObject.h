@@ -4,7 +4,7 @@
 #include <memory>
 
 #include "core/Button.h"
-#include "core/ControllerSectorObject.h"
+#include "core/SectorObject.h"
 
 
 namespace core
@@ -16,7 +16,7 @@ namespace core
 		UnAnchored
 	};
 
-	class ButtonSectorObject : public ControllerSectorObject
+	class ButtonSectorObject : public SectorObject
 	{
 		ButtonAnchorType mAnchorType;
 

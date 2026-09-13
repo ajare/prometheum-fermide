@@ -16,8 +16,7 @@ namespace core
 		MovingToVertex,
 		WaitingForTraversal,
 		TraversingEdge,
-		AwaitingTraversalCommit,
-		UnderVertexControl
+		AwaitingTraversalCommit
 	};
 
 	struct AgentSnapshot

@@ -6,7 +6,6 @@
 #include <functional>
 
 #include "core/Area.h"
-#include "core/Controllable.h"
 #include "core/SectorType.h"
 #include "core/SectorEnd.h"
 #include "core/SectorObject.h"
@@ -23,7 +22,7 @@ namespace core
 
 	typedef std::function<bool(std::shared_ptr<SectorObject>, std::shared_ptr<SectorObject>)> SectorObjectSortFunction;
 
-	class Sector : public Area, public Controllable
+	class Sector : public Area
 	{
 		friend class Building;
 		friend class Graph;
@@ -56,12 +55,6 @@ namespace core
 
 	private:
 
-		// Overridden from Controllable
-		bool validateAction(ControllableActionType type) const override;
-
-		// Overridden from Useable
-		ControllableActionStatus useImpl(Controller* controller, ControllableActionCallback callback) override;
-
 		[[nodiscard]] std::shared_ptr<SectorObject> _getObject(uint32_t index);
 
 		SectorPosition findFreeAgentPosition(Agent const* agent) const;
@@ -75,7 +68,7 @@ namespace core
 
 		uint32_t addWindow(std::shared_ptr<WindowSectorObject> window);
 
-		uint32_t createController(std::shared_ptr<const Sector> sector, std::string const& name, uint32_t x, uint32_t y, float xOffset, float yOffset, uint32_t flags, uint32_t* vertexIdentifier = nullptr);
+		uint32_t createPhysicalControl(std::shared_ptr<const Sector> sector, std::string const& name, uint32_t x, uint32_t y, float xOffset, float yOffset, uint32_t flags, uint32_t* vertexIdentifier = nullptr);
 
 		uint32_t createWalkway(std::shared_ptr<const Sector> sector, uint32_t x, uint32_t y, uint32_t* vertexIdentifier = nullptr);
 
@@ -109,15 +102,6 @@ namespace core
 	protected:
 
 		uint32_t addSectorObject(std::shared_ptr<SectorObject> object);
-
-		// Overriden from Controllable
-		ControllableActionStatus startAction(ControllableAction const& action) override;
-
-		// Overriden from Controllable
-		void finishAction(ControllableAction const& action) override;
-
-		// Overriden from Controllable
-		ControllableActionStatus updateAction(ControllableAction const& action, float frameTime) override;
 
 	public:
 
@@ -161,16 +145,14 @@ namespace core
 
 		[[nodiscard]] std::vector<std::shared_ptr<SectorObject>> getSortedObjects(SectorObjectSortFunction sortFunc) const;
 
-		[[nodiscard]] std::shared_ptr<Useable> getUseableObjectAtPosition(float x, float y, bool includeDisabled, std::shared_ptr<SectorObject>* sectorObject = nullptr) const;
+		[[nodiscard]] std::shared_ptr<const Object> getObjectAtPosition(float x, float y,
+			std::shared_ptr<const SectorObject>* sectorObject = nullptr) const;
 
 		[[nodiscard]] virtual bool sectorSupportsObjectType(SectorObjectType type) const = 0;
 
 		[[nodiscard]] bool areLightsOn() const;
 
 		[[nodiscard]] std::set<Agent*> const& getAgents() const;
-
-		// Overridden from Useable
-		bool canBeUsed(Controller const* controller) const override;
 
 		bool lightsOn();
 
@@ -184,7 +166,7 @@ namespace core
 
 		std::shared_ptr<Edge> exitAgent(Agent* agent);
 
-		void update(float frameTime) override;
+		void update(float frameTime);
 	};
 
 } // core

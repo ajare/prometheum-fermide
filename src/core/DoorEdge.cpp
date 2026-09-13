@@ -67,11 +67,6 @@ namespace core
 		return preparation + agent->estimateTraversalDelay(getTraversalResourceId(), sourceSector);
 	}
 
-	shared_ptr<Controller> DoorEdge::getDependingController(int side, uint32_t layerIndex) const
-	{
-		return mDoor->getDependingController(layerIndex);
-	}
-
 	TraversalResourceId DoorEdge::getTraversalResourceId() const
 	{
 		return mDoor->getTraversalResourceId();

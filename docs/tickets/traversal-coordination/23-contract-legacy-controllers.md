@@ -15,15 +15,15 @@
 - 21 — Migrate bulkhead doors and window thresholds
 - 22 — Rebuild traversal topology safely while paused
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Every graph edge has exactly one replacement traversal authority or immediate-permit policy.
-- [ ] Every physical control uses interaction points and typed command bindings.
-- [ ] Every stateful device reports queryable operations without legacy completion callbacks.
-- [ ] Agents no longer inherit from a device-controller or usability base.
-- [ ] Building-owned registries are the authoritative lifetime owners of migrated simulation entities.
-- [ ] UI and rendering consume stable IDs and read-only state rather than legacy mutable pointers.
-- [ ] The old usability, controller, controllable, orchestrator, orchestrated-system, and vertex-controller implementations have no remaining call sites.
-- [ ] Legacy types and construction adapters are deleted rather than retained as aliases.
-- [ ] Debug and Release application and headless builds remain green.
-- [ ] All migrated behavioural scenarios still pass after deletion.
+- [x] Every graph edge has exactly one replacement traversal authority or immediate-permit policy.
+- [x] Every physical control uses interaction points and typed command bindings.
+- [x] Every stateful device reports queryable operations without legacy completion callbacks.
+- [x] Agents no longer inherit from a device-controller or usability base.
+- [x] Building-owned registries are the authoritative lifetime owners of migrated simulation entities.
+- [x] UI and rendering consume stable IDs and read-only state rather than legacy mutable pointers.
+- [x] The old usability, controller, controllable, orchestrator, orchestrated-system, and vertex-controller implementations have no remaining call sites.
+- [x] Legacy types and construction adapters are deleted rather than retained as aliases.
+- [x] Debug and Release application and headless builds remain green.
+- [x] All migrated behavioural scenarios still pass after deletion.

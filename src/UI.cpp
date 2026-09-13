@@ -36,7 +36,7 @@ extern spdlog::logger* gLogger;
 
 extern UISettings gUISettings;
 
-std::shared_ptr<core::Useable> gHoveredObject;
+core::InteractionPointId gHoveredInteractionPoint;
 core::Agent *gHoveredAgent{ nullptr }, *gSelectedAgent{ nullptr };
 std::shared_ptr<const core::Vertex> gHoveredVertex, gSelectedVertex;
 std::shared_ptr<const core::Sector> gSelectedSector;
@@ -197,7 +197,8 @@ void handleShortcuts(shared_ptr<core::Building> building)
 }
 
 
-void handleWorldInteraction(shared_ptr<core::Building> building, shared_ptr<const core::Graph> graph, shared_ptr<core::Agent> pathingAgent, MouseButtonStatus const& mouseStatus)
+void handleWorldInteraction(shared_ptr<core::Building> building,
+	shared_ptr<const core::Graph> graph, MouseButtonStatus const& mouseStatus)
 {
 	if (mouseStatus.state[MouseButtonStatus::Left] == MouseButtonStatus::State::Clicked)
 	{
@@ -206,11 +207,12 @@ void handleWorldInteraction(shared_ptr<core::Building> building, shared_ptr<cons
 		{
 			gSelectedAgent = gHoveredAgent;
 		}
-		else if (gHoveredObject)
+		else if (gHoveredInteractionPoint)
 		{
-			if (!gUISettings.worldPaused)
+			if (!gUISettings.worldPaused && gSelectedAgent)
 			{
-				gHoveredObject->use(pathingAgent.get(), {}, ImGui::GetIO().KeyCtrl);
+				auto actor = building->getAgentId(gSelectedAgent);
+				if (actor) building->requestInteraction(gHoveredInteractionPoint, actor);
 			}
 		}
 		else if (gHoveredVertex)
@@ -558,23 +560,6 @@ void renderToolbar(shared_ptr<core::Building> building)
 		imgui::ToggleButton("ToggleGraph", "Building graph", &gUISettings.renderGraph);
 
 		ImGui::SameLine();
-		string vertexBoundsStr;
-
-		vertexBoundsStr += "Never";
-		vertexBoundsStr += '\0';
-		vertexBoundsStr += "Always";
-		vertexBoundsStr += '\0';
-		vertexBoundsStr += "On Hover";
-		vertexBoundsStr += '\0';
-
-		ImGui::SetNextItemWidth(128);
-		int vertexBoundsMode = (int)gUISettings.vertexBoundsRenderMode;
-		if (ImGui::Combo("Vertex bounds", &vertexBoundsMode, vertexBoundsStr.c_str(), 6))
-		{
-			gUISettings.vertexBoundsRenderMode = (UISettings::VertexBoundsRenderMode)vertexBoundsMode;
-		}
-
-		ImGui::SameLine();
 		imgui::ToggleButton("ToggleNearestVertex", "Highlight nearest vertex", &gUISettings.highlightNearestVertex);
 
 		ImGui::SameLine();
@@ -628,14 +613,11 @@ void renderStatusBar(shared_ptr<const core::Building> building)
 
 				ImGui::Text(objectData.c_str());
 			}
-			else if (gHoveredObject)
+			else if (gHoveredSectorObject)
 			{
 				ImGui::SameLine();
 				ImGui::SetNextItemWidth(128);
-
-				string objectData = format("{}", gHoveredObject->getDescription());
-
-				ImGui::Text(objectData.c_str());
+				ImGui::Text("%s", gHoveredSectorObject->getDescription().c_str());
 			}
 			else if (gHoveredVertex)
 			{
@@ -688,13 +670,6 @@ void renderBulkheadDoorPanel(shared_ptr<const core::SectorObject> object)
 	// Sectors
 	ImGui::Text("From: %s", door->getSideSector(CORE_SIDE_LEFT)->getDescription().c_str());
 	ImGui::Text("To: %s", door->getSideSector(CORE_SIDE_RIGHT)->getDescription().c_str());
-
-	// Controlling Interactables
-	auto inter0 = door->getDependingController(CORE_SIDE_LEFT);
-	auto inter1 = door->getDependingController(CORE_SIDE_RIGHT);
-
-	ImGui::Text("Left interactable: %s", inter0 ? inter0->getDescription().c_str() : "<none>");
-	ImGui::Text("Right interactable: %s", inter1 ? inter1->getDescription().c_str() : "<none>");
 }
 
 
@@ -704,9 +679,6 @@ void renderDoorPanel(shared_ptr<const core::SectorObject> object)
 	auto door = doorObject->getDoor();
 
 	float pct = door->getOpenPercentage() * 100;
-
-	// Render options
-	imgui::ToggleButton("ToggleDoorQueueStops", "Show queue stops", &gUISettings.renderDoorQueueStops);
 
 	// State
 	switch (door->getState())
@@ -735,13 +707,6 @@ void renderDoorPanel(shared_ptr<const core::SectorObject> object)
 	// Sectors
 	ImGui::Text("From: %s", door->getSector(CORE_LAYER_FORE)->getDescription().c_str());
 	ImGui::Text("To: %s", door->getSector(CORE_LAYER_BACK)->getDescription().c_str());
-
-	// Controlling Interactables
-	auto ctrl0 = door->getDependingController(CORE_LAYER_FORE);
-	auto ctrl1 = door->getDependingController(CORE_LAYER_BACK);
-
-	ImGui::Text("Fore interactable: %s", ctrl0 ? ctrl0->getDescription().c_str() : "<none>");
-	ImGui::Text("Back interactable: %s", ctrl1 ? ctrl1->getDescription().c_str() : "<none>");
 }
 
 
@@ -777,13 +742,6 @@ void renderForceBridgePanel(shared_ptr<const core::SectorObject> object)
 
 	// Sectors
 	ImGui::Text("From: %s", forceBridge->getFromSide() == CORE_SIDE_LEFT ? "left" : "right");
-
-	// Controlling Interactables
-	auto inter0 = forceBridge->getDependingController(CORE_SIDE_LEFT);
-	auto inter1 = forceBridge->getDependingController(CORE_SIDE_RIGHT);
-
-	ImGui::Text("Left interactable: %s", inter0 ? inter0->getDescription().c_str() : "<none>");
-	ImGui::Text("Right interactable: %s", inter1 ? inter1->getDescription().c_str() : "<none>");
 }
 
 
@@ -819,11 +777,6 @@ void renderLadderPanel(shared_ptr<const core::SectorObject> object)
 
 	// Sectors
 	ImGui::Text("Decks: %d", ladder->getDecksHigh());
-
-	// Controlling Interactables
-	auto inter = ladder->getDependingController(0);
-
-	ImGui::Text("Interactable: %s", inter ? inter->getDescription().c_str() : "<none>");
 }
 
 
@@ -860,34 +813,6 @@ void renderLiftPanel(shared_ptr<const core::Lift> lift)
 
 		ImGui::EndTable();
 	}
-
-	// Stops
-	auto requestedStops = lift->getRequestedStops();
-
-
-	if (ImGui::BeginTable("Stops", 3, flags))
-	{
-		ImGui::TableSetupColumn("Deck");
-		ImGui::TableSetupColumn("Waiting");
-		ImGui::TableSetupColumn("Exiting");
-		ImGui::TableHeadersRow();
-
-		for (uint32_t stopIndex : requestedStops)
-		{
-			ImGui::TableNextRow();
-
-			ImGui::TableSetColumnIndex(0);
-			ImGui::Text("%d", stopIndex);
-
-			ImGui::TableSetColumnIndex(1);
-			ImGui::Text("%d", 0);
-
-			ImGui::TableSetColumnIndex(2);
-			ImGui::Text("%d", 0);
-		}
-
-		ImGui::EndTable();
-	}
 }
 
 
@@ -920,34 +845,6 @@ void renderShuttlePanel(shared_ptr<const core::Shuttle> shuttle)
 
 			ImGui::TableSetColumnIndex(1);
 			ImGui::Text(value.c_str());
-		}
-
-		ImGui::EndTable();
-	}
-
-	// Stops
-	auto requestedStops = shuttle->getRequestedStops();
-
-
-	if (ImGui::BeginTable("Stops", 3, flags))
-	{
-		ImGui::TableSetupColumn("Stop");
-		ImGui::TableSetupColumn("Waiting");
-		ImGui::TableSetupColumn("Exiting");
-		ImGui::TableHeadersRow();
-
-		for (uint32_t stopIndex : requestedStops)
-		{
-			ImGui::TableNextRow();
-
-			ImGui::TableSetColumnIndex(0);
-			ImGui::Text("%d", stopIndex);
-
-			ImGui::TableSetColumnIndex(1);
-			ImGui::Text("%d", 0);
-
-			ImGui::TableSetColumnIndex(2);
-			ImGui::Text("%d", 0);
 		}
 
 		ImGui::EndTable();
@@ -1033,10 +930,6 @@ void renderAgentView(shared_ptr<const core::Building> building)
 
 					case core::Agent::State::AwaitingTraversalCommit:
 						ImGui::Text("Awaiting traversal commit");
-						break;
-
-					case core::Agent::State::UnderVertexControl:
-						ImGui::Text("Under Vertex control");
 						break;
 
 					default:
@@ -1511,10 +1404,9 @@ void renderLogWindow()
 void renderUI(shared_ptr<core::Building> building, shared_ptr<const core::Graph> graph, shared_ptr<core::Agent> pathingAgent)
 {
 	ImGui::SetMouseCursor(ImGuiMouseCursor_Arrow);
-	auto const& io = ImGui::GetIO();
 
 	gHoveredAgent = nullptr;
-	gHoveredObject = nullptr;
+	gHoveredInteractionPoint = {};
 	gHoveredSectorObject = nullptr;
 	gHoveredVertex = nullptr;
 
@@ -1534,15 +1426,12 @@ void renderUI(shared_ptr<core::Building> building, shared_ptr<const core::Graph>
 			}
 			else
 			{
-				shared_ptr<core::SectorObject> sectorObj;
-				auto obj = building->getUseableObjectAtPosition(gUISettings.visibleLayer, mousePos.x, mousePos.y, false, &sectorObj);
-
+				shared_ptr<const core::SectorObject> sectorObj;
+				auto object = building->getObjectAtPosition(gUISettings.visibleLayer,
+					mousePos.x, mousePos.y, &sectorObj);
 				gHoveredSectorObject = sectorObj;
-
-				if (obj && obj->canBeUsed(pathingAgent.get()) || io.KeyCtrl)
-				{
-					gHoveredObject = obj;
-				}
+				if (auto button = dynamic_pointer_cast<const core::Button>(object))
+					gHoveredInteractionPoint = button->getInteractionPointId();
 			}
 			break;
 		}
@@ -1552,7 +1441,7 @@ void renderUI(shared_ptr<core::Building> building, shared_ptr<const core::Graph>
 			break;
 		}
 
-		if (gHoveredAgent || gHoveredObject || gHoveredVertex)
+		if (gHoveredAgent || gHoveredSectorObject || gHoveredVertex)
 		{
 			ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
 		}

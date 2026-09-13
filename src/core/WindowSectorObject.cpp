@@ -3,7 +3,6 @@
 #include "core/Defines.h"
 #include "core/WindowSectorObject.h"
 #include "core/WindowVertex.h"
-#include "core/WindowVertexController.h"
 #include "core/Window.h"
 #include "core/Exceptions.h"
 
@@ -43,23 +42,6 @@ namespace core
 		return static_pointer_cast<Window>(_getObject());
 	}
 
-	shared_ptr<VertexController> WindowSectorObject::createVertexController(Building const* building, vector<shared_ptr<Vertex>> const& vertices, map<shared_ptr<Controller>, shared_ptr<Vertex>> const& controllerVertexLookup) const
-	{
-		if (getWindow()->getTraversalResourceId()) return nullptr;
-
-		auto vertex = vertices[0];
-
-		auto vcPos = vertex->getPosition();
-		auto vcSize = getSize();
-		auto vcShape = Shape(vcPos.x - vcSize.x / 2, vcPos.y, vcSize.x, CORE_AGENT_MAX_HEIGHT);
-
-		auto vertexController = make_shared<WindowVertexController>(this, vcShape);
-
-		vertex->_setController(vertexController);
-		vertexController->setVertex(vertex);
-
-		return vertexController;
-	}
 
 	/***
 	

@@ -11,6 +11,7 @@
 
 #include "core/Agent.h"
 #include "core/Building.h"
+#include "core/Button.h"
 #include "core/GapEdge.h"
 #include "core/Graph.h"
 #include "core/Path.h"
@@ -448,8 +449,7 @@ namespace
 		auto right = bulkheadBuilding.addRoom("Right", CORE_LAYER_FORE, 0, 3, 3, 1);
 		core::Building::CreateBulkheadDoorOptions bulkheadOptions;
 		bulkheadOptions.activationMode = core::DoorActivationMode::Manual;
-		bulkheadOptions.controllers[0] = bulkheadOptions.controllers[1] = false;
-		bulkheadOptions.orchestrate = false;
+		bulkheadOptions.controls[0] = bulkheadOptions.controls[1] = false;
 		auto bulkhead = bulkheadBuilding.addSectorBulkheadDoor(CORE_LAYER_FORE, 0, 3,
 			CORE_SIDE_LEFT, bulkheadOptions);
 		bulkheadBuilding.finishBuild();
@@ -457,9 +457,7 @@ namespace
 			bulkheadBuilding.getGraph()->getEdges().end(), [](auto const& edge)
 			{ return edge->getType() == core::EdgeType::BulkheadDoor; });
 		if (bulkheadEdge == bulkheadBuilding.getGraph()->getEdges().end()
-			|| (*bulkheadEdge)->getTraversalResourceId() != bulkhead.traversalResource
-			|| (*bulkheadEdge)->getVertex(0)->getController()
-			|| (*bulkheadEdge)->getVertex(1)->getController()) return false;
+			|| (*bulkheadEdge)->getTraversalResourceId() != bulkhead.traversalResource) return false;
 		auto source = (*bulkheadEdge)->getVertex(0)->getSector()->getIndex() == left
 			? (*bulkheadEdge)->getVertex(0) : (*bulkheadEdge)->getVertex(1);
 		auto destination = (*bulkheadEdge)->getOtherVertex(source);
@@ -614,11 +612,19 @@ namespace
 		auto back = building.addRoom("Back", CORE_LAYER_BACK, 0, 0, 6, 1);
 		core::Building::CreateDoorOptions options;
 		options.activationMode = core::DoorActivationMode::RemoteControlled;
-		options.controllers[0] = true;
-		options.controllers[1] = true;
-		options.orchestrate = true;
+		options.controls[0] = true;
+		options.controls[1] = true;
 		auto created = building.addSectorDoor(0, 3, options);
 		building.finishBuild();
+
+		for (auto const& control : created.controls)
+		{
+			auto object = control.sector->getObject(control.index)->_getObject();
+			auto button = std::dynamic_pointer_cast<core::Button>(object);
+			if (!button || !control.interactionPoint
+				|| button->getInteractionPointId() != control.interactionPoint
+				|| !building.lookupInteractionPoint(control.interactionPoint)) return false;
+		}
 
 		auto edge = *std::find_if(building.getGraph()->getEdges().begin(), building.getGraph()->getEdges().end(),
 			[](auto const& candidate) { return candidate->getType() == core::EdgeType::Door; });
@@ -669,8 +675,8 @@ namespace
 		building.addRoom("Back", CORE_LAYER_BACK, 0, 0, 5, 1);
 		core::Building::CreateDoorOptions options;
 		options.activationMode = core::DoorActivationMode::RemoteControlled;
-		options.controllers[0] = false;
-		options.controllers[1] = false;
+		options.controls[0] = false;
+		options.controls[1] = false;
 		auto created = building.addSectorDoor(0, 2, options);
 		building.finishBuild();
 		auto edge = *std::find_if(building.getGraph()->getEdges().begin(), building.getGraph()->getEdges().end(),

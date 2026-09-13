@@ -86,25 +86,26 @@ _Avoid_: Queue position, traversal permit
 A reserved waiting position near a threshold. Queue positions keep waiting agents separated without imposing general collision avoidance on agents merely passing in two dimensions.
 _Avoid_: Queue ticket, occupancy slot
 
-## Control
+## Interaction and coordination
 
 **Door activation mode**:
-The permitted way to open a door: automatically by presence, manually by the crossing agent, through a remote device controller, or not at all.
+The permitted way to open a door: automatically by presence, manually by the crossing agent, through a remote interaction point, or not at all.
 
-**Device controller**:
-A usable input, usually a button or switch, that requests an action from an orchestrated device.
-_Avoid_: Traversal controller
+**Interaction point**:
+A place where an agent can request one or more typed device commands, usually represented by a physical button or switch.
+_Avoid_: Device controller, traversal controller
 
-**Controllable**:
-A stateful device or object that accepts asynchronous actions, such as opening a door or calling a lift.
+**Device command**:
+A typed request for a device state change, such as opening a door, extending a bridge, or calling a lift.
+_Avoid_: Interaction, traversal request
 
-**Device orchestrator**:
-A router that translates use of device controllers into actions on one or more controllables.
-_Avoid_: Group coordinator
+**Device operation**:
+The queryable progress and outcome of accepted device commands.
+_Avoid_: Callback, traversal request
 
-**Traversal controller**:
-The authority for movement through a threshold. It assigns waiting positions and decides when an agent may cross.
-_Avoid_: Device controller, orchestrator
+**Traversal resource**:
+The authority that owns admission, queueing, capacity, reservations, and permits for movement through a shared resource or threshold.
+_Avoid_: Traversal controller, device controller
 
 **Traversal permit**:
 A short-lived authorization to perform one specific sector transition after all door, capacity, and resource-position conditions are satisfied.

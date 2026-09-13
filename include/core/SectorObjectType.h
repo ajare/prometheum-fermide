@@ -12,7 +12,7 @@ namespace core
 		BulkheadDoor,
 		Door,
 		ForceBridge,
-		Controller,
+		InteractionPoint,
 		Ladder,
 		Lift,
 		Marker,

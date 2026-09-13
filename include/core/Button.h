@@ -1,49 +1,34 @@
 #pragma once
 
 #include <cstdint>
-#include <memory>
+#include <string>
 
 #include "core/Object.h"
-#include "core/Controller.h"
-
+#include "core/EntityId.h"
 
 namespace core
 {
-
-	class Button : public Object, public Controller
+	// Visual representation of a physical control. Its actionable behaviour is
+	// represented by a building-owned InteractionPoint and typed bindings.
+	class Button : public Object
 	{
 		std::string mName;
-
-		float mEnableTimer;
-
-		bool mAutoReEnable;
-
-	private:
-
-		virtual ControllableActionStatus press(Controller* subject);
-
-		// Overridden from Controllable
-		void updateImpl(float frameTime, ControllableActionType action, ControllableActionStatus status) override;
-
-		// Overridden from Useable
-		ControllableActionStatus useImpl(Controller* controller, ControllableActionCallback callback) override;
+		float mEnableTimer{ -1.0f };
+		bool mAutoReEnable{ false };
+		bool mEnabled{ true };
+		InteractionPointId mInteractionPoint;
 
 	public:
+		Button(std::string const& name, uint32_t cellX, uint32_t cellY,
+			float xOffset, float yOffset, uint32_t flags = 0);
 
-		Button(std::string const& name, uint32_t cellX, uint32_t cellY, float xOffset, float yOffset, uint32_t flags = 0);
-
-		~Button() = default;
-
-		// Overridden from Object
-		[[nodiscard]] std::string getDescription() const override;
-
-		// Overridden from Useable
-		bool canBeUsed(Controller const* controller) const override;
-
-		// Overridden from Useable
-		void disable() override;
-
+		std::string getDescription() const override;
+		bool isEnabled() const { return mEnabled; }
+		InteractionPointId getInteractionPointId() const { return mInteractionPoint; }
+		void _setInteractionPointId(InteractionPointId id) { mInteractionPoint = id; }
+		void enable();
+		void disable();
+		void update(float frameTime) override;
 		void _adjustY(float delta);
 	};
-
-} // core
+}

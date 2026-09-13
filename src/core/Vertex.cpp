@@ -1,6 +1,5 @@
 #include "core/Vertex.h"
 #include "core/VertexType.h"
-#include "core/VertexController.h"
 #include "core/Edge.h"
 #include "core/Sector.h"
 #include "core/Pathing.h"
@@ -171,11 +170,6 @@ namespace core
 		return mEdges;
 	}
 
-	shared_ptr<VertexController> Vertex::getController() const
-	{
-		return mController;
-	}
-
 	shared_ptr<Object> Vertex::getObject() const
 	{
 		return mObject;
@@ -204,11 +198,6 @@ namespace core
 		}
 
 		mEdges.push_back(edge);
-	}
-
-	void Vertex::_setController(shared_ptr<VertexController> controller)
-	{
-		mController = controller;
 	}
 
 } // core

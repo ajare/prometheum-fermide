@@ -15,7 +15,6 @@
 #include "core/Window.h"
 #include "core/Button.h"
 #include "core/Graph.h"
-#include "core/Orchestrator.h"
 #include "core/Log.h"
 #include "core/Simulation.h"
 #include "core/Coordination.h"
@@ -37,13 +36,13 @@ namespace core
 			uint32_t index{ ~0u };
 			SectorObjectType type{ SectorObjectType::None };
 			std::shared_ptr<Sector> sector;
+			InteractionPointId interactionPoint;
 		};
 
 		struct CreateDoorOptions
 		{
 			uint32_t width{ 1 };
-			bool controllers[2] = { false, false };
-			bool orchestrate{ false };
+			bool controls[2] = { false, false };
 			DoorActivationMode activationMode{ DoorActivationMode::Manual };
 			float holdOpenSeconds{ CORE_DOOR_STAY_OPEN_TIME };
 			// Zero derives one lane per cell of usable threshold width.
@@ -53,15 +52,13 @@ namespace core
 		struct CreateDoorResult
 		{
 			CreateObjectResult door;
-			CreateObjectResult controllers[2];
-			std::shared_ptr<OrchestratedSystem> orchSystem;
+			CreateObjectResult controls[2];
 			TraversalResourceId traversalResource;
 		};
 
 		struct CreateBulkheadDoorOptions
 		{
-			bool controllers[2] = { true, true };
-			bool orchestrate{ true };
+			bool controls[2] = { true, true };
 			DoorActivationMode activationMode{ DoorActivationMode::RemoteControlled };
 			float holdOpenSeconds{ CORE_BULKHEAD_DOOR_STAY_OPEN_TIME };
 			uint32_t crossingLanes{ 1 };
@@ -70,8 +67,7 @@ namespace core
 		struct CreateBulkheadDoorResult
 		{
 			CreateObjectResult door;
-			CreateObjectResult controllers[2];
-			std::shared_ptr<OrchestratedSystem> orchSystem;
+			CreateObjectResult controls[2];
 			TraversalResourceId traversalResource;
 		};
 
@@ -95,13 +91,13 @@ namespace core
 			int fromSide{ CORE_SIDE_LEFT };
 			bool extensible{ true };  // implies controlled
 			bool startExtended{ true };
-			uint32_t controllerCount{ 0 };
+			uint32_t controlCount{ 0 };
 		};
 
 		struct CreateForceBridgeResult
 		{
 			CreateObjectResult forceBridge;
-			CreateObjectResult controllers[2];
+			CreateObjectResult controls[2];
 			TraversalResourceId traversalResource;
 		};
 
@@ -117,7 +113,7 @@ namespace core
 		struct CreateLadderResult
 		{
 			CreateObjectResult ladder;
-			CreateObjectResult controllers[2];
+			CreateObjectResult controls[2];
 			TraversalResourceId traversalResource;
 		};
 
@@ -149,7 +145,6 @@ namespace core
 		{
 			CreateObjectResult lift;
 			std::vector<CreateDoorResult> doors;
-			std::shared_ptr<OrchestratedSystem> orchSystem;
 			TraversalResourceId traversalResource;
 			InteractionPointId interiorSelector;
 		};
@@ -158,7 +153,6 @@ namespace core
 		{
 			CreateObjectResult lift;
 			std::vector<CreateObjectResult> buttons;
-			std::shared_ptr<OrchestratedSystem> orchSystem;
 			TraversalResourceId traversalResource;
 			InteractionPointId interiorSelector;
 		};
@@ -179,16 +173,15 @@ namespace core
 		{
 			CreateObjectResult shuttle;
 			std::vector<CreateDoorResult> doors;
-			std::shared_ptr<OrchestratedSystem> orchSystem;
 			TraversalResourceId traversalResource;
 			InteractionPointId interiorSelector;
 		};
 
 	public:
 
-		static CreateDoorOptions ManualDoor1Options, OrchButtonDoor1Options, NonOrchButtonDoor1Options;
+		static CreateDoorOptions ManualDoor1Options, RemoteControlledDoor1Options, UnavailableDoor1Options;
 
-		static CreateDoorOptions ManualDoor2Options, OrchButtonDoor2Options, NonOrchButtonDoor2Options;
+		static CreateDoorOptions ManualDoor2Options, RemoteControlledDoor2Options, UnavailableDoor2Options;
 
 	private:
 
@@ -200,9 +193,6 @@ namespace core
 
 		std::vector<std::shared_ptr<Sector>> mSectors;
 
-		std::shared_ptr<Orchestrator> mOrchestrator;
-
-		std::vector<std::shared_ptr<VertexController>> mVertexControllers;
 
 		std::shared_ptr<Graph> mGraph;
 
@@ -278,9 +268,9 @@ namespace core
 
 		void validateCellHasNoDoor(std::string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y) const;
 
-		void validateCellHasController(std::string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y, int side) const;
+		void validateCellHasPhysicalControl(std::string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y, int side) const;
 
-		void validateCellHasNoController(std::string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y, int side) const;
+		void validateCellHasNoPhysicalControl(std::string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y, int side) const;
 
 		void validateCellHasNoFloorType(std::string const& caller, std::string const& desiredObject, uint32_t layerIndex, uint32_t x, uint32_t y) const;
 
@@ -336,7 +326,8 @@ namespace core
 
 		CreateObjectResult createBulkheadDoor(uint32_t layerIndex, uint32_t x, uint32_t y, int side);
 
-		CreateObjectResult createController(std::string const& name, uint32_t layerIndex, uint32_t x, uint32_t y, int side, uint32_t flags, uint32_t* vertexIdentifier = nullptr);
+		CreateObjectResult createPhysicalControl(std::string const& name, uint32_t layerIndex, uint32_t x, uint32_t y, int side, uint32_t flags, uint32_t* vertexIdentifier = nullptr);
+		void bindPhysicalControl(CreateObjectResult& control, InteractionPointId point);
 
 		CreateObjectResult createWalkway(uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t* vertexIdentifier = nullptr);
 
@@ -348,7 +339,8 @@ namespace core
 
 		CreateObjectResult createPlatformLiftSectorObject(uint32_t layerIndex, uint32_t x, uint32_t y, CreateLiftOptions const& options, uint32_t* vertexIdentifier = nullptr);
 
-		CreateDoorResult _addSectorDoor(uint32_t y, uint32_t x, CreateDoorOptions const& options);
+		CreateDoorResult _addSectorDoor(uint32_t y, uint32_t x, CreateDoorOptions const& options,
+			bool controlsAreExternallyBound = false);
 
 		CreateObjectResult _createSectorButton(std::string const& name, std::shared_ptr<const Sector> sector, uint32_t x, uint32_t y, uint32_t flags, uint32_t* index = nullptr);
 
@@ -588,17 +580,13 @@ namespace core
 
 		Agent* getAgentAtPosition(uint32_t layerIndex, float x, float y) const;
 
-		std::shared_ptr<Useable> getUseableObjectAtPosition(uint32_t layerIndex, float x, float y, bool includeDisabled, std::shared_ptr<SectorObject>* sectorObject = nullptr) const;
+		std::shared_ptr<const Object> getObjectAtPosition(uint32_t layerIndex, float x, float y,
+			std::shared_ptr<const SectorObject>* sectorObject = nullptr) const;
 
 		// Building-owned replacement APIs. Callers retain typed IDs, not ownership.
 		AgentId createAgent(std::string const& name, uint32_t sectorId, uint32_t deckOffset, float xOffset);
 
 		AgentId createAgent(std::string const& name, uint32_t sectorId);
-
-		// Legacy adoption seam. Ownership transfers to Building on entry.
-		void addAgentToSector(Agent* agent, uint32_t sectorId, uint32_t deckOffset, float xOffset);
-
-		void addAgentToSector(Agent* agent, uint32_t sectorId);
 
 		EntityLookup<Agent> lookupAgent(AgentId id);
 

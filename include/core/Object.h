@@ -1,36 +1,34 @@
 #pragma once
 
-#include <vector>
-#include <string>
 #include <memory>
+#include <string>
+#include <utility>
+#include <vector>
 
-#include "core/DependentPathControllable.h"
 #include "core/Shape.h"
 #include "core/SensorType.h"
-
 
 namespace core
 {
 	class SensorSource;
 
-	// Intended as a base class for Interactables, Windows, etc.
-	class Object : public DependentPathControllable, public Shape
+	// Physical simulation/rendering object. Interaction and device-operation state
+	// is owned by Building registries, not by this geometry base class.
+	class Object : public Shape
 	{
 		std::shared_ptr<const SensorSource> mSensorSource;
 
 	protected:
-
 		bool canSense(SensorType type) const;
 
 	public:
-
 		Object(float x, float y, float width, float height);
+		virtual ~Object() = default;
 
-		~Object() = default;
-
+		virtual std::string getDescription() const = 0;
 		virtual std::vector<std::pair<std::string, std::string>> getInternalsStrings() const;
+		virtual void update(float frameTime);
 
 		void setSensorSource(std::shared_ptr<const SensorSource> sensor);
 	};
-
-} // core
+}

@@ -12,7 +12,8 @@ MouseButtonStatus getMouseButtonStatus();
 
 void handleShortcuts(std::shared_ptr<core::Building> building);
 
-void handleWorldInteraction(std::shared_ptr<core::Building> building, std::shared_ptr<const core::Graph> graph, std::shared_ptr<core::Agent> pathingAgent, MouseButtonStatus const& mouseStatus);
+void handleWorldInteraction(std::shared_ptr<core::Building> building,
+	std::shared_ptr<const core::Graph> graph, MouseButtonStatus const& mouseStatus);
 
 void handleContinuousKeyboardInput(std::shared_ptr<core::Building> building, uint64_t updateTimeMicros);
 

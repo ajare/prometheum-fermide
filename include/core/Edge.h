@@ -7,7 +7,6 @@
 
 #include "core/EdgeType.h"
 #include "core/EdgeTraversalRequestResult.h"
-#include "core/Controller.h"
 #include "core/EntityId.h"
 
 
@@ -77,11 +76,8 @@ namespace core
 		// To be implemented by subclasses.  Returned weight is in seconds.
 		[[nodiscard]] virtual float getWeight(std::shared_ptr<const Vertex> targetVertex, Agent const* agent, bool edgeVisible) const = 0;
 	
-		// To be implemented by subclasses.
-		[[nodiscard]] virtual std::shared_ptr<Controller> getDependingController(int side, uint32_t layerIndex) const;
-
-		// A non-zero handle selects the replacement traversal authority. Legacy
-		// edge and vertex-controller preparation must not also authorize it.
+		// A non-zero handle selects the traversal authority; zero is the explicit
+		// immediate-permit policy.
 		[[nodiscard]] virtual TraversalResourceId getTraversalResourceId() const { return {}; }
 	};
 

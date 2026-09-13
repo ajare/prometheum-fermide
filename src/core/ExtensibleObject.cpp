@@ -1,207 +1,78 @@
-#include <cassert>
+#include <algorithm>
 
-#include "core/Defines.h"
 #include "core/ExtensibleObject.h"
 #include "core/Exceptions.h"
 
-
 namespace core
 {
-
-	using namespace std;
-
-	/***
-
-	Extensible Object
-	-----------------
-
-	This is an intermediate class which implements logic for objects which can extend, for instance ForceBridges
-	or Ladders.
-	*/
-	ExtensibleObject::ExtensibleObject(float x, float y, float width, float height, bool extensible, bool startExtended)
-		: Object(x, y, width, height)
-		, mIsExtensible(extensible)
-		, mState(startExtended ? State::Extended : State::Retracted)
-		, mExtendedPct(startExtended ? 1.0f : 0.0f)
+	ExtensibleObject::ExtensibleObject(float x, float y, float width, float height,
+		bool extensible, bool startExtended)
+		: Object(x, y, width, height),
+		  mState(startExtended ? State::Extended : State::Retracted),
+		  mIsExtensible(extensible), mExtendedPct(startExtended ? 1.0f : 0.0f)
 	{
 	}
 
-	bool ExtensibleObject::isExtensible() const
-	{
-		return mIsExtensible;
-	}
-
-	ExtensibleObject::State const& ExtensibleObject::getState() const
-	{
-		return mState;
-	}
-
-	float ExtensibleObject::getExtendedPercentage() const
-	{
-		return mExtendedPct;
-	}
-
-	float ExtensibleObject::getMaxRetractedPercentage() const
-	{
-		return 0.0f;
-	}
-
-	bool ExtensibleObject::isExtended() const
-	{
-		return mState == State::Extended;
-	}
-
-	bool ExtensibleObject::isRetracted() const
-	{
-		return mState == State::Retracted;
-	}
-
-	bool ExtensibleObject::isExtending() const
-	{
-		return mState == State::Extending;
-	}
-
-	bool ExtensibleObject::isRetracting() const
-	{
-		return mState == State::Retracting;
-	}
-
-	bool ExtensibleObject::canBeUsed(Controller const* controller) const
-	{
-		return Controllable::canBeUsed(controller) && isExtensible();
-	}
+	bool ExtensibleObject::isExtensible() const { return mIsExtensible; }
+	ExtensibleObject::State const& ExtensibleObject::getState() const { return mState; }
+	float ExtensibleObject::getExtendedPercentage() const { return mExtendedPct; }
+	float ExtensibleObject::getMaxRetractedPercentage() const { return 0.0f; }
+	bool ExtensibleObject::isExtended() const { return mState == State::Extended; }
+	bool ExtensibleObject::isRetracted() const { return mState == State::Retracted; }
+	bool ExtensibleObject::isExtending() const { return mState == State::Extending; }
+	bool ExtensibleObject::isRetracting() const { return mState == State::Retracting; }
 
 	bool ExtensibleObject::extend()
 	{
-		if (!isExtensible())
-		{
-			return false;
-		}
-
-		if (mState != State::Extended)
-		{
-			mState = State::Extending;
-		}
-
+		if (!mIsExtensible) return false;
+		if (!isExtended()) mState = State::Extending;
 		return true;
 	}
 
 	bool ExtensibleObject::retract()
 	{
-		if (!isExtensible() || mExtensionLeaseCount != 0)
-		{
-			return false;
-		}
-
-		if (mState != State::Retracted)
-		{
-			mState = State::Retracting;
-		}
-
+		if (!mIsExtensible || mExtensionLeaseCount != 0) return false;
+		if (!isRetracted()) mState = State::Retracting;
 		return true;
 	}
 
 	bool ExtensibleObject::toggle()
 	{
-		if (!isExtensible())
-		{
-			return false;
-		}
-
-		switch (mState)
-		{
-		case State::Extended:
-		case State::Extending:
-			return retract();
-
-		case State::Retracted:
-		case State::Retracting:
-			return extend();
-
-		default:
-			throw UnhandledException(mState, "ExtensibleObject::State");
-		}
+		if (!mIsExtensible) return false;
+		return isExtended() || isExtending() ? retract() : extend();
 	}
 
-	bool ExtensibleObject::validateAction(ControllableActionType type) const
+	void ExtensibleObject::update(float frameTime)
 	{
-		return type == ControllableActionType::Toggle
-			|| type == ControllableActionType::Extend
-			|| type == ControllableActionType::Retract;
-	}
-
-	ControllableActionStatus ExtensibleObject::startAction(ControllableAction const& action)
-	{
-		switch (action.type)
+		if (isExtending())
 		{
-		case ControllableActionType::Toggle:
-			return toggle() ? ControllableActionStatus::InProgress : ControllableActionStatus::Rejected;
-		case ControllableActionType::Extend:
-			if (isExtended()) return ControllableActionStatus::CompletedSuccess;
-			extend();
-			return ControllableActionStatus::InProgress;
-		case ControllableActionType::Retract:
-			if (isRetracted()) return ControllableActionStatus::CompletedSuccess;
-			if (!retract()) return ControllableActionStatus::Rejected;
-			return ControllableActionStatus::InProgress;
-
-		default:
-			throw UnhandledException(action.type, "ControllableActionType");
+			mExtendedPct = std::min(mExtendedPct + frameTime / getExtendRetractTime(), 1.0f);
+			if (mExtendedPct >= 1.0f) { mExtendedPct = 1.0f; mState = State::Extended; }
 		}
-	}
-
-	void ExtensibleObject::finishAction(ControllableAction const& action)
-	{
-		switch (action.type)
+		else if (isRetracting())
 		{
-		case ControllableActionType::Toggle:
-		case ControllableActionType::Extend:
-		case ControllableActionType::Retract:
-			if (mState == State::Extending)
-			{
-				mState = State::Extended;
-				mExtendedPct = 1.0f;
-			}
-			else if (mState == State::Retracting)
-			{
+			if (mExtensionLeaseCount != 0) { mState = State::Extending; return; }
+			mExtendedPct = std::max(mExtendedPct - frameTime / getExtendRetractTime(),
+				getMaxRetractedPercentage());
+			if (mExtendedPct <= getMaxRetractedPercentage())
 				mState = State::Retracted;
-				mExtendedPct = getMaxRetractedPercentage();
-			}
-			break;
-
-		default:
-			throw UnhandledException(action.type, "ControllableActionType");
 		}
 	}
 
-	ControllableActionStatus ExtensibleObject::updateAction(ControllableAction const& action, float frameTime)
+	bool ExtensibleObject::releaseExtensionLease()
 	{
-		switch (action.type)
-		{
-		case ControllableActionType::Toggle:
-		case ControllableActionType::Extend:
-		case ControllableActionType::Retract:
-			if (mState == State::Extending)
-			{
-				mExtendedPct = min(mExtendedPct + frameTime / getExtendRetractTime(), 1.0f);
-				return mExtendedPct >= 1.0f ? ControllableActionStatus::CompletedSuccess : ControllableActionStatus::InProgress;
-			}
-			else if (mState == State::Retracting)
-			{
-				mExtendedPct = max(mExtendedPct - frameTime / getExtendRetractTime(), getMaxRetractedPercentage());
-				return mExtendedPct <= getMaxRetractedPercentage() ? ControllableActionStatus::CompletedSuccess : ControllableActionStatus::InProgress;
-			}
-
-		default:
-			throw UnhandledException(action.type, "ControllableActionType");
-		}
+		if (mExtensionLeaseCount == 0) return false;
+		--mExtensionLeaseCount;
+		return true;
 	}
 
-	ControllableActionStatus ExtensibleObject::useImpl(Controller* controller, ControllableActionCallback callback)
+	void ExtensibleObject::addExtensionControlSector(SectorId sector)
 	{
-		auto actionId = handleAction(ControllableActionType::Toggle, true, {}, callback);
-
-		return actionId != ~0u ? getAction(actionId).status : ControllableActionStatus::Unhandled;
+		if (sector) mExtensionControlSectors.insert(sector);
 	}
 
-} // core
+	bool ExtensibleObject::canPrepareFrom(SectorId sector) const
+	{
+		return isExtended() || !isExtensible() || mExtensionControlSectors.contains(sector);
+	}
+}

@@ -33,7 +33,7 @@ namespace core
 		return type == SectorObjectType::BulkheadDoor ||
 			type == SectorObjectType::Door ||
 			type == SectorObjectType::ForceBridge ||
-			type == SectorObjectType::Controller ||
+			type == SectorObjectType::InteractionPoint ||
 			type == SectorObjectType::Ladder ||
 			type == SectorObjectType::Lift ||
 			type == SectorObjectType::Walkway ||

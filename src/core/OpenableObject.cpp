@@ -97,11 +97,4 @@ namespace core
 		}
 	}
 
-	ControllableActionStatus OpenableObject::useImpl(Controller* controller, ControllableActionCallback callback)
-	{
-		auto actionId = handleAction(ControllableActionType::Open, true, {}, callback);
-
-		return actionId != ~0u ? getAction(actionId).status : ControllableActionStatus::Unhandled;
-	}
-
 } // core

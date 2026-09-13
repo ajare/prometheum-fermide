@@ -48,47 +48,9 @@ namespace core
 		return mVertexIdentifier;
 	}
 
-	bool SectorObject::hasController(string const& key) const
-	{
-		return mControllerLookup.find(key) != mControllerLookup.end();
-	}
-
-	shared_ptr<Controller> SectorObject::getController(string const& key) const
-	{
-		auto it = mControllerLookup.find(key);
-
-		if (it != mControllerLookup.end())
-		{
-			return it->second;
-		}
-		else
-		{
-			throw Exception(format("Controller key '{}' not found in SectorObject Controller Map", key));
-		}
-	}
-
-	void SectorObject::addController(string const& key, shared_ptr<Controller> controller)
-	{
-		auto it = mControllerLookup.find(key);
-
-		if (it == mControllerLookup.end())
-		{
-			mControllerLookup[key] = controller;
-		}
-		else
-		{
-			throw Exception(format("Controller key '{}' already exists in SectorObject Controller Map", key));
-		}
-	}
-
 	bool SectorObject::pointInside(float x, float y) const
 	{
 		return mObject->pointInShape(x, y);
-	}
-
-	shared_ptr<VertexController> SectorObject::createVertexController(Building const* building, vector<shared_ptr<Vertex>> const& vertices, map<shared_ptr<Controller>, shared_ptr<Vertex>> const& controllerVertexLookup) const
-	{
-		return nullptr;
 	}
 
 

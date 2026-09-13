@@ -4,7 +4,6 @@
 #include "core/Location.h"
 #include "core/Path.h"
 #include "core/Pathing.h"
-#include "core/VertexController.h"
 #include "core/Log.h"
 #include "core/Exceptions.h"
 
@@ -15,8 +14,7 @@ namespace core
 	using namespace std;
 
 	Agent::Agent(string const& name)
-		: Controller()
-		, mName(name)
+		: mName(name)
 		, mFlags(0)
 		, mState(State::Idle)
 	{
@@ -30,11 +28,6 @@ namespace core
 	Agent::State Agent::getState() const
 	{
 		return mState;
-	}
-
-	bool Agent::underVertexControl() const
-	{
-		return mState == State::UnderVertexControl;
 	}
 
 	string Agent::getDescription() const
@@ -177,41 +170,6 @@ namespace core
 		return mPath.atEnd();
 	}
 
-	void Agent::checkMovedUnderVertexControl()
-	{
-		auto thisVertex = getTargetPathNode().targetVertex;
-		auto vertexController = thisVertex->getController();
-
-		uint32_t controlAreaIndex;
-		if (!vertexController || !vertexController->inControlArea(mPosition, &controlAreaIndex))
-		{
-			return;
-		}
-
-		// If we are moving past the Vertex, then we don't need/want to be under its control
-		auto nextVertex = pathing::findNextVertexForVertexInPath(mPath.path, thisVertex.get(), mPath.targetNode);
-
-		if (vertexController->transitionRequiresControl(thisVertex, nextVertex))
-		{
-			vertexController->registerAgentForControl(this, controlAreaIndex);
-		}
-	}
-
-	void Agent::onRegisteredAgentForVertexControl()
-	{
-		mState = State::UnderVertexControl;
-	}
-
-	void Agent::onUnregisteredAgentForVertexControl()
-	{
-		mState = State::MovingToVertex;
-	}
-
-	void Agent::onVertexControllerNotification(VertexControllerNotificationType type)
-	{
-		// Do nothing
-	}
-
 	void Agent::setPath(shared_ptr<Path> path, bool startPathing)
 	{
 		// An onboard replacement remains the same transport journey. Retarget the
@@ -324,15 +282,6 @@ namespace core
 		}
 
 		mState = State::WaitingForTraversal;
-		return false;
-	}
-
-	bool Agent::traversePathEdge(bool skipVertex)
-	{
-		// Legacy vertex controllers are not traversal authorities for an Agent
-		// executing the replacement protocol. A sector transfer is legal only in
-		// Building's commit phase while this Agent owns a live permit.
-		CORE_VAR_UNUSED(skipVertex);
 		return false;
 	}
 
@@ -556,11 +505,6 @@ namespace core
 		return moveToPosition(targetPos, frameTime, getWalkSpeed());
 	}
 
-	ControllableActionStatus Agent::useImpl(Controller* controller, ControllableActionCallback callback)
-	{
-		return ControllableActionStatus::Rejected;
-	}
-
 	void Agent::wake()
 	{
 		if (mState != State::Idle)
@@ -608,7 +552,6 @@ namespace core
 			break;
 
 		case State::AwaitingTraversalCommit:
-		case State::UnderVertexControl:
 			break;
 
 		default:

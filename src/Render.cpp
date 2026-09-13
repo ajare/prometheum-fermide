@@ -16,14 +16,12 @@
 #include "core/LiftTransit.h"
 #include "core/ShuttleTransit.h"
 #include "core/StaircaseTransit.h"
-#include "core/ControllerSectorObject.h"
+#include "core/ButtonSectorObject.h"
 #include "core/ForceBridgeSectorObject.h"
 #include "core/LadderSectorObject.h"
 #include "core/LiftSectorObject.h"
 #include "core/WalkwaySectorObject.h"
 #include "core/Button.h"
-#include "core/VertexController.h"
-#include "core/DoorVertexController.h"
 
 #include "Main.h"
 #include "Render.h"
@@ -37,7 +35,6 @@ extern core::Agent* gHoveredAgent, *gSelectedAgent;
 extern std::shared_ptr<const core::Vertex> gSelectedVertex;
 extern std::shared_ptr<const core::Sector> gSelectedSector;
 extern std::shared_ptr<const core::SectorObject> gHoveredSectorObject, gSelectedSectorObject;
-extern std::map<std::shared_ptr<core::Object>, std::shared_ptr<core::VertexController>> gObjectVertexControllerMap;
 
 extern GLuint gCellsTexture;
 extern int gCellsTextureWidth;
@@ -299,99 +296,6 @@ void renderGraph(shared_ptr<const core::Graph> graph, shared_ptr<const core::Bui
 
 		drawList->AddCircleFilled({ pos.x, pos.y }, RENDER_VERTEX_SIZE, vertexColour);
 
-		// Render VertexController areas
-		auto vertexController = vertex->getController();
-		
-		if (vertexController)
-		{
-			auto vcOwner = vertexController->getOwner();
-			auto ownerHovered = vcOwner == gHoveredSectorObject.get();
-
-			if (gUISettings.vertexBoundsRenderMode == UISettings::VertexBoundsRenderMode::Always ||
-				gUISettings.vertexBoundsRenderMode == UISettings::OnHover && ownerHovered)
-			{
-				auto vertexControllerAreas = vertexController->getAreasForLayer(layer);
-
-				// Area shapes
-				for (auto const& vertexControllerArea : vertexControllerAreas)
-				{
-					core::Vector2 bounds0, bounds1;
-
-					// Control area
-					auto const& controlArea = vertexControllerArea->getControlArea();
-
-					controlArea.getCurrentShape(bounds0, bounds1);
-
-					transformPosition(bounds0);
-					transformPosition(bounds1);
-
-					auto boundsColour = vertexIsInPath ? ImColor(255, 0, 0, 64) : ImColor(128, 255, 128, 64);
-					drawList->AddRectFilled({ bounds0.x, bounds0.y }, { bounds1.x, bounds1.y }, boundsColour);
-
-					boundsColour = vertexIsInPath ? ImColor(255, 64, 64) : ImColor(192, 255, 192);
-					drawList->AddRect({ bounds0.x, bounds0.y }, { bounds1.x, bounds1.y }, boundsColour);
-					
-					// Controller Area
-					if (vertexControllerArea->hasController())
-					{
-						auto const& controllerArea = vertexControllerArea->getControllerArea();
-
-						controllerArea.getCurrentShape(bounds0, bounds1);
-
-						transformPosition(bounds0);
-						transformPosition(bounds1);
-
-						boundsColour = vertexIsInPath ? ImColor(255, 0, 0, 64) : ImColor(192, 255, 0, 64);
-						drawList->AddRectFilled({ bounds0.x, bounds0.y }, { bounds1.x, bounds1.y }, boundsColour);
-
-						boundsColour = vertexIsInPath ? ImColor(255, 64, 64) : ImColor(255, 255, 0);
-						drawList->AddRect({ bounds0.x, bounds0.y }, { bounds1.x, bounds1.y }, boundsColour);
-					}
-
-					// Exit area
-					if (vertexControllerArea->hasExitArea())
-					{
-						auto const& exitArea = vertexControllerArea->getExitArea();
-
-						exitArea.getCurrentShape(bounds0, bounds1);
-
-						transformPosition(bounds0);
-						transformPosition(bounds1);
-
-						boundsColour = (vertexIsInPath && pathCrossesLayers) ? ImColor(255, 0, 0) : ImColor(192, 255, 192);
-						drawList->AddRect({ bounds0.x, bounds0.y }, { bounds1.x, bounds1.y }, boundsColour);
-					}
-				}
-
-				auto interSectorExitType = vertexController->getInterSectorExitType();
-				if (interSectorExitType != core::VertexController::InterSectorExitType::None)
-				{
-					auto const& vPos = vertex->getPosition();
-					core::Vector2 ev0, ev1;
-
-					if (interSectorExitType == core::VertexController::InterSectorExitType::X)
-					{
-						float exitX = vPos.x + vertexController->getInterSectorExitOffset();
-
-						ev0.set(exitX, vPos.y);
-						ev1.set(exitX, vPos.y + CORE_AGENT_MAX_HEIGHT);
-					}
-					else
-					{
-						float exitY = vPos.y + vertexController->getInterSectorExitOffset();
-
-						ev0.set(vPos.x, exitY);
-						ev1.set(vPos.x + 1.0f, exitY);
-					}
-
-					transformPosition(ev0);
-					transformPosition(ev1);
-
-					auto boundsColour = (vertexIsInPath && !pathCrossesLayers) ? ImColor(255, 0, 0) : ImColor(255, 255, 255);
-					drawList->AddLine({ ev0.x, ev0.y }, { ev1.x, ev1.y }, boundsColour);
-				}
-			}
-		}
 	}
 }
 
@@ -470,32 +374,6 @@ void renderDoor(shared_ptr<const core::Door> door, int layer, bool visibleLayer,
 		break;
 	}
 
-	/*
-	if (gUISettings.renderDoorQueueStops && door == gSelectedSectorObject->_getObject())
-	{
-		auto object = gSelectedSectorObject->_getObject();
-
-		auto it = gObjectVertexControllerMap.find(object);
-
-		if (it != gObjectVertexControllerMap.end())
-		{
-			auto doorVertexController = static_pointer_cast<core::DoorVertexController>(it->second);
-			auto const& stopOffsets = doorVertexController->getQueueStopOffsets(layer);
-			auto doorVertex = doorVertexController->getVertexForLayer(layer);
-
-			for (auto const& stopOffset : stopOffsets)
-			{
-				core::Vector2 v0 = doorVertex->getPosition() + core::Vector2(stopOffset.offset, 0.0f);
-				core::Vector2 v1 = doorVertex->getPosition() + core::Vector2(stopOffset.offset, 0.1f);
-
-				transformPosition(v0);
-				transformPosition(v1);
-				
-				drawList->AddLine({ v0.x, v0.y }, { v1.x, v1.y }, ImColor(1.0f, 0.0f, 0.5f), 1.0f);
-			}
-		}
-	}
-	*/
 }
 
 
@@ -598,29 +476,17 @@ void renderWindow(shared_ptr<const core::Window> window, int layer, bool visible
 }
 
 
-void renderPressButton(shared_ptr<const core::Button> button, int layer, bool visibleLayer, bool selected, ImDrawList* drawList)
+void renderPhysicalControl(shared_ptr<const core::Button> button, int layer, bool visibleLayer, bool selected, ImDrawList* drawList)
 {
+	if (layer != CORE_LAYER_BACK && !visibleLayer) return;
+
 	core::Vector2 bounds0, bounds1;
-
 	button->getFullShape(bounds0, bounds1);
-
 	transformPosition(bounds0);
 	transformPosition(bounds1);
 
-	auto colour = button->Useable::isEnabled() ? ImColor(0, 255, 128) : ImColor(192, 128, 128);
+	auto colour = button->isEnabled() ? ImColor(0, 255, 128) : ImColor(192, 128, 128);
 	drawList->AddRectFilled({ bounds0.x, bounds0.y }, { bounds1.x, bounds1.y }, colour);
-}
-
-
-void renderController(shared_ptr<const core::Controller> controller, int layer, bool visibleLayer, bool selected, ImDrawList* drawList)
-{
-	// Don't render if we're rendering the back layer but it's not the visible one.
-	if (layer != CORE_LAYER_BACK && !visibleLayer)
-	{
-		return;
-	}
-
-	renderPressButton(static_pointer_cast<const core::Button>(controller), layer, visibleLayer, selected, drawList);
 }
 
 
@@ -834,10 +700,11 @@ void renderSectorObjects(shared_ptr<const core::Sector> sector, int layer, bool 
 			}
 			break;
 
-		case core::SectorObjectType::Controller:
+		case core::SectorObjectType::InteractionPoint:
 			if (flags & RENDER_SECTOR_OBJECTS_INFRONT)
 			{
-				renderController(static_pointer_cast<const core::ControllerSectorObject>(object)->getController(), layer, visibleLayer, selected, drawList);
+				auto button = static_pointer_cast<const core::Button>(object->_getObject());
+				renderPhysicalControl(button, layer, visibleLayer, selected, drawList);
 			}
 			break;
 
@@ -906,10 +773,6 @@ void renderAgent(core::Agent const* agent, ImDrawList* drawList)
 
 		case core::Agent::State::AwaitingTraversalCommit:
 			drawList->AddText({ pos0.x, pos0.y - 13 }, textColour, "ATC");
-			break;
-
-		case core::Agent::State::UnderVertexControl:
-			drawList->AddText({ pos0.x, pos0.y - 13 }, textColour, "UVC");
 			break;
 
 		default:

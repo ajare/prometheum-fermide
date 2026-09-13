@@ -18,11 +18,6 @@ namespace core
 
 		uint32_t mCarWidth;
 
-	private:
-
-		// Overridden from RailedTransport
-		uint32_t getStopRefIndex(uint32_t index) const override;
-
 	public:
 
 		Shuttle(uint32_t cellX, uint32_t cellY, float xOffset, float yOffset, float transportWidth, float transportHeight, uint32_t numCars, uint32_t carWidth, std::vector<uint32_t> stopOffsets);

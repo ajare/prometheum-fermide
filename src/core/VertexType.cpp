@@ -1,5 +1,4 @@
 #include "core/VertexType.h"
-#include "core/ControllerVertex.h"
 #include "core/Exceptions.h"
 
 

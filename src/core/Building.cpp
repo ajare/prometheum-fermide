@@ -16,19 +16,10 @@
 #include "core/StaircaseTransit.h"
 #include "core/ButtonSectorObject.h"
 #include "core/ForceBridgeSectorObject.h"
-#include "core/ControllerSectorObject.h"
 #include "core/LadderSectorObject.h"
 #include "core/LiftSectorObject.h"
 #include "core/WalkwaySectorObject.h"
 #include "core/PlatformLift.h"
-#include "core/ButtonDoorOrchestratedSystem.h"
-#include "core/BulkheadDoorOrchestratedSystem.h"
-#include "core/ButtonExtensibleObjectOrchestratedSystem.h"
-#include "core/LiftOrchestratedSystem.h"
-#include "core/PlatformLiftOrchestratedSystem.h"
-#include "core/ShuttleOrchestratedSystem.h"
-#include "core/LightingOrchestratedSystem.h"
-#include "core/VertexController.h"
 #include "core/Exceptions.h"
 
 
@@ -37,12 +28,12 @@ namespace core
 
 	using namespace std;
 
-	Building::CreateDoorOptions Building::ManualDoor1Options{ 1, { false, false }, false, DoorActivationMode::Manual };
-	Building::CreateDoorOptions Building::OrchButtonDoor1Options{ 1, { true, true }, true, DoorActivationMode::RemoteControlled };
-	Building::CreateDoorOptions Building::NonOrchButtonDoor1Options{ 1, { true, true }, false, DoorActivationMode::Unavailable };
-	Building::CreateDoorOptions Building::ManualDoor2Options{ 2, { false, false }, false, DoorActivationMode::Manual };
-	Building::CreateDoorOptions Building::OrchButtonDoor2Options{ 2, { true, true }, true, DoorActivationMode::RemoteControlled };
-	Building::CreateDoorOptions Building::NonOrchButtonDoor2Options{ 2, { true, true }, false, DoorActivationMode::Unavailable };
+	Building::CreateDoorOptions Building::ManualDoor1Options{ 1, { false, false }, DoorActivationMode::Manual };
+	Building::CreateDoorOptions Building::RemoteControlledDoor1Options{ 1, { true, true }, DoorActivationMode::RemoteControlled };
+	Building::CreateDoorOptions Building::UnavailableDoor1Options{ 1, { false, false }, DoorActivationMode::Unavailable };
+	Building::CreateDoorOptions Building::ManualDoor2Options{ 2, { false, false }, DoorActivationMode::Manual };
+	Building::CreateDoorOptions Building::RemoteControlledDoor2Options{ 2, { true, true }, DoorActivationMode::RemoteControlled };
+	Building::CreateDoorOptions Building::UnavailableDoor2Options{ 2, { false, false }, DoorActivationMode::Unavailable };
 
 	/*
 	Building
@@ -103,7 +94,6 @@ namespace core
 		}
 
 		mGraph = make_shared<Graph>(this);
-		mOrchestrator = make_shared<Orchestrator>();
 	}
 
 	Building::~Building() = default;
@@ -226,25 +216,25 @@ namespace core
 		}
 	}
 
-	void Building::validateCellHasController(string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y, int side) const
+	void Building::validateCellHasPhysicalControl(string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y, int side) const
 	{
 		auto layer = getLayer(layerIndex);
 		auto const& cellDef = layer->getCellDefinition(x, y);
 
-		if (cellDef.controllers[side] == ~0u)
+		if (cellDef.controls[side] == ~0u)
 		{
-			throw BuildingException(this, format("{} - cell at {},{} (side {}) does not have a controller.", caller, x, y, side));
+			throw BuildingException(this, format("{} - cell at {},{} (side {}) does not have a physical control.", caller, x, y, side));
 		}
 	}
 
-	void Building::validateCellHasNoController(string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y, int side) const
+	void Building::validateCellHasNoPhysicalControl(string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y, int side) const
 	{
 		auto layer = getLayer(layerIndex);
 		auto const& cellDef = layer->getCellDefinition(x, y);
 
-		if (cellDef.controllers[side] != ~0u)
+		if (cellDef.controls[side] != ~0u)
 		{
-			throw BuildingException(this, format("{} - cell at {},{} (side {}) has a controller.", caller, x, y, side));
+			throw BuildingException(this, format("{} - cell at {},{} (side {}) has a physical control.", caller, x, y, side));
 		}
 	}
 
@@ -355,10 +345,6 @@ namespace core
 
 	void Building::validateSectorDoorOptions(string const& caller, CreateDoorOptions const& options) const
 	{
-		if (options.orchestrate && !options.controllers[CORE_LAYER_FORE] && !options.controllers[CORE_LAYER_BACK])
-		{
-			throw BuildingException(this, format("{} - Orchestration requested but no Controllers requested.", caller));
-		}
 		if (options.holdOpenSeconds < 0.0f)
 		{
 			throw BuildingException(this, format("{} - Door hold-open time cannot be negative.", caller));
@@ -367,9 +353,9 @@ namespace core
 
 	void Building::validateSectorForceBridgeOptions(string const& caller, CreateForceBridgeOptions const& options) const
 	{
-		if (options.extensible && (options.controllerCount < 1 || options.controllerCount > 2))
+		if (options.extensible && (options.controlCount < 1 || options.controlCount > 2))
 		{
-			throw BuildingException(this, format("{} - Controller count must be [1,2] for a controlled ForceBridge, not {}", caller, options.controllerCount));
+			throw BuildingException(this, format("{} - Physical control count must be [1,2] for a controlled ForceBridge, not {}", caller, options.controlCount));
 		}
 	}
 
@@ -731,14 +717,14 @@ namespace core
 		};
 	}
 
-	Building::CreateObjectResult Building::createController(string const& name, uint32_t layerIndex, uint32_t x, uint32_t y, int side, uint32_t flags, uint32_t* vertexIdentifier)
+	Building::CreateObjectResult Building::createPhysicalControl(string const& name, uint32_t layerIndex, uint32_t x, uint32_t y, int side, uint32_t flags, uint32_t* vertexIdentifier)
 	{
-		string caller = format("Building::createController({}, {}, {}, {}, {})", layerIndex, x, y, side, flags);
+		string caller = format("Building::createPhysicalControl({}, {}, {}, {}, {})", layerIndex, x, y, side, flags);
 		
 		validateCellOccupied(caller, layerIndex, x, y);
-		validateCellHasNoController(caller, layerIndex, x, y, side);
+		validateCellHasNoPhysicalControl(caller, layerIndex, x, y, side);
 
-		// Create Controller
+		// Create physical control
 		auto& cellDef = mLayers[layerIndex]->getCellDefinition(x, y);
 		auto sector = _getSector(cellDef.sectorIndex);
 
@@ -764,16 +750,16 @@ namespace core
 			throw UnhandledException(side, "side");
 		}
 
-		// Check to see if any Controllers are already in this cell.  Adjust y position accordingly.
+		// Adjust the height when physical controls would overlap.
 		if (side == CORE_SIDE_LEFT && x > 0)
 		{
 			auto& lcd = mLayers[layerIndex]->getCellDefinition(x - 1, y);
 			if (lcd.sectorIndex == cellDef.sectorIndex)
 			{
-				if (lcd.controllers[CORE_SIDE_RIGHT] != ~0u)
+				if (lcd.controls[CORE_SIDE_RIGHT] != ~0u)
 				{
 					// Clash: adjust heights
-					auto ctrl = _getSector(lcd.sectorIndex)->getObject(lcd.controllers[CORE_SIDE_RIGHT]);
+					auto ctrl = _getSector(lcd.sectorIndex)->getObject(lcd.controls[CORE_SIDE_RIGHT]);
 					auto button = static_pointer_cast<Button>(ctrl->_getObject());
 
 					button->_adjustY(0.025f);
@@ -787,10 +773,10 @@ namespace core
 
 			if (lcd.sectorIndex == cellDef.sectorIndex)
 			{
-				if (lcd.controllers[CORE_SIDE_LEFT] != ~0u)
+				if (lcd.controls[CORE_SIDE_LEFT] != ~0u)
 				{
 					// Clash: adjust heights
-					auto ctrl = _getSector(lcd.sectorIndex)->getObject(lcd.controllers[CORE_SIDE_LEFT]);
+					auto ctrl = _getSector(lcd.sectorIndex)->getObject(lcd.controls[CORE_SIDE_LEFT]);
 					auto button = static_pointer_cast<Button>(ctrl->_getObject());
 
 					button->_adjustY(-0.025f);
@@ -799,14 +785,23 @@ namespace core
 			}
 		}
 
-		auto controllerIndex = sector->createController(sector, name, x, y, xOffset, yOffset, flags, vertexIdentifier);
-		cellDef.controllers[side] = controllerIndex;
+		auto controlIndex = sector->createPhysicalControl(sector, name, x, y, xOffset, yOffset, flags, vertexIdentifier);
+		cellDef.controls[side] = controlIndex;
 
 		return {
-			controllerIndex,
-			SectorObjectType::Controller,
+			controlIndex,
+			SectorObjectType::InteractionPoint,
 			sector
 		};
+	}
+
+	void Building::bindPhysicalControl(CreateObjectResult& control, InteractionPointId point)
+	{
+		control.interactionPoint = point;
+		auto object = control.sector->getObject(control.index)->_getObject();
+		auto button = dynamic_pointer_cast<Button>(object);
+		if (!button) throw logic_error("Physical control is not backed by a Button");
+		button->_setInteractionPointId(point);
 	}
 
 	Building::CreateObjectResult Building::createWalkway(uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t* vertexIdentifier)
@@ -1079,7 +1074,7 @@ namespace core
 			SectorId{ (uint64_t)sectorIndex + 1 }, options.agentSpacing,
 			options.directionalBatchLimit);
 		ladder->configureTraversal(traversalResource);
-		auto registerExtensionControl = [&](CreateObjectResult const& control)
+		auto registerExtensionControl = [&](CreateObjectResult& control)
 		{
 			auto object = control.sector->_getObject(control.index);
 			DeviceCommand command;
@@ -1090,48 +1085,27 @@ namespace core
 				SectorId{ (uint64_t)control.sector->getIndex() + 1 },
 				object->getPosition() + object->getSize() * 0.5f, 0.15f,
 				getFixedTimestep(), { { command, InteractionBindingRequirement::Required } });
+			bindPhysicalControl(control, point);
 			addTraversalControl(traversalResource, point);
 		};
 
-		// See if we need an Controller
-		CreateObjectResult createdCtrls[2];
-
+		CreateObjectResult createdControls[2];
 		if (options.extensible)
 		{
-			// Set up the ForceBridge and Button with an appropriate Orchestrator
-			auto orchSystem = make_shared<ButtonExtensibleObjectOrchestratedSystem>(mOrchestrator);
-
-			orchSystem->setExtensibleObject(ladder);
-
-			// Try and place on the right of the Ladder, unless it's at the end of the Location
-			auto locX0 = foreSector0->getCellX();
-			auto locX1 = locX0 + foreSector0->getCellsWide();
+			auto locX1 = foreSector0->getCellX() + foreSector0->getCellsWide();
 			int side = x == locX1 ? CORE_SIDE_LEFT : CORE_SIDE_RIGHT;
+			createdControls[CORE_LEVEL_LOW] = _createLadderButton(foreSector0, x, y0, side, 0);
+			registerExtensionControl(createdControls[CORE_LEVEL_LOW]);
 
-			// Lower
-			createdCtrls[CORE_LEVEL_LOW] = _createLadderButton(foreSector0, x, y0, side, 0);
-			registerExtensionControl(createdCtrls[CORE_LEVEL_LOW]);
-
-			auto buttonSectorObject = dynamic_pointer_cast<ButtonSectorObject>(createdCtrls[CORE_LEVEL_LOW].sector->_getObject(createdCtrls[CORE_LEVEL_LOW].index));
-			orchSystem->addButton(dynamic_pointer_cast<Button>(buttonSectorObject->_getObject()));
-
-			// Upper
-			locX0 = foreSector1->getCellX();
-			locX1 = locX1 + foreSector1->getCellsWide();
+			locX1 = foreSector1->getCellX() + foreSector1->getCellsWide();
 			side = x == locX1 ? CORE_SIDE_LEFT : CORE_SIDE_RIGHT;
-
-			createdCtrls[CORE_LEVEL_HIGH] = _createLadderButton(foreSector1, x, y1, side, 0);
-			registerExtensionControl(createdCtrls[CORE_LEVEL_HIGH]);
-
-			buttonSectorObject = dynamic_pointer_cast<ButtonSectorObject>(createdCtrls[CORE_LEVEL_HIGH].sector->_getObject(createdCtrls[CORE_LEVEL_HIGH].index));
-			orchSystem->addButton(dynamic_pointer_cast<Button>(buttonSectorObject->_getObject()));
-
-			mOrchestrator->addSystem(orchSystem);
+			createdControls[CORE_LEVEL_HIGH] = _createLadderButton(foreSector1, x, y1, side, 0);
+			registerExtensionControl(createdControls[CORE_LEVEL_HIGH]);
 		}
 
 		return {
 			{ ~0u, SectorObjectType::Ladder, ladderSector },
-			{ createdCtrls[0], createdCtrls[1] },
+			{ createdControls[0], createdControls[1] },
 			traversalResource
 		};
 	}
@@ -1309,28 +1283,14 @@ namespace core
 
 		liftRes.lift = liftObject;
 
-		// Orchestrate
-		auto orchSystem = make_shared<LiftOrchestratedSystem>(mOrchestrator);
-		liftRes.orchSystem = orchSystem;
-		
-		orchSystem->setLift(liftTransit);
-
-		// Create Doors and Buttons
+		// Landing controls are physical InteractionPoints; the lift coordinator owns
+		// scheduling, door interlocks, and operation completion.
 		for (auto stopOffset : options.stopOffsets)
 		{
-			auto doorRes = _addSectorDoor(y + stopOffset, x, { options.cellsWide, { true, false }, false, DoorActivationMode::Unavailable });
-			
-			auto door = static_pointer_cast<DoorSectorObject>(doorRes.door.sector->_getObject(doorRes.door.index))->getDoor();
-			
-			auto ctrl = doorRes.controllers[CORE_LAYER_FORE];
-			auto button = dynamic_pointer_cast<Button>(ctrl.sector->_getObject(ctrl.index)->_getObject());
-
-			orchSystem->addStop(door, button);
-
+			auto doorRes = _addSectorDoor(y + stopOffset, x,
+				{ options.cellsWide, { true, false }, DoorActivationMode::Unavailable }, true);
 			liftRes.doors.push_back(doorRes);
 		}
-
-		mOrchestrator->addSystem(orchSystem);
 
 		// The replacement lift coordinator owns the car manifest and schedule. Each
 		// landing remains a distinct threshold resource, linked to this coordinator.
@@ -1361,8 +1321,8 @@ namespace core
 			landing->mLiftCoordinator = coordinator;
 			landing->mLiftStopIndex = i;
 
-			auto const& controller = liftRes.doors[i].controllers[CORE_LAYER_FORE];
-			auto controlObject = controller.sector->_getObject(controller.index);
+			auto& control = liftRes.doors[i].controls[CORE_LAYER_FORE];
+			auto controlObject = control.sector->_getObject(control.index);
 			auto controlPosition = controlObject->getPosition() + controlObject->getSize() * 0.5f;
 			DeviceCommand call;
 			call.type = DeviceCommandType::CallLift;
@@ -1371,6 +1331,7 @@ namespace core
 			auto point = createInteractionPoint("Lift landing call",
 				liftStops[i].locationSector, controlPosition, 0.15f, getFixedTimestep(),
 				{ { call, InteractionBindingRequirement::Required } });
+			bindPhysicalControl(control, point);
 			landing->mControls.push_back(point);
 			liftResource->mLiftStops[i].callControl = point;
 
@@ -1471,40 +1432,19 @@ namespace core
 
 		shuttleRes.shuttle = shuttleObject;
 
-		// Orchestrate
-		auto orchSystem = make_shared<ShuttleOrchestratedSystem>(mOrchestrator);
-		shuttleRes.orchSystem = orchSystem;
-
-		orchSystem->setShuttle(shuttleTransit);
-
-		// Create Doors and Buttons
-		uint32_t stopIndex{ 0 };
+		// Create landing thresholds and physical InteractionPoints. The shuttle
+		// coordinator is the sole vehicle-wide scheduler.
 		for (auto stopOffset : options.stopOffsets)
 		{
 			uint32_t doorWidth = options.carWidth - 2;
-
-			vector<shared_ptr<Door>> stopDoors;
-			vector<shared_ptr<Button>> stopButtons;
-
 			for (uint32_t door_i = 0; door_i < options.numCars; ++door_i)
 			{
 				uint32_t doorX = door_i * options.carWidth + door_i + 1;
-				auto doorRes = _addSectorDoor(y, x + stopOffset + doorX, { doorWidth, { true, false }, false, DoorActivationMode::Unavailable });
-
-				auto door = static_pointer_cast<DoorSectorObject>(doorRes.door.sector->_getObject(doorRes.door.index))->getDoor();
-				stopDoors.push_back(door);
-
-				auto ctrl = doorRes.controllers[CORE_LAYER_FORE];
-				auto button = dynamic_pointer_cast<Button>(ctrl.sector->_getObject(ctrl.index)->_getObject());
-				stopButtons.push_back(button);
-
+				auto doorRes = _addSectorDoor(y, x + stopOffset + doorX,
+					{ doorWidth, { true, false }, DoorActivationMode::Unavailable }, true);
 				shuttleRes.doors.push_back(doorRes);
 			}
-
-			orchSystem->addStop(stopIndex++, stopDoors, stopButtons);
 		}
-
-		mOrchestrator->addSystem(orchSystem);
 
 		vector<LiftStop> stops;
 		for (uint32_t i = 0; i < options.stopOffsets.size(); ++i)
@@ -1548,8 +1488,8 @@ namespace core
 				shuttleResource->mShuttleCarriages[carriage].stopDoors[stop].push_back(
 					doorResult.traversalResource);
 
-				auto const& controller = doorResult.controllers[CORE_LAYER_FORE];
-				auto controlObject = controller.sector->_getObject(controller.index);
+				auto& control = doorResult.controls[CORE_LAYER_FORE];
+				auto controlObject = control.sector->_getObject(control.index);
 				auto controlPosition = controlObject->getPosition() + controlObject->getSize() * 0.5f;
 				DeviceCommand call;
 				call.type = DeviceCommandType::CallShuttle;
@@ -1558,6 +1498,7 @@ namespace core
 				auto point = createInteractionPoint("Shuttle landing call", locationId,
 					controlPosition, 0.15f, getFixedTimestep(),
 					{ { call, InteractionBindingRequirement::Required } });
+				bindPhysicalControl(control, point);
 				landing->mControls.push_back(point);
 				if (!shuttleResource->mLiftStops[stop].callControl)
 					shuttleResource->mLiftStops[stop].callControl = point;
@@ -1625,7 +1566,7 @@ namespace core
 		auto side = CORE_SIDE_MIDDLE;
 		uint32_t buttonX = sector->getCellX() + x;
 
-		auto const& obj = createController(name, sector->getLayerIndex(), buttonX, y, side, flags);
+		auto const& obj = createPhysicalControl(name, sector->getLayerIndex(), buttonX, y, side, flags);
 
 		if (index)
 		{
@@ -1640,7 +1581,7 @@ namespace core
 		int side = ((x + cellsWide) - 1) == sector->getCellX1() ? CORE_SIDE_LEFT : CORE_SIDE_RIGHT;
 		uint32_t buttonX = x + (side == CORE_SIDE_LEFT ? 0 : cellsWide - 1);
 		
-		auto obj = createController("Door button", sector->getLayerIndex(), buttonX, y, side, flags);
+		auto obj = createPhysicalControl("Door button", sector->getLayerIndex(), buttonX, y, side, flags);
 
 		if (index)
 		{
@@ -1654,7 +1595,7 @@ namespace core
 	{
 		uint32_t buttonX = side == CORE_SIDE_LEFT ? sector->getCellX1() : sector->getCellX0();
 
-		auto obj = createController("BulkheadDoor button", sector->getLayerIndex(), buttonX, y, CORE_SIDE_MIDDLE, 0);
+		auto obj = createPhysicalControl("BulkheadDoor button", sector->getLayerIndex(), buttonX, y, CORE_SIDE_MIDDLE, 0);
 
 		if (index)
 		{
@@ -1672,7 +1613,7 @@ namespace core
 		// Check position of button cell
 		validateCellIsInSector(caller, buttonX, y, sector);
 
-		auto obj = createController("ForceBridge button", sector->getLayerIndex(), buttonX, y, side, flags);
+		auto obj = createPhysicalControl("ForceBridge button", sector->getLayerIndex(), buttonX, y, side, flags);
 
 		if (index)
 		{
@@ -1690,7 +1631,7 @@ namespace core
 		// Check position of button cell
 		validateCellIsInSector(caller, buttonX, y, sector);
 
-		auto obj = createController("Ladder button", sector->getLayerIndex(), buttonX, y, side, flags);
+		auto obj = createPhysicalControl("Ladder button", sector->getLayerIndex(), buttonX, y, side, flags);
 
 		if (index)
 		{
@@ -1703,12 +1644,12 @@ namespace core
 	Building::CreateObjectResult Building::_createPlatformLiftButton(shared_ptr<const Sector> sector, uint32_t x, uint32_t y, uint32_t cellsWide, int side, uint32_t flags, uint32_t* index)
 	{
 		string caller = format("_createPlatformLiftButton(<sector>, {}, {}, {}, {}, {}, <index>)", x, y, cellsWide, side, flags);
-		uint32_t buttonX = x + side == CORE_SIDE_LEFT ? 0 : (cellsWide - 1);
+		uint32_t buttonX = x + (side == CORE_SIDE_LEFT ? 0 : cellsWide - 1);
 
 		// Check position of button cell
 		validateCellIsInSector(caller, buttonX, y, sector);
 
-		auto obj = createController("Platform lift button", sector->getLayerIndex(), buttonX, y, side, flags);
+		auto obj = createPhysicalControl("Platform lift button", sector->getLayerIndex(), buttonX, y, side, flags);
 
 		if (index)
 		{
@@ -1724,13 +1665,20 @@ namespace core
 		return _addSectorDoor(y, x, options);
 	}
 
-	Building::CreateDoorResult Building::_addSectorDoor(uint32_t y, uint32_t x, CreateDoorOptions const& options)
+	Building::CreateDoorResult Building::_addSectorDoor(uint32_t y, uint32_t x,
+		CreateDoorOptions const& options, bool controlsAreExternallyBound)
 	{
 		string caller = format("Building::addSectorDoor({}, {}, {})", y, x, options.width);
 
 		auto cellsWide = options.width;
 
 		validateSectorDoorOptions(caller, options);
+		if (!controlsAreExternallyBound && options.activationMode != DoorActivationMode::RemoteControlled
+			&& (options.controls[0] || options.controls[1]))
+		{
+			throw BuildingException(this,
+				format("{} - physical controls require remote-controlled activation", caller));
+		}
 		validateBounds(caller, x, y, cellsWide, 1);
 		validateSpaceOnlyInOneSector(caller, CORE_LAYER_FORE, x, y, cellsWide, 1);
 		validateSpaceOnlyInOneSector(caller, CORE_LAYER_BACK, x, y, cellsWide, 1);
@@ -1811,25 +1759,25 @@ namespace core
 			cellDef1.sectorObjectType = doorObject.type;
 		}
 
-		// Set up controllers and orchestration
-		CreateObjectResult createdCtrls[2];
+		// Bind physical controls to typed device commands
+		CreateObjectResult createdControls[2];
 
 		for (int i = 0; i < 2; ++i)
 		{
-			if (options.controllers[i])
+			if (options.controls[i])
 			{
 				if (x == sectors[i]->getCellX0() && (x + options.width - 1) == sectors[i]->getCellX1())
 				{
 					throw BuildingException(this, format("{} - No space to place Buttons for Door", caller));
 				}
 
-				auto buttonObject = _createDoorButton(sectors[i], x, y, cellsWide, CORE_BUTTON_F_AUTO_REENABLE, &createdCtrls[i].index);
-				createdCtrls[i].type = SectorObjectType::Controller;
-				createdCtrls[i].sector = sectors[i];
+				auto buttonObject = _createDoorButton(sectors[i], x, y, cellsWide, CORE_BUTTON_F_AUTO_REENABLE, &createdControls[i].index);
+				createdControls[i].type = SectorObjectType::InteractionPoint;
+				createdControls[i].sector = sectors[i];
 
-				if (options.activationMode == DoorActivationMode::RemoteControlled)
+				if (!controlsAreExternallyBound)
 				{
-					auto controlObject = sectors[i]->_getObject(createdCtrls[i].index);
+					auto controlObject = sectors[i]->_getObject(createdControls[i].index);
 					auto controlPosition = controlObject->getPosition() + controlObject->getSize() * 0.5f;
 					DeviceCommand command;
 					command.type = DeviceCommandType::OpenDoor;
@@ -1838,42 +1786,14 @@ namespace core
 					auto point = createInteractionPoint("Door button",
 						SectorId{ (uint64_t)sectors[i]->getIndex() + 1 }, controlPosition,
 						0.15f, getFixedTimestep(), { { command, InteractionBindingRequirement::Required } });
+					bindPhysicalControl(createdControls[i], point);
 					addTraversalControl(traversalResource, point);
 				}
 			}
 		}
 
-		// Orchestrate
-		shared_ptr<ButtonDoorOrchestratedSystem> orchSystem;
 
-		if (options.orchestrate)
-		{
-			orchSystem = make_shared<ButtonDoorOrchestratedSystem>(mOrchestrator);
-
-			orchSystem->setDoor(door);
-
-			for (int i = 0; i < CORE_NUM_LAYERS; ++i)
-			{
-				if (options.controllers[i])
-				{
-					auto const& ctrl = createdCtrls[i];
-
-					auto button = dynamic_pointer_cast<Button>(ctrl.sector->_getObject(ctrl.index)->_getObject());
-
-					doorSectorObject->addController(i == CORE_LAYER_FORE ? "ForeController" : "BackController", button);
-					orchSystem->addButton(button);
-				}
-			}
-
-			mOrchestrator->addSystem(orchSystem);
-		}
-
-		return {
-			doorObject,
-			{ createdCtrls[0], createdCtrls[1] },
-			orchSystem,
-			traversalResource
-		};
+		return { doorObject, { createdControls[0], createdControls[1] }, traversalResource };
 	}
 
 	uint32_t Building::addSectorWindow(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t decksHigh)
@@ -1917,7 +1837,10 @@ namespace core
 		}
 
 		// Create window
-		auto const& [windowIndex, windowObjType, windowSector] = createWindow(layerIndex, x, y, cellsWide, decksHigh);
+		auto createdWindow = createWindow(layerIndex, x, y, cellsWide, decksHigh);
+		auto windowIndex = createdWindow.index;
+		auto windowObjType = createdWindow.type;
+		auto windowSector = createdWindow.sector;
 		auto windowObject = dynamic_pointer_cast<WindowSectorObject>(windowSector->_getObject(windowIndex));
 		auto window = windowObject->getWindow();
 		window->setState(options.initialState, options.style);
@@ -1969,6 +1892,12 @@ namespace core
 		if (side != CORE_SIDE_LEFT && side != CORE_SIDE_RIGHT)
 		{
 			throw BuildingException(this, format("{} - side={} is invalid and must be 0 or 1", caller, side));
+		}
+		if (options.activationMode != DoorActivationMode::RemoteControlled
+			&& (options.controls[0] || options.controls[1]))
+		{
+			throw BuildingException(this,
+				format("{} - physical controls require remote-controlled activation", caller));
 		}
 
 		// Get locations on either side.
@@ -2035,25 +1964,16 @@ namespace core
 			rightOrigin, Vector2::UNIT_X,
 			max(0.0f, (sector1->getCellX1() + 1.0f - CORE_AGENT_MAX_WIDTH * 0.5f) - rightOrigin.x));
 
-		CreateObjectResult createdCtrls[2];
-		shared_ptr<BulkheadDoorOrchestratedSystem> orchSystem;
-		if (options.orchestrate) orchSystem = make_shared<BulkheadDoorOrchestratedSystem>(mOrchestrator);
-		if (orchSystem) orchSystem->setBulkheadDoor(door);
+		CreateObjectResult createdControls[2];
 
 		for (int i = 0; i < CORE_NUM_SIDES; ++i)
 		{
-			if (!options.controllers[i]) continue;
+			if (!options.controls[i]) continue;
 			auto sector = i == CORE_SIDE_LEFT ? sector0 : sector1;
-			createdCtrls[i] = _createBulkheadDoorButton(sector, y, i);
-			auto buttonSectorObject = dynamic_pointer_cast<ButtonSectorObject>(
-				createdCtrls[i].sector->_getObject(createdCtrls[i].index));
-			auto button = dynamic_pointer_cast<Button>(buttonSectorObject->_getObject());
-			dooSectorObject->addController(i == CORE_SIDE_LEFT ? "LeftController" : "RightController", button);
-			if (orchSystem) orchSystem->addButton(button);
-
+			createdControls[i] = _createBulkheadDoorButton(sector, y, i);
 			if (options.activationMode == DoorActivationMode::RemoteControlled)
 			{
-				auto controlObject = sector->_getObject(createdCtrls[i].index);
+				auto controlObject = sector->_getObject(createdControls[i].index);
 				DeviceCommand command;
 				command.type = DeviceCommandType::OpenDoor;
 				command.desiredState = true;
@@ -2062,12 +1982,11 @@ namespace core
 					SectorId{ (uint64_t)sector->getIndex() + 1 },
 					controlObject->getPosition() + controlObject->getSize() * 0.5f,
 					0.15f, getFixedTimestep(), { { command, InteractionBindingRequirement::Required } });
+				bindPhysicalControl(createdControls[i], point);
 				addTraversalControl(traversalResource, point);
 			}
 		}
-		if (orchSystem) mOrchestrator->addSystem(orchSystem);
-
-		return { doorObject, { createdCtrls[0], createdCtrls[1] }, orchSystem, traversalResource };
+		return { doorObject, { createdControls[0], createdControls[1] }, traversalResource };
 	}
 
 	Building::CreateObjectResult Building::addSectorLightSwitch(uint32_t sectorIndex, uint32_t xOffset)
@@ -2076,16 +1995,15 @@ namespace core
 		auto sector = _getSector(sectorIndex);
 		auto ctrl = _createSectorButton("Lightswitch", sector, xOffset, 0, CORE_BUTTON_F_AUTO_REENABLE);
 
-		// Set up the Location and Button with an appropriate Orchestrator
-		auto orchSystem = make_shared<LightingOrchestratedSystem>(mOrchestrator);
-
-		orchSystem->setSector(sector);
-
-		auto buttonSectorObject = dynamic_pointer_cast<ButtonSectorObject>(ctrl.sector->_getObject(ctrl.index));
-		orchSystem->addButton(dynamic_pointer_cast<Button>(buttonSectorObject->_getObject()));
-
-		mOrchestrator->addSystem(orchSystem);
-
+		auto object = ctrl.sector->_getObject(ctrl.index);
+		DeviceCommand command;
+		command.type = DeviceCommandType::SetSectorLights;
+		command.target = SectorId{ (uint64_t)sectorIndex + 1 };
+		command.desiredState = !sector->areLightsOn();
+		auto point = createInteractionPoint("Light switch", command.target,
+			object->getPosition() + object->getSize() * 0.5f, 0.15f,
+			getFixedTimestep(), { { command, InteractionBindingRequirement::Required } });
+		bindPhysicalControl(ctrl, point);
 		return ctrl;
 	}
 
@@ -2106,8 +2024,9 @@ namespace core
 			throw BuildingException(this, format("{} - floor is ground, so cannot be a walkway", caller));
 		}
 
-		auto const& [walkwayIndex, walkwayObjType, walkwaySector] = 
-			createWalkway(layerIndex, sector->getCellX() + xOffset, sector->getCellY() + deckIndex);
+		auto createdWalkway = createWalkway(layerIndex,
+			sector->getCellX() + xOffset, sector->getCellY() + deckIndex);
+		auto walkwayIndex = createdWalkway.index;
 
 		// Set layers
 		cellDef.floorIndex = walkwayIndex;
@@ -2129,10 +2048,9 @@ namespace core
 			throw BuildingException(this, format("{} - floor is not ground, so cannot add a marker here", caller));
 		}
 
-		auto const& [markerIndex, markerObjType, markerSector] =
-			createMarker(layerIndex, sector->getCellX(), sector->getCellY() + deckIndex, xOffset, vertexIdentifier);
-
-		cellDef.markers.push_back(markerIndex);
+		auto createdMarker = createMarker(layerIndex, sector->getCellX(),
+			sector->getCellY() + deckIndex, xOffset, vertexIdentifier);
+		cellDef.markers.push_back(createdMarker.index);
 	}
 
 	Building::CreateForceBridgeResult Building::addSectorForceBridge(uint32_t sectorIndex, uint32_t deckIndex, uint32_t xOffset, CreateForceBridgeOptions const& options)
@@ -2194,8 +2112,8 @@ namespace core
 		auto traversalResource = createForceBridgeTraversalResource("Force bridge", forceBridge);
 		forceBridge->configureTraversal(traversalResource);
 
-		// See if we need an Controller
-		CreateObjectResult createdCtrls[2];
+		// See if a physical control is needed
+		CreateObjectResult createdControls[2];
 
 		if (options.extensible)
 		{
@@ -2204,46 +2122,36 @@ namespace core
 				throw BuildingException(this, format("{} - No space to place Buttons for Ladder", caller));
 			}
 
-			// Set up the ForceBridge and Button with an appropriate Orchestrator
-			auto orchSystem = make_shared<ButtonExtensibleObjectOrchestratedSystem>(mOrchestrator);
-
-			orchSystem->setExtensibleObject(forceBridge);
-
-			if (options.controllerCount > 0)
+			if (options.controlCount > 0)
 			{
-				createdCtrls[0] = _createForceBridgeButton(fbObject.sector, x, y, options.width, options.fromSide, 0);
-				auto object = createdCtrls[0].sector->_getObject(createdCtrls[0].index);
+				createdControls[0] = _createForceBridgeButton(fbObject.sector, x, y, options.width, options.fromSide, 0);
+				auto object = createdControls[0].sector->_getObject(createdControls[0].index);
 				DeviceCommand command{ DeviceCommandType::SetExtendedState, {}, true, traversalResource };
 				auto point = createInteractionPoint("Force bridge extension control",
-					SectorId{ (uint64_t)createdCtrls[0].sector->getIndex() + 1 },
+					SectorId{ (uint64_t)createdControls[0].sector->getIndex() + 1 },
 					object->getPosition() + object->getSize() * 0.5f, 0.15f,
 					getFixedTimestep(), { { command, InteractionBindingRequirement::Required } });
+				bindPhysicalControl(createdControls[0], point);
 				addTraversalControl(traversalResource, point);
-
-				auto buttonSectorObject = dynamic_pointer_cast<ButtonSectorObject>(createdCtrls[0].sector->_getObject(createdCtrls[0].index));
-				orchSystem->addButton(dynamic_pointer_cast<Button>(buttonSectorObject->_getObject()));
 			}
-			if (options.controllerCount > 1)
+			if (options.controlCount > 1)
 			{
-				createdCtrls[1] = _createForceBridgeButton(fbObject.sector, x, y, options.width, 1 - options.fromSide, 0);
-				auto object = createdCtrls[1].sector->_getObject(createdCtrls[1].index);
+				createdControls[1] = _createForceBridgeButton(fbObject.sector, x, y, options.width, 1 - options.fromSide, 0);
+				auto object = createdControls[1].sector->_getObject(createdControls[1].index);
 				DeviceCommand command{ DeviceCommandType::SetExtendedState, {}, true, traversalResource };
 				auto point = createInteractionPoint("Force bridge extension control",
-					SectorId{ (uint64_t)createdCtrls[1].sector->getIndex() + 1 },
+					SectorId{ (uint64_t)createdControls[1].sector->getIndex() + 1 },
 					object->getPosition() + object->getSize() * 0.5f, 0.15f,
 					getFixedTimestep(), { { command, InteractionBindingRequirement::Required } });
+				bindPhysicalControl(createdControls[1], point);
 				addTraversalControl(traversalResource, point);
-
-				auto buttonSectorObject = dynamic_pointer_cast<ButtonSectorObject>(createdCtrls[1].sector->_getObject(createdCtrls[1].index));
-				orchSystem->addButton(dynamic_pointer_cast<Button>(buttonSectorObject->_getObject()));
 			}
 
-			mOrchestrator->addSystem(orchSystem);
 		}
 
 		return {
 			fbObject,
-			{ createdCtrls[0], createdCtrls[1] },
+			{ createdControls[0], createdControls[1] },
 			traversalResource
 		};
 	}
@@ -2293,7 +2201,7 @@ namespace core
 			SectorId{ (uint64_t)sectorIndex + 1 }, options.agentSpacing,
 			options.directionalBatchLimit);
 		ladder->configureTraversal(traversalResource);
-		auto registerExtensionControl = [&](CreateObjectResult const& control)
+		auto registerExtensionControl = [&](CreateObjectResult& control)
 		{
 			auto object = control.sector->_getObject(control.index);
 			DeviceCommand command;
@@ -2304,6 +2212,7 @@ namespace core
 				SectorId{ (uint64_t)control.sector->getIndex() + 1 },
 				object->getPosition() + object->getSize() * 0.5f, 0.15f,
 				getFixedTimestep(), { { command, InteractionBindingRequirement::Required } });
+			bindPhysicalControl(control, point);
 			addTraversalControl(traversalResource, point);
 		};
 
@@ -2315,8 +2224,8 @@ namespace core
 			cellDef.sectorObjectIndex = ladderObject.index;
 		}
 
-		// See if we need an Controller
-		CreateObjectResult createdCtrls[2];
+		// See if a physical control is needed
+		CreateObjectResult createdControls[2];
 
 		if (options.extensible)
 		{
@@ -2325,34 +2234,23 @@ namespace core
 				throw BuildingException(this, format("{} - No space to place Buttons for Ladder", caller));
 			}
 
-			// Set up the ForceBridge and Button with an appropriate Orchestrator
-			auto orchSystem = make_shared<ButtonExtensibleObjectOrchestratedSystem>(mOrchestrator);
-
-			orchSystem->setExtensibleObject(ladder);
-
 			// Try and place on the right of the Ladder, unless it's at the end of the Location
 			int side = x == sector->getCellX1() ? CORE_SIDE_LEFT : CORE_SIDE_RIGHT;
 
 			// Lower
-			createdCtrls[CORE_LEVEL_LOW] = _createLadderButton(ladderObject.sector, x, y0, side, 0);
-			registerExtensionControl(createdCtrls[CORE_LEVEL_LOW]);
+			createdControls[CORE_LEVEL_LOW] = _createLadderButton(ladderObject.sector, x, y0, side, 0);
+			registerExtensionControl(createdControls[CORE_LEVEL_LOW]);
 
-			auto buttonSectorObject = dynamic_pointer_cast<ButtonSectorObject>(createdCtrls[CORE_LEVEL_LOW].sector->_getObject(createdCtrls[CORE_LEVEL_LOW].index));
-			orchSystem->addButton(dynamic_pointer_cast<Button>(buttonSectorObject->_getObject()));
 
 			// Upper
-			createdCtrls[CORE_LEVEL_HIGH] = _createLadderButton(ladderObject.sector, x, y1, side, 0);
-			registerExtensionControl(createdCtrls[CORE_LEVEL_HIGH]);
+			createdControls[CORE_LEVEL_HIGH] = _createLadderButton(ladderObject.sector, x, y1, side, 0);
+			registerExtensionControl(createdControls[CORE_LEVEL_HIGH]);
 
-			buttonSectorObject = dynamic_pointer_cast<ButtonSectorObject>(createdCtrls[CORE_LEVEL_HIGH].sector->_getObject(createdCtrls[CORE_LEVEL_HIGH].index));
-			orchSystem->addButton(dynamic_pointer_cast<Button>(buttonSectorObject->_getObject()));
-
-			mOrchestrator->addSystem(orchSystem);
 		}
 
 		return {
 			ladderObject,
-			{ createdCtrls[CORE_LEVEL_LOW], createdCtrls[CORE_LEVEL_HIGH] },
+			{ createdControls[CORE_LEVEL_LOW], createdControls[CORE_LEVEL_HIGH] },
 			traversalResource
 		};
 	}
@@ -2437,30 +2335,15 @@ namespace core
 			}
 		}
 
-		// Orchestrate
 		CreatePlatformLiftResult liftRes;
-
 		liftRes.lift = liftObject;
-
-		auto orchSystem = make_shared<PlatformLiftOrchestratedSystem>(mOrchestrator);
-		liftRes.orchSystem = orchSystem;
-
-		orchSystem->setLift(dynamic_pointer_cast<LiftSectorObject>(liftObject.sector->_getObject(liftObject.index))->getLift());
-
-		// Create Buttons
 		for (auto stopOffset : options.stopOffsets)
 		{
-			// Set up controllers and orchestration
-			CreateObjectResult ctrl = _createPlatformLiftButton(sector, x, y + stopOffset, options.cellsWide, side, CORE_BUTTON_F_AUTO_REENABLE, &ctrl.index);
-			
-			auto button = dynamic_pointer_cast<Button>(ctrl.sector->_getObject(ctrl.index)->_getObject());
-
-			orchSystem->addStop(button);
-
-			liftRes.buttons.push_back(ctrl);
+			CreateObjectResult control = _createPlatformLiftButton(sector, x,
+				y + stopOffset, options.cellsWide, side, CORE_BUTTON_F_AUTO_REENABLE,
+				&control.index);
+			liftRes.buttons.push_back(control);
 		}
-
-		mOrchestrator->addSystem(orchSystem);
 
 		// Platform lifts use the same manifest, dwell, cutoff, destination and LOOK
 		// policies as enclosed lifts. Their stops deliberately have no door resource:
@@ -2485,7 +2368,7 @@ namespace core
 
 		for (uint32_t i = 0; i < liftRes.buttons.size(); ++i)
 		{
-			auto const& buttonResult = liftRes.buttons[i];
+			auto& buttonResult = liftRes.buttons[i];
 			auto buttonObject = buttonResult.sector->_getObject(buttonResult.index);
 			auto buttonPosition = buttonObject->getPosition() + buttonObject->getSize() * 0.5f;
 			DeviceCommand call;
@@ -2495,6 +2378,7 @@ namespace core
 			auto callPoint = createInteractionPoint("Platform lift landing call",
 				stops[i].locationSector, buttonPosition, 0.15f, getFixedTimestep(),
 				{ { call, InteractionBindingRequirement::Required } });
+			bindPhysicalControl(buttonResult, callPoint);
 			resource->mLiftStops[i].callControl = callPoint;
 
 			DeviceCommand select;
@@ -2624,8 +2508,6 @@ namespace core
 			auto resource = mTraversalResources.find(id);
 			require(resource != nullptr, format("Edge {} references removed traversal resource {}",
 				edge->getId(), id.value));
-			require(!edge->getVertex(0)->getController() && !edge->getVertex(1)->getController(),
-				format("Edge {} has both replacement and legacy traversal authorities", edge->getId()));
 			bool compatible = edge->getType() == EdgeType::Door || edge->getType() == EdgeType::BulkheadDoor
 				? resource->mDoor != nullptr
 				: edge->getType() == EdgeType::Window ? resource->mWindow != nullptr
@@ -2818,7 +2700,7 @@ namespace core
 
 	void Building::buildGraph()
 	{
-		mVertexControllers = mGraph->build();
+		mGraph->build();
 		mGraph->validate();
 		validateTraversalTopology(*mGraph);
 	}
@@ -2839,11 +2721,10 @@ namespace core
 		auto candidate = make_shared<Graph>(this);
 		try
 		{
-			auto controllers = candidate->build();
+			candidate->build();
 			candidate->validate();
 			validateTraversalTopology(*candidate);
 			mGraph = std::move(candidate);
-			mVertexControllers = std::move(controllers);
 			mTopologyDirty = false;
 			mTopologyValid = true;
 			mTopologyDiagnostic.clear();
@@ -2974,36 +2855,21 @@ namespace core
 		return nullptr;
 	}
 
-	shared_ptr<Useable> Building::getUseableObjectAtPosition(uint32_t layerIndex, float x, float y, bool includeDisabled, shared_ptr<SectorObject>* sectorObject) const
+	shared_ptr<const Object> Building::getObjectAtPosition(uint32_t layerIndex, float x, float y,
+		shared_ptr<const SectorObject>* sectorObject) const
 	{
-		// Get cell
-		int cellX = (int)x;
-		int cellY = (int)y;
-
-		auto const& layer = mLayers[layerIndex];
-
 		try
 		{
-			auto const& cellDef = layer->getCellDefinition(cellX, cellY);
-			auto sector = getSector(cellDef.sectorIndex);
-
-			switch (sector->getType())
-			{
-			case SectorType::Location:
-				return cellDef.occupied() ? sector->getUseableObjectAtPosition(x, y, includeDisabled, sectorObject) : nullptr;
-
-			case SectorType::Ladder:
+			auto const& cell = mLayers[layerIndex]->getCellDefinition((int)x, (int)y);
+			if (!cell.occupied()) return nullptr;
+			auto sector = getSector(cell.sectorIndex);
+			if (sector->getType() == SectorType::Location)
+				return sector->getObjectAtPosition(x, y, sectorObject);
+			if (sector->getType() == SectorType::Ladder)
 				return dynamic_pointer_cast<const LadderTransit>(sector)->getLadder();
-
-			default:
-				return nullptr;
-			}
 		}
-		catch (BuildingException&)
-		{
-			// This should just catch an out-of-bounds validation check, which we don't mind failing.
-			return nullptr;
-		}
+		catch (BuildingException const&) {}
+		return nullptr;
 	}
 
 	AgentId Building::addOwnedAgentToSector(unique_ptr<Agent> agent, uint32_t sectorId, uint32_t deckOffset, float xOffset)
@@ -3070,24 +2936,6 @@ namespace core
 		return addOwnedAgentToSector(make_unique<Agent>(name), sectorId);
 	}
 
-	void Building::addAgentToSector(Agent* agent, uint32_t sectorId, uint32_t deckOffset, float xOffset)
-	{
-		if (agent && mAgentIds.contains(agent))
-		{
-			throw invalid_argument("Agent is already owned by this Building");
-		}
-		(void)addOwnedAgentToSector(unique_ptr<Agent>(agent), sectorId, deckOffset, xOffset);
-	}
-
-	void Building::addAgentToSector(Agent* agent, uint32_t sectorId)
-	{
-		if (agent && mAgentIds.contains(agent))
-		{
-			throw invalid_argument("Agent is already owned by this Building");
-		}
-		(void)addOwnedAgentToSector(unique_ptr<Agent>(agent), sectorId);
-	}
-
 	void Building::wakeAllAgents()
 	{
 		for (auto const& [id, agent] : mAgents.entries())
@@ -3137,9 +2985,6 @@ namespace core
 			break;
 		case Agent::State::AwaitingTraversalCommit:
 			result.state = AgentPathState::AwaitingTraversalCommit;
-			break;
-		case Agent::State::UnderVertexControl:
-			result.state = AgentPathState::UnderVertexControl;
 			break;
 		}
 
@@ -4963,7 +4808,7 @@ namespace core
 					DoorOpenLeaseKind::Preparation, requestId);
 			if (!boardingLanding->mDoor->isOpen())
 			{
-				if (!boardingLanding->mDoor->isOpening()) boardingLanding->mDoor->handleAction(ControllableActionType::Open);
+				if (!boardingLanding->mDoor->isOpening()) boardingLanding->mDoor->requestOpen();
 				return;
 			}
 			auto lane = find(boardingLanding->mCrossingOwners.begin(), boardingLanding->mCrossingOwners.end(), TraversalRequestId{});
@@ -5074,7 +4919,7 @@ namespace core
 					DoorOpenLeaseKind::Preparation, requestId);
 			if (!disembarkLanding->mDoor->isOpen())
 			{
-				if (!disembarkLanding->mDoor->isOpening()) disembarkLanding->mDoor->handleAction(ControllableActionType::Open);
+				if (!disembarkLanding->mDoor->isOpening()) disembarkLanding->mDoor->requestOpen();
 				return;
 			}
 			auto lane = find(disembarkLanding->mCrossingOwners.begin(), disembarkLanding->mCrossingOwners.end(), TraversalRequestId{});
@@ -6498,7 +6343,7 @@ namespace core
 			&& (kind != DoorOpenLeaseKind::Preparation
 				|| resource.mDoorActivationMode != DoorActivationMode::RemoteControlled))
 		{
-			resource.mDoor->handleAction(ControllableActionType::Open);
+			resource.mDoor->requestOpen();
 		}
 		return id;
 	}
@@ -6822,7 +6667,7 @@ namespace core
 					{
 						interlocked = true;
 						if (landing->mOpenLeases.empty() && !landing->mDoor->isClosing())
-							landing->mDoor->handleAction(ControllableActionType::Close);
+							landing->mDoor->requestClose();
 					}
 				});
 				if (!interlocked && resource.mLiftStopPhase == LiftStopPhase::Closing)
@@ -6966,7 +6811,7 @@ namespace core
 			if ((obstruction || (presence && resource.mDoorActivationMode == DoorActivationMode::Automatic))
 				&& resource.mEnabled && !resource.mDoor->isOpen() && !resource.mDoor->isOpening())
 			{
-				resource.mDoor->handleAction(ControllableActionType::Open);
+				resource.mDoor->requestOpen();
 			}
 
 			bool activeCrossing = any_of(resource.mCrossingOwners.begin(), resource.mCrossingOwners.end(),
@@ -6999,10 +6844,9 @@ namespace core
 				if (operation->mCommand.type == DeviceCommandType::OpenDoor)
 				{
 					auto resource = mTraversalResources.find(operation->mCommand.traversalResource);
-					auto action = operation->mCommand.desiredState
-						? ControllableActionType::Open : ControllableActionType::Close;
 					if (!resource || !resource->mDoor || !resource->mEnabled
-						|| resource->mDoor->handleAction(action) == ~0u)
+						|| !(operation->mCommand.desiredState
+							? resource->mDoor->requestOpen() : resource->mDoor->requestClose()))
 					{
 						operation->mState = DeviceOperationState::Rejected;
 					}
@@ -7018,7 +6862,7 @@ namespace core
 					{
 						resource->mRetractionPending = false;
 						resource->mEnabled = true;
-						if (resource->mExtensible->handleAction(ControllableActionType::Extend) == ~0u)
+						if (!resource->mExtensible->extend())
 							operation->mState = DeviceOperationState::Rejected;
 					}
 					else
@@ -7060,7 +6904,7 @@ namespace core
 						&& resource->mExtensionOccupantLeases.empty())
 					{
 						if (!resource->mExtensible->isRetracted() && !resource->mExtensible->isRetracting())
-							resource->mExtensible->handleAction(ControllableActionType::Retract);
+							resource->mExtensible->retract();
 						if (resource->mExtensible->isRetracted())
 						{
 							resource->mRetractionPending = false;
@@ -7310,11 +7154,6 @@ namespace core
 				agent->update(timestep);
 			}
 			moveInteractions(timestep);
-
-			for (auto const& vertexController : mVertexControllers)
-			{
-				vertexController->update(timestep);
-			}
 			break;
 
 		case SimulationPhase::Commit:

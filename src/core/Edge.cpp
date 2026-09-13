@@ -200,21 +200,4 @@ namespace core
 		return mVertices[0]->getPosition().distanceTo(mVertices[1]->getPosition());
 	}
 
-	/***
-
-	getDependingController()
-	--------------------------
-
-	Get all the Interactables which are required to be interacted with, in order to
-	allow this Edge to be traversed.  For instance, a button which opens a Door.
-
-	Some Interactables will only be required if passing through a specific direction,
-	eg a Door which has buttons to open it will not let you use a button on the other
-	side of the Door.
-	*/
-	shared_ptr<Controller> Edge::getDependingController(int side, uint32_t layerIndex) const
-	{
-		return nullptr;
-	}
-
 } // core

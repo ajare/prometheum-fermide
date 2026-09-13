@@ -158,50 +158,15 @@ namespace core
 		return sortedObjects;
 	}
 
-	shared_ptr<Useable> Sector::getUseableObjectAtPosition(float x, float y, bool includeDisabled, shared_ptr<SectorObject>* sectorObject) const
+	shared_ptr<const Object> Sector::getObjectAtPosition(float x, float y,
+		shared_ptr<const SectorObject>* sectorObject) const
 	{
-		for (auto object : mObjects)
+		for (auto const& object : mObjects)
 		{
-			if (object->pointInside(x, y))
-			{
-				shared_ptr<Useable> result;
-				shared_ptr<SectorObject> resultSO = object;
-
-				switch (object->getObjectType())
-				{
-				case SectorObjectType::BulkheadDoor:
-					result = dynamic_pointer_cast<BulkheadDoorSectorObject>(object)->getDoor();
-					break;
-
-				case SectorObjectType::Door:
-					result = dynamic_pointer_cast<DoorSectorObject>(object)->getDoor();
-					break;
-
-				case SectorObjectType::ForceBridge:
-					result = dynamic_pointer_cast<ForceBridgeSectorObject>(object)->getForceBridge();
-					break;
-
-				case SectorObjectType::Controller:
-					result = dynamic_pointer_cast<ControllerSectorObject>(object)->getController();
-					break;
-
-				case SectorObjectType::Ladder:
-					result = dynamic_pointer_cast<LadderSectorObject>(object)->getLadder();
-					break;
-
-				default:
-					break;
-				}
-
-				if (sectorObject)
-				{
-					*sectorObject = resultSO;
-				}
-
-				return result;
-			}
+			if (!object->pointInside(x, y)) continue;
+			if (sectorObject) *sectorObject = object;
+			return object->_getObject();
 		}
-
 		return nullptr;
 	}
 
@@ -255,7 +220,7 @@ namespace core
 		return addSectorObject(window);
 	}
 
-	uint32_t Sector::createController(shared_ptr<const Sector> sector, string const& name, uint32_t x, uint32_t y, float xOffset, float yOffset, uint32_t flags, uint32_t* vertexIdentifier)
+	uint32_t Sector::createPhysicalControl(shared_ptr<const Sector> sector, string const& name, uint32_t x, uint32_t y, float xOffset, float yOffset, uint32_t flags, uint32_t* vertexIdentifier)
 	{
 		ASSERT_PTR_EQ_THIS(sector);
 
@@ -452,61 +417,8 @@ namespace core
 		}
 	}
 
-	ControllableActionStatus Sector::useImpl(Controller* controller, ControllableActionCallback callback)
-	{
-		return ControllableActionStatus::Unhandled;
-	}
-
-	bool Sector::canBeUsed(Controller const* controller) const
-	{
-		return false;
-	}
-
-	bool Sector::validateAction(ControllableActionType type) const
-	{
-		return type == ControllableActionType::ToggleLights;
-	}
-
-	ControllableActionStatus Sector::startAction(ControllableAction const& action)
-	{
-		switch (action.type)
-		{
-		case ControllableActionType::ToggleLights:
-			return toggleLights() ? ControllableActionStatus::CompletedSuccess : ControllableActionStatus::CompletedFailure;
-
-		default:
-			return ControllableActionStatus::Unhandled;
-		}
-	}
-
-	void Sector::finishAction(ControllableAction const& action)
-	{
-		switch (action.type)
-		{
-		case ControllableActionType::ToggleLights:
-			break;
-
-		default:
-			break;
-		}
-	}
-
-	ControllableActionStatus Sector::updateAction(ControllableAction const& action, float frameTime)
-	{
-		switch (action.type)
-		{
-		case ControllableActionType::ToggleLights:
-			return action.status;
-
-		default:
-			return ControllableActionStatus::Unhandled;
-		}
-	}
-
 	void Sector::advanceResources(float frameTime)
 	{
-		Controllable::update(frameTime);
-
 		for (auto object : mObjects)
 		{
 			object->update(frameTime);

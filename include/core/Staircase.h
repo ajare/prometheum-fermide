@@ -20,8 +20,6 @@ namespace core
 
 	private:
 
-		// Overridden from Useable
-		ControllableActionStatus useImpl(Controller* controller, ControllableActionCallback callback) override;
 
 	public:
 

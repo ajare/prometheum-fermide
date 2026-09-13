@@ -6,7 +6,6 @@
 #include <string>
 
 #include "core/VertexType.h"
-#include "core/VertexActionType.h"
 #include "core/Vector2.h"
 
 
@@ -16,7 +15,6 @@ namespace core
 	class Agent;
 	class Object;
 	class Sector;
-	class VertexController;
 
 	class Vertex
 	{
@@ -40,8 +38,6 @@ namespace core
 		std::shared_ptr<Object> mObject;
 
 		std::vector<std::shared_ptr<const Edge>> mEdges;
-
-		std::shared_ptr<VertexController> mController;
 
 	protected:
 
@@ -75,10 +71,6 @@ namespace core
 		Vector2 getPosition() const;
 
 		std::vector<std::shared_ptr<const Edge>> const& getEdges() const;
-
-		void _setController(std::shared_ptr<VertexController> controller);
-
-		std::shared_ptr<VertexController> getController() const;
 
 		void setObject(std::shared_ptr<Object> object);
 

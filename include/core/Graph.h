@@ -40,10 +40,6 @@ namespace core
 
 		std::vector<std::shared_ptr<const Edge>> mEdges;
 
-		std::map<std::shared_ptr<Controller>, std::shared_ptr<Vertex>> mControllerVertexLookup;
-
-		std::map<std::shared_ptr<const Vertex>, std::shared_ptr<const Edge>> mInteractableEdgeLookup;
-
 		std::map<Sector const*, VertexList> mSectorVertexLookup;
 
 		std::map<uint32_t, std::shared_ptr<const Vertex>> mIdentifierVertexLookup;
@@ -69,7 +65,7 @@ namespace core
 
 		void processWindow(ObjectData const& obj, PositionVertexMap& interLayerVertexLookup, VertexList& workVertices);
 
-		void processController(ObjectData const& obj, PositionVertexMap& interLayerVertexLookup, VertexList& workVertices);
+		void processInteractionPoint(ObjectData const& obj, VertexList& workVertices);
 
 		void processBulkheadDoor(ObjectData const& obj, PositionVertexMap& interLayerVertexLookup, VertexList& workVertices);
 
@@ -95,10 +91,6 @@ namespace core
 
 		void processCrossDeckVertices(std::map<std::shared_ptr<VerticalEdgeCreator>, VertexList> const& crossDeckVertices);
 
-		void validateEdgeController(std::shared_ptr<const Edge> edge, std::shared_ptr<const Controller> controller);
-
-		void validateEdgeControllers();
-
 	public:
 
 		explicit Graph(Building* building);
@@ -111,10 +103,6 @@ namespace core
 
 		std::shared_ptr<const Vertex> const getVertexAtPosition(uint32_t layerIndex, float x, float y, float vertexRadius) const;
 
-		std::shared_ptr<const Vertex> getVertexForController(std::shared_ptr<Controller> controller) const;
-
-		std::shared_ptr<const Edge> getEdgeForInteractableVertex(std::shared_ptr<const Vertex> vertex) const;
-
 		std::shared_ptr<const Vertex> getClosestVertexInSector(Sector const* sector, Vector2 const& pos) const;
 
 		std::shared_ptr<const Vertex> getVertexByIdentifier(uint32_t identifier) const;
@@ -125,7 +113,7 @@ namespace core
 
 		std::shared_ptr<Path> calculatePath(Agent const* agent, std::shared_ptr<const Vertex> target) const;
 
-		std::vector<std::shared_ptr<VertexController>> build();
+		void build();
 
 		void validate();
 	};

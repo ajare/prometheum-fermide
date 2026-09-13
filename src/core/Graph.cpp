@@ -36,7 +36,6 @@
 
 // SectorObjects
 #include "core/ForceBridgeSectorObject.h"
-#include "core/ControllerSectorObject.h"
 #include "core/LadderSectorObject.h"
 #include "core/LiftSectorObject.h"
 
@@ -83,16 +82,6 @@ namespace core
 		}
 
 		return nullptr;
-	}
-
-	shared_ptr<const Vertex> Graph::getVertexForController(shared_ptr<Controller> controller) const
-	{
-		return mControllerVertexLookup.at(controller);
-	}
-
-	shared_ptr<const Edge> Graph::getEdgeForInteractableVertex(shared_ptr<const Vertex> vertex) const
-	{
-		return mInteractableEdgeLookup.at(vertex);
 	}
 
 	shared_ptr<const Vertex> Graph::getClosestVertexInSector(Sector const* sector, Vector2 const& pos) const
@@ -472,28 +461,15 @@ namespace core
 			other->getSector()->getLayerIndex() != windowVertex->getSector()->getLayerIndex());
 	}
 
-	void Graph::processController(ObjectData const& obj, PositionVertexMap& interLayerVertexLookup, VertexList& workVertices)
+	void Graph::processInteractionPoint(ObjectData const& obj, VertexList& workVertices)
 	{
 		ASSERT_INDEX_OK(obj.index);
-
-		// Interactables may be created on either Layer
-		auto ctrl = obj.sectors[obj.layerIndex]->_getObject(obj.index);
-		auto ctrlVertex = ctrl->createVertex(ctrl, obj.sectors[obj.layerIndex]);
-
-		addSectorObjectVertexLookup(ctrl, ctrlVertex);
-
-		auto vertexIdentifier = ctrl->getVertexIdentifier();
-		if (vertexIdentifier != ~0u)
-		{
-			mIdentifierVertexLookup[vertexIdentifier] = ctrlVertex;
-		}
-
-		// Map Interactable to its Vertex, so we can later look up the Vertex we have to path to,
-		// to use an Interactable.
-		auto ctrlPtr = dynamic_pointer_cast<ControllerSectorObject>(ctrl)->getController();
-		mControllerVertexLookup[ctrlPtr] = ctrlVertex;
-
-		workVertices.push_back(ctrlVertex);
+		auto control = obj.sectors[obj.layerIndex]->_getObject(obj.index);
+		auto vertex = control->createVertex(control, obj.sectors[obj.layerIndex]);
+		addSectorObjectVertexLookup(control, vertex);
+		if (auto identifier = control->getVertexIdentifier(); identifier != ~0u)
+			mIdentifierVertexLookup[identifier] = vertex;
+		workVertices.push_back(vertex);
 	}
 
 	void Graph::processBulkheadDoor(ObjectData const& obj, PositionVertexMap& interLayerVertexLookup, VertexList& workVertices)
@@ -702,7 +678,7 @@ namespace core
 
 	void Graph::processStaircaseTransit(int layerIndex, uint32_t curSectorIndex, uint32_t backSectorIndex, uint32_t x, uint32_t y, uint32_t deckOffset, PositionVertexMap& interLayerVertexLookup, VertexList& workVertices, map<shared_ptr<VerticalEdgeCreator>, VertexList>& crossDeckVertices)
 	{
-		// Staircase Vertices are probably the most complex to place, as we have to design a useable path through the transit
+		// Staircase Vertices are probably the most complex to place, as we have to design a usable path through the transit
 		// area, whose steps are not too steep.  Also need to take into account the width of Agents as they pass through.
 		
 		// There are 16 square steps horizontally.  This makes 20 vertically, given it's 2 cells wide.
@@ -851,17 +827,14 @@ namespace core
 		return nextSector && !endTypeIsWall;
 	}
 
-	vector<shared_ptr<VertexController>> Graph::build()
+	void Graph::build()
 	{
 		mBuildLog.clear();
 		mVertices.clear();
 		mEdges.clear();
-		mControllerVertexLookup.clear();
-		mInteractableEdgeLookup.clear();
 		mSectorVertexLookup.clear();
 		mSectorObjectVertexLookup.clear();
 
-		vector<shared_ptr<VertexController>> vertexControllers;
 
 		// List of horizontal vertices, built up as we scan a Deck left to right
 		vector<shared_ptr<Vertex>> workVertices;
@@ -1004,13 +977,13 @@ namespace core
 
 					for (int side = 0; side < 3; ++side)
 					{
-						if (cellDef.controllers[side] != ~0u)
+						if (cellDef.controls[side] != ~0u)
 						{
 							auto cellDef0 = layers[0]->getCellDefinition(x, y);
 							auto cellDef1 = layers[1]->getCellDefinition(x, y);
 
 							ObjectData obj = {
-								cellDef.controllers[side],
+								cellDef.controls[side],
 								layerIndex,
 								x, y,
 								{
@@ -1019,11 +992,7 @@ namespace core
 								}
 							};
 
-							processController(
-								obj,
-								interLayerVertexLookup,
-								workVertices
-							);
+							processInteractionPoint(obj, workVertices);
 						}
 					}
 
@@ -1216,88 +1185,12 @@ namespace core
 		// Connect Layers
 		processCrossDeckVertices(crossDeckVertexLists);
 
-		// Create Vertex Controllers
-		for (auto item : mSectorObjectVertexLookup)
-		{
-			auto const& [sectorObject, vertices] = item;
-
-			// TODO: need to get the Vertices for any Controllers which this SectorObject requires
-			//       and pass them into createVertexController, but in a structured way, so
-			//       the createVertexController() implementation knows what to do with them.
-			//       mControllerVertexLookup maps Controller to Vertex, so need a map from
-			//       SectorObject to the Controllers which control it.
-
-			auto vertexController = sectorObject->createVertexController(mwBuilding, vertices, mControllerVertexLookup);
-
-			if (vertexController)
-			{
-				vertexControllers.push_back(vertexController);
-			}
-		}
-
-		return vertexControllers;
-	}
-
-	void Graph::validateEdgeController(shared_ptr<const Edge> edge, shared_ptr<const Controller> controller)
-	{
-		for (uint32_t i = 0; i < 2; ++i)
-		{
-			auto vertex = edge->getVertex(i);
-
-			for (auto vertexEdge : vertex->getEdges())
-			{
-				if (!vertexEdge->sameAs(edge))
-				{
-					auto otherVertex = vertexEdge->getOtherVertex(vertex);
-
-					if (otherVertex->getSubType() == VertexSubType::Interactable)
-					{
-						auto otherControllerVertex = dynamic_pointer_cast<const ControllerVertex>(otherVertex);
-						auto otherController = otherControllerVertex->getController();
-
-						if (otherController == controller)
-						{
-							auto entry = make_pair(otherVertex, vertexEdge);
-							auto res = mInteractableEdgeLookup.insert(entry);
-							
-							return;
-						}
-					}
-				}
-			}
-		}
-
-		auto errMsg = format("Controller '{}' for Edge '{}' needs to be next to it.", 
-			controller->getDescription(), edge->getDescription());
-
-		throw GraphException(errMsg);
-	}
-
-	void Graph::validateEdgeControllers()
-	{
-		array<int, 2> sides = { CORE_SIDE_LEFT, CORE_SIDE_RIGHT };
-		array<uint32_t, 2> layerIndices = { CORE_LAYER_FORE, CORE_LAYER_BACK };
-
-		for (auto edge : mEdges)
-		{
-			for (int side : sides)
-			{
-				for (uint32_t layerIndex : layerIndices)
-				{
-					auto controller = edge->getDependingController(side, layerIndex);
-
-					if (controller)
-					{
-						validateEdgeController(edge, controller);
-					}
-				}
-			}
-		}
 	}
 
 	void Graph::validate()
 	{
-		validateEdgeControllers();
+		// Resource/edge authority and control-binding validation is performed by
+		// Building::validateTraversalTopology against stable IDs.
 	}
 
 } // core

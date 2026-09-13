@@ -16,18 +16,9 @@ struct UISettings
 		Vertex
 	};
 
-	enum VertexBoundsRenderMode
-	{
-		Never,
-		Always,
-		OnHover
-	};
-
 	Style style{ Style::Dark };
 
 	SelectionMode selectionMode{ SelectionMode::Object };
-
-	VertexBoundsRenderMode vertexBoundsRenderMode{ VertexBoundsRenderMode::Never };
 
 	int visibleLayer{ 0 };
 
@@ -36,8 +27,6 @@ struct UISettings
 	bool renderGraph{ false };
 
 	bool renderNonVisibleLayer{ false };
-
-	bool renderDoorQueueStops{ false };
 
 	bool highlightNearestVertex{ false };
 

@@ -44,7 +44,7 @@ namespace core
 	bool StaircaseTransit::sectorSupportsObjectType(SectorObjectType type) const
 	{
 		return type == SectorObjectType::Door ||
-			type == SectorObjectType::Controller ||
+			type == SectorObjectType::InteractionPoint ||
 			type == SectorObjectType::Window;
 	}
 

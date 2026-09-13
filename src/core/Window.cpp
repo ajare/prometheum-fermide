@@ -122,9 +122,5 @@ namespace core
 		return "Window";
 	}
 
-	ControllableActionStatus Window::useImpl(Controller* controller, ControllableActionCallback callback)
-	{
-		return ControllableActionStatus::Unhandled;
-	}
 
 } // core

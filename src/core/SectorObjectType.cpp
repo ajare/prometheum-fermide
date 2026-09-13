@@ -20,8 +20,8 @@ namespace core
 		case SectorObjectType::ForceBridge:
 			return "ForceBridge";
 
-		case SectorObjectType::Controller:
-			return "Interactable";
+		case SectorObjectType::InteractionPoint:
+			return "InteractionPoint";
 
 		case SectorObjectType::Ladder:
 			return "Ladder";

@@ -23,9 +23,6 @@ namespace core
 		std::shared_ptr<Door> getDoor() const;
 
 		// Overridden from SectorObject
-		[[nodiscard]] std::shared_ptr<VertexController> createVertexController(Building const* building, std::vector<std::shared_ptr<Vertex>> const& vertices, std::map<std::shared_ptr<Controller>, std::shared_ptr<Vertex>> const& controllerVertexLookup) const override;
-
-		// Overridden from SectorObject
 		[[nodiscard]] std::shared_ptr<Vertex> createVertex(std::shared_ptr<SectorObject> object, std::shared_ptr<Sector> sector, void* user = nullptr) const override;
 	};
 

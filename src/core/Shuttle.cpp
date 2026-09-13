@@ -57,11 +57,6 @@ namespace core
 		return format("Shuttle");
 	}
 
-	uint32_t Shuttle::getStopRefIndex(uint32_t index) const
-	{
-		return index;
-	}
-
 	uint32_t Shuttle::getNumCars() const
 	{
 		return mNumCars;

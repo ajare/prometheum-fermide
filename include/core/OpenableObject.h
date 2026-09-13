@@ -1,66 +1,32 @@
 #pragma once
 
-#include <cstdint>
-#include <memory>
-
 #include "core/Object.h"
-
 
 namespace core
 {
-
 	class OpenableObject : public Object
 	{
 	public:
-
-		enum struct State
-		{
-			Open,
-			Opening,
-			Closed,
-			Closing
-		};
+		enum struct State { Open, Opening, Closed, Closing };
 
 	protected:
-
-		State mState;
-
-		float mOpenPct;
-
-		float mOpenWaitTime;
-
-	private:
-
-		// Overridden from Useable
-		ControllableActionStatus useImpl(Controller* controller, ControllableActionCallback callback) override;
+		State mState{ State::Closed };
+		float mOpenPct{ 0.0f };
+		float mOpenWaitTime{ 0.0f };
 
 	public:
-
 		OpenableObject(float x, float y, float width, float height);
-
-		[[nodiscard]] State const& getState() const;
-
-		[[nodiscard]] float getOpenPercentage() const;
-
-		[[nodiscard]] float getOpenWaitTime() const;
-
-		[[nodiscard]] virtual float getOpenCloseTime() const = 0;
-
-		[[nodiscard]] virtual float getTimeBeforeClosing() const = 0;
-
-		[[nodiscard]] bool isOpen() const;
-
-		[[nodiscard]] bool isClosed() const;
-
-		[[nodiscard]] bool isOpening() const;
-
-		[[nodiscard]] bool isClosing() const;
-
+		State const& getState() const;
+		float getOpenPercentage() const;
+		float getOpenWaitTime() const;
+		virtual float getOpenCloseTime() const = 0;
+		virtual float getTimeBeforeClosing() const = 0;
+		bool isOpen() const;
+		bool isClosed() const;
+		bool isOpening() const;
+		bool isClosing() const;
 		bool open();
-
 		bool close();
-
 		bool toggle();
 	};
-
-} // core
+}

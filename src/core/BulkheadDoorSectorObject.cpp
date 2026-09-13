@@ -4,7 +4,6 @@
 #include "core/BulkheadDoorSectorObject.h"
 #include "core/SectorObjectVertex.h"
 #include "core/BulkheadDoorVertex.h"
-#include "core/BulkheadDoorVertexController.h"
 #include "core/Exceptions.h"
 
 
@@ -41,47 +40,6 @@ namespace core
 		return static_pointer_cast<BulkheadDoor>(_getObject());
 	}
 
-	shared_ptr<VertexController> BulkheadDoorSectorObject::createVertexController(Building const* building, vector<shared_ptr<Vertex>> const& vertices, map<shared_ptr<Controller>, shared_ptr<Vertex>> const& controllerVertexLookup) const
-	{
-		// Migrated bulkheads are governed exclusively by their TraversalResource,
-		// including same-layer/same-height transitions.
-		if (getDoor()->getTraversalResourceId()) return nullptr;
-
-		auto vc0Pos0 = vertices[CORE_SIDE_LEFT]->getPosition();
-		auto vc1Pos0 = vertices[CORE_SIDE_RIGHT]->getPosition();
-
-		auto leftController = getController("LeftController");
-		auto leftControllerVertex = controllerVertexLookup.at(leftController);
-		auto lcPos = leftControllerVertex->getPosition();
-
-		auto vc0Pos1 = vc0Pos0;
-		vc0Pos0.x = lcPos.x - CORE_VERTEXCONTROLLER_CONTROLLER_PADDING;
-
-		auto rightController = getController("RightController");
-		auto rightControllerVertex = controllerVertexLookup.at(rightController);
-		auto rcPos = rightControllerVertex->getPosition();
-
-		auto vc1Pos1 = vc1Pos0;
-		vc1Pos1.x = rcPos.x + CORE_VERTEXCONTROLLER_CONTROLLER_PADDING;
-
-		auto vclShape = Shape(vc0Pos0.x, vc0Pos0.y, (vc0Pos1.x - vc0Pos0.x), CORE_AGENT_MAX_HEIGHT);
-		auto vcrShape = Shape(vc1Pos0.x, vc1Pos0.y, (vc1Pos1.x - vc1Pos0.x), CORE_AGENT_MAX_HEIGHT);
-
-		Shape controlAreas[2] = {
-			vclShape,
-			vcrShape
-		};
-
-		auto vertexController = make_shared<BulkheadDoorVertexController>(this, controlAreas);
-
-		for (int i = 0; i < CORE_NUM_SIDES; ++i)
-		{
-			vertices[i]->_setController(vertexController);
-			vertexController->setVertexForSide(i, vertices[i]);
-		}
-
-		return vertexController;
-	}
 
 	/***
 

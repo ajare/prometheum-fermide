@@ -65,9 +65,5 @@ namespace core
 		return "Marker";
 	}
 
-	ControllableActionStatus Marker::useImpl(Controller* controller, ControllableActionCallback callback)
-	{
-		return ControllableActionStatus::Unhandled;
-	}
 
 } // core

@@ -59,9 +59,5 @@ namespace core
 		return "Walkway";
 	}
 
-	ControllableActionStatus Walkway::useImpl(Controller* controller, ControllableActionCallback callback)
-	{
-		return ControllableActionStatus::Unhandled;
-	}
 
 } // core

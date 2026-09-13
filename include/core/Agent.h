@@ -5,11 +5,9 @@
 #include <memory>
 #include <optional>
 
-#include "core/Controller.h"
 #include "core/SectorPosition.h"
 #include "core/Shape.h"
 #include "core/Path.h"
-#include "core/VertexControllerNotificationType.h"
 #include "core/EntityId.h"
 
 
@@ -17,7 +15,6 @@ namespace core
 {
 	class Building;
 	class Sector;
-	class VertexController;
 
 	struct PathIterator
 	{
@@ -30,11 +27,10 @@ namespace core
 		}
 	};
 
-	class Agent : public Controller
+	class Agent
 	{
 		friend class Building;
 		friend class Sector;
-		friend class VertexControllerArea;
 
 	public:
 
@@ -50,8 +46,7 @@ namespace core
 			MovingToVertex,
 			WaitingForTraversal,
 			TraversingEdge,
-			AwaitingTraversalCommit,
-			UnderVertexControl
+			AwaitingTraversalCommit
 		};
 
 		struct TraversalTask
@@ -86,9 +81,6 @@ namespace core
 
 	private:
 
-		// Overridden from Useable
-		ControllableActionStatus useImpl(Controller* controller, ControllableActionCallback callback);
-
 		void setPosition(SectorPosition pos);
 
 		void attachToBuilding(Building* building);
@@ -103,8 +95,6 @@ namespace core
 		void startIdling();
 
 		bool nextPathNode();
-
-		bool traversePathEdge(bool skipVertex);
 
 		void moveToVertex(float frameTime);
 
@@ -129,7 +119,6 @@ namespace core
 
 		bool atEndOfPath() const;
 
-		void checkMovedUnderVertexControl();
 
 	public:
 
@@ -141,10 +130,7 @@ namespace core
 
 		State getState() const;
 
-		bool underVertexControl() const;
-
-		// Overridden from Useable
-		std::string getDescription() const override;
+		std::string getDescription() const;
 
 		Sector const* getSector() const;
 
@@ -195,11 +181,6 @@ namespace core
 
 		int chooseVertexOffset(int dim, std::pair<float, uint32_t> const* offsets, uint32_t numOffsets);
 
-		virtual void onRegisteredAgentForVertexControl();
-
-		virtual void onUnregisteredAgentForVertexControl();
-
-		virtual void onVertexControllerNotification(VertexControllerNotificationType type);
 
 		void wake();
 

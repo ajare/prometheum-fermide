@@ -1,43 +1,30 @@
 #include "core/Object.h"
 #include "core/SensorSource.h"
 
-
 namespace core
 {
-
-	using namespace std;
-
 	Object::Object(float x, float y, float width, float height)
-		: DependentPathControllable()
-		, Shape(x, y, width, height)
+		: Shape(x, y, width, height)
 	{
 	}
 
-	vector<pair<string, string>> Object::getInternalsStrings() const
+	std::vector<std::pair<std::string, std::string>> Object::getInternalsStrings() const
 	{
-		vector<pair<string, string>> res;
+		return {};
+	}
 
-		if (!mActions.empty())
-		{
-			auto const& action = getCurrentAction();
-
-			res.push_back({ "Action Type", getControllableActionTypeString(action.type) });
-			res.push_back({ "Action Status", getControllableActionStatusString(action.status) });
-		}
-
-		return res;
+	void Object::update(float frameTime)
+	{
+		(void)frameTime;
 	}
 
 	bool Object::canSense(SensorType type) const
 	{
-		assert(mSensorSource.get() != nullptr && "No SensorSource set!");
-
-		return mSensorSource->canSense(type);
+		return mSensorSource && mSensorSource->canSense(type);
 	}
 
-	void Object::setSensorSource(shared_ptr<const SensorSource> sensor)
+	void Object::setSensorSource(std::shared_ptr<const SensorSource> sensor)
 	{
-		mSensorSource = sensor;
+		mSensorSource = std::move(sensor);
 	}
-
-} // core
+}

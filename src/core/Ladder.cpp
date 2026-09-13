@@ -21,8 +21,8 @@ namespace core
 	two floors within the same Location, the Location can be on either Layer, but must obviously be more than
 	one floor high.
 
-	Ladders can be extended or retracted, and typically there will be a Button at the base to do this.  The top
-	of the Ladder is also useable, so that the Ladder can be extended by an Agent at the top.
+	Ladders can be extended or retracted through building-owned interaction points, typically represented by
+	a physical Button at the base and an interaction point at the top.
 
 	Ladders may span multiple decks, and pass behind Locations.  The requirement is that for the Locations that
 	they connect, the Cells they connect on have a floor (either the ground, or a Walkway).

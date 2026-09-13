@@ -29,7 +29,7 @@ namespace core
 		uint32_t sectorObjectIndex{ ~0u };
 
 		// Cannot have more than 3 - 1 per side
-		uint32_t controllers[3] = { ~0u, ~0u, ~0u };
+		uint32_t controls[3] = { ~0u, ~0u, ~0u };
 
 		// Index of Bulkhead doors on either side.
 		uint32_t bulkheadIndices[2] = { ~0u, ~0u };
