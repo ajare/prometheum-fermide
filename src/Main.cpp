@@ -31,6 +31,7 @@
 #include "core/Building.h"
 #include "core/Pathing.h"
 #include "core/Exceptions.h"
+#include "core/Log.h"
 
 #include "Main.h"
 #include "Render.h"
@@ -50,8 +51,6 @@ int gCellsTextureWidth{ 0 };
 int gCellsTextureHeight{ 0 };
 
 using namespace std;
-
-vector<LogMessage> gLogMessages;
 
 
 SDL_Window* createWindow()
@@ -147,39 +146,31 @@ void setupImGui(SDL_Window* window, SDL_GLContext context)
 
 auto callbackSink = std::make_shared<spdlog::sinks::callback_sink_mt>([](const spdlog::details::log_msg& msg)
 {
-	string levelStr;
+	core::LogLevel level;
 	switch (msg.level)
 	{
-	case spdlog::level::level_enum::debug:
-		levelStr = "DEBUG";
+	case spdlog::level::trace:
+	case spdlog::level::debug:
+		level = core::LogLevel::Debug;
 		break;
 
-	case spdlog::level::level_enum::info:
-		levelStr = "INFO";
+	case spdlog::level::info:
+		level = core::LogLevel::Info;
 		break;
 
-	case spdlog::level::level_enum::warn:
-		levelStr = "WARN";
+	case spdlog::level::warn:
+		level = core::LogLevel::Warning;
 		break;
 
-	case spdlog::level::level_enum::err:
-		levelStr = "ERROR";
-		break;
-
-	case spdlog::level::level_enum::critical:
-		levelStr = "CRIT";
-		break;
-
-	case spdlog::level::level_enum::trace:
-		levelStr = "TRACE";
-		break;
-
+	case spdlog::level::err:
+	case spdlog::level::critical:
 	default:
-		levelStr = "?????";
+		level = core::LogLevel::Error;
 		break;
 	}
 
-	gLogMessages.push_back({ levelStr, msg.payload });
+	core::addLogMessage("Application", ~0u, level,
+		string(msg.payload.data(), msg.payload.size()));
 });
 
 void setupLogging()
@@ -326,15 +317,15 @@ std::shared_ptr<core::Building> createTestBuilding()
 		auto reactorCorr1 = building->addCorridor(ReactorDeck, 1, 8);
 		
 		auto pumpRoomIndex = building->addRoom("Pump Room", CORE_LAYER_BACK, ReactorDeck, 0, 4, 1);
-		building->addSectorLightSwitch(pumpRoomIndex, 0);
+		
+		//building->addSectorLightSwitch(pumpRoomIndex, 0);
 
 		building->addRoom("Fuel Cells", CORE_LAYER_BACK, ReactorDeck, 5, 3, 1);
-
+		
 		building->addSectorDoor(ReactorDeck, 6);
 		
-		//building->addSectorDoor(ReactorDeck, 2, core::Building::RemoteControlledDoor1Options);
 		building->addSectorDoor(ReactorDeck, 2);
-
+		/*
 		building->addSectorWindow(CORE_LAYER_FORE, ReactorDeck, 7, 1, 1);
 		
 		// Second corridor
@@ -372,16 +363,16 @@ std::shared_ptr<core::Building> createTestBuilding()
 		// Third corridor
 		building->addCorridor(ReactorDeck, 16, 14);
 
-		//building->addSectorDoor(ReactorDeck, 16);
+		building->addSectorDoor(ReactorDeck, 16);
 
 		// Fourth corridor
 		building->addCorridor(ReactorDeck, 34, 9);
 
-		//building->addSectorDoor(ReactorDeck, 38);
+		building->addSectorDoor(ReactorDeck, 38);
 
 		building->addShuttle(ReactorDeck, 24, 17, { 2, 3, { 0, 10 }, 0 });
-
-
+*/
+/*
 		//
 		// Hospital
 		//
@@ -469,12 +460,13 @@ std::shared_ptr<core::Building> createTestBuilding()
 		building->addSectorWindow(CORE_LAYER_FORE, MaintenanceDeck, 17, 1, 1);
 		building->addSectorWindow(CORE_LAYER_BACK, MaintenanceDeck, 0, 1, 1);
 		building->addSectorWindow(CORE_LAYER_BACK, MaintenanceDeck, 12, 1, 1);
-
+*/
 		building->finishBuild();
 
 		// Add agents
 
 		// Door test agents
+		/*
 		for (int i = 0; i < 4; ++i)
 		{
 			if (i == 8) continue;
@@ -499,6 +491,7 @@ std::shared_ptr<core::Building> createTestBuilding()
 			//path = core::pathing::findPath(agent, graph.get(), nullptr, vertex);
 			//agent->setPath(path, false);
 		}
+		*/
 
 		//auto agent = new core::Agent(format("PathAgent-ButtonTest"));
 

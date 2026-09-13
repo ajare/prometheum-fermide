@@ -565,19 +565,7 @@ void renderStatusBar(shared_ptr<const core::Building> building)
 	{
 		if (ImGui::BeginMenuBar())
 		{
-			// Scrollbar
-			static float scrollX = 0.0f;
-			float viewportWidth = gUISettings.worldViewportWidth > 0.0f
-				? gUISettings.worldViewportWidth : (float)APP_WINDOW_WIDTH;
-			float scrollMax = (float)building->getCellsWide() * (float)CORE_CELL_WIDTH_PIXELS - viewportWidth;
-
-			if (scrollMax > 0)
-			{
-				if (ImGui::SliderFloat("##Scroll", &scrollX, 0, scrollMax))
-				{
-					gUISettings.xOffset = -scrollX;
-				}
-			}
+			ImGui::Text("Layer: %s", gUISettings.visibleLayer == CORE_LAYER_FORE ? "Fore" : "Back");
 
 			ImGui::SetNextItemWidth(128);
 
@@ -609,6 +597,21 @@ void renderStatusBar(shared_ptr<const core::Building> building)
 				string objectData = format("{}", gHoveredVertex->getDescription());
 
 				ImGui::Text(objectData.c_str());
+			}
+
+			// Keep status information on the left and the world scroll slider after it.
+			static float scrollX = 0.0f;
+			float viewportWidth = gUISettings.worldViewportWidth > 0.0f
+				? gUISettings.worldViewportWidth : (float)APP_WINDOW_WIDTH;
+			float scrollMax = (float)building->getCellsWide() * (float)CORE_CELL_WIDTH_PIXELS - viewportWidth;
+
+			if (scrollMax > 0)
+			{
+				ImGui::SetNextItemWidth(-1.0f);
+				if (ImGui::SliderFloat("##Scroll", &scrollX, 0, scrollMax))
+				{
+					gUISettings.xOffset = -scrollX;
+				}
 			}
 
 			ImGui::EndMenuBar();
@@ -1298,8 +1301,6 @@ void renderLogPanel()
 			{
 				auto const& msg = gLogMessages[line_no];
 
-				auto text = format("{}\t{}\t\t{}", msg.sourceId, msg.source, msg.msg);
-
 				ImColor textColour(1.0f, 1.0f, 1.0f);
 
 				switch (msg.level)
@@ -1339,10 +1340,10 @@ void renderLogPanel()
 				}
 
 				ImGui::TableSetColumnIndex(1);
-				ImGui::Text(msg.source.c_str(), 1, line_no);
+				ImGui::TextColored(textColour, "%s", msg.source.c_str());
 
 				ImGui::TableSetColumnIndex(2);
-				ImGui::Text(msg.msg.c_str(), 2, line_no);
+				ImGui::TextColored(textColour, "%s", msg.msg.c_str());
 			}
 		}
 

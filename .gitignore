@@ -9,3 +9,6 @@ obj/
 # OS/editor files
 .DS_Store
 Thumbs.db
+
+# Runtime logs
+logs/*.log
