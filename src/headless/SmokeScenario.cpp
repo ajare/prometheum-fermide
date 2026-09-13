@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <bit>
+#include <cmath>
 #include <cstdint>
 #include <exception>
 #include <iostream>
@@ -1074,6 +1075,84 @@ namespace
 			});
 	}
 
+	bool singlePassengerCompletesTwoStopLiftJourney()
+	{
+		core::Building building("Two-stop lift journey", 6, 4);
+		auto lower = building.addCorridor(0, 0, 5);
+		auto upper = building.addCorridor(2, 0, 5);
+		core::Building::CreateLiftOptions options;
+		options.cellsWide = 1;
+		options.stopOffsets = { 0, 2 };
+		auto created = building.addLift(0, 2, options);
+		building.finishBuild();
+		if (!created.traversalResource || created.doors.size() != 2 || !created.interiorSelector)
+			return false;
+
+		auto target = building.getGraph()->getClosestVertexInSector(
+			building.getSector(upper).get(), { 2.5f, 2.0f });
+		auto passengerId = building.createAgent("Lift passenger", lower, 0, 0.5f);
+		auto passenger = building.lookupAgent(passengerId).entity;
+		auto path = building.getGraph()->calculatePath(passenger, target);
+		if (!path) return false;
+		uint32_t boardingEdges = 0, rideEdges = 0;
+		for (auto const& node : path->nodes)
+		{
+			if (!node.edge) continue;
+			boardingEdges += node.edge->getType() == core::EdgeType::Door;
+			rideEdges += node.edge->getType() == core::EdgeType::Lift;
+		}
+		if (boardingEdges != 2 || rideEdges != 1) return false;
+		passenger->setPath(path, true);
+
+		bool sawIntentWithoutDispatch = false;
+		bool sawReservedCapacity = false;
+		bool sawOnboard = false;
+		bool sawConfirmedDestination = false;
+		bool sawMovingAttachedPassenger = false;
+		for (uint32_t i = 0; i < MaximumSimulationTicks * 4
+			&& passenger->getState() != core::Agent::State::Idle; ++i)
+		{
+			building.advanceTick();
+			auto snapshot = building.getSimulationSnapshot();
+			auto lift = std::find_if(snapshot.traversalResources.begin(), snapshot.traversalResources.end(),
+				[&](auto const& resource) { return resource.id == created.traversalResource; });
+			if (lift == snapshot.traversalResources.end() || !lift->isLift) return false;
+			if (!snapshot.traversalRequests.empty() && !lift->liftPassenger
+				&& std::any_of(snapshot.deviceOperations.begin(), snapshot.deviceOperations.end(),
+					[](auto const& operation)
+					{
+						return operation.command.type == core::DeviceCommandType::CallLift
+							&& operation.state == core::DeviceOperationState::Pending;
+					}))
+				sawIntentWithoutDispatch = true;
+			sawReservedCapacity = sawReservedCapacity || lift->admissionReservationCount == 1;
+			sawOnboard = sawOnboard || (lift->liftPassenger == passengerId
+				&& passenger->getSector() == building.getSector(created.lift.sector->getIndex()).get());
+			for (auto const& operation : snapshot.deviceOperations)
+				if (operation.command.type == core::DeviceCommandType::SelectLiftDestination
+					&& operation.state == core::DeviceOperationState::Succeeded)
+					sawConfirmedDestination = true;
+			if (lift->liftMoving)
+			{
+				for (auto const& resource : snapshot.traversalResources)
+					if (resource.isDoor && (!resource.crossingLanes.empty()
+						&& (resource.crossingOwner || resource.doorState != core::DoorSnapshotState::Closed)))
+						return false;
+				if (std::abs(passenger->getGlobalPosition().y - lift->liftPosition) < 0.001f)
+					sawMovingAttachedPassenger = true;
+			}
+		}
+		auto final = building.getSimulationSnapshot();
+		auto lift = std::find_if(final.traversalResources.begin(), final.traversalResources.end(),
+			[&](auto const& resource) { return resource.id == created.traversalResource; });
+		return sawIntentWithoutDispatch && sawReservedCapacity && sawOnboard
+			&& sawConfirmedDestination && sawMovingAttachedPassenger
+			&& passenger->getState() == core::Agent::State::Idle
+			&& passenger->getSector() == building.getSector(upper).get()
+			&& lift != final.traversalResources.end() && !lift->liftPassenger
+			&& lift->occupantCount == 0;
+	}
+
 	bool unavailableDoorRejectsTraversal()
 	{
 		core::Building building("Unavailable door", 6, 2);
@@ -1277,6 +1356,11 @@ int main()
 		if (!doorLeasesAndSensorObservationsPreventUnsafeClosure())
 		{
 			std::cerr << "FAIL: door leases or sensor observations allowed unsafe closure\n";
+			return 1;
+		}
+		if (!singlePassengerCompletesTwoStopLiftJourney())
+		{
+			std::cerr << "FAIL: single passenger did not complete an interlocked two-stop lift journey\n";
 			return 1;
 		}
 		if (!unavailableDoorRejectsTraversal())

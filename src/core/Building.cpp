@@ -1285,6 +1285,53 @@ namespace core
 		}
 
 		mOrchestrator->addSystem(orchSystem);
+
+		// The replacement lift coordinator owns the car manifest and schedule. Each
+		// landing remains a distinct threshold resource, linked to this coordinator.
+		vector<LiftStop> liftStops;
+		for (uint32_t i = 0; i < options.stopOffsets.size(); ++i)
+		{
+			auto location = getSector(getLayer(CORE_LAYER_FORE)->getCellDefinition(x, y + options.stopOffsets[i]).sectorIndex);
+			liftStops.push_back({ SectorId{ (uint64_t)location->getIndex() + 1 },
+				(float)(y + options.stopOffsets[i]), liftRes.doors[i].traversalResource, {} });
+		}
+		auto coordinator = createLiftTraversalResource("Lift journey", lift,
+			SectorId{ (uint64_t)liftTransit->getIndex() + 1 }, liftStops);
+		lift->configureTraversal(coordinator);
+		liftRes.traversalResource = coordinator;
+		auto liftResource = mTraversalResources.find(coordinator);
+		liftResource->mCapacityPositions[0] = {
+			x + options.cellsWide * 0.5f - liftTransit->getPosition().x, 0.0f };
+		for (uint32_t i = 0; i < liftRes.doors.size(); ++i)
+		{
+			auto landing = mTraversalResources.find(liftRes.doors[i].traversalResource);
+			landing->mLiftCoordinator = coordinator;
+			landing->mLiftStopIndex = i;
+
+			auto const& controller = liftRes.doors[i].controllers[CORE_LAYER_FORE];
+			auto controlObject = controller.sector->_getObject(controller.index);
+			auto controlPosition = controlObject->getPosition() + controlObject->getSize() * 0.5f;
+			DeviceCommand call;
+			call.type = DeviceCommandType::CallLift;
+			call.traversalResource = coordinator;
+			call.stopIndex = i;
+			auto point = createInteractionPoint("Lift landing call",
+				liftStops[i].locationSector, controlPosition, 0.15f, getFixedTimestep(),
+				{ { call, InteractionBindingRequirement::Required } });
+			landing->mControls.push_back(point);
+			liftResource->mLiftStops[i].callControl = point;
+
+			DeviceCommand select;
+			select.type = DeviceCommandType::SelectLiftDestination;
+			select.traversalResource = coordinator;
+			select.stopIndex = i;
+			auto selector = createInteractionPoint("Lift destination selector",
+				liftResource->mLiftSector, { x + options.cellsWide * 0.5f, liftResource->mLiftPosition },
+				0.25f, getFixedTimestep(), { { select, InteractionBindingRequirement::Required } });
+			liftResource->mControls.push_back(selector);
+			if (i == 0) liftRes.interiorSelector = selector;
+		}
+		liftResource->mLiftSelector = liftRes.interiorSelector;
 		
 		return liftRes;
 	}
@@ -2532,6 +2579,19 @@ namespace core
 		result.isDoor = resource.mDoor != nullptr;
 		result.isLadder = resource.mLadder != nullptr;
 		result.isForceBridge = resource.mForceBridge != nullptr;
+		result.isLift = resource.mLift != nullptr;
+		result.liftMoving = resource.mLiftMoving;
+		result.liftCarDoorOpen = resource.mLiftCarDoorOpen;
+		result.liftCurrentStop = resource.mLiftCurrentStop;
+		result.liftTargetStop = resource.mLiftTargetStop;
+		result.liftPosition = resource.mLiftPosition;
+		result.liftSector = resource.mLiftSector;
+		result.liftPassenger = resource.mLiftPassenger;
+		result.liftAdmissionReservation = resource.mLiftAdmissionReservation;
+		result.liftDestinationStop = resource.mLiftDestinationStop;
+		result.liftSelector = resource.mLiftSelector;
+		result.liftAligned = !resource.mLiftMoving && resource.mLiftCurrentStop < resource.mLiftStops.size()
+			&& abs(resource.mLiftPosition - resource.mLiftStops[resource.mLiftCurrentStop].globalPosition) < 0.001f;
 		result.isExtensible = resource.mExtensible && resource.mExtensible->isExtensible();
 		result.extended = resource.mExtensible && resource.mExtensible->isExtended();
 		result.retractionPending = resource.mRetractionPending;
@@ -2679,7 +2739,7 @@ namespace core
 		{
 			if (resource->mExtensible && resource->mExtensionRequestLeases.insert(id).second)
 				resource->mExtensible->acquireExtensionLease();
-			if (resource->mDoor) attachDoorQueueTicket(id, *resource);
+			if (resource->mDoor && !resource->mLiftCoordinator) attachDoorQueueTicket(id, *resource);
 			else if ((resource->mLadder || resource->mStaircase)
 				&& isLadderAdmission(*request, *resource))
 				attachLadderAdmissionRequest(id, *resource);
@@ -2872,6 +2932,17 @@ namespace core
 				releaseLadderAdmission(requestId, *resource);
 				attachLadderAdmissionRequest(requestId, *resource);
 			}
+		}
+		else if (auto resource = mTraversalResources.find(request->mResource);
+			resource && resource->mDoor && resource->mLiftCoordinator)
+		{
+			for (auto& owner : resource->mCrossingOwners) if (owner == requestId) owner = {};
+			if (!request->mPreparationLease)
+				request->mPreparationLease = acquireDoorOpenLease(*resource,
+					DoorOpenLeaseKind::Preparation, requestId);
+			if (request->mCrossingLease) releaseDoorOpenLease(*resource, request->mCrossingLease);
+			request->mCrossingLease = {};
+			request->mCrossingLane = ~0u;
 		}
 		else if (auto resource = mTraversalResources.find(request->mResource); resource && resource->mDoor)
 		{
@@ -3230,6 +3301,11 @@ namespace core
 				denyTraversalRequest(requestId);
 				return;
 			}
+			if (resource->mLift || resource->mLiftCoordinator)
+			{
+				allocateLiftTraversal(requestId, *resource);
+				return;
+			}
 			if (resource->mExtensible && !resource->mExtensible->isExtended())
 			{
 				allocateExtensiblePreparation(requestId, *resource);
@@ -3337,6 +3413,152 @@ namespace core
 				grantTraversalRequest(requestId);
 			}
 		}
+	}
+
+	uint32_t Building::findLiftStop(TraversalResource const& resource, Vector2 const& endpoint) const
+	{
+		uint32_t best = ~0u;
+		float distance = 0.0f;
+		for (uint32_t i = 0; i < resource.mLiftStops.size(); ++i)
+		{
+			auto candidate = abs(resource.mLiftStops[i].globalPosition - endpoint.y);
+			if (best == ~0u || candidate < distance)
+			{
+				best = i;
+				distance = candidate;
+			}
+		}
+		return best;
+	}
+
+	void Building::allocateLiftTraversal(TraversalRequestId requestId, TraversalResource& edgeResource)
+	{
+		auto request = mTraversalRequests.find(requestId);
+		if (!request || request->mState != TraversalRequestState::Pending) return;
+		auto coordinatorId = edgeResource.mLift ? request->mResource : edgeResource.mLiftCoordinator;
+		auto coordinator = mTraversalResources.find(coordinatorId);
+		if (!coordinator || !coordinator->mLift || !coordinator->mEnabled)
+		{
+			denyTraversalRequest(requestId, TraversalFailureReason::ResourceDisabled);
+			return;
+		}
+		auto stop = edgeResource.mLift ? findLiftStop(*coordinator, request->mDestinationEndpoint)
+			: edgeResource.mLiftStopIndex;
+		if (stop >= coordinator->mLiftStops.size())
+		{
+			denyTraversalRequest(requestId);
+			return;
+		}
+		auto boarding = request->mSourceSector != coordinator->mLiftSector
+			&& request->mDestinationSector == coordinator->mLiftSector;
+		auto disembarking = request->mSourceSector == coordinator->mLiftSector
+			&& request->mDestinationSector != coordinator->mLiftSector;
+		auto riding = request->mSourceSector == coordinator->mLiftSector
+			&& request->mDestinationSector == coordinator->mLiftSector;
+
+		if (boarding)
+		{
+			if (coordinator->mLiftPassenger && coordinator->mLiftPassenger != request->mOwner) return;
+			if (!request->mPreparationRequested)
+			{
+				if (edgeResource.mControls.empty())
+				{
+					denyTraversalRequest(requestId, TraversalFailureReason::NoReachableControl);
+					return;
+				}
+				auto interactionId = requestInteractionForTraversal(edgeResource.mControls.front(), request->mOwner);
+				if (!interactionId) return;
+				auto interaction = mInteractionRequests.find(interactionId);
+				request->mPreparationRequested = true;
+				if (interaction && !interaction->mOperations.empty())
+					request->mPreparationOperation = interaction->mOperations.front().first;
+				return;
+			}
+			auto operation = mDeviceOperations.find(request->mPreparationOperation);
+			if (!operation || operation->mState == DeviceOperationState::Pending
+				|| operation->mState == DeviceOperationState::Running) return;
+			if (operation->mState != DeviceOperationState::Succeeded)
+			{
+				denyTraversalRequest(requestId, TraversalFailureReason::PreparationFailed);
+				return;
+			}
+			if (coordinator->mLiftMoving || coordinator->mLiftCurrentStop != stop) return;
+			if (!request->mPreparationLease)
+				request->mPreparationLease = acquireDoorOpenLease(edgeResource,
+					DoorOpenLeaseKind::Preparation, requestId);
+			if (!edgeResource.mDoor->isOpen())
+			{
+				if (!edgeResource.mDoor->isOpening()) edgeResource.mDoor->handleAction(ControllableActionType::Open);
+				return;
+			}
+			if (!coordinator->mLiftAdmissionReservation)
+			{
+				coordinator->mLiftAdmissionReservation = requestId;
+				coordinator->mAdmissionReservations[0] = requestId;
+				request->mCapacityPosition = 0;
+			}
+			if (coordinator->mLiftAdmissionReservation != requestId) return;
+			auto lane = find(edgeResource.mCrossingOwners.begin(), edgeResource.mCrossingOwners.end(), TraversalRequestId{});
+			if (lane == edgeResource.mCrossingOwners.end()) return;
+			request->mCrossingLane = (uint32_t)distance(edgeResource.mCrossingOwners.begin(), lane);
+			*lane = requestId;
+			coordinator->mLiftCarDoorOpen = true;
+			grantTraversalRequest(requestId);
+			return;
+		}
+
+		if (riding)
+		{
+			if (coordinator->mLiftPassenger != request->mOwner) return;
+			if (!request->mPreparationRequested)
+			{
+				if (stop >= coordinator->mControls.size()) { denyTraversalRequest(requestId); return; }
+				coordinator->mLiftSelector = coordinator->mControls[stop];
+				auto selector = mInteractionPoints.find(coordinator->mLiftSelector);
+				auto actor = mAgents.find(request->mOwner);
+				if (selector && actor) selector->mPosition = actor->getGlobalPosition();
+				auto interactionId = requestInteractionForTraversal(coordinator->mLiftSelector, request->mOwner);
+				if (!interactionId) return;
+				auto interaction = mInteractionRequests.find(interactionId);
+				request->mPreparationRequested = true;
+				if (interaction && !interaction->mOperations.empty())
+					request->mPreparationOperation = interaction->mOperations.front().first;
+				return;
+			}
+			auto operation = mDeviceOperations.find(request->mPreparationOperation);
+			if (!operation || operation->mState == DeviceOperationState::Pending
+				|| operation->mState == DeviceOperationState::Running) return;
+			if (operation->mState != DeviceOperationState::Succeeded)
+			{
+				denyTraversalRequest(requestId, TraversalFailureReason::PreparationFailed);
+				return;
+			}
+			if (!coordinator->mLiftMoving && coordinator->mLiftCurrentStop == stop)
+				grantTraversalRequest(requestId);
+			return;
+		}
+
+		if (disembarking)
+		{
+			if (coordinator->mLiftPassenger != request->mOwner
+				|| coordinator->mLiftMoving || coordinator->mLiftCurrentStop != stop) return;
+			if (!request->mPreparationLease)
+				request->mPreparationLease = acquireDoorOpenLease(edgeResource,
+					DoorOpenLeaseKind::Preparation, requestId);
+			if (!edgeResource.mDoor->isOpen())
+			{
+				if (!edgeResource.mDoor->isOpening()) edgeResource.mDoor->handleAction(ControllableActionType::Open);
+				return;
+			}
+			auto lane = find(edgeResource.mCrossingOwners.begin(), edgeResource.mCrossingOwners.end(), TraversalRequestId{});
+			if (lane == edgeResource.mCrossingOwners.end()) return;
+			request->mCrossingLane = (uint32_t)distance(edgeResource.mCrossingOwners.begin(), lane);
+			*lane = requestId;
+			coordinator->mLiftCarDoorOpen = true;
+			grantTraversalRequest(requestId);
+			return;
+		}
+		denyTraversalRequest(requestId);
 	}
 
 	void Building::allocateRemoteDoorPreparation(TraversalRequestId requestId, TraversalResource& resource)
@@ -3616,6 +3838,15 @@ namespace core
 				request->mPreparationLease = {};
 				releaseDoorQueueOwnership(requestId, *resource);
 			}
+			else if (resource->mLiftCoordinator)
+			{
+				if (auto lift = mTraversalResources.find(resource->mLiftCoordinator);
+					lift && lift->mLiftAdmissionReservation == requestId)
+				{
+					lift->mLiftAdmissionReservation = {};
+					lift->mAdmissionReservations[0] = {};
+				}
+			}
 			else if (resource->mLadder || resource->mStaircase)
 			{
 				releaseLadderAdmission(requestId, *resource);
@@ -3674,6 +3905,36 @@ namespace core
 		{
 			sourceSector->exitAgent(&agent);
 			destinationSector->enterAgent(&agent, destination);
+		}
+
+		if (auto landing = mTraversalResources.find(request->mResource);
+			landing && landing->mLiftCoordinator)
+		{
+			auto lift = mTraversalResources.find(landing->mLiftCoordinator);
+			if (!lift) return false;
+			if (request->mSourceSector != lift->mLiftSector
+				&& request->mDestinationSector == lift->mLiftSector)
+			{
+				if (lift->mLiftAdmissionReservation != requestId) return false;
+				lift->mLiftAdmissionReservation = {};
+				lift->mAdmissionReservations[0] = {};
+				lift->mOccupants[0] = owner;
+				lift->mLiftPassenger = owner;
+				request->mCapacityPosition = ~0u;
+				// The standing position is local to the car. Its vertical component is
+				// refreshed from the car transform on every resource phase.
+				auto local = agent.getLocalPosition();
+				local.x = lift->mCapacityPositions[0].x;
+				local.y = lift->mLiftPosition - destinationSector->getPosition().y;
+				agent.setPosition({ destinationSector.get(), local });
+			}
+			else if (request->mSourceSector == lift->mLiftSector
+				&& request->mDestinationSector != lift->mLiftSector)
+			{
+				lift->mLiftPassenger = {};
+				lift->mOccupants[0] = {};
+				lift->mLiftDestinationStop = ~0u;
+			}
 		}
 
 		if (auto resource = ladderResource; resource && (resource->mLadder || resource->mStaircase))
@@ -3757,12 +4018,27 @@ namespace core
 			if (auto resource = mTraversalResources.find(request->mResource); resource)
 			{
 				if (resource->mDoor) releaseDoorQueueOwnership(requestId, *resource);
+				if (resource->mLiftCoordinator)
+				{
+					if (auto lift = mTraversalResources.find(resource->mLiftCoordinator);
+						lift && lift->mLiftAdmissionReservation == requestId)
+					{
+						lift->mLiftAdmissionReservation = {};
+						lift->mAdmissionReservations[0] = {};
+					}
+				}
 				else if (resource->mLadder || resource->mStaircase)
 				{
 					releaseLadderAdmission(requestId, *resource);
 					tryGrantLadderAdmissions(*resource);
 				}
 			}
+			vector<InteractionRequestId> ownedInteractions;
+			for (auto const& [interactionId, interaction] : mInteractionRequests.entries())
+				if (interaction->mActor == request->mOwner
+					&& interaction->mResult == InteractionResult::Pending)
+					ownedInteractions.push_back(interactionId);
+			for (auto interactionId : ownedInteractions) cancelInteraction(interactionId);
 		}
 
 		if (auto permit = mTraversalPermits.find(permitId);
@@ -3978,7 +4254,10 @@ namespace core
 				validTarget = binding.command.target && binding.command.target.value <= mSectors.size();
 			else if (auto resource = mTraversalResources.find(binding.command.traversalResource))
 				validTarget = binding.command.type == DeviceCommandType::OpenDoor ? resource->mDoor != nullptr
-					: binding.command.type == DeviceCommandType::SetExtendedState && resource->mExtensible != nullptr;
+					: binding.command.type == DeviceCommandType::SetExtendedState ? resource->mExtensible != nullptr
+					: (binding.command.type == DeviceCommandType::CallLift
+						|| binding.command.type == DeviceCommandType::SelectLiftDestination)
+						&& resource->mLift && binding.command.stopIndex < resource->mLiftStops.size();
 			if (!validTarget)
 			{
 				throw invalid_argument("An interaction binding requires a valid command target");
@@ -4057,6 +4336,8 @@ namespace core
 			: command.type == DeviceCommandType::OpenDoor ? "Open door"
 			: command.type == DeviceCommandType::SetExtendedState
 				? string(command.desiredState ? "Extend resource" : "Retract resource")
+			: command.type == DeviceCommandType::CallLift ? "Call lift"
+			: command.type == DeviceCommandType::SelectLiftDestination ? "Select lift destination"
 				: "Device command";
 		auto id = mDeviceOperations.add(unique_ptr<DeviceOperation>(new DeviceOperation(name, requester, command)));
 		SimulationEvent event;
@@ -4302,6 +4583,24 @@ namespace core
 		auto id = mTraversalResources.add(unique_ptr<TraversalResource>(new TraversalResource(
 			name, ladder, ladder->isExtensible() ? static_pointer_cast<ExtensibleObject>(ladder) : nullptr,
 			ladderSector, agentSpacing, capacity, directionalBatchLimit, std::move(positions))));
+		SimulationEvent event;
+		event.sequence = mNextEventSequence++;
+		event.tick = mSimulationTick;
+		event.type = SimulationEventType::TraversalResourceAdded;
+		event.traversalResource = makeTraversalResourceSnapshot(id, *mTraversalResources.find(id));
+		mEvents.push_back(std::move(event));
+		return id;
+	}
+
+	TraversalResourceId Building::createLiftTraversalResource(string const& name,
+		shared_ptr<Lift> lift, SectorId liftSector, vector<LiftStop> stops)
+	{
+		if (!lift || !liftSector || liftSector.value > mSectors.size() || stops.size() < 2)
+		{
+			throw invalid_argument("A lift traversal resource requires a Lift, transit sector, and at least two stops");
+		}
+		auto id = mTraversalResources.add(unique_ptr<TraversalResource>(new TraversalResource(
+			name, std::move(lift), liftSector, std::move(stops))));
 		SimulationEvent event;
 		event.sequence = mNextEventSequence++;
 		event.tick = mSimulationTick;
@@ -4641,6 +4940,62 @@ namespace core
 		return result;
 	}
 
+	void Building::advanceLiftResources()
+	{
+		for (auto const& [resourceId, resourcePtr] : mTraversalResources.entries())
+		{
+			(void)resourceId;
+			auto& resource = *resourcePtr;
+			if (!resource.mLift || resource.mLiftStops.empty()
+				|| resource.mLiftTargetStop >= resource.mLiftStops.size()) continue;
+			auto target = resource.mLiftStops[resource.mLiftTargetStop].globalPosition;
+			if (abs(resource.mLiftPosition - target) < 0.001f)
+			{
+				resource.mLiftPosition = target;
+				resource.mLiftCurrentStop = resource.mLiftTargetStop;
+				resource.mLiftMoving = false;
+			}
+			else
+			{
+				bool interlocked = false;
+				for (auto const& stop : resource.mLiftStops)
+				{
+					auto landing = mTraversalResources.find(stop.landingResource);
+					if (!landing || !landing->mDoor) continue;
+					if (!landing->mOpenLeases.empty()) interlocked = true;
+					if (!landing->mDoor->isClosed())
+					{
+						interlocked = true;
+						if (landing->mOpenLeases.empty() && !landing->mDoor->isClosing())
+							landing->mDoor->handleAction(ControllableActionType::Close);
+					}
+				}
+				resource.mLiftCarDoorOpen = interlocked;
+				if (!interlocked)
+				{
+					resource.mLiftMoving = true;
+					auto amount = CORE_LIFT_SPEED * getFixedTimestep();
+					if (target > resource.mLiftPosition)
+						resource.mLiftPosition = min(target, resource.mLiftPosition + amount);
+					else resource.mLiftPosition = max(target, resource.mLiftPosition - amount);
+					if (resource.mLiftPosition == target)
+					{
+						resource.mLiftCurrentStop = resource.mLiftTargetStop;
+						resource.mLiftMoving = false;
+					}
+				}
+			}
+			resource.mLift->setCoordinatedPosition(resource.mLiftPosition);
+			if (auto passenger = mAgents.find(resource.mLiftPassenger))
+			{
+				auto transit = mSectors[(size_t)resource.mLiftSector.value - 1].get();
+				auto local = passenger->getLocalPosition();
+				local.y = resource.mLiftPosition - transit->getPosition().y;
+				passenger->setPosition({ transit, local });
+			}
+		}
+	}
+
 	void Building::advanceDoorResources()
 	{
 		for (auto const& [resourceId, resourcePtr] : mTraversalResources.entries())
@@ -4760,6 +5115,23 @@ namespace core
 							operation->mState = DeviceOperationState::Succeeded;
 						}
 					}
+				}
+			}
+			else if (operation->mCommand.type == DeviceCommandType::CallLift
+				|| operation->mCommand.type == DeviceCommandType::SelectLiftDestination)
+			{
+				auto resource = mTraversalResources.find(operation->mCommand.traversalResource);
+				if (!resource || !resource->mLift || !resource->mEnabled
+					|| operation->mCommand.stopIndex >= resource->mLiftStops.size())
+				{
+					operation->mState = DeviceOperationState::Rejected;
+				}
+				else
+				{
+					resource->mLiftTargetStop = operation->mCommand.stopIndex;
+					if (operation->mCommand.type == DeviceCommandType::SelectLiftDestination)
+						resource->mLiftDestinationStop = operation->mCommand.stopIndex;
+					operation->mState = DeviceOperationState::Succeeded;
 				}
 			}
 			else if (operation->mCommand.type == DeviceCommandType::OpenDoor)
@@ -4947,6 +5319,7 @@ namespace core
 			{
 				sector->advanceResources(timestep);
 			}
+			advanceLiftResources();
 			advanceDoorResources();
 			advanceDeviceOperations();
 			break;

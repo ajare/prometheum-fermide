@@ -21,6 +21,7 @@ namespace core
 	class ExtensibleObject;
 	class ForceBridge;
 	class Ladder;
+	class Lift;
 	class Staircase;
 
 	enum struct TraversalDirection { None, Ascending, Descending };
@@ -37,7 +38,9 @@ namespace core
 	{
 		SetSectorLights,
 		OpenDoor,
-		SetExtendedState
+		SetExtendedState,
+		CallLift,
+		SelectLiftDestination
 	};
 
 	enum struct DoorOpenLeaseKind
@@ -68,6 +71,7 @@ namespace core
 		SectorId target;
 		bool desiredState{ false };
 		TraversalResourceId traversalResource;
+		uint32_t stopIndex{ ~0u };
 
 		friend bool operator==(DeviceCommand const&, DeviceCommand const&) = default;
 	};
@@ -205,6 +209,14 @@ namespace core
 		std::vector<std::pair<DeviceOperationId, InteractionBindingRequirement>> const& getOperations() const { return mOperations; }
 	};
 
+	struct LiftStop
+	{
+		SectorId locationSector;
+		float globalPosition{ 0.0f };
+		TraversalResourceId landingResource;
+		InteractionPointId callControl;
+	};
+
 	struct DoorQueueLane
 	{
 		SectorId sector;
@@ -224,7 +236,23 @@ namespace core
 		std::shared_ptr<ExtensibleObject> mExtensible;
 		std::shared_ptr<ForceBridge> mForceBridge;
 		std::shared_ptr<Ladder> mLadder;
+		std::shared_ptr<Lift> mLift;
 		std::shared_ptr<Staircase> mStaircase;
+		// Lift coordinators are separate from their landing-door resources. The
+		// latter point back to the coordinator and one stop.
+		TraversalResourceId mLiftCoordinator;
+		uint32_t mLiftStopIndex{ ~0u };
+		SectorId mLiftSector;
+		std::vector<LiftStop> mLiftStops;
+		InteractionPointId mLiftSelector;
+		float mLiftPosition{ 0.0f };
+		uint32_t mLiftCurrentStop{ 0 };
+		uint32_t mLiftTargetStop{ ~0u };
+		bool mLiftMoving{ false };
+		bool mLiftCarDoorOpen{ false };
+		AgentId mLiftPassenger;
+		TraversalRequestId mLiftAdmissionReservation;
+		uint32_t mLiftDestinationStop{ ~0u };
 		SectorId mLadderSector;
 		float mLadderSpacing{ 0.0f };
 		uint32_t mCapacity{ 0 };
@@ -268,6 +296,14 @@ namespace core
 		TraversalResource(std::string name, std::shared_ptr<ForceBridge> forceBridge,
 			std::shared_ptr<ExtensibleObject> extensible)
 			: mName(std::move(name)), mExtensible(std::move(extensible)), mForceBridge(std::move(forceBridge)) {}
+		TraversalResource(std::string name, std::shared_ptr<Lift> lift,
+			SectorId liftSector, std::vector<LiftStop> stops)
+			: mName(std::move(name)), mLift(std::move(lift)), mLiftSector(liftSector),
+			  mLiftStops(std::move(stops)), mCapacity(1), mCapacityPositions{ Vector2{} },
+			  mOccupants(1), mAdmissionReservations(1)
+		{
+			if (!mLiftStops.empty()) mLiftPosition = mLiftStops.front().globalPosition;
+		}
 		TraversalResource(std::string name, std::shared_ptr<Staircase> staircase,
 			SectorId staircaseSector, uint32_t capacity, uint32_t batchLimit,
 			std::vector<Vector2> positions)
@@ -282,6 +318,7 @@ namespace core
 		bool isDoor() const { return mDoor != nullptr; }
 		bool isLadder() const { return mLadder != nullptr; }
 		bool isForceBridge() const { return mForceBridge != nullptr; }
+		bool isLift() const { return mLift != nullptr; }
 		bool isExtensible() const { return mExtensible != nullptr; }
 		bool isNarrowStaircase() const { return mStaircase != nullptr; }
 		bool isEnabled() const { return mEnabled; }

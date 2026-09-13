@@ -56,4 +56,9 @@ namespace core
 		return CORE_GRAPH_EDGE_MIN_TRAVERSAL_TIME;
 	}
 
+	TraversalResourceId LiftEdge::getTraversalResourceId() const
+	{
+		return mLift->getTraversalResourceId();
+	}
+
 } // core

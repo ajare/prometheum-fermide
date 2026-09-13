@@ -11,15 +11,15 @@
 - 09 — Enforce door safety and wide-threshold concurrency
 - 11 — Enforce finite capacity on ladder transit
 
-**Status:** ready-for-agent
+**Status:** complete
 
-- [ ] The path retains separate boarding, ride, and disembark edges but executes them as one transport journey.
-- [ ] Registering trip intent alone does not dispatch the lift.
-- [ ] Successfully using the landing control creates the pickup stop request.
-- [ ] The landing and car doors open only while the correct lift car is aligned and stationary.
-- [ ] Boarding reserves capacity and an interior standing position before crossing starts.
-- [ ] Boarding commits the agent to the static lift transit and the lift-car manifest.
-- [ ] Destination confirmation creates an onboard stop request before doors close.
-- [ ] The passenger position remains local to the moving lift car and renders at the correct global position.
-- [ ] The lift cannot move while a door or crossing interlock is active.
-- [ ] Disembarking transfers the agent into the destination location and the path continues.
+- [x] The path retains separate boarding, ride, and disembark edges but executes them as one transport journey.
+- [x] Registering trip intent alone does not dispatch the lift.
+- [x] Successfully using the landing control creates the pickup stop request.
+- [x] The landing and car doors open only while the correct lift car is aligned and stationary.
+- [x] Boarding reserves capacity and an interior standing position before crossing starts.
+- [x] Boarding commits the agent to the static lift transit and the lift-car manifest.
+- [x] Destination confirmation creates an onboard stop request before doors close.
+- [x] The passenger position remains local to the moving lift car and renders at the correct global position.
+- [x] The lift cannot move while a door or crossing interlock is active.
+- [x] Disembarking transfers the agent into the destination location and the path continues.

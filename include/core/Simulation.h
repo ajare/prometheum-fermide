@@ -108,6 +108,18 @@ namespace core
 		bool isDoor{ false };
 		bool isLadder{ false };
 		bool isForceBridge{ false };
+		bool isLift{ false };
+		bool liftMoving{ false };
+		bool liftAligned{ false };
+		bool liftCarDoorOpen{ false };
+		uint32_t liftCurrentStop{ 0 };
+		uint32_t liftTargetStop{ ~0u };
+		float liftPosition{ 0.0f };
+		SectorId liftSector;
+		AgentId liftPassenger;
+		TraversalRequestId liftAdmissionReservation;
+		uint32_t liftDestinationStop{ ~0u };
+		InteractionPointId liftSelector;
 		bool isExtensible{ false };
 		bool extended{ false };
 		bool retractionPending{ false };

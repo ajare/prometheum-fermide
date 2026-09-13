@@ -122,6 +122,8 @@ namespace core
 			CreateObjectResult lift;
 			std::vector<CreateDoorResult> doors;
 			std::shared_ptr<OrchestratedSystem> orchSystem;
+			TraversalResourceId traversalResource;
+			InteractionPointId interiorSelector;
 		};
 
 		struct CreatePlatformLiftResult
@@ -357,6 +359,12 @@ namespace core
 
 		void advanceDoorResources();
 
+		void advanceLiftResources();
+
+		void allocateLiftTraversal(TraversalRequestId requestId, TraversalResource& resource);
+
+		uint32_t findLiftStop(TraversalResource const& resource, Vector2 const& endpoint) const;
+
 		void releaseDoorQueueOwnership(TraversalRequestId requestId, TraversalResource& resource);
 
 		TraversalResourceSnapshot makeTraversalResourceSnapshot(TraversalResourceId id, TraversalResource const& resource) const;
@@ -509,6 +517,9 @@ namespace core
 		TraversalResourceId createLadderTraversalResource(std::string const& name,
 			std::shared_ptr<Ladder> ladder, SectorId ladderSector, float agentSpacing,
 			uint32_t directionalBatchLimit);
+
+		TraversalResourceId createLiftTraversalResource(std::string const& name,
+			std::shared_ptr<Lift> lift, SectorId liftSector, std::vector<LiftStop> stops);
 
 		TraversalResourceId createForceBridgeTraversalResource(std::string const& name,
 			std::shared_ptr<ForceBridge> forceBridge);
