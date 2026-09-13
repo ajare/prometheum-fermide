@@ -152,6 +152,8 @@ namespace core
 	vector<shared_ptr<SectorObject>> Sector::getSortedObjects(SectorObjectSortFunction sortFunc) const
 	{
 		auto sortedObjects = mObjects;
+		sortedObjects.erase(remove(sortedObjects.begin(), sortedObjects.end(), nullptr),
+			sortedObjects.end());
 
 		sort(sortedObjects.begin(), sortedObjects.end(), sortFunc);
 
@@ -163,7 +165,7 @@ namespace core
 	{
 		for (auto const& object : mObjects)
 		{
-			if (!object->pointInside(x, y)) continue;
+			if (!object || !object->pointInside(x, y)) continue;
 			if (sectorObject) *sectorObject = object;
 			return object->_getObject();
 		}
@@ -248,6 +250,14 @@ namespace core
 		auto marker = make_shared<MarkerSectorObject>(x, y, sector, xOffset, vertexIdentifier);
 
 		return addSectorObject(marker);
+	}
+
+	bool Sector::removeSectorObject(uint32_t index)
+	{
+		if (index >= mObjects.size() || !mObjects[index]) return false;
+		mObjects[index].reset();
+		while (!mObjects.empty() && !mObjects.back()) mObjects.pop_back();
+		return true;
 	}
 
 	uint32_t Sector::createForceBridge(shared_ptr<const Sector> sector, uint32_t x, uint32_t y, uint32_t size, int fromSide, bool extensible, bool startExtended)
@@ -419,9 +429,9 @@ namespace core
 
 	void Sector::advanceResources(float frameTime)
 	{
-		for (auto object : mObjects)
+		for (auto const& object : mObjects)
 		{
-			object->update(frameTime);
+			if (object) object->update(frameTime);
 		}
 
 		updateImpl(frameTime);

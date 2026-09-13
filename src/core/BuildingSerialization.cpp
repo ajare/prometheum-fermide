@@ -101,7 +101,7 @@ namespace core
 			serializer.beginMap("");
 			ConstructionRecord record;
 			auto const kind = serializer.readUint32("kind");
-			if (kind > static_cast<uint32_t>(ConstructionType::RemoveWall))
+			if (kind > static_cast<uint32_t>(ConstructionType::RemoveMarker))
 			{
 				throw SerializationException("Unknown Building construction record kind");
 			}
@@ -290,6 +290,10 @@ namespace core
 			break;
 		case ConstructionType::RemoveWall:
 			removeLocationWall(record.a, record.b, record.i);
+			break;
+		case ConstructionType::RemoveMarker:
+			if (!removeSectorMarker(record.a, record.b))
+				throw SerializationException("Could not replay Marker deletion");
 			break;
 		}
 	}

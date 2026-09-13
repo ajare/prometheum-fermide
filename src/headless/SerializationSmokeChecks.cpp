@@ -158,7 +158,12 @@ namespace
 		doorOptions.controls[1] = true;
 		doorOptions.crossingLanes = 2;
 		original.addSectorDoor(0, 3, doorOptions);
-		original.addSectorMarker(fore, 0, 1.5f);
+		auto const removedMarker = original.addSectorMarker(fore, 0, 1.5f);
+		original.addSectorMarker(fore, 0, 2.5f);
+		require(original.removeSectorMarker(fore, removedMarker.index),
+			"Marker could not be removed through Building");
+		require(!original.removeSectorMarker(fore, removedMarker.index),
+			"Marker deletion accepted an empty object slot");
 		original.finishBuild();
 		auto const agentId = original.createAgent("Serialized agent", fore, 0, 0.75f);
 		original.lookupAgent(agentId).entity->setFlags(0x12u);
@@ -183,6 +188,14 @@ namespace
 			"Building metadata or sectors did not round-trip");
 		require(loaded.getGraph() && !loaded.getGraph()->getVertices().empty(),
 			"Building graph was not regenerated after deserialization");
+		uint32_t markerCount{ 0 };
+		auto const loadedFore = loaded.getSector(fore);
+		for (uint32_t i = 0; i < loadedFore->getNumObjects(); ++i)
+		{
+			auto const object = loadedFore->getObject(i);
+			if (object && object->getObjectType() == core::SectorObjectType::Marker) ++markerCount;
+		}
+		require(markerCount == 1, "Marker deletion did not round-trip");
 		auto const loadedAgent = loaded.lookupAgent(agentId);
 		require(loadedAgent && loadedAgent.entity->getName() == "Serialized agent"
 			&& loadedAgent.entity->getFlags() == 0x12u

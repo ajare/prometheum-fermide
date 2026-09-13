@@ -2153,6 +2153,31 @@ namespace core
 		return createdMarker;
 	}
 
+	bool Building::removeSectorMarker(uint32_t sectorIndex, uint32_t objectIndex)
+	{
+		if (sectorIndex >= mSectors.size()) return false;
+		auto sector = _getSector(sectorIndex);
+		if (objectIndex >= sector->getNumObjects()) return false;
+		auto markerObject = dynamic_pointer_cast<MarkerSectorObject>(sector->getObject(objectIndex));
+		if (!markerObject) return false;
+
+		beginStructuralEdit("removeSectorMarker");
+		auto const marker = markerObject->getMarker();
+		auto& cellDef = mLayers[sector->getLayerIndex()]->getCellDefinition(
+			marker->getCellX(), marker->getCellY());
+		auto const found = find(cellDef.markers.begin(), cellDef.markers.end(), objectIndex);
+		if (found == cellDef.markers.end())
+			throw BuildingException(this, "removeSectorMarker - Marker is not registered in its cell");
+		cellDef.markers.erase(found);
+		if (!sector->removeSectorObject(objectIndex)) return false;
+
+		ConstructionRecord record{ ConstructionType::RemoveMarker };
+		record.a = sectorIndex;
+		record.b = objectIndex;
+		recordConstruction(std::move(record));
+		return true;
+	}
+
 	Building::CreateForceBridgeResult Building::addSectorForceBridge(uint32_t sectorIndex, uint32_t deckIndex, uint32_t xOffset, CreateForceBridgeOptions const& options)
 	{
 		beginStructuralEdit("addSectorForceBridge");

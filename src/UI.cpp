@@ -240,7 +240,7 @@ namespace
 			for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
 			{
 				auto object = sector->getObject(i);
-				if (object->getObjectType() != core::SectorObjectType::Marker) continue;
+				if (!object || object->getObjectType() != core::SectorObjectType::Marker) continue;
 				auto marker = static_pointer_cast<const core::MarkerSectorObject>(object)->getMarker();
 				auto world = marker->getPosition();
 				world.x += marker->getOffset();
@@ -817,21 +817,53 @@ void handleShortcuts(shared_ptr<core::Building>& building)
 		}
 	}
 
-	// Delete selected Agent. Stop any active path/traversal first so Building can
-	// release its coordination state before destroying the entity.
+	// Delete the selected Agent or Marker.
 	if (ImGui::Shortcut(ImGuiKey_Delete, 0, ImGuiInputFlags_RouteGlobalLow))
 	{
-		if (!ImGui::IsAnyItemActive() && !ImGui::IsAnyItemFocused() && gSelectedAgent)
+		if (!ImGui::IsAnyItemActive() && !ImGui::IsAnyItemFocused())
 		{
-			auto id = building->getAgentId(gSelectedAgent);
-			if (id)
+			if (gSelectedAgent)
 			{
-				auto selected = gSelectedAgent;
-				selected->clearPath();
-				if (building->removeAgent(id))
+				auto id = building->getAgentId(gSelectedAgent);
+				if (id)
 				{
-					if (gHoveredAgent == selected) gHoveredAgent = nullptr;
-					gSelectedAgent = nullptr;
+					auto selected = gSelectedAgent;
+					selected->clearPath();
+					if (building->removeAgent(id))
+					{
+						if (gHoveredAgent == selected) gHoveredAgent = nullptr;
+						gSelectedAgent = nullptr;
+					}
+				}
+			}
+			else if (gSelectedSectorObject
+				&& gSelectedSectorObject->getObjectType() == core::SectorObjectType::Marker)
+			{
+				try
+				{
+					auto selected = gSelectedSectorObject;
+					auto sector = selected->getSector();
+					for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
+					{
+						if (sector->getObject(i) != selected) continue;
+						if (!building->isSimulationPaused()) building->pauseSimulation();
+						gUISettings.worldPaused = true;
+						if (building->removeSectorMarker(sector->getIndex(), i))
+						{
+							if (gHoveredSectorObject == selected) gHoveredSectorObject.reset();
+							gSelectedSectorObject.reset();
+							building->finishBuild();
+						}
+						break;
+					}
+				}
+				catch (core::Exception const& error)
+				{
+					core::addLogMessage("Editor", 0, core::LogLevel::Error, error.getMessage());
+				}
+				catch (std::exception const& error)
+				{
+					core::addLogMessage("Editor", 0, core::LogLevel::Error, error.what());
 				}
 			}
 		}
@@ -1704,6 +1736,7 @@ void renderObjectView(shared_ptr<const core::Building> building)
 					for (uint32_t i = 0; i < numObjects; ++i)
 					{
 						auto object = sector->getObject(i);
+						if (!object) continue;
 
 						thisNodeFlags = nodeFlags | ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
 

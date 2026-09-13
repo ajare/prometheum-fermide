@@ -271,7 +271,8 @@ namespace core
 			PlatformLift,
 			Walkway,
 			Marker,
-			RemoveWall
+			RemoveWall,
+			RemoveMarker
 		};
 
 		// Compact tagged command storage. Field meanings are determined by type and
@@ -608,6 +609,8 @@ namespace core
 
 		CreateObjectResult addSectorMarker(uint32_t sectorIndex, uint32_t deckIndex, float xOffset,
 			uint32_t* vertexIdentifier = nullptr);
+
+		bool removeSectorMarker(uint32_t sectorIndex, uint32_t objectIndex);
 
 		void removeLocationWall(uint32_t sectorIndex, uint32_t deckIndex, int side);
 

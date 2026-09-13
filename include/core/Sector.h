@@ -74,6 +74,8 @@ namespace core
 
 		uint32_t createMarker(std::shared_ptr<const Sector> sector, uint32_t x, uint32_t y, float xOffset, uint32_t* vertexIdentifier = nullptr);
 
+		bool removeSectorObject(uint32_t index);
+
 		uint32_t createForceBridge(std::shared_ptr<const Sector> sector, uint32_t x, uint32_t y, uint32_t size, int fromSide, bool extensible, bool startExtended);
 
 		uint32_t createLadder(std::shared_ptr<const Sector> sector, uint32_t x, uint32_t y, bool extensible, bool startExtended, uint32_t decksHigh, uint32_t* vertexIdentifier = nullptr);
