@@ -383,6 +383,13 @@ namespace core
 
 		void releaseLiftAdmission(TraversalRequestId requestId, TraversalResource& resource);
 
+		void requestLiftPassengerSafeExit(AgentId passenger, TraversalFailureReason reason);
+
+		void assignLiftSafeExitPaths(TraversalResource& resource);
+
+		bool replaceOnboardLiftDestination(Agent& agent, std::shared_ptr<Path> const& path,
+			uint32_t& sourceNode);
+
 		void releaseDoorQueueOwnership(TraversalRequestId requestId, TraversalResource& resource);
 
 		TraversalResourceSnapshot makeTraversalResourceSnapshot(TraversalResourceId id, TraversalResource const& resource) const;

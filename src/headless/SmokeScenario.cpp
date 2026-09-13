@@ -1279,6 +1279,95 @@ namespace
 			&& building.lookupAgent(journeys[2].id).entity->getSector() == building.getSector(middle).get();
 	}
 
+	bool liftFailuresCancellationAndDisableDrainSafely()
+	{
+		// Repeated selector failures keep the landing open and eventually return the
+		// passenger to the current stop without leaking lift ownership.
+		{
+			core::Building building("Failed lift selector", 6, 4);
+			auto lower = building.addCorridor(0, 0, 5);
+			auto upper = building.addCorridor(2, 0, 5);
+			core::Building::CreateLiftOptions options;
+			options.stopOffsets = { 0, 2 };
+			auto created = building.addLift(0, 2, options);
+			building.finishBuild();
+			auto target = building.getGraph()->getClosestVertexInSector(
+				building.getSector(upper).get(), { 2.5f, 2.0f });
+			auto id = building.createAgent("Failed selector passenger", lower, 0, 2.5f);
+			auto agent = building.lookupAgent(id).entity;
+			agent->setPath(building.getGraph()->calculatePath(agent, target), true);
+			std::set<core::DeviceOperationId> failed;
+			bool stayedOpen = true;
+			for (uint32_t tick = 0; tick < MaximumSimulationTicks * 5; ++tick)
+			{
+				building.advanceTick();
+				auto snapshot = building.getSimulationSnapshot();
+				for (auto const& operation : snapshot.deviceOperations)
+				{
+					if (operation.command.type != core::DeviceCommandType::SelectLiftDestination
+						|| failed.contains(operation.id)
+						|| (operation.state != core::DeviceOperationState::Pending
+							&& operation.state != core::DeviceOperationState::Running)) continue;
+					building.lookupDeviceOperation(operation.id).entity->setState(core::DeviceOperationState::Failed);
+					failed.insert(operation.id);
+				}
+				auto lift = std::find_if(snapshot.traversalResources.begin(), snapshot.traversalResources.end(),
+					[&](auto const& resource) { return resource.id == created.traversalResource; });
+				if (lift != snapshot.traversalResources.end() && lift->occupantCount > 0
+					&& lift->liftStopPhase == core::LiftStopPhase::Closing) stayedOpen = false;
+				if (failed.size() == 3 && agent->getState() == core::Agent::State::Idle
+					&& agent->getSector() == building.getSector(lower).get()) break;
+			}
+			auto final = building.getSimulationSnapshot();
+			auto lift = std::find_if(final.traversalResources.begin(), final.traversalResources.end(),
+				[&](auto const& resource) { return resource.id == created.traversalResource; });
+			if (failed.size() != 3 || !stayedOpen || lift == final.traversalResources.end()
+				|| lift->occupantCount != 0 || lift->admissionReservationCount != 0
+				|| !lift->admissionQueue.empty() || lift->liftPendingSafeExits != 0) return false;
+		}
+
+		// Cancellation while moving and subsequent disable both preserve occupancy
+		// until alignment, reject fresh demand, and unload through a landing permit.
+		{
+			core::Building building("Disabled moving lift", 6, 4);
+			auto lower = building.addCorridor(0, 0, 5);
+			auto upper = building.addCorridor(2, 0, 5);
+			core::Building::CreateLiftOptions options;
+			options.stopOffsets = { 0, 2 };
+			auto created = building.addLift(0, 2, options);
+			building.finishBuild();
+			auto target = building.getGraph()->getClosestVertexInSector(
+				building.getSector(upper).get(), { 2.5f, 2.0f });
+			auto id = building.createAgent("Cancelled onboard passenger", lower, 0, 2.5f);
+			auto agent = building.lookupAgent(id).entity;
+			agent->setPath(building.getGraph()->calculatePath(agent, target), true);
+			bool cancelledMoving = false;
+			for (uint32_t tick = 0; tick < MaximumSimulationTicks * 4; ++tick)
+			{
+				building.advanceTick();
+				auto snapshot = building.getSimulationSnapshot();
+				auto lift = std::find_if(snapshot.traversalResources.begin(), snapshot.traversalResources.end(),
+					[&](auto const& resource) { return resource.id == created.traversalResource; });
+				if (!cancelledMoving && lift != snapshot.traversalResources.end() && lift->liftMoving)
+				{
+					agent->clearPath();
+					cancelledMoving = building.setTraversalResourceEnabled(created.traversalResource, false);
+				}
+				if (cancelledMoving && agent->getState() == core::Agent::State::Idle
+					&& agent->getSector() == building.getSector(upper).get()) break;
+			}
+			building.advanceTick(); // publish the terminal unavailable state after unload commit
+			auto final = building.getSimulationSnapshot();
+			auto lift = std::find_if(final.traversalResources.begin(), final.traversalResources.end(),
+				[&](auto const& resource) { return resource.id == created.traversalResource; });
+			if (!cancelledMoving || lift == final.traversalResources.end() || lift->enabled
+				|| lift->liftDraining || lift->occupantCount != 0 || lift->liftPendingSafeExits != 0
+				|| !lift->liftScheduledStops.empty() || !final.traversalRequests.empty()
+				|| !final.traversalPermits.empty()) return false;
+		}
+		return true;
+	}
+
 	bool unavailableDoorRejectsTraversal()
 	{
 		core::Building building("Unavailable door", 6, 2);
@@ -1497,6 +1586,11 @@ int main()
 		if (!multiStopLiftUsesDeterministicLookScheduling())
 		{
 			std::cerr << "FAIL: multi-stop lift did not follow deterministic LOOK scheduling\n";
+			return 1;
+		}
+		if (!liftFailuresCancellationAndDisableDrainSafely())
+		{
+			std::cerr << "FAIL: lift failure, cancellation, or disabled draining was unsafe\n";
 			return 1;
 		}
 		if (!unavailableDoorRejectsTraversal())

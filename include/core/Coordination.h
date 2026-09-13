@@ -245,6 +245,8 @@ namespace core
 		std::vector<TraversalRequestId> queue;
 	};
 
+	enum struct TraversalFailureReason;
+
 	class TraversalResource
 	{
 		friend class Building;
@@ -273,6 +275,12 @@ namespace core
 		uint64_t mLiftBoardingCutoffTick{ 0 };
 		uint64_t mLiftMinimumDwellTicks{ 0 };
 		uint64_t mLiftMaximumBoardingTicks{ 0 };
+		// A disabled moving lift drains to its next aligned stop. Passengers whose
+		// route is cancelled or whose selector fails are likewise retained until a
+		// landing can safely accept their disembark traversal.
+		bool mLiftDraining{ false };
+		std::set<AgentId> mLiftExitAtSafeStop;
+		std::map<AgentId, TraversalFailureReason> mLiftExitFailures;
 		std::map<AgentId, uint32_t> mLiftPassengerDestinations;
 		std::map<AgentId, LiftTripIntent> mLiftTripIntents;
 		std::vector<std::set<AgentId>> mLiftStopRequestOwners;
@@ -386,6 +394,8 @@ namespace core
 		uint64_t permitProgressTimeoutTicks{ 120 };
 		uint64_t minimumReplanWaitTicks{ 300 };
 		uint64_t replanIntervalTicks{ 120 };
+		uint64_t destinationRetryDelayTicks{ 3 };
+		uint32_t maximumDestinationRetries{ 2 };
 		float replanEtaMarginSeconds{ 2.0f };
 		float queueDelayPerAgentSeconds{ 1.0f };
 	};
@@ -403,6 +413,8 @@ namespace core
 		bool mPreparationRequested{ false };
 		TraversalResourceId mResource;
 		DeviceOperationId mPreparationOperation;
+		uint32_t mPreparationAttempts{ 0 };
+		uint64_t mNextPreparationTick{ 0 };
 		TraversalPermitId mPermit;
 		TraversalFailureReason mFailureReason{ TraversalFailureReason::None };
 		QueueTicketId mQueueTicket;

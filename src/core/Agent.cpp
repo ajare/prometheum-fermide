@@ -214,6 +214,23 @@ namespace core
 
 	void Agent::setPath(shared_ptr<Path> path, bool startPathing)
 	{
+		// An onboard replacement remains the same transport journey. Retarget the
+		// live ride request and stop-request ownership instead of cancelling into a
+		// needless exit/reboard cycle.
+		uint32_t replacementSource = 0;
+		if (startPathing && path && mTraversalTask && !mTraversalTask->permit && mBuilding
+			&& mBuilding->replaceOnboardLiftDestination(*this, path, replacementSource))
+		{
+			mPath.path = std::move(path);
+			mPath.targetNode = replacementSource;
+			mTraversalTask->edge = mPath.path->nodes[replacementSource + 1].edge;
+			mTraversalTask->sourceVertex = mPath.path->nodes[replacementSource].targetVertex;
+			mTraversalTask->destinationVertex = mPath.path->nodes[replacementSource + 1].targetVertex;
+			mTraversalTask->permit = {};
+			mState = State::WaitingForTraversal;
+			return;
+		}
+
 		// A granted permit freezes route intent until it is committed or expires.
 		// Silently retaining the current path is safer than invalidating a crossing.
 		if (mTraversalTask && mTraversalTask->permit)

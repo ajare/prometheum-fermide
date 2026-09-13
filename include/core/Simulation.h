@@ -116,6 +116,8 @@ namespace core
 		uint64_t liftServiceStartedTick{ 0 };
 		uint64_t liftBoardingCutoffTick{ 0 };
 		bool liftAcceptingBoarders{ false };
+		bool liftDraining{ false };
+		uint32_t liftPendingSafeExits{ 0 };
 		uint32_t liftCurrentStop{ 0 };
 		uint32_t liftTargetStop{ ~0u };
 		TraversalDirection liftDirection{ TraversalDirection::None };

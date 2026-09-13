@@ -387,9 +387,21 @@ namespace core
 
 	void Building::validateLiftOptions(string const& caller, CreateLiftOptions const& options) const
 	{
+		if (options.cellsWide == 0)
+		{
+			throw BuildingException(this, format("{} - Lift width must be positive.", caller));
+		}
 		if (options.stopOffsets.size() < 2)
 		{
 			throw BuildingException(this, format("{} - Lift must have at least 2 stops.", caller));
+		}
+		for (size_t i = 1; i < options.stopOffsets.size(); ++i)
+		{
+			if (options.stopOffsets[i] <= options.stopOffsets[i - 1])
+			{
+				throw BuildingException(this, format("{} - Lift stop offsets must be strictly increasing; stop {} ({}) is not above stop {} ({}).",
+					caller, i, options.stopOffsets[i], i - 1, options.stopOffsets[i - 1]));
+			}
 		}
 		if (options.capacity == 0)
 		{
@@ -2607,9 +2619,11 @@ namespace core
 		result.liftStopPhase = resource.mLiftStopPhase;
 		result.liftServiceStartedTick = resource.mLiftServiceStartedTick;
 		result.liftBoardingCutoffTick = resource.mLiftBoardingCutoffTick;
-		result.liftAcceptingBoarders = resource.mLift && !resource.mLiftMoving
+		result.liftAcceptingBoarders = resource.mLift && resource.mEnabled && !resource.mLiftMoving
 			&& resource.mLiftStopPhase == LiftStopPhase::Boarding
 			&& mSimulationTick <= resource.mLiftBoardingCutoffTick;
+		result.liftDraining = resource.mLiftDraining;
+		result.liftPendingSafeExits = (uint32_t)resource.mLiftExitAtSafeStop.size();
 		result.liftCurrentStop = resource.mLiftCurrentStop;
 		result.liftTargetStop = resource.mLiftTargetStop;
 		result.liftDirection = resource.mLiftDirection;
@@ -3669,13 +3683,121 @@ namespace core
 		if (auto request = mTraversalRequests.find(requestId)) request->mCapacityPosition = ~0u;
 	}
 
+	void Building::requestLiftPassengerSafeExit(AgentId passenger, TraversalFailureReason reason)
+	{
+		for (auto const& [resourceId, resourcePtr] : mTraversalResources.entries())
+		{
+			(void)resourceId;
+			auto& resource = *resourcePtr;
+			if (!resource.mLift || find(resource.mOccupants.begin(), resource.mOccupants.end(), passenger)
+				== resource.mOccupants.end()) continue;
+			for (uint32_t stop = 0; stop < resource.mLiftStopRequestOwners.size(); ++stop)
+				removeLiftStopRequest(resource, stop, passenger);
+			resource.mLiftPassengerDestinations.erase(passenger);
+			resource.mLiftExitAtSafeStop.insert(passenger);
+			auto failure = resource.mLiftExitFailures.find(passenger);
+			if (failure == resource.mLiftExitFailures.end()
+				|| failure->second == TraversalFailureReason::None)
+				resource.mLiftExitFailures[passenger] = reason;
+			auto safeStop = resource.mLiftMoving && resource.mLiftTargetStop < resource.mLiftStops.size()
+				? resource.mLiftTargetStop : resource.mLiftCurrentStop;
+			addLiftStopRequest(resource, safeStop, passenger);
+			return;
+		}
+	}
+
+	void Building::assignLiftSafeExitPaths(TraversalResource& resource)
+	{
+		if (resource.mLiftMoving || resource.mLiftCurrentStop >= resource.mLiftStops.size()
+			|| (resource.mLiftStopPhase != LiftStopPhase::Opening
+				&& resource.mLiftStopPhase != LiftStopPhase::Disembarking
+				&& resource.mLiftStopPhase != LiftStopPhase::Boarding)) return;
+		auto landingId = resource.mLiftStops[resource.mLiftCurrentStop].landingResource;
+		shared_ptr<const Edge> landingEdge;
+		shared_ptr<const Vertex> source;
+		shared_ptr<const Vertex> destination;
+		for (auto const& edge : mGraph->getEdges())
+		{
+			if (edge->getTraversalResourceId() != landingId) continue;
+			auto first = edge->getVertex(0);
+			auto second = edge->getVertex(1);
+			if (SectorId{ (uint64_t)first->getSector()->getIndex() + 1 } == resource.mLiftSector)
+			{ source = first; destination = second; }
+			else if (SectorId{ (uint64_t)second->getSector()->getIndex() + 1 } == resource.mLiftSector)
+			{ source = second; destination = first; }
+			if (source) { landingEdge = edge; break; }
+		}
+		if (!landingEdge) return;
+		vector<AgentId> assigned;
+		for (auto passenger : resource.mLiftExitAtSafeStop)
+		{
+			auto agent = mAgents.find(passenger);
+			if (!agent || agent->getSector() != mSectors[(size_t)resource.mLiftSector.value - 1].get())
+			{ assigned.push_back(passenger); continue; }
+			auto path = make_shared<Path>();
+			path->nodes.push_back({ nullptr, source, 0.0f });
+			path->nodes.push_back({ landingEdge, destination, landingEdge->getWeight(destination, agent, true) });
+			agent->setPath(std::move(path), true);
+			assigned.push_back(passenger);
+		}
+		for (auto passenger : assigned) resource.mLiftExitAtSafeStop.erase(passenger);
+	}
+
+	bool Building::replaceOnboardLiftDestination(Agent& agent, shared_ptr<Path> const& path,
+		uint32_t& sourceNode)
+	{
+		auto owner = getAgentId(&agent);
+		if (!owner || !path) return false;
+		for (auto const& [resourceId, resourcePtr] : mTraversalResources.entries())
+		{
+			(void)resourceId;
+			auto& resource = *resourcePtr;
+			if (!resource.mLift || !resource.mEnabled
+				|| find(resource.mOccupants.begin(), resource.mOccupants.end(), owner) == resource.mOccupants.end()) continue;
+			for (uint32_t i = 0; i + 1 < path->nodes.size(); ++i)
+			{
+				auto const& node = path->nodes[i + 1];
+				if (!node.edge || node.edge->getType() != EdgeType::Lift || !node.targetVertex) continue;
+				auto destinationStop = findLiftStop(resource, node.targetVertex->getPosition());
+				if (destinationStop >= resource.mLiftStops.size()) return false;
+				for (uint32_t stop = 0; stop < resource.mLiftStopRequestOwners.size(); ++stop)
+					removeLiftStopRequest(resource, stop, owner);
+				resource.mLiftPassengerDestinations.erase(owner);
+				// Allocation below will either share an already-active destination or
+				// serialize a fresh selection at the interior control.
+				resource.mLiftExitAtSafeStop.erase(owner);
+				resource.mLiftExitFailures.erase(owner);
+				vector<InteractionRequestId> obsoleteSelections;
+				for (auto const& [interactionId, interaction] : mInteractionRequests.entries())
+					if (interaction->mActor == owner && interaction->mResult == InteractionResult::Pending)
+						obsoleteSelections.push_back(interactionId);
+				for (auto interactionId : obsoleteSelections) cancelInteraction(interactionId);
+				if (agent.mTraversalTask)
+				{
+					if (auto request = mTraversalRequests.find(agent.mTraversalTask->request))
+					{
+						request->mSourceEndpoint = path->nodes[i].targetVertex->getPosition();
+						request->mDestinationEndpoint = node.targetVertex->getPosition();
+						request->mPreparationRequested = false;
+						request->mPreparationOperation = {};
+						request->mPreparationAttempts = 0;
+						request->mNextPreparationTick = mSimulationTick;
+					}
+				}
+				sourceNode = i;
+				return true;
+			}
+		}
+		return false;
+	}
+
 	void Building::allocateLiftTraversal(TraversalRequestId requestId, TraversalResource& edgeResource)
 	{
 		auto request = mTraversalRequests.find(requestId);
 		if (!request || request->mState != TraversalRequestState::Pending) return;
 		auto coordinatorId = edgeResource.mLift ? request->mResource : edgeResource.mLiftCoordinator;
 		auto coordinator = mTraversalResources.find(coordinatorId);
-		if (!coordinator || !coordinator->mLift || !coordinator->mEnabled)
+		if (!coordinator || !coordinator->mLift)
 		{
 			denyTraversalRequest(requestId, TraversalFailureReason::ResourceDisabled);
 			return;
@@ -3693,6 +3815,11 @@ namespace core
 			&& request->mDestinationSector != coordinator->mLiftSector;
 		auto riding = request->mSourceSector == coordinator->mLiftSector
 			&& request->mDestinationSector == coordinator->mLiftSector;
+		if (!coordinator->mEnabled && !disembarking)
+		{
+			denyTraversalRequest(requestId, TraversalFailureReason::ResourceDisabled);
+			return;
+		}
 
 		if (boarding)
 		{
@@ -3819,6 +3946,7 @@ namespace core
 			if (coordinator->mLiftActiveConfirmation != requestId) return;
 			if (!request->mPreparationRequested)
 			{
+				if (mSimulationTick < request->mNextPreparationTick) return;
 				if (journeyStop >= coordinator->mControls.size()) { denyTraversalRequest(requestId); return; }
 				coordinator->mLiftSelector = coordinator->mControls[journeyStop];
 				auto selector = mInteractionPoints.find(coordinator->mLiftSelector);
@@ -3837,6 +3965,20 @@ namespace core
 				|| operation->mState == DeviceOperationState::Running) return;
 			if (operation->mState != DeviceOperationState::Succeeded)
 			{
+				if (request->mPreparationAttempts < mTraversalWaitingPolicy.maximumDestinationRetries)
+				{
+					++request->mPreparationAttempts;
+					for (auto const& [interactionId, interaction] : mInteractionRequests.entries())
+						if (interaction->mActor == request->mOwner
+							&& interaction->mResult == InteractionResult::Pending)
+							cancelInteraction(interactionId);
+					request->mPreparationRequested = false;
+					request->mPreparationOperation = {};
+					request->mNextPreparationTick = mSimulationTick
+						+ mTraversalWaitingPolicy.destinationRetryDelayTicks;
+					return;
+				}
+				requestLiftPassengerSafeExit(request->mOwner, TraversalFailureReason::PreparationFailed);
 				denyTraversalRequest(requestId, TraversalFailureReason::PreparationFailed);
 				return;
 			}
@@ -4153,6 +4295,10 @@ namespace core
 				if (auto lift = mTraversalResources.find(resource->mLiftCoordinator))
 					releaseLiftAdmission(requestId, *lift);
 			}
+			else if (resource->mLift)
+			{
+				releaseLiftAdmission(requestId, *resource);
+			}
 			else if (resource->mLadder || resource->mStaircase)
 			{
 				releaseLadderAdmission(requestId, *resource);
@@ -4254,6 +4400,10 @@ namespace core
 					removeLiftStopRequest(*lift, destinationIt->second, owner);
 					lift->mLiftPassengerDestinations.erase(destinationIt);
 				}
+				for (uint32_t stop = 0; stop < lift->mLiftStopRequestOwners.size(); ++stop)
+					removeLiftStopRequest(*lift, stop, owner);
+				lift->mLiftExitAtSafeStop.erase(owner);
+				lift->mLiftExitFailures.erase(owner);
 				lift->mLiftPassenger = {};
 				for (auto occupant : lift->mOccupants) if (occupant) { lift->mLiftPassenger = occupant; break; }
 				lift->mLiftDestinationStop = ~0u;
@@ -4323,6 +4473,9 @@ namespace core
 	{
 		if (auto request = mTraversalRequests.find(requestId))
 		{
+			// Route cancellation is not permission to leave a moving car. Convert it
+			// into a deterministic disembark request at the next aligned stop.
+			requestLiftPassengerSafeExit(request->mOwner, TraversalFailureReason::None);
 			if (auto resource = mTraversalResources.find(request->mResource);
 				resource && resource->mExtensible && resource->mExtensionRequestLeases.erase(requestId))
 				resource->mExtensible->releaseExtensionLease();
@@ -4917,7 +5070,19 @@ namespace core
 		if (!lift || !liftSector || liftSector.value > mSectors.size() || stops.size() < 2
 			|| capacity == 0 || minimumDwellSeconds < 0.0f || maximumBoardingSeconds < minimumDwellSeconds)
 		{
-			throw invalid_argument("A lift traversal resource requires valid stops, capacity, and dwell timing");
+			throw invalid_argument("A lift traversal resource requires a lift sector, at least two stops, positive capacity, and valid dwell timing");
+		}
+		for (uint32_t i = 0; i < stops.size(); ++i)
+		{
+			if (!stops[i].locationSector || stops[i].locationSector.value > mSectors.size())
+				throw invalid_argument(format("Lift stop {} has an invalid location sector mapping", i));
+			auto landing = mTraversalResources.find(stops[i].landingResource);
+			if (!landing || !landing->mDoor)
+				throw invalid_argument(format("Lift stop {} has no valid landing-door traversal mapping", i));
+			if (!isfinite(stops[i].globalPosition))
+				throw invalid_argument(format("Lift stop {} has a non-finite position", i));
+			if (i > 0 && stops[i].globalPosition <= stops[i - 1].globalPosition)
+				throw invalid_argument(format("Lift stop {} is not strictly above the previous stop", i));
 		}
 		auto usableWidth = lift->getSize().x;
 		if (capacity > (uint32_t)floor(usableWidth / CORE_AGENT_MAX_WIDTH))
@@ -5127,7 +5292,35 @@ namespace core
 	{
 		auto resource = mTraversalResources.find(resourceId);
 		if (!resource) return false;
+		if (resource->mEnabled == enabled && (!resource->mLift || !resource->mLiftDraining)) return true;
 		resource->mEnabled = enabled;
+		if (!resource->mLift)
+			return true;
+
+		if (enabled)
+		{
+			resource->mLiftDraining = false;
+			return true;
+		}
+
+		resource->mLiftDraining = true;
+		vector<AgentId> occupants;
+		for (auto occupant : resource->mOccupants) if (occupant) occupants.push_back(occupant);
+		for (auto occupant : occupants)
+			requestLiftPassengerSafeExit(occupant, TraversalFailureReason::ResourceDisabled);
+
+		vector<TraversalRequestId> rejected;
+		for (auto const& [requestId, request] : mTraversalRequests.entries())
+		{
+			auto authority = mTraversalResources.find(request->mResource);
+			if (request->mState == TraversalRequestState::Pending
+				&& (request->mResource == resourceId
+					|| (authority && authority->mLiftCoordinator == resourceId))
+				&& find(occupants.begin(), occupants.end(), request->mOwner) == occupants.end())
+				rejected.push_back(requestId);
+		}
+		for (auto requestId : rejected)
+			denyTraversalRequest(requestId, TraversalFailureReason::ResourceDisabled);
 		return true;
 	}
 
@@ -5307,6 +5500,19 @@ namespace core
 			auto& resource = *resourcePtr;
 			if (!resource.mLift || resource.mLiftStops.empty()) continue;
 
+			// A safety hold or obstruction at the aligned landing overrides closure.
+			// The original cutoff is retained, so this cannot admit a late caller.
+			if (!resource.mLiftMoving && resource.mLiftCurrentStop < resource.mLiftStops.size()
+				&& resource.mLiftStopPhase == LiftStopPhase::Closing)
+			{
+				auto landing = mTraversalResources.find(resource.mLiftStops[resource.mLiftCurrentStop].landingResource);
+				bool obstruction = landing && any_of(landing->mSensorObservations.begin(),
+					landing->mSensorObservations.end(), [](auto const& value)
+					{ return value.second == DoorSensorObservation::Obstruction; });
+				if (landing && (!landing->mOpenLeases.empty() || obstruction))
+					resource.mLiftStopPhase = LiftStopPhase::Opening;
+			}
+
 			if ((resource.mLiftStopPhase == LiftStopPhase::Idle
 				|| resource.mLiftStopPhase == LiftStopPhase::Closing) && !resource.mLiftMoving)
 			{
@@ -5354,13 +5560,25 @@ namespace core
 			}
 			else if (resource.mLiftTargetStop == resource.mLiftCurrentStop
 				&& (resource.mLiftStopPhase == LiftStopPhase::Idle
-					|| resource.mLiftStopPhase == LiftStopPhase::Moving
-					|| resource.mLiftStopPhase == LiftStopPhase::Closing))
+					|| resource.mLiftStopPhase == LiftStopPhase::Moving))
 			{
 				resource.mLiftMoving = false;
 				resource.mLiftStopPhase = LiftStopPhase::Opening;
 				resource.mLiftServiceStartedTick = mSimulationTick;
 				resource.mLiftBoardingCutoffTick = mSimulationTick + resource.mLiftMaximumBoardingTicks;
+			}
+			else if (resource.mLiftTargetStop == resource.mLiftCurrentStop
+				&& resource.mLiftStopPhase == LiftStopPhase::Closing)
+			{
+				// Calls accepted after cutoff cannot reverse a close already in progress.
+				// Once fully closed they may begin a distinct service visit.
+				bool allClosed = true;
+				for (auto const& liftStop : resource.mLiftStops)
+				{
+					auto landing = mTraversalResources.find(liftStop.landingResource);
+					allClosed = allClosed && (!landing || !landing->mDoor || landing->mDoor->isClosed());
+				}
+				if (allClosed) resource.mLiftStopPhase = LiftStopPhase::Idle;
 			}
 
 			if (!resource.mLiftMoving && resource.mLiftStopPhase == LiftStopPhase::Opening
@@ -5368,8 +5586,11 @@ namespace core
 				resource.mLiftStopPhase = liftHasDisembarkDemand(resource, resource.mLiftCurrentStop)
 					? LiftStopPhase::Disembarking : LiftStopPhase::Boarding;
 			if (resource.mLiftStopPhase == LiftStopPhase::Disembarking
-				&& !liftHasDisembarkDemand(resource, resource.mLiftCurrentStop))
+				&& !liftHasDisembarkDemand(resource, resource.mLiftCurrentStop)
+				&& resource.mLiftExitAtSafeStop.empty())
 				resource.mLiftStopPhase = LiftStopPhase::Boarding;
+
+			assignLiftSafeExitPaths(resource);
 
 			bool crossing = false;
 			for (auto const& stop : resource.mLiftStops)
@@ -5395,6 +5616,19 @@ namespace core
 			{
 				resource.mLiftStopPhase = LiftStopPhase::Closing;
 				resource.mLiftTargetStop = ~0u;
+			}
+
+			if (resource.mLiftDraining && occupied == 0 && !crossing && !reserved)
+			{
+				for (uint32_t stop = 0; stop < resource.mLiftStopRequestOwners.size(); ++stop)
+				{
+					resource.mLiftStopRequestOwners[stop].clear();
+					resource.mLiftStopRequestTicks[stop].clear();
+				}
+				resource.mLiftDraining = false;
+				resource.mLiftTargetStop = ~0u;
+				resource.mLiftDirection = TraversalDirection::None;
+				resource.mLiftStopPhase = LiftStopPhase::Idle;
 			}
 
 			resource.mLiftCarDoorOpen = resource.mLiftStopPhase == LiftStopPhase::Opening
