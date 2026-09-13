@@ -26,6 +26,16 @@ namespace core
 
 	enum struct TraversalDirection { None, Ascending, Descending };
 
+	enum struct LiftStopPhase
+	{
+		Idle,
+		Moving,
+		Opening,
+		Disembarking,
+		Boarding,
+		Closing
+	};
+
 	enum struct DoorActivationMode
 	{
 		Automatic,
@@ -250,6 +260,16 @@ namespace core
 		uint32_t mLiftTargetStop{ ~0u };
 		bool mLiftMoving{ false };
 		bool mLiftCarDoorOpen{ false };
+		LiftStopPhase mLiftStopPhase{ LiftStopPhase::Idle };
+		uint64_t mLiftServiceStartedTick{ 0 };
+		uint64_t mLiftBoardingCutoffTick{ 0 };
+		uint64_t mLiftMinimumDwellTicks{ 0 };
+		uint64_t mLiftMaximumBoardingTicks{ 0 };
+		std::map<AgentId, uint32_t> mLiftPassengerDestinations;
+		std::vector<std::set<AgentId>> mLiftStopRequestOwners;
+		std::vector<TraversalRequestId> mLiftConfirmationQueue;
+		TraversalRequestId mLiftActiveConfirmation;
+		// Compatibility aliases expose the first passenger/reservation in old snapshots.
 		AgentId mLiftPassenger;
 		TraversalRequestId mLiftAdmissionReservation;
 		uint32_t mLiftDestinationStop{ ~0u };
@@ -297,10 +317,15 @@ namespace core
 			std::shared_ptr<ExtensibleObject> extensible)
 			: mName(std::move(name)), mExtensible(std::move(extensible)), mForceBridge(std::move(forceBridge)) {}
 		TraversalResource(std::string name, std::shared_ptr<Lift> lift,
-			SectorId liftSector, std::vector<LiftStop> stops)
+			SectorId liftSector, std::vector<LiftStop> stops, uint32_t capacity,
+			uint64_t minimumDwellTicks, uint64_t maximumBoardingTicks,
+			std::vector<Vector2> positions)
 			: mName(std::move(name)), mLift(std::move(lift)), mLiftSector(liftSector),
-			  mLiftStops(std::move(stops)), mCapacity(1), mCapacityPositions{ Vector2{} },
-			  mOccupants(1), mAdmissionReservations(1)
+			  mLiftStops(std::move(stops)), mLiftMinimumDwellTicks(minimumDwellTicks),
+			  mLiftMaximumBoardingTicks(maximumBoardingTicks),
+			  mLiftStopRequestOwners(mLiftStops.size()), mCapacity(capacity),
+			  mCapacityPositions(std::move(positions)), mOccupants(capacity),
+			  mAdmissionReservations(capacity)
 		{
 			if (!mLiftStops.empty()) mLiftPosition = mLiftStops.front().globalPosition;
 		}

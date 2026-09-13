@@ -112,6 +112,10 @@ namespace core
 		bool liftMoving{ false };
 		bool liftAligned{ false };
 		bool liftCarDoorOpen{ false };
+		LiftStopPhase liftStopPhase{ LiftStopPhase::Idle };
+		uint64_t liftServiceStartedTick{ 0 };
+		uint64_t liftBoardingCutoffTick{ 0 };
+		bool liftAcceptingBoarders{ false };
 		uint32_t liftCurrentStop{ 0 };
 		uint32_t liftTargetStop{ ~0u };
 		float liftPosition{ 0.0f };
@@ -120,6 +124,9 @@ namespace core
 		TraversalRequestId liftAdmissionReservation;
 		uint32_t liftDestinationStop{ ~0u };
 		InteractionPointId liftSelector;
+		TraversalRequestId liftActiveConfirmation;
+		std::vector<TraversalRequestId> liftConfirmationQueue;
+		std::vector<uint32_t> liftStopRequestOwnerCounts;
 		bool isExtensible{ false };
 		bool extended{ false };
 		bool retractionPending{ false };

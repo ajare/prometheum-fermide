@@ -115,6 +115,9 @@ namespace core
 		{
 			uint32_t cellsWide{ 1 };
 			std::vector<uint32_t> stopOffsets;
+			uint32_t capacity{ 1 };
+			float minimumDwellSeconds{ CORE_LIFT_DOOR_PAUSE_TIME };
+			float maximumBoardingSeconds{ CORE_DOOR_STAY_OPEN_TIME };
 		};
 
 		struct CreateLiftResult
@@ -365,6 +368,12 @@ namespace core
 
 		uint32_t findLiftStop(TraversalResource const& resource, Vector2 const& endpoint) const;
 
+		uint32_t findAgentLiftDestination(Agent const& agent, TraversalResource const& resource) const;
+
+		bool liftHasDisembarkDemand(TraversalResource const& resource, uint32_t stop) const;
+
+		void releaseLiftAdmission(TraversalRequestId requestId, TraversalResource& resource);
+
 		void releaseDoorQueueOwnership(TraversalRequestId requestId, TraversalResource& resource);
 
 		TraversalResourceSnapshot makeTraversalResourceSnapshot(TraversalResourceId id, TraversalResource const& resource) const;
@@ -519,7 +528,9 @@ namespace core
 			uint32_t directionalBatchLimit);
 
 		TraversalResourceId createLiftTraversalResource(std::string const& name,
-			std::shared_ptr<Lift> lift, SectorId liftSector, std::vector<LiftStop> stops);
+			std::shared_ptr<Lift> lift, SectorId liftSector, std::vector<LiftStop> stops,
+			uint32_t capacity = 1, float minimumDwellSeconds = CORE_LIFT_DOOR_PAUSE_TIME,
+			float maximumBoardingSeconds = CORE_DOOR_STAY_OPEN_TIME);
 
 		TraversalResourceId createForceBridgeTraversalResource(std::string const& name,
 			std::shared_ptr<ForceBridge> forceBridge);

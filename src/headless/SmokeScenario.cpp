@@ -1153,6 +1153,58 @@ namespace
 			&& lift->occupantCount == 0;
 	}
 
+	bool liftCapacityAndStopPhasesAreEnforced()
+	{
+		core::Building building("Finite lift", 7, 4);
+		auto lower = building.addCorridor(0, 0, 6);
+		auto upper = building.addCorridor(2, 0, 6);
+		core::Building::CreateLiftOptions options;
+		options.cellsWide = 1;
+		options.stopOffsets = { 0, 2 };
+		options.capacity = 2;
+		options.minimumDwellSeconds = 0.1f;
+		options.maximumBoardingSeconds = 0.5f;
+		auto created = building.addLift(0, 2, options);
+		building.finishBuild();
+		auto target = building.getGraph()->getClosestVertexInSector(
+			building.getSector(upper).get(), { 2.5f, 2.0f });
+		std::vector<core::AgentId> passengers;
+		for (uint32_t i = 0; i < 3; ++i)
+		{
+			auto id = building.createAgent("Capacity passenger", lower, 0, 0.3f + i * 0.15f);
+			auto agent = building.lookupAgent(id).entity;
+			auto path = building.getGraph()->calculatePath(agent, target);
+			if (!path) return false;
+			agent->setPath(path, true);
+			passengers.push_back(id);
+		}
+
+		bool sawFullCarWithWaitingPassenger = false;
+		bool sawCutoffHonorReservations = false;
+		for (uint32_t tick = 0; tick < MaximumSimulationTicks * 8; ++tick)
+		{
+			building.advanceTick();
+			auto snapshot = building.getSimulationSnapshot();
+			auto lift = std::find_if(snapshot.traversalResources.begin(), snapshot.traversalResources.end(),
+				[&](auto const& resource) { return resource.id == created.traversalResource; });
+			if (lift == snapshot.traversalResources.end()
+				|| lift->occupantCount + lift->admissionReservationCount > options.capacity)
+				return false;
+			if (lift->occupantCount == options.capacity && !lift->admissionQueue.empty())
+				sawFullCarWithWaitingPassenger = true;
+			if (snapshot.tick > lift->liftBoardingCutoffTick && lift->admissionReservationCount > 0)
+				sawCutoffHonorReservations = true;
+			if (std::all_of(passengers.begin(), passengers.end(), [&](auto id)
+				{
+					auto agent = building.lookupAgent(id).entity;
+					return agent && agent->getState() == core::Agent::State::Idle
+						&& agent->getSector() == building.getSector(upper).get();
+				}))
+				return sawFullCarWithWaitingPassenger && sawCutoffHonorReservations;
+		}
+		return false;
+	}
+
 	bool unavailableDoorRejectsTraversal()
 	{
 		core::Building building("Unavailable door", 6, 2);
@@ -1361,6 +1413,11 @@ int main()
 		if (!singlePassengerCompletesTwoStopLiftJourney())
 		{
 			std::cerr << "FAIL: single passenger did not complete an interlocked two-stop lift journey\n";
+			return 1;
+		}
+		if (!liftCapacityAndStopPhasesAreEnforced())
+		{
+			std::cerr << "FAIL: lift capacity, boarding cutoff, or later service was not enforced\n";
 			return 1;
 		}
 		if (!unavailableDoorRejectsTraversal())

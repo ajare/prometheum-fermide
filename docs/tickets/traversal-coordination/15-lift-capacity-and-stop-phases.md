@@ -10,16 +10,16 @@
 - 08 — Queue agents fairly on both sides of a door
 - 14 — Complete a two-stop lift journey for one passenger
 
-**Status:** ready-for-agent
+**Status:** complete
 
-- [ ] Declared lift capacity is validated against generated interior standing positions.
-- [ ] Occupants plus boarding reservations never exceed capacity under simultaneous requests.
-- [ ] Passengers leaving at the stop receive crossing access before any boarder.
-- [ ] Capacity remains occupied until disembark crossing completes.
-- [ ] Waiting passengers incompatible with the current run remain queued.
-- [ ] New destination selections are serialized in deterministic boarding order.
-- [ ] An already-active destination confirms immediately while adding the passenger as a request owner.
-- [ ] Minimum dwell prevents premature closure.
-- [ ] Maximum boarding cutoff stops issuing new reservations while honoring existing ones.
-- [ ] A full lift departs and unadmitted passengers keep their queue tickets and pickup demand.
-- [ ] Doors close only when crossings, accepted boarders, and destination confirmations are resolved.
+- [x] Declared lift capacity is validated against generated interior standing positions.
+- [x] Occupants plus boarding reservations never exceed capacity under simultaneous requests.
+- [x] Passengers leaving at the stop receive crossing access before any boarder.
+- [x] Capacity remains occupied until disembark crossing completes.
+- [x] Waiting passengers incompatible with the current run remain queued.
+- [x] New destination selections are serialized in deterministic boarding order.
+- [x] An already-active destination confirms immediately while adding the passenger as a request owner.
+- [x] Minimum dwell prevents premature closure.
+- [x] Maximum boarding cutoff stops issuing new reservations while honoring existing ones.
+- [x] A full lift departs and unadmitted passengers keep their queue tickets and pickup demand.
+- [x] Doors close only when crossings, accepted boarders, and destination confirmations are resolved.
