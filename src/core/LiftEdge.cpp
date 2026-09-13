@@ -53,7 +53,17 @@ namespace core
 
 	float LiftEdge::getWeight(shared_ptr<const Vertex> targetVertex, Agent const* agent, bool edgeVisible) const
 	{
-		return CORE_GRAPH_EDGE_MIN_TRAVERSAL_TIME;
+		(void)edgeVisible;
+		auto rideTime = getLength() / CORE_LIFT_SPEED;
+		auto ride = rideTime > CORE_GRAPH_EDGE_MIN_TRAVERSAL_TIME
+			? rideTime : CORE_GRAPH_EDGE_MIN_TRAVERSAL_TIME;
+		if (!agent) return ride;
+		auto targetSector = targetVertex && targetVertex->getSector()
+			? SectorId{ (uint64_t)targetVertex->getSector()->getIndex() + 1 } : SectorId{};
+		auto sourceSector = getVertex(0) && SectorId{ (uint64_t)getVertex(0)->getSector()->getIndex() + 1 } != targetSector
+			? SectorId{ (uint64_t)getVertex(0)->getSector()->getIndex() + 1 }
+			: getVertex(1) ? SectorId{ (uint64_t)getVertex(1)->getSector()->getIndex() + 1 } : SectorId{};
+		return ride + agent->estimateTraversalDelay(getTraversalResourceId(), sourceSector);
 	}
 
 	TraversalResourceId LiftEdge::getTraversalResourceId() const

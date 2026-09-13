@@ -372,6 +372,15 @@ namespace core
 
 		bool liftHasDisembarkDemand(TraversalResource const& resource, uint32_t stop) const;
 
+		void addLiftStopRequest(TraversalResource& resource, uint32_t stop, AgentId owner);
+
+		void removeLiftStopRequest(TraversalResource& resource, uint32_t stop, AgentId owner);
+
+		uint32_t chooseNextLiftStop(TraversalResource& resource) const;
+
+		bool isLiftBoardingDirectionCompatible(TraversalResource& resource,
+			uint32_t originStop, uint32_t destinationStop);
+
 		void releaseLiftAdmission(TraversalRequestId requestId, TraversalResource& resource);
 
 		void releaseDoorQueueOwnership(TraversalRequestId requestId, TraversalResource& resource);

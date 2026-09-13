@@ -1205,6 +1205,80 @@ namespace
 		return false;
 	}
 
+	bool multiStopLiftUsesDeterministicLookScheduling()
+	{
+		core::Building building("LOOK lift", 7, 7);
+		auto lower = building.addCorridor(0, 0, 6);
+		auto middle = building.addCorridor(2, 0, 6);
+		auto upper = building.addCorridor(5, 0, 6);
+		core::Building::CreateLiftOptions options;
+		options.cellsWide = 1;
+		options.stopOffsets = { 0, 2, 5 }; // deliberately non-uniform
+		options.capacity = 2;
+		options.minimumDwellSeconds = 0.1f;
+		options.maximumBoardingSeconds = 3.0f;
+		auto created = building.addLift(0, 2, options);
+		building.finishBuild();
+
+		auto graph = building.getGraph();
+		auto lowerTarget = graph->getClosestVertexInSector(building.getSector(lower).get(), { 2.5f, 0.0f });
+		auto middleTarget = graph->getClosestVertexInSector(building.getSector(middle).get(), { 2.5f, 2.0f });
+		auto upperTarget = graph->getClosestVertexInSector(building.getSector(upper).get(), { 2.5f, 5.0f });
+		if (!lowerTarget || !middleTarget || !upperTarget) return false;
+
+		struct Journey { core::AgentId id; std::shared_ptr<const core::Vertex> target; };
+		std::vector<Journey> journeys = {
+			{ building.createAgent("Up through run", lower, 0, 2.5f), upperTarget },
+			{ building.createAgent("Down middle", middle, 0, 2.5f), lowerTarget },
+			{ building.createAgent("Down upper", upper, 0, 2.5f), middleTarget }
+		};
+		for (auto const& journey : journeys)
+		{
+			auto agent = building.lookupAgent(journey.id).entity;
+			auto path = graph->calculatePath(agent, journey.target);
+			if (!path) return false;
+			agent->setPath(path, true);
+		}
+
+		std::vector<uint32_t> serviceOrder;
+		core::LiftStopPhase previousPhase = core::LiftStopPhase::Idle;
+		float previousPosition = 0.0f;
+		bool observedCoalescedMiddleDemand = false;
+		for (uint32_t tick = 0; tick < MaximumSimulationTicks * 12; ++tick)
+		{
+			building.advanceTick();
+			auto snapshot = building.getSimulationSnapshot();
+			auto lift = std::find_if(snapshot.traversalResources.begin(), snapshot.traversalResources.end(),
+				[&](auto const& resource) { return resource.id == created.traversalResource; });
+			if (lift == snapshot.traversalResources.end()) return false;
+			if (lift->liftStopRequestOwnerCounts.size() != 3
+				|| lift->liftStopOldestRequestTicks.size() != 3) return false;
+			observedCoalescedMiddleDemand = observedCoalescedMiddleDemand
+				|| lift->liftStopRequestOwnerCounts[1] >= 2;
+			if (lift->liftStopPhase == core::LiftStopPhase::Opening
+				&& previousPhase != core::LiftStopPhase::Opening)
+				serviceOrder.push_back(lift->liftCurrentStop);
+			if (lift->liftMoving)
+			{
+				if (lift->liftDirection == core::TraversalDirection::Ascending
+					&& lift->liftPosition + 0.0001f < previousPosition) return false;
+				if (lift->liftDirection == core::TraversalDirection::Descending
+					&& lift->liftPosition > previousPosition + 0.0001f) return false;
+			}
+			previousPhase = lift->liftStopPhase;
+			previousPosition = lift->liftPosition;
+			if (std::all_of(journeys.begin(), journeys.end(), [&](auto const& journey)
+				{ return building.lookupAgent(journey.id).entity->getState() == core::Agent::State::Idle; }))
+				break;
+		}
+
+		return observedCoalescedMiddleDemand
+			&& serviceOrder == std::vector<uint32_t>({ 0, 2, 1, 0 })
+			&& building.lookupAgent(journeys[0].id).entity->getSector() == building.getSector(upper).get()
+			&& building.lookupAgent(journeys[1].id).entity->getSector() == building.getSector(lower).get()
+			&& building.lookupAgent(journeys[2].id).entity->getSector() == building.getSector(middle).get();
+	}
+
 	bool unavailableDoorRejectsTraversal()
 	{
 		core::Building building("Unavailable door", 6, 2);
@@ -1418,6 +1492,11 @@ int main()
 		if (!liftCapacityAndStopPhasesAreEnforced())
 		{
 			std::cerr << "FAIL: lift capacity, boarding cutoff, or later service was not enforced\n";
+			return 1;
+		}
+		if (!multiStopLiftUsesDeterministicLookScheduling())
+		{
+			std::cerr << "FAIL: multi-stop lift did not follow deterministic LOOK scheduling\n";
 			return 1;
 		}
 		if (!unavailableDoorRejectsTraversal())

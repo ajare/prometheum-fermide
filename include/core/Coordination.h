@@ -227,6 +227,13 @@ namespace core
 		InteractionPointId callControl;
 	};
 
+	struct LiftTripIntent
+	{
+		uint32_t originStop{ ~0u };
+		uint32_t destinationStop{ ~0u };
+		uint64_t registeredAtTick{ 0 };
+	};
+
 	struct DoorQueueLane
 	{
 		SectorId sector;
@@ -258,6 +265,7 @@ namespace core
 		float mLiftPosition{ 0.0f };
 		uint32_t mLiftCurrentStop{ 0 };
 		uint32_t mLiftTargetStop{ ~0u };
+		TraversalDirection mLiftDirection{ TraversalDirection::None };
 		bool mLiftMoving{ false };
 		bool mLiftCarDoorOpen{ false };
 		LiftStopPhase mLiftStopPhase{ LiftStopPhase::Idle };
@@ -266,7 +274,9 @@ namespace core
 		uint64_t mLiftMinimumDwellTicks{ 0 };
 		uint64_t mLiftMaximumBoardingTicks{ 0 };
 		std::map<AgentId, uint32_t> mLiftPassengerDestinations;
+		std::map<AgentId, LiftTripIntent> mLiftTripIntents;
 		std::vector<std::set<AgentId>> mLiftStopRequestOwners;
+		std::vector<std::map<AgentId, uint64_t>> mLiftStopRequestTicks;
 		std::vector<TraversalRequestId> mLiftConfirmationQueue;
 		TraversalRequestId mLiftActiveConfirmation;
 		// Compatibility aliases expose the first passenger/reservation in old snapshots.
@@ -323,7 +333,7 @@ namespace core
 			: mName(std::move(name)), mLift(std::move(lift)), mLiftSector(liftSector),
 			  mLiftStops(std::move(stops)), mLiftMinimumDwellTicks(minimumDwellTicks),
 			  mLiftMaximumBoardingTicks(maximumBoardingTicks),
-			  mLiftStopRequestOwners(mLiftStops.size()), mCapacity(capacity),
+			  mLiftStopRequestOwners(mLiftStops.size()), mLiftStopRequestTicks(mLiftStops.size()), mCapacity(capacity),
 			  mCapacityPositions(std::move(positions)), mOccupants(capacity),
 			  mAdmissionReservations(capacity)
 		{

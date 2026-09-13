@@ -118,6 +118,7 @@ namespace core
 		bool liftAcceptingBoarders{ false };
 		uint32_t liftCurrentStop{ 0 };
 		uint32_t liftTargetStop{ ~0u };
+		TraversalDirection liftDirection{ TraversalDirection::None };
 		float liftPosition{ 0.0f };
 		SectorId liftSector;
 		AgentId liftPassenger;
@@ -127,6 +128,8 @@ namespace core
 		TraversalRequestId liftActiveConfirmation;
 		std::vector<TraversalRequestId> liftConfirmationQueue;
 		std::vector<uint32_t> liftStopRequestOwnerCounts;
+		std::vector<uint64_t> liftStopOldestRequestTicks;
+		std::vector<uint32_t> liftScheduledStops;
 		bool isExtensible{ false };
 		bool extended{ false };
 		bool retractionPending{ false };
