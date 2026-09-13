@@ -1773,6 +1773,85 @@ namespace core
 		return result;
 	}
 
+	Building::CreateObjectResult Building::addSectorDoorButton(uint32_t sectorIndex,
+		uint32_t objectIndex)
+	{
+		beginStructuralEdit("addSectorDoorButton");
+		if (sectorIndex >= mSectors.size() || !mSectors[sectorIndex]
+			|| objectIndex >= mSectors[sectorIndex]->getNumObjects())
+		{
+			throw BuildingException(this, "The selected Door no longer exists");
+		}
+
+		auto doorObject = dynamic_pointer_cast<DoorSectorObject>(
+			mSectors[sectorIndex]->getObject(objectIndex));
+		if (!doorObject)
+		{
+			throw BuildingException(this, "The selected object is not a Door");
+		}
+		auto door = doorObject->getDoor();
+		auto sector = mSectors[sectorIndex];
+		uint32_t layerIndex{ CORE_NUM_LAYERS };
+		for (uint32_t layer = 0; layer < CORE_NUM_LAYERS; ++layer)
+		{
+			if (door->getSector(layer) == sector) layerIndex = layer;
+		}
+		if (layerIndex == CORE_NUM_LAYERS)
+		{
+			throw BuildingException(this, "The selected Door does not belong to this Sector");
+		}
+
+		auto source = find_if(mConstructionRecords.begin(), mConstructionRecords.end(),
+			[&](ConstructionRecord const& record)
+			{
+				return record.type == ConstructionType::Door
+					&& record.a == doorObject->getCellY()
+					&& record.b == doorObject->getCellX()
+					&& record.c == door->getCellsWide();
+			});
+		if (source == mConstructionRecords.end())
+		{
+			throw BuildingException(this, "This Door does not support an added Door Button");
+		}
+		bool const alreadyHasButton = layerIndex == CORE_LAYER_FORE ? source->p : source->q;
+		if (alreadyHasButton)
+		{
+			throw BuildingException(this, "This side of the Door already has a Door Button");
+		}
+		if (doorObject->getCellX() == sector->getCellX0()
+			&& doorObject->getCellX() + door->getCellsWide() - 1 == sector->getCellX1())
+		{
+			throw BuildingException(this, "There is no space to place a Door Button on this side");
+		}
+
+		auto control = _createDoorButton(sector, doorObject->getCellX(),
+			doorObject->getCellY(), door->getCellsWide(), CORE_BUTTON_F_AUTO_REENABLE);
+		auto controlObject = sector->_getObject(control.index);
+		auto controlPosition = controlObject->getPosition() + controlObject->getSize() * 0.5f;
+		DeviceCommand command;
+		command.type = DeviceCommandType::OpenDoor;
+		command.desiredState = true;
+		command.traversalResource = door->getTraversalResourceId();
+		auto point = createInteractionPoint("Door button",
+			SectorId{ (uint64_t)sector->getIndex() + 1 }, controlPosition,
+			0.15f, getFixedTimestep(), { { command, InteractionBindingRequirement::Required } });
+		bindPhysicalControl(control, point);
+		if (!addTraversalControl(door->getTraversalResourceId(), point))
+		{
+			throw BuildingException(this, "Could not bind the Door Button to its Door");
+		}
+
+		// A Door with a physical open control uses remote-controlled preparation.
+		auto resource = mTraversalResources.find(door->getTraversalResourceId());
+		resource->mDoorActivationMode = DoorActivationMode::RemoteControlled;
+		door->configureTraversal(DoorActivationMode::RemoteControlled,
+			door->getTraversalResourceId(), door->mHoldOpenTime);
+		source->i = static_cast<int32_t>(DoorActivationMode::RemoteControlled);
+		if (layerIndex == CORE_LAYER_FORE) source->p = true;
+		else source->q = true;
+		return control;
+	}
+
 	Building::CreateDoorResult Building::_addSectorDoor(uint32_t y, uint32_t x,
 		CreateDoorOptions const& options, bool controlsAreExternallyBound)
 	{

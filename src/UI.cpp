@@ -2245,7 +2245,8 @@ void renderBulkheadDoorPanel(shared_ptr<const core::SectorObject> object)
 }
 
 
-void renderDoorPanel(shared_ptr<const core::SectorObject> object)
+void renderDoorPanel(shared_ptr<core::Building> const& building,
+	shared_ptr<const core::SectorObject> object)
 {
 	auto doorObject = static_pointer_cast<const core::DoorSectorObject>(object);
 	auto door = doorObject->getDoor();
@@ -2285,6 +2286,40 @@ void renderDoorPanel(shared_ptr<const core::SectorObject> object)
 	// Sectors
 	ImGui::Text("From: %s", door->getSector(CORE_LAYER_FORE)->getDescription().c_str());
 	ImGui::Text("To: %s", door->getSector(CORE_LAYER_BACK)->getDescription().c_str());
+
+	ImGui::BeginDisabled(!building->isSimulationPaused());
+	if (ImGui::Button("Add Door Button"))
+	{
+		auto undo = captureDocumentSnapshot(building);
+		try
+		{
+			gUISettings.worldPaused = true;
+			auto owner = object->getSector();
+			uint32_t objectIndex{ ~0u };
+			for (uint32_t i = 0; i < owner->getNumObjects(); ++i)
+			{
+				if (owner->getObject(i) == object)
+				{
+					objectIndex = i;
+					break;
+				}
+			}
+			if (objectIndex == ~0u)
+				throw runtime_error("The selected Door no longer exists");
+			building->addSectorDoorButton(owner->getIndex(), objectIndex);
+			building->finishBuild();
+			commitDocumentEdit(std::move(undo));
+		}
+		catch (core::Exception const& error)
+		{
+			core::addLogMessage("Door editor", 0, core::LogLevel::Error, error.getMessage());
+		}
+		catch (std::exception const& error)
+		{
+			core::addLogMessage("Door editor", 0, core::LogLevel::Error, error.what());
+		}
+	}
+	ImGui::EndDisabled();
 }
 
 
@@ -2633,7 +2668,7 @@ void renderObjectView(shared_ptr<const core::Building> building)
 }
 
 
-void renderSelectedObjectPanel()
+void renderSelectedObjectPanel(shared_ptr<core::Building> const& building)
 {
 	if ((!gSelectedSector && !gSelectedSectorObject)
 		|| !ImGui::CollapsingHeader("Selection", nullptr, 0)) return;
@@ -2660,7 +2695,7 @@ void renderSelectedObjectPanel()
 			break;
 
 		case core::SectorObjectType::Door:
-			renderDoorPanel(gSelectedSectorObject);
+			renderDoorPanel(building, gSelectedSectorObject);
 			break;
 
 		case core::SectorObjectType::ForceBridge:
@@ -2756,7 +2791,7 @@ void renderSelectedAgentPanel(shared_ptr<const core::Building> building)
 }
 
 
-void renderBuildingPanel(shared_ptr<const core::Building> building)
+void renderBuildingPanel(shared_ptr<core::Building> building)
 {
 	if (ImGui::CollapsingHeader("Objects"))
 	{
@@ -2768,7 +2803,7 @@ void renderBuildingPanel(shared_ptr<const core::Building> building)
 		renderAgentView(building);
 	}
 
-	renderSelectedObjectPanel();
+	renderSelectedObjectPanel(building);
 	renderSelectedAgentPanel(building);
 }
 

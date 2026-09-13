@@ -626,6 +626,10 @@ namespace core
 
 		CreateDoorResult addSectorDoor(uint32_t y, uint32_t x, CreateDoorOptions const& options = {});
 
+		// Adds a physical open control in the selected Door's owning Location.
+		// Placement against the left or right edge is derived from the Door and Location geometry.
+		CreateObjectResult addSectorDoorButton(uint32_t sectorIndex, uint32_t objectIndex);
+
 		bool removeSectorDoor(uint32_t sectorIndex, uint32_t objectIndex);
 
 		bool canAddSectorWindow(uint32_t layerIndex, uint32_t y, uint32_t x,
