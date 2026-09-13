@@ -49,6 +49,7 @@ UISettings gUISettings;
 GLuint gCellsTexture{ 0 };
 int gCellsTextureWidth{ 0 };
 int gCellsTextureHeight{ 0 };
+ImFont* gPegmanFont{ nullptr };
 
 using namespace std;
 
@@ -241,6 +242,17 @@ void setup()
 	icons_config.PixelSnapH = true;
 	icons_config.GlyphMinAdvanceX = iconFontSize;
 	io.Fonts->AddFontFromFileTTF(FONT_ICON_FILE_NAME_FAS, iconFontSize, &icons_config, icons_ranges);
+
+	// Pegman is rendered much larger than toolbar icons. Rasterize its glyph at
+	// Agent height so dragging it does not enlarge the small merged icon bitmap.
+	static const ImWchar pegmanRange[] = { 0xf21d, 0xf21d, 0 };
+	gPegmanFont = io.Fonts->AddFontFromFileTTF(FONT_ICON_FILE_NAME_FAS,
+		CORE_AGENT_MAX_HEIGHT * CORE_DECK_HEIGHT_PIXELS, nullptr, pegmanRange);
+	if (!gPegmanFont)
+	{
+		throw ExitApplicationException(1, "Could not load the Pegman icon font.");
+	}
+
 	io.Fonts->Build();
 }
 

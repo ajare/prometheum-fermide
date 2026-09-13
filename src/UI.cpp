@@ -1,4 +1,8 @@
+#include <algorithm>
+#include <cfloat>
+#include <cmath>
 #include <deque>
+#include <set>
 
 #pragma warning(push)
 #pragma warning(disable: 4307)
@@ -35,6 +39,7 @@
 extern spdlog::logger* gLogger;
 
 extern UISettings gUISettings;
+extern ImFont* gPegmanFont;
 
 core::InteractionPointId gHoveredInteractionPoint;
 core::Agent *gHoveredAgent{ nullptr }, *gSelectedAgent{ nullptr };
@@ -48,6 +53,264 @@ using namespace std;
 
 
 static bool gWorldHovered{ false };
+static bool gPegmanConsumesLeftMouse{ false };
+
+void setSelectionMode(UISettings::SelectionMode mode);
+
+namespace
+{
+	constexpr float PegmanHomeSize{ 36.0f };
+	constexpr float PegmanHomeInset{ 16.0f };
+	constexpr float PegmanGravity{ 6.0f };
+	constexpr float PegmanTerminalVelocity{ 8.0f };
+
+	enum class PegmanPhase
+	{
+		Home,
+		Armed,
+		Dragging,
+		Falling
+	};
+
+	struct PegmanDropState
+	{
+		PegmanPhase phase{ PegmanPhase::Home };
+		ImVec2 pressPosition{};
+		shared_ptr<const core::Sector> sector;
+		uint32_t deckOffset{ 0 };
+		float localX{ 0.0f };
+		float feetY{ 0.0f };
+		float floorY{ 0.0f };
+		float velocity{ 0.0f };
+		uint64_t nextAgentNumber{ 1 };
+	};
+
+	struct PegmanTarget
+	{
+		shared_ptr<const core::Sector> sector;
+		uint32_t deckOffset{ 0 };
+		float localX{ 0.0f };
+		float feetY{ 0.0f };
+		float floorY{ 0.0f };
+
+		explicit operator bool() const { return sector != nullptr; }
+	};
+
+	PegmanDropState gPegman;
+
+	bool pointInRect(ImVec2 point, ImVec2 min, ImVec2 max)
+	{
+		return point.x >= min.x && point.x <= max.x && point.y >= min.y && point.y <= max.y;
+	}
+
+	core::Vector2 screenToWorld(ImVec2 position)
+	{
+		return {
+			(position.x - gUISettings.worldViewportX - gUISettings.xOffset) / CORE_CELL_WIDTH_PIXELS,
+			(gUISettings.worldViewportY + gUISettings.worldViewportHeight - position.y
+				- gUISettings.yOffset) / CORE_DECK_HEIGHT_PIXELS
+		};
+	}
+
+	ImVec2 worldToScreen(core::Vector2 position)
+	{
+		return {
+			gUISettings.worldViewportX + gUISettings.xOffset
+				+ position.x * CORE_CELL_WIDTH_PIXELS,
+			gUISettings.worldViewportY + gUISettings.worldViewportHeight
+				- gUISettings.yOffset - position.y * CORE_DECK_HEIGHT_PIXELS
+		};
+	}
+
+	bool locationHasCapacity(shared_ptr<const core::Sector> const& sector)
+	{
+		if (!sector || sector->getType() != core::SectorType::Location) return false;
+		auto capacity = sector->getCapacity();
+		return capacity == ~0u || sector->getAgents().size() < capacity;
+	}
+
+	PegmanTarget getPegmanTarget(shared_ptr<const core::Building> const& building,
+		ImVec2 feet, ImVec2 canvasPos, ImVec2 canvasSize)
+	{
+		if (!pointInRect(feet, canvasPos, canvasPos + canvasSize)) return {};
+
+		auto world = screenToWorld(feet);
+		auto sector = building->getSectorAtPosition(gUISettings.visibleLayer, world.x, world.y);
+		if (!locationHasCapacity(sector) || !sector->pointInBounds(world.x, world.y)) return {};
+
+		auto cellY = (uint32_t)floor(world.y);
+		if (cellY < sector->getCellY()) return {};
+		auto deckOffset = cellY - sector->getCellY();
+		if (deckOffset >= sector->getDecksHigh()) return {};
+
+		float halfAgentWidth = CORE_AGENT_MAX_WIDTH * 0.5f;
+		float minimumX = halfAgentWidth;
+		float maximumX = sector->getSize().x - halfAgentWidth;
+		float localX = world.x - sector->getPosition().x;
+		localX = minimumX <= maximumX
+			? clamp(localX, minimumX, maximumX)
+			: sector->getSize().x * 0.5f;
+
+		return { sector, deckOffset, localX, world.y,
+			(float)sector->getCellY() + deckOffset };
+	}
+
+	float fittedPegmanFontSize(float maximumWidth, float maximumHeight, ImVec2& renderedSize)
+	{
+		ImFont* font = gPegmanFont ? gPegmanFont : ImGui::GetFont();
+		float sourceSize = font->FontSize;
+		auto sourceBounds = font->CalcTextSizeA(sourceSize, FLT_MAX, 0.0f, ICON_FA_STREET_VIEW);
+		float scale = min(maximumWidth / max(sourceBounds.x, 1.0f),
+			maximumHeight / max(sourceBounds.y, 1.0f));
+		float fontSize = sourceSize * scale;
+		renderedSize = font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, ICON_FA_STREET_VIEW);
+		return fontSize;
+	}
+
+	void drawPegman(ImDrawList* drawList, ImVec2 feet, float maximumWidth,
+		float maximumHeight, ImU32 colour)
+	{
+		ImVec2 size;
+		float fontSize = fittedPegmanFontSize(maximumWidth, maximumHeight, size);
+		ImVec2 topLeft{ feet.x - size.x * 0.5f, feet.y - size.y };
+		drawList->AddText(gPegmanFont ? gPegmanFont : ImGui::GetFont(), fontSize,
+			topLeft, colour, ICON_FA_STREET_VIEW);
+	}
+
+	string nextAgentName(shared_ptr<const core::Building> const& building)
+	{
+		set<string> names;
+		for (auto const& agent : building->getSimulationSnapshot().agents)
+			names.insert(agent.name);
+
+		while (true)
+		{
+			auto name = format("Agent {}", gPegman.nextAgentNumber++);
+			if (!names.contains(name)) return name;
+		}
+	}
+
+	void resetPegman()
+	{
+		gPegman.phase = PegmanPhase::Home;
+		gPegman.sector.reset();
+		gPegman.velocity = 0.0f;
+	}
+
+	void landPegman(shared_ptr<core::Building> const& building)
+	{
+		if (locationHasCapacity(gPegman.sector))
+		{
+			auto id = building->createAgent(nextAgentName(building), gPegman.sector->getIndex(),
+				gPegman.deckOffset, gPegman.localX);
+			auto created = building->lookupAgent(id).entity;
+			setSelectionMode(UISettings::SelectionMode::Object);
+			gSelectedAgent = created;
+		}
+		resetPegman();
+	}
+
+	void renderPegman(shared_ptr<core::Building> const& building, ImVec2 canvasPos,
+		ImVec2 canvasSize, ImDrawList* drawList)
+	{
+		constexpr ImU32 yellow = IM_COL32(251, 188, 4, 255);
+		constexpr ImU32 red = IM_COL32(244, 67, 54, 255);
+		auto const& io = ImGui::GetIO();
+		gPegmanConsumesLeftMouse = false;
+
+		if (gPegman.phase == PegmanPhase::Falling)
+		{
+			float frameTime = min(io.DeltaTime, 0.1f);
+			gPegman.velocity = min(gPegman.velocity + PegmanGravity * frameTime,
+				PegmanTerminalVelocity);
+			gPegman.feetY = max(gPegman.floorY,
+				gPegman.feetY - gPegman.velocity * frameTime);
+			if (gPegman.feetY <= gPegman.floorY)
+				landPegman(building);
+		}
+
+		ImVec2 homeSize;
+		fittedPegmanFontSize(PegmanHomeSize, PegmanHomeSize, homeSize);
+		ImVec2 homeBottomRight = canvasPos + canvasSize
+			- ImVec2(PegmanHomeInset, PegmanHomeInset);
+		ImVec2 homeTopLeft = homeBottomRight - homeSize;
+		bool homeHovered = gWorldHovered && gPegman.phase != PegmanPhase::Falling
+			&& pointInRect(io.MousePos, homeTopLeft, homeBottomRight);
+
+		if (gPegman.phase == PegmanPhase::Home && homeHovered && io.MouseClicked[0])
+		{
+			gPegman.phase = PegmanPhase::Armed;
+			gPegman.pressPosition = io.MousePos;
+		}
+
+		if (gPegman.phase == PegmanPhase::Armed)
+		{
+			gPegmanConsumesLeftMouse = true;
+			ImVec2 movement = io.MousePos - gPegman.pressPosition;
+			if (io.MouseDown[0] && movement.x * movement.x + movement.y * movement.y
+				>= io.MouseDragThreshold * io.MouseDragThreshold)
+			{
+				gPegman.phase = PegmanPhase::Dragging;
+			}
+			else if (io.MouseReleased[0])
+			{
+				resetPegman();
+			}
+		}
+
+		PegmanTarget target;
+		if (gPegman.phase == PegmanPhase::Dragging)
+		{
+			gPegmanConsumesLeftMouse = true;
+			target = getPegmanTarget(building, io.MousePos, canvasPos, canvasSize);
+			if (io.MouseReleased[0])
+			{
+				if (target)
+				{
+					gPegman.phase = PegmanPhase::Falling;
+					gPegman.sector = target.sector;
+					gPegman.deckOffset = target.deckOffset;
+					gPegman.localX = target.localX;
+					gPegman.feetY = target.feetY;
+					gPegman.floorY = target.floorY;
+					gPegman.velocity = 0.0f;
+					if (gPegman.feetY <= gPegman.floorY)
+						landPegman(building);
+				}
+				else
+				{
+					resetPegman();
+				}
+			}
+		}
+
+		if (homeHovered || gPegman.phase == PegmanPhase::Armed
+			|| gPegman.phase == PegmanPhase::Dragging)
+			ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+
+		if (gPegman.phase == PegmanPhase::Home || gPegman.phase == PegmanPhase::Armed)
+		{
+			drawPegman(drawList, { homeTopLeft.x + homeSize.x * 0.5f, homeBottomRight.y },
+				PegmanHomeSize, PegmanHomeSize, yellow);
+			if (homeHovered && gPegman.phase == PegmanPhase::Home)
+				ImGui::SetTooltip("Drag to add Agent");
+		}
+		else if (gPegman.phase == PegmanPhase::Dragging)
+		{
+			drawPegman(drawList, io.MousePos,
+				CORE_AGENT_MAX_WIDTH * CORE_CELL_WIDTH_PIXELS,
+				CORE_AGENT_MAX_HEIGHT * CORE_DECK_HEIGHT_PIXELS,
+				target ? yellow : red);
+		}
+		else if (gPegman.phase == PegmanPhase::Falling)
+		{
+			auto globalX = gPegman.sector->getPosition().x + gPegman.localX;
+			drawPegman(drawList, worldToScreen({ globalX, gPegman.feetY }),
+				CORE_AGENT_MAX_WIDTH * CORE_CELL_WIDTH_PIXELS,
+				CORE_AGENT_MAX_HEIGHT * CORE_DECK_HEIGHT_PIXELS, yellow);
+		}
+	}
+}
 
 // The world is now an ImGui window, so WantCaptureMouse is true over it.
 // Track its canvas explicitly to distinguish it from the controls.
@@ -202,7 +465,8 @@ void handleShortcuts(shared_ptr<core::Building> building)
 void handleWorldInteraction(shared_ptr<core::Building> building,
 	shared_ptr<const core::Graph> graph, MouseButtonStatus const& mouseStatus)
 {
-	if (mouseStatus.state[MouseButtonStatus::Left] == MouseButtonStatus::State::Clicked)
+	if (!gPegmanConsumesLeftMouse
+		&& mouseStatus.state[MouseButtonStatus::Left] == MouseButtonStatus::State::Clicked)
 	{
 		// Try and select
 		if (gHoveredAgent)
@@ -239,7 +503,7 @@ void handleWorldInteraction(shared_ptr<core::Building> building,
 		clearSelections();
 	}
 
-	if (mouseStatus.dragging[MouseButtonStatus::Left])
+	if (!gPegmanConsumesLeftMouse && mouseStatus.dragging[MouseButtonStatus::Left])
 	{
 		if (ImGui::GetIO().KeyShift)
 		{
@@ -1434,6 +1698,7 @@ void renderWorldWindow(shared_ptr<core::Building> building, shared_ptr<const cor
 	ImGui::InvisibleButton("##WorldCanvas", canvasSize,
 		ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
 	gWorldHovered = ImGui::IsItemHovered();
+	ImGui::SetItemAllowOverlap();
 
 	gHoveredAgent = nullptr;
 	gHoveredInteractionPoint = {};
@@ -1470,6 +1735,7 @@ void renderWorldWindow(shared_ptr<core::Building> building, shared_ptr<const cor
 	drawList->PushClipRect(canvasPos, canvasPos + canvasSize, true);
 	renderBuilding(building);
 	renderGraph(graph, building);
+	renderPegman(building, canvasPos, canvasSize, drawList);
 	drawList->PopClipRect();
 
 	ImGui::End();
