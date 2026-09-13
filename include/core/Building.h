@@ -134,6 +134,8 @@ namespace core
 			CreateObjectResult lift;
 			std::vector<CreateObjectResult> buttons;
 			std::shared_ptr<OrchestratedSystem> orchSystem;
+			TraversalResourceId traversalResource;
+			InteractionPointId interiorSelector;
 		};
 
 		struct CreateShuttleOptions
@@ -372,6 +374,8 @@ namespace core
 
 		void allocateLiftTraversal(TraversalRequestId requestId, TraversalResource& resource);
 
+		void allocateOpenPlatformLiftTraversal(TraversalRequestId requestId, TraversalResource& resource);
+
 		uint32_t findLiftStop(TraversalResource const& resource, Vector2 const& endpoint) const;
 
 		uint32_t findAgentLiftDestination(Agent const& agent, TraversalResource const& resource) const;
@@ -563,6 +567,11 @@ namespace core
 
 		TraversalResourceId createLiftTraversalResource(std::string const& name,
 			std::shared_ptr<Lift> lift, SectorId liftSector, std::vector<LiftStop> stops,
+			uint32_t capacity = 1, float minimumDwellSeconds = CORE_LIFT_DOOR_PAUSE_TIME,
+			float maximumBoardingSeconds = CORE_DOOR_STAY_OPEN_TIME);
+
+		TraversalResourceId createOpenPlatformLiftTraversalResource(std::string const& name,
+			std::shared_ptr<Lift> lift, SectorId locationSector, std::vector<LiftStop> stops,
 			uint32_t capacity = 1, float minimumDwellSeconds = CORE_LIFT_DOOR_PAUSE_TIME,
 			float maximumBoardingSeconds = CORE_DOOR_STAY_OPEN_TIME);
 

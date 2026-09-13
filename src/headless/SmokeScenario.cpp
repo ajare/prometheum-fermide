@@ -1075,6 +1075,71 @@ namespace
 			});
 	}
 
+	bool openPlatformLiftUsesVirtualBoundaryAndTransportPolicy()
+	{
+		core::Building building("Open platform lift", 7, 5);
+		auto room = building.addCorridor(0, 0, 6, 4);
+		core::Building::CreateLiftOptions options;
+		options.cellsWide = 1;
+		options.stopOffsets = { 0, 2 };
+		options.capacity = 1;
+		options.minimumDwellSeconds = 0.1f;
+		options.maximumBoardingSeconds = 0.5f;
+		building.addSectorWalkway(room, 2, 2);
+		building.addSectorWalkway(room, 2, 3);
+		auto created = building.addSectorPlatformLift(room, 0, 2, options);
+		building.finishBuild();
+		if (!created.traversalResource || !created.interiorSelector || created.buttons.size() != 2)
+			return false;
+
+		auto target = building.getGraph()->getClosestVertexInSector(
+			building.getSector(room).get(), { 2.5f, 2.0f });
+		auto passengerId = building.createAgent("Platform passenger", room, 0, 0.5f);
+		auto passenger = building.lookupAgent(passengerId).entity;
+		auto path = building.getGraph()->calculatePath(passenger, target);
+		if (!path || std::count_if(path->nodes.begin(), path->nodes.end(), [](auto const& node)
+			{ return node.edge && node.edge->getType() == core::EdgeType::Lift; }) != 1) return false;
+		passenger->setPath(path, true);
+
+		bool sawBoundary = false;
+		bool sawOnboard = false;
+		bool sawAttachedMotion = false;
+		bool sawDestinationConfirmation = false;
+		for (uint32_t tick = 0; tick < MaximumSimulationTicks * 6
+			&& passenger->getState() != core::Agent::State::Idle; ++tick)
+		{
+			building.advanceTick();
+			auto snapshot = building.getSimulationSnapshot();
+			auto platform = std::find_if(snapshot.traversalResources.begin(), snapshot.traversalResources.end(),
+				[&](auto const& resource) { return resource.id == created.traversalResource; });
+			if (platform == snapshot.traversalResources.end() || !platform->isOpenPlatformLift
+				|| platform->liftCarDoorOpen
+				|| platform->occupantCount + platform->admissionReservationCount > options.capacity)
+				return false;
+			sawBoundary = sawBoundary || platform->virtualBoundaryCrossingCount == 1;
+			sawOnboard = sawOnboard || platform->occupantCount == 1;
+			for (auto const& operation : snapshot.deviceOperations)
+				if (operation.command.type == core::DeviceCommandType::SelectLiftDestination
+					&& operation.state == core::DeviceOperationState::Succeeded)
+					sawDestinationConfirmation = true;
+			if (platform->liftMoving)
+			{
+				if (platform->virtualBoundaryCrossingCount != 0) return false;
+				if (std::abs(passenger->getGlobalPosition().y - platform->liftPosition) < 0.001f)
+					sawAttachedMotion = true;
+			}
+		}
+		auto final = building.getSimulationSnapshot();
+		auto platform = std::find_if(final.traversalResources.begin(), final.traversalResources.end(),
+			[&](auto const& resource) { return resource.id == created.traversalResource; });
+		return sawBoundary && sawOnboard && sawAttachedMotion && sawDestinationConfirmation
+			&& passenger->getState() == core::Agent::State::Idle
+			&& passenger->getSector() == building.getSector(room).get()
+			&& passenger->getGlobalPosition().distanceTo(target->getPosition()) < 0.001f
+			&& platform != final.traversalResources.end() && platform->occupantCount == 0
+			&& platform->virtualBoundaryCrossingCount == 0;
+	}
+
 	bool singlePassengerCompletesTwoStopLiftJourney()
 	{
 		core::Building building("Two-stop lift journey", 6, 4);
@@ -1725,6 +1790,11 @@ int main()
 		if (!singlePassengerCompletesTwoStopLiftJourney())
 		{
 			std::cerr << "FAIL: single passenger did not complete an interlocked two-stop lift journey\n";
+			return 1;
+		}
+		if (!openPlatformLiftUsesVirtualBoundaryAndTransportPolicy())
+		{
+			std::cerr << "FAIL: open platform lift journey, virtual boundary, or attachment failed\n";
 			return 1;
 		}
 		if (!liftCapacityAndStopPhasesAreEnforced())

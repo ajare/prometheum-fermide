@@ -293,6 +293,11 @@ namespace core
 		TraversalDirection mLiftDirection{ TraversalDirection::None };
 		bool mLiftMoving{ false };
 		bool mLiftCarDoorOpen{ false };
+		// Open platform lifts share the transport scheduler but replace landing/car
+		// doors with one capacity-limited virtual crossing boundary.
+		bool mOpenPlatformLift{ false };
+		std::vector<TraversalRequestId> mVirtualBoundaryOwners;
+		std::map<TraversalRequestId, uint64_t> mVirtualBoardingStarted;
 		LiftStopPhase mLiftStopPhase{ LiftStopPhase::Idle };
 		uint64_t mLiftServiceStartedTick{ 0 };
 		uint64_t mLiftBoardingCutoffTick{ 0 };
@@ -404,6 +409,7 @@ namespace core
 		bool isLadder() const { return mLadder != nullptr; }
 		bool isForceBridge() const { return mForceBridge != nullptr; }
 		bool isLift() const { return mLift != nullptr; }
+		bool isOpenPlatformLift() const { return mOpenPlatformLift; }
 		bool isShuttle() const { return mShuttle != nullptr; }
 		bool isExtensible() const { return mExtensible != nullptr; }
 		bool isNarrowStaircase() const { return mStaircase != nullptr; }

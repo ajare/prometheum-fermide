@@ -128,6 +128,9 @@ namespace core
 		bool isLadder{ false };
 		bool isForceBridge{ false };
 		bool isLift{ false };
+		bool isOpenPlatformLift{ false };
+		uint32_t virtualBoundaryCrossingCount{ 0 };
+		std::vector<TraversalRequestId> virtualBoundaryOwners;
 		bool isShuttle{ false };
 		uint32_t shuttleCapacityPerCarriage{ 0 };
 		std::vector<ShuttleCarriageSnapshot> shuttleCarriages;
