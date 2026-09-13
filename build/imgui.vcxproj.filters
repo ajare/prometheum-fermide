@@ -37,15 +37,6 @@
     <Filter Include="Header Files\core\SectorObjects">
       <UniqueIdentifier>{b38ae4f5-2720-4623-87b6-d62516a1350b}</UniqueIdentifier>
     </Filter>
-    <Filter Include="Header Files\core\OrchestratedSystems">
-      <UniqueIdentifier>{a3c4624b-d3f5-44f5-b0f0-2fc0dddc1b60}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="Header Files\core\VertexControllers">
-      <UniqueIdentifier>{e5fa1628-998f-4fb4-a6cc-ebe4716bc285}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="Header Files\core\VertexControllerAreas">
-      <UniqueIdentifier>{3a27300f-b315-42e2-9b36-88ff10b83425}</UniqueIdentifier>
-    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\src\Main.cpp">
