@@ -540,13 +540,16 @@ namespace core
 			return plan;
 		}
 		auto sector = mSectors[sectorIndex];
-		if (cellsWide == 0 || decksHigh == 0 || x + cellsWide > mCellsWide || y + decksHigh > mDecksHigh)
+		plan.move = (x != sector->getCellX() || y != sector->getCellY())
+			&& cellsWide == sector->getCellsWide() && decksHigh == sector->getDecksHigh();
+		if (cellsWide == 0 || decksHigh == 0 || x + cellsWide >= mCellsWide || y + decksHigh >= mDecksHigh)
 		{
 			plan.diagnostic = "The resized sector is outside the Building bounds";
 			return plan;
 		}
 		bool corridor = sector->getTopDeckHeight() == CORE_CORRIDOR_HEIGHT;
-		if (corridor && (y != sector->getCellY() || decksHigh != sector->getDecksHigh()))
+		if (corridor && !plan.move
+			&& (y != sector->getCellY() || decksHigh != sector->getDecksHigh()))
 		{
 			plan.diagnostic = "Corridors cannot be resized vertically";
 			return plan;
@@ -568,6 +571,14 @@ namespace core
 		{
 			auto object = sector->getObject(i);
 			if (!object || !seen.insert(object.get()).second) continue;
+			if (plan.move)
+			{
+				auto type = object->getObjectType();
+				if (type == SectorObjectType::Door || type == SectorObjectType::Window
+					|| type == SectorObjectType::BulkheadDoor)
+					plan.consequences.push_back("Delete " + object->getDescription());
+				continue;
+			}
 			Vector2 min, max;
 			object->getBounds(min, max);
 			bool inside = min.x >= x && max.x <= x + cellsWide
@@ -579,6 +590,7 @@ namespace core
 		{
 			(void)id;
 			if (agent->getSector() != sector.get()) continue;
+			if (plan.move) continue;
 			auto pos = agent->getGlobalPosition();
 			if (pos.x < x || pos.x > x + cellsWide || pos.y < y || pos.y > y + decksHigh
 				|| (y != sector->getCellY() && (uint32_t)floor(pos.y) == sector->getCellY()))
@@ -594,7 +606,7 @@ namespace core
 				if (transitStop.sector != sector) continue;
 				auto stopX = (int)sector->getCellX() + transitStop.sectorOffsetX;
 				auto stopY = (int)sector->getCellY() + transitStop.sectorOffsetY;
-				if (stopX < (int)x || stopX >= (int)(x + cellsWide)
+				if (plan.move || stopX < (int)x || stopX >= (int)(x + cellsWide)
 					|| stopY < (int)y || stopY >= (int)(y + decksHigh))
 				{
 					plan.consequences.push_back(format("Remove stop {} from {}", stop, transit->getName()));
@@ -688,8 +700,16 @@ namespace core
 		};
 		vector<SavedAgent> agents;
 		for (auto const& [id, agent] : mAgents.entries())
+		{
+			auto position = agent->getGlobalPosition();
+			if (plan.move && agent->getSector()->getIndex() == plan.sectorIndex)
+			{
+				position.x += (float)plan.x - (float)mSectors[plan.sectorIndex]->getCellX();
+				position.y += (float)plan.y - (float)mSectors[plan.sectorIndex]->getCellY();
+			}
 			agents.push_back({ id, agent->getName(), agent->getFlags(),
-				agent->getSector()->getLayerIndex(), agent->getGlobalPosition() });
+				agent->getSector()->getLayerIndex(), position });
+		}
 
 		resetForDeserialization(mName, mCellsWide, mDecksHigh);
 		mDeserializingConstruction = true;

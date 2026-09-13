@@ -184,6 +184,7 @@ namespace core
 		{
 			bool valid{ false };
 			bool remove{ false };
+			bool move{ false };
 			uint32_t sectorIndex{ ~0u };
 			uint32_t x{ 0 }, y{ 0 }, cellsWide{ 0 }, decksHigh{ 0 };
 			std::string diagnostic;

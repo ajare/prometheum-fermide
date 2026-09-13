@@ -249,7 +249,26 @@ namespace
 			if (reloaded.getSector(resized)->getObject(i)) ++reloadedObjects;
 		require(reloadedObjects == 1, "Edited object tombstones did not survive serialization");
 
-		auto remove = building.planRemoveLocation(resized);
+		auto movedAgent = building.createAgent("Moved", resized, 0, 1.0f);
+		auto move = building.planResizeLocation(resized, 4, 0, 3, 2);
+		if (!move.valid || !move.move || move.requiresConfirmation())
+			throw std::runtime_error("Free Location move was not planned without deletions: "
+				+ move.diagnostic + " consequences=" + std::to_string(move.consequences.size()));
+		auto moved = building.applyLocationEdit(move);
+		require(building.getSector(moved)->getCellX() == 4
+			&& building.getSector(moved)->getCellY() == 0,
+			"Location was not moved to its planned cells");
+		auto movedLookup = building.lookupAgent(movedAgent);
+		require(movedLookup && std::abs(movedLookup.entity->getGlobalPosition().x - 5.0f) < 0.001f
+			&& std::abs(movedLookup.entity->getGlobalPosition().y) < 0.001f,
+			"Agent did not move with its Location");
+		std::shared_ptr<const core::SectorObject> movedObject;
+		for (uint32_t i = 0; i < building.getSector(moved)->getNumObjects(); ++i)
+			if (building.getSector(moved)->getObject(i)) movedObject = building.getSector(moved)->getObject(i);
+		require(movedObject && movedObject->getCellX() == 6,
+			"Sector object did not move with its Location");
+
+		auto remove = building.planRemoveLocation(moved);
 		require(remove.valid, "Valid Location deletion was rejected");
 		building.applyLocationEdit(remove);
 		require(building.getNumSectors() == 0, "Deleted Location was retained");

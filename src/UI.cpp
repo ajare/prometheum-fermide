@@ -153,7 +153,8 @@ namespace
 		Left,
 		Right,
 		Bottom,
-		Top
+		Top,
+		Move
 	};
 
 	struct SectorResizeState
@@ -2642,8 +2643,10 @@ namespace
 		}
 		auto closest = min_element(candidates.begin(), candidates.end(),
 			[](auto const& a, auto const& b) { return a.distance < b.distance; });
-		return closest != candidates.end() && closest->distance <= tolerance
-			? closest->edge : ResizeEdge::None;
+		if (closest != candidates.end() && closest->distance <= tolerance) return closest->edge;
+		return mouse.x > topLeft.x && mouse.x < bottomRight.x
+			&& mouse.y > topLeft.y && mouse.y < bottomRight.y
+			? ResizeEdge::Move : ResizeEdge::None;
 	}
 
 	void updateSectorResize(shared_ptr<core::Building> const& building)
@@ -2662,11 +2665,16 @@ namespace
 			ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
 		else if (hoverEdge == ResizeEdge::Top || hoverEdge == ResizeEdge::Bottom)
 			ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+		else if (hoverEdge == ResizeEdge::Move)
+			ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
 
 		if (!gSectorResize.dragging && gWorldHovered && hoverEdge != ResizeEdge::None && io.MouseClicked[0])
 		{
-			if (!building->isSimulationPaused()) building->pauseSimulation();
-			gUISettings.worldPaused = true;
+			if (hoverEdge != ResizeEdge::Move)
+			{
+				if (!building->isSimulationPaused()) building->pauseSimulation();
+				gUISettings.worldPaused = true;
+			}
 			gSectorResize.dragging = true;
 			gSectorResize.edge = hoverEdge;
 			gSectorResize.pressPosition = io.MousePos;
@@ -2698,9 +2706,24 @@ namespace
 		switch (gSectorResize.edge)
 		{
 		case ResizeEdge::Left: moving = &left; desired = clamp(left + deltaX, 0, right - 1); break;
-		case ResizeEdge::Right: moving = &right; desired = clamp(right + deltaX, left + 1, (int)building->getCellsWide()); break;
+		case ResizeEdge::Right: moving = &right; desired = clamp(right + deltaX, left + 1, (int)building->getCellsWide() - 1); break;
 		case ResizeEdge::Bottom: moving = &bottom; desired = clamp(bottom + deltaY, 0, top - 1); break;
-		case ResizeEdge::Top: moving = &top; desired = clamp(top + deltaY, bottom + 1, (int)building->getDecksHigh()); break;
+		case ResizeEdge::Top: moving = &top; desired = clamp(top + deltaY, bottom + 1, (int)building->getDecksHigh() - 1); break;
+		case ResizeEdge::Move:
+		{
+			int width = right - left;
+			int height = top - bottom;
+			left = clamp(left + deltaX, 0, (int)building->getCellsWide() - width - 1);
+			bottom = clamp(bottom + deltaY, 0, (int)building->getDecksHigh() - height - 1);
+			right = left + width;
+			top = bottom + height;
+			if ((deltaX != 0 || deltaY != 0) && !building->isSimulationPaused())
+			{
+				building->pauseSimulation();
+				gUISettings.worldPaused = true;
+			}
+			break;
+		}
 		case ResizeEdge::None: break;
 		}
 		if (moving)
@@ -2761,6 +2784,9 @@ namespace
 			case ResizeEdge::Right: drawList->AddLine({ bottomRight.x, topLeft.y }, bottomRight, IM_COL32(255, 255, 0, 255), 4.0f); break;
 			case ResizeEdge::Top: drawList->AddLine(topLeft, { bottomRight.x, topLeft.y }, IM_COL32(255, 255, 0, 255), 4.0f); break;
 			case ResizeEdge::Bottom: drawList->AddLine({ topLeft.x, bottomRight.y }, bottomRight, IM_COL32(255, 255, 0, 255), 4.0f); break;
+			case ResizeEdge::Move:
+				drawList->AddRect(topLeft, bottomRight, IM_COL32(255, 255, 0, 255), 0.0f, 0, 3.0f);
+				break;
 			case ResizeEdge::None: break;
 			}
 		}
