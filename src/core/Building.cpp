@@ -2,6 +2,7 @@
 #include <cmath>
 #include <set>
 #include <iterator>
+#include <limits>
 #include <stdexcept>
 #include <utility>
 
@@ -1853,6 +1854,35 @@ namespace core
 				max(0.0f, available - firstDistance));
 		}
 
+		// Regular doors use one shared, centre-first physical queue. Constrain it
+		// to floor space common to both approach sectors so every generated target
+		// remains valid regardless of which side supplied the request.
+		auto queueResource = mTraversalResources.find(traversalResource);
+		auto const halfWidth = CORE_AGENT_MAX_WIDTH * 0.5f;
+		auto floorMin = max(sectors[0]->getCellX0(), sectors[1]->getCellX0()) + halfWidth;
+		auto floorMax = min(sectors[0]->getCellX1(), sectors[1]->getCellX1()) + 1.0f - halfWidth;
+		vector<Vector2> positions;
+		if (threshold.x >= floorMin && threshold.x <= floorMax) positions.push_back(threshold);
+		for (uint32_t step = 1;; ++step)
+		{
+			auto distance = step * (float)CORE_DOOR_QUEUE_STOP_WIDTH;
+			auto left = threshold.x - distance;
+			auto right = threshold.x + distance;
+			bool leftFits = left >= floorMin;
+			bool rightFits = right <= floorMax;
+			if (!leftFits && !rightFits) break;
+			if (leftFits) positions.push_back({ left, threshold.y });
+			if (rightFits) positions.push_back({ right, threshold.y });
+		}
+		for (auto& lane : queueResource->mQueueLanes)
+		{
+			lane.origin = threshold;
+			lane.direction = Vector2::UNIT_X;
+			lane.extent = max(threshold.x - floorMin, floorMax - threshold.x);
+			lane.positions = positions;
+			lane.positionOwners.assign(positions.size(), {});
+		}
+
 		// Set layers
 		for (uint32_t ix = x; ix < x + cellsWide; ++ix)
 		{
@@ -3601,6 +3631,82 @@ namespace core
 
 	void Building::refreshDoorQueuePositions(TraversalResource& resource)
 	{
+		if (resource.mDoor && dynamic_cast<BulkheadDoor*>(resource.mDoor.get()) == nullptr)
+		{
+			map<TraversalRequestId, uint32_t> previousPositions;
+			vector<pair<uint32_t, TraversalRequestId>> waiting;
+			for (uint32_t laneIndex = 0; laneIndex < resource.mQueueLanes.size(); ++laneIndex)
+			{
+				auto& lane = resource.mQueueLanes[laneIndex];
+				for (uint32_t i = 0; i < lane.positionOwners.size(); ++i)
+					if (lane.positionOwners[i]) previousPositions[lane.positionOwners[i]] = i;
+				fill(lane.positionOwners.begin(), lane.positionOwners.end(), TraversalRequestId{});
+				for (auto requestId : lane.queue)
+				{
+					auto request = mTraversalRequests.find(requestId);
+					if (!request || request->mState != TraversalRequestState::Pending) continue;
+					request->mQueuePosition = ~0u;
+					if (auto agent = mAgents.find(request->mOwner)) agent->mTraversalLocalGoal.reset();
+					if (resource.mPreparationOperator != requestId
+						&& mSimulationTick >= request->mPositionRetryAtTick)
+						waiting.push_back({ laneIndex, requestId });
+				}
+			}
+			sort(waiting.begin(), waiting.end(), [&](auto const& left, auto const& right)
+			{
+				auto leftRequest = mTraversalRequests.find(left.second);
+				auto rightRequest = mTraversalRequests.find(right.second);
+				if (leftRequest->mQueuedAtTick != rightRequest->mQueuedAtTick)
+					return leftRequest->mQueuedAtTick < rightRequest->mQueuedAtTick;
+				return leftRequest->mOwner < rightRequest->mOwner;
+			});
+			auto capacity = resource.mQueueLanes[0].positions.size();
+			vector<bool> occupied(capacity, false);
+			for (uint32_t waitingIndex = 0; waitingIndex < waiting.size() && waitingIndex < capacity; ++waitingIndex)
+			{
+				auto laneIndex = waiting[waitingIndex].first;
+				auto requestId = waiting[waitingIndex].second;
+				auto request = mTraversalRequests.find(requestId);
+				auto& lane = resource.mQueueLanes[laneIndex];
+				auto agent = mAgents.find(request->mOwner);
+				auto agentPosition = agent ? agent->getGlobalPosition() : request->mSourceEndpoint;
+				uint32_t position = ~0u;
+				float bestTotalDistance = numeric_limits<float>::max();
+				float bestAgentDistance = numeric_limits<float>::max();
+				for (uint32_t candidate = 0; candidate < capacity; ++candidate)
+				{
+					if (occupied[candidate]) continue;
+					auto agentDistance = agentPosition.distanceTo(lane.positions[candidate]);
+					auto totalDistance = agentDistance
+						+ lane.positions[candidate].distanceTo(request->mSourceEndpoint);
+					if (totalDistance < bestTotalDistance - 0.001f
+						|| (abs(totalDistance - bestTotalDistance) <= 0.001f
+							&& agentDistance < bestAgentDistance - 0.001f))
+					{
+						position = candidate;
+						bestTotalDistance = totalDistance;
+						bestAgentDistance = agentDistance;
+					}
+				}
+				if (position == ~0u) break;
+				occupied[position] = true;
+				lane.positionOwners[position] = requestId;
+				request->mQueuePosition = position;
+				if (agent)
+				{
+					agent->mTraversalLocalGoal = lane.positions[position];
+					auto previous = previousPositions.find(requestId);
+					if (previous == previousPositions.end() || previous->second != position)
+					{
+						request->mPositionAssignedAtTick = mSimulationTick;
+						request->mLastPositionProgressTick = mSimulationTick;
+						request->mBestPositionDistance = bestAgentDistance;
+					}
+				}
+			}
+			return;
+		}
+
 		for (auto& lane : resource.mQueueLanes)
 		{
 			map<TraversalRequestId, uint32_t> previousPositions;
@@ -3819,6 +3925,7 @@ namespace core
 			return;
 		}
 
+		bool queueChanged = false;
 		for (uint32_t crossingLane = 0; crossingLane < resource.mCrossingOwners.size(); ++crossingLane)
 		{
 			if (resource.mCrossingOwners[crossingLane])
@@ -3863,9 +3970,10 @@ namespace core
 			selectedRequest->mCrossingLane = crossingLane;
 			resource.mCrossingOwners[crossingLane] = selected;
 			if (auto agent = mAgents.find(selectedRequest->mOwner)) agent->mTraversalLocalGoal.reset();
-			refreshDoorQueuePositions(resource);
+			queueChanged = true;
 			grantTraversalRequest(selected);
 		}
+		if (queueChanged) refreshDoorQueuePositions(resource);
 	}
 
 	void Building::releaseDoorQueueOwnership(TraversalRequestId requestId, TraversalResource& resource)
