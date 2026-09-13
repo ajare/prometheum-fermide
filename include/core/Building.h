@@ -85,12 +85,28 @@ namespace core
 			bool extensible;  // implies controlled
 			bool startExtended;
 			float agentSpacing{ CORE_AGENT_MAX_HEIGHT };
+			uint32_t directionalBatchLimit{ 4 };
 		};
 
 		struct CreateLadderResult
 		{
 			CreateObjectResult ladder;
 			CreateObjectResult controllers[2];
+			TraversalResourceId traversalResource;
+		};
+
+		struct CreateStaircaseOptions
+		{
+			uint32_t decksHigh;
+			int mountSide;
+			// Zero preserves ordinary, unconstrained bidirectional stairs.
+			uint32_t directionalCapacity{ 0 };
+			uint32_t directionalBatchLimit{ 4 };
+		};
+
+		struct CreateStaircaseResult
+		{
+			uint32_t sectorIndex{ ~0u };
 			TraversalResourceId traversalResource;
 		};
 
@@ -403,6 +419,9 @@ namespace core
 
 		uint32_t addStaircase(uint32_t y, uint32_t x, uint32_t decksHigh, int mountSide);
 
+		CreateStaircaseResult addStaircase(uint32_t y, uint32_t x,
+			CreateStaircaseOptions const& options);
+
 		CreateLiftResult addLift(uint32_t y, uint32_t x, CreateLiftOptions const& options);
 
 		CreateShuttleResult addShuttle(uint32_t y, uint32_t x, uint32_t cellsWide, CreateShuttleOptions const& options);
@@ -485,7 +504,12 @@ namespace core
 			std::shared_ptr<Door> door, DoorActivationMode mode, float holdOpenSeconds);
 
 		TraversalResourceId createLadderTraversalResource(std::string const& name,
-			std::shared_ptr<Ladder> ladder, SectorId ladderSector, float agentSpacing);
+			std::shared_ptr<Ladder> ladder, SectorId ladderSector, float agentSpacing,
+			uint32_t directionalBatchLimit);
+
+		TraversalResourceId createStaircaseTraversalResource(std::string const& name,
+			std::shared_ptr<Staircase> staircase, SectorId staircaseSector,
+			uint32_t capacity, uint32_t directionalBatchLimit);
 
 		// Defines one physical waiting lane. The direction is normalized and
 		// positions are generated at agent-safe spacing from origin through extent.

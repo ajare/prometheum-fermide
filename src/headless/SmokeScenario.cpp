@@ -921,6 +921,109 @@ namespace
 			&& resource->admissionQueue.empty();
 	}
 
+	bool directionalLadderBoundsBatchesAndPreventsOpposingAdmission()
+	{
+		core::Building building("Directional ladder", 4, 4);
+		auto lower = building.addCorridor(0, 0, 3);
+		auto upper = building.addCorridor(2, 0, 3);
+		core::Building::CreateLadderOptions options{ 3, false, true };
+		options.agentSpacing = 1.0f;
+		options.directionalBatchLimit = 2;
+		auto created = building.addLadder(0, 1, options);
+		building.finishBuild();
+
+		auto graph = building.getGraph();
+		auto upperTarget = graph->getClosestVertexInSector(building.getSector(upper).get(), { 1.5f, 2.0f });
+		auto lowerTarget = graph->getClosestVertexInSector(building.getSector(lower).get(), { 1.5f, 0.0f });
+		if (!upperTarget || !lowerTarget) return false;
+		std::vector<core::AgentId> ascending = {
+			building.createAgent("Ascending one", lower, 0, 1.5f),
+			building.createAgent("Ascending two", lower, 0, 1.5f),
+			building.createAgent("Ascending next batch", lower, 0, 1.5f)
+		};
+		auto descending = building.createAgent("Descending waiter", upper, 0, 1.5f);
+		for (auto id : ascending)
+		{
+			auto agent = building.lookupAgent(id).entity;
+			auto path = graph->calculatePath(agent, upperTarget);
+			if (!path) return false;
+			agent->setPath(path, true);
+		}
+		{
+			auto agent = building.lookupAgent(descending).entity;
+			auto path = graph->calculatePath(agent, lowerTarget);
+			if (!path) return false;
+			agent->setPath(path, true);
+		}
+
+		bool observedOppositeWaiting = false;
+		uint64_t descendingFinished = 0;
+		uint64_t thirdAscendingFinished = 0;
+		for (uint32_t i = 0; i < MaximumSimulationTicks * 4; ++i)
+		{
+			building.advanceTick();
+			auto snapshot = building.getSimulationSnapshot();
+			auto resource = std::find_if(snapshot.traversalResources.begin(), snapshot.traversalResources.end(),
+				[&](auto const& value) { return value.id == created.traversalResource; });
+			if (resource == snapshot.traversalResources.end() || resource->capacity != 2
+				|| resource->occupantCount + resource->admissionReservationCount > 2
+				|| resource->directionalBatchLimit != 2) return false;
+
+			core::TraversalDirection admittedDirection = core::TraversalDirection::None;
+			for (auto const& request : snapshot.traversalRequests)
+			{
+				if (request.resource != created.traversalResource || !request.hasCapacityPosition) continue;
+				if (admittedDirection != core::TraversalDirection::None
+					&& admittedDirection != request.direction) return false;
+				admittedDirection = request.direction;
+			}
+			if (resource->activeDirection != core::TraversalDirection::None
+				&& admittedDirection != core::TraversalDirection::None
+				&& resource->activeDirection != admittedDirection) return false;
+			observedOppositeWaiting = observedOppositeWaiting
+				|| (resource->activeDirection == core::TraversalDirection::Ascending
+					&& resource->descendingWaitingCount == 1
+					&& resource->directionalBatchCount == 2);
+			if (!descendingFinished && building.lookupAgent(descending).entity->getState() == core::Agent::State::Idle)
+				descendingFinished = building.getSimulationTick();
+			if (!thirdAscendingFinished && building.lookupAgent(ascending[2]).entity->getState() == core::Agent::State::Idle)
+				thirdAscendingFinished = building.getSimulationTick();
+			if (descendingFinished && thirdAscendingFinished) break;
+		}
+		return observedOppositeWaiting && descendingFinished && thirdAscendingFinished
+			&& descendingFinished < thirdAscendingFinished;
+	}
+
+	bool staircaseCoordinationIsExplicitlyOptIn()
+	{
+		core::Building ordinary("Ordinary staircase", 5, 3);
+		ordinary.addCorridor(0, 0, 4);
+		ordinary.addCorridor(1, 0, 4);
+		ordinary.addStaircase(0, 1, 2, CORE_SIDE_LEFT);
+		ordinary.finishBuild();
+		if (!ordinary.getSimulationSnapshot().traversalResources.empty()) return false;
+
+		core::Building narrow("Narrow staircase", 5, 3);
+		narrow.addCorridor(0, 0, 4);
+		narrow.addCorridor(1, 0, 4);
+		core::Building::CreateStaircaseOptions options{ 2, CORE_SIDE_LEFT };
+		options.directionalCapacity = 1;
+		options.directionalBatchLimit = 3;
+		auto created = narrow.addStaircase(0, 1, options);
+		narrow.finishBuild();
+		auto snapshot = narrow.getSimulationSnapshot();
+		if (!created.traversalResource || snapshot.traversalResources.size() != 1
+			|| !snapshot.traversalResources.front().isNarrowStaircase
+			|| snapshot.traversalResources.front().capacity != 1
+			|| snapshot.traversalResources.front().directionalBatchLimit != 3) return false;
+		return std::all_of(narrow.getGraph()->getEdges().begin(), narrow.getGraph()->getEdges().end(),
+			[&](auto const& edge)
+			{
+				return edge->getType() != core::EdgeType::Staircase
+					|| edge->getTraversalResourceId() == created.traversalResource;
+			});
+	}
+
 	bool unavailableDoorRejectsTraversal()
 	{
 		core::Building building("Unavailable door", 6, 2);
@@ -1134,6 +1237,16 @@ int main()
 		if (!finiteCapacityLadderSerializesAdmissionAndClimbsAtConfiguredSpeed())
 		{
 			std::cerr << "FAIL: finite ladder capacity, reservations, cancellation, or climb speed failed\n";
+			return 1;
+		}
+		if (!directionalLadderBoundsBatchesAndPreventsOpposingAdmission())
+		{
+			std::cerr << "FAIL: directional ladder admission or bounded-batch fairness failed\n";
+			return 1;
+		}
+		if (!staircaseCoordinationIsExplicitlyOptIn())
+		{
+			std::cerr << "FAIL: ordinary/narrow staircase coordination policy was incorrect\n";
 			return 1;
 		}
 

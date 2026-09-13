@@ -4,6 +4,7 @@
 #include <memory>
 
 #include "core/Object.h"
+#include "core/EntityId.h"
 
 
 namespace core
@@ -14,6 +15,8 @@ namespace core
 		uint32_t mDecksHigh;
 
 		int mMountSide;
+
+		TraversalResourceId mTraversalResource;
 
 	private:
 
@@ -29,6 +32,10 @@ namespace core
 		[[nodiscard]] uint32_t getDecksHigh() const;
 
 		[[nodiscard]] int getMountSide() const;
+
+		[[nodiscard]] TraversalResourceId getTraversalResourceId() const { return mTraversalResource; }
+
+		void configureTraversal(TraversalResourceId resource) { mTraversalResource = resource; }
 
 		// Overridden from Object
 		[[nodiscard]] std::string getDescription() const override;

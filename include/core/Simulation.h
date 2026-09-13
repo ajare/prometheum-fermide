@@ -107,6 +107,7 @@ namespace core
 		std::string name;
 		bool isDoor{ false };
 		bool isLadder{ false };
+		bool isNarrowStaircase{ false };
 		bool enabled{ true };
 		uint32_t capacity{ 0 };
 		uint32_t occupantCount{ 0 };
@@ -115,6 +116,11 @@ namespace core
 		SectorId capacitySector;
 		std::vector<TraversalRequestId> admissionQueue;
 		std::vector<CapacityPositionSnapshot> capacityPositions;
+		TraversalDirection activeDirection{ TraversalDirection::None };
+		uint32_t directionalBatchCount{ 0 };
+		uint32_t directionalBatchLimit{ 0 };
+		uint32_t ascendingWaitingCount{ 0 };
+		uint32_t descendingWaitingCount{ 0 };
 		DoorActivationMode doorActivationMode{ DoorActivationMode::Unavailable };
 		DoorSnapshotState doorState{ DoorSnapshotState::NotADoor };
 		float doorOpenPercentage{ 0.0f };
@@ -157,6 +163,7 @@ namespace core
 		uint32_t crossingLane{ ~0u };
 		bool hasCapacityPosition{ false };
 		uint32_t capacityPosition{ ~0u };
+		TraversalDirection direction{ TraversalDirection::None };
 		uint64_t positionAssignedAtTick{ 0 };
 		uint64_t lastPositionProgressTick{ 0 };
 		uint64_t positionRetryAtTick{ 0 };

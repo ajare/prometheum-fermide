@@ -8,14 +8,14 @@
 
 **Blocked by:** 11 — Enforce finite capacity on ladder transit
 
-**Status:** ready-for-agent
+**Status:** complete
 
-- [ ] A ladder admits multiple agents moving in its active direction up to capacity.
-- [ ] No opposing-direction agent is admitted while an occupant or committed entry remains.
-- [ ] When opposite demand exists, new same-direction admission stops after the configured batch limit.
-- [ ] Direction switches only after current occupants and committed entries drain.
-- [ ] The oldest waiting direction receives the next batch, with deterministic tie-breaking.
-- [ ] Continuous arrivals from one side cannot starve the other side.
-- [ ] An ordinary staircase still permits unconstrained bidirectional movement.
-- [ ] A configured narrow staircase enforces the same directional-capacity invariants.
-- [ ] Direction, batch count, occupancy, and waiting demand are visible in diagnostics.
+- [x] A ladder admits multiple agents moving in its active direction up to capacity.
+- [x] No opposing-direction agent is admitted while an occupant or committed entry remains.
+- [x] When opposite demand exists, new same-direction admission stops after the configured batch limit.
+- [x] Direction switches only after current occupants and committed entries drain.
+- [x] The oldest waiting direction receives the next batch, with deterministic tie-breaking.
+- [x] Continuous arrivals from one side cannot starve the other side.
+- [x] An ordinary staircase still permits unconstrained bidirectional movement.
+- [x] A configured narrow staircase enforces the same directional-capacity invariants.
+- [x] Direction, batch count, occupancy, and waiting demand are visible in diagnostics.

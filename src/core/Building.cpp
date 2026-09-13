@@ -379,6 +379,10 @@ namespace core
 		{
 			throw BuildingException(this, format("{} - Ladder agent spacing must be positive.", caller));
 		}
+		if (options.directionalBatchLimit == 0)
+		{
+			throw BuildingException(this, format("{} - Ladder directional batch limit must be positive.", caller));
+		}
 	}
 
 	void Building::validateLiftOptions(string const& caller, CreateLiftOptions const& options) const
@@ -1029,7 +1033,8 @@ namespace core
 		auto ladderTransit = dynamic_pointer_cast<LadderTransit>(ladderSector);
 		auto ladder = ladderTransit->getLadder();
 		auto traversalResource = createLadderTraversalResource("Ladder capacity", ladder,
-			SectorId{ (uint64_t)sectorIndex + 1 }, options.agentSpacing);
+			SectorId{ (uint64_t)sectorIndex + 1 }, options.agentSpacing,
+			options.directionalBatchLimit);
 		ladder->configureTraversal(traversalResource);
 
 		// See if we need an Controller
@@ -1075,6 +1080,14 @@ namespace core
 
 	uint32_t Building::addStaircase(uint32_t y, uint32_t x, uint32_t decksHigh, int mountSide)
 	{
+		return addStaircase(y, x, CreateStaircaseOptions{ decksHigh, mountSide }).sectorIndex;
+	}
+
+	Building::CreateStaircaseResult Building::addStaircase(uint32_t y, uint32_t x,
+		CreateStaircaseOptions const& options)
+	{
+		auto decksHigh = options.decksHigh;
+		auto mountSide = options.mountSide;
 		ASSERT_SIDE_OK(mountSide);
 
 		auto foreLayer = getLayer(CORE_LAYER_FORE);
@@ -1128,6 +1141,11 @@ namespace core
 			}
 		}
 
+		if (options.directionalCapacity > 0 && options.directionalBatchLimit == 0)
+		{
+			throw BuildingException(this, format("{} - Narrow staircase directional batch limit must be positive.", caller));
+		}
+
 		// Create staircase
 		auto sectorIndex = createStaircase(x, y, decksHigh, mountSide);
 
@@ -1142,7 +1160,18 @@ namespace core
 			}
 		}
 
-		return sectorIndex;
+		TraversalResourceId traversalResource;
+		if (options.directionalCapacity > 0)
+		{
+			auto staircaseTransit = dynamic_pointer_cast<StaircaseTransit>(_getSector(sectorIndex));
+			auto staircase = staircaseTransit->getStaircase();
+			traversalResource = createStaircaseTraversalResource("Narrow staircase capacity",
+				staircase, SectorId{ (uint64_t)sectorIndex + 1 }, options.directionalCapacity,
+				options.directionalBatchLimit);
+			staircase->configureTraversal(traversalResource);
+		}
+
+		return { sectorIndex, traversalResource };
 	}
 
 	Building::CreateLiftResult Building::addLift(uint32_t y, uint32_t x, CreateLiftOptions const& options)
@@ -2004,7 +2033,8 @@ namespace core
 		auto ladder = dynamic_pointer_cast<LadderSectorObject>(
 			ladderObject.sector->_getObject(ladderObject.index))->getLadder();
 		auto traversalResource = createLadderTraversalResource("Ladder capacity", ladder,
-			SectorId{ (uint64_t)sectorIndex + 1 }, options.agentSpacing);
+			SectorId{ (uint64_t)sectorIndex + 1 }, options.agentSpacing,
+			options.directionalBatchLimit);
 		ladder->configureTraversal(traversalResource);
 
 		for (uint32_t iy = y0; iy <= y1; ++iy)
@@ -2453,11 +2483,23 @@ namespace core
 		result.name = resource.getName();
 		result.isDoor = resource.mDoor != nullptr;
 		result.isLadder = resource.mLadder != nullptr;
+		result.isNarrowStaircase = resource.mStaircase != nullptr;
 		result.enabled = resource.mEnabled;
 		result.capacity = resource.mCapacity;
 		result.agentSpacing = resource.mLadderSpacing;
 		result.capacitySector = resource.mLadderSector;
 		result.admissionQueue = resource.mAdmissionQueue;
+		result.activeDirection = resource.mActiveDirection;
+		result.directionalBatchCount = resource.mDirectionalBatchCount;
+		result.directionalBatchLimit = resource.mDirectionalBatchLimit;
+		for (auto requestId : resource.mAdmissionQueue)
+		{
+			if (auto request = mTraversalRequests.find(requestId))
+			{
+				if (request->mDirection == TraversalDirection::Ascending) ++result.ascendingWaitingCount;
+				else if (request->mDirection == TraversalDirection::Descending) ++result.descendingWaitingCount;
+			}
+		}
 		for (uint32_t i = 0; i < resource.mCapacityPositions.size(); ++i)
 		{
 			result.capacityPositions.push_back({ i, resource.mCapacityPositions[i],
@@ -2542,6 +2584,7 @@ namespace core
 		result.crossingLane = request.mCrossingLane;
 		result.hasCapacityPosition = request.mCapacityPosition != ~0u;
 		result.capacityPosition = request.mCapacityPosition;
+		result.direction = request.mDirection;
 		result.positionAssignedAtTick = request.mPositionAssignedAtTick;
 		result.lastPositionProgressTick = request.mLastPositionProgressTick;
 		result.positionRetryAtTick = request.mPositionRetryAtTick;
@@ -2581,7 +2624,8 @@ namespace core
 		if (auto resource = mTraversalResources.find(request->mResource); resource)
 		{
 			if (resource->mDoor) attachDoorQueueTicket(id, *resource);
-			else if (resource->mLadder && isLadderAdmission(*request, *resource))
+			else if ((resource->mLadder || resource->mStaircase)
+				&& isLadderAdmission(*request, *resource))
 				attachLadderAdmissionRequest(id, *resource);
 		}
 
@@ -2764,7 +2808,8 @@ namespace core
 		request->mPermit = {};
 		request->mState = TraversalRequestState::Pending;
 		request->mFailureReason = TraversalFailureReason::PermitExpired;
-		if (auto resource = mTraversalResources.find(request->mResource); resource && resource->mLadder)
+		if (auto resource = mTraversalResources.find(request->mResource);
+			resource && (resource->mLadder || resource->mStaircase))
 		{
 			if (isLadderAdmission(*request, *resource))
 			{
@@ -2899,9 +2944,17 @@ namespace core
 	bool Building::isLadderAdmission(TraversalRequest const& request,
 		TraversalResource const& resource) const
 	{
-		if (!resource.mLadder || request.mDestinationSector != resource.mLadderSector)
+		if ((!resource.mLadder && !resource.mStaircase)
+			|| request.mDestinationSector != resource.mLadderSector)
 		{
 			return false;
+		}
+		if (resource.mStaircase)
+		{
+			// Ordinary mount edges remain unconstrained. A narrow staircase owns
+			// capacity only for the actual sloping, cross-deck edge.
+			return request.mSourceSector == resource.mLadderSector
+				&& request.mEdgeType == EdgeType::Staircase;
 		}
 		if (request.mSourceSector != resource.mLadderSector)
 		{
@@ -2918,32 +2971,121 @@ namespace core
 	void Building::attachLadderAdmissionRequest(TraversalRequestId requestId,
 		TraversalResource& resource)
 	{
+		auto request = mTraversalRequests.find(requestId);
+		if (!request) return;
+		if (request->mDirection == TraversalDirection::None)
+		{
+			if (request->mSourceSector == resource.mLadderSector)
+			{
+				auto deltaY = request->mDestinationEndpoint.y - request->mSourceEndpoint.y;
+				request->mDirection = deltaY >= 0.0f
+					? TraversalDirection::Ascending : TraversalDirection::Descending;
+			}
+			else
+			{
+				auto objectY = resource.mLadder ? resource.mLadder->getPosition().y
+					: resource.mStaircase->getPosition().y;
+				auto objectHeight = resource.mLadder ? resource.mLadder->getSize().y
+					: resource.mStaircase->getSize().y;
+				request->mDirection = request->mSourceEndpoint.y < objectY + objectHeight * 0.5f
+					? TraversalDirection::Ascending : TraversalDirection::Descending;
+			}
+		}
 		if (find(resource.mAdmissionQueue.begin(), resource.mAdmissionQueue.end(), requestId)
 			== resource.mAdmissionQueue.end())
 		{
 			resource.mAdmissionQueue.push_back(requestId);
-			sort(resource.mAdmissionQueue.begin(), resource.mAdmissionQueue.end());
+			sort(resource.mAdmissionQueue.begin(), resource.mAdmissionQueue.end(),
+				[&](auto lhs, auto rhs)
+				{
+					auto left = mTraversalRequests.find(lhs);
+					auto right = mTraversalRequests.find(rhs);
+					if (!left || !right) return lhs < rhs;
+					return left->mQueuedAtTick != right->mQueuedAtTick
+						? left->mQueuedAtTick < right->mQueuedAtTick
+						: (left->mOwner != right->mOwner ? left->mOwner < right->mOwner : lhs < rhs);
+				});
 		}
 	}
 
 	void Building::tryGrantLadderAdmissions(TraversalResource& resource)
 	{
-		if (!resource.mEnabled || !resource.mLadder) return;
+		if (!resource.mEnabled || (!resource.mLadder && !resource.mStaircase)) return;
+
+		auto hasInFlight = any_of(resource.mOccupants.begin(), resource.mOccupants.end(),
+			[](auto id) { return (bool)id; })
+			|| any_of(resource.mAdmissionReservations.begin(), resource.mAdmissionReservations.end(),
+				[](auto id) { return (bool)id; });
+		auto oldestDirection = [&]()
+		{
+			for (auto requestId : resource.mAdmissionQueue)
+			{
+				if (auto request = mTraversalRequests.find(requestId);
+					request && request->mState == TraversalRequestState::Pending)
+					return request->mDirection;
+			}
+			return TraversalDirection::None;
+		};
+		auto hasWaitingDirection = [&](TraversalDirection direction)
+		{
+			return any_of(resource.mAdmissionQueue.begin(), resource.mAdmissionQueue.end(),
+				[&](auto id)
+				{
+					auto request = mTraversalRequests.find(id);
+					return request && request->mState == TraversalRequestState::Pending
+						&& request->mDirection == direction;
+				});
+		};
+
+		if (resource.mActiveDirection == TraversalDirection::None)
+		{
+			resource.mActiveDirection = oldestDirection();
+			resource.mDirectionalBatchCount = 0;
+		}
+		else if (!hasInFlight)
+		{
+			auto opposite = resource.mActiveDirection == TraversalDirection::Ascending
+				? TraversalDirection::Descending : TraversalDirection::Ascending;
+			if (hasWaitingDirection(opposite)
+				&& (!hasWaitingDirection(resource.mActiveDirection)
+					|| resource.mDirectionalBatchCount >= resource.mDirectionalBatchLimit))
+			{
+				resource.mActiveDirection = opposite;
+				resource.mDirectionalBatchCount = 0;
+			}
+			else if (!hasWaitingDirection(resource.mActiveDirection))
+			{
+				resource.mActiveDirection = oldestDirection();
+				resource.mDirectionalBatchCount = 0;
+			}
+		}
+
+		auto opposite = resource.mActiveDirection == TraversalDirection::Ascending
+			? TraversalDirection::Descending : TraversalDirection::Ascending;
+		if (hasWaitingDirection(opposite)
+			&& resource.mDirectionalBatchCount >= resource.mDirectionalBatchLimit)
+			return;
+
 		for (uint32_t position = 0; position < resource.mCapacity; ++position)
 		{
 			if (resource.mOccupants[position] || resource.mAdmissionReservations[position]) continue;
-			while (!resource.mAdmissionQueue.empty())
-			{
-				auto requestId = resource.mAdmissionQueue.front();
-				resource.mAdmissionQueue.erase(resource.mAdmissionQueue.begin());
-				auto request = mTraversalRequests.find(requestId);
-				if (!request || request->mState != TraversalRequestState::Pending) continue;
-				resource.mAdmissionReservations[position] = requestId;
-				request->mCapacityPosition = position;
-				grantTraversalRequest(requestId);
-				break;
-			}
-			if (resource.mAdmissionQueue.empty()) break;
+			auto selected = find_if(resource.mAdmissionQueue.begin(), resource.mAdmissionQueue.end(),
+				[&](auto id)
+				{
+					auto request = mTraversalRequests.find(id);
+					return request && request->mState == TraversalRequestState::Pending
+						&& request->mDirection == resource.mActiveDirection;
+				});
+			if (selected == resource.mAdmissionQueue.end()) break;
+			auto requestId = *selected;
+			resource.mAdmissionQueue.erase(selected);
+			auto request = mTraversalRequests.find(requestId);
+			resource.mAdmissionReservations[position] = requestId;
+			request->mCapacityPosition = position;
+			++resource.mDirectionalBatchCount;
+			grantTraversalRequest(requestId);
+			if (hasWaitingDirection(opposite)
+				&& resource.mDirectionalBatchCount >= resource.mDirectionalBatchLimit) break;
 		}
 	}
 
@@ -3031,7 +3173,7 @@ namespace core
 				denyTraversalRequest(requestId);
 				return;
 			}
-			if (resource->mLadder)
+			if (resource->mLadder || resource->mStaircase)
 			{
 				if (isLadderAdmission(*request, *resource))
 				{
@@ -3313,7 +3455,7 @@ namespace core
 				request->mPreparationLease = {};
 				releaseDoorQueueOwnership(requestId, *resource);
 			}
-			else if (resource->mLadder)
+			else if (resource->mLadder || resource->mStaircase)
 			{
 				releaseLadderAdmission(requestId, *resource);
 				tryGrantLadderAdmissions(*resource);
@@ -3354,9 +3496,8 @@ namespace core
 		}
 
 		auto ladderResource = mTraversalResources.find(request->mResource);
-		if (ladderResource && ladderResource->mLadder
-			&& request->mSourceSector != ladderResource->mLadderSector
-			&& request->mDestinationSector == ladderResource->mLadderSector)
+		if (ladderResource && (ladderResource->mLadder || ladderResource->mStaircase)
+			&& isLadderAdmission(*request, *ladderResource))
 		{
 			if (request->mCapacityPosition >= ladderResource->mCapacity
 				|| ladderResource->mAdmissionReservations[request->mCapacityPosition] != requestId
@@ -3374,9 +3515,9 @@ namespace core
 			destinationSector->enterAgent(&agent, destination);
 		}
 
-		if (auto resource = ladderResource; resource && resource->mLadder)
+		if (auto resource = ladderResource; resource && (resource->mLadder || resource->mStaircase))
 		{
-			if (request->mSourceSector != resource->mLadderSector
+			if (resource->mLadder && request->mSourceSector != resource->mLadderSector
 				&& request->mDestinationSector == resource->mLadderSector
 				&& request->mCapacityPosition < resource->mCapacity)
 			{
@@ -3385,7 +3526,7 @@ namespace core
 				resource->mOccupants[position] = owner;
 				request->mCapacityPosition = ~0u;
 			}
-			else if (request->mSourceSector == resource->mLadderSector
+			else if (resource->mLadder && request->mSourceSector == resource->mLadderSector
 				&& request->mDestinationSector != resource->mLadderSector)
 			{
 				releaseLadderOccupancy(owner, *resource);
@@ -3439,7 +3580,7 @@ namespace core
 			if (auto resource = mTraversalResources.find(request->mResource); resource)
 			{
 				if (resource->mDoor) releaseDoorQueueOwnership(requestId, *resource);
-				else if (resource->mLadder)
+				else if (resource->mLadder || resource->mStaircase)
 				{
 					releaseLadderAdmission(requestId, *resource);
 					tryGrantLadderAdmissions(*resource);
@@ -3488,7 +3629,7 @@ namespace core
 					request->mCrossingLease = {};
 					releaseDoorQueueOwnership(requestId, *resource);
 				}
-				else if (resource->mLadder)
+				else if (resource->mLadder || resource->mStaircase)
 				{
 					releaseLadderAdmission(requestId, *resource);
 					tryGrantLadderAdmissions(*resource);
@@ -3953,9 +4094,11 @@ namespace core
 	}
 
 	TraversalResourceId Building::createLadderTraversalResource(string const& name,
-		shared_ptr<Ladder> ladder, SectorId ladderSector, float agentSpacing)
+		shared_ptr<Ladder> ladder, SectorId ladderSector, float agentSpacing,
+		uint32_t directionalBatchLimit)
 	{
-		if (!ladder || !ladderSector || ladderSector.value > mSectors.size() || agentSpacing <= 0.0f)
+		if (!ladder || !ladderSector || ladderSector.value > mSectors.size()
+			|| agentSpacing <= 0.0f || directionalBatchLimit == 0)
 		{
 			throw invalid_argument("A ladder traversal resource requires a Ladder, sector, and positive spacing");
 		}
@@ -3972,7 +4115,36 @@ namespace core
 		}
 
 		auto id = mTraversalResources.add(unique_ptr<TraversalResource>(new TraversalResource(
-			name, ladder, ladderSector, agentSpacing, capacity, std::move(positions))));
+			name, ladder, ladderSector, agentSpacing, capacity, directionalBatchLimit,
+			std::move(positions))));
+		SimulationEvent event;
+		event.sequence = mNextEventSequence++;
+		event.tick = mSimulationTick;
+		event.type = SimulationEventType::TraversalResourceAdded;
+		event.traversalResource = makeTraversalResourceSnapshot(id, *mTraversalResources.find(id));
+		mEvents.push_back(std::move(event));
+		return id;
+	}
+
+	TraversalResourceId Building::createStaircaseTraversalResource(string const& name,
+		shared_ptr<Staircase> staircase, SectorId staircaseSector, uint32_t capacity,
+		uint32_t directionalBatchLimit)
+	{
+		if (!staircase || !staircaseSector || staircaseSector.value > mSectors.size()
+			|| capacity == 0 || directionalBatchLimit == 0)
+		{
+			throw invalid_argument("A narrow staircase resource requires a Staircase, sector, capacity, and batch limit");
+		}
+		vector<Vector2> positions;
+		positions.reserve(capacity);
+		auto origin = staircase->getPosition();
+		for (uint32_t i = 0; i < capacity; ++i)
+		{
+			positions.push_back({ origin.x + ((float)i + 0.5f) * staircase->getSize().x / capacity,
+				origin.y + staircase->getSize().y * 0.5f });
+		}
+		auto id = mTraversalResources.add(unique_ptr<TraversalResource>(new TraversalResource(
+			name, staircase, staircaseSector, capacity, directionalBatchLimit, std::move(positions))));
 		SimulationEvent event;
 		event.sequence = mNextEventSequence++;
 		event.tick = mSimulationTick;

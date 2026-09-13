@@ -19,6 +19,9 @@ namespace core
 	class Building;
 	class Door;
 	class Ladder;
+	class Staircase;
+
+	enum struct TraversalDirection { None, Ascending, Descending };
 
 	enum struct DoorActivationMode
 	{
@@ -216,6 +219,7 @@ namespace core
 		std::string mName;
 		std::shared_ptr<Door> mDoor;
 		std::shared_ptr<Ladder> mLadder;
+		std::shared_ptr<Staircase> mStaircase;
 		SectorId mLadderSector;
 		float mLadderSpacing{ 0.0f };
 		uint32_t mCapacity{ 0 };
@@ -223,6 +227,9 @@ namespace core
 		std::vector<AgentId> mOccupants;
 		std::vector<TraversalRequestId> mAdmissionReservations;
 		std::vector<TraversalRequestId> mAdmissionQueue;
+		TraversalDirection mActiveDirection{ TraversalDirection::None };
+		uint32_t mDirectionalBatchCount{ 0 };
+		uint32_t mDirectionalBatchLimit{ 1 };
 		DoorActivationMode mDoorActivationMode{ DoorActivationMode::Unavailable };
 		uint64_t mHoldOpenTicks{ 0 };
 		bool mEnabled{ true };
@@ -243,17 +250,25 @@ namespace core
 			  mDoorActivationMode(mode), mHoldOpenTicks(holdOpenTicks) {}
 		TraversalResource(std::string name, std::shared_ptr<Ladder> ladder,
 			SectorId ladderSector, float spacing, uint32_t capacity,
-			std::vector<Vector2> positions)
+			uint32_t batchLimit, std::vector<Vector2> positions)
 			: mName(std::move(name)), mLadder(std::move(ladder)),
 			  mLadderSector(ladderSector), mLadderSpacing(spacing), mCapacity(capacity),
 			  mCapacityPositions(std::move(positions)), mOccupants(capacity),
-			  mAdmissionReservations(capacity) {}
+			  mAdmissionReservations(capacity), mDirectionalBatchLimit(batchLimit) {}
+		TraversalResource(std::string name, std::shared_ptr<Staircase> staircase,
+			SectorId staircaseSector, uint32_t capacity, uint32_t batchLimit,
+			std::vector<Vector2> positions)
+			: mName(std::move(name)), mStaircase(std::move(staircase)),
+			  mLadderSector(staircaseSector), mCapacity(capacity),
+			  mCapacityPositions(std::move(positions)), mOccupants(capacity),
+			  mAdmissionReservations(capacity), mDirectionalBatchLimit(batchLimit) {}
 	public:
 		TraversalResource(TraversalResource const&) = delete;
 		TraversalResource& operator=(TraversalResource const&) = delete;
 		std::string const& getName() const { return mName; }
 		bool isDoor() const { return mDoor != nullptr; }
 		bool isLadder() const { return mLadder != nullptr; }
+		bool isNarrowStaircase() const { return mStaircase != nullptr; }
 		bool isEnabled() const { return mEnabled; }
 		uint32_t getCapacity() const { return mCapacity; }
 		SectorId getLadderSector() const { return mLadderSector; }
@@ -314,6 +329,7 @@ namespace core
 		uint32_t mPositionRetryCount{ 0 };
 		uint32_t mCrossingLane{ ~0u };
 		uint32_t mCapacityPosition{ ~0u };
+		TraversalDirection mDirection{ TraversalDirection::None };
 		DoorOpenLeaseId mPreparationLease;
 		DoorOpenLeaseId mCrossingLease;
 		TraversalRequest(AgentId owner, EdgeType edgeType, SectorId sourceSector,
@@ -345,6 +361,7 @@ namespace core
 		uint32_t getCrossingLane() const { return mCrossingLane; }
 		bool hasCapacityPosition() const { return mCapacityPosition != ~0u; }
 		uint32_t getCapacityPosition() const { return mCapacityPosition; }
+		TraversalDirection getDirection() const { return mDirection; }
 	};
 
 	enum struct TraversalPermitState { Active, Committed, Cancelled };
