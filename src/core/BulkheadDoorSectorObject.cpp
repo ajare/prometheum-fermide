@@ -43,6 +43,10 @@ namespace core
 
 	shared_ptr<VertexController> BulkheadDoorSectorObject::createVertexController(Building const* building, vector<shared_ptr<Vertex>> const& vertices, map<shared_ptr<Controller>, shared_ptr<Vertex>> const& controllerVertexLookup) const
 	{
+		// Migrated bulkheads are governed exclusively by their TraversalResource,
+		// including same-layer/same-height transitions.
+		if (getDoor()->getTraversalResourceId()) return nullptr;
+
 		auto vc0Pos0 = vertices[CORE_SIDE_LEFT]->getPosition();
 		auto vc1Pos0 = vertices[CORE_SIDE_RIGHT]->getPosition();
 

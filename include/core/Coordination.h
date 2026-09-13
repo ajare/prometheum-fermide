@@ -24,6 +24,7 @@ namespace core
 	class Lift;
 	class Shuttle;
 	class Staircase;
+	class Window;
 
 	enum struct TraversalDirection { None, Ascending, Descending };
 
@@ -274,6 +275,7 @@ namespace core
 		friend class Building;
 		std::string mName;
 		std::shared_ptr<Door> mDoor;
+		std::shared_ptr<Window> mWindow;
 		std::shared_ptr<ExtensibleObject> mExtensible;
 		std::shared_ptr<ForceBridge> mForceBridge;
 		std::shared_ptr<Ladder> mLadder;
@@ -357,6 +359,8 @@ namespace core
 			DoorActivationMode mode, uint64_t holdOpenTicks)
 			: mName(std::move(name)), mDoor(std::move(door)),
 			  mDoorActivationMode(mode), mHoldOpenTicks(holdOpenTicks) {}
+		TraversalResource(std::string name, std::shared_ptr<Window> window)
+			: mName(std::move(name)), mWindow(std::move(window)) {}
 		TraversalResource(std::string name, std::shared_ptr<Ladder> ladder,
 			std::shared_ptr<ExtensibleObject> extensible, SectorId ladderSector,
 			float spacing, uint32_t capacity, uint32_t batchLimit, std::vector<Vector2> positions)
@@ -406,6 +410,7 @@ namespace core
 		TraversalResource& operator=(TraversalResource const&) = delete;
 		std::string const& getName() const { return mName; }
 		bool isDoor() const { return mDoor != nullptr; }
+		bool isWindow() const { return mWindow != nullptr; }
 		bool isLadder() const { return mLadder != nullptr; }
 		bool isForceBridge() const { return mForceBridge != nullptr; }
 		bool isLift() const { return mLift != nullptr; }

@@ -55,6 +55,11 @@ namespace core
 
 	protected:
 
+		// Allows door-shaped resources with different geometry (for example a
+		// same-layer bulkhead) to use the same traversal safety implementation.
+		Door(float x, float y, float width, float height, uint32_t cellsWide,
+			std::shared_ptr<const Sector> sectors[2]);
+
 		ControllableActionStatus startAction(ControllableAction const& action) override;
 
 		void finishAction(ControllableAction const& action) override;

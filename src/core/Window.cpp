@@ -100,6 +100,23 @@ namespace core
 		return mSectors[layerIndex];
 	}
 
+	void Window::setState(State state, Style style)
+	{
+		mState = state;
+		mStyle = style;
+	}
+
+	void Window::configureTraversal(bool enabled, TraversalResourceId resource)
+	{
+		mTraversalConfigured = enabled;
+		mTraversalResource = enabled ? resource : TraversalResourceId{};
+	}
+
+	bool Window::isNormallyTraversable() const
+	{
+		return mTraversalConfigured && mState == State::Open && mStyle == Style::Clear;
+	}
+
 	std::string Window::getDescription() const
 	{
 		return "Window";

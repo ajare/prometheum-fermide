@@ -125,6 +125,8 @@ namespace core
 		TraversalResourceId id;
 		std::string name;
 		bool isDoor{ false };
+		bool isWindow{ false };
+		bool windowNormallyTraversable{ false };
 		bool isLadder{ false };
 		bool isForceBridge{ false };
 		bool isLift{ false };

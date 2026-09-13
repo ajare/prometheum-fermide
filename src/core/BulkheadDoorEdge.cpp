@@ -26,7 +26,7 @@ namespace core
 	}
 
 	BulkheadDoorEdge::BulkheadDoorEdge(uint32_t id, shared_ptr<BulkheadDoor> door)
-		: Edge(id, EdgeType::Door)
+		: Edge(id, EdgeType::BulkheadDoor)
 		, mDoor(door)
 	{
 	}
@@ -55,15 +55,27 @@ namespace core
 	{
 		// Weight is time to cross the Edge, plus possibly the time waiting for the Door to open.
 		auto distance = getLength();
-		float traverseTime = distance == 0.0f ? 0.0f : agent->getWalkSpeed() / distance;
+		float traverseTime = !agent || distance == 0.0f ? 0.0f : distance / agent->getWalkSpeed();
 
-		// If Edge isn't visible, then assume we have to wait for the Door.
-		if (!edgeVisible || mDoor->isOpen())
+		if (!edgeVisible || !mDoor->isOpen())
 		{
 			traverseTime += mDoor->getOpenCloseTime();
 		}
-
+		if (agent)
+		{
+			auto targetSector = targetVertex && targetVertex->getSector()
+				? SectorId{ (uint64_t)targetVertex->getSector()->getIndex() + 1 } : SectorId{};
+			auto sourceSector = getVertex(0) && SectorId{ (uint64_t)getVertex(0)->getSector()->getIndex() + 1 } != targetSector
+				? SectorId{ (uint64_t)getVertex(0)->getSector()->getIndex() + 1 }
+				: getVertex(1) ? SectorId{ (uint64_t)getVertex(1)->getSector()->getIndex() + 1 } : SectorId{};
+			traverseTime += agent->estimateTraversalDelay(getTraversalResourceId(), sourceSector);
+		}
 		return max(traverseTime, CORE_GRAPH_EDGE_MIN_TRAVERSAL_TIME);
+	}
+
+	TraversalResourceId BulkheadDoorEdge::getTraversalResourceId() const
+	{
+		return mDoor->getTraversalResourceId();
 	}
 
 } // core

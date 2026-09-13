@@ -1869,6 +1869,12 @@ namespace core
 
 	uint32_t Building::addSectorWindow(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t decksHigh)
 	{
+		return addSectorWindow(layerIndex, y, x, cellsWide, decksHigh, {}).window.index;
+	}
+
+	Building::CreateWindowResult Building::addSectorWindow(uint32_t layerIndex, uint32_t y, uint32_t x,
+		uint32_t cellsWide, uint32_t decksHigh, CreateWindowOptions const& options)
+	{
 		string caller = format("Building::addSectorWindow({}, {}, {}, {})", layerIndex, y, x, cellsWide);
 
 		validateBounds(caller, x, y, cellsWide, 1);
@@ -1901,6 +1907,33 @@ namespace core
 
 		// Create window
 		auto const& [windowIndex, windowObjType, windowSector] = createWindow(layerIndex, x, y, cellsWide, decksHigh);
+		auto windowObject = dynamic_pointer_cast<WindowSectorObject>(windowSector->_getObject(windowIndex));
+		auto window = windowObject->getWindow();
+		window->setState(options.initialState, options.style);
+		TraversalResourceId traversalResource;
+		if (options.traversable && window->getSector(CORE_LAYER_FORE)
+			&& window->getSector(CORE_LAYER_BACK))
+		{
+			traversalResource = createWindowTraversalResource(format("Window at {},{}", x, y), window);
+			window->configureTraversal(true, traversalResource);
+
+			// A traversable threshold must be discovered while scanning both layers.
+			// The shared SectorObject may have a different vector index in its second
+			// sector, so recover that index rather than copying the foreground value.
+			auto backSector = const_pointer_cast<Sector>(window->getSector(CORE_LAYER_BACK));
+			uint32_t backObjectIndex = ~0u;
+			for (uint32_t i = 0; i < backSector->getNumObjects(); ++i)
+			{
+				if (backSector->_getObject(i) == windowObject) { backObjectIndex = i; break; }
+			}
+			if (backObjectIndex == ~0u) throw BuildingException(this, "Traversable window is missing its back-sector object");
+			for (uint32_t ix = x; ix < x + cellsWide; ++ix)
+			{
+				auto& backCell = mLayers[CORE_LAYER_BACK]->getCellDefinition(ix, y);
+				backCell.sectorObjectIndex = backObjectIndex;
+				backCell.sectorObjectType = SectorObjectType::Window;
+			}
+		}
 
 		// Set layers
 		for (uint32_t ix = x; ix < x + cellsWide; ++ix)
@@ -1911,10 +1944,11 @@ namespace core
 			cellDef.sectorObjectType = SectorObjectType::Window;
 		}
 
-		return windowIndex;
+		return { { windowIndex, windowObjType, windowSector }, window, traversalResource };
 	}
 
-	Building::CreateBulkheadDoorResult Building::addSectorBulkheadDoor(uint32_t layerIndex, uint32_t y, uint32_t x, int side)
+	Building::CreateBulkheadDoorResult Building::addSectorBulkheadDoor(uint32_t layerIndex, uint32_t y, uint32_t x,
+		int side, CreateBulkheadDoorOptions const& options)
 	{
 		ASSERT_SIDE_OK(side);
 
@@ -1972,34 +2006,56 @@ namespace core
 		auto dooSectorObject = doorObject.sector->_getObject(doorObject.index);
 		auto door = dynamic_pointer_cast<BulkheadDoorSectorObject>(dooSectorObject)->getDoor();
 
+		auto traversalResource = createDoorTraversalResource(format("Bulkhead door at {},{}", x, y),
+			door, options.activationMode, options.holdOpenSeconds);
+		door->configureTraversal(options.activationMode, traversalResource, options.holdOpenSeconds);
+		configureDoorCrossingLanes(traversalResource, options.crossingLanes);
+
+		// Same-layer geometry gets explicit approaches on opposite sides of the
+		// threshold; no Y/layer heuristic participates in authorization.
+		auto threshold = Vector2{ (float)x, (float)y };
+		auto leftOrigin = threshold - Vector2::UNIT_X * CORE_DOOR_QUEUE_STOP_WIDTH;
+		auto rightOrigin = threshold + Vector2::UNIT_X * CORE_DOOR_QUEUE_STOP_WIDTH;
+		configureDoorQueueLane(traversalResource, SectorId{ (uint64_t)sector0->getIndex() + 1 },
+			leftOrigin, Vector2::NEGATIVE_UNIT_X,
+			max(0.0f, leftOrigin.x - (sector0->getCellX0() + CORE_AGENT_MAX_WIDTH * 0.5f)));
+		configureDoorQueueLane(traversalResource, SectorId{ (uint64_t)sector1->getIndex() + 1 },
+			rightOrigin, Vector2::UNIT_X,
+			max(0.0f, (sector1->getCellX1() + 1.0f - CORE_AGENT_MAX_WIDTH * 0.5f) - rightOrigin.x));
+
 		CreateObjectResult createdCtrls[2];
+		shared_ptr<BulkheadDoorOrchestratedSystem> orchSystem;
+		if (options.orchestrate) orchSystem = make_shared<BulkheadDoorOrchestratedSystem>(mOrchestrator);
+		if (orchSystem) orchSystem->setBulkheadDoor(door);
 
-		createdCtrls[CORE_SIDE_LEFT] = _createBulkheadDoorButton(sector0, y, CORE_SIDE_LEFT);
-		createdCtrls[CORE_SIDE_RIGHT] = _createBulkheadDoorButton(sector1, y, CORE_SIDE_RIGHT);
+		for (int i = 0; i < CORE_NUM_SIDES; ++i)
+		{
+			if (!options.controllers[i]) continue;
+			auto sector = i == CORE_SIDE_LEFT ? sector0 : sector1;
+			createdCtrls[i] = _createBulkheadDoorButton(sector, y, i);
+			auto buttonSectorObject = dynamic_pointer_cast<ButtonSectorObject>(
+				createdCtrls[i].sector->_getObject(createdCtrls[i].index));
+			auto button = dynamic_pointer_cast<Button>(buttonSectorObject->_getObject());
+			dooSectorObject->addController(i == CORE_SIDE_LEFT ? "LeftController" : "RightController", button);
+			if (orchSystem) orchSystem->addButton(button);
 
-		// Set up the ForceBridge and Button with an appropriate Orchestrator
-		auto orchSystem = make_shared<BulkheadDoorOrchestratedSystem>(mOrchestrator);
+			if (options.activationMode == DoorActivationMode::RemoteControlled)
+			{
+				auto controlObject = sector->_getObject(createdCtrls[i].index);
+				DeviceCommand command;
+				command.type = DeviceCommandType::OpenDoor;
+				command.desiredState = true;
+				command.traversalResource = traversalResource;
+				auto point = createInteractionPoint("Bulkhead door button",
+					SectorId{ (uint64_t)sector->getIndex() + 1 },
+					controlObject->getPosition() + controlObject->getSize() * 0.5f,
+					0.15f, getFixedTimestep(), { { command, InteractionBindingRequirement::Required } });
+				addTraversalControl(traversalResource, point);
+			}
+		}
+		if (orchSystem) mOrchestrator->addSystem(orchSystem);
 
-		orchSystem->setBulkheadDoor(door);
-
-		auto buttonSectorObject = dynamic_pointer_cast<ButtonSectorObject>(createdCtrls[CORE_SIDE_LEFT].sector->_getObject(createdCtrls[CORE_SIDE_LEFT].index));
-		auto leftButton = dynamic_pointer_cast<Button>(buttonSectorObject->_getObject());
-		
-		dooSectorObject->addController("LeftController", leftButton);
-		orchSystem->addButton(leftButton);
-		
-		buttonSectorObject = dynamic_pointer_cast<ButtonSectorObject>(createdCtrls[CORE_SIDE_RIGHT].sector->_getObject(createdCtrls[CORE_SIDE_RIGHT].index));
-		auto rightButton = dynamic_pointer_cast<Button>(buttonSectorObject->_getObject());
-
-		dooSectorObject->addController("RightController", rightButton);
-		orchSystem->addButton(rightButton);
-
-		mOrchestrator->addSystem(orchSystem);
-
-		return {
-			doorObject,
-			{ createdCtrls[CORE_SIDE_LEFT], createdCtrls[CORE_SIDE_RIGHT] }
-		};
+		return { doorObject, { createdCtrls[0], createdCtrls[1] }, orchSystem, traversalResource };
 	}
 
 	Building::CreateObjectResult Building::addSectorLightSwitch(uint32_t sectorIndex, uint32_t xOffset)
@@ -2730,6 +2786,8 @@ namespace core
 		result.id = id;
 		result.name = resource.getName();
 		result.isDoor = resource.mDoor != nullptr;
+		result.isWindow = resource.mWindow != nullptr;
+		result.windowNormallyTraversable = resource.mWindow && resource.mWindow->isNormallyTraversable();
 		result.isLadder = resource.mLadder != nullptr;
 		result.isForceBridge = resource.mForceBridge != nullptr;
 		result.isLift = resource.mLift != nullptr;
@@ -3584,6 +3642,16 @@ namespace core
 				{
 					grantTraversalRequest(requestId);
 				}
+				return;
+			}
+			if (resource->mWindow)
+			{
+				if (!resource->mEnabled)
+					denyTraversalRequest(requestId, TraversalFailureReason::ResourceDisabled);
+				else if (resource->mWindow->isNormallyTraversable())
+					grantTraversalRequest(requestId);
+				else
+					denyTraversalRequest(requestId, TraversalFailureReason::PreparationFailed);
 				return;
 			}
 			if (!resource->mDoor)
@@ -5665,6 +5733,21 @@ namespace core
 		auto id = mTraversalResources.add(unique_ptr<TraversalResource>(
 			new TraversalResource(name, std::move(door), mode, holdTicks)));
 		mTraversalResources.find(id)->mCrossingOwners.resize(laneCount);
+		SimulationEvent event;
+		event.sequence = mNextEventSequence++;
+		event.tick = mSimulationTick;
+		event.type = SimulationEventType::TraversalResourceAdded;
+		event.traversalResource = makeTraversalResourceSnapshot(id, *mTraversalResources.find(id));
+		mEvents.push_back(std::move(event));
+		return id;
+	}
+
+	TraversalResourceId Building::createWindowTraversalResource(string const& name,
+		shared_ptr<Window> window)
+	{
+		if (!window) throw invalid_argument("A window traversal resource requires a Window");
+		auto id = mTraversalResources.add(unique_ptr<TraversalResource>(
+			new TraversalResource(name, std::move(window))));
 		SimulationEvent event;
 		event.sequence = mNextEventSequence++;
 		event.tick = mSimulationTick;

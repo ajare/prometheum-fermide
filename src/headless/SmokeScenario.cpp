@@ -439,6 +439,99 @@ namespace
 		return building.getSimulationSnapshot().traversalResources.front().doorState == core::DoorSnapshotState::Closed;
 	}
 
+	bool bulkheadAndWindowThresholdsUseTraversalResources()
+	{
+		// A bulkhead is horizontal and same-layer, but still queues and waits for
+		// its fully-open resource permit.
+		core::Building bulkheadBuilding("Bulkhead threshold", 8, 2);
+		auto left = bulkheadBuilding.addRoom("Left", CORE_LAYER_FORE, 0, 0, 3, 1);
+		auto right = bulkheadBuilding.addRoom("Right", CORE_LAYER_FORE, 0, 3, 3, 1);
+		core::Building::CreateBulkheadDoorOptions bulkheadOptions;
+		bulkheadOptions.activationMode = core::DoorActivationMode::Manual;
+		bulkheadOptions.controllers[0] = bulkheadOptions.controllers[1] = false;
+		bulkheadOptions.orchestrate = false;
+		auto bulkhead = bulkheadBuilding.addSectorBulkheadDoor(CORE_LAYER_FORE, 0, 3,
+			CORE_SIDE_LEFT, bulkheadOptions);
+		bulkheadBuilding.finishBuild();
+		auto bulkheadEdge = std::find_if(bulkheadBuilding.getGraph()->getEdges().begin(),
+			bulkheadBuilding.getGraph()->getEdges().end(), [](auto const& edge)
+			{ return edge->getType() == core::EdgeType::BulkheadDoor; });
+		if (bulkheadEdge == bulkheadBuilding.getGraph()->getEdges().end()
+			|| (*bulkheadEdge)->getTraversalResourceId() != bulkhead.traversalResource
+			|| (*bulkheadEdge)->getVertex(0)->getController()
+			|| (*bulkheadEdge)->getVertex(1)->getController()) return false;
+		auto source = (*bulkheadEdge)->getVertex(0)->getSector()->getIndex() == left
+			? (*bulkheadEdge)->getVertex(0) : (*bulkheadEdge)->getVertex(1);
+		auto destination = (*bulkheadEdge)->getOtherVertex(source);
+		auto agentId = bulkheadBuilding.createAgent("Left bulkhead traveller", left, 0, 1.0f);
+		auto opposingId = bulkheadBuilding.createAgent("Right bulkhead traveller", right, 0, 1.0f);
+		auto agent = bulkheadBuilding.lookupAgent(agentId).entity;
+		auto opposing = bulkheadBuilding.lookupAgent(opposingId).entity;
+		agent->setPath(twoNodePath(source, destination, *bulkheadEdge), true);
+		opposing->setPath(twoNodePath(destination, source, *bulkheadEdge), true);
+		bool waitedForOpen = false;
+		bool serializedContention = true;
+		for (uint32_t i = 0; i < MaximumSimulationTicks
+			&& (agent->getState() != core::Agent::State::Idle
+				|| opposing->getState() != core::Agent::State::Idle); ++i)
+		{
+			bulkheadBuilding.advanceTick();
+			auto const& snapshot = bulkheadBuilding.getSimulationSnapshot();
+			if (!snapshot.traversalResources.empty()
+				&& snapshot.traversalResources.front().doorState == core::DoorSnapshotState::Opening
+				&& snapshot.traversalPermits.empty()) waitedForOpen = true;
+			if (snapshot.traversalPermits.size() > 1) serializedContention = false;
+		}
+		if (!waitedForOpen || !serializedContention
+			|| agent->getSector() != bulkheadBuilding.getSector(right).get()
+			|| opposing->getSector() != bulkheadBuilding.getSector(left).get()
+			|| !bulkheadBuilding.getSimulationSnapshot().traversalRequests.empty()) return false;
+
+		// Traversable windows contribute conditional topology, and only the clear,
+		// fully-open state can receive a permit.
+		core::Building windowBuilding("Window threshold", 6, 2);
+		auto fore = windowBuilding.addRoom("Fore", CORE_LAYER_FORE, 0, 0, 5, 1);
+		auto back = windowBuilding.addRoom("Back", CORE_LAYER_BACK, 0, 0, 5, 1);
+		core::Building::CreateWindowOptions windowOptions;
+		windowOptions.traversable = true;
+		windowOptions.initialState = core::Window::State::Open;
+		auto window = windowBuilding.addSectorWindow(CORE_LAYER_FORE, 0, 2, 1, 1, windowOptions);
+		windowBuilding.finishBuild();
+		auto windowEdge = std::find_if(windowBuilding.getGraph()->getEdges().begin(),
+			windowBuilding.getGraph()->getEdges().end(), [](auto const& edge)
+			{ return edge->getType() == core::EdgeType::Window; });
+		if (windowEdge == windowBuilding.getGraph()->getEdges().end()
+			|| (*windowEdge)->getTraversalResourceId() != window.traversalResource
+			|| !window.object->isNormallyTraversable()) return false;
+		constexpr core::Window::State blockedStates[] = {
+			core::Window::State::Closed, core::Window::State::Opening,
+			core::Window::State::Closing, core::Window::State::Broken,
+			core::Window::State::Frosted, core::Window::State::Frosting,
+			core::Window::State::Unfrosting, core::Window::State::Tinted,
+			core::Window::State::Tinting, core::Window::State::Untinting
+		};
+		for (auto state : blockedStates)
+		{
+			window.object->setState(state);
+			if ((*windowEdge)->isTraversable({}, {})) return false;
+		}
+		window.object->setState(core::Window::State::Open, core::Window::Style::Tinted);
+		if ((*windowEdge)->isTraversable({}, {})) return false;
+		window.object->setState(core::Window::State::Open, core::Window::Style::Frosted);
+		if ((*windowEdge)->isTraversable({}, {})) return false;
+		window.object->setState(core::Window::State::Open);
+		auto windowSource = (*windowEdge)->getVertex(0)->getSector()->getIndex() == fore
+			? (*windowEdge)->getVertex(0) : (*windowEdge)->getVertex(1);
+		auto windowDestination = (*windowEdge)->getOtherVertex(windowSource);
+		auto windowAgentId = windowBuilding.createAgent("Window traveller", fore, 0, 0.5f);
+		auto windowAgent = windowBuilding.lookupAgent(windowAgentId).entity;
+		windowAgent->setPath(twoNodePath(windowSource, windowDestination, *windowEdge), true);
+		for (uint32_t i = 0; i < MaximumSimulationTicks && windowAgent->getState() != core::Agent::State::Idle; ++i)
+			windowBuilding.advanceTick();
+		return windowAgent->getSector() == windowBuilding.getSector(back).get()
+			&& windowBuilding.getSimulationSnapshot().traversalRequests.empty();
+	}
+
 	bool remoteDoorUsesOnePhysicalOperatorAndSharedOperation()
 	{
 		core::Building building("Shared remote door", 7, 2);
@@ -1750,6 +1843,11 @@ int main()
 		if (!singleAgentDoorJourney(core::DoorActivationMode::Automatic))
 		{
 			std::cerr << "FAIL: automatic door journey or hold-open safety failed\n";
+			return 1;
+		}
+		if (!bulkheadAndWindowThresholdsUseTraversalResources())
+		{
+			std::cerr << "FAIL: bulkhead or window threshold migration failed\n";
 			return 1;
 		}
 		if (!remoteDoorUsesOnePhysicalOperatorAndSharedOperation())

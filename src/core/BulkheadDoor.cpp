@@ -31,7 +31,8 @@ namespace core
 	- sectors[2] is the left and right Sector (see CORE_SIDE_LEFT / CORE_SIDE_RIGHT)
 	*/
 	BulkheadDoor::BulkheadDoor(uint32_t cellX, uint32_t cellY, shared_ptr<const Sector> sectors[2])
-		: OpenableObject((float)cellX + (1.0f - CORE_BULKHEAD_DOOR_WIDTH * 0.5f), (float)cellY, CORE_BULKHEAD_DOOR_WIDTH, CORE_CORRIDOR_HEIGHT)
+		: Door((float)cellX + (1.0f - CORE_BULKHEAD_DOOR_WIDTH * 0.5f), (float)cellY,
+			CORE_BULKHEAD_DOOR_WIDTH, CORE_CORRIDOR_HEIGHT, 1, sectors)
 		, mOpenStyle(OpenStyle::VertFromFloor)
 		, mSectors{ sectors[0], sectors[1] }
 	{
@@ -117,78 +118,5 @@ namespace core
 		minExtent.y += getOpenPercentage() * CORE_CORRIDOR_HEIGHT;
 	}
 
-	bool BulkheadDoor::validateAction(ControllableActionType type) const
-	{
-		return type == ControllableActionType::Open
-			|| type == ControllableActionType::Close
-			|| type == ControllableActionType::None;
-	}
-
-	ControllableActionStatus BulkheadDoor::startAction(ControllableAction const& action)
-	{
-		switch (action.type)
-		{
-		case ControllableActionType::Open:
-			open();
-			return ControllableActionStatus::InProgress;
-
-		case ControllableActionType::Close:
-			close();
-			return ControllableActionStatus::InProgress;
-
-		default:
-			return ControllableActionStatus::Unhandled;
-		}
-	}
-
-	void BulkheadDoor::finishAction(ControllableAction const& action)
-	{
-		switch (action.type)
-		{
-		case ControllableActionType::Open:
-			mOpenPct = 1.0f;
-			mOpenWaitTime = getTimeBeforeClosing();
-			mState = State::Open;
-			break;
-
-		case ControllableActionType::Close:
-			mOpenPct = 0.0f;
-			mState = State::Closed;
-			break;
-
-		default:
-			break;
-		}
-	}
-
-	ControllableActionStatus BulkheadDoor::updateAction(ControllableAction const& action, float frameTime)
-	{
-		switch (action.type)
-		{
-		case ControllableActionType::Open:
-			mOpenPct = min(mOpenPct + frameTime / getOpenCloseTime(), 1.0f);
-			return mOpenPct >= 1.0f ? ControllableActionStatus::CompletedSuccess : ControllableActionStatus::InProgress;
-
-		case ControllableActionType::Close:
-			mOpenPct = max(mOpenPct - frameTime / getOpenCloseTime(), 0.0f);
-			return mOpenPct <= 0.0f ? ControllableActionStatus::CompletedSuccess : ControllableActionStatus::InProgress;
-
-		default:
-			return ControllableActionStatus::Unhandled;
-		}
-	}
-
-	void BulkheadDoor::updateImpl(float frameTime, ControllableActionType action, ControllableActionStatus status)
-	{
-		if (isOpen() && action == ControllableActionType::None)
-		{
-			mOpenWaitTime -= frameTime;
-
-			if (mOpenWaitTime <= 0.0f)
-			{
-				handleAction(ControllableActionType::Close);
-			}
-		}
-	}
 
 } // core

@@ -18,7 +18,7 @@ namespace core
 
 		~WindowSectorObject() = default;
 
-		std::shared_ptr<const Window> getWindow() const;
+		std::shared_ptr<Window> getWindow() const;
 
 		// Overridden from SectorObject
 		[[nodiscard]] std::shared_ptr<VertexController> createVertexController(Building const* building, std::vector<std::shared_ptr<Vertex>> const& vertices, std::map<std::shared_ptr<Controller>, std::shared_ptr<Vertex>> const& controllerVertexLookup) const override;

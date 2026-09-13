@@ -58,10 +58,35 @@ namespace core
 			TraversalResourceId traversalResource;
 		};
 
+		struct CreateBulkheadDoorOptions
+		{
+			bool controllers[2] = { true, true };
+			bool orchestrate{ true };
+			DoorActivationMode activationMode{ DoorActivationMode::RemoteControlled };
+			float holdOpenSeconds{ CORE_BULKHEAD_DOOR_STAY_OPEN_TIME };
+			uint32_t crossingLanes{ 1 };
+		};
+
 		struct CreateBulkheadDoorResult
 		{
 			CreateObjectResult door;
 			CreateObjectResult controllers[2];
+			std::shared_ptr<OrchestratedSystem> orchSystem;
+			TraversalResourceId traversalResource;
+		};
+
+		struct CreateWindowOptions
+		{
+			bool traversable{ false };
+			Window::State initialState{ Window::State::Closed };
+			Window::Style style{ Window::Style::Clear };
+		};
+
+		struct CreateWindowResult
+		{
+			CreateObjectResult window;
+			std::shared_ptr<Window> object;
+			TraversalResourceId traversalResource;
 		};
 
 		struct CreateForceBridgeOptions
@@ -489,7 +514,11 @@ namespace core
 
 		uint32_t addSectorWindow(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t decksHigh);
 
-		CreateBulkheadDoorResult addSectorBulkheadDoor(uint32_t layerIndex, uint32_t y, uint32_t x, int side);
+		CreateWindowResult addSectorWindow(uint32_t layerIndex, uint32_t y, uint32_t x,
+			uint32_t cellsWide, uint32_t decksHigh, CreateWindowOptions const& options);
+
+		CreateBulkheadDoorResult addSectorBulkheadDoor(uint32_t layerIndex, uint32_t y, uint32_t x,
+			int side, CreateBulkheadDoorOptions const& options = {});
 
 		CreateObjectResult addSectorLightSwitch(uint32_t sectorIndex, uint32_t xOffset);
 
@@ -560,6 +589,9 @@ namespace core
 
 		TraversalResourceId createDoorTraversalResource(std::string const& name,
 			std::shared_ptr<Door> door, DoorActivationMode mode, float holdOpenSeconds);
+
+		TraversalResourceId createWindowTraversalResource(std::string const& name,
+			std::shared_ptr<Window> window);
 
 		TraversalResourceId createLadderTraversalResource(std::string const& name,
 			std::shared_ptr<Ladder> ladder, SectorId ladderSector, float agentSpacing,

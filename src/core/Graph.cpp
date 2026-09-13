@@ -20,9 +20,11 @@
 #include "core/SectorMarkerVertex.h"
 #include "core/StaircaseLocationVertex.h"
 #include "core/StaircaseVertex.h"
+#include "core/WindowVertex.h"
 
 // Edges
 #include "core/BulkheadDoorEdge.h"
+#include "core/WindowEdge.h"
 #include "core/DoorEdge.h"
 #include "core/ForceBridgeEdge.h"
 #include "core/GapEdge.h"
@@ -271,6 +273,21 @@ namespace core
 					
 					addEdge(make_shared<BulkheadDoorEdge>(bulkheadDoor), vertices[i], vertices[j], connectZ);
 				}
+				else if (vertexSubType0 == VertexSubType::Window && vertexSubType1 == VertexSubType::Window)
+				{
+					auto windowVertex = dynamic_pointer_cast<WindowVertex>(vertices[i]);
+					auto otherWindowVertex = dynamic_pointer_cast<WindowVertex>(vertices[j]);
+					if (windowVertex->getWindow() == otherWindowVertex->getWindow()
+						&& windowVertex->getWindow()->isTraversalConfigured())
+					{
+						addEdge(make_shared<WindowEdge>(const_pointer_cast<Window>(windowVertex->getWindow())),
+							vertices[i], vertices[j], connectZ);
+					}
+					else
+					{
+						addEdge(make_shared<SectorEdge>(), vertices[i], vertices[j], connectZ);
+					}
+				}
 				else if (vertexSubType0 == VertexSubType::ForceBridge && vertexSubType1 == VertexSubType::ForceBridge)
 				{
 					auto sectorVertex = dynamic_pointer_cast<SectorObjectVertex>(vertices[i]);
@@ -423,19 +440,36 @@ namespace core
 	{
 		ASSERT_INDEX_OK(obj.index);
 
-		// Windows may be created on either Layer
-		auto window = obj.sectors[obj.layerIndex]->_getObject(obj.index);
-		auto windowVertex = window->createVertex(window, obj.sectors[obj.layerIndex]);
+		auto windowObject = obj.sectors[obj.layerIndex]->_getObject(obj.index);
+		auto window = dynamic_pointer_cast<WindowSectorObject>(windowObject)->getWindow();
+		auto windowVertex = windowObject->createVertex(windowObject, obj.sectors[obj.layerIndex]);
+		addSectorObjectVertexLookup(windowObject, windowVertex);
 
-		addSectorObjectVertexLookup(window, windowVertex);
+		auto vertexIdentifier = windowObject->getVertexIdentifier();
+		if (vertexIdentifier != ~0u) mIdentifierVertexLookup[vertexIdentifier] = windowVertex;
 
-		auto vertexIdentifier = window->getVertexIdentifier();
-		if (vertexIdentifier != ~0u)
+		// Ordinary windows remain local points of interest. A configured window
+		// threshold pairs its two layer vertices and contributes conditional
+		// topology through a WindowEdge.
+		if (!window->isTraversalConfigured())
 		{
-			mIdentifierVertexLookup[vertexIdentifier] = windowVertex;
+			workVertices.push_back(windowVertex);
+			return;
 		}
 
+		auto cellPos = make_pair(obj.x, obj.y);
+		auto paired = interLayerVertexLookup.find(cellPos);
+		if (paired == interLayerVertexLookup.end())
+		{
+			interLayerVertexLookup[cellPos] = windowVertex;
+			workVertices.push_back(windowVertex);
+			return;
+		}
+
+		auto other = paired->second;
 		workVertices.push_back(windowVertex);
+		addEdge(make_shared<WindowEdge>(window), other, windowVertex,
+			other->getSector()->getLayerIndex() != windowVertex->getSector()->getLayerIndex());
 	}
 
 	void Graph::processController(ObjectData const& obj, PositionVertexMap& interLayerVertexLookup, VertexList& workVertices)
@@ -942,8 +976,9 @@ namespace core
 					if (cellDef.sectorObjectType == SectorObjectType::Window)
 					{
 						// Only process one cell, so if this Window is wider than one, just
-						// process left-most
-						if (x == 0 || layers[0]->getCellDefinition(x - 1, y).sectorObjectIndex != cellDef.sectorObjectIndex)
+						// process left-most. The shared object can have a different index
+						// in each sector, so compare within the layer being scanned.
+						if (x == 0 || layer->getCellDefinition(x - 1, y).sectorObjectIndex != cellDef.sectorObjectIndex)
 						{
 							// Get both Layer Locations here, as Windows need them both
 							auto cellDef0 = layers[0]->getCellDefinition(x, y);

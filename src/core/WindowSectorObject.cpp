@@ -38,13 +38,15 @@ namespace core
 
 	Get the Window instance.
 	*/
-	shared_ptr<const Window> WindowSectorObject::getWindow() const
+	shared_ptr<Window> WindowSectorObject::getWindow() const
 	{
 		return static_pointer_cast<Window>(_getObject());
 	}
 
 	shared_ptr<VertexController> WindowSectorObject::createVertexController(Building const* building, vector<shared_ptr<Vertex>> const& vertices, map<shared_ptr<Controller>, shared_ptr<Vertex>> const& controllerVertexLookup) const
 	{
+		if (getWindow()->getTraversalResourceId()) return nullptr;
+
 		auto vertex = vertices[0];
 
 		auto vcPos = vertex->getPosition();

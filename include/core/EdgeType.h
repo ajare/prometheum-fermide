@@ -9,6 +9,7 @@ namespace core
 		Location,
 		Door,
 		BulkheadDoor,
+		Window,
 		Gap,
 		ForceBridge,
 		LadderMount,

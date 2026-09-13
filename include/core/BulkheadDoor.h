@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <memory>
 
-#include "core/OpenableObject.h"
+#include "core/Door.h"
 #include "core/DependentPathControllable.h"
 
 
@@ -12,7 +12,7 @@ namespace core
 
 	class Sector;
 
-	class BulkheadDoor : public OpenableObject
+	class BulkheadDoor : public Door
 	{
 		friend class Building;
 
@@ -28,23 +28,6 @@ namespace core
 		OpenStyle mOpenStyle;
 
 		std::shared_ptr<const Sector> mSectors[2];
-
-		// Overridden from Controllable
-		bool validateAction(ControllableActionType type) const override;
-
-		// Overriden from Controllable
-		void updateImpl(float frameTime, ControllableActionType action, ControllableActionStatus status) override;
-
-	protected:
-
-		// Overriden from Controllable
-		ControllableActionStatus startAction(ControllableAction const& action) override;
-
-		// Overriden from Controllable
-		void finishAction(ControllableAction const& action) override;
-
-		// Overriden from Controllable
-		ControllableActionStatus updateAction(ControllableAction const& action, float frameTime) override;
 
 	public:
 

@@ -246,13 +246,13 @@ namespace core
 		return addSectorObject(window);
 	}
 
-	void Sector::addWindow(shared_ptr<WindowSectorObject> window)
+	uint32_t Sector::addWindow(shared_ptr<WindowSectorObject> window)
 	{
 		auto x = window->getCellX();
 
 		assert(x >= getCellX0() && x <= getCellX1());
 
-		addSectorObject(window);
+		return addSectorObject(window);
 	}
 
 	uint32_t Sector::createController(shared_ptr<const Sector> sector, string const& name, uint32_t x, uint32_t y, float xOffset, float yOffset, uint32_t flags, uint32_t* vertexIdentifier)

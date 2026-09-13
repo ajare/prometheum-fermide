@@ -5,6 +5,7 @@
 
 #include "core/Object.h"
 #include "core/Sector.h"
+#include "core/EntityId.h"
 
 
 namespace core
@@ -46,6 +47,10 @@ namespace core
 
 		std::shared_ptr<const Sector> mSectors[2];
 
+		bool mTraversalConfigured{ false };
+
+		TraversalResourceId mTraversalResource;
+
 	private:
 
 		// Overridden from Useable
@@ -66,6 +71,19 @@ namespace core
 		[[nodiscard]] Style getStyle() const;
 
 		[[nodiscard]] std::shared_ptr<const Sector> getSector(uint32_t layerIndex) const;
+
+		// Window animation is not yet device-driven; this explicit state seam lets
+		// world logic configure/test the threshold without treating broken glass as
+		// an ordinary passage.
+		void setState(State state, Style style = Style::Clear);
+
+		void configureTraversal(bool enabled, TraversalResourceId resource);
+
+		[[nodiscard]] bool isTraversalConfigured() const { return mTraversalConfigured; }
+
+		[[nodiscard]] bool isNormallyTraversable() const;
+
+		[[nodiscard]] TraversalResourceId getTraversalResourceId() const { return mTraversalResource; }
 
 		// Overridden from Object
 		[[nodiscard]] std::string getDescription() const override;

@@ -33,11 +33,18 @@ namespace core
 	- cellsWide should generally be 1, but in theory there's no reason why it can't be any value greater than zero.
 	- sectors[2] is the fore and back Sector (see CORE_LAYER_FORE / CORE_LAYER_BACK)
 	*/
-	Door::Door(uint32_t cellX, uint32_t cellY, uint32_t cellsWide, shared_ptr<const Sector> sectors[2])
-		: OpenableObject((float)cellX + CORE_DOOR_X_INSET, (float)cellY, cellsWide - CORE_DOOR_X_INSET * 2.0f, CORE_DOOR_HEIGHT)
+	Door::Door(float x, float y, float width, float height, uint32_t cellsWide,
+		shared_ptr<const Sector> sectors[2])
+		: OpenableObject(x, y, width, height)
 		, mCellsWide(cellsWide)
 		, mOpenStyle(OpenStyle::VertFromFloor)
 		, mSectors{ sectors[0], sectors[1] }
+	{
+	}
+
+	Door::Door(uint32_t cellX, uint32_t cellY, uint32_t cellsWide, shared_ptr<const Sector> sectors[2])
+		: Door((float)cellX + CORE_DOOR_X_INSET, (float)cellY,
+			cellsWide - CORE_DOOR_X_INSET * 2.0f, CORE_DOOR_HEIGHT, cellsWide, sectors)
 	{
 	}
 
