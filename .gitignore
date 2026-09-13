@@ -6,6 +6,7 @@ bin/
 obj/
 *.vcxproj.user
 cmake-build*/
+build-windows/
 out/
 
 # OS/editor files
