@@ -240,6 +240,24 @@ namespace core
 
 		TraversalWaitingPolicy mTraversalWaitingPolicy;
 
+		// Structural edits are transactional at the graph boundary. The world may
+		// only be changed after an explicit pause; the previous graph remains live
+		// until a replacement has built and validated successfully.
+		bool mBuildFinished{ false };
+		bool mSimulationPaused{ false };
+		bool mTopologyDirty{ true };
+		bool mTopologyValid{ false };
+		uint64_t mTopologyGeneration{ 0 };
+		std::string mTopologyDiagnostic;
+
+		struct TopologyPathIntent
+		{
+			SectorId destinationSector;
+			Vector2 destinationPosition;
+			bool wasPathing{ false };
+		};
+		std::map<AgentId, TopologyPathIntent> mPausedPathIntents;
+
 		Log mBuildLog;
 
 	private:
@@ -287,6 +305,16 @@ namespace core
 		void validateLiftOptions(std::string const& caller, CreateLiftOptions const& options) const;
 
 		void validateShuttleOptions(std::string const& caller, CreateShuttleOptions const& options) const;
+
+		void beginStructuralEdit(std::string const& operation);
+
+		void cancelTraversalForTopologyRebuild(Agent& agent);
+
+		void validateTraversalTopology(Graph const& graph) const;
+
+		void restorePausedPathIntents();
+
+		void publishTopologyEvent(SimulationEventType type, std::string diagnostic = {});
 
 		std::shared_ptr<Sector> _getSector(uint32_t index);
 
@@ -459,7 +487,8 @@ namespace core
 		bool commitTraversal(Agent& agent, TraversalRequestId requestId, TraversalPermitId permitId,
 			std::shared_ptr<const Vertex> const& destination);
 
-		void cancelTraversal(TraversalRequestId requestId, TraversalPermitId permitId);
+		void cancelTraversal(TraversalRequestId requestId, TraversalPermitId permitId,
+			bool requestSafeTransportExit = true);
 
 		void releaseTraversal(TraversalRequestId requestId, TraversalPermitId permitId);
 
@@ -535,6 +564,25 @@ namespace core
 		void removeLocationWall(uint32_t sectorIndex, uint32_t deckIndex, int side);
 
 		void finishBuild();
+
+		// Runtime structural editing protocol. Pausing deterministically cancels
+		// active edge transactions while retaining route destinations for the new
+		// graph. A failed rebuild is atomic at the graph boundary and cannot resume.
+		void pauseSimulation();
+
+		bool rebuildTraversalTopology();
+
+		bool resumeSimulation();
+
+		bool isSimulationPaused() const { return mSimulationPaused; }
+
+		bool isTraversalTopologyDirty() const { return mTopologyDirty; }
+
+		bool isTraversalTopologyValid() const { return mTopologyValid; }
+
+		uint64_t getTopologyGeneration() const { return mTopologyGeneration; }
+
+		std::string const& getTopologyDiagnostic() const { return mTopologyDiagnostic; }
 
 		std::shared_ptr<const Sector> getSectorAtPosition(uint32_t layerIndex, float x, float y) const;
 

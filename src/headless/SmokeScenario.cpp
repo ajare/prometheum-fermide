@@ -532,6 +532,81 @@ namespace
 			&& windowBuilding.getSimulationSnapshot().traversalRequests.empty();
 	}
 
+	bool pausedTopologyRebuildIsAtomicAndCleansOwnership()
+	{
+		core::Building building("Paused topology rebuild", 8, 2);
+		auto fore = building.addRoom("Fore", CORE_LAYER_FORE, 0, 0, 7, 1);
+		auto back = building.addRoom("Back", CORE_LAYER_BACK, 0, 0, 7, 1);
+		core::Building::CreateDoorOptions options;
+		options.activationMode = core::DoorActivationMode::Manual;
+		options.holdOpenSeconds = core::Building::getFixedTimestep() * 8.0f;
+		auto door = building.addSectorDoor(0, 3, options);
+		building.finishBuild();
+		auto generation = building.getTopologyGeneration();
+		auto oldGraph = building.getGraph();
+		auto edge = *std::find_if(oldGraph->getEdges().begin(), oldGraph->getEdges().end(),
+			[](auto const& candidate) { return candidate->getType() == core::EdgeType::Door; });
+		auto source = edge->getVertex(0)->getSector()->getIndex() == fore
+			? edge->getVertex(0) : edge->getVertex(1);
+		auto destination = edge->getOtherVertex(source);
+		auto agentId = building.createAgent("Rebuild traveller", fore, 0,
+			source->getPosition().x - building.getSector(fore)->getPosition().x);
+		auto agent = building.lookupAgent(agentId).entity;
+		agent->setPath(twoNodePath(source, destination, edge), true);
+		building.advanceTicks(3);
+		auto active = building.getSimulationSnapshot();
+		if (active.traversalRequests.empty()) return false;
+
+		// An active simulation cannot be structurally changed.
+		bool rejected = false;
+		try { building.addSectorMarker(fore, 0, 0.5f); }
+		catch (std::exception const&) { rejected = true; }
+		if (!rejected || building.isSimulationPaused()) return false;
+
+		building.pauseSimulation();
+		auto pausedTick = building.getSimulationTick();
+		building.advanceTicks(10);
+		auto paused = building.getSimulationSnapshot();
+		if (!paused.paused || building.getSimulationTick() != pausedTick
+			|| !paused.traversalRequests.empty() || !paused.traversalPermits.empty()) return false;
+		for (auto const& resource : paused.traversalResources)
+		{
+			if (resource.id != door.traversalResource) continue;
+			if (resource.openLeaseCount || resource.crossingOwner
+				|| std::any_of(resource.queueLanes.begin(), resource.queueLanes.end(),
+					[](auto const& lane) { return std::any_of(lane.positions.begin(), lane.positions.end(),
+						[](auto const& position) { return (bool)position.owner; }); })) return false;
+		}
+
+		uint32_t marker;
+		building.addSectorMarker(fore, 0, 0.5f, &marker);
+		if (!building.isTraversalTopologyDirty() || !building.rebuildTraversalTopology()
+			|| building.getGraph() == oldGraph || building.getTopologyGeneration() != generation + 1
+			|| !building.getGraph()->getVertexByIdentifier(marker)
+			|| !building.resumeSimulation()) return false;
+		for (uint32_t i = 0; i < MaximumSimulationTicks
+			&& agent->getState() != core::Agent::State::Idle; ++i) building.advanceTick();
+		if (agent->getSector() != building.getSector(back).get()) return false;
+
+		// Candidate failure leaves the previous graph installed, the simulation
+		// paused, and removed handles permanently invalid.
+		core::Building invalid("Invalid paused rebuild", 6, 2);
+		invalid.addRoom("Fore", CORE_LAYER_FORE, 0, 0, 5, 1);
+		invalid.addRoom("Back", CORE_LAYER_BACK, 0, 0, 5, 1);
+		auto invalidDoor = invalid.addSectorDoor(0, 2);
+		invalid.finishBuild();
+		auto previousGraph = invalid.getGraph();
+		invalid.pauseSimulation();
+		if (!invalid.removeTraversalResource(invalidDoor.traversalResource)
+			|| invalid.lookupTraversalResource(invalidDoor.traversalResource)) return false;
+		auto replacement = invalid.createTraversalResource("Replacement handle proof");
+		if (replacement.value <= invalidDoor.traversalResource.value
+			|| invalid.rebuildTraversalTopology() || invalid.resumeSimulation()
+			|| !invalid.isSimulationPaused() || invalid.getGraph() != previousGraph
+			|| invalid.getTopologyDiagnostic().empty()) return false;
+		return true;
+	}
+
 	bool remoteDoorUsesOnePhysicalOperatorAndSharedOperation()
 	{
 		core::Building building("Shared remote door", 7, 2);
@@ -740,15 +815,22 @@ namespace
 		building.addRoom("Destination side", CORE_LAYER_BACK, 0, 0, 7, 1);
 		auto created = building.addSectorDoor(0, 3);
 		building.finishBuild();
+		auto initialEdge = *std::find_if(building.getGraph()->getEdges().begin(), building.getGraph()->getEdges().end(),
+			[](auto const& candidate) { return candidate->getType() == core::EdgeType::Door; });
+		auto initialSource = initialEdge->getVertex(0)->getSector()->getIndex() == fore
+			? initialEdge->getVertex(0) : initialEdge->getVertex(1);
+
+		// One physical position deliberately forces logical overflow. Runtime queue
+		// geometry is a structural edit and therefore uses the paused rebuild seam.
+		building.pauseSimulation();
+		auto sourceSectorId = core::SectorId{ (uint64_t)fore + 1 };
+		if (!building.configureDoorQueueLane(created.traversalResource, sourceSectorId,
+			initialSource->getPosition(), { -1.0f, 0.0f }, 0.0f)
+			|| !building.rebuildTraversalTopology() || !building.resumeSimulation()) return false;
 		auto edge = *std::find_if(building.getGraph()->getEdges().begin(), building.getGraph()->getEdges().end(),
 			[](auto const& candidate) { return candidate->getType() == core::EdgeType::Door; });
 		auto source = edge->getVertex(0)->getSector()->getIndex() == fore ? edge->getVertex(0) : edge->getVertex(1);
 		auto destination = edge->getOtherVertex(source);
-
-		// One physical position deliberately forces logical overflow.
-		auto sourceSectorId = core::SectorId{ (uint64_t)fore + 1 };
-		if (!building.configureDoorQueueLane(created.traversalResource, sourceSectorId,
-			source->getPosition(), { -1.0f, 0.0f }, 0.0f)) return false;
 		std::vector<core::AgentId> ids = {
 			building.createAgent("Queue head", fore, 0, 3.5f),
 			building.createAgent("Overflow one", fore, 0, 3.5f),
@@ -1848,6 +1930,11 @@ int main()
 		if (!bulkheadAndWindowThresholdsUseTraversalResources())
 		{
 			std::cerr << "FAIL: bulkhead or window threshold migration failed\n";
+			return 1;
+		}
+		if (!pausedTopologyRebuildIsAtomicAndCleansOwnership())
+		{
+			std::cerr << "FAIL: paused topology rebuild was not safe and atomic\n";
 			return 1;
 		}
 		if (!remoteDoorUsesOnePhysicalOperatorAndSharedOperation())

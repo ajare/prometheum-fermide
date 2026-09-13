@@ -986,11 +986,13 @@ namespace core
 
 	uint32_t Building::addCorridor(uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t decksHigh)
 	{
+		beginStructuralEdit("addCorridor");
 		return addLocation("Corridor", SectorType::Location, CORE_LAYER_FORE, x, y, cellsWide, decksHigh, CORE_CORRIDOR_HEIGHT);
 	}
 
 	uint32_t Building::addRoom(string const& name, uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t decksHigh, float topDeckHeight)
 	{
+		beginStructuralEdit("addRoom");
 		if (topDeckHeight < CORE_ROOM_MIN_HEIGHT || topDeckHeight > CORE_ROOM_MAX_HEIGHT)
 		{
 			string caller = format("Building::addRoom({}, {}, {}, {}, {}, {}, {})", name, layerIndex, y, x, cellsWide, decksHigh, topDeckHeight);
@@ -1003,6 +1005,7 @@ namespace core
 
 	Building::CreateLadderResult Building::addLadder(uint32_t y, uint32_t x, CreateLadderOptions const& options)
 	{
+		beginStructuralEdit("addLadder");
 		auto foreLayer = getLayer(CORE_LAYER_FORE);
 		auto backLayer = getLayer(CORE_LAYER_BACK);
 
@@ -1135,12 +1138,14 @@ namespace core
 
 	uint32_t Building::addStaircase(uint32_t y, uint32_t x, uint32_t decksHigh, int mountSide)
 	{
+		beginStructuralEdit("addStaircase");
 		return addStaircase(y, x, CreateStaircaseOptions{ decksHigh, mountSide }).sectorIndex;
 	}
 
 	Building::CreateStaircaseResult Building::addStaircase(uint32_t y, uint32_t x,
 		CreateStaircaseOptions const& options)
 	{
+		beginStructuralEdit("addStaircase");
 		auto decksHigh = options.decksHigh;
 		auto mountSide = options.mountSide;
 		ASSERT_SIDE_OK(mountSide);
@@ -1231,6 +1236,7 @@ namespace core
 
 	Building::CreateLiftResult Building::addLift(uint32_t y, uint32_t x, CreateLiftOptions const& options)
 	{
+		beginStructuralEdit("addLift");
 		auto foreLayer = getLayer(CORE_LAYER_FORE);
 		auto backLayer = getLayer(CORE_LAYER_BACK);
 
@@ -1385,6 +1391,7 @@ namespace core
 
 	Building::CreateShuttleResult Building::addShuttle(uint32_t y, uint32_t x, uint32_t cellsWide, CreateShuttleOptions const& options)
 	{
+		beginStructuralEdit("addShuttle");
 		auto foreLayer = getLayer(CORE_LAYER_FORE);
 		auto backLayer = getLayer(CORE_LAYER_BACK);
 
@@ -1579,6 +1586,7 @@ namespace core
 
 	void Building::removeLocationWall(uint32_t sectorIndex, uint32_t deckIndex, int side)
 	{
+		beginStructuralEdit("removeLocationWall");
 		ASSERT_SIDE_OK(side);
 
 		auto sector = _getSector(sectorIndex);
@@ -1712,6 +1720,7 @@ namespace core
 
 	Building::CreateDoorResult Building::addSectorDoor(uint32_t y, uint32_t x, CreateDoorOptions const& options)
 	{
+		beginStructuralEdit("addSectorDoor");
 		return _addSectorDoor(y, x, options);
 	}
 
@@ -1869,12 +1878,14 @@ namespace core
 
 	uint32_t Building::addSectorWindow(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t decksHigh)
 	{
+		beginStructuralEdit("addSectorWindow");
 		return addSectorWindow(layerIndex, y, x, cellsWide, decksHigh, {}).window.index;
 	}
 
 	Building::CreateWindowResult Building::addSectorWindow(uint32_t layerIndex, uint32_t y, uint32_t x,
 		uint32_t cellsWide, uint32_t decksHigh, CreateWindowOptions const& options)
 	{
+		beginStructuralEdit("addSectorWindow");
 		string caller = format("Building::addSectorWindow({}, {}, {}, {})", layerIndex, y, x, cellsWide);
 
 		validateBounds(caller, x, y, cellsWide, 1);
@@ -1950,6 +1961,7 @@ namespace core
 	Building::CreateBulkheadDoorResult Building::addSectorBulkheadDoor(uint32_t layerIndex, uint32_t y, uint32_t x,
 		int side, CreateBulkheadDoorOptions const& options)
 	{
+		beginStructuralEdit("addSectorBulkheadDoor");
 		ASSERT_SIDE_OK(side);
 
 		string caller = format("Building::addSectorBulkheadDoor({}, {}, {}, {})", layerIndex, y, x, side);
@@ -2060,6 +2072,7 @@ namespace core
 
 	Building::CreateObjectResult Building::addSectorLightSwitch(uint32_t sectorIndex, uint32_t xOffset)
 	{
+		beginStructuralEdit("addSectorLightSwitch");
 		auto sector = _getSector(sectorIndex);
 		auto ctrl = _createSectorButton("Lightswitch", sector, xOffset, 0, CORE_BUTTON_F_AUTO_REENABLE);
 
@@ -2078,6 +2091,7 @@ namespace core
 
 	void Building::addSectorWalkway(uint32_t sectorIndex, uint32_t deckIndex, uint32_t xOffset)
 	{
+		beginStructuralEdit("addSectorWalkway");
 		string caller = format("Building::addSectorWalkway({}, {}, {})", sectorIndex, deckIndex, xOffset);
 
 		validateObjectAllowedInSector(caller, SectorObjectType::Walkway, sectorIndex);
@@ -2102,6 +2116,7 @@ namespace core
 
 	void Building::addSectorMarker(uint32_t sectorIndex, uint32_t deckIndex, float xOffset, uint32_t* vertexIdentifier)
 	{
+		beginStructuralEdit("addSectorMarker");
 		string caller = format("Building::addSectorMarker({}, {}, {})", sectorIndex, deckIndex, xOffset);
 
 		auto sector = _getSector(sectorIndex);
@@ -2122,6 +2137,7 @@ namespace core
 
 	Building::CreateForceBridgeResult Building::addSectorForceBridge(uint32_t sectorIndex, uint32_t deckIndex, uint32_t xOffset, CreateForceBridgeOptions const& options)
 	{
+		beginStructuralEdit("addSectorForceBridge");
 		ASSERT_SIDE_OK(options.fromSide);
 
 		string caller = format("Building::addSectorForceBridge({}, {}, {}, {}, {}, {})", sectorIndex, deckIndex, xOffset, options.width, options.fromSide, options.startExtended);
@@ -2234,6 +2250,7 @@ namespace core
 
 	Building::CreateLadderResult Building::addSectorLadder(uint32_t sectorIndex, uint32_t deckIndex, uint32_t xOffset, CreateLadderOptions const& options)
 	{
+		beginStructuralEdit("addSectorLadder");
 		auto sector = _getSector(sectorIndex);
 		auto layerIndex = sector->getLayerIndex();
 
@@ -2342,6 +2359,7 @@ namespace core
 
 	Building::CreatePlatformLiftResult Building::addSectorPlatformLift(uint32_t sectorIndex, uint32_t deckIndex, uint32_t xOffset, CreateLiftOptions const& options)
 	{
+		beginStructuralEdit("addSectorPlatformLift");
 		auto sector = _getSector(sectorIndex);
 		auto layerIndex = sector->getLayerIndex();
 		auto layer = getLayer(layerIndex);
@@ -2494,29 +2512,414 @@ namespace core
 		return liftRes;
 	}
 
+	void Building::beginStructuralEdit(string const& operation)
+	{
+		if (mBuildFinished && !mSimulationPaused)
+		{
+			throw BuildingException(this, format(
+				"{} is a structural edit and requires pauseSimulation() before it can run", operation));
+		}
+		mTopologyDirty = true;
+		mTopologyValid = false;
+		mTopologyDiagnostic = "Traversal topology has unvalidated structural edits";
+	}
+
+	void Building::publishTopologyEvent(SimulationEventType type, string diagnostic)
+	{
+		SimulationEvent event;
+		event.sequence = mNextEventSequence++;
+		event.tick = mSimulationTick;
+		event.type = type;
+		event.phase = SimulationPhase::None;
+		event.diagnostic = std::move(diagnostic);
+		mEvents.push_back(std::move(event));
+	}
+
+	void Building::cancelTraversalForTopologyRebuild(Agent& agent)
+	{
+		if (agent.mTraversalTask)
+		{
+			// A threshold crossing which has not committed still belongs to its source
+			// sector. Put it back on that safe boundary before releasing its permit.
+			if ((agent.mState == Agent::State::TraversingEdge
+				|| agent.mState == Agent::State::AwaitingTraversalCommit)
+				&& agent.mTraversalTask->sourceVertex && agent.getSector())
+			{
+				auto source = agent.mTraversalTask->sourceVertex->getPosition();
+				agent.setPosition({ const_cast<Sector*>(agent.getSector()),
+					source - agent.getSector()->getPosition() });
+			}
+			cancelTraversal(agent.mTraversalTask->request, agent.mTraversalTask->permit, false);
+			releaseTraversal(agent.mTraversalTask->request, agent.mTraversalTask->permit);
+			agent.mTraversalTask.reset();
+			agent.mTraversalLocalGoal.reset();
+		}
+		agent.mPath.path.reset();
+		agent.mPath.targetNode = 0;
+		agent.mState = Agent::State::Idle;
+	}
+
+	void Building::pauseSimulation()
+	{
+		if (mSimulationPaused) return;
+		if (mCurrentPhase != SimulationPhase::None)
+			throw BuildingException(this, "Simulation cannot be paused from inside a simulation phase");
+
+		mSimulationPaused = true;
+		mAccumulatedTime = 0.0;
+		mPausedPathIntents.clear();
+		for (auto const& [id, agent] : mAgents.entries())
+		{
+			if (agent->mPath.path && !agent->mPath.path->nodes.empty())
+			{
+				auto destination = agent->mPath.path->nodes.back().targetVertex;
+				if (destination && destination->getSector())
+					mPausedPathIntents[id] = {
+						SectorId{ (uint64_t)destination->getSector()->getIndex() + 1 },
+						destination->getPosition(), agent->mState != Agent::State::Idle };
+			}
+			cancelTraversalForTopologyRebuild(*agent);
+		}
+
+		// Defensive cleanup also handles requests whose owning Agent was removed or
+		// whose task was already detached. Typed IDs are never recycled.
+		vector<TraversalRequestId> orphaned;
+		for (auto const& [id, request] : mTraversalRequests.entries())
+		{
+			(void)request;
+			orphaned.push_back(id);
+		}
+		for (auto id : orphaned)
+		{
+			auto request = mTraversalRequests.find(id);
+			auto permit = request ? request->mPermit : TraversalPermitId{};
+			cancelTraversal(id, permit, false);
+			releaseTraversal(id, permit);
+		}
+		publishTopologyEvent(SimulationEventType::SimulationPaused);
+	}
+
+	void Building::validateTraversalTopology(Graph const& graph) const
+	{
+		auto validSector = [&](SectorId id) { return id && id.value <= mSectors.size(); };
+		auto require = [&](bool condition, string const& diagnostic)
+		{
+			if (!condition) throw BuildingException(this, diagnostic);
+		};
+		require(mTraversalRequests.entries().empty() && mTraversalPermits.entries().empty(),
+			"Traversal requests and permits must be drained before topology replacement");
+
+		for (auto const& edge : graph.getEdges())
+		{
+			auto id = edge->getTraversalResourceId();
+			bool requiresAuthority = edge->getType() == EdgeType::Door
+				|| edge->getType() == EdgeType::BulkheadDoor || edge->getType() == EdgeType::Window
+				|| edge->getType() == EdgeType::ForceBridge || edge->getType() == EdgeType::Ladder
+				|| edge->getType() == EdgeType::LadderMount || edge->getType() == EdgeType::Lift
+				|| edge->getType() == EdgeType::LiftMount || edge->getType() == EdgeType::Shuttle
+				|| edge->getType() == EdgeType::ShuttleMount;
+			require(!requiresAuthority || id,
+				format("Edge {} ({}) has no traversal authority", edge->getId(), edge->getDescription()));
+			if (!id) continue; // Explicit immediate-permit policy.
+			auto resource = mTraversalResources.find(id);
+			require(resource != nullptr, format("Edge {} references removed traversal resource {}",
+				edge->getId(), id.value));
+			require(!edge->getVertex(0)->getController() && !edge->getVertex(1)->getController(),
+				format("Edge {} has both replacement and legacy traversal authorities", edge->getId()));
+			bool compatible = edge->getType() == EdgeType::Door || edge->getType() == EdgeType::BulkheadDoor
+				? resource->mDoor != nullptr
+				: edge->getType() == EdgeType::Window ? resource->mWindow != nullptr
+				: edge->getType() == EdgeType::ForceBridge ? resource->mForceBridge != nullptr
+				: edge->getType() == EdgeType::Ladder || edge->getType() == EdgeType::LadderMount
+					? resource->mLadder != nullptr
+				: edge->getType() == EdgeType::Staircase || edge->getType() == EdgeType::StaircaseMount
+					? resource->mStaircase != nullptr
+				: edge->getType() == EdgeType::Lift || edge->getType() == EdgeType::LiftMount
+					? resource->mLift != nullptr
+				: edge->getType() == EdgeType::Shuttle || edge->getType() == EdgeType::ShuttleMount
+					? resource->mShuttle != nullptr : true;
+			require(compatible, format("Edge {} references an incompatible traversal resource {}",
+				edge->getId(), id.value));
+		}
+
+		for (auto const& [id, resourcePtr] : mTraversalResources.entries())
+		{
+			auto const& resource = *resourcePtr;
+			if (resource.mDoor)
+			{
+				require(resource.mDoor->getTraversalResourceId() == id,
+					format("Door resource {} is not the door's sole configured authority", id.value));
+				require(!resource.mCrossingOwners.empty()
+					&& resource.mCrossingOwners.size() <= resource.mDoor->getCellsWide(),
+					format("Door resource {} has invalid crossing-lane geometry", id.value));
+				set<SectorId> approachSectors;
+				for (auto const& lane : resource.mQueueLanes)
+				{
+					if (!lane.sector) continue;
+					require(validSector(lane.sector) && approachSectors.insert(lane.sector).second,
+						format("Door resource {} has invalid or duplicate approach sectors", id.value));
+					require(lane.positions.size() == lane.positionOwners.size() && !lane.positions.empty(),
+						format("Door resource {} has invalid queue-position storage", id.value));
+					auto sector = mSectors[(size_t)lane.sector.value - 1];
+					for (auto const& position : lane.positions)
+						require(isfinite(position.x) && isfinite(position.y)
+							&& position.x - CORE_AGENT_MAX_WIDTH * 0.5f >= sector->getCellX0() - 0.001f
+							&& position.x + CORE_AGENT_MAX_WIDTH * 0.5f <= sector->getCellX1() + 1.001f
+							&& position.y >= sector->getCellY0() - 0.001f
+							&& position.y + CORE_AGENT_MAX_HEIGHT <= sector->getCellY1() + 1.001f,
+							format("Door resource {} has a queue position outside its approach sector", id.value));
+				}
+			}
+			if (resource.mWindow)
+				require(resource.mWindow->getTraversalResourceId() == id,
+					format("Window resource {} is not the window's configured authority", id.value));
+			if (resource.mLadder)
+				require(resource.mLadder->getTraversalResourceId() == id,
+					format("Ladder resource {} is not the ladder's configured authority", id.value));
+			if (resource.mStaircase)
+				require(resource.mStaircase->getTraversalResourceId() == id,
+					format("Staircase resource {} is not the staircase's configured authority", id.value));
+			if (resource.mForceBridge)
+				require(resource.mForceBridge->getTraversalResourceId() == id,
+					format("Force-bridge resource {} is not the bridge's configured authority", id.value));
+			if (resource.mLift)
+				require(resource.mLift->getTraversalResourceId() == id,
+					format("Lift resource {} is not the lift's configured authority", id.value));
+			if (resource.mShuttle)
+				require(resource.mShuttle->getTraversalResourceId() == id,
+					format("Shuttle resource {} is not the shuttle's configured authority", id.value));
+
+			if (resource.mCapacity)
+			{
+				require(resource.mCapacityPositions.size() == resource.mCapacity
+					&& resource.mOccupants.size() == resource.mCapacity
+					&& resource.mAdmissionReservations.size() == resource.mCapacity,
+					format("Traversal resource {} has inconsistent capacity positions", id.value));
+				for (uint32_t i = 0; i < resource.mCapacityPositions.size(); ++i)
+				{
+					auto const& position = resource.mCapacityPositions[i];
+					require(isfinite(position.x) && isfinite(position.y),
+						format("Traversal resource {} has a non-finite capacity position", id.value));
+					require(!resource.mOccupants[i] || mAgents.find(resource.mOccupants[i]),
+						format("Traversal resource {} contains a removed manifest occupant", id.value));
+					require(!resource.mAdmissionReservations[i]
+						|| mTraversalRequests.find(resource.mAdmissionReservations[i]),
+						format("Traversal resource {} contains a stale admission reservation", id.value));
+					for (uint32_t j = 0; j < i; ++j)
+						require(position.distanceTo(resource.mCapacityPositions[j]) > 0.001f,
+							format("Traversal resource {} has overlapping capacity positions", id.value));
+				}
+			}
+			for (auto requestId : resource.mAdmissionQueue)
+				require(mTraversalRequests.find(requestId) != nullptr,
+					format("Traversal resource {} contains a stale admission queue entry", id.value));
+			for (auto owner : resource.mVirtualBoundaryOwners)
+				require(!owner || mTraversalRequests.find(owner),
+					format("Traversal resource {} contains a stale boundary owner", id.value));
+			for (auto const& [leaseId, lease] : resource.mOpenLeases)
+			{
+				(void)leaseId;
+				require(lease.kind == DoorOpenLeaseKind::ExternalHoldOpen || (lease.request
+					&& mTraversalRequests.find(lease.request)),
+					format("Traversal resource {} contains a stale open lease", id.value));
+			}
+
+			for (auto controlId : resource.mControls)
+			{
+				auto control = mInteractionPoints.find(controlId);
+				require(control != nullptr, format("Traversal resource {} references removed control {}",
+					id.value, controlId.value));
+				auto expected = resource.mLiftCoordinator ? resource.mLiftCoordinator : id;
+				require(any_of(control->mBindings.begin(), control->mBindings.end(), [&](auto const& binding)
+					{ return binding.command.traversalResource == expected; }),
+					format("Control {} does not target traversal resource {}", controlId.value, expected.value));
+				if (resource.mDoor)
+					require(any_of(resource.mQueueLanes.begin(), resource.mQueueLanes.end(),
+						[&](auto const& lane) { return lane.sector == control->mSector; }),
+						format("Control {} is unreachable from resource {} approaches", controlId.value, id.value));
+				if (resource.mLift || resource.mShuttle)
+					require(control->mSector == resource.mLiftSector,
+						format("Transport selector {} is outside resource {}", controlId.value, id.value));
+			}
+
+			if (resource.mLift || resource.mShuttle)
+			{
+				require(resource.mLiftStops.size() >= 2 && validSector(resource.mLiftSector),
+					format("Transport resource {} has invalid stops or transit sector", id.value));
+				for (uint32_t stop = 0; stop < resource.mLiftStops.size(); ++stop)
+				{
+					auto const& value = resource.mLiftStops[stop];
+					require(validSector(value.locationSector) && isfinite(value.globalPosition)
+						&& (stop == 0 || value.globalPosition > resource.mLiftStops[stop - 1].globalPosition),
+						format("Transport resource {} has invalid stop {} geometry", id.value, stop));
+					if (!resource.mOpenPlatformLift)
+					{
+						auto landing = mTraversalResources.find(value.landingResource);
+						require(landing && landing->mDoor && landing->mLiftCoordinator == id
+							&& landing->mLiftStopIndex == stop,
+							format("Transport resource {} has invalid landing-door mapping at stop {}", id.value, stop));
+					}
+					auto call = mInteractionPoints.find(value.callControl);
+					require(call && call->mSector == value.locationSector
+						&& any_of(call->mBindings.begin(), call->mBindings.end(), [&](auto const& binding)
+							{ return binding.command.traversalResource == id
+								&& binding.command.stopIndex == stop; }),
+						format("Transport resource {} has an invalid landing control at stop {}", id.value, stop));
+				}
+				if (resource.mShuttle)
+					for (auto const& door : resource.mShuttleDoors)
+					{
+						auto landing = mTraversalResources.find(door.landingResource);
+						require(door.stopIndex < resource.mLiftStops.size()
+							&& door.carriageIndex < resource.mShuttleCarriages.size()
+							&& validSector(door.locationSector) && landing && landing->mDoor
+							&& landing->mLiftCoordinator == id && landing->mLiftStopIndex == door.stopIndex,
+							format("Shuttle resource {} has an invalid carriage-door mapping", id.value));
+					}
+			}
+		}
+
+		for (auto const& [pointId, point] : mInteractionPoints.entries())
+		{
+			require(validSector(point->mSector),
+				format("Interaction point {} has an invalid sector", pointId.value));
+			for (auto const& binding : point->mBindings)
+				if (binding.command.type != DeviceCommandType::SetSectorLights)
+					require(mTraversalResources.find(binding.command.traversalResource) != nullptr,
+						format("Interaction point {} targets removed traversal resource {}",
+							pointId.value, binding.command.traversalResource.value));
+		}
+	}
+
+	void Building::restorePausedPathIntents()
+	{
+		for (auto const& [id, intent] : mPausedPathIntents)
+		{
+			auto agent = mAgents.find(id);
+			if (!agent || !agent->getSector() || !intent.destinationSector
+				|| intent.destinationSector.value > mSectors.size()) continue;
+			try
+			{
+				auto source = mGraph->getClosestVertexInSector(agent->getSector(), agent->getGlobalPosition());
+				auto destinationSector = mSectors[(size_t)intent.destinationSector.value - 1];
+				auto destination = mGraph->getClosestVertexInSector(
+					destinationSector.get(), intent.destinationPosition);
+				auto path = mGraph->calculatePath(agent, source, destination);
+				if (path && !path->nodes.empty()) agent->setPath(std::move(path), intent.wasPathing);
+			}
+			catch (Exception const&)
+			{
+				// The destination was structurally removed or disconnected. The Agent
+				// remains safely idle; this does not invalidate otherwise usable topology.
+			}
+		}
+		mPausedPathIntents.clear();
+	}
+
 	void Building::buildGraph()
 	{
 		mVertexControllers = mGraph->build();
 		mGraph->validate();
+		validateTraversalTopology(*mGraph);
+	}
+
+	bool Building::rebuildTraversalTopology()
+	{
+		if (!mBuildFinished)
+		{
+			mTopologyDiagnostic = "finishBuild() must establish the initial topology";
+			return false;
+		}
+		if (!mSimulationPaused)
+		{
+			mTopologyDiagnostic = "Traversal topology can only be rebuilt while the simulation is paused";
+			return false;
+		}
+
+		auto candidate = make_shared<Graph>(this);
+		try
+		{
+			auto controllers = candidate->build();
+			candidate->validate();
+			validateTraversalTopology(*candidate);
+			mGraph = std::move(candidate);
+			mVertexControllers = std::move(controllers);
+			mTopologyDirty = false;
+			mTopologyValid = true;
+			mTopologyDiagnostic.clear();
+			++mTopologyGeneration;
+			restorePausedPathIntents();
+			auto const& graphLog = mGraph->getBuildLog();
+			mBuildLog.insert(mBuildLog.end(), graphLog.begin(), graphLog.end());
+			publishTopologyEvent(SimulationEventType::TopologyRebuilt);
+			return true;
+		}
+		catch (Exception const& error)
+		{
+			mTopologyDirty = true;
+			mTopologyValid = false;
+			mTopologyDiagnostic = error.getMessage();
+			auto const& graphLog = candidate->getBuildLog();
+			mBuildLog.insert(mBuildLog.end(), graphLog.begin(), graphLog.end());
+			mBuildLog.push_back({ "Topology rebuild", ~0u, LogLevel::Error, mTopologyDiagnostic });
+			publishTopologyEvent(SimulationEventType::TopologyRebuildFailed, mTopologyDiagnostic);
+			return false;
+		}
+		catch (exception const& error)
+		{
+			mTopologyDirty = true;
+			mTopologyValid = false;
+			mTopologyDiagnostic = error.what();
+			mBuildLog.push_back({ "Topology rebuild", ~0u, LogLevel::Error, mTopologyDiagnostic });
+			publishTopologyEvent(SimulationEventType::TopologyRebuildFailed, mTopologyDiagnostic);
+			return false;
+		}
+	}
+
+	bool Building::resumeSimulation()
+	{
+		if (!mSimulationPaused) return true;
+		if (mTopologyDirty || !mTopologyValid)
+		{
+			if (mTopologyDiagnostic.empty())
+				mTopologyDiagnostic = "Traversal topology contains unvalidated structural edits";
+			return false;
+		}
+		restorePausedPathIntents();
+		mSimulationPaused = false;
+		mAccumulatedTime = 0.0;
+		publishTopologyEvent(SimulationEventType::SimulationResumed);
+		return true;
 	}
 
 	void Building::finishBuild()
 	{
+		if (mBuildFinished)
+		{
+			if (!mSimulationPaused)
+				throw BuildingException(this, "A finished building must be paused before rebuilding topology");
+			if (!rebuildTraversalTopology()) throw BuildingException(this, mTopologyDiagnostic);
+			return;
+		}
 		try
 		{
 			buildGraph();
+			mBuildFinished = true;
+			mTopologyDirty = false;
+			mTopologyValid = true;
+			mTopologyDiagnostic.clear();
+			++mTopologyGeneration;
 		}
-		catch(BuildingException& e)
+		catch(Exception const& e)
 		{
 			auto const& graphLog = mGraph->getBuildLog();
-
 			mBuildLog.insert(mBuildLog.end(), graphLog.begin(), graphLog.end());
-
-			throw e;
+			mTopologyValid = false;
+			mTopologyDiagnostic = e.getMessage();
+			throw;
 		}
 
 		auto const& graphLog = mGraph->getBuildLog();
-
 		mBuildLog.insert(mBuildLog.end(), graphLog.begin(), graphLog.end());
 	}
 
@@ -5161,13 +5564,16 @@ namespace core
 		return true;
 	}
 
-	void Building::cancelTraversal(TraversalRequestId requestId, TraversalPermitId permitId)
+	void Building::cancelTraversal(TraversalRequestId requestId, TraversalPermitId permitId,
+		bool requestSafeTransportExit)
 	{
 		if (auto request = mTraversalRequests.find(requestId))
 		{
-			// Route cancellation is not permission to leave a moving car. Convert it
-			// into a deterministic disembark request at the next aligned stop.
-			requestLiftPassengerSafeExit(request->mOwner, TraversalFailureReason::None);
+			// Ordinary route cancellation is not permission to leave a moving car.
+			// A topology rebuild is different: the manifest survives and will be
+			// rebound to the replacement graph, so it must not invent an exit demand.
+			if (requestSafeTransportExit)
+				requestLiftPassengerSafeExit(request->mOwner, TraversalFailureReason::None);
 			if (auto resource = mTraversalResources.find(request->mResource);
 				resource && resource->mExtensible && resource->mExtensionRequestLeases.erase(requestId))
 				resource->mExtensible->releaseExtensionLease();
@@ -5196,6 +5602,8 @@ namespace core
 					if (find(resource->mOccupants.begin(), resource->mOccupants.end(), request->mOwner)
 						== resource->mOccupants.end()) releaseLiftAdmission(requestId, *resource);
 				}
+				else if (resource->mLift || resource->mShuttle)
+					releaseLiftAdmission(requestId, *resource);
 				else if (resource->mLadder || resource->mStaircase)
 				{
 					releaseLadderAdmission(requestId, *resource);
@@ -5262,6 +5670,8 @@ namespace core
 					resource->mVirtualBoardingStarted.erase(requestId);
 					releaseLiftAdmission(requestId, *resource);
 				}
+				else if (resource->mLift || resource->mShuttle)
+					releaseLiftAdmission(requestId, *resource);
 				else if (resource->mLadder || resource->mStaircase)
 				{
 					releaseLadderAdmission(requestId, *resource);
@@ -5477,6 +5887,16 @@ namespace core
 		{
 			return { false, found.diagnostic };
 		}
+		bool structural = any_of(mTraversalResources.entries().begin(), mTraversalResources.entries().end(),
+			[id](auto const& entry)
+			{
+				auto const& resource = *entry.second;
+				if (find(resource.mControls.begin(), resource.mControls.end(), id) != resource.mControls.end()) return true;
+				if (resource.mLiftSelector == id) return true;
+				return any_of(resource.mLiftStops.begin(), resource.mLiftStops.end(),
+					[id](auto const& stop) { return stop.callControl == id; });
+			});
+		if (structural) beginStructuralEdit("removeInteractionPoint");
 		vector<InteractionRequestId> requests;
 		for (auto const& [requestId, request] : mInteractionRequests.entries())
 		{
@@ -5724,6 +6144,7 @@ namespace core
 	TraversalResourceId Building::createDoorTraversalResource(string const& name,
 		shared_ptr<Door> door, DoorActivationMode mode, float holdOpenSeconds)
 	{
+		beginStructuralEdit("createDoorTraversalResource");
 		if (!door || holdOpenSeconds < 0.0f)
 		{
 			throw invalid_argument("A door traversal resource requires a Door and non-negative hold time");
@@ -5745,6 +6166,7 @@ namespace core
 	TraversalResourceId Building::createWindowTraversalResource(string const& name,
 		shared_ptr<Window> window)
 	{
+		beginStructuralEdit("createWindowTraversalResource");
 		if (!window) throw invalid_argument("A window traversal resource requires a Window");
 		auto id = mTraversalResources.add(unique_ptr<TraversalResource>(
 			new TraversalResource(name, std::move(window))));
@@ -5761,6 +6183,7 @@ namespace core
 		shared_ptr<Ladder> ladder, SectorId ladderSector, float agentSpacing,
 		uint32_t directionalBatchLimit)
 	{
+		beginStructuralEdit("createLadderTraversalResource");
 		if (!ladder || !ladderSector || ladderSector.value > mSectors.size()
 			|| agentSpacing <= 0.0f || directionalBatchLimit == 0)
 		{
@@ -5794,6 +6217,7 @@ namespace core
 		shared_ptr<Lift> lift, SectorId liftSector, vector<LiftStop> stops, uint32_t capacity,
 		float minimumDwellSeconds, float maximumBoardingSeconds)
 	{
+		beginStructuralEdit("createLiftTraversalResource");
 		if (!lift || !liftSector || liftSector.value > mSectors.size() || stops.size() < 2
 			|| capacity == 0 || minimumDwellSeconds < 0.0f || maximumBoardingSeconds < minimumDwellSeconds)
 		{
@@ -5837,6 +6261,7 @@ namespace core
 		shared_ptr<Lift> lift, SectorId locationSector, vector<LiftStop> stops, uint32_t capacity,
 		float minimumDwellSeconds, float maximumBoardingSeconds)
 	{
+		beginStructuralEdit("createOpenPlatformLiftTraversalResource");
 		if (!lift || !locationSector || locationSector.value > mSectors.size() || stops.size() < 2
 			|| capacity == 0 || minimumDwellSeconds < 0.0f
 			|| maximumBoardingSeconds < minimumDwellSeconds)
@@ -5875,6 +6300,7 @@ namespace core
 		shared_ptr<Shuttle> shuttle, SectorId shuttleSector, vector<LiftStop> stops,
 		uint32_t capacity, float minimumDwellSeconds, float maximumBoardingSeconds)
 	{
+		beginStructuralEdit("createShuttleTraversalResource");
 		if (!shuttle || shuttle->getNumCars() == 0 || !shuttleSector
 			|| shuttleSector.value > mSectors.size() || stops.size() < 2 || capacity == 0
 			|| minimumDwellSeconds < 0.0f || maximumBoardingSeconds < minimumDwellSeconds)
@@ -5925,6 +6351,7 @@ namespace core
 		shared_ptr<Staircase> staircase, SectorId staircaseSector, uint32_t capacity,
 		uint32_t directionalBatchLimit)
 	{
+		beginStructuralEdit("createStaircaseTraversalResource");
 		if (!staircase || !staircaseSector || staircaseSector.value > mSectors.size()
 			|| capacity == 0 || directionalBatchLimit == 0)
 		{
@@ -5952,6 +6379,7 @@ namespace core
 	TraversalResourceId Building::createForceBridgeTraversalResource(string const& name,
 		shared_ptr<ForceBridge> forceBridge)
 	{
+		beginStructuralEdit("createForceBridgeTraversalResource");
 		if (!forceBridge) throw invalid_argument("A force bridge traversal resource requires a ForceBridge");
 		auto id = mTraversalResources.add(unique_ptr<TraversalResource>(new TraversalResource(
 			name, forceBridge, forceBridge->isExtensible()
@@ -5968,6 +6396,7 @@ namespace core
 	bool Building::configureDoorQueueLane(TraversalResourceId resourceId, SectorId sectorId,
 		Vector2 origin, Vector2 direction, float extent)
 	{
+		beginStructuralEdit("configureDoorQueueLane");
 		auto resource = mTraversalResources.find(resourceId);
 		if (!resource || !resource->mDoor || !sectorId || sectorId.value > mSectors.size()
 			|| extent < 0.0f || direction.length() < 0.001f)
@@ -6038,6 +6467,7 @@ namespace core
 
 	bool Building::configureDoorCrossingLanes(TraversalResourceId resourceId, uint32_t laneCount)
 	{
+		beginStructuralEdit("configureDoorCrossingLanes");
 		auto resource = mTraversalResources.find(resourceId);
 		if (!resource || !resource->mDoor || laneCount == 0)
 		{
@@ -6142,6 +6572,7 @@ namespace core
 
 	bool Building::addTraversalControl(TraversalResourceId resourceId, InteractionPointId controlId)
 	{
+		beginStructuralEdit("addTraversalControl");
 		auto resource = mTraversalResources.find(resourceId);
 		auto control = mInteractionPoints.find(controlId);
 		if (!resource || (!resource->mDoor && !resource->mExtensible) || !control)
@@ -6178,6 +6609,28 @@ namespace core
 		{
 			return { false, found.diagnostic };
 		}
+		bool structural = found.entity->mDoor || found.entity->mWindow || found.entity->mLadder
+			|| found.entity->mForceBridge || found.entity->mLift || found.entity->mShuttle
+			|| found.entity->mStaircase;
+		if (!structural && mGraph)
+			structural = any_of(mGraph->getEdges().begin(), mGraph->getEdges().end(),
+				[id](auto const& edge) { return edge->getTraversalResourceId() == id; });
+		if (structural) beginStructuralEdit("removeTraversalResource");
+		auto hasOwner = [](auto const& values)
+			{ return any_of(values.begin(), values.end(), [](auto value) { return (bool)value; }); };
+		bool owned = hasOwner(found.entity->mOccupants)
+			|| hasOwner(found.entity->mAdmissionReservations)
+			|| hasOwner(found.entity->mCrossingOwners)
+			|| hasOwner(found.entity->mVirtualBoundaryOwners)
+			|| !found.entity->mAdmissionQueue.empty() || !found.entity->mOpenLeases.empty()
+			|| !found.entity->mExtensionRequestLeases.empty()
+			|| !found.entity->mExtensionOccupantLeases.empty()
+			|| any_of(found.entity->mQueueLanes.begin(), found.entity->mQueueLanes.end(),
+				[](auto const& lane) { return !lane.queue.empty(); })
+			|| any_of(found.entity->mLiftStopRequestOwners.begin(), found.entity->mLiftStopRequestOwners.end(),
+				[](auto const& owners) { return !owners.empty(); });
+		if (owned)
+			return { false, format("TraversalResource handle {} still has active ownership and cannot be replaced safely", id.value) };
 		auto snapshot = makeTraversalResourceSnapshot(id, *found.entity);
 		mTraversalResources.remove(id);
 
@@ -6268,6 +6721,11 @@ namespace core
 	{
 		SimulationSnapshot result;
 		result.tick = mSimulationTick;
+		result.paused = mSimulationPaused;
+		result.topologyDirty = mTopologyDirty;
+		result.topologyValid = mTopologyValid;
+		result.topologyGeneration = mTopologyGeneration;
+		result.topologyDiagnostic = mTopologyDiagnostic;
 		result.agents.reserve(mAgents.entries().size());
 		result.interactionPoints.reserve(mInteractionPoints.entries().size());
 		result.interactionRequests.reserve(mInteractionRequests.entries().size());
@@ -6956,6 +7414,7 @@ namespace core
 
 	void Building::advanceTick()
 	{
+		if (mSimulationPaused) return;
 		auto before = getSimulationSnapshot();
 		++mSimulationTick;
 
@@ -6979,6 +7438,7 @@ namespace core
 
 	void Building::update(float elapsedSeconds)
 	{
+		if (mSimulationPaused) return;
 		if (elapsedSeconds <= 0.0f)
 		{
 			return;

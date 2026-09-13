@@ -243,6 +243,11 @@ namespace core
 	struct SimulationSnapshot
 	{
 		uint64_t tick{ 0 };
+		bool paused{ false };
+		bool topologyDirty{ false };
+		bool topologyValid{ false };
+		uint64_t topologyGeneration{ 0 };
+		std::string topologyDiagnostic;
 		std::vector<AgentSnapshot> agents;
 		std::vector<InteractionPointSnapshot> interactionPoints;
 		std::vector<InteractionRequestSnapshot> interactionRequests;
@@ -285,7 +290,11 @@ namespace core
 		TraversalRequestRemoved,
 		TraversalPermitAdded,
 		TraversalPermitChanged,
-		TraversalPermitRemoved
+		TraversalPermitRemoved,
+		SimulationPaused,
+		TopologyRebuilt,
+		TopologyRebuildFailed,
+		SimulationResumed
 	};
 
 	// Events contain values only.  They are collected during a tick and become
@@ -305,6 +314,7 @@ namespace core
 		TraversalResourceSnapshot traversalResource;
 		TraversalRequestSnapshot traversalRequest;
 		TraversalPermitSnapshot traversalPermit;
+		std::string diagnostic;
 	};
 
 } // core

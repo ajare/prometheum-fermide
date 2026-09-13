@@ -13,14 +13,14 @@
 - 20 — Migrate open platform lifts
 - 21 — Migrate bulkhead doors and window thresholds
 
-**Status:** ready-for-agent
+**Status:** implemented
 
-- [ ] Structural edits are rejected while active simulation ticks continue.
-- [ ] Pausing initiates deterministic cancellation or safe completion for affected traversal tasks.
-- [ ] Queue tickets, position reservations, permits, leases, manifests, and stop-request ownership are cleaned before replacement.
-- [ ] Rebuilt edges reference exactly one valid traversal authority.
-- [ ] Queue geometry, controls, capacity positions, stops, and transport doors are revalidated.
-- [ ] Removed handles fail safely and cannot resolve to newly created entities accidentally.
-- [ ] Unaffected agents and resources preserve their state.
-- [ ] Simulation can resume and complete new paths through the rebuilt topology.
-- [ ] Validation failure leaves the simulation paused with a useful diagnostic rather than a partially active graph.
+- [x] Structural edits are rejected while active simulation ticks continue.
+- [x] Pausing initiates deterministic cancellation or safe completion for affected traversal tasks.
+- [x] Queue tickets, position reservations, permits, leases, manifests, and stop-request ownership are cleaned before replacement.
+- [x] Rebuilt edges reference exactly one valid traversal authority.
+- [x] Queue geometry, controls, capacity positions, stops, and transport doors are revalidated.
+- [x] Removed handles fail safely and cannot resolve to newly created entities accidentally.
+- [x] Unaffected agents and resources preserve their state.
+- [x] Simulation can resume and complete new paths through the rebuilt topology.
+- [x] Validation failure leaves the simulation paused with a useful diagnostic rather than a partially active graph.
