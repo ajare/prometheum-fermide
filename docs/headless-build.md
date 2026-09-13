@@ -1,6 +1,6 @@
 # Headless simulation smoke scenario
 
-The `headless` target builds the simulation core and deterministic smoke scenarios without SDL, ImGui, OpenGL, rendering, or audio dependencies. The scenarios route agents between marker vertices, verify ordinary request/permit/commit behavior, denial and cancellation, exercise manual, automatic, remote-controlled, unavailable, fair two-sided queued, and wide concurrent doors, verify scoped open leases, sensor-driven reopening, graceful deactivation, queue cancellation, and physical waiting separation, advance buildings in fixed ticks, and exit unsuccessfully if an invariant fails or two identical runs produce different snapshots or events.
+The `core` target builds the shared simulation as `phosphorus-fluoride-core.lib`. Both the `headless` and `imgui` projects reference that static library, so simulation sources are compiled once per configuration instead of being duplicated in each executable. The `headless` target builds deterministic smoke scenarios without SDL, ImGui, OpenGL, rendering, or audio dependencies. The scenarios route agents between marker vertices, verify ordinary request/permit/commit behavior, denial and cancellation, exercise manual, automatic, remote-controlled, unavailable, fair two-sided queued, and wide concurrent doors, verify scoped open leases, sensor-driven reopening, graceful deactivation, queue cancellation, and physical waiting separation, advance buildings in fixed ticks, and exit unsuccessfully if an invariant fails or two identical runs produce different snapshots or events.
 
 ## Deterministic simulation API
 
@@ -42,11 +42,11 @@ msbuild build\headless.vcxproj /m /p:Configuration=Release /p:Platform=x64
 bin\x64\Release\phosphorus-fluoride-headless.exe
 ```
 
-A successful run prints a `PASS` line and returns exit code 0. A failed assertion prints a `FAIL` line and returns a nonzero exit code.
+Building `headless.vcxproj` automatically builds its `core.vcxproj` project reference. A successful run prints a `PASS` line and returns exit code 0. A failed assertion prints a `FAIL` line and returns a nonzero exit code.
 
 ## Build the complete solution
 
-The existing graphical application and headless target are both in `build\imgui.sln`:
+The shared static library, graphical application, and headless target are all in `build\imgui.sln`:
 
 ```bat
 msbuild build\imgui.sln /m /p:Configuration=Debug /p:Platform=x64
