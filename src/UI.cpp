@@ -68,6 +68,7 @@ void setSelectionMode(UISettings::SelectionMode mode);
 namespace
 {
 	constexpr float PaletteSlotSize{ 36.0f };
+	constexpr float PaletteSlotWidth{ 64.0f };
 	constexpr float PaletteInset{ 16.0f };
 	constexpr float PaletteGap{ 6.0f };
 	constexpr float PalettePadding{ 6.0f };
@@ -117,6 +118,39 @@ namespace
 	};
 
 	PaletteDropState gPegman;
+
+	enum class PaintTool
+	{
+		None,
+		Room,
+		Corridor
+	};
+
+	struct PaintState
+	{
+		PaintTool tool{ PaintTool::None };
+		bool dragging{ false };
+		uint32_t layer{ CORE_LAYER_FORE };
+		int anchorX{ 0 };
+		int anchorY{ 0 };
+	};
+
+	struct PaintRectangle
+	{
+		bool valid{ false };
+		uint32_t x{ 0 };
+		uint32_t y{ 0 };
+		uint32_t width{ 0 };
+		uint32_t height{ 0 };
+	};
+
+	PaintState gPaint;
+
+	void resetPaint(bool clearTool = true)
+	{
+		gPaint.dragging = false;
+		if (clearTool) gPaint.tool = PaintTool::None;
+	}
 
 	bool pointInRect(ImVec2 point, ImVec2 min, ImVec2 max)
 	{
@@ -265,6 +299,75 @@ namespace
 		}
 	}
 
+	string nextRoomName(shared_ptr<const core::Building> const& building)
+	{
+		set<string> names;
+		for (uint32_t layer = 0; layer < CORE_NUM_LAYERS; ++layer)
+		{
+			for (auto const& sector : building->getSectors(layer))
+				names.insert(sector->getName());
+		}
+
+		for (uint64_t number = 1;; ++number)
+		{
+			auto name = format("Room {}", number);
+			if (!names.contains(name)) return name;
+		}
+	}
+
+	PaintRectangle getPaintRectangle(shared_ptr<const core::Building> const& building,
+		ImVec2 mousePosition)
+	{
+		if (!gPaint.dragging || gPaint.anchorX < 0 || gPaint.anchorY < 0
+			|| gPaint.anchorX >= (int)building->getCellsWide()
+			|| gPaint.anchorY >= (int)building->getDecksHigh()) return {};
+
+		auto layer = building->getLayer(gPaint.layer);
+		if (layer->getCellDefinition(gPaint.anchorX, gPaint.anchorY).occupied()) return {};
+
+		auto world = screenToWorld(mousePosition);
+		int endX = clamp((int)floor(world.x), 0, (int)building->getCellsWide() - 1);
+		int endY = gPaint.tool == PaintTool::Corridor
+			? gPaint.anchorY
+			: clamp((int)floor(world.y), 0, (int)building->getDecksHigh() - 1);
+		int directionX = endX >= gPaint.anchorX ? 1 : -1;
+		int directionY = endY >= gPaint.anchorY ? 1 : -1;
+		int requestedWidth = abs(endX - gPaint.anchorX) + 1;
+		int requestedHeight = abs(endY - gPaint.anchorY) + 1;
+
+		PaintRectangle best;
+		uint32_t bestArea = 0;
+		for (int height = 1; height <= requestedHeight; ++height)
+		{
+			for (int width = 1; width <= requestedWidth; ++width)
+			{
+				int x = directionX > 0 ? gPaint.anchorX : gPaint.anchorX - width + 1;
+				int y = directionY > 0 ? gPaint.anchorY : gPaint.anchorY - height + 1;
+				bool free = true;
+				for (int iy = y; free && iy < y + height; ++iy)
+				{
+					for (int ix = x; ix < x + width; ++ix)
+					{
+						if (layer->getCellDefinition(ix, iy).occupied())
+						{
+							free = false;
+							break;
+						}
+					}
+				}
+				if (!free) continue;
+				auto area = (uint32_t)(width * height);
+				if (area > bestArea || (area == bestArea && (uint32_t)width > best.width))
+				{
+					best = { true, (uint32_t)x, (uint32_t)y,
+						(uint32_t)width, (uint32_t)height };
+					bestArea = area;
+				}
+			}
+		}
+		return best;
+	}
+
 	void resetPegman()
 	{
 		gPegman.phase = PalettePhase::Home;
@@ -334,9 +437,16 @@ namespace
 		constexpr ImU32 yellow = IM_COL32(251, 188, 4, 255);
 		constexpr ImU32 red = IM_COL32(244, 67, 54, 255);
 		constexpr ImU32 trayColour = IM_COL32(24, 24, 28, 210);
+		constexpr ImU32 selectedColour = IM_COL32(105, 78, 14, 240);
 		constexpr ImU32 borderColour = IM_COL32(180, 180, 190, 180);
+		constexpr ImU32 disabledColour = IM_COL32(90, 90, 98, 150);
 		auto const& io = ImGui::GetIO();
-		gPegmanConsumesLeftMouse = false;
+		bool paletteConsumedMouse = false;
+
+		if (gPaint.dragging && gPaint.layer != (uint32_t)gUISettings.visibleLayer)
+			resetPaint(false);
+		if (gPaint.tool == PaintTool::Corridor && gUISettings.visibleLayer == CORE_LAYER_BACK)
+			resetPaint();
 
 		if (gPegman.phase == PalettePhase::Falling)
 		{
@@ -349,18 +459,148 @@ namespace
 		}
 
 		auto trayBottomRight = canvasPos + canvasSize - ImVec2(PaletteInset, PaletteInset);
-		auto traySize = ImVec2(PalettePadding * 2.0f + PaletteSlotSize * 2.0f + PaletteGap,
-			PalettePadding * 2.0f + PaletteSlotSize);
+		auto traySize = ImVec2(PalettePadding * 2.0f + PaletteSlotWidth * 2.0f + PaletteGap,
+			PalettePadding * 2.0f + PaletteSlotSize * 2.0f + PaletteGap);
 		auto trayTopLeft = trayBottomRight - traySize;
-		auto agentMin = trayTopLeft + ImVec2(PalettePadding, PalettePadding);
-		auto markerMin = agentMin + ImVec2(PaletteSlotSize + PaletteGap, 0.0f);
-		auto agentMax = agentMin + ImVec2(PaletteSlotSize, PaletteSlotSize);
-		auto markerMax = markerMin + ImVec2(PaletteSlotSize, PaletteSlotSize);
+		auto roomMin = trayTopLeft + ImVec2(PalettePadding, PalettePadding);
+		auto corridorMin = roomMin + ImVec2(PaletteSlotWidth + PaletteGap, 0.0f);
+		auto agentMin = roomMin + ImVec2(0.0f, PaletteSlotSize + PaletteGap);
+		auto markerMin = corridorMin + ImVec2(0.0f, PaletteSlotSize + PaletteGap);
+		auto roomMax = roomMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
+		auto corridorMax = corridorMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
+		auto agentMax = agentMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
+		auto markerMax = markerMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
 		drawList->AddRectFilled(trayTopLeft, trayBottomRight, trayColour, 5.0f);
 		drawList->AddRect(trayTopLeft, trayBottomRight, borderColour, 5.0f);
 
+		bool overTray = gWorldHovered && pointInRect(io.MousePos, trayTopLeft, trayBottomRight);
+		bool roomHovered = gWorldHovered && pointInRect(io.MousePos, roomMin, roomMax);
+		bool corridorHovered = gWorldHovered && pointInRect(io.MousePos, corridorMin, corridorMax);
+		bool corridorDisabled = gUISettings.visibleLayer == CORE_LAYER_BACK;
+		if (overTray) paletteConsumedMouse = true;
+
+		auto drawPaintButton = [&](ImVec2 min, ImVec2 max, char const* label,
+			PaintTool tool, bool hovered, bool disabled)
+		{
+			if (gPaint.tool == tool) drawList->AddRectFilled(min, max, selectedColour, 3.0f);
+			drawList->AddRect(min, max,
+				disabled ? disabledColour : (hovered ? yellow : borderColour), 3.0f);
+			auto textSize = ImGui::CalcTextSize(label);
+			auto textPosition = min + (max - min - textSize) * 0.5f;
+			drawList->AddText(textPosition, disabled ? disabledColour : IM_COL32_WHITE, label);
+		};
+
+		if (gPegman.phase == PalettePhase::Home && (roomHovered || corridorHovered))
+		{
+			paletteConsumedMouse = true;
+			ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+			if (corridorHovered && corridorDisabled)
+				ImGui::SetTooltip("Corridors can only be painted on the Fore Layer");
+			else
+				ImGui::SetTooltip(roomHovered ? "Paint Room" : "Paint Corridor");
+
+			if (io.MouseClicked[0] && !(corridorHovered && corridorDisabled))
+			{
+				auto clickedTool = roomHovered ? PaintTool::Room : PaintTool::Corridor;
+				gPaint.tool = gPaint.tool == clickedTool ? PaintTool::None : clickedTool;
+				gPaint.dragging = false;
+				resetPegman();
+				if (gPaint.tool != PaintTool::None)
+				{
+					if (!building->isSimulationPaused()) building->pauseSimulation();
+					gUISettings.worldPaused = true;
+				}
+			}
+		}
+
+		drawPaintButton(roomMin, roomMax, "Room", PaintTool::Room, roomHovered, false);
+		drawPaintButton(corridorMin, corridorMax, "Corridor", PaintTool::Corridor,
+			corridorHovered, corridorDisabled);
+
+		bool paintWasActive = gPaint.tool != PaintTool::None;
+		if (paintWasActive && (ImGui::IsKeyPressed(ImGuiKey_Escape)
+			|| (gWorldHovered && io.MouseClicked[1])))
+		{
+			resetPaint();
+			paletteConsumedMouse = true;
+		}
+
+		if (gPaint.tool != PaintTool::None && !gPaint.dragging && gWorldHovered
+			&& !overTray && io.MouseClicked[0])
+		{
+			auto world = screenToWorld(io.MousePos);
+			int x = (int)floor(world.x);
+			int y = (int)floor(world.y);
+			if (x >= 0 && y >= 0 && x < (int)building->getCellsWide()
+				&& y < (int)building->getDecksHigh())
+			{
+				gPaint.dragging = true;
+				gPaint.layer = (uint32_t)gUISettings.visibleLayer;
+				gPaint.anchorX = x;
+				gPaint.anchorY = y;
+			}
+		}
+
+		PaintRectangle paintRectangle;
+		if (gPaint.dragging)
+		{
+			paletteConsumedMouse = true;
+			paintRectangle = getPaintRectangle(building, io.MousePos);
+			if (paintRectangle.valid)
+			{
+				auto topLeft = worldToScreen({ (float)paintRectangle.x,
+					(float)(paintRectangle.y + paintRectangle.height) });
+				auto bottomRight = worldToScreen({ (float)(paintRectangle.x + paintRectangle.width),
+					(float)paintRectangle.y });
+				drawList->AddRectFilled(topLeft, bottomRight, IM_COL32(251, 188, 4, 55));
+				drawList->AddRect(topLeft, bottomRight, yellow, 0.0f, 0, 2.0f);
+			}
+			else
+			{
+				auto topLeft = worldToScreen({ (float)gPaint.anchorX,
+					(float)(gPaint.anchorY + 1) });
+				auto bottomRight = worldToScreen({ (float)(gPaint.anchorX + 1),
+					(float)gPaint.anchorY });
+				drawList->AddRectFilled(topLeft, bottomRight, IM_COL32(244, 67, 54, 55));
+				drawList->AddRect(topLeft, bottomRight, red, 0.0f, 0, 2.0f);
+				ImGui::SetTooltip("The starting cell is occupied");
+			}
+			ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+
+			if (io.MouseReleased[0])
+			{
+				auto tool = gPaint.tool;
+				resetPaint(false);
+				if (paintRectangle.valid)
+				{
+					try
+					{
+						if (tool == PaintTool::Room)
+							building->addRoom(nextRoomName(building), gPaint.layer,
+								paintRectangle.y, paintRectangle.x, paintRectangle.width,
+								paintRectangle.height, CORE_ROOM_MAX_HEIGHT);
+						else
+							building->addCorridor(paintRectangle.y, paintRectangle.x,
+								paintRectangle.width, 1);
+						building->finishBuild();
+					}
+					catch (core::Exception const& error)
+					{
+						core::addLogMessage("Paint palette", 0, core::LogLevel::Error,
+							error.getMessage());
+					}
+					catch (std::exception const& error)
+					{
+						core::addLogMessage("Paint palette", 0, core::LogLevel::Error,
+							error.what());
+					}
+				}
+			}
+		}
+
 		PaletteItem hoveredItem = PaletteItem::None;
-		if (gWorldHovered && gPegman.phase == PalettePhase::Home)
+		if (gWorldHovered && gPegman.phase == PalettePhase::Home
+			&& gPaint.tool == PaintTool::None)
 		{
 			if (pointInRect(io.MousePos, agentMin, agentMax)) hoveredItem = PaletteItem::Agent;
 			else if (pointInRect(io.MousePos, markerMin, markerMax)) hoveredItem = PaletteItem::Marker;
@@ -371,7 +611,7 @@ namespace
 			hoveredItem == PaletteItem::Marker ? yellow : borderColour, 3.0f);
 		if (hoveredItem != PaletteItem::None)
 		{
-			gPegmanConsumesLeftMouse = true;
+			paletteConsumedMouse = true;
 			ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
 			ImGui::SetTooltip(hoveredItem == PaletteItem::Agent
 				? "Drag to add Agent" : "Drag to add Marker");
@@ -385,7 +625,7 @@ namespace
 
 		if (gPegman.phase == PalettePhase::Armed)
 		{
-			gPegmanConsumesLeftMouse = true;
+			paletteConsumedMouse = true;
 			ImVec2 movement = io.MousePos - gPegman.pressPosition;
 			if (io.MouseDown[0] && movement.x * movement.x + movement.y * movement.y
 				>= io.MouseDragThreshold * io.MouseDragThreshold)
@@ -396,7 +636,7 @@ namespace
 		PegmanTarget target;
 		if (gPegman.phase == PalettePhase::Dragging)
 		{
-			gPegmanConsumesLeftMouse = true;
+			paletteConsumedMouse = true;
 			target = gPegman.item == PaletteItem::Marker
 				? getMarkerTarget(building, io.MousePos, canvasPos, canvasSize)
 				: getPegmanTarget(building, io.MousePos, canvasPos, canvasSize);
@@ -455,6 +695,9 @@ namespace
 				CORE_AGENT_MAX_WIDTH * CORE_CELL_WIDTH_PIXELS,
 				CORE_AGENT_MAX_HEIGHT * CORE_DECK_HEIGHT_PIXELS, yellow);
 		}
+
+		gPegmanConsumesLeftMouse = paletteConsumedMouse || gPaint.tool != PaintTool::None
+			|| gPaint.dragging || paintWasActive;
 	}
 }
 
@@ -587,6 +830,7 @@ namespace
 		gHoveredSectorObject.reset();
 		gSelectedSectorObject.reset();
 		resetPegman();
+		resetPaint();
 		gUISettings.worldPaused = false;
 	}
 

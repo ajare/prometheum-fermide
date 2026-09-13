@@ -17,6 +17,12 @@ An occupancy region to which an agent belongs at a point in time. A sector is ei
 A stationary sector such as a room or corridor.
 _Avoid_: Sector, when specifically referring to stationary space
 
+**Room**:
+A named location that may occupy either the fore or back layer.
+
+**Corridor**:
+A location that occupies the fore layer.
+
 **Transit**:
 A static sector that connects locations through one or more stops, such as a lift shaft, shuttle route, ladder, or staircase. Within a lift or shuttle transit, an agent may also occupy a specific transport vehicle or carriage.
 
