@@ -880,6 +880,15 @@ void renderSector(shared_ptr<const core::Sector> sector, int layer, bool visible
 		drawList->AddRectFilled({ bounds0.x, bounds0.y }, { bounds1.x, bounds1.y }, colour);
 	}
 
+	if (gUISettings.selectionMode == UISettings::SelectionMode::Sector
+		&& sector == gSelectedSector && sector->getType() == core::SectorType::Location)
+	{
+		ImVec2 topLeft{ min(bounds0.x, bounds1.x), min(bounds0.y, bounds1.y) };
+		ImVec2 bottomRight{ max(bounds0.x, bounds1.x), max(bounds0.y, bounds1.y) };
+		drawList->AddRectFilled(topLeft, bottomRight, ImColor(255, 255, 0, 48));
+		drawList->AddRect(topLeft, bottomRight, SelectedColour, 0.0f, 0, 2.0f);
+	}
+
 	// Render some objects before the sector-specific stuff, like windows
 	// If we are on the Fore layer, then we will only be dealing with Locations, so nothing needs
 	// to be rendered here

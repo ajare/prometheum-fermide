@@ -13,7 +13,8 @@ struct UISettings
 	enum SelectionMode
 	{
 		Object,
-		Vertex
+		Vertex,
+		Sector
 	};
 
 	Style style{ Style::Dark };

@@ -209,6 +209,52 @@ namespace
 		require(loaded.isModified(), "removing an Agent did not modify its Building");
 	}
 
+	void locationEditsArePlannedAndAppliedAtomically()
+	{
+		core::Building building("Editable", 8, 3);
+		auto room = building.addRoom("Room", CORE_LAYER_FORE, 0, 0, 5, 2);
+		building.addSectorMarker(room, 0, 4.5f);
+		auto removed = building.addSectorMarker(room, 0, 1.5f);
+		building.removeSectorMarker(room, removed.index);
+		building.addSectorMarker(room, 0, 2.5f);
+		building.finishBuild();
+		auto agent = building.createAgent("Cropped", room, 0, 4.5f);
+
+		auto resize = building.planResizeLocation(room, 0, 0, 3, 2);
+		require(resize.valid && resize.requiresConfirmation(),
+			"Location shrink did not report its cascading deletions");
+		building.pauseSimulation();
+		auto resized = building.applyLocationEdit(resize);
+		require(building.getSector(resized)->getCellsWide() == 3,
+			"Location width was not changed");
+		require(!building.lookupAgent(agent), "Agent cropped by resize was retained");
+		uint32_t retainedObjects = 0;
+		for (uint32_t i = 0; i < building.getSector(resized)->getNumObjects(); ++i)
+			if (building.getSector(resized)->getObject(i)) ++retainedObjects;
+		require(retainedObjects == 1, "Resize did not preserve the correct authored object slots");
+		require(building.isSimulationPaused(), "Location edit resumed the simulation");
+
+		core::SerializationWorkData workData;
+		auto writer = core::YamlSerializer::toString();
+		building.serialize(*writer, workData);
+		writer->serialize();
+		core::Building reloaded("placeholder", 1, 1);
+		auto reader = core::YamlSerializer::fromString(writer->getSerializedString());
+		reader->deserialize();
+		require(reloaded.deserialize(*reader, workData)
+			&& reloaded.getSector(resized)->getCellsWide() == 3,
+			"Edited Location did not survive serialization");
+		uint32_t reloadedObjects = 0;
+		for (uint32_t i = 0; i < reloaded.getSector(resized)->getNumObjects(); ++i)
+			if (reloaded.getSector(resized)->getObject(i)) ++reloadedObjects;
+		require(reloadedObjects == 1, "Edited object tombstones did not survive serialization");
+
+		auto remove = building.planRemoveLocation(resized);
+		require(remove.valid, "Valid Location deletion was rejected");
+		building.applyLocationEdit(remove);
+		require(building.getNumSectors() == 0, "Deleted Location was retained");
+	}
+
 	void serializableTracksModificationState()
 	{
 		SerializableProbe probe;
@@ -248,5 +294,6 @@ void runSerializationSmokeChecks()
 	fileYamlRoundTrips();
 	malformedValuesAndInvalidUsageThrowUsefulErrors();
 	buildingRoundTripsAuthoredStateAndAgents();
+	locationEditsArePlannedAndAppliedAtomically();
 	serializableTracksModificationState();
 }

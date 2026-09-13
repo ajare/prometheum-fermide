@@ -394,6 +394,10 @@ namespace core
 		{
 			throw BuildingException(this, format("{} - Lift capacity must be positive.", caller));
 		}
+		if (options.initialStop >= options.stopOffsets.size())
+		{
+			throw BuildingException(this, format("{} - Lift initial stop is out of range.", caller));
+		}
 		auto representablePositions = (uint32_t)floor((float)options.cellsWide / CORE_AGENT_MAX_WIDTH);
 		if (options.capacity > representablePositions)
 		{
@@ -548,13 +552,18 @@ namespace core
 		for (auto stopOffset : stopOffsets)
 		{
 			uint32_t ix = x + stopOffset;
-
-			// Add 1 to ix to get position of the first door
-			uint32_t cx = ix + 1;
-
-			auto const& cellDef = mLayers[CORE_LAYER_FORE]->getCellDefinition(cx, y);
-			auto sector = getSector(cellDef.sectorIndex);
-
+			shared_ptr<const Sector> sector;
+			for (uint32_t car = 0; car < numCars && !sector; ++car)
+			{
+				uint32_t cx = ix + car * (carWidth + 1) + 1;
+				auto const& cellDef = mLayers[CORE_LAYER_FORE]->getCellDefinition(cx, y);
+				bool supported = cellDef.sectorIndex != ~0u;
+				if (supported && carWidth == 4)
+					supported = mLayers[CORE_LAYER_FORE]->getCellDefinition(cx + 1, y).sectorIndex
+						== cellDef.sectorIndex;
+				if (supported) sector = getSector(cellDef.sectorIndex);
+			}
+			assert(sector);
 			stops.push_back({
 				sector,
 				(int)ix - (int)sector->getCellX(),
@@ -1327,6 +1336,9 @@ namespace core
 		lift->configureTraversal(coordinator);
 		liftRes.traversalResource = coordinator;
 		auto liftResource = mTraversalResources.find(coordinator);
+		liftResource->mLiftCurrentStop = options.initialStop;
+		liftResource->mLiftPosition = liftStops[options.initialStop].globalPosition;
+		lift->setCoordinatedPosition(liftResource->mLiftPosition);
 		// Standing positions are deterministic and local to the moving car.  Validation
 		// above guarantees agent-safe horizontal separation for every declared slot.
 		auto standingWidth = CORE_AGENT_MAX_WIDTH * options.capacity;
@@ -1369,6 +1381,7 @@ namespace core
 
 		ConstructionRecord record{ ConstructionType::Lift };
 		record.a = y; record.b = x; record.c = options.cellsWide; record.d = options.capacity;
+		record.g = options.initialStop;
 		record.x = options.minimumDwellSeconds; record.y = options.maximumBoardingSeconds;
 		record.values = options.stopOffsets;
 		recordConstruction(std::move(record));
@@ -1426,17 +1439,27 @@ namespace core
 				throw BuildingException(this, format("{} - shuttle is too wide to fit at stop offset {}", caller, i));
 			}
 
-			// Every carriage door must open onto a Location. Different Location
-			// sectors intentionally form disconnected access zones at the same stop.
+			// A stop remains usable when at least one carriage door has a complete
+			// Location landing. Missing carriage landings are simply omitted.
+			bool hasLanding = false;
 			for (uint32_t j = 0; j < options.numCars; ++j)
 			{
-				// Offset of door is 1 within a car, and each car has a gap of 1 between
-				// it and the previous.
 				uint32_t cx = ix + j * (options.carWidth + 1) + 1;
-				validateCellIsType(caller, CORE_LAYER_FORE, cx, y, SectorType::Location);
-				if (options.carWidth == 4)
-					validateCellIsType(caller, CORE_LAYER_FORE, cx + 1, y, SectorType::Location);
+				auto const& cell = foreLayer->getCellDefinition(cx, y);
+				bool supported = cell.sectorIndex != ~0u
+					&& getSector(cell.sectorIndex)->getType() == SectorType::Location;
+				if (supported && options.carWidth == 4)
+				{
+					auto const& second = foreLayer->getCellDefinition(cx + 1, y);
+					supported = second.sectorIndex == cell.sectorIndex;
+				}
+				if (!supported && !options.allowPartialLandings)
+					throw BuildingException(this, format("{} - carriage {} at stop offset {} has no supported landing",
+						caller, j, options.stopOffsets[i]));
+				hasLanding = hasLanding || supported;
 			}
+			if (!hasLanding)
+				throw BuildingException(this, format("{} - stop offset {} has no supported carriage landing", caller, options.stopOffsets[i]));
 		}
 
 		// Create shuttle
@@ -1457,26 +1480,34 @@ namespace core
 
 		shuttleRes.shuttle = shuttleObject;
 
-		// Create landing thresholds and physical InteractionPoints. The shuttle
-		// coordinator is the sole vehicle-wide scheduler.
-		for (auto stopOffset : options.stopOffsets)
+		// Create landing thresholds and physical InteractionPoints. Keep a fixed
+		// stop/carriage result grid so later coordination can skip absent doors.
+		shuttleRes.doors.resize(options.stopOffsets.size() * options.numCars);
+		for (uint32_t stop = 0; stop < options.stopOffsets.size(); ++stop)
 		{
 			uint32_t doorWidth = options.carWidth - 2;
-			for (uint32_t door_i = 0; door_i < options.numCars; ++door_i)
+			for (uint32_t car = 0; car < options.numCars; ++car)
 			{
-				uint32_t doorX = door_i * options.carWidth + door_i + 1;
-				auto doorRes = _addSectorDoor(y, x + stopOffset + doorX,
-					{ doorWidth, { true, false }, DoorActivationMode::Unavailable }, true);
-				shuttleRes.doors.push_back(doorRes);
+				uint32_t doorX = car * (options.carWidth + 1) + 1;
+				auto globalX = x + options.stopOffsets[stop] + doorX;
+				auto const& cell = foreLayer->getCellDefinition(globalX, y);
+				bool supported = cell.sectorIndex != ~0u;
+				if (supported && options.carWidth == 4)
+					supported = foreLayer->getCellDefinition(globalX + 1, y).sectorIndex == cell.sectorIndex;
+				if (supported)
+					shuttleRes.doors[stop * options.numCars + car] = _addSectorDoor(y, globalX,
+						{ doorWidth, { true, false }, DoorActivationMode::Unavailable }, true);
 			}
 		}
 
 		vector<LiftStop> stops;
 		for (uint32_t i = 0; i < options.stopOffsets.size(); ++i)
 		{
-			auto doorIndex = i * options.numCars;
-			auto location = getSector(foreLayer->getCellDefinition(
-				x + options.stopOffsets[i] + 1, y).sectorIndex);
+			uint32_t doorIndex = i * options.numCars;
+			while (doorIndex < (i + 1) * options.numCars
+				&& !shuttleRes.doors[doorIndex].traversalResource) ++doorIndex;
+			assert(doorIndex < (i + 1) * options.numCars);
+			auto location = shuttleRes.doors[doorIndex].door.sector;
 			stops.push_back({ SectorId{ (uint64_t)location->getIndex() + 1 },
 				(float)(x + options.stopOffsets[i]), shuttleRes.doors[doorIndex].traversalResource, {} });
 		}
@@ -1499,6 +1530,7 @@ namespace core
 			{
 				auto doorIndex = stop * options.numCars + carriage;
 				auto& doorResult = shuttleRes.doors[doorIndex];
+				if (!doorResult.traversalResource) continue;
 				auto landing = mTraversalResources.find(doorResult.traversalResource);
 				auto doorX = x + options.stopOffsets[stop]
 					+ carriage * (options.carWidth + 1) + 1;
@@ -1550,6 +1582,7 @@ namespace core
 		ConstructionRecord record{ ConstructionType::Shuttle };
 		record.a = y; record.b = x; record.c = cellsWide; record.d = options.numCars;
 		record.e = options.carWidth; record.f = options.initialStop; record.g = options.capacity;
+		record.p = options.allowPartialLandings;
 		record.x = options.minimumDwellSeconds; record.y = options.maximumBoardingSeconds;
 		record.values = options.stopOffsets;
 		recordConstruction(std::move(record));

@@ -140,6 +140,7 @@ namespace core
 			uint32_t capacity{ 1 };
 			float minimumDwellSeconds{ CORE_LIFT_DOOR_PAUSE_TIME };
 			float maximumBoardingSeconds{ CORE_DOOR_STAY_OPEN_TIME };
+			uint32_t initialStop{ 0 };
 		};
 
 		struct CreateLiftResult
@@ -168,6 +169,7 @@ namespace core
 			uint32_t capacity{ 1 };
 			float minimumDwellSeconds{ CORE_LIFT_DOOR_PAUSE_TIME };
 			float maximumBoardingSeconds{ CORE_DOOR_STAY_OPEN_TIME };
+			bool allowPartialLandings{ false };
 		};
 
 		struct CreateShuttleResult
@@ -176,6 +178,21 @@ namespace core
 			std::vector<CreateDoorResult> doors;
 			TraversalResourceId traversalResource;
 			InteractionPointId interiorSelector;
+		};
+
+		struct LocationEditPlan
+		{
+			bool valid{ false };
+			bool remove{ false };
+			uint32_t sectorIndex{ ~0u };
+			uint32_t x{ 0 }, y{ 0 }, cellsWide{ 0 }, decksHigh{ 0 };
+			std::string diagnostic;
+			std::vector<std::string> consequences;
+
+			[[nodiscard]] bool requiresConfirmation() const
+			{
+				return !consequences.empty();
+			}
 		};
 
 	public:
@@ -272,7 +289,8 @@ namespace core
 			Walkway,
 			Marker,
 			RemoveWall,
-			RemoveMarker
+			RemoveMarker,
+			ObjectTombstone
 		};
 
 		// Compact tagged command storage. Field meanings are determined by type and
@@ -302,6 +320,10 @@ namespace core
 		void recordConstruction(ConstructionRecord record);
 
 		void applyConstructionRecord(ConstructionRecord const& record);
+
+		bool prepareLocationEdit(LocationEditPlan const& plan,
+			std::vector<ConstructionRecord>& records, uint32_t& newSectorIndex,
+			std::string& diagnostic) const;
 
 		void resetForDeserialization(std::string name, uint32_t cellsWide, uint32_t decksHigh);
 
@@ -611,6 +633,15 @@ namespace core
 			uint32_t* vertexIdentifier = nullptr);
 
 		bool removeSectorMarker(uint32_t sectorIndex, uint32_t objectIndex);
+
+		// Plans are side-effect free. Applying a plan reconstructs the authored
+		// structure atomically and leaves the simulation paused.
+		LocationEditPlan planResizeLocation(uint32_t sectorIndex, uint32_t x, uint32_t y,
+			uint32_t cellsWide, uint32_t decksHigh) const;
+
+		LocationEditPlan planRemoveLocation(uint32_t sectorIndex) const;
+
+		uint32_t applyLocationEdit(LocationEditPlan const& plan);
 
 		void removeLocationWall(uint32_t sectorIndex, uint32_t deckIndex, int side);
 

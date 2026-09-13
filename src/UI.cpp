@@ -3,6 +3,7 @@
 #include <cmath>
 #include <deque>
 #include <filesystem>
+#include <optional>
 #include <set>
 
 #pragma warning(push)
@@ -52,7 +53,7 @@ extern ImFont* gAgentIconFont;
 core::InteractionPointId gHoveredInteractionPoint;
 core::Agent *gHoveredAgent{ nullptr }, *gSelectedAgent{ nullptr };
 std::shared_ptr<const core::Vertex> gHoveredVertex, gSelectedVertex;
-std::shared_ptr<const core::Sector> gSelectedSector;
+std::shared_ptr<const core::Sector> gHoveredSector, gSelectedSector;
 std::shared_ptr<const core::SectorObject> gHoveredSectorObject, gSelectedSectorObject;
 
 static std::deque<core::LogMessage> gLogMessages;
@@ -145,6 +146,33 @@ namespace
 	};
 
 	PaintState gPaint;
+
+	enum class ResizeEdge
+	{
+		None,
+		Left,
+		Right,
+		Bottom,
+		Top
+	};
+
+	struct SectorResizeState
+	{
+		bool dragging{ false };
+		ResizeEdge edge{ ResizeEdge::None };
+		ImVec2 pressPosition{};
+		uint32_t originalX{ 0 }, originalY{ 0 }, originalWidth{ 0 }, originalHeight{ 0 };
+		core::Building::LocationEditPlan preview;
+	};
+
+	SectorResizeState gSectorResize;
+	optional<core::Building::LocationEditPlan> gPendingLocationEdit;
+	bool gOpenLocationEditPopup{ false };
+
+	void resetSectorResize()
+	{
+		gSectorResize = {};
+	}
 
 	void resetPaint(bool clearTool = true)
 	{
@@ -696,8 +724,8 @@ namespace
 				CORE_AGENT_MAX_HEIGHT * CORE_DECK_HEIGHT_PIXELS, yellow);
 		}
 
-		gPegmanConsumesLeftMouse = paletteConsumedMouse || gPaint.tool != PaintTool::None
-			|| gPaint.dragging || paintWasActive;
+		gPegmanConsumesLeftMouse = gSectorResize.dragging || paletteConsumedMouse
+			|| gPaint.tool != PaintTool::None || gPaint.dragging || paintWasActive;
 	}
 }
 
@@ -774,6 +802,11 @@ void setSelectionMode(UISettings::SelectionMode mode)
 	if (gUISettings.selectionMode != mode)
 	{
 		gUISettings.selectionMode = mode;
+		gSelectedAgent = nullptr;
+		gSelectedVertex.reset();
+		gSelectedSector.reset();
+		gSelectedSectorObject.reset();
+		resetSectorResize();
 	}
 
 	if (mode == UISettings::SelectionMode::Vertex)
@@ -795,6 +828,11 @@ void clearSelections()
 		gSelectedAgent = nullptr;
 		gSelectedSector = nullptr;
 		gSelectedSectorObject = nullptr;
+		break;
+
+	case UISettings::SelectionMode::Sector:
+		gSelectedSector.reset();
+		resetSectorResize();
 		break;
 	}
 }
@@ -826,11 +864,14 @@ namespace
 		gSelectedAgent = nullptr;
 		gHoveredVertex.reset();
 		gSelectedVertex.reset();
+		gHoveredSector.reset();
 		gSelectedSector.reset();
 		gHoveredSectorObject.reset();
 		gSelectedSectorObject.reset();
 		resetPegman();
 		resetPaint();
+		resetSectorResize();
+		gPendingLocationEdit.reset();
 		gUISettings.worldPaused = false;
 	}
 
@@ -954,6 +995,44 @@ namespace
 		executeFileAction(action, building);
 	}
 
+	void commitLocationEdit(shared_ptr<core::Building> const& building,
+		core::Building::LocationEditPlan const& plan)
+	{
+		try
+		{
+			auto newIndex = building->applyLocationEdit(plan);
+			gUISettings.worldPaused = true;
+			gHoveredAgent = nullptr;
+			gHoveredSector.reset();
+			gHoveredSectorObject.reset();
+			gSelectedAgent = nullptr;
+			gSelectedSectorObject.reset();
+			gSelectedSector = plan.remove ? nullptr : building->getSector(newIndex);
+		}
+		catch (core::Exception const& error)
+		{
+			core::addLogMessage("Sector editor", 0, core::LogLevel::Error, error.getMessage());
+		}
+		catch (std::exception const& error)
+		{
+			core::addLogMessage("Sector editor", 0, core::LogLevel::Error, error.what());
+		}
+		resetSectorResize();
+	}
+
+	void queueLocationEdit(shared_ptr<core::Building> const& building,
+		core::Building::LocationEditPlan const& plan)
+	{
+		if (!building->isSimulationPaused()) building->pauseSimulation();
+		gUISettings.worldPaused = true;
+		if (plan.requiresConfirmation())
+		{
+			gPendingLocationEdit = plan;
+			gOpenLocationEditPopup = true;
+		}
+		else commitLocationEdit(building, plan);
+	}
+
 	void renderFilePopups(shared_ptr<core::Building>& building)
 	{
 		if (gOpenUnsavedChangesPopup)
@@ -1029,6 +1108,36 @@ namespace
 			if (ImGui::Button("OK")) ImGui::CloseCurrentPopup();
 			ImGui::EndPopup();
 		}
+
+		if (gOpenLocationEditPopup)
+		{
+			ImGui::OpenPopup("Confirm sector edit");
+			gOpenLocationEditPopup = false;
+		}
+		if (ImGui::BeginPopupModal("Confirm sector edit", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+		{
+			ImGui::TextUnformatted("This edit will also:");
+			ImGui::Separator();
+			if (gPendingLocationEdit)
+				for (auto const& consequence : gPendingLocationEdit->consequences)
+					ImGui::BulletText("%s", consequence.c_str());
+			ImGui::Separator();
+			if (ImGui::Button("OK") && building && gPendingLocationEdit)
+			{
+				auto plan = *gPendingLocationEdit;
+				gPendingLocationEdit.reset();
+				ImGui::CloseCurrentPopup();
+				commitLocationEdit(building, plan);
+			}
+			ImGui::SameLine();
+			if (ImGui::Button("Cancel"))
+			{
+				gPendingLocationEdit.reset();
+				resetSectorResize();
+				ImGui::CloseCurrentPopup();
+			}
+			ImGui::EndPopup();
+		}
 	}
 }
 
@@ -1066,7 +1175,14 @@ void handleShortcuts(shared_ptr<core::Building>& building)
 	{
 		if (!ImGui::IsAnyItemActive() && !ImGui::IsAnyItemFocused())
 		{
-			if (gSelectedAgent)
+			if (gUISettings.selectionMode == UISettings::SelectionMode::Sector && gSelectedSector)
+			{
+				auto plan = building->planRemoveLocation(gSelectedSector->getIndex());
+				if (!plan.valid)
+					core::addLogMessage("Sector editor", 0, core::LogLevel::Error, plan.diagnostic);
+				else queueLocationEdit(building, plan);
+			}
+			else if (gSelectedAgent)
 			{
 				auto id = building->getAgentId(gSelectedAgent);
 				if (id)
@@ -1125,6 +1241,12 @@ void handleShortcuts(shared_ptr<core::Building>& building)
 		setSelectionMode(UISettings::SelectionMode::Vertex);
 	}
 
+	// Sector selection mode
+	if (ImGui::Shortcut(ImGuiKey_S, 0, ImGuiInputFlags_RouteGlobalLow))
+	{
+		setSelectionMode(UISettings::SelectionMode::Sector);
+	}
+
 	// View
 	if (ImGui::Shortcut(ImGuiKey_F2, 0, ImGuiInputFlags_RouteGlobalLow))
 	{
@@ -1152,7 +1274,14 @@ void handleWorldInteraction(shared_ptr<core::Building> building,
 		&& mouseStatus.state[MouseButtonStatus::Left] == MouseButtonStatus::State::Clicked)
 	{
 		// Try and select
-		if (gHoveredAgent)
+		if (gUISettings.selectionMode == UISettings::SelectionMode::Sector)
+		{
+			gSelectedSector = gHoveredSector;
+			gSelectedAgent = nullptr;
+			gSelectedVertex.reset();
+			gSelectedSectorObject.reset();
+		}
+		else if (gHoveredAgent)
 		{
 			gSelectedAgent = gHoveredAgent;
 			gSelectedSector.reset();
@@ -1375,7 +1504,7 @@ void renderMenu(shared_ptr<core::Building>& building)
 		{
 			if (ImGui::BeginMenu("Selection"))
 			{
-				bool selected = gUISettings.style == UISettings::SelectionMode::Object;
+				bool selected = gUISettings.selectionMode == UISettings::SelectionMode::Object;
 
 				if (ImGui::MenuItem("Objects", 0, &selected))
 				{
@@ -1385,7 +1514,7 @@ void renderMenu(shared_ptr<core::Building>& building)
 					}
 				}
 
-				selected = gUISettings.style == UISettings::SelectionMode::Vertex;
+				selected = gUISettings.selectionMode == UISettings::SelectionMode::Vertex;
 
 				if (ImGui::MenuItem("Vertices", 0, &selected))
 				{
@@ -1394,6 +1523,10 @@ void renderMenu(shared_ptr<core::Building>& building)
 						setSelectionMode(UISettings::SelectionMode::Vertex);
 					}
 				}
+
+				selected = gUISettings.selectionMode == UISettings::SelectionMode::Sector;
+				if (ImGui::MenuItem("Sectors", "S", &selected) && selected)
+					setSelectionMode(UISettings::SelectionMode::Sector);
 
 				ImGui::EndMenu();
 			}
@@ -1491,7 +1624,8 @@ void renderToolbar(shared_ptr<core::Building> building)
 
 		vector<string> selectionModes = {
 			"Objects",
-			"Vertices"
+			"Vertices",
+			"Sectors"
 		};
 
 		string modesStr;
@@ -1970,6 +2104,8 @@ void renderObjectView(shared_ptr<const core::Building> building)
 				if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
 				{
 					selectedNode = (void*)sector.get();
+					setSelectionMode(sector->getType() == core::SectorType::Location
+						? UISettings::SelectionMode::Sector : UISettings::SelectionMode::Object);
 					gSelectedAgent = nullptr;
 					gSelectedSector = sector;
 					gSelectedSectorObject = nullptr;
@@ -1995,6 +2131,7 @@ void renderObjectView(shared_ptr<const core::Building> building)
 						if (ImGui::IsItemClicked())
 						{
 							selectedNode = (void*)object.get();
+							setSelectionMode(UISettings::SelectionMode::Object);
 							gSelectedAgent = nullptr;
 							gSelectedSector = nullptr;
 							gSelectedSectorObject = object;
@@ -2465,6 +2602,184 @@ void renderControlsWindow(shared_ptr<core::Building> building, shared_ptr<const 
 	ImGui::End();
 }
 
+namespace
+{
+	bool resizeRectangleFree(shared_ptr<const core::Building> const& building,
+		shared_ptr<const core::Sector> const& sector, int left, int bottom, int right, int top)
+	{
+		if (left < 0 || bottom < 0 || right > (int)building->getCellsWide()
+			|| top > (int)building->getDecksHigh() || left >= right || bottom >= top) return false;
+		auto layer = building->getLayer(sector->getLayerIndex());
+		for (int y = bottom; y < top; ++y)
+			for (int x = left; x < right; ++x)
+			{
+				auto occupant = layer->getCellDefinition(x, y).sectorIndex;
+				if (occupant != ~0u && occupant != sector->getIndex()) return false;
+			}
+		return true;
+	}
+
+	ResizeEdge hoveredResizeEdge(shared_ptr<const core::Sector> const& sector, ImVec2 mouse)
+	{
+		if (!sector || sector->getType() != core::SectorType::Location) return ResizeEdge::None;
+		auto topLeft = worldToScreen({ (float)sector->getCellX(),
+			(float)(sector->getCellY() + sector->getDecksHigh()) });
+		auto bottomRight = worldToScreen({ (float)(sector->getCellX() + sector->getCellsWide()),
+			(float)sector->getCellY() });
+		constexpr float tolerance = 6.0f;
+		struct Candidate { ResizeEdge edge; float distance; };
+		vector<Candidate> candidates;
+		if (mouse.y >= topLeft.y - tolerance && mouse.y <= bottomRight.y + tolerance)
+		{
+			candidates.push_back({ ResizeEdge::Left, abs(mouse.x - topLeft.x) });
+			candidates.push_back({ ResizeEdge::Right, abs(mouse.x - bottomRight.x) });
+		}
+		bool corridor = sector->getTopDeckHeight() == CORE_CORRIDOR_HEIGHT;
+		if (!corridor && mouse.x >= topLeft.x - tolerance && mouse.x <= bottomRight.x + tolerance)
+		{
+			candidates.push_back({ ResizeEdge::Top, abs(mouse.y - topLeft.y) });
+			candidates.push_back({ ResizeEdge::Bottom, abs(mouse.y - bottomRight.y) });
+		}
+		auto closest = min_element(candidates.begin(), candidates.end(),
+			[](auto const& a, auto const& b) { return a.distance < b.distance; });
+		return closest != candidates.end() && closest->distance <= tolerance
+			? closest->edge : ResizeEdge::None;
+	}
+
+	void updateSectorResize(shared_ptr<core::Building> const& building)
+	{
+		auto& io = ImGui::GetIO();
+		if (gUISettings.selectionMode != UISettings::SelectionMode::Sector || !gSelectedSector
+			|| gSelectedSector->getLayerIndex() != (uint32_t)gUISettings.visibleLayer)
+		{
+			if (gSectorResize.dragging) resetSectorResize();
+			return;
+		}
+
+		auto hoverEdge = gSectorResize.dragging ? gSectorResize.edge
+			: hoveredResizeEdge(gSelectedSector, io.MousePos);
+		if (hoverEdge == ResizeEdge::Left || hoverEdge == ResizeEdge::Right)
+			ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+		else if (hoverEdge == ResizeEdge::Top || hoverEdge == ResizeEdge::Bottom)
+			ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+
+		if (!gSectorResize.dragging && gWorldHovered && hoverEdge != ResizeEdge::None && io.MouseClicked[0])
+		{
+			if (!building->isSimulationPaused()) building->pauseSimulation();
+			gUISettings.worldPaused = true;
+			gSectorResize.dragging = true;
+			gSectorResize.edge = hoverEdge;
+			gSectorResize.pressPosition = io.MousePos;
+			gSectorResize.originalX = gSelectedSector->getCellX();
+			gSectorResize.originalY = gSelectedSector->getCellY();
+			gSectorResize.originalWidth = gSelectedSector->getCellsWide();
+			gSectorResize.originalHeight = gSelectedSector->getDecksHigh();
+			gSectorResize.preview = building->planResizeLocation(gSelectedSector->getIndex(),
+				gSectorResize.originalX, gSectorResize.originalY,
+				gSectorResize.originalWidth, gSectorResize.originalHeight);
+		}
+		if (!gSectorResize.dragging) return;
+
+		if (ImGui::IsKeyPressed(ImGuiKey_Escape) || io.MouseClicked[1])
+		{
+			resetSectorResize();
+			if (io.MouseClicked[1]) gSelectedSector.reset();
+			return;
+		}
+
+		int left = (int)gSectorResize.originalX;
+		int bottom = (int)gSectorResize.originalY;
+		int right = left + (int)gSectorResize.originalWidth;
+		int top = bottom + (int)gSectorResize.originalHeight;
+		int deltaX = (int)round((io.MousePos.x - gSectorResize.pressPosition.x) / CORE_CELL_WIDTH_PIXELS);
+		int deltaY = (int)round(-(io.MousePos.y - gSectorResize.pressPosition.y) / CORE_DECK_HEIGHT_PIXELS);
+		int* moving = nullptr;
+		int desired = 0;
+		switch (gSectorResize.edge)
+		{
+		case ResizeEdge::Left: moving = &left; desired = clamp(left + deltaX, 0, right - 1); break;
+		case ResizeEdge::Right: moving = &right; desired = clamp(right + deltaX, left + 1, (int)building->getCellsWide()); break;
+		case ResizeEdge::Bottom: moving = &bottom; desired = clamp(bottom + deltaY, 0, top - 1); break;
+		case ResizeEdge::Top: moving = &top; desired = clamp(top + deltaY, bottom + 1, (int)building->getDecksHigh()); break;
+		case ResizeEdge::None: break;
+		}
+		if (moving)
+		{
+			int step = desired >= *moving ? 1 : -1;
+			while (*moving != desired)
+			{
+				int old = *moving;
+				*moving += step;
+				if (!resizeRectangleFree(building, gSelectedSector, left, bottom, right, top))
+				{
+					*moving = old;
+					break;
+				}
+			}
+		}
+		if (gSectorResize.preview.x != (uint32_t)left
+			|| gSectorResize.preview.y != (uint32_t)bottom
+			|| gSectorResize.preview.cellsWide != (uint32_t)(right - left)
+			|| gSectorResize.preview.decksHigh != (uint32_t)(top - bottom))
+		{
+			gSectorResize.preview = building->planResizeLocation(gSelectedSector->getIndex(),
+				(uint32_t)left, (uint32_t)bottom, (uint32_t)(right - left), (uint32_t)(top - bottom));
+		}
+
+		if (io.MouseReleased[0])
+		{
+			gSectorResize.dragging = false;
+			bool unchanged = left == (int)gSectorResize.originalX
+				&& bottom == (int)gSectorResize.originalY
+				&& right - left == (int)gSectorResize.originalWidth
+				&& top - bottom == (int)gSectorResize.originalHeight;
+			if (unchanged) resetSectorResize();
+			else if (!gSectorResize.preview.valid)
+			{
+				core::addLogMessage("Sector editor", 0, core::LogLevel::Error,
+					gSectorResize.preview.diagnostic);
+				resetSectorResize();
+			}
+			else queueLocationEdit(building, gSectorResize.preview);
+		}
+	}
+
+	void drawSectorEditOverlay(ImDrawList* drawList)
+	{
+		if (gWorldHovered && gUISettings.selectionMode == UISettings::SelectionMode::Sector
+			&& gSelectedSector && !gSectorResize.dragging && !gPendingLocationEdit)
+		{
+			auto edge = hoveredResizeEdge(gSelectedSector, ImGui::GetIO().MousePos);
+			auto topLeft = worldToScreen({ (float)gSelectedSector->getCellX(),
+				(float)(gSelectedSector->getCellY() + gSelectedSector->getDecksHigh()) });
+			auto bottomRight = worldToScreen({
+				(float)(gSelectedSector->getCellX() + gSelectedSector->getCellsWide()),
+				(float)gSelectedSector->getCellY() });
+			switch (edge)
+			{
+			case ResizeEdge::Left: drawList->AddLine(topLeft, { topLeft.x, bottomRight.y }, IM_COL32(255, 255, 0, 255), 4.0f); break;
+			case ResizeEdge::Right: drawList->AddLine({ bottomRight.x, topLeft.y }, bottomRight, IM_COL32(255, 255, 0, 255), 4.0f); break;
+			case ResizeEdge::Top: drawList->AddLine(topLeft, { bottomRight.x, topLeft.y }, IM_COL32(255, 255, 0, 255), 4.0f); break;
+			case ResizeEdge::Bottom: drawList->AddLine({ topLeft.x, bottomRight.y }, bottomRight, IM_COL32(255, 255, 0, 255), 4.0f); break;
+			case ResizeEdge::None: break;
+			}
+		}
+
+		core::Building::LocationEditPlan const* plan = nullptr;
+		if (gSectorResize.dragging || (gSectorResize.preview.cellsWide && !gPendingLocationEdit))
+			plan = &gSectorResize.preview;
+		else if (gPendingLocationEdit) plan = &*gPendingLocationEdit;
+		if (!plan || plan->remove || plan->cellsWide == 0 || plan->decksHigh == 0) return;
+		auto topLeft = worldToScreen({ (float)plan->x, (float)(plan->y + plan->decksHigh) });
+		auto bottomRight = worldToScreen({ (float)(plan->x + plan->cellsWide), (float)plan->y });
+		auto colour = plan->valid ? IM_COL32(255, 255, 0, 255) : IM_COL32(255, 64, 64, 255);
+		drawList->AddRectFilled(topLeft, bottomRight,
+			plan->valid ? IM_COL32(255, 255, 0, 45) : IM_COL32(255, 64, 64, 45));
+		drawList->AddRect(topLeft, bottomRight, colour, 0.0f, 0, 2.0f);
+		if (!plan->valid && !plan->diagnostic.empty()) ImGui::SetTooltip("%s", plan->diagnostic.c_str());
+	}
+}
+
 void renderWorldWindow(shared_ptr<core::Building> building, shared_ptr<const core::Graph> graph)
 {
 	ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
@@ -2488,13 +2803,19 @@ void renderWorldWindow(shared_ptr<core::Building> building, shared_ptr<const cor
 
 	gHoveredAgent = nullptr;
 	gHoveredInteractionPoint = {};
+	gHoveredSector.reset();
 	gHoveredSectorObject = nullptr;
 	gHoveredVertex = nullptr;
 
 	if (gWorldHovered)
 	{
 		auto mousePos = getMouseWorldPosition();
-		if (gUISettings.selectionMode == UISettings::SelectionMode::Object)
+		if (gUISettings.selectionMode == UISettings::SelectionMode::Sector)
+		{
+			auto sector = building->getSectorAtPosition(gUISettings.visibleLayer, mousePos.x, mousePos.y);
+			if (sector && sector->getType() == core::SectorType::Location) gHoveredSector = sector;
+		}
+		else if (gUISettings.selectionMode == UISettings::SelectionMode::Object)
 		{
 			gHoveredAgent = building->getAgentAtPosition(gUISettings.visibleLayer, mousePos.x, mousePos.y);
 			if (!gHoveredAgent)
@@ -2518,15 +2839,18 @@ void renderWorldWindow(shared_ptr<core::Building> building, shared_ptr<const cor
 				mousePos.y, RENDER_VERTEX_SIZE / (float)CORE_DECK_HEIGHT_PIXELS);
 		}
 
-		if (gHoveredAgent || gHoveredSectorObject || gHoveredVertex)
+		if (gHoveredAgent || gHoveredSector || gHoveredSectorObject || gHoveredVertex)
 			ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
 	}
+
+	updateSectorResize(building);
 
 	ImDrawList* drawList = ImGui::GetWindowDrawList();
 	drawList->PushClipRect(canvasPos, canvasPos + canvasSize, true);
 	renderBuilding(building);
 	renderGraph(graph, building);
 	renderObjectPalette(building, canvasPos, canvasSize, drawList);
+	drawSectorEditOverlay(drawList);
 	drawList->PopClipRect();
 
 	ImGui::End();
