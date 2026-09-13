@@ -47,11 +47,13 @@ static std::deque<core::LogMessage> gLogMessages;
 using namespace std;
 
 
-// Are we interacting with ImGui widgets or the background?
+static bool gWorldHovered{ false };
+
+// The world is now an ImGui window, so WantCaptureMouse is true over it.
+// Track its canvas explicitly to distinguish it from the controls.
 bool mouseInteractingWithBackground()
 {
-	auto const& io = ImGui::GetIO();
-	return !io.WantCaptureMouse;
+	return gWorldHovered;
 }
 
 
@@ -487,17 +489,7 @@ void renderMenu(shared_ptr<const core::Building> building)
 
 void renderToolbar(shared_ptr<core::Building> building)
 {
-	ImGuiIO& io = ImGui::GetIO();
-
-	auto windowFlags = 0
-		| ImGuiWindowFlags_NoDecoration;
-
-	ImGui::SetNextWindowPos(ImVec2(0, gMainMenuWindowSize.y));
-	ImGui::SetNextWindowSize(ImVec2(io.DisplaySize.x, 35));
-
-	if (ImGui::Begin("Toolbar", nullptr, windowFlags))
-	{
-		if (ImGui::Button(gUISettings.worldPaused ? "Resume" : "Pause"))
+	if (ImGui::Button(gUISettings.worldPaused ? "Resume" : "Pause"))
 		{
 			gUISettings.worldPaused = !gUISettings.worldPaused;
 		}
@@ -509,7 +501,6 @@ void renderToolbar(shared_ptr<core::Building> building)
 			building->wakeAllAgents();
 		}
 
-		ImGui::SameLine();
 
 		// Select visible Layer
 		vector<string> layers = {
@@ -529,7 +520,6 @@ void renderToolbar(shared_ptr<core::Building> building)
 		ImGui::Combo("Visible Layer", &gUISettings.visibleLayer, layersStr.c_str(), 6);
 
 		// Selection mode
-		ImGui::SameLine();
 
 		vector<string> selectionModes = {
 			"Objects",
@@ -553,20 +543,10 @@ void renderToolbar(shared_ptr<core::Building> building)
 		}
 
 		// View
-		ImGui::SameLine();
 		imgui::ToggleButton("ToggleNonVisibleLayer", "Show non-visible layer", &gUISettings.renderNonVisibleLayer);
-
-		ImGui::SameLine();
 		imgui::ToggleButton("ToggleGraph", "Building graph", &gUISettings.renderGraph);
-
-		ImGui::SameLine();
 		imgui::ToggleButton("ToggleNearestVertex", "Highlight nearest vertex", &gUISettings.highlightNearestVertex);
-
-		ImGui::SameLine();
 		imgui::ToggleButton("Agent Debug", "Agent debug", &gUISettings.renderAgentDebug);
-
-		ImGui::End();
-	}
 }
 
 
@@ -587,7 +567,9 @@ void renderStatusBar(shared_ptr<const core::Building> building)
 		{
 			// Scrollbar
 			static float scrollX = 0.0f;
-			float scrollMax = (float)building->getCellsWide() * (float)CORE_CELL_WIDTH_PIXELS - (float)APP_WINDOW_WIDTH;
+			float viewportWidth = gUISettings.worldViewportWidth > 0.0f
+				? gUISettings.worldViewportWidth : (float)APP_WINDOW_WIDTH;
+			float scrollMax = (float)building->getCellsWide() * (float)CORE_CELL_WIDTH_PIXELS - viewportWidth;
 
 			if (scrollMax > 0)
 			{
@@ -1088,32 +1070,23 @@ void renderObjectView(shared_ptr<const core::Building> building)
 }
 
 
-void renderBuildingWindow(shared_ptr<const core::Building> building)
+void renderBuildingPanel(shared_ptr<const core::Building> building)
 {
-	string layerNames[2] = { "Fore Layer", "Back Layer" };
-
-	if (ImGui::Begin("Building"))
+	if (ImGui::CollapsingHeader("Objects"))
 	{
-		if (ImGui::CollapsingHeader("Objects", nullptr, 0))
-		{
-			renderObjectView(building);
-		}
-
-		if (ImGui::CollapsingHeader("Agents", nullptr, 0))
-		{
-			renderAgentView(building);
-		}
+		renderObjectView(building);
 	}
 
-	ImGui::End();
+	if (ImGui::CollapsingHeader("Agents"))
+	{
+		renderAgentView(building);
+	}
 }
 
 
-void renderGraphWindow(shared_ptr<const core::Graph> graph)
+void renderGraphPanel(shared_ptr<const core::Graph> graph)
 {
-	if (ImGui::Begin("Graph"))
-	{
-		if (ImGui::CollapsingHeader("Edges", nullptr, 0))
+	if (ImGui::CollapsingHeader("Edges"))
 		{
 			ImGuiTableFlags flags =
 				ImGuiTableFlags_SizingStretchSame |
@@ -1154,16 +1127,11 @@ void renderGraphWindow(shared_ptr<const core::Graph> graph)
 				ImGui::EndTable();
 			}
 		}
-	}
-
-	ImGui::End();
 }
 
 
-void renderPathingWindow(shared_ptr<const core::Agent> agent)
+void renderPathingPanel(shared_ptr<const core::Agent> agent)
 {
-	if (ImGui::Begin("Path finding"))
-	{
 		string selectedVertexText = format("Selected vertex: {}", gSelectedVertex ? gSelectedVertex->getDescription() : "<none>");
 		string hoveredVertexText = format("Hovered vertex: {}", gHoveredVertex ? gHoveredVertex->getDescription() : "<none>");
 
@@ -1273,12 +1241,9 @@ void renderPathingWindow(shared_ptr<const core::Agent> agent)
 				ImGui::EndTable();
 			}
 		}
-	}
-
-	ImGui::End();
 }
 
-void renderLogWindow()
+void renderLogPanel()
 {
 	auto newMessages = core::consumeLogMessages();
 
@@ -1290,12 +1255,6 @@ void renderLogWindow()
 	copy(newMessages.begin(), newMessages.end(), back_inserter(gLogMessages));
 
 	// UI
-	if (!ImGui::Begin("Log"))
-	{
-		ImGui::End();
-		return;
-	}
-
 	ImGui::AlignTextToFramePadding();
 	//ImGui::Text("Log events:");
 	//SameLine(); CheckboxFlags("All", &g.DebugLogFlags, ImGuiDebugLogFlags_EventMask_);
@@ -1396,62 +1355,132 @@ void renderLogWindow()
 	}
 
 	ImGui::EndChild();
+}
+
+
+void renderDockSpace()
+{
+	ImGuiViewport* viewport = ImGui::GetMainViewport();
+	ImGui::SetNextWindowPos(viewport->WorkPos);
+	ImGui::SetNextWindowSize(viewport->WorkSize);
+	ImGui::SetNextWindowViewport(viewport->ID);
+
+	ImGuiWindowFlags flags = ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoTitleBar |
+		ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+		ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus |
+		ImGuiWindowFlags_NoBackground;
+
+	ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+	ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+	ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+	ImGui::Begin("DockSpace Host", nullptr, flags);
+	ImGui::PopStyleVar(3);
+
+	ImGuiID dockspaceId = ImGui::GetID("MainDockSpace");
+	if (ImGui::DockBuilderGetNode(dockspaceId) == nullptr)
+	{
+		ImGui::DockBuilderRemoveNode(dockspaceId);
+		ImGui::DockBuilderAddNode(dockspaceId, ImGuiDockNodeFlags_DockSpace);
+		ImGui::DockBuilderSetNodeSize(dockspaceId, viewport->WorkSize);
+
+		ImGuiID leftId;
+		ImGuiID worldId;
+		ImGui::DockBuilderSplitNode(dockspaceId, ImGuiDir_Left, 0.32f, &leftId, &worldId);
+		ImGui::DockBuilderDockWindow("Controls", leftId);
+		ImGui::DockBuilderDockWindow("World", worldId);
+		ImGui::DockBuilderFinish(dockspaceId);
+	}
+
+	ImGui::DockSpace(dockspaceId, ImVec2(0.0f, 0.0f));
+	ImGui::End();
+}
+
+void renderControlsWindow(shared_ptr<core::Building> building, shared_ptr<const core::Graph> graph,
+	shared_ptr<core::Agent> pathingAgent)
+{
+	ImGui::Begin("Controls");
+
+	if (ImGui::CollapsingHeader("Simulation", ImGuiTreeNodeFlags_DefaultOpen))
+		renderToolbar(building);
+	if (ImGui::CollapsingHeader("Building", ImGuiTreeNodeFlags_DefaultOpen))
+		renderBuildingPanel(building);
+	if (ImGui::CollapsingHeader("Path finding"))
+		renderPathingPanel(pathingAgent);
+	if (ImGui::CollapsingHeader("Graph"))
+		renderGraphPanel(graph);
+	if (ImGui::CollapsingHeader("Log"))
+		renderLogPanel();
 
 	ImGui::End();
 }
 
-
-void renderUI(shared_ptr<core::Building> building, shared_ptr<const core::Graph> graph, shared_ptr<core::Agent> pathingAgent)
+void renderWorldWindow(shared_ptr<core::Building> building, shared_ptr<const core::Graph> graph)
 {
-	ImGui::SetMouseCursor(ImGuiMouseCursor_Arrow);
+	ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+	ImGui::Begin("World", nullptr, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+	ImGui::PopStyleVar();
+
+	ImVec2 canvasPos = ImGui::GetCursorScreenPos();
+	ImVec2 canvasSize = ImGui::GetContentRegionAvail();
+	canvasSize.x = max(canvasSize.x, 1.0f);
+	canvasSize.y = max(canvasSize.y, 1.0f);
+
+	gUISettings.worldViewportX = canvasPos.x;
+	gUISettings.worldViewportY = canvasPos.y;
+	gUISettings.worldViewportWidth = canvasSize.x;
+	gUISettings.worldViewportHeight = canvasSize.y;
+
+	ImGui::InvisibleButton("##WorldCanvas", canvasSize,
+		ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+	gWorldHovered = ImGui::IsItemHovered();
 
 	gHoveredAgent = nullptr;
 	gHoveredInteractionPoint = {};
 	gHoveredSectorObject = nullptr;
 	gHoveredVertex = nullptr;
 
-	if (mouseInteractingWithBackground())
+	if (gWorldHovered)
 	{
 		auto mousePos = getMouseWorldPosition();
-
-		switch (gUISettings.selectionMode)
+		if (gUISettings.selectionMode == UISettings::SelectionMode::Object)
 		{
-		case UISettings::SelectionMode::Object:
-		{
-			auto agent = building->getAgentAtPosition(gUISettings.visibleLayer, mousePos.x, mousePos.y);
-
-			if (agent)
+			gHoveredAgent = building->getAgentAtPosition(gUISettings.visibleLayer, mousePos.x, mousePos.y);
+			if (!gHoveredAgent)
 			{
-				gHoveredAgent = agent;
-			}
-			else
-			{
-				shared_ptr<const core::SectorObject> sectorObj;
+				shared_ptr<const core::SectorObject> sectorObject;
 				auto object = building->getObjectAtPosition(gUISettings.visibleLayer,
-					mousePos.x, mousePos.y, &sectorObj);
-				gHoveredSectorObject = sectorObj;
+					mousePos.x, mousePos.y, &sectorObject);
+				gHoveredSectorObject = sectorObject;
 				if (auto button = dynamic_pointer_cast<const core::Button>(object))
 					gHoveredInteractionPoint = button->getInteractionPointId();
 			}
-			break;
 		}
-
-		case UISettings::SelectionMode::Vertex:
-			gHoveredVertex = graph->getVertexAtPosition(gUISettings.visibleLayer, mousePos.x, mousePos.y, RENDER_VERTEX_SIZE / (float)CORE_DECK_HEIGHT_PIXELS);
-			break;
+		else
+		{
+			gHoveredVertex = graph->getVertexAtPosition(gUISettings.visibleLayer, mousePos.x,
+				mousePos.y, RENDER_VERTEX_SIZE / (float)CORE_DECK_HEIGHT_PIXELS);
 		}
 
 		if (gHoveredAgent || gHoveredSectorObject || gHoveredVertex)
-		{
 			ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-		}
 	}
 
+	ImDrawList* drawList = ImGui::GetWindowDrawList();
+	drawList->PushClipRect(canvasPos, canvasPos + canvasSize, true);
+	renderBuilding(building);
+	renderGraph(graph, building);
+	drawList->PopClipRect();
+
+	ImGui::End();
+}
+
+void renderUI(shared_ptr<core::Building> building, shared_ptr<const core::Graph> graph, shared_ptr<core::Agent> pathingAgent)
+{
+	ImGui::SetMouseCursor(ImGuiMouseCursor_Arrow);
+
 	renderMenu(building);
-	renderToolbar(building);
 	renderStatusBar(building);
-	renderBuildingWindow(building);
-	renderPathingWindow(pathingAgent);
-	renderGraphWindow(graph);
-	renderLogWindow();
+	renderDockSpace();
+	renderControlsWindow(building, graph, pathingAgent);
+	renderWorldWindow(building, graph);
 }

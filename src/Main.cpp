@@ -237,6 +237,7 @@ void setup()
 	ImGuiIO& io = ImGui::GetIO();
 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
+	io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;         // Enable the docking branch UI
 
 	io.Fonts->AddFontDefault();
 
@@ -593,7 +594,9 @@ void run()
 		(void)building->consumeSimulationEvents();
 
 		// Set up rendering
-		glViewport(0, 0, APP_WINDOW_WIDTH, APP_WINDOW_HEIGHT);
+		int drawableWidth, drawableHeight;
+		SDL_GL_GetDrawableSize(gWindow, &drawableWidth, &drawableHeight);
+		glViewport(0, 0, drawableWidth, drawableHeight);
 		glClearColor(clearColour.x * clearColour.w, clearColour.y * clearColour.w, clearColour.z * clearColour.w, clearColour.w);
 		glClear(GL_COLOR_BUFFER_BIT);
 		glEnable(GL_VERTEX_PROGRAM_POINT_SIZE);
@@ -604,10 +607,7 @@ void run()
 
 		ImGui::NewFrame();
 
-		auto mouseButtonStatus = getMouseButtonStatus();
-
 		handleShortcuts(building);
-		handleWorldInteraction(building, building->getGraph(), mouseButtonStatus);
 		handleContinuousKeyboardInput(building, updateTimeMicros);
 
 		if (ImGui::IsKeyPressed(ImGui::GetKeyIndex(ImGuiKey_F11)))
@@ -623,10 +623,10 @@ void run()
 
 		renderUI(building, building->getGraph(), pathingAgent);
 
+		auto mouseButtonStatus = getMouseButtonStatus();
+		handleWorldInteraction(building, building->getGraph(), mouseButtonStatus);
+
 		// Rendering
-		renderBuilding(building);
-		renderGraph(building->getGraph(), building);
-		
 		ImGui::Render();
 
 		ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());

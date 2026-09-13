@@ -71,9 +71,9 @@ void transformPosition(core::Vector2& p)
 {
 	p.x *= CORE_CELL_WIDTH_PIXELS;
 	p.y *= CORE_DECK_HEIGHT_PIXELS;
-	p.y = APP_WINDOW_HEIGHT - p.y;
+	p.y = gUISettings.worldViewportY + gUISettings.worldViewportHeight - p.y;
 
-	p.x += gUISettings.xOffset;
+	p.x += gUISettings.worldViewportX + gUISettings.xOffset;
 	p.y -= gUISettings.yOffset;
 }
 
@@ -96,13 +96,16 @@ void renderGrid(ImColor const& colour, float width, ImDrawList* drawList)
 	gridOffset.x = (float)fmod(-gUISettings.xOffset, CORE_CELL_WIDTH_PIXELS);
 	gridOffset.y = (float)fmod(gUISettings.yOffset, CORE_DECK_HEIGHT_PIXELS);
 
-	float xMin = 0.0f, yMin = 0.0f, xMax = APP_WINDOW_WIDTH, yMax = APP_WINDOW_HEIGHT;
+	float xMin = gUISettings.worldViewportX;
+	float yMin = gUISettings.worldViewportY;
+	float xMax = xMin + gUISettings.worldViewportWidth;
+	float yMax = yMin + gUISettings.worldViewportHeight;
 
 	for (float x = xMin; x <= xMax; x += CORE_CELL_WIDTH_PIXELS)
 	{
 		drawList->AddLine(
-			{ x - gridOffset.x, APP_WINDOW_HEIGHT - yMin },
-			{ x - gridOffset.x, APP_WINDOW_HEIGHT - yMax },
+			{ x - gridOffset.x, yMax },
+			{ x - gridOffset.x, yMin },
 			colour,
 			width
 		);
@@ -111,8 +114,8 @@ void renderGrid(ImColor const& colour, float width, ImDrawList* drawList)
 	for (float y = yMin; y <= yMax; y += CORE_DECK_HEIGHT_PIXELS)
 	{
 		drawList->AddLine(
-			{ xMin, APP_WINDOW_HEIGHT - (y + gridOffset.y) },
-			{ xMax, APP_WINDOW_HEIGHT - (y + gridOffset.y) },
+			{ xMin, yMax - (y - yMin + gridOffset.y) },
+			{ xMax, yMax - (y - yMin + gridOffset.y) },
 			colour,
 			width
 		);
@@ -131,7 +134,7 @@ void renderGraph(shared_ptr<const core::Graph> graph, shared_ptr<const core::Bui
 
 	auto layer = (uint32_t)gUISettings.visibleLayer;
 
-	auto drawList = ImGui::GetBackgroundDrawList();
+	auto drawList = ImGui::GetWindowDrawList();
 
 	auto const& vertices = graph->getVertices();
 	auto const& edges = graph->getEdges();
@@ -1095,7 +1098,8 @@ void renderStaircaseTransit(shared_ptr<const core::StaircaseTransit> staircaseTr
 
 void renderSectors(shared_ptr<const core::Building> building, int layer, bool visibleLayer, bool wireframe, ImDrawList* drawList)
 {
-	auto sectors = building->getSectorsInBounds(layer, -gUISettings.xOffset, 0, APP_WINDOW_WIDTH, APP_WINDOW_HEIGHT);
+	auto sectors = building->getSectorsInBounds(layer, -gUISettings.xOffset, 0,
+		gUISettings.worldViewportWidth, gUISettings.worldViewportHeight);
 
 	ImColor colour;
 
@@ -1110,7 +1114,8 @@ void renderSectors(shared_ptr<const core::Building> building, int layer, bool vi
 	// have a Door in front of them, in which case they will already be rendered.
 	if (layer == CORE_LAYER_FORE && visibleLayer)
 	{
-		sectors = building->getSectorsInBounds(CORE_LAYER_BACK, 0, 0, APP_WINDOW_WIDTH, APP_WINDOW_HEIGHT);
+		sectors = building->getSectorsInBounds(CORE_LAYER_BACK, -gUISettings.xOffset, 0,
+			gUISettings.worldViewportWidth, gUISettings.worldViewportHeight);
 
 		for (auto sector : sectors)
 		{
@@ -1133,7 +1138,7 @@ void renderSectors(shared_ptr<const core::Building> building, int layer, bool vi
 
 void renderBuilding(shared_ptr<const core::Building> building)
 {
-	auto drawList = ImGui::GetBackgroundDrawList();
+	auto drawList = ImGui::GetWindowDrawList();
 
 	assert(gUISettings.visibleLayer == 0 || gUISettings.visibleLayer == 1);
 

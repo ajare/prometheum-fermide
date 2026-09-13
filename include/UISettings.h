@@ -36,5 +36,11 @@ struct UISettings
 
 	float yOffset{ 32 };
 
+	// Screen-space rectangle occupied by the docked world view.
+	float worldViewportX{ 0 };
+	float worldViewportY{ 0 };
+	float worldViewportWidth{ 0 };
+	float worldViewportHeight{ 0 };
+
 	bool worldPaused{ false };
 };

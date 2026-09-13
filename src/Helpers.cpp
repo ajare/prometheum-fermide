@@ -82,7 +82,7 @@ core::Vector2 getMouseWorldPosition()
     auto mouseScreenPos = ImGui::GetMousePos();
 
     return {
-        (mouseScreenPos.x - gUISettings.xOffset) / CORE_CELL_WIDTH_PIXELS,
-        (APP_WINDOW_HEIGHT - (mouseScreenPos.y + gUISettings.yOffset)) / CORE_DECK_HEIGHT_PIXELS
+        (mouseScreenPos.x - gUISettings.worldViewportX - gUISettings.xOffset) / CORE_CELL_WIDTH_PIXELS,
+        (gUISettings.worldViewportY + gUISettings.worldViewportHeight - mouseScreenPos.y - gUISettings.yOffset) / CORE_DECK_HEIGHT_PIXELS
     };
 }
