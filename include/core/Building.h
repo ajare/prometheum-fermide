@@ -386,7 +386,7 @@ namespace core
 
 		std::shared_ptr<Layer> getLayer(uint32_t layerIndex);
 
-		uint32_t createLocation(std::string const& name, SectorType type, uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh, float topDeckHeight);
+		uint32_t createLocation(std::string const& name, SectorType type, uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh, float topDeckHeight, bool isCorridor);
 
 		uint32_t createLadder(uint32_t x, uint32_t y, CreateLadderOptions const& options);
 
@@ -430,7 +430,7 @@ namespace core
 
 		CreateObjectResult _createPlatformLiftButton(std::shared_ptr<const Sector> sector, uint32_t x, uint32_t y, uint32_t cellsWide, int side, uint32_t flags, uint32_t* index = nullptr);
 
-		uint32_t addLocation(std::string const& name, SectorType type, uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh, float topDeckHeight);
+		uint32_t addLocation(std::string const& name, SectorType type, uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh, float topDeckHeight, bool isCorridor);
 
 		void buildGraph();
 
@@ -607,6 +607,10 @@ namespace core
 		CreateShuttleResult addShuttle(uint32_t y, uint32_t x, uint32_t cellsWide, CreateShuttleOptions const& options);
 
 		// Sector object types
+		// Corridor doors are the constrained authoring form exposed by the object palette.
+		bool canAddCorridorDoor(uint32_t y, uint32_t x,
+			std::string* diagnostic = nullptr) const;
+
 		CreateDoorResult addSectorDoor(uint32_t y, uint32_t x, CreateDoorOptions const& options = {});
 
 		uint32_t addSectorWindow(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t decksHigh);

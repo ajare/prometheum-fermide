@@ -1,0 +1,103 @@
+version: 1
+name: Untitled
+cellsWide: 48
+decksHigh: 6
+construction:
+  - kind: 0
+    name: ""
+    a: 0
+    b: 1
+    c: 5
+    d: 1
+    e: 0
+    f: 0
+    g: 0
+    i: 0
+    j: 0
+    x: 0
+    y: 0
+    p: 0
+    q: 0
+    values: []
+  - kind: 1
+    name: Room 1
+    a: 1
+    b: 0
+    c: 4
+    d: 3
+    e: 1
+    f: 0
+    g: 0
+    i: 0
+    j: 0
+    x: 0.899999976
+    y: 0
+    p: 0
+    q: 0
+    values: []
+  - kind: 1
+    name: Room 2
+    a: 1
+    b: 0
+    c: 0
+    d: 3
+    e: 1
+    f: 0
+    g: 0
+    i: 0
+    j: 0
+    x: 0.899999976
+    y: 0
+    p: 0
+    q: 0
+    values: []
+  - kind: 14
+    name: ""
+    a: 2
+    b: 0
+    c: 0
+    d: 0
+    e: 0
+    f: 0
+    g: 0
+    i: 0
+    j: 0
+    x: 0.484375
+    y: 0
+    p: 0
+    q: 0
+    values: []
+  - kind: 6
+    name: ""
+    a: 0
+    b: 1
+    c: 1
+    d: 0
+    e: 0
+    f: 0
+    g: 0
+    i: 1
+    j: 0
+    x: 5
+    y: 0
+    p: 0
+    q: 0
+    values: []
+  - kind: 6
+    name: ""
+    a: 0
+    b: 5
+    c: 1
+    d: 0
+    e: 0
+    f: 0
+    g: 0
+    i: 1
+    j: 0
+    x: 5
+    y: 0
+    p: 0
+    q: 0
+    values: []
+agents:
+  []

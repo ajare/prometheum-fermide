@@ -253,6 +253,38 @@ namespace
 			&& building.resumeSimulation() && !building.isSimulationPaused();
 	}
 
+	bool corridorDoorPlacementEnforcesPaletteRules()
+	{
+		core::Building building("Corridor Door placement rules", 10, 4);
+		auto corridor = building.addCorridor(0, 0, 6);
+		auto backRoom = building.addRoom("Back room", CORE_LAYER_BACK, 0, 0, 6, 1);
+		building.addRoom("Not a corridor", CORE_LAYER_FORE, 1, 0, 3, 1);
+		building.addRoom("Second back room", CORE_LAYER_BACK, 1, 0, 3, 1);
+		building.addCorridor(2, 0, 4);
+
+		std::string diagnostic;
+		if (!building.canAddCorridorDoor(0, 2, &diagnostic)
+			|| building.canAddCorridorDoor(0, 7, &diagnostic)
+			|| diagnostic.find("corridor") == std::string::npos
+			|| building.canAddCorridorDoor(1, 1, &diagnostic)
+			|| diagnostic.find("corridor") == std::string::npos
+			|| building.canAddCorridorDoor(2, 1, &diagnostic)
+			|| diagnostic.find("Back Layer Room") == std::string::npos)
+			return false;
+
+		building.addSectorMarker(corridor, 0, 4.5f);
+		building.addSectorMarker(backRoom, 0, 0.5f);
+		if (building.canAddCorridorDoor(0, 4, &diagnostic)
+			|| diagnostic.find("blocks") == std::string::npos) return false;
+
+		auto door = building.addSectorDoor(0, 2);
+		building.finishBuild();
+		return door.door.type == core::SectorObjectType::Door
+			&& !building.canAddCorridorDoor(0, 2, &diagnostic)
+			&& diagnostic.find("blocks") != std::string::npos
+			&& building.isTraversalTopologyValid();
+	}
+
 	bool ordinaryTraversalCommitsOnlyAtDestination()
 	{
 		core::Building building("Ordinary transition", 10, 2);
@@ -2137,6 +2169,11 @@ int main()
 		if (!markerPlacementEnforcesPaletteCoreRules())
 		{
 			std::cerr << "FAIL: Marker placement did not enforce core viability rules\n";
+			return 1;
+		}
+		if (!corridorDoorPlacementEnforcesPaletteRules())
+		{
+			std::cerr << "FAIL: Door placement did not enforce corridor/Room or obstruction rules\n";
 			return 1;
 		}
 		if (!ordinaryTraversalCommitsOnlyAtDestination())

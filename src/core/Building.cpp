@@ -449,11 +449,11 @@ namespace core
 		return mLayers[layerIndex];
 	}
 
-	uint32_t Building::createLocation(string const& name, SectorType type, uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh, float topDeckHeight)
+	uint32_t Building::createLocation(string const& name, SectorType type, uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh, float topDeckHeight, bool isCorridor)
 	{
 		auto sectorIndex = (uint32_t)mSectors.size();
 
-		auto location = make_shared<Location>(name, type, layerIndex, sectorIndex, x, y, cellsWide, decksHigh, topDeckHeight, ~0u);
+		auto location = make_shared<Location>(name, type, layerIndex, sectorIndex, x, y, cellsWide, decksHigh, topDeckHeight, ~0u, isCorridor);
 		
 		mSectors.push_back(location);
 		return sectorIndex;
@@ -586,7 +586,7 @@ namespace core
 		};
 	}
 
-	uint32_t Building::addLocation(string const& name, SectorType type, uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh, float topDeckHeight)
+	uint32_t Building::addLocation(string const& name, SectorType type, uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh, float topDeckHeight, bool isCorridor)
 	{
 		string caller = format("Building::addLocation({}, {}, {}, {}, {}, {}, {} {})", name, getSectorTypeString(type), layerIndex, x, y, cellsWide, decksHigh, topDeckHeight);
 		
@@ -594,7 +594,7 @@ namespace core
 		validateLayerSpace(caller, layerIndex, x, y, cellsWide, decksHigh);
 
 		// Create sector
-		auto sectorIndex = createLocation(name, type, layerIndex, x, y, cellsWide, decksHigh, topDeckHeight);
+		auto sectorIndex = createLocation(name, type, layerIndex, x, y, cellsWide, decksHigh, topDeckHeight, isCorridor);
 
 		// Set layers
 		auto layer = getLayer(layerIndex);
@@ -992,7 +992,7 @@ namespace core
 	uint32_t Building::addCorridor(uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t decksHigh)
 	{
 		beginStructuralEdit("addCorridor");
-		auto const result = addLocation("Corridor", SectorType::Location, CORE_LAYER_FORE, x, y, cellsWide, decksHigh, CORE_CORRIDOR_HEIGHT);
+		auto const result = addLocation("Corridor", SectorType::Location, CORE_LAYER_FORE, x, y, cellsWide, decksHigh, CORE_CORRIDOR_HEIGHT, true);
 		ConstructionRecord record{ ConstructionType::Corridor };
 		record.a = y; record.b = x; record.c = cellsWide; record.d = decksHigh;
 		recordConstruction(std::move(record));
@@ -1009,7 +1009,7 @@ namespace core
 			throw BuildingException(this, format("{} - topDeckHeight={} is out of range", caller, topDeckHeight));
 		}
 
-		auto const result = addLocation(name, SectorType::Location, layerIndex, x, y, cellsWide, decksHigh, topDeckHeight);
+		auto const result = addLocation(name, SectorType::Location, layerIndex, x, y, cellsWide, decksHigh, topDeckHeight, false);
 		ConstructionRecord record{ ConstructionType::Room };
 		record.name = name;
 		record.a = layerIndex; record.b = y; record.c = x; record.d = cellsWide; record.e = decksHigh;
@@ -1725,6 +1725,39 @@ namespace core
 		}
 
 		return obj;
+	}
+
+	bool Building::canAddCorridorDoor(uint32_t y, uint32_t x, string* diagnostic) const
+	{
+		auto reject = [diagnostic](string reason)
+		{
+			if (diagnostic) *diagnostic = std::move(reason);
+			return false;
+		};
+
+		// addSectorDoor's bounds convention leaves the final column as a world boundary.
+		if (x >= mCellsWide || y >= mDecksHigh || x + 1 >= mCellsWide)
+			return reject("Door position is outside the building");
+
+		auto const& foreCell = mLayers[CORE_LAYER_FORE]->getCellDefinition(x, y);
+		if (!foreCell.occupied()) return reject("Doors must be placed on a Fore Layer corridor");
+		auto fore = dynamic_pointer_cast<const Location>(mSectors[foreCell.sectorIndex]);
+		if (!fore || !fore->isCorridor())
+			return reject("Doors must be placed on a Fore Layer corridor");
+
+		auto const& backCell = mLayers[CORE_LAYER_BACK]->getCellDefinition(x, y);
+		if (!backCell.occupied()) return reject("A Back Layer Room is required here");
+		auto back = dynamic_pointer_cast<const Location>(mSectors[backCell.sectorIndex]);
+		if (!back || back->isCorridor()) return reject("A Back Layer Room is required here");
+
+		if (foreCell.hasObject() || backCell.hasObject()
+			|| !foreCell.markers.empty() || !backCell.markers.empty())
+			return reject("Another object blocks Door placement");
+		if (!foreCell.isTraversableOnFoot() || !backCell.isTraversableOnFoot())
+			return reject("Door placement requires a traversable floor on both layers");
+
+		if (diagnostic) diagnostic->clear();
+		return true;
 	}
 
 	Building::CreateDoorResult Building::addSectorDoor(uint32_t y, uint32_t x, CreateDoorOptions const& options)

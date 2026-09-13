@@ -249,6 +249,7 @@ void setup()
 		0xf183, 0xf183, // Male
 		0xf21d, 0xf21d, // Street View
 		0xf3c5, 0xf3c5, // Map Marker Alt
+		0xf52a, 0xf52a, // Door Closed
 		0
 	};
 	gAgentIconFont = io.Fonts->AddFontFromFileTTF(FONT_ICON_FILE_NAME_FAS,

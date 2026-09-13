@@ -89,7 +89,8 @@ namespace
 	{
 		None,
 		Agent,
-		Marker
+		Marker,
+		Door
 	};
 
 	struct PaletteDropState
@@ -114,11 +115,38 @@ namespace
 		float feetY{ 0.0f };
 		float floorY{ 0.0f };
 		string diagnostic;
+		uint32_t cellX{ 0 };
+		uint32_t cellY{ 0 };
 
 		explicit operator bool() const { return sector != nullptr && diagnostic.empty(); }
 	};
 
 	PaletteDropState gPegman;
+
+	bool gSelectingAgentPathDestination{ false };
+	UISettings::SelectionMode gPathSelectionPreviousMode{ UISettings::SelectionMode::Object };
+	bool gPathSelectionPreviouslyRenderedGraph{ false };
+
+	void beginAgentPathSelection()
+	{
+		if (!gSelectedAgent || gSelectingAgentPathDestination) return;
+		gSelectingAgentPathDestination = true;
+		gPathSelectionPreviousMode = gUISettings.selectionMode;
+		gPathSelectionPreviouslyRenderedGraph = gUISettings.renderGraph;
+		gUISettings.selectionMode = UISettings::SelectionMode::Vertex;
+		gUISettings.renderGraph = true;
+		gSelectedVertex.reset();
+	}
+
+	void endAgentPathSelection()
+	{
+		if (!gSelectingAgentPathDestination) return;
+		gSelectingAgentPathDestination = false;
+		gUISettings.selectionMode = gPathSelectionPreviousMode;
+		gUISettings.renderGraph = gPathSelectionPreviouslyRenderedGraph;
+		gHoveredVertex.reset();
+		gSelectedVertex.reset();
+	}
 
 	enum class PaintTool
 	{
@@ -261,6 +289,34 @@ namespace
 			(float)sector->getCellY() + deckOffset, std::move(diagnostic) };
 	}
 
+	PegmanTarget getDoorTarget(shared_ptr<const core::Building> const& building,
+		ImVec2 position, ImVec2 canvasPos, ImVec2 canvasSize)
+	{
+		PegmanTarget target;
+		if (gUISettings.visibleLayer != CORE_LAYER_FORE)
+		{
+			target.diagnostic = "Doors can only be placed on the Fore Layer";
+			return target;
+		}
+		if (!pointInRect(position, canvasPos, canvasPos + canvasSize))
+		{
+			target.diagnostic = "Drop inside the world";
+			return target;
+		}
+
+		auto world = screenToWorld(position);
+		if (world.x < 0.0f || world.y < 0.0f)
+		{
+			target.diagnostic = "Door position is outside the building";
+			return target;
+		}
+		target.cellX = (uint32_t)floor(world.x);
+		target.cellY = (uint32_t)floor(world.y);
+		target.sector = building->getSectorAtPosition(CORE_LAYER_FORE, world.x, world.y);
+		building->canAddCorridorDoor(target.cellY, target.cellX, &target.diagnostic);
+		return target;
+	}
+
 	float fittedPegmanFontSize(float maximumWidth, float maximumHeight, ImVec2& renderedSize)
 	{
 		ImFont* font = gAgentIconFont ? gAgentIconFont : ImGui::GetFont();
@@ -293,6 +349,19 @@ namespace
 		auto size = font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, ICON_FA_MAP_MARKER_ALT);
 		drawList->AddText(font, fontSize, { point.x - size.x * 0.5f, point.y - size.y },
 			colour, ICON_FA_MAP_MARKER_ALT);
+	}
+
+	void drawDoorIcon(ImDrawList* drawList, ImVec2 boundsMin, ImVec2 boundsMax, ImU32 colour)
+	{
+		ImFont* font = gAgentIconFont ? gAgentIconFont : ImGui::GetFont();
+		auto sourceSize = font->FontSize;
+		auto sourceBounds = font->CalcTextSizeA(sourceSize, FLT_MAX, 0.0f, ICON_FA_DOOR_OPED);
+		auto available = boundsMax - boundsMin - ImVec2(10.0f, 8.0f);
+		auto fontSize = sourceSize * min(available.x / max(sourceBounds.x, 1.0f),
+			available.y / max(sourceBounds.y, 1.0f));
+		auto size = font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, ICON_FA_DOOR_OPED);
+		drawList->AddText(font, fontSize,
+			boundsMin + (boundsMax - boundsMin - size) * 0.5f, colour, ICON_FA_DOOR_OPED);
 	}
 
 	shared_ptr<const core::SectorObject> markerAtScreenPosition(
@@ -409,6 +478,7 @@ namespace
 	{
 		if (paused)
 		{
+			building->pauseSimulation();
 			gUISettings.worldPaused = true;
 			return;
 		}
@@ -434,6 +504,27 @@ namespace
 			gSelectedAgent = nullptr;
 			gSelectedSector.reset();
 			gSelectedSectorObject = created.sector->getObject(created.index);
+		}
+		catch (core::Exception const& error)
+		{
+			core::addLogMessage("Object palette", 0, core::LogLevel::Error, error.getMessage());
+		}
+		catch (std::exception const& error)
+		{
+			core::addLogMessage("Object palette", 0, core::LogLevel::Error, error.what());
+		}
+	}
+
+	void placeDoor(shared_ptr<core::Building> const& building, PegmanTarget const& target)
+	{
+		try
+		{
+			auto created = building->addSectorDoor(target.cellY, target.cellX);
+			building->finishBuild();
+			setSelectionMode(UISettings::SelectionMode::Object);
+			gSelectedAgent = nullptr;
+			gSelectedSector.reset();
+			gSelectedSectorObject = created.door.sector->getObject(created.door.index);
 		}
 		catch (core::Exception const& error)
 		{
@@ -488,15 +579,17 @@ namespace
 		}
 
 		auto trayBottomRight = canvasPos + canvasSize - ImVec2(PaletteInset, PaletteInset);
-		auto traySize = ImVec2(PalettePadding * 2.0f + PaletteSlotWidth * 2.0f + PaletteGap,
+		auto traySize = ImVec2(PalettePadding * 2.0f + PaletteSlotWidth * 3.0f + PaletteGap * 2.0f,
 			PalettePadding * 2.0f + PaletteSlotSize * 2.0f + PaletteGap);
 		auto trayTopLeft = trayBottomRight - traySize;
 		auto roomMin = trayTopLeft + ImVec2(PalettePadding, PalettePadding);
 		auto corridorMin = roomMin + ImVec2(PaletteSlotWidth + PaletteGap, 0.0f);
 		auto agentMin = roomMin + ImVec2(0.0f, PaletteSlotSize + PaletteGap);
 		auto markerMin = corridorMin + ImVec2(0.0f, PaletteSlotSize + PaletteGap);
+		auto doorMin = markerMin + ImVec2(PaletteSlotWidth + PaletteGap, 0.0f);
 		auto roomMax = roomMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
 		auto corridorMax = corridorMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
+		auto doorMax = doorMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
 		auto agentMax = agentMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
 		auto markerMax = markerMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
 		drawList->AddRectFilled(trayTopLeft, trayBottomRight, trayColour, 5.0f);
@@ -633,18 +726,26 @@ namespace
 		{
 			if (pointInRect(io.MousePos, agentMin, agentMax)) hoveredItem = PaletteItem::Agent;
 			else if (pointInRect(io.MousePos, markerMin, markerMax)) hoveredItem = PaletteItem::Marker;
+			else if (pointInRect(io.MousePos, doorMin, doorMax)) hoveredItem = PaletteItem::Door;
 		}
 		drawList->AddRect(agentMin, agentMax,
 			hoveredItem == PaletteItem::Agent ? yellow : borderColour, 3.0f);
 		drawList->AddRect(markerMin, markerMax,
 			hoveredItem == PaletteItem::Marker ? yellow : borderColour, 3.0f);
+		drawList->AddRect(doorMin, doorMax,
+			gUISettings.visibleLayer == CORE_LAYER_BACK ? disabledColour
+			: (hoveredItem == PaletteItem::Door ? yellow : borderColour), 3.0f);
 		if (hoveredItem != PaletteItem::None)
 		{
 			paletteConsumedMouse = true;
 			ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-			ImGui::SetTooltip(hoveredItem == PaletteItem::Agent
-				? "Drag to add Agent" : "Drag to add Marker");
-			if (io.MouseClicked[0])
+			if (hoveredItem == PaletteItem::Door && gUISettings.visibleLayer == CORE_LAYER_BACK)
+				ImGui::SetTooltip("Doors can only be placed on the Fore Layer");
+			else
+				ImGui::SetTooltip(hoveredItem == PaletteItem::Agent ? "Drag to add Agent"
+					: hoveredItem == PaletteItem::Marker ? "Drag to add Marker" : "Drag to add Door");
+			if (io.MouseClicked[0]
+				&& !(hoveredItem == PaletteItem::Door && gUISettings.visibleLayer == CORE_LAYER_BACK))
 			{
 				gPegman.phase = PalettePhase::Armed;
 				gPegman.item = hoveredItem;
@@ -666,9 +767,12 @@ namespace
 		if (gPegman.phase == PalettePhase::Dragging)
 		{
 			paletteConsumedMouse = true;
-			target = gPegman.item == PaletteItem::Marker
-				? getMarkerTarget(building, io.MousePos, canvasPos, canvasSize)
-				: getPegmanTarget(building, io.MousePos, canvasPos, canvasSize);
+			if (gPegman.item == PaletteItem::Marker)
+				target = getMarkerTarget(building, io.MousePos, canvasPos, canvasSize);
+			else if (gPegman.item == PaletteItem::Door)
+				target = getDoorTarget(building, io.MousePos, canvasPos, canvasSize);
+			else
+				target = getPegmanTarget(building, io.MousePos, canvasPos, canvasSize);
 			if (!gUISettings.worldPaused) target.diagnostic = "Pause simulation to place objects";
 			if (ImGui::IsKeyPressed(ImGuiKey_Escape) || io.MouseClicked[1]) resetPegman();
 			else if (io.MouseReleased[0])
@@ -676,6 +780,11 @@ namespace
 				if (target && gPegman.item == PaletteItem::Marker)
 				{
 					placeMarker(building, target);
+					resetPegman();
+				}
+				else if (target && gPegman.item == PaletteItem::Door)
+				{
+					placeDoor(building, target);
 					resetPegman();
 				}
 				else if (target && gPegman.item == PaletteItem::Agent)
@@ -697,6 +806,8 @@ namespace
 			PaletteSlotSize - 8.0f, PaletteSlotSize - 8.0f, yellow);
 		drawMarkerIcon(drawList, { (markerMin.x + markerMax.x) * 0.5f, markerMax.y - 5.0f },
 			PaletteSlotSize - 10.0f, yellow);
+		drawDoorIcon(drawList, doorMin, doorMax,
+			gUISettings.visibleLayer == CORE_LAYER_BACK ? disabledColour : yellow);
 
 		if (gPegman.phase == PalettePhase::Dragging)
 		{
@@ -707,6 +818,26 @@ namespace
 					? worldToScreen({ target.sector->getPosition().x + target.localX, target.floorY })
 					: io.MousePos;
 				drawMarkerIcon(drawList, preview, MarkerIconSize, colour);
+			}
+			else if (gPegman.item == PaletteItem::Door)
+			{
+				if (target.sector)
+				{
+					auto topLeft = worldToScreen({ (float)target.cellX,
+						(float)target.cellY + CORE_DOOR_HEIGHT });
+					auto bottomRight = worldToScreen({ (float)target.cellX + 1.0f,
+						(float)target.cellY });
+					drawList->AddRectFilled(topLeft, bottomRight,
+						colour == yellow ? IM_COL32(251, 188, 4, 55) : IM_COL32(244, 67, 54, 55));
+					drawList->AddRect(topLeft, bottomRight, colour, 0.0f, 0, 2.0f);
+				}
+				else
+				{
+					auto halfSize = ImVec2(CORE_CELL_WIDTH_PIXELS * 0.5f,
+						CORE_DOOR_HEIGHT * CORE_DECK_HEIGHT_PIXELS * 0.5f);
+					drawList->AddRect(io.MousePos - halfSize, io.MousePos + halfSize,
+						colour, 0.0f, 0, 2.0f);
+				}
 			}
 			else
 			{
@@ -800,6 +931,7 @@ MouseButtonStatus getMouseButtonStatus()
 
 void setSelectionMode(UISettings::SelectionMode mode)
 {
+	endAgentPathSelection();
 	if (gUISettings.selectionMode != mode)
 	{
 		gUISettings.selectionMode = mode;
@@ -871,6 +1003,7 @@ namespace
 		gSelectedSectorObject.reset();
 		resetPegman();
 		resetPaint();
+		endAgentPathSelection();
 		resetSectorResize();
 		gPendingLocationEdit.reset();
 		gUISettings.worldPaused = false;
@@ -956,6 +1089,7 @@ namespace
 			building = std::move(loaded);
 			gBuildingFilepath = selectedPath.get();
 			clearDocumentState();
+			setWorldPaused(building, true);
 			core::addLogMessage("File", 0, core::LogLevel::Info,
 				"Opened Building from " + gBuildingFilepath);
 		}
@@ -1090,6 +1224,7 @@ namespace
 					static_cast<uint32_t>(gNewBuildingDecks));
 				gBuildingFilepath.clear();
 				clearDocumentState();
+				setWorldPaused(building, true);
 				ImGui::CloseCurrentPopup();
 			}
 			ImGui::SameLine();
@@ -1153,8 +1288,21 @@ void handleShortcuts(shared_ptr<core::Building>& building)
 
 	if (!building) return;
 
+	if (gSelectingAgentPathDestination
+		&& ImGui::Shortcut(ImGuiKey_Escape, 0, ImGuiInputFlags_RouteGlobalLow))
+	{
+		endAgentPathSelection();
+	}
+
+	if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_P, 0, ImGuiInputFlags_RouteGlobalLow)
+		&& gSelectedAgent && !ImGui::IsAnyItemActive() && !ImGui::IsAnyItemFocused())
+	{
+		beginAgentPathSelection();
+	}
+
 	// World pause
-	if (ImGui::Shortcut(ImGuiKey_P, 0, ImGuiInputFlags_RouteGlobalLow))
+	if (!ImGui::GetIO().KeyCtrl
+		&& ImGui::Shortcut(ImGuiKey_P, 0, ImGuiInputFlags_RouteGlobalLow))
 	{
 		if (!ImGui::IsAnyItemActive() && !ImGui::IsAnyItemFocused())
 		{
@@ -1257,7 +1405,8 @@ void handleShortcuts(shared_ptr<core::Building>& building)
 	{
 		gUISettings.renderNonVisibleLayer = !gUISettings.renderNonVisibleLayer;
 	}
-	if (ImGui::Shortcut(ImGuiKey_F4, 0, ImGuiInputFlags_RouteGlobalLow))
+	if (!gSelectingAgentPathDestination
+		&& ImGui::Shortcut(ImGuiKey_F4, 0, ImGuiInputFlags_RouteGlobalLow))
 	{
 		gUISettings.renderGraph = !gUISettings.renderGraph;
 	}
@@ -1305,7 +1454,22 @@ void handleWorldInteraction(shared_ptr<core::Building> building,
 		}
 		else if (gHoveredVertex)
 		{
-			if (ImGui::GetIO().KeyCtrl)
+			if (gSelectingAgentPathDestination && gSelectedAgent)
+			{
+				auto path = graph->calculatePath(gSelectedAgent, nullptr, gHoveredVertex);
+				if (path)
+				{
+					gSelectedAgent->clearPath();
+					gSelectedAgent->setPath(path, true);
+					endAgentPathSelection();
+				}
+				else
+				{
+					core::addLogMessage("Agent path", 0, core::LogLevel::Error,
+						"No path is available to the selected vertex");
+				}
+			}
+			else if (ImGui::GetIO().KeyCtrl)
 			{
 				if (gSelectedAgent)
 				{
@@ -1323,7 +1487,8 @@ void handleWorldInteraction(shared_ptr<core::Building> building,
 	if (!gPegmanConsumesLeftMouse
 		&& mouseStatus.state[MouseButtonStatus::Right] == MouseButtonStatus::State::Clicked)
 	{
-		clearSelections();
+		if (gSelectingAgentPathDestination) endAgentPathSelection();
+		else clearSelections();
 	}
 
 	if (!gPegmanConsumesLeftMouse && mouseStatus.dragging[MouseButtonStatus::Left])
@@ -2217,6 +2382,17 @@ void renderSelectedAgentPanel(shared_ptr<const core::Building> building)
 	ImGui::Text("Local position: %.2f, %.2f", localPosition.x, localPosition.y);
 	ImGui::Text("World position: %.2f, %.2f", globalPosition.x, globalPosition.y);
 
+	if (gSelectingAgentPathDestination)
+	{
+		ImGui::TextColored({ 1.0f, 0.75f, 0.1f, 1.0f },
+			"Select a destination vertex (Escape to cancel)");
+		if (ImGui::Button("Cancel path selection")) endAgentPathSelection();
+	}
+	else if (ImGui::Button("Select path destination (Ctrl+P)"))
+	{
+		beginAgentPathSelection();
+	}
+
 	const char* state = "Unknown";
 	switch (gSelectedAgent->getState())
 	{
@@ -2870,6 +3046,8 @@ void renderWorldWindow(shared_ptr<core::Building> building, shared_ptr<const cor
 	}
 
 	updateSectorResize(building);
+
+	if (gSelectingAgentPathDestination) gUISettings.renderGraph = true;
 
 	ImDrawList* drawList = ImGui::GetWindowDrawList();
 	drawList->PushClipRect(canvasPos, canvasPos + canvasSize, true);

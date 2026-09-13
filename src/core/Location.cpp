@@ -18,8 +18,9 @@ namespace core
 
 	using namespace std;
 
-	Location::Location(string const& name, SectorType type, uint32_t layerIndex, uint32_t index, uint32_t cellX, uint32_t cellY, uint32_t cellsWide, uint32_t decksHigh, float topDeckHeight, uint32_t capacity)
+	Location::Location(string const& name, SectorType type, uint32_t layerIndex, uint32_t index, uint32_t cellX, uint32_t cellY, uint32_t cellsWide, uint32_t decksHigh, float topDeckHeight, uint32_t capacity, bool isCorridor)
 		: Sector(type, layerIndex, index, cellX, cellY, 0.0f, 0.0f, (float)cellsWide, (float)((decksHigh - 1) + topDeckHeight), name, cellsWide, decksHigh, topDeckHeight, capacity)
+		, mIsCorridor(isCorridor)
 	{
 	}
 
