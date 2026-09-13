@@ -24,6 +24,15 @@ namespace core
 			return id;
 		}
 
+		void restore(Id id, std::unique_ptr<Entity> entity)
+		{
+			mEntities.emplace(id, std::move(entity));
+			if (mNextId <= id.value)
+			{
+				mNextId = id.value + 1;
+			}
+		}
+
 		Entity* find(Id id)
 		{
 			auto found = mEntities.find(id);

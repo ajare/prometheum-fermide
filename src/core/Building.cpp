@@ -983,7 +983,11 @@ namespace core
 	uint32_t Building::addCorridor(uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t decksHigh)
 	{
 		beginStructuralEdit("addCorridor");
-		return addLocation("Corridor", SectorType::Location, CORE_LAYER_FORE, x, y, cellsWide, decksHigh, CORE_CORRIDOR_HEIGHT);
+		auto const result = addLocation("Corridor", SectorType::Location, CORE_LAYER_FORE, x, y, cellsWide, decksHigh, CORE_CORRIDOR_HEIGHT);
+		ConstructionRecord record{ ConstructionType::Corridor };
+		record.a = y; record.b = x; record.c = cellsWide; record.d = decksHigh;
+		recordConstruction(std::move(record));
+		return result;
 	}
 
 	uint32_t Building::addRoom(string const& name, uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t decksHigh, float topDeckHeight)
@@ -996,7 +1000,13 @@ namespace core
 			throw BuildingException(this, format("{} - topDeckHeight={} is out of range", caller, topDeckHeight));
 		}
 
-		return addLocation(name, SectorType::Location, layerIndex, x, y, cellsWide, decksHigh, topDeckHeight);
+		auto const result = addLocation(name, SectorType::Location, layerIndex, x, y, cellsWide, decksHigh, topDeckHeight);
+		ConstructionRecord record{ ConstructionType::Room };
+		record.name = name;
+		record.a = layerIndex; record.b = y; record.c = x; record.d = cellsWide; record.e = decksHigh;
+		record.x = topDeckHeight;
+		recordConstruction(std::move(record));
+		return result;
 	}
 
 	Building::CreateLadderResult Building::addLadder(uint32_t y, uint32_t x, CreateLadderOptions const& options)
@@ -1104,11 +1114,16 @@ namespace core
 			registerExtensionControl(createdControls[CORE_LEVEL_HIGH]);
 		}
 
-		return {
+		CreateLadderResult result{
 			{ ~0u, SectorObjectType::Ladder, ladderSector },
 			{ createdControls[0], createdControls[1] },
 			traversalResource
 		};
+		ConstructionRecord record{ ConstructionType::Ladder };
+		record.a = y; record.b = x; record.c = options.decksHigh; record.d = options.directionalBatchLimit;
+		record.p = options.extensible; record.q = options.startExtended; record.x = options.agentSpacing;
+		recordConstruction(std::move(record));
+		return result;
 	}
 
 	uint32_t Building::addStaircase(uint32_t y, uint32_t x, uint32_t decksHigh, int mountSide)
@@ -1206,6 +1221,10 @@ namespace core
 			staircase->configureTraversal(traversalResource);
 		}
 
+		ConstructionRecord record{ ConstructionType::Staircase };
+		record.a = y; record.b = x; record.c = options.decksHigh;
+		record.i = options.mountSide; record.d = options.directionalCapacity; record.e = options.directionalBatchLimit;
+		recordConstruction(std::move(record));
 		return { sectorIndex, traversalResource };
 	}
 
@@ -1347,7 +1366,12 @@ namespace core
 			if (i == 0) liftRes.interiorSelector = selector;
 		}
 		liftResource->mLiftSelector = liftRes.interiorSelector;
-		
+
+		ConstructionRecord record{ ConstructionType::Lift };
+		record.a = y; record.b = x; record.c = options.cellsWide; record.d = options.capacity;
+		record.x = options.minimumDwellSeconds; record.y = options.maximumBoardingSeconds;
+		record.values = options.stopOffsets;
+		recordConstruction(std::move(record));
 		return liftRes;
 	}
 
@@ -1523,6 +1547,12 @@ namespace core
 		}
 		shuttleResource->mLiftSelector = shuttleRes.interiorSelector;
 
+		ConstructionRecord record{ ConstructionType::Shuttle };
+		record.a = y; record.b = x; record.c = cellsWide; record.d = options.numCars;
+		record.e = options.carWidth; record.f = options.initialStop; record.g = options.capacity;
+		record.x = options.minimumDwellSeconds; record.y = options.maximumBoardingSeconds;
+		record.values = options.stopOffsets;
+		recordConstruction(std::move(record));
 		return shuttleRes;
 	}
 
@@ -1560,6 +1590,10 @@ namespace core
 
 			neighbour->removeEndWall(neighbourDeckIndex, 1 - side);
 		}
+
+		ConstructionRecord record{ ConstructionType::RemoveWall };
+		record.a = sectorIndex; record.b = deckIndex; record.i = side;
+		recordConstruction(std::move(record));
 	}
 
 	Building::CreateObjectResult Building::_createSectorButton(string const& name, shared_ptr<const Sector> sector, uint32_t x, uint32_t y, uint32_t flags, uint32_t* index)
@@ -1663,7 +1697,13 @@ namespace core
 	Building::CreateDoorResult Building::addSectorDoor(uint32_t y, uint32_t x, CreateDoorOptions const& options)
 	{
 		beginStructuralEdit("addSectorDoor");
-		return _addSectorDoor(y, x, options);
+		auto result = _addSectorDoor(y, x, options);
+		ConstructionRecord record{ ConstructionType::Door };
+		record.a = y; record.b = x; record.c = options.width; record.d = options.crossingLanes;
+		record.p = options.controls[0]; record.q = options.controls[1];
+		record.i = static_cast<int32_t>(options.activationMode); record.x = options.holdOpenSeconds;
+		recordConstruction(std::move(record));
+		return result;
 	}
 
 	Building::CreateDoorResult Building::_addSectorDoor(uint32_t y, uint32_t x,
@@ -1879,6 +1919,12 @@ namespace core
 			cellDef.sectorObjectType = SectorObjectType::Window;
 		}
 
+		ConstructionRecord record{ ConstructionType::Window };
+		record.a = layerIndex; record.b = y; record.c = x; record.d = cellsWide; record.e = decksHigh;
+		record.p = options.traversable;
+		record.i = static_cast<int32_t>(options.initialState);
+		record.j = static_cast<int32_t>(options.style);
+		recordConstruction(std::move(record));
 		return { { windowIndex, windowObjType, windowSector }, window, traversalResource };
 	}
 
@@ -1987,6 +2033,12 @@ namespace core
 				addTraversalControl(traversalResource, point);
 			}
 		}
+		ConstructionRecord record{ ConstructionType::BulkheadDoor };
+		record.a = layerIndex; record.b = y; record.c = x; record.i = side;
+		record.p = options.controls[0]; record.q = options.controls[1];
+		record.j = static_cast<int32_t>(options.activationMode);
+		record.x = options.holdOpenSeconds; record.d = options.crossingLanes;
+		recordConstruction(std::move(record));
 		return { doorObject, { createdControls[0], createdControls[1] }, traversalResource };
 	}
 
@@ -2005,6 +2057,9 @@ namespace core
 			object->getPosition() + object->getSize() * 0.5f, 0.15f,
 			getFixedTimestep(), { { command, InteractionBindingRequirement::Required } });
 		bindPhysicalControl(ctrl, point);
+		ConstructionRecord record{ ConstructionType::LightSwitch };
+		record.a = sectorIndex; record.b = xOffset;
+		recordConstruction(std::move(record));
 		return ctrl;
 	}
 
@@ -2032,6 +2087,9 @@ namespace core
 		// Set layers
 		cellDef.floorIndex = walkwayIndex;
 		cellDef.floorType = CellFloorType::Walkway;
+		ConstructionRecord record{ ConstructionType::Walkway };
+		record.a = sectorIndex; record.b = deckIndex; record.c = xOffset;
+		recordConstruction(std::move(record));
 	}
 
 	bool Building::canAddSectorMarker(uint32_t sectorIndex, uint32_t deckIndex, float xOffset,
@@ -2089,6 +2147,9 @@ namespace core
 		auto createdMarker = createMarker(layerIndex, sector->getCellX(),
 			sector->getCellY() + deckIndex, xOffset, vertexIdentifier);
 		cellDef.markers.push_back(createdMarker.index);
+		ConstructionRecord record{ ConstructionType::Marker };
+		record.a = sectorIndex; record.b = deckIndex; record.x = xOffset;
+		recordConstruction(std::move(record));
 		return createdMarker;
 	}
 
@@ -2188,11 +2249,17 @@ namespace core
 
 		}
 
-		return {
+		CreateForceBridgeResult result{
 			fbObject,
 			{ createdControls[0], createdControls[1] },
 			traversalResource
 		};
+		ConstructionRecord record{ ConstructionType::ForceBridge };
+		record.a = sectorIndex; record.b = deckIndex; record.c = xOffset; record.d = options.width;
+		record.i = options.fromSide; record.p = options.extensible; record.q = options.startExtended;
+		record.e = options.controlCount;
+		recordConstruction(std::move(record));
+		return result;
 	}
 
 	Building::CreateLadderResult Building::addSectorLadder(uint32_t sectorIndex, uint32_t deckIndex, uint32_t xOffset, CreateLadderOptions const& options)
@@ -2287,11 +2354,17 @@ namespace core
 
 		}
 
-		return {
+		CreateLadderResult result{
 			ladderObject,
 			{ createdControls[CORE_LEVEL_LOW], createdControls[CORE_LEVEL_HIGH] },
 			traversalResource
 		};
+		ConstructionRecord record{ ConstructionType::SectorLadder };
+		record.a = sectorIndex; record.b = deckIndex; record.c = xOffset;
+		record.d = options.decksHigh; record.e = options.directionalBatchLimit;
+		record.p = options.extensible; record.q = options.startExtended; record.x = options.agentSpacing;
+		recordConstruction(std::move(record));
+		return result;
 	}
 
 	Building::CreatePlatformLiftResult Building::addSectorPlatformLift(uint32_t sectorIndex, uint32_t deckIndex, uint32_t xOffset, CreateLiftOptions const& options)
@@ -2432,6 +2505,12 @@ namespace core
 		}
 		resource->mLiftSelector = liftRes.interiorSelector;
 
+		ConstructionRecord record{ ConstructionType::PlatformLift };
+		record.a = sectorIndex; record.b = deckIndex; record.c = xOffset;
+		record.d = options.cellsWide; record.e = options.capacity;
+		record.x = options.minimumDwellSeconds; record.y = options.maximumBoardingSeconds;
+		record.values = options.stopOffsets;
+		recordConstruction(std::move(record));
 		return liftRes;
 	}
 
@@ -2442,6 +2521,7 @@ namespace core
 			throw BuildingException(this, format(
 				"{} is a structural edit and requires pauseSimulation() before it can run", operation));
 		}
+		modify();
 		mTopologyDirty = true;
 		mTopologyValid = false;
 		mTopologyDiagnostic = "Traversal topology has unvalidated structural edits";
@@ -5752,6 +5832,7 @@ namespace core
 		event.type = SimulationEventType::AgentRemoved;
 		event.agent = std::move(snapshot);
 		mEvents.push_back(std::move(event));
+		modify();
 		return { true, {} };
 	}
 

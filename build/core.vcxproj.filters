@@ -20,6 +20,9 @@
     <ClCompile Include="..\src\core\Building.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\core\BuildingSerialization.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\core\BulkheadDoor.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>

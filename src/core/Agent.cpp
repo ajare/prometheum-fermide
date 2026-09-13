@@ -20,6 +20,33 @@ namespace core
 	{
 	}
 
+	bool Agent::childrenModified() const
+	{
+		return false;
+	}
+
+	void Agent::serializeImpl(Serializer& serializer, SerializationWorkData&) const
+	{
+		serializer.beginMap("agent");
+		serializer.writeString("name", mName);
+		serializer.writeUint32("flags", mFlags);
+		serializer.endMap();
+	}
+
+	bool Agent::deserializeImpl(Serializer& serializer, SerializationWorkData&)
+	{
+		serializer.beginMap("agent");
+		mName = serializer.readString("name");
+		mFlags = serializer.readUint32("flags");
+		serializer.endMap();
+
+		mState = State::Idle;
+		mPath = {};
+		mTraversalTask.reset();
+		mTraversalLocalGoal.reset();
+		return true;
+	}
+
 	string const& Agent::getName() const
 	{
 		return mName;
@@ -104,17 +131,28 @@ namespace core
 
 	void Agent::setFlags(uint32_t flags)
 	{
-		mFlags |= flags;
+		auto const updated = mFlags | flags;
+		if (updated != mFlags)
+		{
+			mFlags = updated;
+			modify();
+		}
 	}
 
 	void Agent::unsetFlags(uint32_t flags)
 	{
-		mFlags &= ~flags;
+		auto const updated = mFlags & ~flags;
+		if (updated != mFlags)
+		{
+			mFlags = updated;
+			modify();
+		}
 	}
 
 	void Agent::setPosition(SectorPosition pos)
 	{
 		mPosition = pos;
+		modify();
 	}
 
 	void Agent::attachToBuilding(Building* building)

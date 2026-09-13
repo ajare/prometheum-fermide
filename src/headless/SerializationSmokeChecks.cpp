@@ -3,6 +3,8 @@
 #include <stdexcept>
 #include <string>
 
+#include "core/Building.h"
+#include "core/Defines.h"
 #include "core/Serializable.h"
 #include "core/SerializationException.h"
 #include "core/YamlSerializer.h"
@@ -144,6 +146,56 @@ namespace
 		}
 	}
 
+	void buildingRoundTripsAuthoredStateAndAgents()
+	{
+		core::Building original("Serializable building", 8, 3);
+		auto const fore = original.addRoom("Fore room", CORE_LAYER_FORE, 0, 0, 7, 2);
+		original.addRoom("Back room", CORE_LAYER_BACK, 0, 0, 7, 2);
+		core::Building::CreateDoorOptions doorOptions;
+		doorOptions.width = 2;
+		doorOptions.activationMode = core::DoorActivationMode::RemoteControlled;
+		doorOptions.controls[0] = true;
+		doorOptions.controls[1] = true;
+		doorOptions.crossingLanes = 2;
+		original.addSectorDoor(0, 3, doorOptions);
+		original.addSectorMarker(fore, 0, 1.5f);
+		original.finishBuild();
+		auto const agentId = original.createAgent("Serialized agent", fore, 0, 0.75f);
+		original.lookupAgent(agentId).entity->setFlags(0x12u);
+
+		core::SerializationWorkData workData;
+		auto writer = core::YamlSerializer::toString();
+		original.serialize(*writer, workData);
+		writer->serialize();
+		auto const yaml = writer->getSerializedString();
+		require(yaml.find("construction") != std::string::npos
+			&& yaml.find("agents") != std::string::npos,
+			"Building YAML omitted authored structure or agents");
+
+		core::Building loaded("placeholder", 2, 2);
+		auto reader = core::YamlSerializer::fromString(yaml);
+		reader->deserialize();
+		require(loaded.deserialize(*reader, workData), "Building deserialization failed");
+		require(loaded.getName() == original.getName()
+			&& loaded.getCellsWide() == original.getCellsWide()
+			&& loaded.getDecksHigh() == original.getDecksHigh()
+			&& loaded.getNumSectors() == original.getNumSectors(),
+			"Building metadata or sectors did not round-trip");
+		require(loaded.getGraph() && !loaded.getGraph()->getVertices().empty(),
+			"Building graph was not regenerated after deserialization");
+		auto const loadedAgent = loaded.lookupAgent(agentId);
+		require(loadedAgent && loadedAgent.entity->getName() == "Serialized agent"
+			&& loadedAgent.entity->getFlags() == 0x12u
+			&& loadedAgent.entity->getSector()->getIndex() == fore
+			&& std::abs(loadedAgent.entity->getLocalPosition().x - 0.75f) < 0.0001f
+			&& loadedAgent.entity->getState() == core::Agent::State::Idle
+			&& !loadedAgent.entity->getPath(),
+			"Building-owned Agent did not round-trip as an idle, pathless Agent");
+		require(!loaded.isModified(), "deserialized Building was unexpectedly modified");
+		require(loaded.removeAgent(agentId).removed, "deserialized Agent could not be removed");
+		require(loaded.isModified(), "removing an Agent did not modify its Building");
+	}
+
 	void serializableTracksModificationState()
 	{
 		SerializableProbe probe;
@@ -182,5 +234,6 @@ void runSerializationSmokeChecks()
 	stringYamlRoundTripsPrimitiveValues();
 	fileYamlRoundTrips();
 	malformedValuesAndInvalidUsageThrowUsefulErrors();
+	buildingRoundTripsAuthoredStateAndAgents();
 	serializableTracksModificationState();
 }

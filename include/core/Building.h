@@ -19,12 +19,13 @@
 #include "core/Simulation.h"
 #include "core/Coordination.h"
 #include "core/EntityRegistry.h"
+#include "core/Serializable.h"
 
 
 namespace core
 {
 
-	class Building
+	class Building : public Serializable
 	{
 		friend class Agent;
 		friend class Graph;
@@ -250,7 +251,58 @@ namespace core
 
 		Log mBuildLog;
 
+		// Authored facade operations are the persistence boundary. Replaying them
+		// reconstructs sectors, objects, controls, and traversal resources while
+		// finishBuild() regenerates graph and pathing data.
+		enum class ConstructionType : uint8_t
+		{
+			Corridor,
+			Room,
+			Ladder,
+			Staircase,
+			Lift,
+			Shuttle,
+			Door,
+			Window,
+			BulkheadDoor,
+			LightSwitch,
+			ForceBridge,
+			SectorLadder,
+			PlatformLift,
+			Walkway,
+			Marker,
+			RemoveWall
+		};
+
+		// Compact tagged command storage. Field meanings are determined by type and
+		// kept private so the public model is not coupled to its YAML representation.
+		struct ConstructionRecord
+		{
+			ConstructionType type{};
+			std::string name;
+			uint32_t a{ 0 }, b{ 0 }, c{ 0 }, d{ 0 }, e{ 0 }, f{ 0 }, g{ 0 };
+			int32_t i{ 0 }, j{ 0 };
+			float x{ 0.0f }, y{ 0.0f };
+			bool p{ false }, q{ false };
+			std::vector<uint32_t> values;
+		};
+
+		std::vector<ConstructionRecord> mConstructionRecords;
+		bool mDeserializingConstruction{ false };
+
 	private:
+
+		bool childrenModified() const override;
+
+		void serializeImpl(Serializer& serializer, SerializationWorkData& workData) const override;
+
+		bool deserializeImpl(Serializer& serializer, SerializationWorkData& workData) override;
+
+		void recordConstruction(ConstructionRecord record);
+
+		void applyConstructionRecord(ConstructionRecord const& record);
+
+		void resetForDeserialization(std::string name, uint32_t cellsWide, uint32_t decksHigh);
 
 		void validateCellOccupied(std::string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y) const;
 

@@ -103,6 +103,7 @@
     <ClCompile Include="..\src\core\Agent.cpp" />
     <ClCompile Include="..\src\core\Area.cpp" />
     <ClCompile Include="..\src\core\Building.cpp" />
+    <ClCompile Include="..\src\core\BuildingSerialization.cpp" />
     <ClCompile Include="..\src\core\BulkheadDoor.cpp" />
     <ClCompile Include="..\src\core\BulkheadDoorEdge.cpp" />
     <ClCompile Include="..\src\core\BulkheadDoorSectorObject.cpp" />

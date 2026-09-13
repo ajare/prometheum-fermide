@@ -9,6 +9,7 @@
 #include "core/Shape.h"
 #include "core/Path.h"
 #include "core/EntityId.h"
+#include "core/Serializable.h"
 
 
 namespace core
@@ -27,7 +28,7 @@ namespace core
 		}
 	};
 
-	class Agent
+	class Agent : public Serializable
 	{
 		friend class Building;
 		friend class Sector;
@@ -80,6 +81,12 @@ namespace core
 		std::optional<Vector2> mTraversalLocalGoal;
 
 	private:
+
+		bool childrenModified() const override;
+
+		void serializeImpl(Serializer& serializer, SerializationWorkData& workData) const override;
+
+		bool deserializeImpl(Serializer& serializer, SerializationWorkData& workData) override;
 
 		void setPosition(SectorPosition pos);
 

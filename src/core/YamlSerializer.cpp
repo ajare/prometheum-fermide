@@ -147,7 +147,8 @@ namespace core
 		YAML::Node node;
 		if (mNodeStack.empty())
 		{
-			node = name.empty() ? mLoadedData : mLoadedData[name];
+			// A root map's name is descriptive only, matching the emitter.
+			node = mLoadedData;
 		}
 		else
 		{
