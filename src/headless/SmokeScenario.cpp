@@ -26,6 +26,8 @@
 
 #pragma comment(lib, "Psapi.lib")
 
+void runSerializationSmokeChecks();
+
 static_assert(!std::is_convertible_v<core::AgentId, core::InteractionPointId>);
 static_assert(!std::is_convertible_v<core::DeviceOperationId, core::TraversalResourceId>);
 
@@ -2115,6 +2117,8 @@ int main()
 {
 	try
 	{
+		runSerializationSmokeChecks();
+
 		if (!accumulatedRenderTimeAdvancesWholeTicksOnly())
 		{
 			std::cerr << "FAIL: render-time accumulation did not advance exactly one whole tick\n";

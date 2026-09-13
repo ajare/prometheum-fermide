@@ -79,7 +79,8 @@
       <SDLCheck>true</SDLCheck>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>$(ProjectDir)..\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)..\include;$(ProjectDir)..\vendor\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>YAML_CPP_STATIC_DEFINE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <RuntimeTypeInfo>true</RuntimeTypeInfo>
     </ClCompile>
   </ItemDefinitionGroup>
@@ -144,6 +145,8 @@
     <ClCompile Include="..\src\core\PlatformLift.cpp" />
     <ClCompile Include="..\src\core\PlatformLiftVertex.cpp" />
     <ClCompile Include="..\src\core\RailedTransport.cpp" />
+    <ClCompile Include="..\src\core\Serializable.cpp" />
+    <ClCompile Include="..\src\core\Serializer.cpp" />
     <ClCompile Include="..\src\core\Sector.cpp" />
     <ClCompile Include="..\src\core\SectorEdge.cpp" />
     <ClCompile Include="..\src\core\SectorMarkerVertex.cpp" />
@@ -175,6 +178,7 @@
     <ClCompile Include="..\src\core\WindowEdge.cpp" />
     <ClCompile Include="..\src\core\WindowSectorObject.cpp" />
     <ClCompile Include="..\src\core\WindowVertex.cpp" />
+    <ClCompile Include="..\src\core\YamlSerializer.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\include\core\Agent.h" />
@@ -232,6 +236,11 @@
     <ClInclude Include="..\include\core\PlatformLiftVertex.h" />
     <ClInclude Include="..\include\core\PriorityQueue.h" />
     <ClInclude Include="..\include\core\RailedTransport.h" />
+    <ClInclude Include="..\include\core\Serializable.h" />
+    <ClInclude Include="..\include\core\SerializationException.h" />
+    <ClInclude Include="..\include\core\SerializationWorkData.h" />
+    <ClInclude Include="..\include\core\Serializer.h" />
+    <ClInclude Include="..\include\core\SerializerFactory.h" />
     <ClInclude Include="..\include\core\Sector.h" />
     <ClInclude Include="..\include\core\SectorEdge.h" />
     <ClInclude Include="..\include\core\SectorEnd.h" />
@@ -267,6 +276,7 @@
     <ClInclude Include="..\include\core\WindowEdge.h" />
     <ClInclude Include="..\include\core\WindowSectorObject.h" />
     <ClInclude Include="..\include\core\WindowVertex.h" />
+    <ClInclude Include="..\include\core\YamlSerializer.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />
