@@ -93,12 +93,28 @@ namespace core
 		TraversalRequestId owner;
 	};
 
+	struct CapacityPositionSnapshot
+	{
+		uint32_t index{ 0 };
+		Vector2 position;
+		AgentId occupant;
+		TraversalRequestId admissionReservation;
+	};
+
 	struct TraversalResourceSnapshot
 	{
 		TraversalResourceId id;
 		std::string name;
 		bool isDoor{ false };
+		bool isLadder{ false };
 		bool enabled{ true };
+		uint32_t capacity{ 0 };
+		uint32_t occupantCount{ 0 };
+		uint32_t admissionReservationCount{ 0 };
+		float agentSpacing{ 0.0f };
+		SectorId capacitySector;
+		std::vector<TraversalRequestId> admissionQueue;
+		std::vector<CapacityPositionSnapshot> capacityPositions;
 		DoorActivationMode doorActivationMode{ DoorActivationMode::Unavailable };
 		DoorSnapshotState doorState{ DoorSnapshotState::NotADoor };
 		float doorOpenPercentage{ 0.0f };
@@ -139,6 +155,8 @@ namespace core
 		Vector2 queuePositionTarget;
 		bool hasCrossingLane{ false };
 		uint32_t crossingLane{ ~0u };
+		bool hasCapacityPosition{ false };
+		uint32_t capacityPosition{ ~0u };
 		uint64_t positionAssignedAtTick{ 0 };
 		uint64_t lastPositionProgressTick{ 0 };
 		uint64_t positionRetryAtTick{ 0 };

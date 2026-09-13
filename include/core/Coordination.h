@@ -18,6 +18,7 @@ namespace core
 {
 	class Building;
 	class Door;
+	class Ladder;
 
 	enum struct DoorActivationMode
 	{
@@ -214,6 +215,14 @@ namespace core
 		friend class Building;
 		std::string mName;
 		std::shared_ptr<Door> mDoor;
+		std::shared_ptr<Ladder> mLadder;
+		SectorId mLadderSector;
+		float mLadderSpacing{ 0.0f };
+		uint32_t mCapacity{ 0 };
+		std::vector<Vector2> mCapacityPositions;
+		std::vector<AgentId> mOccupants;
+		std::vector<TraversalRequestId> mAdmissionReservations;
+		std::vector<TraversalRequestId> mAdmissionQueue;
 		DoorActivationMode mDoorActivationMode{ DoorActivationMode::Unavailable };
 		uint64_t mHoldOpenTicks{ 0 };
 		bool mEnabled{ true };
@@ -232,12 +241,22 @@ namespace core
 			DoorActivationMode mode, uint64_t holdOpenTicks)
 			: mName(std::move(name)), mDoor(std::move(door)),
 			  mDoorActivationMode(mode), mHoldOpenTicks(holdOpenTicks) {}
+		TraversalResource(std::string name, std::shared_ptr<Ladder> ladder,
+			SectorId ladderSector, float spacing, uint32_t capacity,
+			std::vector<Vector2> positions)
+			: mName(std::move(name)), mLadder(std::move(ladder)),
+			  mLadderSector(ladderSector), mLadderSpacing(spacing), mCapacity(capacity),
+			  mCapacityPositions(std::move(positions)), mOccupants(capacity),
+			  mAdmissionReservations(capacity) {}
 	public:
 		TraversalResource(TraversalResource const&) = delete;
 		TraversalResource& operator=(TraversalResource const&) = delete;
 		std::string const& getName() const { return mName; }
 		bool isDoor() const { return mDoor != nullptr; }
+		bool isLadder() const { return mLadder != nullptr; }
 		bool isEnabled() const { return mEnabled; }
+		uint32_t getCapacity() const { return mCapacity; }
+		SectorId getLadderSector() const { return mLadderSector; }
 		DoorActivationMode getDoorActivationMode() const { return mDoorActivationMode; }
 		std::vector<InteractionPointId> const& getControls() const { return mControls; }
 	};
@@ -294,6 +313,7 @@ namespace core
 		uint64_t mPositionRetryAtTick{ 0 };
 		uint32_t mPositionRetryCount{ 0 };
 		uint32_t mCrossingLane{ ~0u };
+		uint32_t mCapacityPosition{ ~0u };
 		DoorOpenLeaseId mPreparationLease;
 		DoorOpenLeaseId mCrossingLease;
 		TraversalRequest(AgentId owner, EdgeType edgeType, SectorId sourceSector,
@@ -323,6 +343,8 @@ namespace core
 		uint32_t getQueuePosition() const { return mQueuePosition; }
 		bool hasCrossingLane() const { return mCrossingLane != ~0u; }
 		uint32_t getCrossingLane() const { return mCrossingLane; }
+		bool hasCapacityPosition() const { return mCapacityPosition != ~0u; }
+		uint32_t getCapacityPosition() const { return mCapacityPosition; }
 	};
 
 	enum struct TraversalPermitState { Active, Committed, Cancelled };

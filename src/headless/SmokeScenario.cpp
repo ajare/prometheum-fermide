@@ -844,6 +844,83 @@ namespace
 			&& snapshot.traversalResources.front().doorState == core::DoorSnapshotState::Opening;
 	}
 
+	bool finiteCapacityLadderSerializesAdmissionAndClimbsAtConfiguredSpeed()
+	{
+		core::Building building("Finite ladder", 4, 4);
+		auto lower = building.addCorridor(0, 0, 3);
+		auto upper = building.addCorridor(2, 0, 3);
+		core::Building::CreateLadderOptions options{ 3, false, true };
+		options.agentSpacing = 10.0f; // Deliberately derive a single capacity slot.
+		auto created = building.addLadder(0, 1, options);
+		building.finishBuild();
+		if (!created.traversalResource) return false;
+
+		auto const& graph = building.getGraph();
+		auto target = graph->getClosestVertexInSector(building.getSector(upper).get(), { 1.5f, 2.0f });
+		if (!target) return false;
+		std::vector<core::AgentId> ids = {
+			building.createAgent("First climber", lower, 0, 1.5f),
+			building.createAgent("Second climber", lower, 0, 1.5f),
+			building.createAgent("Cancelled climber", lower, 0, 1.5f)
+		};
+		for (auto id : ids)
+		{
+			auto agent = building.lookupAgent(id).entity;
+			auto path = graph->calculatePath(agent, target);
+			if (!path) return false;
+			agent->setPath(path, true);
+		}
+
+		bool observedFull = false;
+		bool cancelledWaiter = false;
+		uint64_t climbStarted = 0;
+		uint64_t climbFinished = 0;
+		for (uint32_t i = 0; i < MaximumSimulationTicks * 3; ++i)
+		{
+			building.advanceTick();
+			auto snapshot = building.getSimulationSnapshot();
+			auto resource = std::find_if(snapshot.traversalResources.begin(), snapshot.traversalResources.end(),
+				[&](auto const& value) { return value.id == created.traversalResource; });
+			if (resource == snapshot.traversalResources.end() || !resource->isLadder
+				|| resource->capacity != 1
+				|| resource->occupantCount + resource->admissionReservationCount > resource->capacity
+				|| resource->capacityPositions.size() != resource->capacity)
+				return false;
+			if (resource->occupantCount == 1)
+			{
+				observedFull = true;
+				if (!climbStarted && building.lookupAgent(ids[0]).entity->getState()
+					== core::Agent::State::TraversingEdge)
+					climbStarted = building.getSimulationTick();
+				if (!cancelledWaiter)
+				{
+					building.lookupAgent(ids[2]).entity->clearPath();
+					cancelledWaiter = true;
+				}
+			}
+			if (climbStarted && !climbFinished
+				&& building.lookupAgent(ids[0]).entity->getSector() == building.getSector(upper).get())
+				climbFinished = building.getSimulationTick();
+			if (building.lookupAgent(ids[0]).entity->getState() == core::Agent::State::Idle
+				&& building.lookupAgent(ids[1]).entity->getState() == core::Agent::State::Idle)
+				break;
+		}
+
+		auto snapshot = building.getSimulationSnapshot();
+		auto resource = std::find_if(snapshot.traversalResources.begin(), snapshot.traversalResources.end(),
+			[&](auto const& value) { return value.id == created.traversalResource; });
+		// Two vertical units at 0.25 units/second require about 480 fixed ticks;
+		// this also detects accidentally using walking speed.
+		return observedFull && cancelledWaiter && climbStarted && climbFinished
+			&& climbFinished - climbStarted >= 470
+			&& building.lookupAgent(ids[0]).entity->getSector() == building.getSector(upper).get()
+			&& building.lookupAgent(ids[1]).entity->getSector() == building.getSector(upper).get()
+			&& building.lookupAgent(ids[2]).entity->getSector() == building.getSector(lower).get()
+			&& resource != snapshot.traversalResources.end()
+			&& resource->occupantCount == 0 && resource->admissionReservationCount == 0
+			&& resource->admissionQueue.empty();
+	}
+
 	bool unavailableDoorRejectsTraversal()
 	{
 		core::Building building("Unavailable door", 6, 2);
@@ -1052,6 +1129,11 @@ int main()
 		if (!unavailableDoorRejectsTraversal())
 		{
 			std::cerr << "FAIL: unavailable door did not reject traversal\n";
+			return 1;
+		}
+		if (!finiteCapacityLadderSerializesAdmissionAndClimbsAtConfiguredSpeed())
+		{
+			std::cerr << "FAIL: finite ladder capacity, reservations, cancellation, or climb speed failed\n";
 			return 1;
 		}
 

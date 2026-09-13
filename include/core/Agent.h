@@ -93,7 +93,12 @@ namespace core
 
 		void attachToBuilding(Building* building);
 
-		bool moveToPosition(Vector2 const& pos, float frameTime);
+		bool moveToPosition(Vector2 const& pos, float frameTime, float speed);
+
+		bool moveToPosition(Vector2 const& pos, float frameTime)
+		{
+			return moveToPosition(pos, frameTime, getWalkSpeed());
+		}
 
 		void startIdling();
 

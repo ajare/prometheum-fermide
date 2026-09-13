@@ -64,4 +64,9 @@ namespace core
 		return CORE_GRAPH_EDGE_MIN_TRAVERSAL_TIME;
 	}
 
+	TraversalResourceId LadderMountEdge::getTraversalResourceId() const
+	{
+		return mLadder->getTraversalResourceId();
+	}
+
 } // core

@@ -56,7 +56,7 @@ namespace core
 	float LadderEdge::getWeight(shared_ptr<const Vertex> targetVertex, Agent const* agent, bool edgeVisible) const
 	{
 		auto distance = getLength();
-		float traverseTime = distance == 0.0f ? 0.0f : agent->getClimbSpeed() / distance;
+		float traverseTime = distance == 0.0f ? 0.0f : distance / agent->getClimbSpeed();
 
 		// If Edge isn't visible, then assume we have to wait for the Ladder to extend.
 		if (!edgeVisible || !mLadder->isExtended())
@@ -67,6 +67,11 @@ namespace core
 		}
 
 		return max(traverseTime, CORE_GRAPH_EDGE_MIN_TRAVERSAL_TIME);
+	}
+
+	TraversalResourceId LadderEdge::getTraversalResourceId() const
+	{
+		return mLadder->getTraversalResourceId();
 	}
 
 } // core

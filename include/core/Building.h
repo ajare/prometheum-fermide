@@ -84,12 +84,14 @@ namespace core
 			uint32_t decksHigh;
 			bool extensible;  // implies controlled
 			bool startExtended;
+			float agentSpacing{ CORE_AGENT_MAX_HEIGHT };
 		};
 
 		struct CreateLadderResult
 		{
 			CreateObjectResult ladder;
 			CreateObjectResult controllers[2];
+			TraversalResourceId traversalResource;
 		};
 
 		struct CreateLiftOptions
@@ -319,6 +321,16 @@ namespace core
 
 		void tryGrantDoorQueue(TraversalResource& resource);
 
+		bool isLadderAdmission(TraversalRequest const& request, TraversalResource const& resource) const;
+
+		void attachLadderAdmissionRequest(TraversalRequestId requestId, TraversalResource& resource);
+
+		void tryGrantLadderAdmissions(TraversalResource& resource);
+
+		void releaseLadderAdmission(TraversalRequestId requestId, TraversalResource& resource);
+
+		void releaseLadderOccupancy(AgentId agentId, TraversalResource& resource);
+
 		DoorOpenLeaseId acquireDoorOpenLease(TraversalResource& resource,
 			DoorOpenLeaseKind kind, TraversalRequestId request = {});
 
@@ -471,6 +483,9 @@ namespace core
 
 		TraversalResourceId createDoorTraversalResource(std::string const& name,
 			std::shared_ptr<Door> door, DoorActivationMode mode, float holdOpenSeconds);
+
+		TraversalResourceId createLadderTraversalResource(std::string const& name,
+			std::shared_ptr<Ladder> ladder, SectorId ladderSector, float agentSpacing);
 
 		// Defines one physical waiting lane. The direction is normalized and
 		// positions are generated at agent-safe spacing from origin through extent.

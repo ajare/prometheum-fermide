@@ -375,6 +375,10 @@ namespace core
 
 	void Building::validateSectorLadderOptions(string const& caller, CreateLadderOptions const& options) const
 	{
+		if (options.agentSpacing <= 0.0f)
+		{
+			throw BuildingException(this, format("{} - Ladder agent spacing must be positive.", caller));
+		}
 	}
 
 	void Building::validateLiftOptions(string const& caller, CreateLiftOptions const& options) const
@@ -1008,6 +1012,8 @@ namespace core
 		validateCellTraversableOnFoot(caller, "Ladder", CORE_LAYER_FORE, x, y0);
 		validateCellTraversableOnFoot(caller, "Ladder", CORE_LAYER_FORE, x, y1);
 
+		validateSectorLadderOptions(caller, options);
+
 		// Create ladder
 		auto sectorIndex = createLadder(x, y, options);
 
@@ -1022,6 +1028,9 @@ namespace core
 		auto ladderSector = _getSector(sectorIndex);
 		auto ladderTransit = dynamic_pointer_cast<LadderTransit>(ladderSector);
 		auto ladder = ladderTransit->getLadder();
+		auto traversalResource = createLadderTraversalResource("Ladder capacity", ladder,
+			SectorId{ (uint64_t)sectorIndex + 1 }, options.agentSpacing);
+		ladder->configureTraversal(traversalResource);
 
 		// See if we need an Controller
 		CreateObjectResult createdCtrls[2];
@@ -1059,7 +1068,8 @@ namespace core
 
 		return {
 			{ ~0u, SectorObjectType::Ladder, ladderSector },
-			{ createdCtrls[0], createdCtrls[1] }
+			{ createdCtrls[0], createdCtrls[1] },
+			traversalResource
 		};
 	}
 
@@ -1991,6 +2001,11 @@ namespace core
 		auto const& cellDef1 = layer->getCellDefinition(x, y1);
 
 		auto ladderObject = createLadderSectorObject(layerIndex, x, y, options);
+		auto ladder = dynamic_pointer_cast<LadderSectorObject>(
+			ladderObject.sector->_getObject(ladderObject.index))->getLadder();
+		auto traversalResource = createLadderTraversalResource("Ladder capacity", ladder,
+			SectorId{ (uint64_t)sectorIndex + 1 }, options.agentSpacing);
+		ladder->configureTraversal(traversalResource);
 
 		for (uint32_t iy = y0; iy <= y1; ++iy)
 		{
@@ -2009,8 +2024,6 @@ namespace core
 			{
 				throw BuildingException(this, format("{} - No space to place Buttons for Ladder", caller));
 			}
-
-			auto ladder = dynamic_pointer_cast<LadderSectorObject>(ladderObject.sector->_getObject(ladderObject.index))->getLadder();
 
 			// Set up the ForceBridge and Button with an appropriate Orchestrator
 			auto orchSystem = make_shared<ButtonExtensibleObjectOrchestratedSystem>(mOrchestrator);
@@ -2037,7 +2050,8 @@ namespace core
 
 		return {
 			ladderObject,
-			{ createdCtrls[CORE_LEVEL_LOW], createdCtrls[CORE_LEVEL_HIGH] }
+			{ createdCtrls[CORE_LEVEL_LOW], createdCtrls[CORE_LEVEL_HIGH] },
+			traversalResource
 		};
 	}
 
@@ -2438,7 +2452,19 @@ namespace core
 		result.id = id;
 		result.name = resource.getName();
 		result.isDoor = resource.mDoor != nullptr;
+		result.isLadder = resource.mLadder != nullptr;
 		result.enabled = resource.mEnabled;
+		result.capacity = resource.mCapacity;
+		result.agentSpacing = resource.mLadderSpacing;
+		result.capacitySector = resource.mLadderSector;
+		result.admissionQueue = resource.mAdmissionQueue;
+		for (uint32_t i = 0; i < resource.mCapacityPositions.size(); ++i)
+		{
+			result.capacityPositions.push_back({ i, resource.mCapacityPositions[i],
+				resource.mOccupants[i], resource.mAdmissionReservations[i] });
+			if (resource.mOccupants[i]) ++result.occupantCount;
+			if (resource.mAdmissionReservations[i]) ++result.admissionReservationCount;
+		}
 		result.doorActivationMode = resource.mDoorActivationMode;
 		result.holdOpenTicks = resource.mHoldOpenTicks;
 		result.openLeaseCount = (uint32_t)resource.mOpenLeases.size();
@@ -2514,6 +2540,8 @@ namespace core
 		result.queuePosition = request.mQueuePosition;
 		result.hasCrossingLane = request.mCrossingLane != ~0u;
 		result.crossingLane = request.mCrossingLane;
+		result.hasCapacityPosition = request.mCapacityPosition != ~0u;
+		result.capacityPosition = request.mCapacityPosition;
 		result.positionAssignedAtTick = request.mPositionAssignedAtTick;
 		result.lastPositionProgressTick = request.mLastPositionProgressTick;
 		result.positionRetryAtTick = request.mPositionRetryAtTick;
@@ -2550,9 +2578,11 @@ namespace core
 			edge->getType(), sourceSector, destinationSector, source->getPosition(), destination->getPosition())));
 		auto request = mTraversalRequests.find(id);
 		request->mResource = edge->getTraversalResourceId();
-		if (auto resource = mTraversalResources.find(request->mResource); resource && resource->mDoor)
+		if (auto resource = mTraversalResources.find(request->mResource); resource)
 		{
-			attachDoorQueueTicket(id, *resource);
+			if (resource->mDoor) attachDoorQueueTicket(id, *resource);
+			else if (resource->mLadder && isLadderAdmission(*request, *resource))
+				attachLadderAdmissionRequest(id, *resource);
 		}
 
 		SimulationEvent event;
@@ -2734,7 +2764,15 @@ namespace core
 		request->mPermit = {};
 		request->mState = TraversalRequestState::Pending;
 		request->mFailureReason = TraversalFailureReason::PermitExpired;
-		if (auto resource = mTraversalResources.find(request->mResource); resource && resource->mDoor)
+		if (auto resource = mTraversalResources.find(request->mResource); resource && resource->mLadder)
+		{
+			if (isLadderAdmission(*request, *resource))
+			{
+				releaseLadderAdmission(requestId, *resource);
+				attachLadderAdmissionRequest(requestId, *resource);
+			}
+		}
+		else if (auto resource = mTraversalResources.find(request->mResource); resource && resource->mDoor)
 		{
 			for (auto& owner : resource->mCrossingOwners) if (owner == requestId) owner = {};
 			// Downgrade crossing authority to preparation before releasing its safety
@@ -2858,6 +2896,77 @@ namespace core
 		refreshDoorQueuePositions(resource);
 	}
 
+	bool Building::isLadderAdmission(TraversalRequest const& request,
+		TraversalResource const& resource) const
+	{
+		if (!resource.mLadder || request.mDestinationSector != resource.mLadderSector)
+		{
+			return false;
+		}
+		if (request.mSourceSector != resource.mLadderSector)
+		{
+			return true;
+		}
+		if (request.mEdgeType != EdgeType::Ladder)
+		{
+			return false;
+		}
+		return find(resource.mOccupants.begin(), resource.mOccupants.end(), request.mOwner)
+			== resource.mOccupants.end();
+	}
+
+	void Building::attachLadderAdmissionRequest(TraversalRequestId requestId,
+		TraversalResource& resource)
+	{
+		if (find(resource.mAdmissionQueue.begin(), resource.mAdmissionQueue.end(), requestId)
+			== resource.mAdmissionQueue.end())
+		{
+			resource.mAdmissionQueue.push_back(requestId);
+			sort(resource.mAdmissionQueue.begin(), resource.mAdmissionQueue.end());
+		}
+	}
+
+	void Building::tryGrantLadderAdmissions(TraversalResource& resource)
+	{
+		if (!resource.mEnabled || !resource.mLadder) return;
+		for (uint32_t position = 0; position < resource.mCapacity; ++position)
+		{
+			if (resource.mOccupants[position] || resource.mAdmissionReservations[position]) continue;
+			while (!resource.mAdmissionQueue.empty())
+			{
+				auto requestId = resource.mAdmissionQueue.front();
+				resource.mAdmissionQueue.erase(resource.mAdmissionQueue.begin());
+				auto request = mTraversalRequests.find(requestId);
+				if (!request || request->mState != TraversalRequestState::Pending) continue;
+				resource.mAdmissionReservations[position] = requestId;
+				request->mCapacityPosition = position;
+				grantTraversalRequest(requestId);
+				break;
+			}
+			if (resource.mAdmissionQueue.empty()) break;
+		}
+	}
+
+	void Building::releaseLadderAdmission(TraversalRequestId requestId,
+		TraversalResource& resource)
+	{
+		resource.mAdmissionQueue.erase(remove(resource.mAdmissionQueue.begin(),
+			resource.mAdmissionQueue.end(), requestId), resource.mAdmissionQueue.end());
+		for (auto& reservation : resource.mAdmissionReservations)
+		{
+			if (reservation == requestId) reservation = {};
+		}
+		if (auto request = mTraversalRequests.find(requestId)) request->mCapacityPosition = ~0u;
+	}
+
+	void Building::releaseLadderOccupancy(AgentId agentId, TraversalResource& resource)
+	{
+		for (auto& occupant : resource.mOccupants)
+		{
+			if (occupant == agentId) occupant = {};
+		}
+	}
+
 	TraversalPermitId Building::grantTraversalRequest(TraversalRequestId requestId)
 	{
 		auto request = mTraversalRequests.find(requestId);
@@ -2917,7 +3026,30 @@ namespace core
 		if (request->mResource)
 		{
 			auto resource = mTraversalResources.find(request->mResource);
-			if (!resource || !resource->mDoor)
+			if (!resource)
+			{
+				denyTraversalRequest(requestId);
+				return;
+			}
+			if (resource->mLadder)
+			{
+				if (isLadderAdmission(*request, *resource))
+				{
+					if (!resource->mEnabled)
+					{
+						denyTraversalRequest(requestId, TraversalFailureReason::ResourceDisabled);
+						return;
+					}
+					attachLadderAdmissionRequest(requestId, *resource);
+					tryGrantLadderAdmissions(*resource);
+				}
+				else
+				{
+					grantTraversalRequest(requestId);
+				}
+				return;
+			}
+			if (!resource->mDoor)
 			{
 				denyTraversalRequest(requestId);
 				return;
@@ -3173,11 +3305,19 @@ namespace core
 		}
 		request->mState = TraversalRequestState::Denied;
 		request->mFailureReason = reason;
-		if (auto resource = mTraversalResources.find(request->mResource); resource && resource->mDoor)
+		if (auto resource = mTraversalResources.find(request->mResource); resource)
 		{
-			if (request->mPreparationLease) releaseDoorOpenLease(*resource, request->mPreparationLease);
-			request->mPreparationLease = {};
-			releaseDoorQueueOwnership(requestId, *resource);
+			if (resource->mDoor)
+			{
+				if (request->mPreparationLease) releaseDoorOpenLease(*resource, request->mPreparationLease);
+				request->mPreparationLease = {};
+				releaseDoorQueueOwnership(requestId, *resource);
+			}
+			else if (resource->mLadder)
+			{
+				releaseLadderAdmission(requestId, *resource);
+				tryGrantLadderAdmissions(*resource);
+			}
 		}
 
 		SimulationEvent event;
@@ -3213,12 +3353,50 @@ namespace core
 			return false;
 		}
 
+		auto ladderResource = mTraversalResources.find(request->mResource);
+		if (ladderResource && ladderResource->mLadder
+			&& request->mSourceSector != ladderResource->mLadderSector
+			&& request->mDestinationSector == ladderResource->mLadderSector)
+		{
+			if (request->mCapacityPosition >= ladderResource->mCapacity
+				|| ladderResource->mAdmissionReservations[request->mCapacityPosition] != requestId
+				|| ladderResource->mOccupants[request->mCapacityPosition])
+			{
+				return false;
+			}
+		}
+
 		// The transfer is deliberately confined to the commit phase. Until this
 		// point movement changed only the source-relative position.
 		if (sourceSector != destinationSector.get())
 		{
 			sourceSector->exitAgent(&agent);
 			destinationSector->enterAgent(&agent, destination);
+		}
+
+		if (auto resource = ladderResource; resource && resource->mLadder)
+		{
+			if (request->mSourceSector != resource->mLadderSector
+				&& request->mDestinationSector == resource->mLadderSector
+				&& request->mCapacityPosition < resource->mCapacity)
+			{
+				auto position = request->mCapacityPosition;
+				resource->mAdmissionReservations[position] = {};
+				resource->mOccupants[position] = owner;
+				request->mCapacityPosition = ~0u;
+			}
+			else if (request->mSourceSector == resource->mLadderSector
+				&& request->mDestinationSector != resource->mLadderSector)
+			{
+				releaseLadderOccupancy(owner, *resource);
+			}
+			else if (request->mCapacityPosition != ~0u)
+			{
+				// A ladder embedded in one location owns capacity only while its
+				// vertical edge is active; there is no separate transit membership.
+				releaseLadderAdmission(requestId, *resource);
+			}
+			tryGrantLadderAdmissions(*resource);
 		}
 
 		permit->mState = TraversalPermitState::Committed;
@@ -3258,9 +3436,14 @@ namespace core
 				resource->mSharedPreparationOperation = {};
 				resource->mNextPreparationTick = mSimulationTick + 1;
 			}
-			if (auto resource = mTraversalResources.find(request->mResource); resource && resource->mDoor)
+			if (auto resource = mTraversalResources.find(request->mResource); resource)
 			{
-				releaseDoorQueueOwnership(requestId, *resource);
+				if (resource->mDoor) releaseDoorQueueOwnership(requestId, *resource);
+				else if (resource->mLadder)
+				{
+					releaseLadderAdmission(requestId, *resource);
+					tryGrantLadderAdmissions(*resource);
+				}
 			}
 		}
 
@@ -3295,13 +3478,21 @@ namespace core
 	{
 		if (auto request = mTraversalRequests.find(requestId))
 		{
-			if (auto resource = mTraversalResources.find(request->mResource); resource && resource->mDoor)
+			if (auto resource = mTraversalResources.find(request->mResource); resource)
 			{
-				if (request->mPreparationLease) releaseDoorOpenLease(*resource, request->mPreparationLease);
-				if (request->mCrossingLease) releaseDoorOpenLease(*resource, request->mCrossingLease);
-				request->mPreparationLease = {};
-				request->mCrossingLease = {};
-				releaseDoorQueueOwnership(requestId, *resource);
+				if (resource->mDoor)
+				{
+					if (request->mPreparationLease) releaseDoorOpenLease(*resource, request->mPreparationLease);
+					if (request->mCrossingLease) releaseDoorOpenLease(*resource, request->mCrossingLease);
+					request->mPreparationLease = {};
+					request->mCrossingLease = {};
+					releaseDoorQueueOwnership(requestId, *resource);
+				}
+				else if (resource->mLadder)
+				{
+					releaseLadderAdmission(requestId, *resource);
+					tryGrantLadderAdmissions(*resource);
+				}
 			}
 			if (request->mState == TraversalRequestState::Cancelled && request->mPreparationOperation)
 			{
@@ -3752,6 +3943,36 @@ namespace core
 		auto id = mTraversalResources.add(unique_ptr<TraversalResource>(
 			new TraversalResource(name, std::move(door), mode, holdTicks)));
 		mTraversalResources.find(id)->mCrossingOwners.resize(laneCount);
+		SimulationEvent event;
+		event.sequence = mNextEventSequence++;
+		event.tick = mSimulationTick;
+		event.type = SimulationEventType::TraversalResourceAdded;
+		event.traversalResource = makeTraversalResourceSnapshot(id, *mTraversalResources.find(id));
+		mEvents.push_back(std::move(event));
+		return id;
+	}
+
+	TraversalResourceId Building::createLadderTraversalResource(string const& name,
+		shared_ptr<Ladder> ladder, SectorId ladderSector, float agentSpacing)
+	{
+		if (!ladder || !ladderSector || ladderSector.value > mSectors.size() || agentSpacing <= 0.0f)
+		{
+			throw invalid_argument("A ladder traversal resource requires a Ladder, sector, and positive spacing");
+		}
+		auto usableLength = ladder->getUsableLength();
+		auto capacity = max(1u, (uint32_t)floor(usableLength / agentSpacing));
+		vector<Vector2> positions;
+		positions.reserve(capacity);
+		auto origin = ladder->getPosition();
+		auto x = origin.x + ladder->getSize().x * 0.5f;
+		for (uint32_t i = 0; i < capacity; ++i)
+		{
+			positions.push_back({ x, origin.y + (agentSpacing >= usableLength
+				? usableLength * 0.5f : agentSpacing * ((float)i + 0.5f)) });
+		}
+
+		auto id = mTraversalResources.add(unique_ptr<TraversalResource>(new TraversalResource(
+			name, ladder, ladderSector, agentSpacing, capacity, std::move(positions))));
 		SimulationEvent event;
 		event.sequence = mNextEventSequence++;
 		event.tick = mSimulationTick;

@@ -10,14 +10,14 @@
 - 04 — Execute ordinary edges through the traversal protocol
 - 10 — Recover from full queues, expired permits, and excessive waits
 
-**Status:** ready-for-agent
+**Status:** complete
 
-- [ ] Ladder capacity is derived from usable length and configured agent spacing.
-- [ ] Occupants plus admission reservations never exceed capacity.
-- [ ] Each admitted agent owns a distinct climbing-position reservation.
-- [ ] Waiting agents cannot enter merely because the ladder edge appears in their path.
-- [ ] Ladder movement uses climbing speed and correct distance-over-speed route cost.
-- [ ] Boarding the ladder transit and leaving it commit sector membership at their crossing endpoints.
-- [ ] Cancellation before entry releases capacity; cancellation while occupying preserves occupancy until safe exit.
-- [ ] Simultaneous requests are resolved deterministically.
-- [ ] Capacity, occupants, and reservations are exposed in diagnostic snapshots.
+- [x] Ladder capacity is derived from usable length and configured agent spacing.
+- [x] Occupants plus admission reservations never exceed capacity.
+- [x] Each admitted agent owns a distinct climbing-position reservation.
+- [x] Waiting agents cannot enter merely because the ladder edge appears in their path.
+- [x] Ladder movement uses climbing speed and correct distance-over-speed route cost.
+- [x] Boarding the ladder transit and leaving it commit sector membership at their crossing endpoints.
+- [x] Cancellation before entry releases capacity; cancellation while occupying preserves occupancy until safe exit.
+- [x] Simultaneous requests are resolved deterministically.
+- [x] Capacity, occupants, and reservations are exposed in diagnostic snapshots.

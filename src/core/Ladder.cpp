@@ -52,6 +52,12 @@ namespace core
 		return mDecksHigh;
 	}
 
+	float Ladder::getUsableLength() const
+	{
+		return (float)(mDecksHigh - 1) + CORE_LADDER_HEIGHT_AT_TOP
+			- CORE_LADDER_HEIGHT_OFF_GROUND;
+	}
+
 	/***
 
 	getDescription()

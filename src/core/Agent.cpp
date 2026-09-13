@@ -329,11 +329,11 @@ namespace core
 		addLogMessage(getDescription(), 0, LogLevel::Debug, format("Started idling"));
 	}
 
-	bool Agent::moveToPosition(Vector2 const& pos, float frameTime)
+	bool Agent::moveToPosition(Vector2 const& pos, float frameTime, float speed)
 	{
 		auto agentPos = getGlobalPosition();
 		auto posDist = agentPos.distanceTo(pos);
-		auto moveDist = getWalkSpeed() * frameTime;
+		auto moveDist = speed * frameTime;
 		auto moveDelta = pos - agentPos;
 		auto reachedPos = moveDist >= posDist;
 		auto moveAmt = reachedPos ? moveDelta : moveDelta.normalisedCopy() * moveDist;
@@ -365,7 +365,7 @@ namespace core
 		}
 
 		auto const& targetPos = mPath.path->nodes[mPath.targetNode].targetVertex->getPosition();
-		if (!moveToPosition(targetPos, frameTime))
+		if (!moveToPosition(targetPos, frameTime, getWalkSpeed()))
 		{
 			return;
 		}
@@ -536,7 +536,7 @@ namespace core
 			targetPos.y += offset;
 		}
 
-		return moveToPosition(targetPos, frameTime);
+		return moveToPosition(targetPos, frameTime, getWalkSpeed());
 	}
 
 	ControllableActionStatus Agent::useImpl(Controller* controller, ControllableActionCallback callback)
@@ -575,7 +575,9 @@ namespace core
 				break;
 			}
 			if (mTraversalTask
-				&& moveToPosition(mTraversalTask->destinationVertex->getPosition(), frameTime))
+				&& moveToPosition(mTraversalTask->destinationVertex->getPosition(), frameTime,
+					mTraversalTask->edge->getType() == EdgeType::Ladder
+						? getClimbSpeed() : getWalkSpeed()))
 			{
 				mState = State::AwaitingTraversalCommit;
 			}
@@ -584,7 +586,7 @@ namespace core
 		case State::WaitingForTraversal:
 			if (mTraversalLocalGoal)
 			{
-				moveToPosition(*mTraversalLocalGoal, frameTime);
+				moveToPosition(*mTraversalLocalGoal, frameTime, getWalkSpeed());
 			}
 			break;
 
