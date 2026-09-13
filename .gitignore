@@ -5,6 +5,8 @@ build/x64/
 bin/
 obj/
 *.vcxproj.user
+cmake-build*/
+out/
 
 # OS/editor files
 .DS_Store

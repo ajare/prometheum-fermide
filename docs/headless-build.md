@@ -27,10 +27,35 @@ Runtime structural changes use `pauseSimulation()`, the existing construction/co
 
 - Windows x64
 - Visual Studio with the MSVC `v145` toolset and Windows 10 SDK
+- CMake 3.24 or newer (for the CMake workflow)
 
-Run commands from the repository root in a Developer Command Prompt, or invoke the full path to `MSBuild.exe`.
+Run commands from the repository root in a Developer Command Prompt.
 
-## Build and run only the headless scenario
+## CMake build
+
+Configure a 64-bit Visual Studio build tree:
+
+```bat
+cmake -S . -B out\build -A x64
+```
+
+Build and run only the headless smoke scenario:
+
+```bat
+cmake --build out\build --config Debug --target phosphorus-fluoride-headless
+bin\x64\Debug\phosphorus-fluoride-headless.exe
+```
+
+Build all targets and run the registered CTest smoke test:
+
+```bat
+cmake --build out\build --config Debug
+ctest --test-dir out\build -C Debug --output-on-failure
+```
+
+Use `Release` instead of `Debug` for an optimized build. CMake places executables in `bin\x64\<Configuration>`. Building `imgui` also copies the matching bundled DLLs and the contents of `resources` beside the executable.
+
+## Build and run only the headless scenario with MSBuild
 
 ```bat
 msbuild build\headless.vcxproj /m /p:Configuration=Debug /p:Platform=x64
