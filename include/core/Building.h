@@ -626,10 +626,18 @@ namespace core
 
 		CreateDoorResult addSectorDoor(uint32_t y, uint32_t x, CreateDoorOptions const& options = {});
 
+		bool removeSectorDoor(uint32_t sectorIndex, uint32_t objectIndex);
+
+		bool canAddSectorWindow(uint32_t layerIndex, uint32_t y, uint32_t x,
+			uint32_t cellsWide = 1, uint32_t decksHigh = 1,
+			std::string* diagnostic = nullptr) const;
+
 		uint32_t addSectorWindow(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t decksHigh);
 
 		CreateWindowResult addSectorWindow(uint32_t layerIndex, uint32_t y, uint32_t x,
 			uint32_t cellsWide, uint32_t decksHigh, CreateWindowOptions const& options);
+
+		bool removeSectorWindow(uint32_t sectorIndex, uint32_t objectIndex);
 
 		CreateBulkheadDoorResult addSectorBulkheadDoor(uint32_t layerIndex, uint32_t y, uint32_t x,
 			int side, CreateBulkheadDoorOptions const& options = {});

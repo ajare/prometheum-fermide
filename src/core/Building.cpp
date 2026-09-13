@@ -1933,45 +1933,67 @@ namespace core
 		return { doorObject, { createdControls[0], createdControls[1] }, traversalResource };
 	}
 
+	bool Building::canAddSectorWindow(uint32_t layerIndex, uint32_t y, uint32_t x,
+		uint32_t cellsWide, uint32_t decksHigh, string* diagnostic) const
+	{
+		string caller = format("Building::addSectorWindow({}, {}, {}, {})", layerIndex, y, x, cellsWide);
+		try
+		{
+			validateLayer(caller, layerIndex);
+			validateBounds(caller, x, y, cellsWide, decksHigh);
+			if (layerIndex == CORE_LAYER_FORE)
+				validateSpaceOnlyInOneSector(caller, CORE_LAYER_FORE, x, y, cellsWide, decksHigh);
+			validateSpaceOnlyInOneSector(caller, CORE_LAYER_BACK, x, y, cellsWide, decksHigh);
+
+			// A foreground Window joins both layers; a background Window belongs
+			// only to its background Location.
+			uint32_t firstRequiredLayer = layerIndex == CORE_LAYER_FORE
+				? CORE_LAYER_FORE : CORE_LAYER_BACK;
+			for (uint32_t requiredLayer = firstRequiredLayer;
+				requiredLayer <= CORE_LAYER_BACK; ++requiredLayer)
+			{
+				auto layer = getLayer(requiredLayer);
+				for (uint32_t iy = y; iy < y + decksHigh; ++iy)
+					for (uint32_t ix = x; ix < x + cellsWide; ++ix)
+					{
+						auto const& cellDef = layer->getCellDefinition(ix, iy);
+						if (cellDef.sectorIndex == ~0u)
+							throw BuildingException(this, format("{} - {} cell at {},{} is not occupied.",
+								caller, requiredLayer ? "background" : "foreground", ix, iy));
+						validateObjectAllowedInSector(caller, SectorObjectType::Window, cellDef.sectorIndex);
+						if (cellDef.hasObject() || !cellDef.markers.empty())
+							throw BuildingException(this, format("{} - another object occupies cell at {},{}",
+								caller, ix, iy));
+					}
+			}
+		}
+		catch (Exception const& error)
+		{
+			if (diagnostic) *diagnostic = error.getMessage();
+			return false;
+		}
+		catch (exception const& error)
+		{
+			if (diagnostic) *diagnostic = error.what();
+			return false;
+		}
+		if (diagnostic) diagnostic->clear();
+		return true;
+	}
+
 	uint32_t Building::addSectorWindow(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t decksHigh)
 	{
-		beginStructuralEdit("addSectorWindow");
 		return addSectorWindow(layerIndex, y, x, cellsWide, decksHigh, {}).window.index;
 	}
 
 	Building::CreateWindowResult Building::addSectorWindow(uint32_t layerIndex, uint32_t y, uint32_t x,
 		uint32_t cellsWide, uint32_t decksHigh, CreateWindowOptions const& options)
 	{
+		string diagnostic;
+		if (!canAddSectorWindow(layerIndex, y, x, cellsWide, decksHigh, &diagnostic))
+			throw BuildingException(this, diagnostic);
 		beginStructuralEdit("addSectorWindow");
-		string caller = format("Building::addSectorWindow({}, {}, {}, {})", layerIndex, y, x, cellsWide);
-
-		validateBounds(caller, x, y, cellsWide, 1);
-
-		if (layerIndex == CORE_LAYER_FORE)
-		{
-			validateSpaceOnlyInOneSector(caller, CORE_LAYER_FORE, x, y, cellsWide, decksHigh);
-		}
-
-		validateSpaceOnlyInOneSector(caller, CORE_LAYER_BACK, x, y, cellsWide, decksHigh);
-
-		// Windows can be be placed on either Layer, but there must be a Location on that Layer.
 		auto layer = getLayer(layerIndex);
-
-		for (uint32_t iy = y; iy < y + decksHigh; ++iy)
-		{
-			for (uint32_t ix = x; ix < x + cellsWide; ++ix)
-			{
-				auto& cellDef = layer->getCellDefinition(ix, iy);
-
-				if (cellDef.sectorIndex == ~0u)
-				{
-					throw BuildingException(this, format("{} - {} cell at {},{} is not occupied.",
-						caller, layerIndex ? "background" : "foreground", ix, y));
-				}
-
-				validateObjectAllowedInSector(caller, SectorObjectType::Window, cellDef.sectorIndex);
-			}
-		}
 
 		// Create window
 		auto createdWindow = createWindow(layerIndex, x, y, cellsWide, decksHigh);

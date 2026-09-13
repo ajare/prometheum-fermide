@@ -4,6 +4,7 @@
 #include "core/Transit.h"
 #include "core/DoorSectorObject.h"
 #include "core/MarkerSectorObject.h"
+#include "core/WindowSectorObject.h"
 
 #include <algorithm>
 #include <cmath>
@@ -675,6 +676,189 @@ namespace core
 		{
 			diagnostic = error.what();
 			return false;
+		}
+		return true;
+	}
+
+	bool Building::removeSectorDoor(uint32_t sectorIndex, uint32_t objectIndex)
+	{
+		if (!mSimulationPaused)
+			throw BuildingException(this, "Deleting a Door requires the simulation to be paused");
+		if (sectorIndex >= mSectors.size() || !mSectors[sectorIndex]
+			|| objectIndex >= mSectors[sectorIndex]->getNumObjects()) return false;
+		auto object = dynamic_pointer_cast<DoorSectorObject>(
+			mSectors[sectorIndex]->getObject(objectIndex));
+		if (!object) return false;
+
+		auto door = object->getDoor();
+		auto source = find_if(mConstructionRecords.begin(), mConstructionRecords.end(),
+			[&](ConstructionRecord const& record)
+			{
+				return record.type == ConstructionType::Door
+					&& record.a == object->getCellY() && record.b == object->getCellX()
+					&& record.c == door->getCellsWide();
+			});
+		if (source == mConstructionRecords.end()) return false;
+
+		vector<ConstructionRecord> records;
+		records.reserve(mConstructionRecords.size() + 3);
+		for (auto const& record : mConstructionRecords)
+		{
+			if (&record != &*source)
+			{
+				records.push_back(record);
+				continue;
+			}
+			// The Door is shared by both Locations and may also have added one
+			// control to either Location. Preserve each Sector's authored indices.
+			for (uint32_t layer = 0; layer < CORE_NUM_LAYERS; ++layer)
+			{
+				auto sector = door->getSector(layer);
+				if (!sector) continue;
+				ConstructionRecord doorTombstone{ ConstructionType::ObjectTombstone };
+				doorTombstone.a = sector->getIndex();
+				records.push_back(std::move(doorTombstone));
+				bool hadControl = layer == CORE_LAYER_FORE ? source->p : source->q;
+				if (hadControl)
+				{
+					ConstructionRecord controlTombstone{ ConstructionType::ObjectTombstone };
+					controlTombstone.a = sector->getIndex();
+					records.push_back(std::move(controlTombstone));
+				}
+			}
+		}
+
+		struct SavedAgent
+		{
+			AgentId id;
+			string name;
+			uint32_t flags;
+			uint32_t layer;
+			Vector2 position;
+		};
+		vector<SavedAgent> agents;
+		for (auto const& [id, agent] : mAgents.entries())
+			agents.push_back({ id, agent->getName(), agent->getFlags(),
+				agent->getSector()->getLayerIndex(), agent->getGlobalPosition() });
+
+		resetForDeserialization(mName, mCellsWide, mDecksHigh);
+		mDeserializingConstruction = true;
+		try
+		{
+			for (auto const& record : records) applyConstructionRecord(record);
+			finishBuild();
+		}
+		catch (...)
+		{
+			mDeserializingConstruction = false;
+			throw;
+		}
+		mDeserializingConstruction = false;
+		mConstructionRecords = std::move(records);
+		mSimulationPaused = true;
+		modify();
+		for (auto const& saved : agents)
+		{
+			auto sector = getSectorAtPosition(saved.layer, saved.position.x, saved.position.y);
+			if (!sector) continue;
+			auto agent = make_unique<Agent>(saved.name);
+			agent->setFlags(saved.flags);
+			auto* raw = agent.get();
+			raw->attachToBuilding(this);
+			raw->mPosition = SectorPosition(sector.get(), saved.position - sector->getPosition());
+			_getSector(sector->getIndex())->mAgents.insert(raw);
+			mAgents.restore(saved.id, std::move(agent));
+			mAgentIds.emplace(raw, saved.id);
+		}
+		return true;
+	}
+
+	bool Building::removeSectorWindow(uint32_t sectorIndex, uint32_t objectIndex)
+	{
+		if (!mSimulationPaused)
+			throw BuildingException(this, "Deleting a Window requires the simulation to be paused");
+		if (sectorIndex >= mSectors.size() || !mSectors[sectorIndex]
+			|| objectIndex >= mSectors[sectorIndex]->getNumObjects()) return false;
+		auto object = dynamic_pointer_cast<WindowSectorObject>(
+			mSectors[sectorIndex]->getObject(objectIndex));
+		if (!object) return false;
+
+		auto window = object->getWindow();
+		auto sourceX = object->getCellX();
+		auto sourceY = object->getCellY();
+		auto sourceLayer = object->getSector()->getLayerIndex();
+		auto matches = [&](ConstructionRecord const& record)
+		{
+			return record.type == ConstructionType::Window && record.a == sourceLayer
+				&& record.b == sourceY && record.c == sourceX
+				&& record.d == window->getCellsWide() && record.e == window->getDecksHigh();
+		};
+		auto source = find_if(mConstructionRecords.begin(), mConstructionRecords.end(), matches);
+		if (source == mConstructionRecords.end()) return false;
+
+		vector<ConstructionRecord> records;
+		records.reserve(mConstructionRecords.size() + 1);
+		for (auto const& record : mConstructionRecords)
+		{
+			if (&record != &*source)
+			{
+				records.push_back(record);
+				continue;
+			}
+			// Keep later authored object indices stable in every Sector that shared
+			// the Window, while omitting the Window and its traversal resource.
+			set<uint32_t> sectorIndices;
+			for (uint32_t layer = 0; layer < CORE_NUM_LAYERS; ++layer)
+				if (auto sector = window->getSector(layer)) sectorIndices.insert(sector->getIndex());
+			for (auto index : sectorIndices)
+			{
+				ConstructionRecord tombstone{ ConstructionType::ObjectTombstone };
+				tombstone.a = index;
+				records.push_back(std::move(tombstone));
+			}
+		}
+
+		struct SavedAgent
+		{
+			AgentId id;
+			string name;
+			uint32_t flags;
+			uint32_t layer;
+			Vector2 position;
+		};
+		vector<SavedAgent> agents;
+		for (auto const& [id, agent] : mAgents.entries())
+			agents.push_back({ id, agent->getName(), agent->getFlags(),
+				agent->getSector()->getLayerIndex(), agent->getGlobalPosition() });
+
+		resetForDeserialization(mName, mCellsWide, mDecksHigh);
+		mDeserializingConstruction = true;
+		try
+		{
+			for (auto const& record : records) applyConstructionRecord(record);
+			finishBuild();
+		}
+		catch (...)
+		{
+			mDeserializingConstruction = false;
+			throw;
+		}
+		mDeserializingConstruction = false;
+		mConstructionRecords = std::move(records);
+		mSimulationPaused = true;
+		modify();
+		for (auto const& saved : agents)
+		{
+			auto sector = getSectorAtPosition(saved.layer, saved.position.x, saved.position.y);
+			if (!sector) continue;
+			auto agent = make_unique<Agent>(saved.name);
+			agent->setFlags(saved.flags);
+			auto* raw = agent.get();
+			raw->attachToBuilding(this);
+			raw->mPosition = SectorPosition(sector.get(), saved.position - sector->getPosition());
+			_getSector(sector->getIndex())->mAgents.insert(raw);
+			mAgents.restore(saved.id, std::move(agent));
+			mAgentIds.emplace(raw, saved.id);
 		}
 		return true;
 	}

@@ -290,7 +290,11 @@ namespace
 		core::Building building("Object movement", 10, 3);
 		auto corridor = building.addCorridor(0, 0, 8);
 		building.addRoom("Back room", CORE_LAYER_BACK, 0, 0, 8, 1);
-		auto created = building.addSectorDoor(0, 1);
+		core::Building::CreateDoorOptions doorOptions;
+		doorOptions.controls[0] = true;
+		doorOptions.controls[1] = true;
+		doorOptions.activationMode = core::DoorActivationMode::RemoteControlled;
+		auto created = building.addSectorDoor(0, 1, doorOptions);
 		building.addSectorMarker(corridor, 0, 5.5f);
 		building.finishBuild();
 		building.pauseSimulation();
@@ -305,10 +309,48 @@ namespace
 		if (outsideBothSectors.valid || blocked.valid || !valid.valid) return false;
 
 		auto moved = building.applyObjectMove(valid);
-		return moved && moved->getObjectType() == core::SectorObjectType::Door
-			&& moved->getCellX() == 3 && moved->getCellY() == 0
-			&& building.lookupAgent(agentId).entity != nullptr
-			&& building.isSimulationPaused() && building.isTraversalTopologyValid();
+		if (!moved || moved->getObjectType() != core::SectorObjectType::Door
+			|| moved->getCellX() != 3 || moved->getCellY() != 0
+			|| building.lookupAgent(agentId).entity == nullptr
+			|| !building.isSimulationPaused() || !building.isTraversalTopologyValid()) return false;
+		auto doorOwner = moved->getSector();
+		uint32_t movedDoorIndex = ~0u;
+		for (uint32_t i = 0; i < doorOwner->getNumObjects(); ++i)
+			if (doorOwner->getObject(i) == moved) { movedDoorIndex = i; break; }
+		if (movedDoorIndex == ~0u
+			|| !building.removeSectorDoor(doorOwner->getIndex(), movedDoorIndex)
+			|| building.lookupAgent(agentId).entity == nullptr
+			|| !building.getSimulationSnapshot().traversalResources.empty()) return false;
+		for (auto const& sector : building.getSectors(CORE_LAYER_FORE))
+			for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
+				if (auto object = sector->getObject(i))
+					if (object->getObjectType() == core::SectorObjectType::Door) return false;
+
+		core::Building windowBuilding("Window editing", 10, 3);
+		auto fore = windowBuilding.addRoom("Fore", CORE_LAYER_FORE, 0, 0, 8, 1);
+		windowBuilding.addRoom("Back", CORE_LAYER_BACK, 0, 0, 8, 1);
+		auto createdWindow = windowBuilding.addSectorWindow(CORE_LAYER_FORE, 0, 1, 1, 1, {});
+		windowBuilding.finishBuild();
+		windowBuilding.pauseSimulation();
+		auto windowAgent = windowBuilding.createAgent("Stationary", fore, 0, 0.5f);
+		auto windowMove = windowBuilding.planMoveSectorObject(
+			createdWindow.window.sector->getIndex(), createdWindow.window.index, 3, 0);
+		if (!windowMove.valid) return false;
+		auto movedWindow = windowBuilding.applyObjectMove(windowMove);
+		if (!movedWindow || movedWindow->getObjectType() != core::SectorObjectType::Window
+			|| movedWindow->getCellX() != 3) return false;
+		auto owner = movedWindow->getSector();
+		uint32_t movedIndex = ~0u;
+		for (uint32_t i = 0; i < owner->getNumObjects(); ++i)
+			if (owner->getObject(i) == movedWindow) { movedIndex = i; break; }
+		if (movedIndex == ~0u || !windowBuilding.removeSectorWindow(owner->getIndex(), movedIndex))
+			return false;
+		for (auto const& sector : windowBuilding.getSectors(CORE_LAYER_FORE))
+			for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
+				if (auto object = sector->getObject(i))
+					if (object->getObjectType() == core::SectorObjectType::Window) return false;
+		return windowBuilding.lookupAgent(windowAgent).entity != nullptr
+			&& windowBuilding.isSimulationPaused() && windowBuilding.isTraversalTopologyValid();
 	}
 
 	bool ordinaryTraversalCommitsOnlyAtDestination()

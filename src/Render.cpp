@@ -670,6 +670,18 @@ void renderWindow(shared_ptr<const core::Window> window, int layer, bool visible
 		renderWindowTinted(window, layer, visibleLayer, selected, drawList);
 		break;
 	}
+
+	if (selected && visibleLayer)
+	{
+		core::Vector2 bounds0, bounds1;
+		window->getFullShape(bounds0, bounds1);
+		transformPosition(bounds0);
+		transformPosition(bounds1);
+		ImVec2 topLeft{ min(bounds0.x, bounds1.x), min(bounds0.y, bounds1.y) };
+		ImVec2 bottomRight{ max(bounds0.x, bounds1.x), max(bounds0.y, bounds1.y) };
+		drawList->AddRectFilled(topLeft, bottomRight, ImColor(255, 255, 0, 48));
+		drawList->AddRect(topLeft, bottomRight, SelectedColour, 0.0f, 0, 2.0f);
+	}
 }
 
 
