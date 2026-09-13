@@ -109,6 +109,7 @@ namespace core
 		bool isLadder{ false };
 		bool isForceBridge{ false };
 		bool isLift{ false };
+		bool isShuttle{ false };
 		bool liftMoving{ false };
 		bool liftAligned{ false };
 		bool liftCarDoorOpen{ false };

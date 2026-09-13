@@ -142,6 +142,9 @@ namespace core
 			uint32_t carWidth;
 			std::vector<uint32_t> stopOffsets;
 			uint32_t initialStop;
+			uint32_t capacity{ 1 };
+			float minimumDwellSeconds{ CORE_LIFT_DOOR_PAUSE_TIME };
+			float maximumBoardingSeconds{ CORE_DOOR_STAY_OPEN_TIME };
 		};
 
 		struct CreateShuttleResult
@@ -149,6 +152,8 @@ namespace core
 			CreateObjectResult shuttle;
 			std::vector<CreateDoorResult> doors;
 			std::shared_ptr<OrchestratedSystem> orchSystem;
+			TraversalResourceId traversalResource;
+			InteractionPointId interiorSelector;
 		};
 
 	public:
@@ -545,6 +550,11 @@ namespace core
 
 		TraversalResourceId createLiftTraversalResource(std::string const& name,
 			std::shared_ptr<Lift> lift, SectorId liftSector, std::vector<LiftStop> stops,
+			uint32_t capacity = 1, float minimumDwellSeconds = CORE_LIFT_DOOR_PAUSE_TIME,
+			float maximumBoardingSeconds = CORE_DOOR_STAY_OPEN_TIME);
+
+		TraversalResourceId createShuttleTraversalResource(std::string const& name,
+			std::shared_ptr<Shuttle> shuttle, SectorId shuttleSector, std::vector<LiftStop> stops,
 			uint32_t capacity = 1, float minimumDwellSeconds = CORE_LIFT_DOOR_PAUSE_TIME,
 			float maximumBoardingSeconds = CORE_DOOR_STAY_OPEN_TIME);
 

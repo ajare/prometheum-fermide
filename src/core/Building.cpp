@@ -422,15 +422,28 @@ namespace core
 
 	void Building::validateShuttleOptions(string const& caller, CreateShuttleOptions const& options) const
 	{
+		if (options.numCars == 0)
+			throw BuildingException(this, format("{} - Shuttle must have at least one carriage.", caller));
 		if (options.carWidth != 3 && options.carWidth != 4)
 		{
 			throw BuildingException(this, format("{} - Shuttle car width must be 3 or 4.", caller));
 		}
 
+		if (options.stopOffsets.size() < 2)
+			throw BuildingException(this, format("{} - Shuttle must have at least two stops.", caller));
 		if (options.initialStop >= (uint32_t)options.stopOffsets.size())
 		{
 			throw BuildingException(this, format("{} - Shuttle initialStop parameter out of bounds.", caller));
 		}
+		for (size_t i = 1; i < options.stopOffsets.size(); ++i)
+			if (options.stopOffsets[i] <= options.stopOffsets[i - 1])
+				throw BuildingException(this, format("{} - Shuttle stop offsets must be strictly increasing.", caller));
+		if (options.capacity == 0
+			|| options.capacity > (uint32_t)floor((float)options.carWidth / CORE_AGENT_MAX_WIDTH))
+			throw BuildingException(this, format("{} - Shuttle capacity cannot be represented by carriage standing positions.", caller));
+		if (options.minimumDwellSeconds < 0.0f
+			|| options.maximumBoardingSeconds < options.minimumDwellSeconds)
+			throw BuildingException(this, format("{} - Shuttle timing requires 0 <= minimum dwell <= maximum boarding time.", caller));
 	}
 
 	shared_ptr<const Layer> Building::getLayer(uint32_t layerIndex) const
@@ -1441,9 +1454,9 @@ namespace core
 				{
 					if (stopSectorIndex == ~0u)
 					{
-						thisStopSectorIndex = stopSectorIndex;
+						stopSectorIndex = thisStopSectorIndex;
 					}
-					else
+					else if (thisStopSectorIndex != stopSectorIndex)
 					{
 						throw BuildingException(this, format("{} - stop offset {} doors span multiple fore Locations", caller, i));
 					}
@@ -1503,6 +1516,62 @@ namespace core
 		}
 
 		mOrchestrator->addSystem(orchSystem);
+
+		// Ticket 18 migrates one physical carriage. Multi-carriage manifests and
+		// access-zone door balancing are introduced by the following slice.
+		if (options.numCars == 1)
+		{
+			vector<LiftStop> stops;
+			for (uint32_t i = 0; i < options.stopOffsets.size(); ++i)
+			{
+				auto doorIndex = i;
+				auto location = getSector(foreLayer->getCellDefinition(
+					x + options.stopOffsets[i] + 1, y).sectorIndex);
+				stops.push_back({ SectorId{ (uint64_t)location->getIndex() + 1 },
+					(float)(x + options.stopOffsets[i]), shuttleRes.doors[doorIndex].traversalResource, {} });
+			}
+			auto coordinator = createShuttleTraversalResource("Shuttle journey", shuttle,
+				SectorId{ (uint64_t)shuttleTransit->getIndex() + 1 }, stops, options.capacity,
+				options.minimumDwellSeconds, options.maximumBoardingSeconds);
+			shuttle->configureTraversal(coordinator);
+			shuttleRes.traversalResource = coordinator;
+			auto shuttleResource = mTraversalResources.find(coordinator);
+			shuttleResource->mLiftCurrentStop = options.initialStop;
+			shuttleResource->mLiftPosition = stops[options.initialStop].globalPosition;
+			shuttle->setCoordinatedPosition(shuttleResource->mLiftPosition);
+
+			for (uint32_t i = 0; i < stops.size(); ++i)
+			{
+				auto& doorResult = shuttleRes.doors[i];
+				auto landing = mTraversalResources.find(doorResult.traversalResource);
+				landing->mLiftCoordinator = coordinator;
+				landing->mLiftStopIndex = i;
+				auto const& controller = doorResult.controllers[CORE_LAYER_FORE];
+				auto controlObject = controller.sector->_getObject(controller.index);
+				auto controlPosition = controlObject->getPosition() + controlObject->getSize() * 0.5f;
+				DeviceCommand call;
+				call.type = DeviceCommandType::CallShuttle;
+				call.traversalResource = coordinator;
+				call.stopIndex = i;
+				auto point = createInteractionPoint("Shuttle landing call", stops[i].locationSector,
+					controlPosition, 0.15f, getFixedTimestep(),
+					{ { call, InteractionBindingRequirement::Required } });
+				landing->mControls.push_back(point);
+				shuttleResource->mLiftStops[i].callControl = point;
+
+				DeviceCommand select;
+				select.type = DeviceCommandType::SelectShuttleDestination;
+				select.traversalResource = coordinator;
+				select.stopIndex = i;
+				auto selector = createInteractionPoint("Shuttle destination selector",
+					shuttleResource->mLiftSector,
+					{ shuttleResource->mLiftPosition + options.carWidth * 0.5f, (float)y },
+					0.25f, getFixedTimestep(), { { select, InteractionBindingRequirement::Required } });
+				shuttleResource->mControls.push_back(selector);
+				if (i == 0) shuttleRes.interiorSelector = selector;
+			}
+			shuttleResource->mLiftSelector = shuttleRes.interiorSelector;
+		}
 
 		return shuttleRes;
 	}
@@ -2614,12 +2683,13 @@ namespace core
 		result.isLadder = resource.mLadder != nullptr;
 		result.isForceBridge = resource.mForceBridge != nullptr;
 		result.isLift = resource.mLift != nullptr;
+		result.isShuttle = resource.mShuttle != nullptr;
 		result.liftMoving = resource.mLiftMoving;
 		result.liftCarDoorOpen = resource.mLiftCarDoorOpen;
 		result.liftStopPhase = resource.mLiftStopPhase;
 		result.liftServiceStartedTick = resource.mLiftServiceStartedTick;
 		result.liftBoardingCutoffTick = resource.mLiftBoardingCutoffTick;
-		result.liftAcceptingBoarders = resource.mLift && resource.mEnabled && !resource.mLiftMoving
+		result.liftAcceptingBoarders = (resource.mLift || resource.mShuttle) && resource.mEnabled && !resource.mLiftMoving
 			&& resource.mLiftStopPhase == LiftStopPhase::Boarding
 			&& mSimulationTick <= resource.mLiftBoardingCutoffTick;
 		result.liftDraining = resource.mLiftDraining;
@@ -3356,7 +3426,7 @@ namespace core
 				denyTraversalRequest(requestId);
 				return;
 			}
-			if (resource->mLift || resource->mLiftCoordinator)
+			if (resource->mLift || resource->mShuttle || resource->mLiftCoordinator)
 			{
 				allocateLiftTraversal(requestId, *resource);
 				return;
@@ -3476,7 +3546,8 @@ namespace core
 		float distance = 0.0f;
 		for (uint32_t i = 0; i < resource.mLiftStops.size(); ++i)
 		{
-			auto candidate = abs(resource.mLiftStops[i].globalPosition - endpoint.y);
+			auto coordinate = resource.mShuttle ? endpoint.x : endpoint.y;
+			auto candidate = abs(resource.mLiftStops[i].globalPosition - coordinate);
 			if (best == ~0u || candidate < distance)
 			{
 				best = i;
@@ -3496,7 +3567,8 @@ namespace core
 		{
 			auto const& node = agent.mPath.path->nodes[i];
 			if (!node.edge) continue;
-			if (node.edge->getType() == EdgeType::Lift && node.targetVertex)
+			if ((node.edge->getType() == EdgeType::Lift
+				|| node.edge->getType() == EdgeType::Shuttle) && node.targetVertex)
 			{
 				foundRide = true;
 				destination = findLiftStop(resource, node.targetVertex->getPosition());
@@ -3689,7 +3761,8 @@ namespace core
 		{
 			(void)resourceId;
 			auto& resource = *resourcePtr;
-			if (!resource.mLift || find(resource.mOccupants.begin(), resource.mOccupants.end(), passenger)
+			if ((!resource.mLift && !resource.mShuttle)
+				|| find(resource.mOccupants.begin(), resource.mOccupants.end(), passenger)
 				== resource.mOccupants.end()) continue;
 			for (uint32_t stop = 0; stop < resource.mLiftStopRequestOwners.size(); ++stop)
 				removeLiftStopRequest(resource, stop, passenger);
@@ -3752,12 +3825,13 @@ namespace core
 		{
 			(void)resourceId;
 			auto& resource = *resourcePtr;
-			if (!resource.mLift || !resource.mEnabled
+			if ((!resource.mLift && !resource.mShuttle) || !resource.mEnabled
 				|| find(resource.mOccupants.begin(), resource.mOccupants.end(), owner) == resource.mOccupants.end()) continue;
 			for (uint32_t i = 0; i + 1 < path->nodes.size(); ++i)
 			{
 				auto const& node = path->nodes[i + 1];
-				if (!node.edge || node.edge->getType() != EdgeType::Lift || !node.targetVertex) continue;
+				if (!node.edge || (node.edge->getType() != EdgeType::Lift
+					&& node.edge->getType() != EdgeType::Shuttle) || !node.targetVertex) continue;
 				auto destinationStop = findLiftStop(resource, node.targetVertex->getPosition());
 				if (destinationStop >= resource.mLiftStops.size()) return false;
 				for (uint32_t stop = 0; stop < resource.mLiftStopRequestOwners.size(); ++stop)
@@ -3795,15 +3869,16 @@ namespace core
 	{
 		auto request = mTraversalRequests.find(requestId);
 		if (!request || request->mState != TraversalRequestState::Pending) return;
-		auto coordinatorId = edgeResource.mLift ? request->mResource : edgeResource.mLiftCoordinator;
+		auto coordinatorId = (edgeResource.mLift || edgeResource.mShuttle)
+			? request->mResource : edgeResource.mLiftCoordinator;
 		auto coordinator = mTraversalResources.find(coordinatorId);
-		if (!coordinator || !coordinator->mLift)
+		if (!coordinator || (!coordinator->mLift && !coordinator->mShuttle))
 		{
 			denyTraversalRequest(requestId, TraversalFailureReason::ResourceDisabled);
 			return;
 		}
-		auto stop = edgeResource.mLift ? findLiftStop(*coordinator, request->mDestinationEndpoint)
-			: edgeResource.mLiftStopIndex;
+		auto stop = (edgeResource.mLift || edgeResource.mShuttle)
+			? findLiftStop(*coordinator, request->mDestinationEndpoint) : edgeResource.mLiftStopIndex;
 		if (stop >= coordinator->mLiftStops.size())
 		{
 			denyTraversalRequest(requestId);
@@ -4295,7 +4370,7 @@ namespace core
 				if (auto lift = mTraversalResources.find(resource->mLiftCoordinator))
 					releaseLiftAdmission(requestId, *lift);
 			}
-			else if (resource->mLift)
+			else if (resource->mLift || resource->mShuttle)
 			{
 				releaseLiftAdmission(requestId, *resource);
 			}
@@ -4385,9 +4460,11 @@ namespace core
 				lift->mLiftAdmissionReservation = {};
 				lift->mLiftPassenger = lift->mOccupants.front();
 				request->mCapacityPosition = ~0u;
-				auto local = agent.getLocalPosition();
-				local.x = lift->mCapacityPositions[position].x;
-				local.y = lift->mLiftPosition - destinationSector->getPosition().y;
+				auto local = lift->mCapacityPositions[position];
+				if (lift->mShuttle)
+					local.x += lift->mLiftPosition - destinationSector->getPosition().x;
+				else
+					local.y += lift->mLiftPosition - destinationSector->getPosition().y;
 				agent.setPosition({ destinationSector.get(), local });
 			}
 			else if (request->mSourceSector == lift->mLiftSector
@@ -4727,8 +4804,11 @@ namespace core
 				validTarget = binding.command.type == DeviceCommandType::OpenDoor ? resource->mDoor != nullptr
 					: binding.command.type == DeviceCommandType::SetExtendedState ? resource->mExtensible != nullptr
 					: (binding.command.type == DeviceCommandType::CallLift
-						|| binding.command.type == DeviceCommandType::SelectLiftDestination)
-						&& resource->mLift && binding.command.stopIndex < resource->mLiftStops.size();
+						|| binding.command.type == DeviceCommandType::SelectLiftDestination
+						|| binding.command.type == DeviceCommandType::CallShuttle
+						|| binding.command.type == DeviceCommandType::SelectShuttleDestination)
+						&& (resource->mLift || resource->mShuttle)
+						&& binding.command.stopIndex < resource->mLiftStops.size();
 			if (!validTarget)
 			{
 				throw invalid_argument("An interaction binding requires a valid command target");
@@ -4809,6 +4889,8 @@ namespace core
 				? string(command.desiredState ? "Extend resource" : "Retract resource")
 			: command.type == DeviceCommandType::CallLift ? "Call lift"
 			: command.type == DeviceCommandType::SelectLiftDestination ? "Select lift destination"
+			: command.type == DeviceCommandType::CallShuttle ? "Call shuttle"
+			: command.type == DeviceCommandType::SelectShuttleDestination ? "Select shuttle destination"
 				: "Device command";
 		auto id = mDeviceOperations.add(unique_ptr<DeviceOperation>(new DeviceOperation(name, requester, command)));
 		SimulationEvent event;
@@ -5106,6 +5188,46 @@ namespace core
 		return id;
 	}
 
+	TraversalResourceId Building::createShuttleTraversalResource(string const& name,
+		shared_ptr<Shuttle> shuttle, SectorId shuttleSector, vector<LiftStop> stops,
+		uint32_t capacity, float minimumDwellSeconds, float maximumBoardingSeconds)
+	{
+		if (!shuttle || shuttle->getNumCars() != 1 || !shuttleSector
+			|| shuttleSector.value > mSectors.size() || stops.size() < 2 || capacity == 0
+			|| minimumDwellSeconds < 0.0f || maximumBoardingSeconds < minimumDwellSeconds)
+			throw invalid_argument("A single-carriage shuttle requires valid stops, positive capacity, and dwell timing");
+		for (uint32_t i = 0; i < stops.size(); ++i)
+		{
+			auto landing = mTraversalResources.find(stops[i].landingResource);
+			if (!stops[i].locationSector || stops[i].locationSector.value > mSectors.size()
+				|| !landing || !landing->mDoor)
+				throw invalid_argument(format("Shuttle stop {} has an invalid location or landing-door mapping", i));
+			if (!isfinite(stops[i].globalPosition)
+				|| (i > 0 && stops[i].globalPosition <= stops[i - 1].globalPosition))
+				throw invalid_argument(format("Shuttle stop {} has invalid linear geometry", i));
+		}
+		auto usableWidth = (float)shuttle->getCarWidth();
+		if (capacity > (uint32_t)floor(usableWidth / CORE_AGENT_MAX_WIDTH))
+			throw invalid_argument("Declared shuttle capacity cannot be represented by separated carriage positions");
+		vector<Vector2> positions(capacity);
+		auto start = (usableWidth - capacity * CORE_AGENT_MAX_WIDTH) * 0.5f
+			+ CORE_AGENT_MAX_WIDTH * 0.5f;
+		for (uint32_t i = 0; i < capacity; ++i)
+			positions[i] = { start + i * CORE_AGENT_MAX_WIDTH, 0.0f };
+		auto minimumDwellTicks = (uint64_t)ceil(minimumDwellSeconds / getFixedTimestep());
+		auto maximumBoardingTicks = (uint64_t)ceil(maximumBoardingSeconds / getFixedTimestep());
+		auto id = mTraversalResources.add(unique_ptr<TraversalResource>(new TraversalResource(
+			name, std::move(shuttle), shuttleSector, std::move(stops), capacity,
+			minimumDwellTicks, maximumBoardingTicks, std::move(positions))));
+		SimulationEvent event;
+		event.sequence = mNextEventSequence++;
+		event.tick = mSimulationTick;
+		event.type = SimulationEventType::TraversalResourceAdded;
+		event.traversalResource = makeTraversalResourceSnapshot(id, *mTraversalResources.find(id));
+		mEvents.push_back(std::move(event));
+		return id;
+	}
+
 	TraversalResourceId Building::createStaircaseTraversalResource(string const& name,
 		shared_ptr<Staircase> staircase, SectorId staircaseSector, uint32_t capacity,
 		uint32_t directionalBatchLimit)
@@ -5292,9 +5414,10 @@ namespace core
 	{
 		auto resource = mTraversalResources.find(resourceId);
 		if (!resource) return false;
-		if (resource->mEnabled == enabled && (!resource->mLift || !resource->mLiftDraining)) return true;
+		if (resource->mEnabled == enabled
+			&& ((!resource->mLift && !resource->mShuttle) || !resource->mLiftDraining)) return true;
 		resource->mEnabled = enabled;
-		if (!resource->mLift)
+		if (!resource->mLift && !resource->mShuttle)
 			return true;
 
 		if (enabled)
@@ -5423,7 +5546,8 @@ namespace core
 					}) / max(1u, lift->mCapacity);
 			if (stop < lift->mLiftStops.size())
 			{
-				delay += abs(lift->mLiftPosition - lift->mLiftStops[stop].globalPosition) / CORE_LIFT_SPEED;
+				delay += abs(lift->mLiftPosition - lift->mLiftStops[stop].globalPosition)
+					/ (lift->mShuttle ? CORE_SHUTTLE_SPEED : CORE_LIFT_SPEED);
 				// Existing scheduled stops add stable preparation/service cost without
 				// creating a reservation as a side effect of path search.
 				for (uint32_t i = 0; i < lift->mLiftStops.size(); ++i)
@@ -5432,7 +5556,7 @@ namespace core
 			}
 			return delay;
 		}
-		if (resource->mLift)
+		if (resource->mLift || resource->mShuttle)
 		{
 			float delay = (float)resource->mLiftMinimumDwellTicks * getFixedTimestep();
 			for (auto const& owners : resource->mLiftStopRequestOwners)
@@ -5498,7 +5622,7 @@ namespace core
 		{
 			(void)resourceId;
 			auto& resource = *resourcePtr;
-			if (!resource.mLift || resource.mLiftStops.empty()) continue;
+			if ((!resource.mLift && !resource.mShuttle) || resource.mLiftStops.empty()) continue;
 
 			// A safety hold or obstruction at the aligned landing overrides closure.
 			// The original cutoff is retained, so this cannot admit a late caller.
@@ -5543,7 +5667,8 @@ namespace core
 				}
 				if (resource.mLiftStopPhase == LiftStopPhase::Moving)
 				{
-					auto amount = CORE_LIFT_SPEED * getFixedTimestep();
+					auto amount = (resource.mShuttle ? CORE_SHUTTLE_SPEED : CORE_LIFT_SPEED)
+						* getFixedTimestep();
 					if (target > resource.mLiftPosition)
 						resource.mLiftPosition = min(target, resource.mLiftPosition + amount);
 					else resource.mLiftPosition = max(target, resource.mLiftPosition - amount);
@@ -5634,13 +5759,16 @@ namespace core
 			resource.mLiftCarDoorOpen = resource.mLiftStopPhase == LiftStopPhase::Opening
 				|| resource.mLiftStopPhase == LiftStopPhase::Disembarking
 				|| resource.mLiftStopPhase == LiftStopPhase::Boarding;
-			resource.mLift->setCoordinatedPosition(resource.mLiftPosition);
+			if (resource.mLift) resource.mLift->setCoordinatedPosition(resource.mLiftPosition);
+			else resource.mShuttle->setCoordinatedPosition(resource.mLiftPosition);
 			for (uint32_t i = 0; resource.mLiftMoving && i < resource.mOccupants.size(); ++i)
 				if (auto passenger = mAgents.find(resource.mOccupants[i]))
 				{
 					auto transit = mSectors[(size_t)resource.mLiftSector.value - 1].get();
-					passenger->setPosition({ transit, { resource.mCapacityPositions[i].x,
-						resource.mLiftPosition - transit->getPosition().y } });
+					auto local = resource.mCapacityPositions[i];
+					if (resource.mShuttle) local.x += resource.mLiftPosition - transit->getPosition().x;
+					else local.y += resource.mLiftPosition - transit->getPosition().y;
+					passenger->setPosition({ transit, local });
 				}
 		}
 	}
@@ -5767,17 +5895,20 @@ namespace core
 				}
 			}
 			else if (operation->mCommand.type == DeviceCommandType::CallLift
-				|| operation->mCommand.type == DeviceCommandType::SelectLiftDestination)
+				|| operation->mCommand.type == DeviceCommandType::SelectLiftDestination
+				|| operation->mCommand.type == DeviceCommandType::CallShuttle
+				|| operation->mCommand.type == DeviceCommandType::SelectShuttleDestination)
 			{
 				auto resource = mTraversalResources.find(operation->mCommand.traversalResource);
-				if (!resource || !resource->mLift || !resource->mEnabled
+				if (!resource || (!resource->mLift && !resource->mShuttle) || !resource->mEnabled
 					|| operation->mCommand.stopIndex >= resource->mLiftStops.size())
 				{
 					operation->mState = DeviceOperationState::Rejected;
 				}
 				else
 				{
-					if (operation->mCommand.type == DeviceCommandType::CallLift)
+					if (operation->mCommand.type == DeviceCommandType::CallLift
+						|| operation->mCommand.type == DeviceCommandType::CallShuttle)
 					{
 						// The operation may be shared by several waiting passengers. Each
 						// keeps independent ownership even though the physical call coalesces.

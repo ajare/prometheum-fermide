@@ -61,7 +61,15 @@ namespace core
 
 	float ShuttleMountEdge::getWeight(shared_ptr<const Vertex> targetVertex, Agent const* agent, bool edgeVisible) const
 	{
-		return CORE_GRAPH_EDGE_MIN_TRAVERSAL_TIME;
+		auto resource = getTraversalResourceId();
+		return CORE_GRAPH_EDGE_MIN_TRAVERSAL_TIME
+			+ (agent && resource ? agent->estimateTraversalDelay(resource,
+				SectorId{ (uint64_t)targetVertex->getSector()->getIndex() + 1 }) : 0.0f);
+	}
+
+	TraversalResourceId ShuttleMountEdge::getTraversalResourceId() const
+	{
+		return mShuttle ? mShuttle->getTraversalResourceId() : TraversalResourceId{};
 	}
 
 } // core

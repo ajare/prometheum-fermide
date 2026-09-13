@@ -22,6 +22,7 @@ namespace core
 	class ForceBridge;
 	class Ladder;
 	class Lift;
+	class Shuttle;
 	class Staircase;
 
 	enum struct TraversalDirection { None, Ascending, Descending };
@@ -50,7 +51,9 @@ namespace core
 		OpenDoor,
 		SetExtendedState,
 		CallLift,
-		SelectLiftDestination
+		SelectLiftDestination,
+		CallShuttle,
+		SelectShuttleDestination
 	};
 
 	enum struct DoorOpenLeaseKind
@@ -256,6 +259,7 @@ namespace core
 		std::shared_ptr<ForceBridge> mForceBridge;
 		std::shared_ptr<Ladder> mLadder;
 		std::shared_ptr<Lift> mLift;
+		std::shared_ptr<Shuttle> mShuttle;
 		std::shared_ptr<Staircase> mStaircase;
 		// Lift coordinators are separate from their landing-door resources. The
 		// latter point back to the coordinator and one stop.
@@ -347,6 +351,19 @@ namespace core
 		{
 			if (!mLiftStops.empty()) mLiftPosition = mLiftStops.front().globalPosition;
 		}
+		TraversalResource(std::string name, std::shared_ptr<Shuttle> shuttle,
+			SectorId shuttleSector, std::vector<LiftStop> stops, uint32_t capacity,
+			uint64_t minimumDwellTicks, uint64_t maximumBoardingTicks,
+			std::vector<Vector2> positions)
+			: mName(std::move(name)), mShuttle(std::move(shuttle)), mLiftSector(shuttleSector),
+			  mLiftStops(std::move(stops)), mLiftMinimumDwellTicks(minimumDwellTicks),
+			  mLiftMaximumBoardingTicks(maximumBoardingTicks),
+			  mLiftStopRequestOwners(mLiftStops.size()), mLiftStopRequestTicks(mLiftStops.size()), mCapacity(capacity),
+			  mCapacityPositions(std::move(positions)), mOccupants(capacity),
+			  mAdmissionReservations(capacity)
+		{
+			if (!mLiftStops.empty()) mLiftPosition = mLiftStops.front().globalPosition;
+		}
 		TraversalResource(std::string name, std::shared_ptr<Staircase> staircase,
 			SectorId staircaseSector, uint32_t capacity, uint32_t batchLimit,
 			std::vector<Vector2> positions)
@@ -362,6 +379,7 @@ namespace core
 		bool isLadder() const { return mLadder != nullptr; }
 		bool isForceBridge() const { return mForceBridge != nullptr; }
 		bool isLift() const { return mLift != nullptr; }
+		bool isShuttle() const { return mShuttle != nullptr; }
 		bool isExtensible() const { return mExtensible != nullptr; }
 		bool isNarrowStaircase() const { return mStaircase != nullptr; }
 		bool isEnabled() const { return mEnabled; }

@@ -1279,6 +1279,80 @@ namespace
 			&& building.lookupAgent(journeys[2].id).entity->getSector() == building.getSector(middle).get();
 	}
 
+	bool singleCarriageShuttleUsesTransportJourneyProtocol()
+	{
+		core::Building building("Single carriage shuttle", 12, 2);
+		auto left = building.addRoom("Left platform", CORE_LAYER_FORE, 0, 0, 3, 1);
+		auto right = building.addRoom("Right platform", CORE_LAYER_FORE, 0, 7, 3, 1);
+		core::Building::CreateShuttleOptions options{ 1, 3, { 0, 7 }, 0 };
+		options.capacity = 2;
+		options.minimumDwellSeconds = 0.1f;
+		options.maximumBoardingSeconds = 0.5f;
+		auto created = building.addShuttle(0, 0, 11, options);
+		building.finishBuild();
+		if (!created.traversalResource || !created.interiorSelector || created.doors.size() != 2)
+			return false;
+		auto target = building.getGraph()->getClosestVertexInSector(
+			building.getSector(right).get(), { 8.5f, 0.0f });
+		if (!target) return false;
+		std::vector<core::AgentId> passengers;
+		for (uint32_t i = 0; i < 3; ++i)
+		{
+			auto id = building.createAgent("Shuttle passenger", left, 0, 1.0f + i * 0.15f);
+			auto agent = building.lookupAgent(id).entity;
+			auto path = building.getGraph()->calculatePath(agent, target);
+			if (!path) return false;
+			uint32_t rides = 0, doors = 0;
+			for (auto const& node : path->nodes) if (node.edge)
+			{
+				rides += node.edge->getType() == core::EdgeType::Shuttle;
+				doors += node.edge->getType() == core::EdgeType::Door;
+			}
+			if (rides != 1 || doors != 2) return false;
+			agent->setPath(path, true);
+			passengers.push_back(id);
+		}
+
+		bool sawPhysicalCall = false;
+		bool sawFullWithWaiter = false;
+		bool sawAttachedMotion = false;
+		bool sawDisembarkBeforeBoard = false;
+		for (uint32_t tick = 0; tick < MaximumSimulationTicks * 14; ++tick)
+		{
+			building.advanceTick();
+			auto snapshot = building.getSimulationSnapshot();
+			auto shuttle = std::find_if(snapshot.traversalResources.begin(), snapshot.traversalResources.end(),
+				[&](auto const& resource) { return resource.id == created.traversalResource; });
+			if (shuttle == snapshot.traversalResources.end() || !shuttle->isShuttle
+				|| shuttle->occupantCount + shuttle->admissionReservationCount > options.capacity)
+				return false;
+			for (auto const& operation : snapshot.deviceOperations)
+				if (operation.command.type == core::DeviceCommandType::CallShuttle
+					&& operation.state == core::DeviceOperationState::Succeeded) sawPhysicalCall = true;
+			sawFullWithWaiter = sawFullWithWaiter
+				|| (shuttle->occupantCount == options.capacity && !shuttle->admissionQueue.empty());
+			if (shuttle->liftStopPhase == core::LiftStopPhase::Disembarking)
+				sawDisembarkBeforeBoard = sawDisembarkBeforeBoard || shuttle->admissionReservationCount == 0;
+			if (shuttle->liftMoving)
+				for (auto const& passenger : passengers)
+				{
+					auto agent = building.lookupAgent(passenger).entity;
+					if (agent->getSector() == building.getSector(created.shuttle.sector->getIndex()).get()
+						&& agent->getGlobalPosition().x >= shuttle->liftPosition)
+						sawAttachedMotion = true;
+				}
+			if (std::all_of(passengers.begin(), passengers.end(), [&](auto id)
+				{ auto agent = building.lookupAgent(id).entity; return agent->getState() == core::Agent::State::Idle
+					&& agent->getSector() == building.getSector(right).get(); })) break;
+		}
+		auto final = building.getSimulationSnapshot();
+		auto shuttle = std::find_if(final.traversalResources.begin(), final.traversalResources.end(),
+			[&](auto const& resource) { return resource.id == created.traversalResource; });
+		return sawPhysicalCall && sawFullWithWaiter && sawAttachedMotion && sawDisembarkBeforeBoard
+			&& shuttle != final.traversalResources.end() && shuttle->occupantCount == 0
+			&& shuttle->admissionReservationCount == 0;
+	}
+
 	bool liftFailuresCancellationAndDisableDrainSafely()
 	{
 		// Repeated selector failures keep the landing open and eventually return the
@@ -1591,6 +1665,11 @@ int main()
 		if (!liftFailuresCancellationAndDisableDrainSafely())
 		{
 			std::cerr << "FAIL: lift failure, cancellation, or disabled draining was unsafe\n";
+			return 1;
+		}
+		if (!singleCarriageShuttleUsesTransportJourneyProtocol())
+		{
+			std::cerr << "FAIL: single-carriage shuttle journey coordination failed\n";
 			return 1;
 		}
 		if (!unavailableDoorRejectsTraversal())
