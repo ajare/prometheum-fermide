@@ -43,6 +43,7 @@ namespace core
 		std::vector<std::string> const& getDeserializationWarnings() const;
 		std::vector<std::string> const& getDeserializationErrors() const;
 		bool isModified() const;
+		void markModified();
 
 		void serialize(Serializer& serializer, SerializationWorkData& workData) const;
 		bool deserialize(Serializer& serializer, SerializationWorkData& workData);

@@ -67,6 +67,11 @@ namespace core
 		return childrenModified() || mModified;
 	}
 
+	void Serializable::markModified()
+	{
+		modify();
+	}
+
 	void Serializable::copyErrorsAndWarnings(Serializable const* serializable, bool errors, bool warnings)
 	{
 		if (!serializable)

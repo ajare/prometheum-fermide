@@ -69,6 +69,49 @@ void setSelectionMode(UISettings::SelectionMode mode);
 
 namespace
 {
+	struct DocumentSnapshot
+	{
+		string yaml;
+		uint64_t stateId{ 0 };
+	};
+
+	constexpr size_t MaximumUndoHistory{ 100 };
+	deque<DocumentSnapshot> gUndoHistory;
+	deque<DocumentSnapshot> gRedoHistory;
+	uint64_t gCurrentStateId{ 0 };
+	uint64_t gNextStateId{ 1 };
+	optional<uint64_t> gSavedStateId;
+
+	optional<DocumentSnapshot> captureDocumentSnapshot(
+		shared_ptr<core::Building> const& building)
+	{
+		if (!building) return nullopt;
+		try
+		{
+			auto serializer = core::YamlSerializer::toString();
+			core::SerializationWorkData workData;
+			workData.markSerializedUnmodified = false;
+			building->serialize(*serializer, workData);
+			serializer->serialize();
+			return DocumentSnapshot{ serializer->getSerializedString(), gCurrentStateId };
+		}
+		catch (std::exception const& error)
+		{
+			core::addLogMessage("Undo", 0, core::LogLevel::Error,
+				"Could not capture editor state: " + string(error.what()));
+			return nullopt;
+		}
+	}
+
+	void commitDocumentEdit(optional<DocumentSnapshot> snapshot)
+	{
+		if (!snapshot) return;
+		gUndoHistory.push_back(std::move(*snapshot));
+		if (gUndoHistory.size() > MaximumUndoHistory) gUndoHistory.pop_front();
+		gRedoHistory.clear();
+		gCurrentStateId = gNextStateId++;
+	}
+
 	constexpr float PaletteSlotSize{ 36.0f };
 	constexpr float PaletteSlotWidth{ 64.0f };
 	constexpr float PaletteInset{ 16.0f };
@@ -545,6 +588,7 @@ namespace
 
 	void placeMarker(shared_ptr<core::Building> const& building, PegmanTarget const& target)
 	{
+		auto undo = captureDocumentSnapshot(building);
 		try
 		{
 			if (!building->isSimulationPaused()) building->pauseSimulation();
@@ -555,6 +599,7 @@ namespace
 			gSelectedAgent = nullptr;
 			gSelectedSector.reset();
 			gSelectedSectorObject = created.sector->getObject(created.index);
+			commitDocumentEdit(std::move(undo));
 		}
 		catch (core::Exception const& error)
 		{
@@ -568,6 +613,7 @@ namespace
 
 	void placeDoor(shared_ptr<core::Building> const& building, PegmanTarget const& target)
 	{
+		auto undo = captureDocumentSnapshot(building);
 		try
 		{
 			auto created = building->addSectorDoor(target.cellY, target.cellX);
@@ -576,6 +622,7 @@ namespace
 			gSelectedAgent = nullptr;
 			gSelectedSector.reset();
 			gSelectedSectorObject = created.door.sector->getObject(created.door.index);
+			commitDocumentEdit(std::move(undo));
 		}
 		catch (core::Exception const& error)
 		{
@@ -589,6 +636,7 @@ namespace
 
 	void placeWindow(shared_ptr<core::Building> const& building, PegmanTarget const& target)
 	{
+		auto undo = captureDocumentSnapshot(building);
 		try
 		{
 			auto created = building->addSectorWindow(gUISettings.visibleLayer,
@@ -598,6 +646,7 @@ namespace
 			gSelectedAgent = nullptr;
 			gSelectedSector.reset();
 			gSelectedSectorObject = created.window.sector->getObject(created.window.index);
+			commitDocumentEdit(std::move(undo));
 		}
 		catch (core::Exception const& error)
 		{
@@ -613,6 +662,7 @@ namespace
 	{
 		if (gUISettings.worldPaused && locationHasCapacity(gPegman.sector))
 		{
+			auto undo = captureDocumentSnapshot(building);
 			auto id = building->createAgent(nextAgentName(building), gPegman.sector->getIndex(),
 				gPegman.deckOffset, gPegman.localX);
 			auto created = building->lookupAgent(id).entity;
@@ -620,6 +670,7 @@ namespace
 			gSelectedAgent = created;
 			gSelectedSector.reset();
 			gSelectedSectorObject.reset();
+			commitDocumentEdit(std::move(undo));
 		}
 		resetPegman();
 	}
@@ -773,6 +824,7 @@ namespace
 				{
 					try
 					{
+						auto undo = captureDocumentSnapshot(building);
 						if (tool == PaintTool::Room)
 							building->addRoom(nextRoomName(building), gPaint.layer,
 								paintRectangle.y, paintRectangle.x, paintRectangle.width,
@@ -781,6 +833,7 @@ namespace
 							building->addCorridor(paintRectangle.y, paintRectangle.x,
 								paintRectangle.width, 1);
 						building->finishBuild();
+						commitDocumentEdit(std::move(undo));
 					}
 					catch (core::Exception const& error)
 					{
@@ -1082,7 +1135,7 @@ namespace
 	int gNewBuildingWidth{ 48 };
 	int gNewBuildingDecks{ 6 };
 
-	void clearDocumentState()
+	void clearDocumentState(bool clearHistory = true)
 	{
 		gHoveredInteractionPoint = {};
 		gHoveredAgent = nullptr;
@@ -1100,6 +1153,49 @@ namespace
 		resetObjectMove();
 		gPendingLocationEdit.reset();
 		gUISettings.worldPaused = false;
+		if (clearHistory)
+		{
+			gUndoHistory.clear();
+			gRedoHistory.clear();
+			gCurrentStateId = 0;
+			gNextStateId = 1;
+			gSavedStateId.reset();
+		}
+	}
+
+	bool restoreDocumentSnapshot(shared_ptr<core::Building>& building, bool redo)
+	{
+		auto& source = redo ? gRedoHistory : gUndoHistory;
+		auto& destination = redo ? gUndoHistory : gRedoHistory;
+		if (!building || source.empty()) return false;
+
+		auto current = captureDocumentSnapshot(building);
+		if (!current) return false;
+		try
+		{
+			auto const& target = source.back();
+			auto loaded = make_shared<core::Building>("Loading", 1, 1);
+			auto serializer = core::YamlSerializer::fromString(target.yaml);
+			serializer->deserialize();
+			core::SerializationWorkData workData;
+			loaded->deserialize(*serializer, workData);
+			if (!gSavedStateId || target.stateId != *gSavedStateId) loaded->markModified();
+
+			destination.push_back(std::move(*current));
+			if (destination.size() > MaximumUndoHistory) destination.pop_front();
+			gCurrentStateId = target.stateId;
+			source.pop_back();
+			building = std::move(loaded);
+			clearDocumentState(false);
+			setWorldPaused(building, true);
+			return true;
+		}
+		catch (std::exception const& error)
+		{
+			core::addLogMessage("Undo", 0, core::LogLevel::Error,
+				"Could not restore editor state: " + string(error.what()));
+			return false;
+		}
 	}
 
 	void reportFileError(string message)
@@ -1146,6 +1242,7 @@ namespace
 			building->serialize(*serializer, workData);
 			serializer->serialize();
 			gBuildingFilepath = std::move(filepath);
+			gSavedStateId = gCurrentStateId;
 			core::addLogMessage("File", 0, core::LogLevel::Info,
 				"Saved Building to " + gBuildingFilepath);
 			return true;
@@ -1182,6 +1279,7 @@ namespace
 			building = std::move(loaded);
 			gBuildingFilepath = selectedPath.get();
 			clearDocumentState();
+			gSavedStateId = gCurrentStateId;
 			setWorldPaused(building, true);
 			core::addLogMessage("File", 0, core::LogLevel::Info,
 				"Opened Building from " + gBuildingFilepath);
@@ -1226,6 +1324,7 @@ namespace
 	void commitLocationEdit(shared_ptr<core::Building> const& building,
 		core::Building::LocationEditPlan const& plan)
 	{
+		auto undo = captureDocumentSnapshot(building);
 		try
 		{
 			auto newIndex = building->applyLocationEdit(plan);
@@ -1236,6 +1335,7 @@ namespace
 			gSelectedAgent = nullptr;
 			gSelectedSectorObject.reset();
 			gSelectedSector = plan.remove ? nullptr : building->getSector(newIndex);
+			commitDocumentEdit(std::move(undo));
 		}
 		catch (core::Exception const& error)
 		{
@@ -1381,6 +1481,11 @@ void handleShortcuts(shared_ptr<core::Building>& building)
 
 	if (!building) return;
 
+	if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Z, 0, ImGuiInputFlags_RouteGlobalLow))
+		restoreDocumentSnapshot(building, false);
+	if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Y, 0, ImGuiInputFlags_RouteGlobalLow))
+		restoreDocumentSnapshot(building, true);
+
 	if (gSelectingAgentPathDestination
 		&& ImGui::Shortcut(ImGuiKey_Escape, 0, ImGuiInputFlags_RouteGlobalLow))
 	{
@@ -1429,12 +1534,14 @@ void handleShortcuts(shared_ptr<core::Building>& building)
 				auto id = building->getAgentId(gSelectedAgent);
 				if (id)
 				{
+					auto undo = captureDocumentSnapshot(building);
 					auto selected = gSelectedAgent;
 					selected->clearPath();
 					if (building->removeAgent(id))
 					{
 						if (gHoveredAgent == selected) gHoveredAgent = nullptr;
 						gSelectedAgent = nullptr;
+						commitDocumentEdit(std::move(undo));
 					}
 				}
 			}
@@ -1445,6 +1552,7 @@ void handleShortcuts(shared_ptr<core::Building>& building)
 			{
 				try
 				{
+					auto undo = captureDocumentSnapshot(building);
 					auto selected = gSelectedSectorObject;
 					auto sector = selected->getSector();
 					for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
@@ -1465,6 +1573,7 @@ void handleShortcuts(shared_ptr<core::Building>& building)
 							gSelectedAgent = nullptr;
 							gSelectedSectorObject.reset();
 							if (type == core::SectorObjectType::Marker) building->finishBuild();
+							commitDocumentEdit(std::move(undo));
 						}
 						break;
 					}
@@ -1771,6 +1880,14 @@ void renderMenu(shared_ptr<core::Building>& building)
 		
 		if (ImGui::BeginMenu("Edit"))
 		{
+			if (ImGui::MenuItem("Undo", "Ctrl+Z", false,
+				building != nullptr && !gUndoHistory.empty()))
+				restoreDocumentSnapshot(building, false);
+			if (ImGui::MenuItem("Redo", "Ctrl+Y", false,
+				building != nullptr && !gRedoHistory.empty()))
+				restoreDocumentSnapshot(building, true);
+			ImGui::Separator();
+
 			if (ImGui::BeginMenu("Selection"))
 			{
 				bool selected = gUISettings.selectionMode == UISettings::SelectionMode::Object;
@@ -3069,10 +3186,12 @@ namespace
 			}
 			try
 			{
+				auto undo = captureDocumentSnapshot(building);
 				gSelectedSectorObject = building->applyObjectMove(gObjectMove.preview);
 				gHoveredSectorObject.reset();
 				gSelectedSector.reset();
 				gSelectedAgent = nullptr;
+				commitDocumentEdit(std::move(undo));
 			}
 			catch (core::Exception const& error)
 			{
