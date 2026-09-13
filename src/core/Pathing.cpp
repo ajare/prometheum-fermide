@@ -102,7 +102,8 @@ namespace core
             PriorityQueue<node_type, float> frontier;
 
             // Look for first vertex if we need to
-            if (!source)
+            auto const inferredSource = !source;
+            if (inferredSource)
             {
                 source = graph->getClosestVertexInSector(agent->getSector(), agent->getGlobalPosition());
             }
@@ -145,7 +146,34 @@ namespace core
                 }
             }
 
-            return reconstructPath(agent, graph, source, target, cameFrom, costSoFar, edgeMap);
+            auto path = reconstructPath(agent, graph, source, target, cameFrom, costSoFar, edgeMap);
+
+            // The nearest vertex can be behind the agent even though the route immediately
+            // continues toward a vertex in front of it. Since movement within a sector is
+            // unconstrained, start at the second vertex rather than making the agent double back.
+            if (inferredSource && path && path->nodes.size() >= 2)
+            {
+                auto const& agentPosition = agent->getGlobalPosition();
+                auto const& firstVertex = path->nodes[0].targetVertex;
+                auto const& secondVertex = path->nodes[1].targetVertex;
+                auto const firstDirection = firstVertex->getPosition() - agentPosition;
+                auto const secondDirection = secondVertex->getPosition() - agentPosition;
+                auto const directionsAreOpposite =
+                    firstDirection.x * secondDirection.x + firstDirection.y * secondDirection.y < 0.0f;
+
+                if (firstVertex->getSector() == secondVertex->getSector() && directionsAreOpposite)
+                {
+                    auto const skippedCost = path->nodes[1].edgeWeight;
+                    path->nodes.erase(path->nodes.begin());
+                    path->nodes[0].edge = nullptr;
+                    for (auto& node : path->nodes)
+                    {
+                        node.edgeWeight -= skippedCost;
+                    }
+                }
+            }
+
+            return path;
         }
 
         shared_ptr<const Vertex> findNextVertexForVertexInPath(shared_ptr<Path> path, Vertex const* vertex, uint32_t index)

@@ -198,6 +198,31 @@ namespace
 		return path;
 	}
 
+	bool inferredPathSourceDoesNotMakeAgentDoubleBack()
+	{
+		core::Building building("Path source selection", 7, 2);
+		auto corridor = building.addCorridor(0, 0, 6);
+		uint32_t sourceVertexId;
+		uint32_t destinationVertexId;
+		building.addSectorMarker(corridor, 0, 0.5f, &sourceVertexId);
+		building.addSectorMarker(corridor, 0, 5.5f, &destinationVertexId);
+		building.finishBuild();
+
+		auto source = building.getGraph()->getVertexByIdentifier(sourceVertexId);
+		auto destination = building.getGraph()->getVertexByIdentifier(destinationVertexId);
+		auto agentId = building.createAgent("Path source traveller", corridor, 0, 2.5f);
+		auto agent = building.lookupAgent(agentId).entity;
+
+		auto inferredPath = building.getGraph()->calculatePath(agent, destination);
+		auto explicitPath = building.getGraph()->calculatePath(agent, source, destination);
+		return inferredPath && inferredPath->nodes.size() == 1
+			&& inferredPath->nodes.front().targetVertex->sameAs(destination)
+			&& !inferredPath->nodes.front().edge
+			&& inferredPath->nodes.front().edgeWeight == 0.0f
+			&& explicitPath && explicitPath->nodes.size() == 2
+			&& explicitPath->nodes.front().targetVertex->sameAs(source);
+	}
+
 	bool ordinaryTraversalCommitsOnlyAtDestination()
 	{
 		core::Building building("Ordinary transition", 10, 2);
@@ -2070,6 +2095,11 @@ int main()
 		if (!buildingOwnsTypedEntitiesAndInvalidatesHandles())
 		{
 			std::cerr << "FAIL: typed building ownership or handle invalidation failed\n";
+			return 1;
+		}
+		if (!inferredPathSourceDoesNotMakeAgentDoubleBack())
+		{
+			std::cerr << "FAIL: inferred path source made the agent double back\n";
 			return 1;
 		}
 		if (!ordinaryTraversalCommitsOnlyAtDestination())
