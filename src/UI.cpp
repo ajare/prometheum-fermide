@@ -1198,6 +1198,11 @@ namespace
 		}
 	}
 
+	bool isDocumentStale(shared_ptr<core::Building> const& building)
+	{
+		return building && building->isModified();
+	}
+
 	void reportFileError(string message)
 	{
 		gFileError = std::move(message);
@@ -1312,7 +1317,7 @@ namespace
 
 	void requestFileAction(PendingFileAction action, shared_ptr<core::Building>& building)
 	{
-		if (building && building->isModified())
+		if (isDocumentStale(building))
 		{
 			gPendingFileAction = action;
 			gOpenUnsavedChangesPopup = true;
@@ -1476,7 +1481,8 @@ void handleShortcuts(shared_ptr<core::Building>& building)
 		requestFileAction(PendingFileAction::New, building);
 	if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_O, 0, ImGuiInputFlags_RouteGlobalLow))
 		requestFileAction(PendingFileAction::Open, building);
-	if (building && ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_S, 0, ImGuiInputFlags_RouteGlobalLow))
+	if (isDocumentStale(building)
+		&& ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_S, 0, ImGuiInputFlags_RouteGlobalLow))
 		saveBuilding(building, false);
 
 	if (!building) return;
@@ -1863,7 +1869,7 @@ void renderMenu(shared_ptr<core::Building>& building)
 				requestFileAction(PendingFileAction::New, building);
 			if (ImGui::MenuItem("Open...", "Ctrl+O"))
 				requestFileAction(PendingFileAction::Open, building);
-			if (ImGui::MenuItem("Save", "Ctrl+S", false, building != nullptr))
+			if (ImGui::MenuItem("Save", "Ctrl+S", false, isDocumentStale(building)))
 				saveBuilding(building, false);
 			if (ImGui::MenuItem("Save As...", nullptr, false, building != nullptr))
 				saveBuilding(building, true);
@@ -1999,7 +2005,7 @@ void renderDocumentToolbar(shared_ptr<core::Building>& building)
 	if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open... (Ctrl+O)");
 
 	ImGui::SameLine();
-	ImGui::BeginDisabled(building == nullptr);
+	ImGui::BeginDisabled(!isDocumentStale(building));
 	if (ImGui::Button(ICON_FA_SAVE "##SaveDocument")) saveBuilding(building, false);
 	if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save (Ctrl+S)");
 	ImGui::EndDisabled();
