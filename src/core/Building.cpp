@@ -18,6 +18,7 @@
 #include "core/ForceBridgeSectorObject.h"
 #include "core/LadderSectorObject.h"
 #include "core/LiftSectorObject.h"
+#include "core/MarkerSectorObject.h"
 #include "core/WalkwaySectorObject.h"
 #include "core/PlatformLift.h"
 #include "core/Exceptions.h"
@@ -2033,24 +2034,62 @@ namespace core
 		cellDef.floorType = CellFloorType::Walkway;
 	}
 
-	void Building::addSectorMarker(uint32_t sectorIndex, uint32_t deckIndex, float xOffset, uint32_t* vertexIdentifier)
+	bool Building::canAddSectorMarker(uint32_t sectorIndex, uint32_t deckIndex, float xOffset,
+		string* diagnostic) const
 	{
-		beginStructuralEdit("addSectorMarker");
+		auto reject = [diagnostic](string reason)
+		{
+			if (diagnostic) *diagnostic = std::move(reason);
+			return false;
+		};
+
+		if (sectorIndex >= mSectors.size()) return reject("Marker sector does not exist");
+		auto const& sector = mSectors[sectorIndex];
+		if (!sector || !sector->sectorSupportsObjectType(SectorObjectType::Marker))
+			return reject("This sector does not support Markers");
+		if (deckIndex >= sector->getDecksHigh()) return reject("Marker deck is outside the sector");
+		if (!isfinite(xOffset) || xOffset < 0.0f || xOffset >= sector->getSize().x)
+			return reject("Marker position is outside the sector");
+
+		auto const cellX = sector->getCellX() + (uint32_t)floor(xOffset);
+		auto const cellY = sector->getCellY() + deckIndex;
+		auto const& cellDef = mLayers[sector->getLayerIndex()]->getCellDefinition(cellX, cellY);
+		if (cellDef.floorType != CellFloorType::Ground)
+			return reject("Markers require a ground floor");
+
+		auto const globalX = sector->getCellX() + xOffset;
+		for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
+		{
+			auto markerObject = dynamic_pointer_cast<MarkerSectorObject>(sector->getObject(i));
+			if (!markerObject) continue;
+			auto marker = markerObject->getMarker();
+			if (marker->getCellY() == cellY
+				&& fabs(marker->getCellX() + marker->getOffset() - globalX) <= 0.05f)
+				return reject("A Marker already exists at this position");
+		}
+
+		if (diagnostic) diagnostic->clear();
+		return true;
+	}
+
+	Building::CreateObjectResult Building::addSectorMarker(uint32_t sectorIndex,
+		uint32_t deckIndex, float xOffset, uint32_t* vertexIdentifier)
+	{
 		string caller = format("Building::addSectorMarker({}, {}, {})", sectorIndex, deckIndex, xOffset);
+		string diagnostic;
+		if (!canAddSectorMarker(sectorIndex, deckIndex, xOffset, &diagnostic))
+			throw BuildingException(this, format("{} - {}", caller, diagnostic));
+		beginStructuralEdit("addSectorMarker");
 
 		auto sector = _getSector(sectorIndex);
 		auto layerIndex = sector->getLayerIndex();
 		auto layer = getLayer(layerIndex);
-		auto& cellDef = layer->getCellDefinition(sector->getCellX() + (uint32_t)xOffset, sector->getCellY() + deckIndex);
-
-		if (cellDef.floorType != CellFloorType::Ground)
-		{
-			throw BuildingException(this, format("{} - floor is not ground, so cannot add a marker here", caller));
-		}
-
+		auto& cellDef = layer->getCellDefinition(sector->getCellX() + (uint32_t)xOffset,
+			sector->getCellY() + deckIndex);
 		auto createdMarker = createMarker(layerIndex, sector->getCellX(),
 			sector->getCellY() + deckIndex, xOffset, vertexIdentifier);
 		cellDef.markers.push_back(createdMarker.index);
+		return createdMarker;
 	}
 
 	Building::CreateForceBridgeResult Building::addSectorForceBridge(uint32_t sectorIndex, uint32_t deckIndex, uint32_t xOffset, CreateForceBridgeOptions const& options)

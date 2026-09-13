@@ -36,6 +36,7 @@ namespace core
 			type == SectorObjectType::InteractionPoint ||
 			type == SectorObjectType::Ladder ||
 			type == SectorObjectType::Lift ||
+			type == SectorObjectType::Marker ||
 			type == SectorObjectType::Walkway ||
 			type == SectorObjectType::Window;
 	}

@@ -223,6 +223,34 @@ namespace
 			&& explicitPath->nodes.front().targetVertex->sameAs(source);
 	}
 
+	bool markerPlacementEnforcesPaletteCoreRules()
+	{
+		core::Building building("Marker placement rules", 7, 3);
+		auto room = building.addRoom("Marker room", CORE_LAYER_FORE, 0, 0, 6, 2);
+		building.finishBuild();
+
+		std::string diagnostic;
+		if (!building.canAddSectorMarker(room, 0, 2.5f, &diagnostic)
+			|| building.canAddSectorMarker(room, 1, 2.5f, &diagnostic)) return false;
+
+		bool runningRejected = false;
+		try { building.addSectorMarker(room, 0, 2.5f); }
+		catch (std::exception const&) { runningRejected = true; }
+		if (!runningRejected || building.isTraversalTopologyDirty()) return false;
+
+		building.pauseSimulation();
+		auto created = building.addSectorMarker(room, 0, 2.5f);
+		if (created.type != core::SectorObjectType::Marker || created.index == ~0u
+			|| building.canAddSectorMarker(room, 0, 2.52f, &diagnostic)
+			|| diagnostic.find("already exists") == std::string::npos) return false;
+
+		bool duplicateRejected = false;
+		try { building.addSectorMarker(room, 0, 2.52f); }
+		catch (std::exception const&) { duplicateRejected = true; }
+		return duplicateRejected && building.rebuildTraversalTopology()
+			&& building.resumeSimulation() && !building.isSimulationPaused();
+	}
+
 	bool ordinaryTraversalCommitsOnlyAtDestination()
 	{
 		core::Building building("Ordinary transition", 10, 2);
@@ -2100,6 +2128,11 @@ int main()
 		if (!inferredPathSourceDoesNotMakeAgentDoubleBack())
 		{
 			std::cerr << "FAIL: inferred path source made the agent double back\n";
+			return 1;
+		}
+		if (!markerPlacementEnforcesPaletteCoreRules())
+		{
+			std::cerr << "FAIL: Marker placement did not enforce core viability rules\n";
 			return 1;
 		}
 		if (!ordinaryTraversalCommitsOnlyAtDestination())

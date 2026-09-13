@@ -21,8 +21,10 @@
 #include "core/ForceBridgeSectorObject.h"
 #include "core/LadderSectorObject.h"
 #include "core/LiftSectorObject.h"
+#include "core/MarkerSectorObject.h"
 #include "core/WalkwaySectorObject.h"
 #include "core/Button.h"
+#include "core/Marker.h"
 
 #include "Main.h"
 #include "Render.h"
@@ -509,6 +511,30 @@ void renderWalkway(shared_ptr<const core::Walkway> walkway, int layer, bool visi
 }
 
 
+void renderMarker(shared_ptr<const core::Marker> marker, int layer, bool visibleLayer,
+	bool selected, ImDrawList* drawList)
+{
+	if (!visibleLayer) return;
+	constexpr float iconExtent = 18.0f;
+	auto point = marker->getPosition();
+	point.x += marker->getOffset();
+	transformPosition(point);
+
+	ImFont* font = gAgentIconFont ? gAgentIconFont : ImGui::GetFont();
+	auto sourceSize = font->FontSize;
+	auto sourceBounds = font->CalcTextSizeA(sourceSize, FLT_MAX, 0.0f, ICON_FA_MAP_MARKER_ALT);
+	auto fontSize = sourceSize * iconExtent
+		/ max(max(sourceBounds.x, sourceBounds.y), 1.0f);
+	auto size = font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, ICON_FA_MAP_MARKER_ALT);
+	ImVec2 topLeft{ point.x - size.x * 0.5f, point.y - size.y };
+	if (selected)
+		drawList->AddRect({ topLeft.x - 3.0f, topLeft.y - 3.0f },
+			{ topLeft.x + size.x + 3.0f, topLeft.y + size.y + 3.0f },
+			SelectedColour, 2.0f, 0, 2.0f);
+	drawList->AddText(font, fontSize, topLeft, ImColor(251, 188, 4), ICON_FA_MAP_MARKER_ALT);
+}
+
+
 void renderForceBridge(shared_ptr<const core::ForceBridge> forceBridge, int layer, bool visibleLayer, bool selected, ImDrawList* drawList)
 {
 	core::Vector2 bounds0, bounds1;
@@ -710,6 +736,14 @@ void renderSectorObjects(shared_ptr<const core::Sector> sector, int layer, bool 
 			{
 				auto button = static_pointer_cast<const core::Button>(object->_getObject());
 				renderPhysicalControl(button, layer, visibleLayer, selected, drawList);
+			}
+			break;
+
+		case core::SectorObjectType::Marker:
+			if (flags & RENDER_SECTOR_OBJECTS_INFRONT)
+			{
+				renderMarker(static_pointer_cast<const core::MarkerSectorObject>(object)->getMarker(),
+					layer, visibleLayer, selected, drawList);
 			}
 			break;
 

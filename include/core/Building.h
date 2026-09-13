@@ -551,7 +551,11 @@ namespace core
 
 		void addSectorWalkway(uint32_t sectorIndex, uint32_t deckIndex, uint32_t xOffset);
 
-		void addSectorMarker(uint32_t sectorIndex, uint32_t deckIndex, float xOffset, uint32_t* vertexIdentifier = nullptr);
+		bool canAddSectorMarker(uint32_t sectorIndex, uint32_t deckIndex, float xOffset,
+			std::string* diagnostic = nullptr) const;
+
+		CreateObjectResult addSectorMarker(uint32_t sectorIndex, uint32_t deckIndex, float xOffset,
+			uint32_t* vertexIdentifier = nullptr);
 
 		void removeLocationWall(uint32_t sectorIndex, uint32_t deckIndex, int side);
 

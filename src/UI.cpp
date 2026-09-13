@@ -26,7 +26,10 @@
 #include "core/ForceBridgeSectorObject.h"
 #include "core/LadderSectorObject.h"
 #include "core/LiftSectorObject.h"
+#include "core/MarkerSectorObject.h"
+#include "core/Marker.h"
 #include "core/Log.h"
+#include "core/Exceptions.h"
 
 #include "Main.h"
 #include "UI.h"
@@ -59,12 +62,15 @@ void setSelectionMode(UISettings::SelectionMode mode);
 
 namespace
 {
-	constexpr float PegmanHomeSize{ 36.0f };
-	constexpr float PegmanHomeInset{ 16.0f };
+	constexpr float PaletteSlotSize{ 36.0f };
+	constexpr float PaletteInset{ 16.0f };
+	constexpr float PaletteGap{ 6.0f };
+	constexpr float PalettePadding{ 6.0f };
+	constexpr float MarkerIconSize{ 22.0f };
 	constexpr float PegmanGravity{ 6.0f };
 	constexpr float PegmanTerminalVelocity{ 8.0f };
 
-	enum class PegmanPhase
+	enum class PalettePhase
 	{
 		Home,
 		Armed,
@@ -72,9 +78,17 @@ namespace
 		Falling
 	};
 
-	struct PegmanDropState
+	enum class PaletteItem
 	{
-		PegmanPhase phase{ PegmanPhase::Home };
+		None,
+		Agent,
+		Marker
+	};
+
+	struct PaletteDropState
+	{
+		PalettePhase phase{ PalettePhase::Home };
+		PaletteItem item{ PaletteItem::None };
 		ImVec2 pressPosition{};
 		shared_ptr<const core::Sector> sector;
 		uint32_t deckOffset{ 0 };
@@ -92,11 +106,12 @@ namespace
 		float localX{ 0.0f };
 		float feetY{ 0.0f };
 		float floorY{ 0.0f };
+		string diagnostic;
 
-		explicit operator bool() const { return sector != nullptr; }
+		explicit operator bool() const { return sector != nullptr && diagnostic.empty(); }
 	};
 
-	PegmanDropState gPegman;
+	PaletteDropState gPegman;
 
 	bool pointInRect(ImVec2 point, ImVec2 min, ImVec2 max)
 	{
@@ -152,7 +167,30 @@ namespace
 			: sector->getSize().x * 0.5f;
 
 		return { sector, deckOffset, localX, world.y,
-			(float)sector->getCellY() + deckOffset };
+			(float)sector->getCellY() + deckOffset, {} };
+	}
+
+	PegmanTarget getMarkerTarget(shared_ptr<const core::Building> const& building,
+		ImVec2 position, ImVec2 canvasPos, ImVec2 canvasSize)
+	{
+		if (!pointInRect(position, canvasPos, canvasPos + canvasSize))
+			return { nullptr, 0, 0.0f, 0.0f, 0.0f, "Drop inside the world" };
+
+		auto world = screenToWorld(position);
+		auto sector = building->getSectorAtPosition(gUISettings.visibleLayer, world.x, world.y);
+		if (!sector || !sector->pointInBounds(world.x, world.y))
+			return { nullptr, 0, 0.0f, world.y, world.y, "Markers require a viable sector" };
+
+		auto cellY = (uint32_t)floor(world.y);
+		if (cellY < sector->getCellY())
+			return { sector, 0, 0.0f, world.y, world.y, "Marker deck is outside the sector" };
+		auto deckOffset = cellY - sector->getCellY();
+		auto localX = world.x - sector->getPosition().x;
+		string diagnostic;
+		building->canAddSectorMarker(sector->getIndex(), deckOffset, localX, &diagnostic);
+		return { sector, deckOffset, localX,
+			(float)sector->getCellY() + deckOffset,
+			(float)sector->getCellY() + deckOffset, std::move(diagnostic) };
 	}
 
 	float fittedPegmanFontSize(float maximumWidth, float maximumHeight, ImVec2& renderedSize)
@@ -177,6 +215,38 @@ namespace
 			topLeft, colour, ICON_FA_STREET_VIEW);
 	}
 
+	void drawMarkerIcon(ImDrawList* drawList, ImVec2 point, float maximumSize, ImU32 colour)
+	{
+		ImFont* font = gAgentIconFont ? gAgentIconFont : ImGui::GetFont();
+		auto sourceSize = font->FontSize;
+		auto sourceBounds = font->CalcTextSizeA(sourceSize, FLT_MAX, 0.0f, ICON_FA_MAP_MARKER_ALT);
+		auto fontSize = sourceSize * maximumSize
+			/ max(max(sourceBounds.x, sourceBounds.y), 1.0f);
+		auto size = font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, ICON_FA_MAP_MARKER_ALT);
+		drawList->AddText(font, fontSize, { point.x - size.x * 0.5f, point.y - size.y },
+			colour, ICON_FA_MAP_MARKER_ALT);
+	}
+
+	shared_ptr<const core::SectorObject> markerAtScreenPosition(
+		shared_ptr<const core::Building> const& building, ImVec2 position)
+	{
+		for (auto const& sector : building->getSectors(gUISettings.visibleLayer))
+		{
+			for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
+			{
+				auto object = sector->getObject(i);
+				if (object->getObjectType() != core::SectorObjectType::Marker) continue;
+				auto marker = static_pointer_cast<const core::MarkerSectorObject>(object)->getMarker();
+				auto world = marker->getPosition();
+				world.x += marker->getOffset();
+				auto point = worldToScreen(world);
+				if (pointInRect(position, point - ImVec2(MarkerIconSize * 0.5f, MarkerIconSize),
+					point + ImVec2(MarkerIconSize * 0.5f, 2.0f))) return object;
+			}
+		}
+		return nullptr;
+	}
+
 	string nextAgentName(shared_ptr<const core::Building> const& building)
 	{
 		set<string> names;
@@ -192,14 +262,55 @@ namespace
 
 	void resetPegman()
 	{
-		gPegman.phase = PegmanPhase::Home;
+		gPegman.phase = PalettePhase::Home;
+		gPegman.item = PaletteItem::None;
 		gPegman.sector.reset();
 		gPegman.velocity = 0.0f;
 	}
 
+	void setWorldPaused(shared_ptr<core::Building> const& building, bool paused)
+	{
+		if (paused)
+		{
+			gUISettings.worldPaused = true;
+			return;
+		}
+		if (building->isSimulationPaused() && !building->resumeSimulation())
+		{
+			gUISettings.worldPaused = true;
+			core::addLogMessage("Object palette", 0, core::LogLevel::Error,
+				building->getTopologyDiagnostic());
+			return;
+		}
+		gUISettings.worldPaused = false;
+	}
+
+	void placeMarker(shared_ptr<core::Building> const& building, PegmanTarget const& target)
+	{
+		try
+		{
+			if (!building->isSimulationPaused()) building->pauseSimulation();
+			auto created = building->addSectorMarker(target.sector->getIndex(),
+				target.deckOffset, target.localX);
+			building->finishBuild();
+			setSelectionMode(UISettings::SelectionMode::Object);
+			gSelectedAgent = nullptr;
+			gSelectedSector.reset();
+			gSelectedSectorObject = created.sector->getObject(created.index);
+		}
+		catch (core::Exception const& error)
+		{
+			core::addLogMessage("Object palette", 0, core::LogLevel::Error, error.getMessage());
+		}
+		catch (std::exception const& error)
+		{
+			core::addLogMessage("Object palette", 0, core::LogLevel::Error, error.what());
+		}
+	}
+
 	void landPegman(shared_ptr<core::Building> const& building)
 	{
-		if (locationHasCapacity(gPegman.sector))
+		if (gUISettings.worldPaused && locationHasCapacity(gPegman.sector))
 		{
 			auto id = building->createAgent(nextAgentName(building), gPegman.sector->getIndex(),
 				gPegman.deckOffset, gPegman.localX);
@@ -212,99 +323,127 @@ namespace
 		resetPegman();
 	}
 
-	void renderPegman(shared_ptr<core::Building> const& building, ImVec2 canvasPos,
+	void renderObjectPalette(shared_ptr<core::Building> const& building, ImVec2 canvasPos,
 		ImVec2 canvasSize, ImDrawList* drawList)
 	{
 		constexpr ImU32 yellow = IM_COL32(251, 188, 4, 255);
 		constexpr ImU32 red = IM_COL32(244, 67, 54, 255);
+		constexpr ImU32 trayColour = IM_COL32(24, 24, 28, 210);
+		constexpr ImU32 borderColour = IM_COL32(180, 180, 190, 180);
 		auto const& io = ImGui::GetIO();
 		gPegmanConsumesLeftMouse = false;
 
-		if (gPegman.phase == PegmanPhase::Falling)
+		if (gPegman.phase == PalettePhase::Falling)
 		{
 			float frameTime = min(io.DeltaTime, 0.1f);
 			gPegman.velocity = min(gPegman.velocity + PegmanGravity * frameTime,
 				PegmanTerminalVelocity);
 			gPegman.feetY = max(gPegman.floorY,
 				gPegman.feetY - gPegman.velocity * frameTime);
-			if (gPegman.feetY <= gPegman.floorY)
-				landPegman(building);
+			if (gPegman.feetY <= gPegman.floorY) landPegman(building);
 		}
 
-		ImVec2 homeSize;
-		fittedPegmanFontSize(PegmanHomeSize, PegmanHomeSize, homeSize);
-		ImVec2 homeBottomRight = canvasPos + canvasSize
-			- ImVec2(PegmanHomeInset, PegmanHomeInset);
-		ImVec2 homeTopLeft = homeBottomRight - homeSize;
-		bool homeHovered = gWorldHovered && gPegman.phase != PegmanPhase::Falling
-			&& pointInRect(io.MousePos, homeTopLeft, homeBottomRight);
+		auto trayBottomRight = canvasPos + canvasSize - ImVec2(PaletteInset, PaletteInset);
+		auto traySize = ImVec2(PalettePadding * 2.0f + PaletteSlotSize * 2.0f + PaletteGap,
+			PalettePadding * 2.0f + PaletteSlotSize);
+		auto trayTopLeft = trayBottomRight - traySize;
+		auto agentMin = trayTopLeft + ImVec2(PalettePadding, PalettePadding);
+		auto markerMin = agentMin + ImVec2(PaletteSlotSize + PaletteGap, 0.0f);
+		auto agentMax = agentMin + ImVec2(PaletteSlotSize, PaletteSlotSize);
+		auto markerMax = markerMin + ImVec2(PaletteSlotSize, PaletteSlotSize);
+		drawList->AddRectFilled(trayTopLeft, trayBottomRight, trayColour, 5.0f);
+		drawList->AddRect(trayTopLeft, trayBottomRight, borderColour, 5.0f);
 
-		if (gPegman.phase == PegmanPhase::Home && homeHovered && io.MouseClicked[0])
+		PaletteItem hoveredItem = PaletteItem::None;
+		if (gWorldHovered && gPegman.phase == PalettePhase::Home)
 		{
-			gPegman.phase = PegmanPhase::Armed;
-			gPegman.pressPosition = io.MousePos;
+			if (pointInRect(io.MousePos, agentMin, agentMax)) hoveredItem = PaletteItem::Agent;
+			else if (pointInRect(io.MousePos, markerMin, markerMax)) hoveredItem = PaletteItem::Marker;
+		}
+		drawList->AddRect(agentMin, agentMax,
+			hoveredItem == PaletteItem::Agent ? yellow : borderColour, 3.0f);
+		drawList->AddRect(markerMin, markerMax,
+			hoveredItem == PaletteItem::Marker ? yellow : borderColour, 3.0f);
+		if (hoveredItem != PaletteItem::None)
+		{
+			gPegmanConsumesLeftMouse = true;
+			ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+			ImGui::SetTooltip(hoveredItem == PaletteItem::Agent
+				? "Drag to add Agent" : "Drag to add Marker");
+			if (io.MouseClicked[0])
+			{
+				gPegman.phase = PalettePhase::Armed;
+				gPegman.item = hoveredItem;
+				gPegman.pressPosition = io.MousePos;
+			}
 		}
 
-		if (gPegman.phase == PegmanPhase::Armed)
+		if (gPegman.phase == PalettePhase::Armed)
 		{
 			gPegmanConsumesLeftMouse = true;
 			ImVec2 movement = io.MousePos - gPegman.pressPosition;
 			if (io.MouseDown[0] && movement.x * movement.x + movement.y * movement.y
 				>= io.MouseDragThreshold * io.MouseDragThreshold)
-			{
-				gPegman.phase = PegmanPhase::Dragging;
-			}
-			else if (io.MouseReleased[0])
-			{
-				resetPegman();
-			}
+				gPegman.phase = PalettePhase::Dragging;
+			else if (io.MouseReleased[0]) resetPegman();
 		}
 
 		PegmanTarget target;
-		if (gPegman.phase == PegmanPhase::Dragging)
+		if (gPegman.phase == PalettePhase::Dragging)
 		{
 			gPegmanConsumesLeftMouse = true;
-			target = getPegmanTarget(building, io.MousePos, canvasPos, canvasSize);
-			if (io.MouseReleased[0])
+			target = gPegman.item == PaletteItem::Marker
+				? getMarkerTarget(building, io.MousePos, canvasPos, canvasSize)
+				: getPegmanTarget(building, io.MousePos, canvasPos, canvasSize);
+			if (!gUISettings.worldPaused) target.diagnostic = "Pause simulation to place objects";
+			if (ImGui::IsKeyPressed(ImGuiKey_Escape) || io.MouseClicked[1]) resetPegman();
+			else if (io.MouseReleased[0])
 			{
-				if (target)
+				if (target && gPegman.item == PaletteItem::Marker)
 				{
-					gPegman.phase = PegmanPhase::Falling;
+					placeMarker(building, target);
+					resetPegman();
+				}
+				else if (target && gPegman.item == PaletteItem::Agent)
+				{
+					gPegman.phase = PalettePhase::Falling;
 					gPegman.sector = target.sector;
 					gPegman.deckOffset = target.deckOffset;
 					gPegman.localX = target.localX;
 					gPegman.feetY = target.feetY;
 					gPegman.floorY = target.floorY;
 					gPegman.velocity = 0.0f;
-					if (gPegman.feetY <= gPegman.floorY)
-						landPegman(building);
+					if (gPegman.feetY <= gPegman.floorY) landPegman(building);
 				}
-				else
-				{
-					resetPegman();
-				}
+				else resetPegman();
 			}
 		}
 
-		if (homeHovered || gPegman.phase == PegmanPhase::Armed
-			|| gPegman.phase == PegmanPhase::Dragging)
-			ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+		drawPegman(drawList, { (agentMin.x + agentMax.x) * 0.5f, agentMax.y - 3.0f },
+			PaletteSlotSize - 8.0f, PaletteSlotSize - 8.0f, yellow);
+		drawMarkerIcon(drawList, { (markerMin.x + markerMax.x) * 0.5f, markerMax.y - 5.0f },
+			PaletteSlotSize - 10.0f, yellow);
 
-		if (gPegman.phase == PegmanPhase::Home || gPegman.phase == PegmanPhase::Armed)
+		if (gPegman.phase == PalettePhase::Dragging)
 		{
-			drawPegman(drawList, { homeTopLeft.x + homeSize.x * 0.5f, homeBottomRight.y },
-				PegmanHomeSize, PegmanHomeSize, yellow);
-			if (homeHovered && gPegman.phase == PegmanPhase::Home)
-				ImGui::SetTooltip("Drag to add Agent");
+			auto colour = target ? yellow : red;
+			if (gPegman.item == PaletteItem::Marker)
+			{
+				auto preview = target.sector
+					? worldToScreen({ target.sector->getPosition().x + target.localX, target.floorY })
+					: io.MousePos;
+				drawMarkerIcon(drawList, preview, MarkerIconSize, colour);
+			}
+			else
+			{
+				drawPegman(drawList, io.MousePos,
+					CORE_AGENT_MAX_WIDTH * CORE_CELL_WIDTH_PIXELS,
+					CORE_AGENT_MAX_HEIGHT * CORE_DECK_HEIGHT_PIXELS, colour);
+			}
+			if (!target.diagnostic.empty()) ImGui::SetTooltip("%s", target.diagnostic.c_str());
+			ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
 		}
-		else if (gPegman.phase == PegmanPhase::Dragging)
-		{
-			drawPegman(drawList, io.MousePos,
-				CORE_AGENT_MAX_WIDTH * CORE_CELL_WIDTH_PIXELS,
-				CORE_AGENT_MAX_HEIGHT * CORE_DECK_HEIGHT_PIXELS,
-				target ? yellow : red);
-		}
-		else if (gPegman.phase == PegmanPhase::Falling)
+		else if (gPegman.phase == PalettePhase::Falling)
 		{
 			auto globalX = gPegman.sector->getPosition().x + gPegman.localX;
 			drawPegman(drawList, worldToScreen({ globalX, gPegman.feetY }),
@@ -419,7 +558,7 @@ void handleShortcuts(shared_ptr<core::Building> building)
 	{
 		if (!ImGui::IsAnyItemActive() && !ImGui::IsAnyItemFocused())
 		{
-			gUISettings.worldPaused = !gUISettings.worldPaused;
+			setWorldPaused(building, !gUISettings.worldPaused);
 		}
 	}
 
@@ -505,6 +644,13 @@ void handleWorldInteraction(shared_ptr<core::Building> building,
 				if (actor) building->requestInteraction(gHoveredInteractionPoint, actor);
 			}
 		}
+		else if (gHoveredSectorObject)
+		{
+			setSelectionMode(UISettings::SelectionMode::Object);
+			gSelectedAgent = nullptr;
+			gSelectedSector.reset();
+			gSelectedSectorObject = gHoveredSectorObject;
+		}
 		else if (gHoveredVertex)
 		{
 			if (ImGui::GetIO().KeyCtrl)
@@ -522,7 +668,8 @@ void handleWorldInteraction(shared_ptr<core::Building> building,
 		}
 	}
 
-	if (mouseStatus.state[MouseButtonStatus::Right] == MouseButtonStatus::State::Clicked)
+	if (!gPegmanConsumesLeftMouse
+		&& mouseStatus.state[MouseButtonStatus::Right] == MouseButtonStatus::State::Clicked)
 	{
 		clearSelections();
 	}
@@ -778,9 +925,9 @@ void renderMenu(shared_ptr<const core::Building> building)
 void renderToolbar(shared_ptr<core::Building> building)
 {
 	if (ImGui::Button(gUISettings.worldPaused ? "Resume" : "Pause"))
-		{
-			gUISettings.worldPaused = !gUISettings.worldPaused;
-		}
+	{
+		setWorldPaused(building, !gUISettings.worldPaused);
+	}
 
 		ImGui::SameLine();
 
@@ -907,6 +1054,16 @@ void renderStatusBar(shared_ptr<const core::Building> building)
 
 		ImGui::End();
 	}
+}
+
+
+void renderMarkerPanel(shared_ptr<const core::SectorObject> object)
+{
+	auto marker = static_pointer_cast<const core::MarkerSectorObject>(object)->getMarker();
+	auto position = marker->getPosition();
+	position.x += marker->getOffset();
+	ImGui::Text("Marker");
+	ImGui::Text("Position: %.2f, %.2f", position.x, position.y);
 }
 
 
@@ -1361,6 +1518,10 @@ void renderObjectView(shared_ptr<const core::Building> building)
 				case core::SectorObjectType::Lift:
 					renderLiftPanel(static_pointer_cast<const core::LiftSectorObject>(gSelectedSectorObject)->getLift());
 					break;
+
+				case core::SectorObjectType::Marker:
+					renderMarkerPanel(gSelectedSectorObject);
+					break;
 				}
 			}
 		}
@@ -1804,12 +1965,17 @@ void renderWorldWindow(shared_ptr<core::Building> building, shared_ptr<const cor
 			gHoveredAgent = building->getAgentAtPosition(gUISettings.visibleLayer, mousePos.x, mousePos.y);
 			if (!gHoveredAgent)
 			{
-				shared_ptr<const core::SectorObject> sectorObject;
-				auto object = building->getObjectAtPosition(gUISettings.visibleLayer,
-					mousePos.x, mousePos.y, &sectorObject);
-				gHoveredSectorObject = sectorObject;
-				if (auto button = dynamic_pointer_cast<const core::Button>(object))
-					gHoveredInteractionPoint = button->getInteractionPointId();
+				gHoveredSectorObject = markerAtScreenPosition(building, ImGui::GetIO().MousePos);
+				if (!gHoveredSectorObject)
+				{
+					shared_ptr<const core::SectorObject> sectorObject;
+					auto object = building->getObjectAtPosition(gUISettings.visibleLayer,
+						mousePos.x, mousePos.y, &sectorObject);
+					if (sectorObject && sectorObject->getObjectType() != core::SectorObjectType::Marker)
+						gHoveredSectorObject = sectorObject;
+					if (auto button = dynamic_pointer_cast<const core::Button>(object))
+						gHoveredInteractionPoint = button->getInteractionPointId();
+				}
 			}
 		}
 		else
@@ -1826,7 +1992,7 @@ void renderWorldWindow(shared_ptr<core::Building> building, shared_ptr<const cor
 	drawList->PushClipRect(canvasPos, canvasPos + canvasSize, true);
 	renderBuilding(building);
 	renderGraph(graph, building);
-	renderPegman(building, canvasPos, canvasSize, drawList);
+	renderObjectPalette(building, canvasPos, canvasSize, drawList);
 	drawList->PopClipRect();
 
 	ImGui::End();

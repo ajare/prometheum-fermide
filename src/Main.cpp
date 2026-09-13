@@ -243,11 +243,12 @@ void setup()
 	icons_config.GlyphMinAdvanceX = iconFontSize;
 	io.Fonts->AddFontFromFileTTF(FONT_ICON_FILE_NAME_FAS, iconFontSize, &icons_config, icons_ranges);
 
-	// Pegman and Agents are rendered much larger than toolbar icons. Rasterize
-	// their glyphs at Agent height instead of enlarging the merged icon bitmap.
+	// Palette items and world entities are rendered much larger than toolbar icons.
+	// Rasterize their glyphs at Agent height instead of enlarging the merged bitmap.
 	static const ImWchar agentIconRanges[] = {
 		0xf183, 0xf183, // Male
 		0xf21d, 0xf21d, // Street View
+		0xf3c5, 0xf3c5, // Map Marker Alt
 		0
 	};
 	gAgentIconFont = io.Fonts->AddFontFromFileTTF(FONT_ICON_FILE_NAME_FAS,
