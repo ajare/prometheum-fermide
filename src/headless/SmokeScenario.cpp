@@ -1353,6 +1353,81 @@ namespace
 			&& shuttle->admissionReservationCount == 0;
 	}
 
+	bool multiCarriageShuttleCoordinatesIndependentCarriagesAndAccessZones()
+	{
+		core::Building building("Coupled shuttle", 20, 2);
+		auto leftA = building.addRoom("Left A", CORE_LAYER_FORE, 0, 0, 3, 1);
+		auto leftB = building.addRoom("Left B", CORE_LAYER_FORE, 0, 4, 3, 1);
+		auto rightA = building.addRoom("Right A", CORE_LAYER_FORE, 0, 12, 3, 1);
+		auto rightB = building.addRoom("Right B", CORE_LAYER_FORE, 0, 16, 3, 1);
+		core::Building::CreateShuttleOptions options{ 2, 3, { 0, 12 }, 0 };
+		options.capacity = 1;
+		options.minimumDwellSeconds = 0.1f;
+		options.maximumBoardingSeconds = 2.0f;
+		auto created = building.addShuttle(0, 0, 19, options);
+		building.finishBuild();
+		if (!created.traversalResource || created.doors.size() != 4) return false;
+
+		struct Journey { core::AgentId agent; uint32_t targetSector; float targetX; };
+		std::vector<Journey> journeys = {
+			{ building.createAgent("A first", leftA, 0, 1.35f), rightA, 13.5f },
+			{ building.createAgent("B", leftB, 0, 1.5f), rightB, 17.5f },
+			{ building.createAgent("A overflow", leftA, 0, 1.65f), rightA, 13.5f }
+		};
+		for (auto const& journey : journeys)
+		{
+			auto agent = building.lookupAgent(journey.agent).entity;
+			auto target = building.getGraph()->getClosestVertexInSector(
+				building.getSector(journey.targetSector).get(), { journey.targetX, 0.0f });
+			if (!target) return false;
+			auto path = building.getGraph()->calculatePath(agent, target);
+			if (!path) return false;
+			agent->setPath(std::move(path), true);
+		}
+
+		bool sawIndependentFullCarriages = false;
+		std::array<bool, 2> sawCarriageOccupied{};
+		bool sawSeparatedAccessZones = false;
+		bool sawBoundAssignment = false;
+		for (uint32_t tick = 0; tick < MaximumSimulationTicks * 24; ++tick)
+		{
+			building.advanceTick();
+			auto snapshot = building.getSimulationSnapshot();
+			auto shuttle = std::find_if(snapshot.traversalResources.begin(), snapshot.traversalResources.end(),
+				[&](auto const& resource) { return resource.id == created.traversalResource; });
+			if (shuttle == snapshot.traversalResources.end() || shuttle->shuttleCarriages.size() != 2
+				|| shuttle->capacity != 2 || shuttle->shuttleCapacityPerCarriage != 1) return false;
+			for (auto const& carriage : shuttle->shuttleCarriages)
+			{
+				if (carriage.occupantCount + carriage.admissionReservationCount > carriage.capacity) return false;
+				if (carriage.index < sawCarriageOccupied.size() && carriage.occupantCount)
+					sawCarriageOccupied[carriage.index] = true;
+			}
+			sawIndependentFullCarriages = sawIndependentFullCarriages
+				|| (shuttle->shuttleCarriages[0].occupantCount == 1
+					&& shuttle->shuttleCarriages[1].occupantCount == 1);
+			uint32_t leftZones = 0;
+			for (auto const& zone : shuttle->shuttleAccessZones)
+				if (zone.stopIndex == 0 && zone.direction == core::TraversalDirection::Ascending) ++leftZones;
+			sawSeparatedAccessZones = sawSeparatedAccessZones || leftZones >= 2;
+			for (auto const& request : snapshot.traversalRequests)
+				if (request.shuttleCarriage != ~0u && request.shuttleDoor)
+					sawBoundAssignment = sawBoundAssignment
+						|| (request.hasQueuePosition && request.hasCapacityPosition);
+			if (std::all_of(journeys.begin(), journeys.end(), [&](auto const& journey)
+				{ auto agent = building.lookupAgent(journey.agent).entity;
+					return agent->getState() == core::Agent::State::Idle
+						&& agent->getSector() == building.getSector(journey.targetSector).get(); })) break;
+		}
+		auto complete = std::all_of(journeys.begin(), journeys.end(), [&](auto const& journey)
+			{ auto agent = building.lookupAgent(journey.agent).entity;
+				return agent->getState() == core::Agent::State::Idle
+					&& agent->getSector() == building.getSector(journey.targetSector).get(); });
+		return (sawIndependentFullCarriages || std::all_of(sawCarriageOccupied.begin(), sawCarriageOccupied.end(),
+			[](bool occupied) { return occupied; }))
+			&& sawSeparatedAccessZones && sawBoundAssignment && complete;
+	}
+
 	bool liftFailuresCancellationAndDisableDrainSafely()
 	{
 		// Repeated selector failures keep the landing open and eventually return the
@@ -1670,6 +1745,11 @@ int main()
 		if (!singleCarriageShuttleUsesTransportJourneyProtocol())
 		{
 			std::cerr << "FAIL: single-carriage shuttle journey coordination failed\n";
+			return 1;
+		}
+		if (!multiCarriageShuttleCoordinatesIndependentCarriagesAndAccessZones())
+		{
+			std::cerr << "FAIL: multi-carriage shuttle or access-zone coordination failed\n";
 			return 1;
 		}
 		if (!unavailableDoorRejectsTraversal())

@@ -237,6 +237,25 @@ namespace core
 		uint64_t registeredAtTick{ 0 };
 	};
 
+	// A coupled shuttle has one vehicle schedule, but each physical carriage owns
+	// a disjoint range of the coordinator's standing and reservation slots.
+	struct ShuttleCarriage
+	{
+		uint32_t index{ 0 };
+		uint32_t firstCapacityPosition{ 0 };
+		uint32_t capacity{ 0 };
+		std::vector<std::vector<TraversalResourceId>> stopDoors;
+	};
+
+	struct ShuttleDoor
+	{
+		uint32_t stopIndex{ ~0u };
+		uint32_t carriageIndex{ ~0u };
+		uint32_t accessZoneIndex{ ~0u };
+		SectorId locationSector;
+		TraversalResourceId landingResource;
+	};
+
 	struct DoorQueueLane
 	{
 		SectorId sector;
@@ -291,6 +310,11 @@ namespace core
 		std::vector<std::map<AgentId, uint64_t>> mLiftStopRequestTicks;
 		std::vector<TraversalRequestId> mLiftConfirmationQueue;
 		TraversalRequestId mLiftActiveConfirmation;
+		// Shuttle motion and scheduling remain vehicle-wide. These records partition
+		// capacity and associate every stop threshold with a carriage/access zone.
+		uint32_t mShuttleCapacityPerCarriage{ 0 };
+		std::vector<ShuttleCarriage> mShuttleCarriages;
+		std::vector<ShuttleDoor> mShuttleDoors;
 		// Compatibility aliases expose the first passenger/reservation in old snapshots.
 		AgentId mLiftPassenger;
 		TraversalRequestId mLiftAdmissionReservation;
@@ -352,15 +376,16 @@ namespace core
 			if (!mLiftStops.empty()) mLiftPosition = mLiftStops.front().globalPosition;
 		}
 		TraversalResource(std::string name, std::shared_ptr<Shuttle> shuttle,
-			SectorId shuttleSector, std::vector<LiftStop> stops, uint32_t capacity,
+			SectorId shuttleSector, std::vector<LiftStop> stops, uint32_t capacityPerCarriage,
 			uint64_t minimumDwellTicks, uint64_t maximumBoardingTicks,
 			std::vector<Vector2> positions)
 			: mName(std::move(name)), mShuttle(std::move(shuttle)), mLiftSector(shuttleSector),
 			  mLiftStops(std::move(stops)), mLiftMinimumDwellTicks(minimumDwellTicks),
 			  mLiftMaximumBoardingTicks(maximumBoardingTicks),
-			  mLiftStopRequestOwners(mLiftStops.size()), mLiftStopRequestTicks(mLiftStops.size()), mCapacity(capacity),
-			  mCapacityPositions(std::move(positions)), mOccupants(capacity),
-			  mAdmissionReservations(capacity)
+			  mLiftStopRequestOwners(mLiftStops.size()), mLiftStopRequestTicks(mLiftStops.size()),
+			  mShuttleCapacityPerCarriage(capacityPerCarriage), mCapacity((uint32_t)positions.size()),
+			  mCapacityPositions(std::move(positions)), mOccupants(mCapacity),
+			  mAdmissionReservations(mCapacity)
 		{
 			if (!mLiftStops.empty()) mLiftPosition = mLiftStops.front().globalPosition;
 		}
@@ -446,6 +471,9 @@ namespace core
 		uint32_t mPositionRetryCount{ 0 };
 		uint32_t mCrossingLane{ ~0u };
 		uint32_t mCapacityPosition{ ~0u };
+		uint32_t mShuttleCarriage{ ~0u };
+		uint32_t mShuttleAccessZone{ ~0u };
+		TraversalResourceId mShuttleDoor;
 		TraversalDirection mDirection{ TraversalDirection::None };
 		DoorOpenLeaseId mPreparationLease;
 		DoorOpenLeaseId mCrossingLease;
@@ -478,6 +506,9 @@ namespace core
 		uint32_t getCrossingLane() const { return mCrossingLane; }
 		bool hasCapacityPosition() const { return mCapacityPosition != ~0u; }
 		uint32_t getCapacityPosition() const { return mCapacityPosition; }
+		uint32_t getShuttleCarriage() const { return mShuttleCarriage; }
+		uint32_t getShuttleAccessZone() const { return mShuttleAccessZone; }
+		TraversalResourceId getShuttleDoor() const { return mShuttleDoor; }
 		TraversalDirection getDirection() const { return mDirection; }
 	};
 

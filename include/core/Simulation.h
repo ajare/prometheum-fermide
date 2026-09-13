@@ -101,6 +101,25 @@ namespace core
 		TraversalRequestId admissionReservation;
 	};
 
+	struct ShuttleCarriageSnapshot
+	{
+		uint32_t index{ 0 };
+		uint32_t capacity{ 0 };
+		uint32_t occupantCount{ 0 };
+		uint32_t admissionReservationCount{ 0 };
+		std::vector<CapacityPositionSnapshot> positions;
+		std::vector<std::vector<TraversalResourceId>> stopDoors;
+	};
+
+	struct ShuttleAccessZoneSnapshot
+	{
+		uint32_t stopIndex{ ~0u };
+		uint32_t accessZoneIndex{ ~0u };
+		SectorId sector;
+		TraversalDirection direction{ TraversalDirection::None };
+		std::vector<TraversalRequestId> queue;
+	};
+
 	struct TraversalResourceSnapshot
 	{
 		TraversalResourceId id;
@@ -110,6 +129,9 @@ namespace core
 		bool isForceBridge{ false };
 		bool isLift{ false };
 		bool isShuttle{ false };
+		uint32_t shuttleCapacityPerCarriage{ 0 };
+		std::vector<ShuttleCarriageSnapshot> shuttleCarriages;
+		std::vector<ShuttleAccessZoneSnapshot> shuttleAccessZones;
 		bool liftMoving{ false };
 		bool liftAligned{ false };
 		bool liftCarDoorOpen{ false };
@@ -194,6 +216,9 @@ namespace core
 		uint32_t crossingLane{ ~0u };
 		bool hasCapacityPosition{ false };
 		uint32_t capacityPosition{ ~0u };
+		uint32_t shuttleCarriage{ ~0u };
+		uint32_t shuttleAccessZone{ ~0u };
+		TraversalResourceId shuttleDoor;
 		TraversalDirection direction{ TraversalDirection::None };
 		uint64_t positionAssignedAtTick{ 0 };
 		uint64_t lastPositionProgressTick{ 0 };

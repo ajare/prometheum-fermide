@@ -1433,34 +1433,16 @@ namespace core
 				throw BuildingException(this, format("{} - shuttle is too wide to fit at stop offset {}", caller, i));
 			}
 
-			// For door openings, fore cell must be occupied and a Location
-			uint32_t stopSectorIndex{ ~0u };
+			// Every carriage door must open onto a Location. Different Location
+			// sectors intentionally form disconnected access zones at the same stop.
 			for (uint32_t j = 0; j < options.numCars; ++j)
 			{
 				// Offset of door is 1 within a car, and each car has a gap of 1 between
-				// it and the previous
+				// it and the previous.
 				uint32_t cx = ix + j * (options.carWidth + 1) + 1;
-
 				validateCellIsType(caller, CORE_LAYER_FORE, cx, y, SectorType::Location);
-
 				if (options.carWidth == 4)
-				{
 					validateCellIsType(caller, CORE_LAYER_FORE, cx + 1, y, SectorType::Location);
-				}
-
-				// Stop doors can only connect a single Location
-				auto thisStopSectorIndex = foreLayer->getCellDefinition(cx, y).sectorIndex;
-				if (thisStopSectorIndex != ~0u)
-				{
-					if (stopSectorIndex == ~0u)
-					{
-						stopSectorIndex = thisStopSectorIndex;
-					}
-					else if (thisStopSectorIndex != stopSectorIndex)
-					{
-						throw BuildingException(this, format("{} - stop offset {} doors span multiple fore Locations", caller, i));
-					}
-				}
 			}
 		}
 
@@ -1517,61 +1499,80 @@ namespace core
 
 		mOrchestrator->addSystem(orchSystem);
 
-		// Ticket 18 migrates one physical carriage. Multi-carriage manifests and
-		// access-zone door balancing are introduced by the following slice.
-		if (options.numCars == 1)
+		vector<LiftStop> stops;
+		for (uint32_t i = 0; i < options.stopOffsets.size(); ++i)
 		{
-			vector<LiftStop> stops;
-			for (uint32_t i = 0; i < options.stopOffsets.size(); ++i)
-			{
-				auto doorIndex = i;
-				auto location = getSector(foreLayer->getCellDefinition(
-					x + options.stopOffsets[i] + 1, y).sectorIndex);
-				stops.push_back({ SectorId{ (uint64_t)location->getIndex() + 1 },
-					(float)(x + options.stopOffsets[i]), shuttleRes.doors[doorIndex].traversalResource, {} });
-			}
-			auto coordinator = createShuttleTraversalResource("Shuttle journey", shuttle,
-				SectorId{ (uint64_t)shuttleTransit->getIndex() + 1 }, stops, options.capacity,
-				options.minimumDwellSeconds, options.maximumBoardingSeconds);
-			shuttle->configureTraversal(coordinator);
-			shuttleRes.traversalResource = coordinator;
-			auto shuttleResource = mTraversalResources.find(coordinator);
-			shuttleResource->mLiftCurrentStop = options.initialStop;
-			shuttleResource->mLiftPosition = stops[options.initialStop].globalPosition;
-			shuttle->setCoordinatedPosition(shuttleResource->mLiftPosition);
+			auto doorIndex = i * options.numCars;
+			auto location = getSector(foreLayer->getCellDefinition(
+				x + options.stopOffsets[i] + 1, y).sectorIndex);
+			stops.push_back({ SectorId{ (uint64_t)location->getIndex() + 1 },
+				(float)(x + options.stopOffsets[i]), shuttleRes.doors[doorIndex].traversalResource, {} });
+		}
+		auto coordinator = createShuttleTraversalResource("Shuttle journey", shuttle,
+			SectorId{ (uint64_t)shuttleTransit->getIndex() + 1 }, stops, options.capacity,
+			options.minimumDwellSeconds, options.maximumBoardingSeconds);
+		shuttle->configureTraversal(coordinator);
+		shuttleRes.traversalResource = coordinator;
+		auto shuttleResource = mTraversalResources.find(coordinator);
+		shuttleResource->mLiftCurrentStop = options.initialStop;
+		shuttleResource->mLiftPosition = stops[options.initialStop].globalPosition;
+		shuttle->setCoordinatedPosition(shuttleResource->mLiftPosition);
 
-			for (uint32_t i = 0; i < stops.size(); ++i)
+		// A Location sector is one connected platform access zone. Doors opening
+		// onto the same sector share a logical queue; different sectors do not.
+		for (uint32_t stop = 0; stop < stops.size(); ++stop)
+		{
+			map<SectorId, uint32_t> accessZones;
+			for (uint32_t carriage = 0; carriage < options.numCars; ++carriage)
 			{
-				auto& doorResult = shuttleRes.doors[i];
+				auto doorIndex = stop * options.numCars + carriage;
+				auto& doorResult = shuttleRes.doors[doorIndex];
 				auto landing = mTraversalResources.find(doorResult.traversalResource);
+				auto doorX = x + options.stopOffsets[stop]
+					+ carriage * (options.carWidth + 1) + 1;
+				auto location = getSector(foreLayer->getCellDefinition(doorX, y).sectorIndex);
+				auto locationId = SectorId{ (uint64_t)location->getIndex() + 1 };
+				auto [zone, inserted] = accessZones.emplace(locationId, (uint32_t)accessZones.size());
+				(void)inserted;
 				landing->mLiftCoordinator = coordinator;
-				landing->mLiftStopIndex = i;
+				landing->mLiftStopIndex = stop;
+				shuttleResource->mShuttleDoors.push_back({ stop, carriage, zone->second,
+					locationId, doorResult.traversalResource });
+				shuttleResource->mShuttleCarriages[carriage].stopDoors[stop].push_back(
+					doorResult.traversalResource);
+
 				auto const& controller = doorResult.controllers[CORE_LAYER_FORE];
 				auto controlObject = controller.sector->_getObject(controller.index);
 				auto controlPosition = controlObject->getPosition() + controlObject->getSize() * 0.5f;
 				DeviceCommand call;
 				call.type = DeviceCommandType::CallShuttle;
 				call.traversalResource = coordinator;
-				call.stopIndex = i;
-				auto point = createInteractionPoint("Shuttle landing call", stops[i].locationSector,
+				call.stopIndex = stop;
+				auto point = createInteractionPoint("Shuttle landing call", locationId,
 					controlPosition, 0.15f, getFixedTimestep(),
 					{ { call, InteractionBindingRequirement::Required } });
 				landing->mControls.push_back(point);
-				shuttleResource->mLiftStops[i].callControl = point;
-
-				DeviceCommand select;
-				select.type = DeviceCommandType::SelectShuttleDestination;
-				select.traversalResource = coordinator;
-				select.stopIndex = i;
-				auto selector = createInteractionPoint("Shuttle destination selector",
-					shuttleResource->mLiftSector,
-					{ shuttleResource->mLiftPosition + options.carWidth * 0.5f, (float)y },
-					0.25f, getFixedTimestep(), { { select, InteractionBindingRequirement::Required } });
-				shuttleResource->mControls.push_back(selector);
-				if (i == 0) shuttleRes.interiorSelector = selector;
+				if (!shuttleResource->mLiftStops[stop].callControl)
+					shuttleResource->mLiftStops[stop].callControl = point;
 			}
-			shuttleResource->mLiftSelector = shuttleRes.interiorSelector;
 		}
+
+		// Destination selection is serialized vehicle-wide. The interaction point
+		// is moved to the acting passenger, so passengers retain carriage positions.
+		for (uint32_t i = 0; i < stops.size(); ++i)
+		{
+			DeviceCommand select;
+			select.type = DeviceCommandType::SelectShuttleDestination;
+			select.traversalResource = coordinator;
+			select.stopIndex = i;
+			auto selector = createInteractionPoint("Shuttle destination selector",
+				shuttleResource->mLiftSector,
+				{ shuttleResource->mLiftPosition + options.carWidth * 0.5f, (float)y },
+				0.25f, getFixedTimestep(), { { select, InteractionBindingRequirement::Required } });
+			shuttleResource->mControls.push_back(selector);
+			if (i == 0) shuttleRes.interiorSelector = selector;
+		}
+		shuttleResource->mLiftSelector = shuttleRes.interiorSelector;
 
 		return shuttleRes;
 	}
@@ -2684,6 +2685,7 @@ namespace core
 		result.isForceBridge = resource.mForceBridge != nullptr;
 		result.isLift = resource.mLift != nullptr;
 		result.isShuttle = resource.mShuttle != nullptr;
+		result.shuttleCapacityPerCarriage = resource.mShuttleCapacityPerCarriage;
 		result.liftMoving = resource.mLiftMoving;
 		result.liftCarDoorOpen = resource.mLiftCarDoorOpen;
 		result.liftStopPhase = resource.mLiftStopPhase;
@@ -2745,6 +2747,69 @@ namespace core
 				resource.mOccupants[i], resource.mAdmissionReservations[i] });
 			if (resource.mOccupants[i]) ++result.occupantCount;
 			if (resource.mAdmissionReservations[i]) ++result.admissionReservationCount;
+		}
+		for (auto const& carriage : resource.mShuttleCarriages)
+		{
+			ShuttleCarriageSnapshot snapshot;
+			snapshot.index = carriage.index;
+			snapshot.capacity = carriage.capacity;
+			snapshot.stopDoors = carriage.stopDoors;
+			for (uint32_t i = 0; i < carriage.capacity; ++i)
+			{
+				auto position = carriage.firstCapacityPosition + i;
+				if (position >= resource.mCapacityPositions.size()) break;
+				snapshot.positions.push_back({ i, resource.mCapacityPositions[position],
+					resource.mOccupants[position], resource.mAdmissionReservations[position] });
+				if (resource.mOccupants[position]) ++snapshot.occupantCount;
+				if (resource.mAdmissionReservations[position]) ++snapshot.admissionReservationCount;
+			}
+			result.shuttleCarriages.push_back(std::move(snapshot));
+		}
+		if (resource.mShuttle)
+		{
+			for (auto const& door : resource.mShuttleDoors)
+				for (auto direction : { TraversalDirection::Ascending, TraversalDirection::Descending })
+					if (find_if(result.shuttleAccessZones.begin(), result.shuttleAccessZones.end(),
+						[&](auto const& value) { return value.stopIndex == door.stopIndex
+							&& value.accessZoneIndex == door.accessZoneIndex
+							&& value.direction == direction; }) == result.shuttleAccessZones.end())
+						result.shuttleAccessZones.push_back({ door.stopIndex, door.accessZoneIndex,
+							door.locationSector, direction, {} });
+			for (auto const& [requestId, request] : mTraversalRequests.entries())
+			{
+				if (!request->mQueueTicket || request->mSourceSector == resource.mLiftSector
+					|| request->mState != TraversalRequestState::Pending) continue;
+				auto authority = mTraversalResources.find(request->mResource);
+				if (!authority || authority->mLiftCoordinator != id) continue;
+				auto intent = resource.mLiftTripIntents.find(request->mOwner);
+				if (intent == resource.mLiftTripIntents.end()) continue;
+				auto direction = resource.mLiftStops[intent->second.destinationStop].globalPosition
+					> resource.mLiftStops[intent->second.originStop].globalPosition
+					? TraversalDirection::Ascending : TraversalDirection::Descending;
+				auto zone = request->mShuttleAccessZone;
+				if (zone == ~0u)
+				{
+					auto door = find_if(resource.mShuttleDoors.begin(), resource.mShuttleDoors.end(),
+						[&](auto const& value) { return value.landingResource == request->mResource; });
+					if (door != resource.mShuttleDoors.end()) zone = door->accessZoneIndex;
+				}
+				auto found = find_if(result.shuttleAccessZones.begin(), result.shuttleAccessZones.end(),
+					[&](auto const& value) { return value.stopIndex == intent->second.originStop
+						&& value.accessZoneIndex == zone && value.direction == direction; });
+				if (found == result.shuttleAccessZones.end())
+				{
+					result.shuttleAccessZones.push_back({ intent->second.originStop, zone,
+						request->mSourceSector, direction, { requestId } });
+				}
+				else found->queue.push_back(requestId);
+			}
+			for (auto& zone : result.shuttleAccessZones)
+				sort(zone.queue.begin(), zone.queue.end(), [&](auto left, auto right)
+				{
+					auto lhs = mTraversalRequests.find(left);
+					auto rhs = mTraversalRequests.find(right);
+					return lhs && rhs ? lhs->mQueueTicket < rhs->mQueueTicket : left < right;
+				});
 		}
 		result.doorActivationMode = resource.mDoorActivationMode;
 		result.holdOpenTicks = resource.mHoldOpenTicks;
@@ -2823,6 +2888,9 @@ namespace core
 		result.crossingLane = request.mCrossingLane;
 		result.hasCapacityPosition = request.mCapacityPosition != ~0u;
 		result.capacityPosition = request.mCapacityPosition;
+		result.shuttleCarriage = request.mShuttleCarriage;
+		result.shuttleAccessZone = request.mShuttleAccessZone;
+		result.shuttleDoor = request.mShuttleDoor;
 		result.direction = request.mDirection;
 		result.positionAssignedAtTick = request.mPositionAssignedAtTick;
 		result.lastPositionProgressTick = request.mLastPositionProgressTick;
@@ -3755,6 +3823,206 @@ namespace core
 		if (auto request = mTraversalRequests.find(requestId)) request->mCapacityPosition = ~0u;
 	}
 
+	uint32_t Building::findShuttlePassengerCarriage(TraversalResource const& resource,
+		AgentId passenger) const
+	{
+		if (!resource.mShuttle || !resource.mShuttleCapacityPerCarriage) return ~0u;
+		for (uint32_t position = 0; position < resource.mOccupants.size(); ++position)
+			if (resource.mOccupants[position] == passenger)
+				return position / resource.mShuttleCapacityPerCarriage;
+		return ~0u;
+	}
+
+	bool Building::retargetShuttleDoorTraversal(TraversalRequestId requestId,
+		TraversalResource& coordinator, ShuttleDoor const& door)
+	{
+		auto request = mTraversalRequests.find(requestId);
+		auto landing = mTraversalResources.find(door.landingResource);
+		if (!request || !landing || landing->mLiftCoordinator != coordinator.mShuttle->getTraversalResourceId())
+			return false;
+
+		shared_ptr<const Edge> selectedEdge;
+		shared_ptr<const Vertex> selectedSource;
+		shared_ptr<const Vertex> selectedDestination;
+		for (auto const& edge : mGraph->getEdges())
+		{
+			if (edge->getTraversalResourceId() != door.landingResource) continue;
+			auto first = edge->getVertex(0);
+			auto second = edge->getVertex(1);
+			auto firstSector = SectorId{ (uint64_t)first->getSector()->getIndex() + 1 };
+			auto secondSector = SectorId{ (uint64_t)second->getSector()->getIndex() + 1 };
+			if (firstSector == request->mSourceSector && secondSector == request->mDestinationSector)
+			{ selectedSource = first; selectedDestination = second; }
+			else if (secondSector == request->mSourceSector && firstSector == request->mDestinationSector)
+			{ selectedSource = second; selectedDestination = first; }
+			if (selectedSource) { selectedEdge = edge; break; }
+		}
+		if (!selectedEdge) return false;
+
+		if (request->mShuttleDoor && request->mShuttleDoor != door.landingResource)
+			if (auto previous = mTraversalResources.find(request->mShuttleDoor))
+				releaseDoorQueueOwnership(requestId, *previous);
+		request->mResource = door.landingResource;
+		request->mSourceEndpoint = selectedSource->getPosition();
+		request->mDestinationEndpoint = selectedDestination->getPosition();
+		request->mShuttleDoor = door.landingResource;
+		request->mShuttleCarriage = door.carriageIndex;
+		request->mShuttleAccessZone = door.accessZoneIndex;
+		if (auto agent = mAgents.find(request->mOwner); agent && agent->mTraversalTask)
+		{
+			agent->mTraversalTask->edge = selectedEdge;
+			agent->mTraversalTask->sourceVertex = selectedSource;
+			agent->mTraversalTask->destinationVertex = selectedDestination;
+		}
+		return true;
+	}
+
+	bool Building::assignShuttleBoardingDoor(TraversalRequestId requestId,
+		TraversalResource& coordinator, uint32_t stop)
+	{
+		auto request = mTraversalRequests.find(requestId);
+		auto agent = request ? mAgents.find(request->mOwner) : nullptr;
+		if (!request || !agent) return false;
+		if (request->mShuttleCarriage != ~0u) return true;
+
+		// A disconnected destination platform can only be reached from a carriage
+		// that has a door into that access zone. Derive that zone from the journey's
+		// disembark edge before ranking otherwise eligible carriages.
+		SectorId destinationAccessSector;
+		bool passedRide = false;
+		if (agent->mPath.path)
+			for (uint32_t i = agent->mPath.targetNode + 1; i < agent->mPath.path->nodes.size(); ++i)
+			{
+				auto const& node = agent->mPath.path->nodes[i];
+				if (!node.edge || !node.targetVertex) continue;
+				if (node.edge->getType() == EdgeType::Shuttle) { passedRide = true; continue; }
+				if (passedRide && node.edge->getType() == EdgeType::Door
+					&& SectorId{ (uint64_t)node.targetVertex->getSector()->getIndex() + 1 }
+						!= coordinator.mLiftSector)
+				{
+					destinationAccessSector = SectorId{
+						(uint64_t)node.targetVertex->getSector()->getIndex() + 1 };
+					break;
+				}
+			}
+		auto intent = coordinator.mLiftTripIntents.find(request->mOwner);
+		auto destinationStop = intent == coordinator.mLiftTripIntents.end()
+			? ~0u : intent->second.destinationStop;
+
+		ShuttleDoor const* selected = nullptr;
+		float selectedDistance = 0.0f;
+		uint32_t selectedLoad = 0;
+		for (auto const& door : coordinator.mShuttleDoors)
+		{
+			if (door.stopIndex != stop || door.locationSector != request->mSourceSector
+				|| door.carriageIndex >= coordinator.mShuttleCarriages.size()) continue;
+			if (destinationAccessSector && none_of(coordinator.mShuttleDoors.begin(),
+				coordinator.mShuttleDoors.end(), [&](auto const& destinationDoor)
+				{
+					return destinationDoor.stopIndex == destinationStop
+						&& destinationDoor.carriageIndex == door.carriageIndex
+						&& destinationDoor.locationSector == destinationAccessSector;
+				})) continue;
+			auto const& carriage = coordinator.mShuttleCarriages[door.carriageIndex];
+			uint32_t load = 0;
+			for (uint32_t i = 0; i < carriage.capacity; ++i)
+			{
+				auto position = carriage.firstCapacityPosition + i;
+				load += coordinator.mOccupants[position] || coordinator.mAdmissionReservations[position];
+			}
+			if (load >= carriage.capacity) continue;
+
+			Vector2 threshold;
+			bool foundThreshold = false;
+			for (auto const& edge : mGraph->getEdges())
+			{
+				if (edge->getTraversalResourceId() != door.landingResource) continue;
+				for (uint32_t vertex = 0; vertex < 2; ++vertex)
+					if (SectorId{ (uint64_t)edge->getVertex(vertex)->getSector()->getIndex() + 1 }
+						== request->mSourceSector)
+					{ threshold = edge->getVertex(vertex)->getPosition(); foundThreshold = true; break; }
+				if (foundThreshold) break;
+			}
+			if (!foundThreshold) continue;
+			auto distance = agent->getGlobalPosition().distanceTo(threshold);
+			if (!selected || distance < selectedDistance - 0.001f
+				|| (abs(distance - selectedDistance) <= 0.001f
+					&& (load < selectedLoad || (load == selectedLoad
+						&& (door.carriageIndex < selected->carriageIndex
+							|| (door.carriageIndex == selected->carriageIndex
+								&& door.landingResource < selected->landingResource))))))
+			{
+				selected = &door;
+				selectedDistance = distance;
+				selectedLoad = load;
+			}
+		}
+		if (!selected || !retargetShuttleDoorTraversal(requestId, coordinator, *selected)) return false;
+
+		// The queue ticket was created at the access-zone boundary and is retained
+		// while the physical door/position assignment changes.
+		auto landing = mTraversalResources.find(selected->landingResource);
+		for (uint32_t lane = 0; landing && lane < landing->mQueueLanes.size(); ++lane)
+		{
+			if (landing->mQueueLanes[lane].sector != request->mSourceSector) continue;
+			request->mQueueApproach = lane;
+			auto& queue = landing->mQueueLanes[lane].queue;
+			if (find(queue.begin(), queue.end(), requestId) == queue.end()) queue.push_back(requestId);
+			sort(queue.begin(), queue.end(), [&](auto left, auto right)
+			{
+				auto lhs = mTraversalRequests.find(left);
+				auto rhs = mTraversalRequests.find(right);
+				return lhs && rhs ? lhs->mQueueTicket < rhs->mQueueTicket : left < right;
+			});
+			refreshDoorQueuePositions(*landing);
+			break;
+		}
+		return true;
+	}
+
+	bool Building::assignShuttleDisembarkDoor(TraversalRequestId requestId,
+		TraversalResource& coordinator, uint32_t stop)
+	{
+		auto request = mTraversalRequests.find(requestId);
+		if (!request) return false;
+		auto carriage = findShuttlePassengerCarriage(coordinator, request->mOwner);
+		if (carriage == ~0u) return false;
+		if (request->mShuttleDoor && request->mShuttleCarriage == carriage) return true;
+
+		ShuttleDoor const* selected = nullptr;
+		float selectedDistance = 0.0f;
+		uint32_t selectedLoad = 0;
+		auto passenger = mAgents.find(request->mOwner);
+		for (auto const& door : coordinator.mShuttleDoors)
+		{
+			if (door.stopIndex != stop || door.carriageIndex != carriage
+				|| door.locationSector != request->mDestinationSector) continue;
+			auto landing = mTraversalResources.find(door.landingResource);
+			if (!landing) continue;
+			auto load = (uint32_t)count_if(landing->mCrossingOwners.begin(),
+				landing->mCrossingOwners.end(), [](auto owner) { return (bool)owner; });
+			Vector2 interior;
+			bool foundInterior = false;
+			for (auto const& edge : mGraph->getEdges())
+			{
+				if (edge->getTraversalResourceId() != door.landingResource) continue;
+				for (uint32_t vertex = 0; vertex < 2; ++vertex)
+					if (SectorId{ (uint64_t)edge->getVertex(vertex)->getSector()->getIndex() + 1 }
+						== coordinator.mLiftSector)
+					{ interior = edge->getVertex(vertex)->getPosition(); foundInterior = true; break; }
+				if (foundInterior) break;
+			}
+			if (!foundInterior) continue;
+			auto distance = passenger ? passenger->getGlobalPosition().distanceTo(interior) : 0.0f;
+			if (!selected || distance < selectedDistance - 0.001f
+				|| (abs(distance - selectedDistance) <= 0.001f
+					&& (load < selectedLoad || (load == selectedLoad
+						&& door.landingResource < selected->landingResource))))
+			{ selected = &door; selectedDistance = distance; selectedLoad = load; }
+		}
+		return selected && retargetShuttleDoorTraversal(requestId, coordinator, *selected);
+	}
+
 	void Building::requestLiftPassengerSafeExit(AgentId passenger, TraversalFailureReason reason)
 	{
 		for (auto const& [resourceId, resourcePtr] : mTraversalResources.entries())
@@ -3785,28 +4053,36 @@ namespace core
 			|| (resource.mLiftStopPhase != LiftStopPhase::Opening
 				&& resource.mLiftStopPhase != LiftStopPhase::Disembarking
 				&& resource.mLiftStopPhase != LiftStopPhase::Boarding)) return;
-		auto landingId = resource.mLiftStops[resource.mLiftCurrentStop].landingResource;
-		shared_ptr<const Edge> landingEdge;
-		shared_ptr<const Vertex> source;
-		shared_ptr<const Vertex> destination;
-		for (auto const& edge : mGraph->getEdges())
-		{
-			if (edge->getTraversalResourceId() != landingId) continue;
-			auto first = edge->getVertex(0);
-			auto second = edge->getVertex(1);
-			if (SectorId{ (uint64_t)first->getSector()->getIndex() + 1 } == resource.mLiftSector)
-			{ source = first; destination = second; }
-			else if (SectorId{ (uint64_t)second->getSector()->getIndex() + 1 } == resource.mLiftSector)
-			{ source = second; destination = first; }
-			if (source) { landingEdge = edge; break; }
-		}
-		if (!landingEdge) return;
 		vector<AgentId> assigned;
 		for (auto passenger : resource.mLiftExitAtSafeStop)
 		{
 			auto agent = mAgents.find(passenger);
 			if (!agent || agent->getSector() != mSectors[(size_t)resource.mLiftSector.value - 1].get())
 			{ assigned.push_back(passenger); continue; }
+			auto landingId = resource.mLiftStops[resource.mLiftCurrentStop].landingResource;
+			if (resource.mShuttle)
+			{
+				auto carriage = findShuttlePassengerCarriage(resource, passenger);
+				auto door = find_if(resource.mShuttleDoors.begin(), resource.mShuttleDoors.end(),
+					[&](auto const& value) { return value.stopIndex == resource.mLiftCurrentStop
+						&& value.carriageIndex == carriage; });
+				if (door != resource.mShuttleDoors.end()) landingId = door->landingResource;
+			}
+			shared_ptr<const Edge> landingEdge;
+			shared_ptr<const Vertex> source;
+			shared_ptr<const Vertex> destination;
+			for (auto const& edge : mGraph->getEdges())
+			{
+				if (edge->getTraversalResourceId() != landingId) continue;
+				auto first = edge->getVertex(0);
+				auto second = edge->getVertex(1);
+				if (SectorId{ (uint64_t)first->getSector()->getIndex() + 1 } == resource.mLiftSector)
+				{ source = first; destination = second; }
+				else if (SectorId{ (uint64_t)second->getSector()->getIndex() + 1 } == resource.mLiftSector)
+				{ source = second; destination = first; }
+				if (source) { landingEdge = edge; break; }
+			}
+			if (!landingEdge) continue;
 			auto path = make_shared<Path>();
 			path->nodes.push_back({ nullptr, source, 0.0f });
 			path->nodes.push_back({ landingEdge, destination, landingEdge->getWeight(destination, agent, true) });
@@ -3898,6 +4174,8 @@ namespace core
 
 		if (boarding)
 		{
+			auto boardingLanding = &edgeResource;
+			auto usesCarriageQueue = coordinator->mShuttle && coordinator->mShuttleCarriages.size() > 1;
 			auto actor = mAgents.find(request->mOwner);
 			auto desiredStop = actor ? findAgentLiftDestination(*actor, *coordinator) : ~0u;
 			if (desiredStop >= coordinator->mLiftStops.size() || desiredStop == stop)
@@ -3948,7 +4226,8 @@ namespace core
 					[&](TraversalRequestId candidateId)
 					{
 						auto candidate = mTraversalRequests.find(candidateId);
-						if (!candidate) return false;
+						if (!candidate || (coordinator->mShuttle
+							&& candidate->mSourceSector != request->mSourceSector)) return false;
 						auto landing = mTraversalResources.find(candidate->mResource);
 						if (!landing || landing->mLiftStopIndex != stop) return false;
 						auto intent = coordinator->mLiftTripIntents.find(candidate->mOwner);
@@ -3959,8 +4238,20 @@ namespace core
 						return desired == coordinator->mLiftDirection;
 					});
 				if (selected == coordinator->mAdmissionQueue.end() || *selected != requestId) return;
+				if (coordinator->mShuttle && !assignShuttleBoardingDoor(requestId, *coordinator, stop)) return;
+				boardingLanding = mTraversalResources.find(request->mResource);
+				if (!boardingLanding || (usesCarriageQueue && request->mQueuePosition == ~0u)) return;
+
+				uint32_t first = 0, count = coordinator->mCapacity;
+				if (coordinator->mShuttle)
+				{
+					if (request->mShuttleCarriage >= coordinator->mShuttleCarriages.size()) return;
+					auto const& carriage = coordinator->mShuttleCarriages[request->mShuttleCarriage];
+					first = carriage.firstCapacityPosition;
+					count = carriage.capacity;
+				}
 				uint32_t position = ~0u;
-				for (uint32_t i = 0; i < coordinator->mCapacity; ++i)
+				for (uint32_t i = first; i < first + count; ++i)
 					if (!coordinator->mOccupants[i] && !coordinator->mAdmissionReservations[i])
 					{ position = i; break; }
 				if (position == ~0u) return;
@@ -3968,17 +4259,31 @@ namespace core
 				request->mCapacityPosition = position;
 				coordinator->mAdmissionQueue.erase(selected);
 			}
-			if (!request->mPreparationLease)
-				request->mPreparationLease = acquireDoorOpenLease(edgeResource,
-					DoorOpenLeaseKind::Preparation, requestId);
-			if (!edgeResource.mDoor->isOpen())
+			if (coordinator->mShuttle && request->mQueuePosition != ~0u)
 			{
-				if (!edgeResource.mDoor->isOpening()) edgeResource.mDoor->handleAction(ControllableActionType::Open);
+				boardingLanding = mTraversalResources.find(request->mResource);
+				if (!boardingLanding || request->mQueueApproach >= boardingLanding->mQueueLanes.size()) return;
+				auto const& queueLane = boardingLanding->mQueueLanes[request->mQueueApproach];
+				if (usesCarriageQueue && (request->mQueuePosition >= queueLane.positions.size()
+					|| !actor || actor->getGlobalPosition().distanceTo(
+						queueLane.positions[request->mQueuePosition]) > 0.001f)) return;
+				auto& laneQueue = boardingLanding->mQueueLanes[request->mQueueApproach].queue;
+				laneQueue.erase(remove(laneQueue.begin(), laneQueue.end(), requestId), laneQueue.end());
+				request->mQueuePosition = ~0u;
+				if (auto actor = mAgents.find(request->mOwner)) actor->mTraversalLocalGoal.reset();
+				refreshDoorQueuePositions(*boardingLanding);
+			}
+			if (!request->mPreparationLease)
+				request->mPreparationLease = acquireDoorOpenLease(*boardingLanding,
+					DoorOpenLeaseKind::Preparation, requestId);
+			if (!boardingLanding->mDoor->isOpen())
+			{
+				if (!boardingLanding->mDoor->isOpening()) boardingLanding->mDoor->handleAction(ControllableActionType::Open);
 				return;
 			}
-			auto lane = find(edgeResource.mCrossingOwners.begin(), edgeResource.mCrossingOwners.end(), TraversalRequestId{});
-			if (lane == edgeResource.mCrossingOwners.end()) return;
-			request->mCrossingLane = (uint32_t)distance(edgeResource.mCrossingOwners.begin(), lane);
+			auto lane = find(boardingLanding->mCrossingOwners.begin(), boardingLanding->mCrossingOwners.end(), TraversalRequestId{});
+			if (lane == boardingLanding->mCrossingOwners.end()) return;
+			request->mCrossingLane = (uint32_t)distance(boardingLanding->mCrossingOwners.begin(), lane);
 			*lane = requestId;
 			coordinator->mLiftAdmissionReservation = requestId;
 			coordinator->mLiftCarDoorOpen = true;
@@ -4071,18 +4376,25 @@ namespace core
 			if (find(coordinator->mOccupants.begin(), coordinator->mOccupants.end(), request->mOwner)
 				== coordinator->mOccupants.end()
 				|| coordinator->mLiftMoving || coordinator->mLiftCurrentStop != stop) return;
+			auto disembarkLanding = &edgeResource;
+			if (coordinator->mShuttle)
+			{
+				if (!assignShuttleDisembarkDoor(requestId, *coordinator, stop)) return;
+				disembarkLanding = mTraversalResources.find(request->mResource);
+				if (!disembarkLanding) return;
+			}
 			coordinator->mLiftStopPhase = LiftStopPhase::Disembarking;
 			if (!request->mPreparationLease)
-				request->mPreparationLease = acquireDoorOpenLease(edgeResource,
+				request->mPreparationLease = acquireDoorOpenLease(*disembarkLanding,
 					DoorOpenLeaseKind::Preparation, requestId);
-			if (!edgeResource.mDoor->isOpen())
+			if (!disembarkLanding->mDoor->isOpen())
 			{
-				if (!edgeResource.mDoor->isOpening()) edgeResource.mDoor->handleAction(ControllableActionType::Open);
+				if (!disembarkLanding->mDoor->isOpening()) disembarkLanding->mDoor->handleAction(ControllableActionType::Open);
 				return;
 			}
-			auto lane = find(edgeResource.mCrossingOwners.begin(), edgeResource.mCrossingOwners.end(), TraversalRequestId{});
-			if (lane == edgeResource.mCrossingOwners.end()) return;
-			request->mCrossingLane = (uint32_t)distance(edgeResource.mCrossingOwners.begin(), lane);
+			auto lane = find(disembarkLanding->mCrossingOwners.begin(), disembarkLanding->mCrossingOwners.end(), TraversalRequestId{});
+			if (lane == disembarkLanding->mCrossingOwners.end()) return;
+			request->mCrossingLane = (uint32_t)distance(disembarkLanding->mCrossingOwners.begin(), lane);
 			*lane = requestId;
 			coordinator->mLiftCarDoorOpen = true;
 			grantTraversalRequest(requestId);
@@ -5192,10 +5504,10 @@ namespace core
 		shared_ptr<Shuttle> shuttle, SectorId shuttleSector, vector<LiftStop> stops,
 		uint32_t capacity, float minimumDwellSeconds, float maximumBoardingSeconds)
 	{
-		if (!shuttle || shuttle->getNumCars() != 1 || !shuttleSector
+		if (!shuttle || shuttle->getNumCars() == 0 || !shuttleSector
 			|| shuttleSector.value > mSectors.size() || stops.size() < 2 || capacity == 0
 			|| minimumDwellSeconds < 0.0f || maximumBoardingSeconds < minimumDwellSeconds)
-			throw invalid_argument("A single-carriage shuttle requires valid stops, positive capacity, and dwell timing");
+			throw invalid_argument("A coupled shuttle requires valid stops, carriages, positive per-carriage capacity, and dwell timing");
 		for (uint32_t i = 0; i < stops.size(); ++i)
 		{
 			auto landing = mTraversalResources.find(stops[i].landingResource);
@@ -5209,16 +5521,26 @@ namespace core
 		auto usableWidth = (float)shuttle->getCarWidth();
 		if (capacity > (uint32_t)floor(usableWidth / CORE_AGENT_MAX_WIDTH))
 			throw invalid_argument("Declared shuttle capacity cannot be represented by separated carriage positions");
-		vector<Vector2> positions(capacity);
+		vector<Vector2> positions;
+		positions.reserve(capacity * shuttle->getNumCars());
 		auto start = (usableWidth - capacity * CORE_AGENT_MAX_WIDTH) * 0.5f
 			+ CORE_AGENT_MAX_WIDTH * 0.5f;
-		for (uint32_t i = 0; i < capacity; ++i)
-			positions[i] = { start + i * CORE_AGENT_MAX_WIDTH, 0.0f };
+		for (uint32_t carriage = 0; carriage < shuttle->getNumCars(); ++carriage)
+			for (uint32_t i = 0; i < capacity; ++i)
+				positions.push_back({ carriage * (shuttle->getCarWidth() + 1.0f)
+					+ start + i * CORE_AGENT_MAX_WIDTH, 0.0f });
 		auto minimumDwellTicks = (uint64_t)ceil(minimumDwellSeconds / getFixedTimestep());
 		auto maximumBoardingTicks = (uint64_t)ceil(maximumBoardingSeconds / getFixedTimestep());
+		auto shuttlePtr = shuttle;
+		auto stopCount = (uint32_t)stops.size();
 		auto id = mTraversalResources.add(unique_ptr<TraversalResource>(new TraversalResource(
 			name, std::move(shuttle), shuttleSector, std::move(stops), capacity,
 			minimumDwellTicks, maximumBoardingTicks, std::move(positions))));
+		auto resource = mTraversalResources.find(id);
+		resource->mShuttleCarriages.reserve(shuttlePtr->getNumCars());
+		for (uint32_t carriage = 0; carriage < shuttlePtr->getNumCars(); ++carriage)
+			resource->mShuttleCarriages.push_back({ carriage, carriage * capacity, capacity,
+				std::vector<std::vector<TraversalResourceId>>(stopCount) });
 		SimulationEvent event;
 		event.sequence = mNextEventSequence++;
 		event.tick = mSimulationTick;
@@ -5623,18 +5945,32 @@ namespace core
 			(void)resourceId;
 			auto& resource = *resourcePtr;
 			if ((!resource.mLift && !resource.mShuttle) || resource.mLiftStops.empty()) continue;
+			auto forEachLanding = [&](auto&& callback)
+			{
+				if (resource.mShuttle)
+				{
+					for (auto const& door : resource.mShuttleDoors)
+						callback(door.stopIndex, mTraversalResources.find(door.landingResource));
+				}
+				else for (uint32_t stop = 0; stop < resource.mLiftStops.size(); ++stop)
+					callback(stop, mTraversalResources.find(resource.mLiftStops[stop].landingResource));
+			};
 
 			// A safety hold or obstruction at the aligned landing overrides closure.
 			// The original cutoff is retained, so this cannot admit a late caller.
 			if (!resource.mLiftMoving && resource.mLiftCurrentStop < resource.mLiftStops.size()
 				&& resource.mLiftStopPhase == LiftStopPhase::Closing)
 			{
-				auto landing = mTraversalResources.find(resource.mLiftStops[resource.mLiftCurrentStop].landingResource);
-				bool obstruction = landing && any_of(landing->mSensorObservations.begin(),
-					landing->mSensorObservations.end(), [](auto const& value)
-					{ return value.second == DoorSensorObservation::Obstruction; });
-				if (landing && (!landing->mOpenLeases.empty() || obstruction))
-					resource.mLiftStopPhase = LiftStopPhase::Opening;
+				bool heldOrObstructed = false;
+				forEachLanding([&](uint32_t stop, TraversalResource* landing)
+				{
+					if (stop != resource.mLiftCurrentStop || !landing) return;
+					auto obstruction = any_of(landing->mSensorObservations.begin(),
+						landing->mSensorObservations.end(), [](auto const& value)
+						{ return value.second == DoorSensorObservation::Obstruction; });
+					heldOrObstructed = heldOrObstructed || !landing->mOpenLeases.empty() || obstruction;
+				});
+				if (heldOrObstructed) resource.mLiftStopPhase = LiftStopPhase::Opening;
 			}
 
 			if ((resource.mLiftStopPhase == LiftStopPhase::Idle
@@ -5648,10 +5984,9 @@ namespace core
 			{
 				auto target = resource.mLiftStops[resource.mLiftTargetStop].globalPosition;
 				bool interlocked = false;
-				for (auto const& stop : resource.mLiftStops)
+				forEachLanding([&](uint32_t, TraversalResource* landing)
 				{
-					auto landing = mTraversalResources.find(stop.landingResource);
-					if (!landing || !landing->mDoor) continue;
+					if (!landing || !landing->mDoor) return;
 					if (!landing->mOpenLeases.empty()) interlocked = true;
 					if (!landing->mDoor->isClosed())
 					{
@@ -5659,7 +5994,7 @@ namespace core
 						if (landing->mOpenLeases.empty() && !landing->mDoor->isClosing())
 							landing->mDoor->handleAction(ControllableActionType::Close);
 					}
-				}
+				});
 				if (!interlocked && resource.mLiftStopPhase == LiftStopPhase::Closing)
 				{
 					resource.mLiftStopPhase = LiftStopPhase::Moving;
@@ -5698,11 +6033,10 @@ namespace core
 				// Calls accepted after cutoff cannot reverse a close already in progress.
 				// Once fully closed they may begin a distinct service visit.
 				bool allClosed = true;
-				for (auto const& liftStop : resource.mLiftStops)
+				forEachLanding([&](uint32_t, TraversalResource* landing)
 				{
-					auto landing = mTraversalResources.find(liftStop.landingResource);
 					allClosed = allClosed && (!landing || !landing->mDoor || landing->mDoor->isClosed());
-				}
+				});
 				if (allClosed) resource.mLiftStopPhase = LiftStopPhase::Idle;
 			}
 
@@ -5718,10 +6052,11 @@ namespace core
 			assignLiftSafeExitPaths(resource);
 
 			bool crossing = false;
-			for (auto const& stop : resource.mLiftStops)
-				if (auto landing = mTraversalResources.find(stop.landingResource))
-					crossing = crossing || any_of(landing->mCrossingOwners.begin(),
-						landing->mCrossingOwners.end(), [](auto owner) { return (bool)owner; });
+			forEachLanding([&](uint32_t, TraversalResource* landing)
+			{
+				if (landing) crossing = crossing || any_of(landing->mCrossingOwners.begin(),
+					landing->mCrossingOwners.end(), [](auto owner) { return (bool)owner; });
+			});
 			auto reserved = any_of(resource.mAdmissionReservations.begin(), resource.mAdmissionReservations.end(),
 				[](auto id) { return (bool)id; });
 			auto occupied = (uint32_t)count_if(resource.mOccupants.begin(), resource.mOccupants.end(),

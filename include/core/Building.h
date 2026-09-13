@@ -142,6 +142,7 @@ namespace core
 			uint32_t carWidth;
 			std::vector<uint32_t> stopOffsets;
 			uint32_t initialStop;
+			// Passenger capacity of each carriage, not the coupled vehicle total.
 			uint32_t capacity{ 1 };
 			float minimumDwellSeconds{ CORE_LIFT_DOOR_PAUSE_TIME };
 			float maximumBoardingSeconds{ CORE_DOOR_STAY_OPEN_TIME };
@@ -387,6 +388,18 @@ namespace core
 			uint32_t originStop, uint32_t destinationStop);
 
 		void releaseLiftAdmission(TraversalRequestId requestId, TraversalResource& resource);
+
+		bool retargetShuttleDoorTraversal(TraversalRequestId requestId,
+			TraversalResource& coordinator, ShuttleDoor const& door);
+
+		bool assignShuttleBoardingDoor(TraversalRequestId requestId,
+			TraversalResource& coordinator, uint32_t stop);
+
+		bool assignShuttleDisembarkDoor(TraversalRequestId requestId,
+			TraversalResource& coordinator, uint32_t stop);
+
+		uint32_t findShuttlePassengerCarriage(TraversalResource const& resource,
+			AgentId passenger) const;
 
 		void requestLiftPassengerSafeExit(AgentId passenger, TraversalFailureReason reason);
 
