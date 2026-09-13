@@ -1974,6 +1974,52 @@ void renderMenu(shared_ptr<core::Building>& building)
 }
 
 
+void renderDocumentToolbar(shared_ptr<core::Building>& building)
+{
+	ImGuiViewportP* viewport = (ImGuiViewportP*)(void*)ImGui::GetMainViewport();
+	auto const& style = ImGui::GetStyle();
+	float const height = ImGui::GetFrameHeight() + style.WindowPadding.y * 2.0f;
+	ImGuiWindowFlags const windowFlags = ImGuiWindowFlags_NoScrollbar
+		| ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNavFocus;
+
+	if (!ImGui::BeginViewportSideBar("##MainToolbar", viewport, ImGuiDir_Up,
+		height, windowFlags))
+	{
+		ImGui::End();
+		return;
+	}
+
+	if (ImGui::Button(ICON_FA_FILE "##NewDocument"))
+		requestFileAction(PendingFileAction::New, building);
+	if (ImGui::IsItemHovered()) ImGui::SetTooltip("New (Ctrl+N)");
+
+	ImGui::SameLine();
+	if (ImGui::Button(ICON_FA_FOLDER_OPEN "##OpenDocument"))
+		requestFileAction(PendingFileAction::Open, building);
+	if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open... (Ctrl+O)");
+
+	ImGui::SameLine();
+	ImGui::BeginDisabled(building == nullptr);
+	if (ImGui::Button(ICON_FA_SAVE "##SaveDocument")) saveBuilding(building, false);
+	if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save (Ctrl+S)");
+	ImGui::EndDisabled();
+
+	ImGui::SameLine(0.0f, style.ItemSpacing.x * 2.0f);
+	ImGui::BeginDisabled(building == nullptr || gUndoHistory.empty());
+	if (ImGui::Button(ICON_FA_UNDO "##Undo")) restoreDocumentSnapshot(building, false);
+	if (ImGui::IsItemHovered()) ImGui::SetTooltip("Undo (Ctrl+Z)");
+	ImGui::EndDisabled();
+
+	ImGui::SameLine();
+	ImGui::BeginDisabled(building == nullptr || gRedoHistory.empty());
+	if (ImGui::Button(ICON_FA_REDO "##Redo")) restoreDocumentSnapshot(building, true);
+	if (ImGui::IsItemHovered()) ImGui::SetTooltip("Redo (Ctrl+Y)");
+	ImGui::EndDisabled();
+
+	ImGui::End();
+}
+
+
 void renderToolbar(shared_ptr<core::Building> building)
 {
 	if (ImGui::Button(gUISettings.worldPaused ? "Resume" : "Pause"))
@@ -3456,6 +3502,7 @@ void renderUI(shared_ptr<core::Building>& building, shared_ptr<core::Agent> path
 	ImGui::SetMouseCursor(ImGuiMouseCursor_Arrow);
 
 	renderMenu(building);
+	renderDocumentToolbar(building);
 	renderFilePopups(building);
 	renderDockSpace();
 
