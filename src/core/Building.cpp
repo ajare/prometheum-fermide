@@ -3256,6 +3256,65 @@ namespace core
 		result.lastPositionProgressTick = request.mLastPositionProgressTick;
 		result.positionRetryAtTick = request.mPositionRetryAtTick;
 		result.positionRetryCount = request.mPositionRetryCount;
+
+		auto failureDiagnostic = [](TraversalFailureReason reason)
+		{
+			switch (reason)
+			{
+			case TraversalFailureReason::NoReachableControl: return "no reachable interaction point can prepare the resource";
+			case TraversalFailureReason::ControlRejected: return "the resource control rejected the request";
+			case TraversalFailureReason::PreparationFailed: return "resource preparation failed";
+			case TraversalFailureReason::ResourceDisabled: return "the traversal resource is disabled";
+			case TraversalFailureReason::LocalGoalUnreachable: return "the assigned local waiting position is unreachable";
+			case TraversalFailureReason::PermitExpired: return "the traversal permit expired before progress was made";
+			case TraversalFailureReason::None: return "no failure was reported";
+			}
+			return "unknown traversal failure";
+		};
+		switch (request.mState)
+		{
+		case TraversalRequestState::Denied:
+			result.diagnostic = string("Denied: ") + failureDiagnostic(request.mFailureReason);
+			break;
+		case TraversalRequestState::Cancelled:
+			result.diagnostic = "Cancelled: all traversal ownership is being released";
+			break;
+		case TraversalRequestState::Committed:
+			result.diagnostic = "Committed: the authorized sector transition completed";
+			break;
+		case TraversalRequestState::Granted:
+			result.diagnostic = request.mPermit
+				? format("Active: permit {} authorizes this transition", request.mPermit.value)
+				: "Active: admission was granted and a permit is pending publication";
+			break;
+		case TraversalRequestState::Pending:
+		{
+			auto resource = mTraversalResources.find(request.mResource);
+			if (!request.mResource)
+				result.diagnostic = "Waiting: immediate traversal allocation is pending";
+			else if (!resource)
+				result.diagnostic = "Waiting: the referenced traversal resource is unavailable";
+			else if (!resource->mEnabled)
+				result.diagnostic = "Waiting: the traversal resource is draining or disabled";
+			else if (request.mPreparationOperation)
+				result.diagnostic = format("Waiting: device operation {} is preparing the resource",
+					request.mPreparationOperation.value);
+			else if (request.mQueuePosition != ~0u)
+				result.diagnostic = format("Waiting: moving to reserved queue position {}",
+					request.mQueuePosition);
+			else if (request.mQueueTicket)
+				result.diagnostic = format("Waiting: queue ticket {} is awaiting a position or admission",
+					request.mQueueTicket.value);
+			else if (request.mCapacityPosition != ~0u)
+				result.diagnostic = format("Waiting: capacity position {} is reserved for boarding",
+					request.mCapacityPosition);
+			else if ((resource->mLift || resource->mShuttle) && resource->mLiftMoving)
+				result.diagnostic = format("Waiting: transport is moving toward stop {}", resource->mLiftTargetStop);
+			else
+				result.diagnostic = "Waiting: resource admission conditions are not yet satisfied";
+			break;
+		}
+		}
 		if (result.hasQueuePosition)
 		{
 			if (auto resource = mTraversalResources.find(request.mResource);
@@ -7194,18 +7253,23 @@ namespace core
 		}
 
 		auto after = getSimulationSnapshot();
+		// Registry snapshots are in stable ID order. Merge them linearly rather than
+		// searching the entire previous snapshot for every active agent.
+		size_t previousAgentIndex = 0;
 		for (auto const& current : after.agents)
 		{
-			auto previousIt = find_if(before.agents.begin(), before.agents.end(), [&](AgentSnapshot const& candidate)
+			while (previousAgentIndex < before.agents.size()
+				&& before.agents[previousAgentIndex].id < current.id)
 			{
-				return candidate.id == current.id;
-			});
-			if (previousIt == before.agents.end())
+				++previousAgentIndex;
+			}
+			if (previousAgentIndex == before.agents.size()
+				|| before.agents[previousAgentIndex].id != current.id)
 			{
 				continue;
 			}
 
-			auto const& previous = *previousIt;
+			auto const& previous = before.agents[previousAgentIndex];
 			auto changed = current.sectorId != previous.sectorId
 				|| current.localPosition != previous.localPosition
 				|| current.globalPosition != previous.globalPosition
@@ -7232,13 +7296,17 @@ namespace core
 			}
 		}
 
+		size_t previousOperationIndex = 0;
 		for (auto const& current : after.deviceOperations)
 		{
-			auto previousIt = find_if(before.deviceOperations.begin(), before.deviceOperations.end(), [&](DeviceOperationSnapshot const& candidate)
+			while (previousOperationIndex < before.deviceOperations.size()
+				&& before.deviceOperations[previousOperationIndex].id < current.id)
 			{
-				return candidate.id == current.id;
-			});
-			if (previousIt != before.deviceOperations.end() && previousIt->state != current.state)
+				++previousOperationIndex;
+			}
+			if (previousOperationIndex < before.deviceOperations.size()
+				&& before.deviceOperations[previousOperationIndex].id == current.id
+				&& before.deviceOperations[previousOperationIndex].state != current.state)
 			{
 				SimulationEvent event;
 				event.sequence = mNextEventSequence++;

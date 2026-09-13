@@ -1,5 +1,10 @@
+#define NOMINMAX
+#include <Windows.h>
+#include <Psapi.h>
+
 #include <algorithm>
 #include <bit>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <exception>
@@ -18,6 +23,8 @@
 #include "core/SectorEdge.h"
 #include "core/Simulation.h"
 #include "core/Vector2.h"
+
+#pragma comment(lib, "Psapi.lib")
 
 static_assert(!std::is_convertible_v<core::AgentId, core::InteractionPointId>);
 static_assert(!std::is_convertible_v<core::DeviceOperationId, core::TraversalResourceId>);
@@ -52,7 +59,7 @@ namespace
 			<< std::bit_cast<uint32_t>(request.sourceEndpoint.y) << ':'
 			<< std::bit_cast<uint32_t>(request.destinationEndpoint.x) << ':'
 			<< std::bit_cast<uint32_t>(request.destinationEndpoint.y) << ':'
-			<< (int)request.state << ':' << request.permit.value;
+			<< (int)request.state << ':' << request.permit.value << ':' << request.diagnostic;
 	}
 
 	std::string canonicalResult(ScenarioResult const& result)
@@ -218,6 +225,7 @@ namespace
 			{
 				observedPermit = snapshot.traversalPermits.size() == 1
 					&& snapshot.traversalRequests.size() == 1
+					&& snapshot.traversalRequests.front().diagnostic.starts_with("Active:")
 					&& snapshot.agents.front().hasLocomotionTask;
 			}
 
@@ -260,6 +268,7 @@ namespace
 			|| agent->getState() != core::Agent::State::WaitingForTraversal
 			|| snapshot.traversalRequests.size() != 1
 			|| snapshot.traversalRequests.front().state != core::TraversalRequestState::Denied
+			|| !snapshot.traversalRequests.front().diagnostic.starts_with("Denied:")
 			|| !snapshot.traversalPermits.empty())
 		{
 			return false;
@@ -1103,6 +1112,58 @@ namespace
 			&& resource->admissionQueue.empty();
 	}
 
+	bool extensibleForceBridgeCompletesThroughPhysicalControl()
+	{
+		core::Building building("Extensible force bridge", 6, 4);
+		auto room = building.addRoom("Bridge room", CORE_LAYER_BACK, 0, 0, 4, 3);
+		building.addSectorWalkway(room, 1, 0);
+		building.addSectorWalkway(room, 1, 2);
+		building.addSectorWalkway(room, 1, 3);
+		core::Building::CreateForceBridgeOptions options;
+		options.fromSide = CORE_SIDE_LEFT;
+		options.extensible = true;
+		options.startExtended = false;
+		options.controlCount = 1;
+		auto bridge = building.addSectorForceBridge(room, 1, 1, options);
+		building.finishBuild();
+
+		auto edgeIt = std::find_if(building.getGraph()->getEdges().begin(), building.getGraph()->getEdges().end(),
+			[](auto const& candidate) { return candidate->getType() == core::EdgeType::ForceBridge; });
+		if (edgeIt == building.getGraph()->getEdges().end()) return false;
+		auto edge = *edgeIt;
+		auto source = edge->getVertex(0)->getPosition().x < edge->getVertex(1)->getPosition().x
+			? edge->getVertex(0) : edge->getVertex(1);
+		auto destination = edge->getOtherVertex(source);
+		auto agentId = building.createAgent("Bridge traveller", room, 1, 0.5f);
+		auto agent = building.lookupAgent(agentId).entity;
+		agent->setPath(twoNodePath(source, destination, edge), true);
+
+		bool sawPreparation = false;
+		bool sawExtensionLease = false;
+		while (agent->getState() != core::Agent::State::Idle
+			&& building.getSimulationTick() < MaximumSimulationTicks)
+		{
+			building.advanceTick();
+			auto snapshot = building.getSimulationSnapshot();
+			auto resource = std::find_if(snapshot.traversalResources.begin(), snapshot.traversalResources.end(),
+				[&](auto const& value) { return value.id == bridge.traversalResource; });
+			if (resource == snapshot.traversalResources.end() || !resource->isForceBridge
+				|| !resource->isExtensible) return false;
+			sawPreparation = sawPreparation || !snapshot.deviceOperations.empty();
+			sawExtensionLease = sawExtensionLease || resource->extensionRequestLeaseCount > 0;
+		}
+		auto final = building.getSimulationSnapshot();
+		auto resource = std::find_if(final.traversalResources.begin(), final.traversalResources.end(),
+			[&](auto const& value) { return value.id == bridge.traversalResource; });
+		return sawPreparation && sawExtensionLease
+			&& agent->getState() == core::Agent::State::Idle
+			&& agent->getGlobalPosition().distanceTo(destination->getPosition()) < 0.001f
+			&& resource != final.traversalResources.end() && resource->extended
+			&& resource->extensionRequestLeaseCount == 0
+			&& resource->extensionOccupantLeaseCount == 0
+			&& final.traversalRequests.empty() && final.traversalPermits.empty();
+	}
+
 	bool extensibleLadderUsesDesiredStateAndLeases()
 	{
 		core::Building building("Extensible ladder", 4, 4);
@@ -1778,7 +1839,13 @@ namespace
 		auto destination = edge->getOtherVertex(source);
 		auto agentId = building.createAgent("Rejected traveller", fore, 0, 0.5f);
 		auto agent = building.lookupAgent(agentId).entity;
-		agent->setPath(twoNodePath(source, destination, edge), true);
+		// This is the same two-step path assignment used by the UI for a
+		// player-directed agent: preview the route, then explicitly start it.
+		agent->setPath(twoNodePath(source, destination, edge), false);
+		building.advanceTick();
+		if (agent->getState() != core::Agent::State::Idle
+			|| !building.getSimulationSnapshot().traversalRequests.empty()) return false;
+		agent->startPathing();
 		for (uint32_t i = 0; i < MaximumSimulationTicks
 			&& building.getSimulationSnapshot().traversalRequests.empty(); ++i)
 		{
@@ -1835,6 +1902,113 @@ namespace
 			core::DeviceOperationState::Failed);
 		building.advanceTick();
 		return building.lookupInteractionRequest(failedRequestId).entity->getResult() == core::InteractionResult::Failed;
+	}
+
+	struct ScaleObservation
+	{
+		bool valid{ false };
+		uint64_t deterministicDigest{ 1469598103934665603ull };
+		double elapsedMilliseconds{ 0.0 };
+		size_t workingSetBytes{ 0 };
+	};
+
+	void digestValue(uint64_t& digest, uint64_t value)
+	{
+		for (uint32_t byte = 0; byte < 8; ++byte)
+		{
+			digest ^= (value >> (byte * 8)) & 0xffu;
+			digest *= 1099511628211ull;
+		}
+	}
+
+	size_t currentWorkingSetBytes()
+	{
+		PROCESS_MEMORY_COUNTERS_EX counters{};
+		counters.cb = sizeof(counters);
+		return GetProcessMemoryInfo(GetCurrentProcess(),
+			reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&counters), sizeof(counters))
+			? counters.WorkingSetSize : 0;
+	}
+
+	ScaleObservation runScaledWorld(uint32_t agentCount, uint64_t ticks)
+	{
+		constexpr uint32_t ResourceCount = 32;
+		core::Building building("Scale world", 80, 2);
+		auto corridor = building.addCorridor(0, 0, 79);
+		uint32_t sourceVertexId;
+		uint32_t destinationVertexId;
+		building.addSectorMarker(corridor, 0, 0.5f, &sourceVertexId);
+		building.addSectorMarker(corridor, 0, 70.5f, &destinationVertexId);
+		building.finishBuild();
+		for (uint32_t i = 0; i < ResourceCount; ++i)
+		{
+			building.createTraversalResource("Scale resource " + std::to_string(i));
+		}
+
+		auto source = building.getGraph()->getVertexByIdentifier(sourceVertexId);
+		auto destination = building.getGraph()->getVertexByIdentifier(destinationVertexId);
+		auto edge = std::make_shared<core::SectorEdge>();
+		for (uint32_t i = 0; i < agentCount; ++i)
+		{
+			auto id = building.createAgent("Scale agent " + std::to_string(i), corridor, 0, 0.5f);
+			building.lookupAgent(id).entity->setPath(twoNodePath(source, destination, edge), true);
+		}
+
+		ScaleObservation result;
+		auto digestEvents = [&](std::vector<core::SimulationEvent> const& events)
+		{
+			for (auto const& event : events)
+			{
+				digestValue(result.deterministicDigest, event.sequence);
+				digestValue(result.deterministicDigest, event.tick);
+				digestValue(result.deterministicDigest, (uint64_t)event.type);
+				digestValue(result.deterministicDigest, (uint64_t)event.phase);
+				digestValue(result.deterministicDigest, event.agent.id.value);
+				digestValue(result.deterministicDigest, event.traversalRequest.id.value);
+				digestValue(result.deterministicDigest, event.traversalPermit.id.value);
+			}
+		};
+		digestEvents(building.consumeSimulationEvents());
+		auto started = std::chrono::steady_clock::now();
+		for (uint64_t tick = 0; tick < ticks; ++tick)
+		{
+			building.advanceTick();
+			// Event delivery is intentionally incremental in a long-running host.
+			if ((tick + 1) % 10 == 0) digestEvents(building.consumeSimulationEvents());
+		}
+		digestEvents(building.consumeSimulationEvents());
+		result.elapsedMilliseconds = std::chrono::duration<double, std::milli>(
+			std::chrono::steady_clock::now() - started).count();
+		result.workingSetBytes = currentWorkingSetBytes();
+
+		auto snapshot = building.getSimulationSnapshot();
+		std::set<uint64_t> requestOwners;
+		result.valid = snapshot.tick == ticks && snapshot.agents.size() == agentCount
+			&& snapshot.traversalResources.size() == ResourceCount;
+		for (auto const& agent : snapshot.agents)
+		{
+			result.valid = result.valid && agent.hasPath && agent.globalPosition.x > 0.5f;
+			digestValue(result.deterministicDigest, agent.id.value);
+			digestValue(result.deterministicDigest, std::bit_cast<uint32_t>(agent.globalPosition.x));
+			digestValue(result.deterministicDigest, std::bit_cast<uint32_t>(agent.globalPosition.y));
+			digestValue(result.deterministicDigest, (uint64_t)agent.state);
+		}
+		for (auto const& request : snapshot.traversalRequests)
+		{
+			result.valid = result.valid && request.state != core::TraversalRequestState::Cancelled
+				&& request.state != core::TraversalRequestState::Denied
+				&& !request.diagnostic.empty() && requestOwners.insert(request.owner.value).second;
+		}
+		for (auto const& resource : snapshot.traversalResources)
+		{
+			result.valid = result.valid
+				&& resource.occupantCount + resource.admissionReservationCount <= resource.capacity
+				&& resource.virtualBoundaryCrossingCount <= resource.capacity;
+			for (auto const& carriage : resource.shuttleCarriages)
+				result.valid = result.valid && carriage.occupantCount
+					+ carriage.admissionReservationCount <= carriage.capacity;
+		}
+		return result;
 	}
 
 	ScenarioResult runOrdinaryPathScenario()
@@ -2033,6 +2207,11 @@ int main()
 			std::cerr << "FAIL: extensible ladder preparation or leases failed\n";
 			return 1;
 		}
+		if (!extensibleForceBridgeCompletesThroughPhysicalControl())
+		{
+			std::cerr << "FAIL: extensible force bridge preparation or lease cleanup failed\n";
+			return 1;
+		}
 		if (!staircaseCoordinationIsExplicitlyOptIn())
 		{
 			std::cerr << "FAIL: ordinary/narrow staircase coordination policy was incorrect\n";
@@ -2052,7 +2231,28 @@ int main()
 			return 1;
 		}
 
+		auto representative = runScaledWorld(500, 60);
+		auto repeatedRepresentative = runScaledWorld(500, 60);
+		if (!representative.valid || !repeatedRepresentative.valid
+			|| representative.deterministicDigest != repeatedRepresentative.deterministicDigest)
+		{
+			std::cerr << "FAIL: representative scale run violated ownership, capacity, or determinism\n";
+			return 1;
+		}
+		auto stretch = runScaledWorld(1000, 60);
+		if (!stretch.valid)
+		{
+			std::cerr << "FAIL: 1,000-agent stretch run violated ownership or capacity\n";
+			return 1;
+		}
+
 		auto const& agent = first.snapshot.agents.front();
+		std::cout << "SCALE: 500 agents, 32 resources, 60 ticks in "
+			<< representative.elapsedMilliseconds << " ms; working set "
+			<< representative.workingSetBytes / (1024.0 * 1024.0) << " MiB\n";
+		std::cout << "STRETCH: 1000 agents, 32 resources, 60 ticks in "
+			<< stretch.elapsedMilliseconds << " ms; working set "
+			<< stretch.workingSetBytes / (1024.0 * 1024.0) << " MiB\n";
 		std::cout << "PASS: deterministic snapshot and events matched after "
 			<< first.snapshot.tick << " fixed ticks; final position=("
 			<< agent.globalPosition.x << ", " << agent.globalPosition.y << ")\n";

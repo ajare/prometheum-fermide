@@ -210,6 +210,9 @@ namespace core
 		DeviceOperationId preparationOperation;
 		TraversalPermitId permit;
 		TraversalFailureReason failureReason{ TraversalFailureReason::None };
+		// Stable, read-only explanation of the request's current outcome or wait.
+		// Consumers need not reconstruct protocol state from resource internals.
+		std::string diagnostic;
 		QueueTicketId queueTicket;
 		uint64_t queuedAtTick{ 0 };
 		uint32_t queueApproach{ ~0u };

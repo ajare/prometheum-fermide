@@ -279,10 +279,8 @@ namespace core
 				}
 				else if (vertexSubType0 == VertexSubType::ForceBridge && vertexSubType1 == VertexSubType::ForceBridge)
 				{
-					auto sectorVertex = dynamic_pointer_cast<SectorObjectVertex>(vertices[i]);
-					auto forceBridge = dynamic_pointer_cast<ForceBridgeSectorObject>(sectorVertex->getObject());
-
-					addEdge(make_shared<ForceBridgeEdge>(forceBridge->getForceBridge()), vertices[i], vertices[j], connectZ);
+					// processForceBridge connects the two sides explicitly because
+					// interaction-point vertices can appear between them in this row.
 				}
 				else if (vertexSubType0 == VertexSubType::Gap && vertexSubType1 == VertexSubType::Gap)
 				{
@@ -502,18 +500,22 @@ namespace core
 	{
 		ASSERT_INDEX_OK(obj.index);
 
-		auto forceBridge = obj.sectors[obj.layerIndex]->_getObject(obj.index);
+		auto forceBridgeObject = obj.sectors[obj.layerIndex]->_getObject(obj.index);
 
-		// Place a Vertex on either side.
+		// Place and connect both bridge vertices here. A physical control may sort
+		// between them, so adjacency-based row connection cannot own this edge.
 		int side = CORE_SIDE_LEFT;
-		workVertices.push_back(forceBridge->createVertex(forceBridge, obj.sectors[side], &side));
-
-		addSectorObjectVertexLookup(forceBridge, workVertices.back());
+		auto left = forceBridgeObject->createVertex(forceBridgeObject, obj.sectors[side], &side);
+		workVertices.push_back(left);
+		addSectorObjectVertexLookup(forceBridgeObject, left);
 
 		side = CORE_SIDE_RIGHT;
-		workVertices.push_back(forceBridge->createVertex(forceBridge, obj.sectors[side], &side));
+		auto right = forceBridgeObject->createVertex(forceBridgeObject, obj.sectors[side], &side);
+		workVertices.push_back(right);
+		addSectorObjectVertexLookup(forceBridgeObject, right);
 
-		addSectorObjectVertexLookup(forceBridge, workVertices.back());
+		auto sectorObject = dynamic_pointer_cast<ForceBridgeSectorObject>(forceBridgeObject);
+		addEdge(make_shared<ForceBridgeEdge>(sectorObject->getForceBridge()), left, right, false);
 	}
 
 	void Graph::processLadderObject(ObjectData const& obj, PositionVertexMap& interLayerVertexLookup, VertexList& workVertices, map<shared_ptr<VerticalEdgeCreator>, VertexList>& crossDeckVertices, int level)

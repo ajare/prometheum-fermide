@@ -48,7 +48,7 @@ Elapsed render time is accumulated into whole fixed ticks. Simulation decisions 
 
 A path is route intent, not movement authority. Before crossing an edge, an agent submits a traversal request to the edge's traversal resource. Edges that need no shared coordination use the explicit immediate-permit policy; all other edges identify one resource.
 
-A granted permit is short-lived and belongs to one request and one agent. Crossing occurs only in the commit phase while that permit is live. Cancellation, timeout, disablement, replanning, and entity removal release associated queue positions, reservations, leases, and permits.
+A granted permit is short-lived and belongs to one request and one agent. Crossing occurs only in the commit phase while that permit is live. Cancellation, timeout, disablement, replanning, and entity removal release associated queue positions, reservations, leases, and permits. Each read-only traversal-request snapshot includes a stable diagnostic that explains its current wait, active permit, denial, cancellation, or completed commit without requiring a UI to infer protocol internals.
 
 ## Controlled thresholds
 
@@ -97,7 +97,9 @@ Structural graph edits are allowed while paused. Rebuild validates that each edg
 
 The headless suite verifies, among other cases:
 
-- ordered phases and deterministic snapshots/events;
+- ordered phases and deterministic snapshots/events, including repeated 500-agent runs;
+- player-directed paths entering the same request/permit protocol as autonomous paths;
+- a measured 1,000-agent stretch run that reports elapsed time and working-set memory;
 - ordinary, denied, cancelled, and expired traversal;
 - typed interaction aggregation and requester-local cancellation;
 - automatic, manual, remote-controlled, and unavailable doors;
