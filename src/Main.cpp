@@ -563,7 +563,7 @@ void run()
 		throw ExitApplicationException(1, "Could not load image for cells.");
 	}
 
-	shared_ptr<core::Building> building = createTestBuilding();
+	shared_ptr<core::Building> building;// createTestBuilding();
 	std::shared_ptr<core::Agent> pathingAgent = make_shared<core::Agent>("Pather");
 
 	// Render settings
@@ -598,10 +598,13 @@ void run()
 		// Logic
 		float updateTimeSecs = updateTimeMicros / 1'000'000.0f;
 
-		building->update(gUISettings.worldPaused ? 0.0f : updateTimeSecs);
-		// The current UI observes entity state directly. Drain value events until
-		// an event-driven UI consumer is introduced so the queue remains bounded.
-		(void)building->consumeSimulationEvents();
+		if (building)
+		{
+			building->update(gUISettings.worldPaused ? 0.0f : updateTimeSecs);
+			// The current UI observes entity state directly. Drain value events until
+			// an event-driven UI consumer is introduced so the queue remains bounded.
+			(void)building->consumeSimulationEvents();
+		}
 
 		// Set up rendering
 		int drawableWidth, drawableHeight;
@@ -618,7 +621,7 @@ void run()
 		ImGui::NewFrame();
 
 		handleShortcuts(building);
-		handleContinuousKeyboardInput(building, updateTimeMicros);
+		if (building) handleContinuousKeyboardInput(building, updateTimeMicros);
 
 		if (ImGui::IsKeyPressed(ImGui::GetKeyIndex(ImGuiKey_F11)))
 		{
@@ -631,10 +634,13 @@ void run()
 			ImGui::ShowDemoWindow();
 		}
 
-		renderUI(building, building->getGraph(), pathingAgent);
+		renderUI(building, pathingAgent);
 
-		auto mouseButtonStatus = getMouseButtonStatus();
-		handleWorldInteraction(building, building->getGraph(), mouseButtonStatus);
+		if (building)
+		{
+			auto mouseButtonStatus = getMouseButtonStatus();
+			handleWorldInteraction(building, building->getGraph(), mouseButtonStatus);
+		}
 
 		// Rendering
 		ImGui::Render();

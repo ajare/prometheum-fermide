@@ -2,6 +2,7 @@
 #include <cfloat>
 #include <cmath>
 #include <deque>
+#include <filesystem>
 #include <set>
 
 #pragma warning(push)
@@ -17,6 +18,8 @@
 #include "imgui/imgui_internal.h"
 #include "imgui/IconsFontAwesome5.h"
 
+#include <nfd/nfd.h>
+
 #include "core/Vector2.h"
 #include "core/Button.h"
 #include "core/Door.h"
@@ -30,6 +33,8 @@
 #include "core/Marker.h"
 #include "core/Log.h"
 #include "core/Exceptions.h"
+#include "core/SerializationWorkData.h"
+#include "core/YamlSerializer.h"
 
 #include "Main.h"
 #include "UI.h"
@@ -551,8 +556,249 @@ void clearSelections()
 	}
 }
 
-void handleShortcuts(shared_ptr<core::Building> building)
+namespace
 {
+	enum class PendingFileAction
+	{
+		None,
+		New,
+		Open,
+		Close
+	};
+
+	string gBuildingFilepath;
+	PendingFileAction gPendingFileAction{ PendingFileAction::None };
+	bool gOpenUnsavedChangesPopup{ false };
+	bool gOpenNewBuildingPopup{ false };
+	bool gOpenFileErrorPopup{ false };
+	string gFileError;
+	char gNewBuildingName[128]{ "Untitled" };
+	int gNewBuildingWidth{ 48 };
+	int gNewBuildingDecks{ 6 };
+
+	void clearDocumentState()
+	{
+		gHoveredInteractionPoint = {};
+		gHoveredAgent = nullptr;
+		gSelectedAgent = nullptr;
+		gHoveredVertex.reset();
+		gSelectedVertex.reset();
+		gSelectedSector.reset();
+		gHoveredSectorObject.reset();
+		gSelectedSectorObject.reset();
+		resetPegman();
+		gUISettings.worldPaused = false;
+	}
+
+	void reportFileError(string message)
+	{
+		gFileError = std::move(message);
+		gOpenFileErrorPopup = true;
+		core::addLogMessage("File", 0, core::LogLevel::Error, gFileError);
+	}
+
+	bool saveBuilding(shared_ptr<core::Building> const& building, bool saveAs)
+	{
+		if (!building) return false;
+
+		string filepath = gBuildingFilepath;
+		if (saveAs || filepath.empty())
+		{
+			nfdu8char_t* selectedPathRaw{ nullptr };
+			nfdu8filteritem_t const filters[] = { { "Building YAML", "yaml,yml" } };
+			filesystem::path const current(filepath);
+			auto const directory = filepath.empty() ? string() : current.parent_path().string();
+			auto defaultName = filepath.empty()
+				? building->getName() + ".yaml"
+				: current.filename().string();
+			auto const result = NFD_SaveDialogU8(&selectedPathRaw, filters, 1,
+				directory.empty() ? nullptr : directory.c_str(), defaultName.c_str());
+			unique_ptr<nfdu8char_t, decltype(&NFD_FreePathU8)> selectedPath(
+				selectedPathRaw, NFD_FreePathU8);
+			if (result == NFD_CANCEL) return false;
+			if (result == NFD_ERROR)
+			{
+				reportFileError(string("Could not choose a save location: ")
+					+ (NFD_GetError() ? NFD_GetError() : "unknown native dialog error"));
+				return false;
+			}
+			filepath = selectedPath.get();
+			filesystem::path selected(filepath);
+			if (!selected.has_extension()) filepath += ".yaml";
+		}
+
+		try
+		{
+			auto serializer = core::YamlSerializer::toFile(filepath);
+			core::SerializationWorkData workData;
+			building->serialize(*serializer, workData);
+			serializer->serialize();
+			gBuildingFilepath = std::move(filepath);
+			core::addLogMessage("File", 0, core::LogLevel::Info,
+				"Saved Building to " + gBuildingFilepath);
+			return true;
+		}
+		catch (std::exception const& error)
+		{
+			reportFileError("Could not save Building: " + string(error.what()));
+			return false;
+		}
+	}
+
+	void openBuilding(shared_ptr<core::Building>& building)
+	{
+		nfdu8char_t* selectedPathRaw{ nullptr };
+		nfdu8filteritem_t const filters[] = { { "Building YAML", "yaml,yml" } };
+		auto const result = NFD_OpenDialogU8(&selectedPathRaw, filters, 1, nullptr);
+		unique_ptr<nfdu8char_t, decltype(&NFD_FreePathU8)> selectedPath(
+			selectedPathRaw, NFD_FreePathU8);
+		if (result == NFD_CANCEL) return;
+		if (result == NFD_ERROR)
+		{
+			reportFileError(string("Could not choose a Building file: ")
+				+ (NFD_GetError() ? NFD_GetError() : "unknown native dialog error"));
+			return;
+		}
+
+		try
+		{
+			auto loaded = make_shared<core::Building>("Loading", 1, 1);
+			auto serializer = core::YamlSerializer::fromFile(selectedPath.get());
+			serializer->deserialize();
+			core::SerializationWorkData workData;
+			loaded->deserialize(*serializer, workData);
+			building = std::move(loaded);
+			gBuildingFilepath = selectedPath.get();
+			clearDocumentState();
+			core::addLogMessage("File", 0, core::LogLevel::Info,
+				"Opened Building from " + gBuildingFilepath);
+		}
+		catch (std::exception const& error)
+		{
+			reportFileError("Could not open Building: " + string(error.what()));
+		}
+	}
+
+	void executeFileAction(PendingFileAction action, shared_ptr<core::Building>& building)
+	{
+		switch (action)
+		{
+		case PendingFileAction::New:
+			gOpenNewBuildingPopup = true;
+			break;
+		case PendingFileAction::Open:
+			openBuilding(building);
+			break;
+		case PendingFileAction::Close:
+			building.reset();
+			gBuildingFilepath.clear();
+			clearDocumentState();
+			break;
+		case PendingFileAction::None:
+			break;
+		}
+	}
+
+	void requestFileAction(PendingFileAction action, shared_ptr<core::Building>& building)
+	{
+		if (building && building->isModified())
+		{
+			gPendingFileAction = action;
+			gOpenUnsavedChangesPopup = true;
+			return;
+		}
+		executeFileAction(action, building);
+	}
+
+	void renderFilePopups(shared_ptr<core::Building>& building)
+	{
+		if (gOpenUnsavedChangesPopup)
+		{
+			ImGui::OpenPopup("Unsaved changes");
+			gOpenUnsavedChangesPopup = false;
+		}
+		if (ImGui::BeginPopupModal("Unsaved changes", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+		{
+			ImGui::TextUnformatted("Save changes to the current Building?");
+			if (ImGui::Button("Save"))
+			{
+				if (saveBuilding(building, false))
+				{
+					auto const action = gPendingFileAction;
+					gPendingFileAction = PendingFileAction::None;
+					ImGui::CloseCurrentPopup();
+					executeFileAction(action, building);
+				}
+			}
+			ImGui::SameLine();
+			if (ImGui::Button("Discard"))
+			{
+				auto const action = gPendingFileAction;
+				gPendingFileAction = PendingFileAction::None;
+				ImGui::CloseCurrentPopup();
+				executeFileAction(action, building);
+			}
+			ImGui::SameLine();
+			if (ImGui::Button("Cancel"))
+			{
+				gPendingFileAction = PendingFileAction::None;
+				ImGui::CloseCurrentPopup();
+			}
+			ImGui::EndPopup();
+		}
+
+		if (gOpenNewBuildingPopup)
+		{
+			ImGui::OpenPopup("New Building");
+			gOpenNewBuildingPopup = false;
+		}
+		if (ImGui::BeginPopupModal("New Building", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+		{
+			ImGui::InputText("Name", gNewBuildingName, sizeof(gNewBuildingName));
+			ImGui::InputInt("Width", &gNewBuildingWidth);
+			ImGui::InputInt("Decks", &gNewBuildingDecks);
+			bool const valid = gNewBuildingName[0] != '\0'
+				&& gNewBuildingWidth > 0 && gNewBuildingDecks > 0;
+			if (ImGui::Button("Create") && valid)
+			{
+				building = make_shared<core::Building>(gNewBuildingName,
+					static_cast<uint32_t>(gNewBuildingWidth),
+					static_cast<uint32_t>(gNewBuildingDecks));
+				gBuildingFilepath.clear();
+				clearDocumentState();
+				ImGui::CloseCurrentPopup();
+			}
+			ImGui::SameLine();
+			if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
+			if (!valid) ImGui::TextDisabled("Name, width, and deck count are required.");
+			ImGui::EndPopup();
+		}
+
+		if (gOpenFileErrorPopup)
+		{
+			ImGui::OpenPopup("File error");
+			gOpenFileErrorPopup = false;
+		}
+		if (ImGui::BeginPopupModal("File error", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+		{
+			ImGui::TextWrapped("%s", gFileError.c_str());
+			if (ImGui::Button("OK")) ImGui::CloseCurrentPopup();
+			ImGui::EndPopup();
+		}
+	}
+}
+
+void handleShortcuts(shared_ptr<core::Building>& building)
+{
+	if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_N, 0, ImGuiInputFlags_RouteGlobalLow))
+		requestFileAction(PendingFileAction::New, building);
+	if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_O, 0, ImGuiInputFlags_RouteGlobalLow))
+		requestFileAction(PendingFileAction::Open, building);
+	if (building && ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_S, 0, ImGuiInputFlags_RouteGlobalLow))
+		saveBuilding(building, false);
+
+	if (!building) return;
+
 	// World pause
 	if (ImGui::Shortcut(ImGuiKey_P, 0, ImGuiInputFlags_RouteGlobalLow))
 	{
@@ -824,12 +1070,23 @@ void exitApp()
 
 ImVec2 gMainMenuWindowSize;
 
-void renderMenu(shared_ptr<const core::Building> building)
+void renderMenu(shared_ptr<core::Building>& building)
 {
 	if (ImGui::BeginMainMenuBar())
 	{
 		if (ImGui::BeginMenu("File"))
 		{
+			if (ImGui::MenuItem("New", "Ctrl+N"))
+				requestFileAction(PendingFileAction::New, building);
+			if (ImGui::MenuItem("Open...", "Ctrl+O"))
+				requestFileAction(PendingFileAction::Open, building);
+			if (ImGui::MenuItem("Save", "Ctrl+S", false, building != nullptr))
+				saveBuilding(building, false);
+			if (ImGui::MenuItem("Save As...", nullptr, false, building != nullptr))
+				saveBuilding(building, true);
+			if (ImGui::MenuItem("Close", nullptr, false, building != nullptr))
+				requestFileAction(PendingFileAction::Close, building);
+			ImGui::Separator();
 			if (ImGui::MenuItem("Exit"))
 			{
 				exitApp();
@@ -1998,13 +2255,25 @@ void renderWorldWindow(shared_ptr<core::Building> building, shared_ptr<const cor
 	ImGui::End();
 }
 
-void renderUI(shared_ptr<core::Building> building, shared_ptr<const core::Graph> graph, shared_ptr<core::Agent> pathingAgent)
+void renderUI(shared_ptr<core::Building>& building, shared_ptr<core::Agent> pathingAgent)
 {
 	ImGui::SetMouseCursor(ImGuiMouseCursor_Arrow);
 
 	renderMenu(building);
-	renderStatusBar(building);
+	renderFilePopups(building);
 	renderDockSpace();
+
+	if (!building)
+	{
+		ImGui::Begin("Building");
+		ImGui::TextDisabled("No Building is open.");
+		ImGui::TextUnformatted("Choose File > New or File > Open to begin.");
+		ImGui::End();
+		return;
+	}
+
+	auto const graph = building->getGraph();
+	renderStatusBar(building);
 	renderControlsWindow(building, graph, pathingAgent);
 	renderWorldWindow(building, graph);
 }
