@@ -139,6 +139,10 @@ namespace core
 		Vector2 queuePositionTarget;
 		bool hasCrossingLane{ false };
 		uint32_t crossingLane{ ~0u };
+		uint64_t positionAssignedAtTick{ 0 };
+		uint64_t lastPositionProgressTick{ 0 };
+		uint64_t positionRetryAtTick{ 0 };
+		uint32_t positionRetryCount{ 0 };
 	};
 
 	struct TraversalPermitSnapshot
@@ -147,6 +151,7 @@ namespace core
 		TraversalRequestId request;
 		AgentId owner;
 		TraversalPermitState state{ TraversalPermitState::Active };
+		uint64_t expiresAtTick{ 0 };
 	};
 
 	struct SimulationSnapshot

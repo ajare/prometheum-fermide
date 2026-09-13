@@ -181,6 +181,8 @@ namespace core
 
 		std::vector<SimulationEvent> mEvents;
 
+		TraversalWaitingPolicy mTraversalWaitingPolicy;
+
 		Log mBuildLog;
 
 	private:
@@ -310,6 +312,10 @@ namespace core
 		void attachDoorQueueTicket(TraversalRequestId requestId, TraversalResource& resource);
 
 		void refreshDoorQueuePositions(TraversalResource& resource);
+
+		void updateTraversalProgressAndTimeouts();
+
+		void expireTraversalPermit(TraversalPermitId permitId);
 
 		void tryGrantDoorQueue(TraversalResource& resource);
 
@@ -502,6 +508,13 @@ namespace core
 		EntityLookup<TraversalRequest const> lookupTraversalRequest(TraversalRequestId id) const;
 
 		EntityLookup<TraversalPermit const> lookupTraversalPermit(TraversalPermitId id) const;
+
+		TraversalWaitingPolicy const& getTraversalWaitingPolicy() const;
+
+		void setTraversalWaitingPolicy(TraversalWaitingPolicy policy);
+
+		// Pure route-cost query: it creates no ticket, operation, reservation, or permit.
+		float estimateTraversalDelay(TraversalResourceId resource, SectorId sourceSector) const;
 
 		void wakeAllAgents();
 

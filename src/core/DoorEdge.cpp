@@ -56,17 +56,15 @@ namespace core
 	{
 		// Time in seconds.  As we are crossing Layers, the distance between Vertices is essentially zero.
 
-		if (edgeVisible)
-		{
-			// Although we could be more accurate in estimating the time here based on the exact state of
-			// the Door, let's just assume we have to wait at most for it to open fully once.
-			return mDoor->isOpen() ? CORE_GRAPH_EDGE_MIN_TRAVERSAL_TIME : mDoor->getOpenCloseTime();
-		}
-		else
-		{
-			// Assume that the Door is closed, and we need to wait for it to open.
-			return mDoor->getOpenCloseTime();
-		}	
+		float preparation = edgeVisible && mDoor->isOpen()
+			? CORE_GRAPH_EDGE_MIN_TRAVERSAL_TIME : mDoor->getOpenCloseTime();
+		if (!agent) return preparation;
+		auto targetSector = targetVertex && targetVertex->getSector()
+			? SectorId{ (uint64_t)targetVertex->getSector()->getIndex() + 1 } : SectorId{};
+		auto sourceSector = getVertex(0) && SectorId{ (uint64_t)getVertex(0)->getSector()->getIndex() + 1 } != targetSector
+			? SectorId{ (uint64_t)getVertex(0)->getSector()->getIndex() + 1 }
+			: getVertex(1) ? SectorId{ (uint64_t)getVertex(1)->getSector()->getIndex() + 1 } : SectorId{};
+		return preparation + agent->estimateTraversalDelay(getTraversalResourceId(), sourceSector);
 	}
 
 	shared_ptr<Controller> DoorEdge::getDependingController(int side, uint32_t layerIndex) const

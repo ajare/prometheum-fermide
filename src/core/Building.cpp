@@ -2514,6 +2514,10 @@ namespace core
 		result.queuePosition = request.mQueuePosition;
 		result.hasCrossingLane = request.mCrossingLane != ~0u;
 		result.crossingLane = request.mCrossingLane;
+		result.positionAssignedAtTick = request.mPositionAssignedAtTick;
+		result.lastPositionProgressTick = request.mLastPositionProgressTick;
+		result.positionRetryAtTick = request.mPositionRetryAtTick;
+		result.positionRetryCount = request.mPositionRetryCount;
 		if (result.hasQueuePosition)
 		{
 			if (auto resource = mTraversalResources.find(request.mResource);
@@ -2528,7 +2532,7 @@ namespace core
 
 	TraversalPermitSnapshot Building::makeTraversalPermitSnapshot(TraversalPermitId id, TraversalPermit const& permit) const
 	{
-		return { id, permit.getRequest(), permit.getOwner(), permit.getState() };
+		return { id, permit.getRequest(), permit.getOwner(), permit.getState(), permit.getExpiresAtTick() };
 	}
 
 	TraversalRequestId Building::createTraversalRequest(Agent const& agent, shared_ptr<const Edge> const& edge,
@@ -2587,6 +2591,11 @@ namespace core
 	{
 		for (auto& lane : resource.mQueueLanes)
 		{
+			map<TraversalRequestId, uint32_t> previousPositions;
+			for (uint32_t i = 0; i < lane.positionOwners.size(); ++i)
+			{
+				if (lane.positionOwners[i]) previousPositions[lane.positionOwners[i]] = i;
+			}
 			fill(lane.positionOwners.begin(), lane.positionOwners.end(), TraversalRequestId{});
 			uint32_t position = 0;
 			for (auto requestId : lane.queue)
@@ -2597,13 +2606,12 @@ namespace core
 					continue;
 				}
 				request->mQueuePosition = ~0u;
-				if (auto agent = mAgents.find(request->mOwner))
-				{
-					agent->mTraversalLocalGoal.reset();
-				}
-				// The selected operator temporarily leaves the physical line but its
-				// ticket remains in lane.queue at exactly the same logical position.
-				if (resource.mPreparationOperator == requestId)
+				if (auto agent = mAgents.find(request->mOwner)) agent->mTraversalLocalGoal.reset();
+
+				// Operators and timed-out assignments keep their logical place while
+				// releasing the scarce physical position.
+				if (resource.mPreparationOperator == requestId
+					|| mSimulationTick < request->mPositionRetryAtTick)
 				{
 					continue;
 				}
@@ -2611,14 +2619,165 @@ namespace core
 				{
 					lane.positionOwners[position] = requestId;
 					request->mQueuePosition = position;
-					if (auto agent = mAgents.find(request->mOwner))
+					auto agent = mAgents.find(request->mOwner);
+					if (agent)
 					{
 						agent->mTraversalLocalGoal = lane.positions[position];
+						auto distance = agent->getGlobalPosition().distanceTo(lane.positions[position]);
+						auto previous = previousPositions.find(requestId);
+						if (previous == previousPositions.end() || previous->second != position)
+						{
+							request->mPositionAssignedAtTick = mSimulationTick;
+							request->mLastPositionProgressTick = mSimulationTick;
+							request->mBestPositionDistance = distance;
+						}
 					}
 					++position;
 				}
 			}
 		}
+	}
+
+	void Building::updateTraversalProgressAndTimeouts()
+	{
+		vector<TraversalPermitId> expiredPermits;
+		for (auto const& [permitId, permit] : mTraversalPermits.entries())
+		{
+			if (permit->mState != TraversalPermitState::Active) continue;
+			auto request = mTraversalRequests.find(permit->mRequest);
+			auto agent = request ? mAgents.find(request->mOwner) : nullptr;
+			if (!request || !agent) { expiredPermits.push_back(permitId); continue; }
+			auto distance = agent->getGlobalPosition().distanceTo(request->mDestinationEndpoint);
+			if (distance + 0.001f < permit->mBestDestinationDistance)
+			{
+				permit->mBestDestinationDistance = distance;
+				permit->mExpiresAtTick = mSimulationTick + mTraversalWaitingPolicy.permitProgressTimeoutTicks;
+			}
+			else if (mSimulationTick >= permit->mExpiresAtTick)
+			{
+				expiredPermits.push_back(permitId);
+			}
+		}
+		for (auto permitId : expiredPermits) expireTraversalPermit(permitId);
+
+		vector<TraversalRequestId> unreachableRequests;
+		for (auto const& [resourceId, resource] : mTraversalResources.entries())
+		{
+			(void)resourceId;
+			if (!resource->mDoor) continue;
+			bool refresh = false;
+			for (auto& lane : resource->mQueueLanes)
+			{
+				for (auto requestId : lane.queue)
+				{
+					auto request = mTraversalRequests.find(requestId);
+					if (!request) continue;
+					if (request->mQueuePosition == ~0u)
+					{
+						if (request->mPositionRetryAtTick != 0
+							&& mSimulationTick >= request->mPositionRetryAtTick)
+						{
+							request->mPositionRetryAtTick = 0;
+							refresh = true;
+						}
+						continue;
+					}
+					auto agent = mAgents.find(request->mOwner);
+					if (!agent || request->mQueuePosition >= lane.positions.size()) continue;
+					auto distance = agent->getGlobalPosition().distanceTo(lane.positions[request->mQueuePosition]);
+					if (distance + 0.001f < request->mBestPositionDistance)
+					{
+						request->mBestPositionDistance = distance;
+						request->mLastPositionProgressTick = mSimulationTick;
+					}
+					else if (distance > 0.001f && mSimulationTick - request->mLastPositionProgressTick
+						>= mTraversalWaitingPolicy.localGoalTimeoutTicks)
+					{
+						request->mQueuePosition = ~0u;
+						request->mPositionRetryAtTick = mSimulationTick
+							+ mTraversalWaitingPolicy.localGoalRetryDelayTicks;
+						++request->mPositionRetryCount;
+						if (agent) agent->mTraversalLocalGoal.reset();
+						refresh = true;
+						if (request->mPositionRetryCount > mTraversalWaitingPolicy.maximumLocalGoalRetries)
+						{
+							unreachableRequests.push_back(requestId);
+						}
+					}
+				}
+			}
+			if (refresh) refreshDoorQueuePositions(*resource);
+		}
+		for (auto requestId : unreachableRequests)
+		{
+			denyTraversalRequest(requestId, TraversalFailureReason::LocalGoalUnreachable);
+		}
+	}
+
+	void Building::expireTraversalPermit(TraversalPermitId permitId)
+	{
+		auto permit = mTraversalPermits.find(permitId);
+		if (!permit || permit->mState != TraversalPermitState::Active) return;
+		auto requestId = permit->mRequest;
+		auto request = mTraversalRequests.find(requestId);
+		if (!request) return;
+
+		permit->mState = TraversalPermitState::Cancelled;
+		SimulationEvent permitChanged;
+		permitChanged.sequence = mNextEventSequence++;
+		permitChanged.tick = mSimulationTick;
+		permitChanged.type = SimulationEventType::TraversalPermitChanged;
+		permitChanged.phase = mCurrentPhase;
+		permitChanged.traversalPermit = makeTraversalPermitSnapshot(permitId, *permit);
+		mEvents.push_back(std::move(permitChanged));
+
+		request->mPermit = {};
+		request->mState = TraversalRequestState::Pending;
+		request->mFailureReason = TraversalFailureReason::PermitExpired;
+		if (auto resource = mTraversalResources.find(request->mResource); resource && resource->mDoor)
+		{
+			for (auto& owner : resource->mCrossingOwners) if (owner == requestId) owner = {};
+			// Downgrade crossing authority to preparation before releasing its safety
+			// lease, so even a zero-hold door cannot close around a stalled agent.
+			if (!request->mPreparationLease && resource->mEnabled)
+			{
+				request->mPreparationLease = acquireDoorOpenLease(*resource,
+					DoorOpenLeaseKind::Preparation, requestId);
+			}
+			if (request->mCrossingLease) releaseDoorOpenLease(*resource, request->mCrossingLease);
+			request->mCrossingLease = {};
+			request->mCrossingLane = ~0u;
+			auto& queue = resource->mQueueLanes[request->mQueueApproach].queue;
+			queue.push_back(requestId);
+			sort(queue.begin(), queue.end(), [&](TraversalRequestId lhs, TraversalRequestId rhs)
+			{
+				return mTraversalRequests.find(lhs)->mQueueTicket < mTraversalRequests.find(rhs)->mQueueTicket;
+			});
+			refreshDoorQueuePositions(*resource);
+		}
+		if (auto agent = mAgents.find(request->mOwner); agent && agent->mTraversalTask)
+		{
+			agent->mTraversalTask->permit = {};
+			agent->mState = Agent::State::WaitingForTraversal;
+		}
+
+		auto removed = makeTraversalPermitSnapshot(permitId, *permit);
+		mTraversalPermits.remove(permitId);
+		SimulationEvent permitRemoved;
+		permitRemoved.sequence = mNextEventSequence++;
+		permitRemoved.tick = mSimulationTick;
+		permitRemoved.type = SimulationEventType::TraversalPermitRemoved;
+		permitRemoved.phase = mCurrentPhase;
+		permitRemoved.traversalPermit = std::move(removed);
+		mEvents.push_back(std::move(permitRemoved));
+
+		SimulationEvent requestChanged;
+		requestChanged.sequence = mNextEventSequence++;
+		requestChanged.tick = mSimulationTick;
+		requestChanged.type = SimulationEventType::TraversalRequestChanged;
+		requestChanged.phase = mCurrentPhase;
+		requestChanged.traversalRequest = makeTraversalRequestSnapshot(requestId, *request);
+		mEvents.push_back(std::move(requestChanged));
 	}
 
 	void Building::tryGrantDoorQueue(TraversalResource& resource)
@@ -2709,8 +2868,15 @@ namespace core
 
 		auto permitId = mTraversalPermits.add(unique_ptr<TraversalPermit>(
 			new TraversalPermit(requestId, request->mOwner)));
+		auto permit = mTraversalPermits.find(permitId);
+		permit->mExpiresAtTick = mSimulationTick + mTraversalWaitingPolicy.permitProgressTimeoutTicks;
+		if (auto agent = mAgents.find(request->mOwner))
+		{
+			permit->mBestDestinationDistance = agent->getGlobalPosition().distanceTo(request->mDestinationEndpoint);
+		}
 		request->mPermit = permitId;
 		request->mState = TraversalRequestState::Granted;
+		request->mFailureReason = TraversalFailureReason::None;
 		if (auto resource = mTraversalResources.find(request->mResource); resource && resource->mDoor)
 		{
 			request->mCrossingLease = acquireDoorOpenLease(*resource, DoorOpenLeaseKind::Crossing, requestId);
@@ -3804,6 +3970,37 @@ namespace core
 			: EntityLookup<TraversalPermit const>{ nullptr, format("TraversalPermit handle {} is invalid or has been released", id.value) };
 	}
 
+	TraversalWaitingPolicy const& Building::getTraversalWaitingPolicy() const
+	{
+		return mTraversalWaitingPolicy;
+	}
+
+	void Building::setTraversalWaitingPolicy(TraversalWaitingPolicy policy)
+	{
+		if (policy.localGoalTimeoutTicks == 0 || policy.permitProgressTimeoutTicks == 0
+			|| policy.replanIntervalTicks == 0 || policy.queueDelayPerAgentSeconds < 0.0f
+			|| policy.replanEtaMarginSeconds < 0.0f)
+		{
+			throw invalid_argument("Traversal waiting policy durations must be positive and costs non-negative");
+		}
+		mTraversalWaitingPolicy = policy;
+	}
+
+	float Building::estimateTraversalDelay(TraversalResourceId resourceId, SectorId sourceSector) const
+	{
+		(void)sourceSector; // Future access-zone resources may scope demand by origin.
+		auto resource = mTraversalResources.find(resourceId);
+		if (!resource) return 0.0f;
+		size_t ahead = 0;
+		for (auto const& lane : resource->mQueueLanes)
+		{
+			ahead += lane.queue.size();
+		}
+		auto lanes = max<size_t>(1, resource->mCrossingOwners.size());
+		return (float)((ahead + lanes - 1) / lanes)
+			* mTraversalWaitingPolicy.queueDelayPerAgentSeconds;
+	}
+
 	SimulationSnapshot Building::getSimulationSnapshot() const
 	{
 		SimulationSnapshot result;
@@ -4151,6 +4348,7 @@ namespace core
 			break;
 
 		case SimulationPhase::CleanupAndEventPublication:
+			updateTraversalProgressAndTimeouts();
 			for (auto const& [id, agent] : mAgents.entries())
 			{
 				(void)id;

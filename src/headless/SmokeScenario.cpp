@@ -639,6 +639,108 @@ namespace
 			&& building.lookupAgent(cancelledId).entity->getSector() == building.getSector(fore).get();
 	}
 
+	bool resilientWaitingRetainsPriorityAndExpiresPermits()
+	{
+		core::Building building("Resilient door waiting", 8, 2);
+		auto fore = building.addRoom("Waiting side", CORE_LAYER_FORE, 0, 0, 7, 1);
+		building.addRoom("Destination side", CORE_LAYER_BACK, 0, 0, 7, 1);
+		auto created = building.addSectorDoor(0, 3);
+		building.finishBuild();
+		auto edge = *std::find_if(building.getGraph()->getEdges().begin(), building.getGraph()->getEdges().end(),
+			[](auto const& candidate) { return candidate->getType() == core::EdgeType::Door; });
+		auto source = edge->getVertex(0)->getSector()->getIndex() == fore ? edge->getVertex(0) : edge->getVertex(1);
+		auto destination = edge->getOtherVertex(source);
+
+		// One physical position deliberately forces logical overflow.
+		auto sourceSectorId = core::SectorId{ (uint64_t)fore + 1 };
+		if (!building.configureDoorQueueLane(created.traversalResource, sourceSectorId,
+			source->getPosition(), { -1.0f, 0.0f }, 0.0f)) return false;
+		std::vector<core::AgentId> ids = {
+			building.createAgent("Queue head", fore, 0, 3.5f),
+			building.createAgent("Overflow one", fore, 0, 3.5f),
+			building.createAgent("Overflow two", fore, 0, 3.5f)
+		};
+		for (auto id : ids) building.lookupAgent(id).entity->setPath(twoNodePath(source, destination, edge), true);
+		building.advanceTicks(2);
+		auto queued = building.getSimulationSnapshot();
+		if (queued.traversalRequests.size() != 3
+			|| std::count_if(queued.traversalRequests.begin(), queued.traversalRequests.end(),
+				[](auto const& request) { return (bool)request.queueTicket; }) != 3
+			|| std::count_if(queued.traversalRequests.begin(), queued.traversalRequests.end(),
+				[](auto const& request) { return request.hasQueuePosition; }) != 1)
+		{
+			return false;
+		}
+
+		auto firstRequest = queued.traversalRequests.front();
+		building.lookupAgent(ids.front()).entity->setPath(twoNodePath(source, destination, edge), true);
+		auto compatible = building.getSimulationSnapshot();
+		auto retained = std::find_if(compatible.traversalRequests.begin(), compatible.traversalRequests.end(),
+			[&](auto const& request) { return request.owner == ids.front(); });
+		if (retained == compatible.traversalRequests.end() || retained->id != firstRequest.id
+			|| retained->queueTicket != firstRequest.queueTicket) return false;
+
+		// Changing the immediate authority is incompatible and must release the old
+		// logical ticket before a later compatible route can queue afresh.
+		auto oldOverflow = *std::find_if(compatible.traversalRequests.begin(), compatible.traversalRequests.end(),
+			[&](auto const& request) { return request.owner == ids[1]; });
+		building.lookupAgent(ids[1]).entity->setPath(twoNodePath(source, destination,
+			std::make_shared<core::SectorEdge>()), true);
+		auto incompatible = building.getSimulationSnapshot();
+		if (std::any_of(incompatible.traversalRequests.begin(), incompatible.traversalRequests.end(),
+			[&](auto const& request) { return request.id == oldOverflow.id; })) return false;
+		building.lookupAgent(ids[1]).entity->setPath(twoNodePath(source, destination, edge), true);
+		building.advanceTicks(2);
+		auto fresh = building.getSimulationSnapshot();
+		auto freshOverflow = std::find_if(fresh.traversalRequests.begin(), fresh.traversalRequests.end(),
+			[&](auto const& request) { return request.owner == ids[1]; });
+		if (freshOverflow == fresh.traversalRequests.end() || freshOverflow->queueTicket == oldOverflow.queueTicket)
+			return false;
+
+		// Route estimation observes queue demand but creates no coordination state.
+		auto requestCount = fresh.traversalRequests.size();
+		auto permitCount = fresh.traversalPermits.size();
+		if (edge->getWeight(destination, building.lookupAgent(ids.front()).entity, true) <= 0.0f
+			|| building.getSimulationSnapshot().traversalRequests.size() != requestCount
+			|| building.getSimulationSnapshot().traversalPermits.size() != permitCount) return false;
+
+		// A deliberately short no-progress deadline expires the coincident threshold
+		// crossing. The request and ticket survive and a fresh permit is assigned.
+		auto policy = building.getTraversalWaitingPolicy();
+		policy.permitProgressTimeoutTicks = 1;
+		building.setTraversalWaitingPolicy(policy);
+		core::TraversalPermitId firstPermit;
+		core::TraversalPermitId replacementPermit;
+		for (uint32_t i = 0; i < MaximumSimulationTicks && !replacementPermit; ++i)
+		{
+			building.advanceTick();
+			auto snapshot = building.getSimulationSnapshot();
+			for (auto const& permit : snapshot.traversalPermits)
+			{
+				if (permit.owner != ids.front()) continue;
+				if (!firstPermit) firstPermit = permit.id;
+				else if (permit.id != firstPermit) replacementPermit = permit.id;
+			}
+		}
+		if (!firstPermit || !replacementPermit) return false;
+		auto afterExpiry = building.getSimulationSnapshot();
+		retained = std::find_if(afterExpiry.traversalRequests.begin(), afterExpiry.traversalRequests.end(),
+			[&](auto const& request) { return request.owner == ids.front(); });
+		if (retained == afterExpiry.traversalRequests.end() || retained->id != firstRequest.id
+			|| retained->queueTicket != firstRequest.queueTicket) return false;
+
+		policy.permitProgressTimeoutTicks = 120;
+		building.setTraversalWaitingPolicy(policy);
+		building.advanceTicks(MaximumSimulationTicks * 2);
+		return std::all_of(ids.begin(), ids.end(), [&](auto id)
+		{
+			auto agent = building.lookupAgent(id).entity;
+			return agent->getState() == core::Agent::State::Idle
+				&& agent->getSector() == destination->getSector().get();
+		}) && building.getSimulationSnapshot().traversalRequests.empty()
+			&& building.getSimulationSnapshot().traversalPermits.empty();
+	}
+
 	bool wideDoorLanesAndGracefulDisableAreSafe()
 	{
 		core::Building building("Wide safe door", 9, 2);
@@ -935,6 +1037,11 @@ int main()
 		if (!wideDoorLanesAndGracefulDisableAreSafe())
 		{
 			std::cerr << "FAIL: wide door lanes exceeded capacity or deactivation was unsafe\n";
+			return 1;
+		}
+		if (!resilientWaitingRetainsPriorityAndExpiresPermits())
+		{
+			std::cerr << "FAIL: resilient waiting lost priority, leaked reservations, or failed permit expiry\n";
 			return 1;
 		}
 		if (!doorLeasesAndSensorObservationsPreventUnsafeClosure())

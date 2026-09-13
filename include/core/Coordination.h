@@ -250,7 +250,23 @@ namespace core
 		NoReachableControl,
 		ControlRejected,
 		PreparationFailed,
-		ResourceDisabled
+		ResourceDisabled,
+		LocalGoalUnreachable,
+		PermitExpired
+	};
+
+	// Tick-based policy keeps timeout and replanning behaviour deterministic and
+	// lets headless scenarios shorten the otherwise conservative production values.
+	struct TraversalWaitingPolicy
+	{
+		uint64_t localGoalTimeoutTicks{ 180 };
+		uint64_t localGoalRetryDelayTicks{ 6 };
+		uint32_t maximumLocalGoalRetries{ 3 };
+		uint64_t permitProgressTimeoutTicks{ 120 };
+		uint64_t minimumReplanWaitTicks{ 300 };
+		uint64_t replanIntervalTicks{ 120 };
+		float replanEtaMarginSeconds{ 2.0f };
+		float queueDelayPerAgentSeconds{ 1.0f };
 	};
 
 	class TraversalRequest
@@ -272,6 +288,11 @@ namespace core
 		uint64_t mQueuedAtTick{ 0 };
 		uint32_t mQueueApproach{ ~0u };
 		uint32_t mQueuePosition{ ~0u };
+		uint64_t mPositionAssignedAtTick{ 0 };
+		uint64_t mLastPositionProgressTick{ 0 };
+		float mBestPositionDistance{ 0.0f };
+		uint64_t mPositionRetryAtTick{ 0 };
+		uint32_t mPositionRetryCount{ 0 };
 		uint32_t mCrossingLane{ ~0u };
 		DoorOpenLeaseId mPreparationLease;
 		DoorOpenLeaseId mCrossingLease;
@@ -312,6 +333,8 @@ namespace core
 		TraversalRequestId mRequest;
 		AgentId mOwner;
 		TraversalPermitState mState{ TraversalPermitState::Active };
+		uint64_t mExpiresAtTick{ 0 };
+		float mBestDestinationDistance{ 0.0f };
 		TraversalPermit(TraversalRequestId request, AgentId owner) : mRequest(request), mOwner(owner) {}
 	public:
 		TraversalPermit(TraversalPermit const&) = delete;
@@ -319,6 +342,7 @@ namespace core
 		TraversalRequestId getRequest() const { return mRequest; }
 		AgentId getOwner() const { return mOwner; }
 		TraversalPermitState getState() const { return mState; }
+		uint64_t getExpiresAtTick() const { return mExpiresAtTick; }
 	};
 
 	template<typename Entity>

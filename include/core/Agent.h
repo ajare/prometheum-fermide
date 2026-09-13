@@ -111,6 +111,10 @@ namespace core
 
 		void cleanupTraversal();
 
+		void considerTraversalReplan();
+
+		float estimateRemainingPathSeconds(std::shared_ptr<Path> const& path, uint32_t fromNode) const;
+
 		void cancelTraversal();
 
 		bool moveToVertexOffset(int dim, float offset, float frameTime);
@@ -152,6 +156,9 @@ namespace core
 		float getWalkSpeed() const;
 
 		float getClimbSpeed() const;
+
+		// Used by edge route-cost implementations; this is an observation only.
+		float estimateTraversalDelay(TraversalResourceId resource, SectorId sourceSector) const;
 
 		uint32_t getFlags() const;
 

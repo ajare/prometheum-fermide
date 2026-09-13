@@ -94,6 +94,11 @@ namespace core
 		return (float)CORE_AGENT_BASE_CLIMB_SPEED;
 	}
 
+	float Agent::estimateTraversalDelay(TraversalResourceId resource, SectorId sourceSector) const
+	{
+		return mBuilding ? mBuilding->estimateTraversalDelay(resource, sourceSector) : 0.0f;
+	}
+
 	uint32_t Agent::getFlags() const
 	{
 		return mFlags;
@@ -209,6 +214,45 @@ namespace core
 
 	void Agent::setPath(shared_ptr<Path> path, bool startPathing)
 	{
+		// A granted permit freezes route intent until it is committed or expires.
+		// Silently retaining the current path is safer than invalidating a crossing.
+		if (mTraversalTask && mTraversalTask->permit)
+		{
+			return;
+		}
+
+		// Replacing only the suffix after the same immediate resource is a compatible
+		// replan. Update the locomotion endpoints while retaining request/ticket age.
+		if (startPathing && path && mTraversalTask && mBuilding)
+		{
+			auto request = mBuilding->lookupTraversalRequest(mTraversalTask->request);
+			if (request && request.entity->getState() == TraversalRequestState::Pending)
+			{
+				for (uint32_t i = 0; i + 1 < path->nodes.size(); ++i)
+				{
+					auto const& source = path->nodes[i].targetVertex;
+					auto const& destination = path->nodes[i + 1].targetVertex;
+					auto const& edge = path->nodes[i + 1].edge;
+					if (!source || !destination || !edge) continue;
+					auto sourceSector = SectorId{ (uint64_t)source->getSector()->getIndex() + 1 };
+					auto destinationSector = SectorId{ (uint64_t)destination->getSector()->getIndex() + 1 };
+					if (sourceSector == request.entity->getSourceSector()
+						&& destinationSector == request.entity->getDestinationSector()
+						&& edge->getTraversalResourceId() == request.entity->getResource()
+						&& edge->getType() == request.entity->getEdgeType())
+					{
+						mPath.path = std::move(path);
+						mPath.targetNode = i;
+						mTraversalTask->edge = edge;
+						mTraversalTask->sourceVertex = source;
+						mTraversalTask->destinationVertex = destination;
+						mState = State::WaitingForTraversal;
+						return;
+					}
+				}
+			}
+		}
+
 		clearPath();
 		mPath.path = std::move(path);
 		mPath.targetNode = 0;
@@ -369,14 +413,16 @@ namespace core
 		}
 
 		auto requestLookup = mBuilding->lookupTraversalRequest(mTraversalTask->request);
-		if (!requestLookup || requestLookup.entity->getState() != TraversalRequestState::Pending)
+		if (!requestLookup) return;
+		if (requestLookup.entity->getState() == TraversalRequestState::Pending)
 		{
-			return;
+			mBuilding->allocateTraversalRequest(mTraversalTask->request,
+				mTraversalTask->edge, mTraversalTask->destinationVertex);
+			requestLookup = mBuilding->lookupTraversalRequest(mTraversalTask->request);
 		}
-
-		mBuilding->allocateTraversalRequest(mTraversalTask->request,
-			mTraversalTask->edge, mTraversalTask->destinationVertex);
-		requestLookup = mBuilding->lookupTraversalRequest(mTraversalTask->request);
+		// A resource allocation initiated while processing another agent may have
+		// granted this request earlier in the phase. The owner adopts that permit
+		// on its next allocation turn rather than remaining a ghost lane owner.
 		if (requestLookup && requestLookup.entity->getState() == TraversalRequestState::Granted)
 		{
 			mTraversalTask->permit = requestLookup.entity->getPermit();
@@ -406,6 +452,40 @@ namespace core
 		nextPathNode();
 	}
 
+	float Agent::estimateRemainingPathSeconds(shared_ptr<Path> const& path, uint32_t fromNode) const
+	{
+		if (!path) return 0.0f;
+		float result = 0.0f;
+		for (uint32_t i = fromNode + 1; i < path->nodes.size(); ++i)
+		{
+			auto const& node = path->nodes[i];
+			if (node.edge) result += node.edge->getWeight(node.targetVertex, this, true);
+		}
+		return result;
+	}
+
+	void Agent::considerTraversalReplan()
+	{
+		if (!mTraversalTask || mTraversalTask->permit || !mBuilding || !mPath.path
+			|| mPath.path->nodes.empty()) return;
+		auto request = mBuilding->lookupTraversalRequest(mTraversalTask->request);
+		if (!request || !request.entity->getQueueTicket()) return;
+		auto const& policy = mBuilding->getTraversalWaitingPolicy();
+		auto waited = mBuilding->getSimulationTick() - request.entity->getQueuedAtTick();
+		if (waited < policy.minimumReplanWaitTicks
+			|| (waited - policy.minimumReplanWaitTicks) % policy.replanIntervalTicks != 0) return;
+
+		auto target = mPath.path->nodes.back().targetVertex;
+		auto alternative = mBuilding->getGraph()->calculatePath(this, mTraversalTask->sourceVertex, target);
+		if (!alternative || alternative->nodes.size() < 2) return;
+		auto currentEta = estimateRemainingPathSeconds(mPath.path, mPath.targetNode);
+		auto alternativeEta = estimateRemainingPathSeconds(alternative, 0);
+		if (alternativeEta + policy.replanEtaMarginSeconds < currentEta)
+		{
+			setPath(std::move(alternative), true);
+		}
+	}
+
 	void Agent::cleanupTraversal()
 	{
 		if (!mTraversalTask || !mBuilding)
@@ -420,7 +500,9 @@ namespace core
 			mBuilding->releaseTraversal(mTraversalTask->request, mTraversalTask->permit);
 			mTraversalTask.reset();
 			mTraversalLocalGoal.reset();
+			return;
 		}
+		considerTraversalReplan();
 	}
 
 	void Agent::cancelTraversal()
