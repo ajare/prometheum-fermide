@@ -2,6 +2,8 @@
 #include "core/SerializationException.h"
 #include "core/Exceptions.h"
 #include "core/Transit.h"
+#include "core/DoorSectorObject.h"
+#include "core/MarkerSectorObject.h"
 
 #include <algorithm>
 #include <cmath>
@@ -525,6 +527,226 @@ namespace core
 			return false;
 		}
 		return true;
+	}
+
+	bool Building::prepareObjectMove(ObjectMovePlan const& plan,
+		vector<ConstructionRecord>& records, uint32_t& newObjectIndex,
+		string& diagnostic) const
+	{
+		records = mConstructionRecords;
+		newObjectIndex = ~0u;
+		if (plan.sectorIndex >= mSectors.size() || !mSectors[plan.sectorIndex]
+			|| plan.objectIndex >= mSectors[plan.sectorIndex]->getNumObjects())
+		{
+			diagnostic = "The selected object no longer exists";
+			return false;
+		}
+		auto object = mSectors[plan.sectorIndex]->getObject(plan.objectIndex);
+		if (!object)
+		{
+			diagnostic = "The selected object no longer exists";
+			return false;
+		}
+
+		auto owner = object->getSector();
+		auto sourceX = object->getCellX();
+		auto sourceY = object->getCellY();
+		auto matches = [&](ConstructionRecord const& record)
+		{
+			switch (object->getObjectType())
+			{
+			case SectorObjectType::Door:
+				return record.type == ConstructionType::Door
+					&& record.b == sourceX && record.a == sourceY;
+			case SectorObjectType::Window:
+				return record.type == ConstructionType::Window
+					&& record.c == sourceX && record.b == sourceY
+					&& record.a == owner->getLayerIndex();
+			case SectorObjectType::ForceBridge:
+				return record.type == ConstructionType::ForceBridge && record.a == plan.sectorIndex
+					&& owner->getCellX() + record.c == sourceX
+					&& owner->getCellY() + record.b == sourceY;
+			case SectorObjectType::Ladder:
+				return record.type == ConstructionType::SectorLadder && record.a == plan.sectorIndex
+					&& owner->getCellX() + record.c == sourceX
+					&& owner->getCellY() + record.b == sourceY;
+			case SectorObjectType::Lift:
+				return record.type == ConstructionType::PlatformLift && record.a == plan.sectorIndex
+					&& owner->getCellX() + record.c == sourceX
+					&& owner->getCellY() + record.b == sourceY;
+			case SectorObjectType::Walkway:
+				return record.type == ConstructionType::Walkway && record.a == plan.sectorIndex
+					&& owner->getCellX() + record.c == sourceX
+					&& owner->getCellY() + record.b == sourceY;
+			case SectorObjectType::Marker:
+			{
+				auto marker = static_pointer_cast<MarkerSectorObject>(object)->getMarker();
+				return record.type == ConstructionType::Marker && record.a == plan.sectorIndex
+					&& owner->getCellY() + record.b == marker->getCellY()
+					&& fabs(record.x - marker->getOffset()) <= 0.001f;
+			}
+			default:
+				return false;
+			}
+		};
+
+		auto found = find_if(records.begin(), records.end(), matches);
+		if (found == records.end())
+		{
+			diagnostic = "This object cannot be moved independently";
+			return false;
+		}
+
+		auto targetRight = (uint64_t)plan.x + (uint32_t)ceil(object->getSize().x);
+		auto targetTop = (uint64_t)plan.y + (uint32_t)ceil(object->getSize().y);
+		if (plan.x < owner->getCellX() || plan.y < owner->getCellY()
+			|| targetRight > (uint64_t)owner->getCellX() + owner->getCellsWide()
+			|| targetTop > (uint64_t)owner->getCellY() + owner->getDecksHigh())
+		{
+			diagnostic = "The object must remain inside its sector";
+			return false;
+		}
+
+		if (object->getObjectType() == SectorObjectType::Door)
+		{
+			auto door = static_pointer_cast<DoorSectorObject>(object)->getDoor();
+			for (uint32_t layer = 0; layer < CORE_NUM_LAYERS; ++layer)
+				for (uint32_t ix = plan.x; ix < targetRight; ++ix)
+				{
+					auto sector = getSectorAtPosition(layer, (float)ix, (float)plan.y);
+					if (sector != door->getSector(layer))
+					{
+						diagnostic = "The Door must remain within both sectors it connects";
+						return false;
+					}
+					auto const& cell = mLayers[layer]->getCellDefinition(ix, plan.y);
+					if (!cell.markers.empty())
+					{
+						diagnostic = "Another object blocks the Door's destination";
+						return false;
+					}
+					bool occupiedBySelectedDoor = ix >= sourceX
+						&& ix < sourceX + object->getSize().x && plan.y == sourceY;
+					if (cell.hasObject() && !occupiedBySelectedDoor)
+					{
+						diagnostic = "Another object blocks the Door's destination";
+						return false;
+					}
+				}
+		}
+
+		switch (object->getObjectType())
+		{
+		case SectorObjectType::Door: found->a = plan.y; found->b = plan.x; break;
+		case SectorObjectType::Window: found->b = plan.y; found->c = plan.x; break;
+		case SectorObjectType::ForceBridge:
+		case SectorObjectType::Ladder:
+		case SectorObjectType::Lift:
+		case SectorObjectType::Walkway:
+			found->b = plan.y - owner->getCellY();
+			found->c = plan.x - owner->getCellX();
+			break;
+		case SectorObjectType::Marker:
+			found->b = plan.y - owner->getCellY();
+			found->x = (float)(plan.x - owner->getCellX()) + 0.5f;
+			break;
+		default: break;
+		}
+
+		Building candidate(mName, mCellsWide, mDecksHigh);
+		candidate.mDeserializingConstruction = true;
+		try
+		{
+			for (auto const& record : records)
+			{
+				auto before = plan.sectorIndex < candidate.mSectors.size()
+					? candidate.mSectors[plan.sectorIndex]->getNumObjects() : 0;
+				candidate.applyConstructionRecord(record);
+				if (&record == &*found) newObjectIndex = before;
+			}
+			candidate.finishBuild();
+		}
+		catch (Exception const& error)
+		{
+			diagnostic = error.getMessage();
+			return false;
+		}
+		catch (exception const& error)
+		{
+			diagnostic = error.what();
+			return false;
+		}
+		return true;
+	}
+
+	Building::ObjectMovePlan Building::planMoveSectorObject(uint32_t sectorIndex,
+		uint32_t objectIndex, uint32_t x, uint32_t y) const
+	{
+		ObjectMovePlan plan;
+		plan.sectorIndex = sectorIndex;
+		plan.objectIndex = objectIndex;
+		plan.x = x;
+		plan.y = y;
+		vector<ConstructionRecord> records;
+		uint32_t ignored;
+		plan.valid = prepareObjectMove(plan, records, ignored, plan.diagnostic);
+		return plan;
+	}
+
+	shared_ptr<const SectorObject> Building::applyObjectMove(ObjectMovePlan const& requested)
+	{
+		if (!mSimulationPaused)
+			throw BuildingException(this, "Moving an object requires the simulation to be paused");
+		auto plan = requested;
+		vector<ConstructionRecord> records;
+		uint32_t newObjectIndex;
+		string diagnostic;
+		if (!prepareObjectMove(plan, records, newObjectIndex, diagnostic))
+			throw BuildingException(this, diagnostic);
+
+		struct SavedAgent
+		{
+			AgentId id;
+			string name;
+			uint32_t flags;
+			uint32_t layer;
+			Vector2 position;
+		};
+		vector<SavedAgent> agents;
+		for (auto const& [id, agent] : mAgents.entries())
+			agents.push_back({ id, agent->getName(), agent->getFlags(),
+				agent->getSector()->getLayerIndex(), agent->getGlobalPosition() });
+
+		resetForDeserialization(mName, mCellsWide, mDecksHigh);
+		mDeserializingConstruction = true;
+		try
+		{
+			for (auto const& record : records) applyConstructionRecord(record);
+			finishBuild();
+		}
+		catch (...)
+		{
+			mDeserializingConstruction = false;
+			throw;
+		}
+		mDeserializingConstruction = false;
+		mConstructionRecords = std::move(records);
+		mSimulationPaused = true;
+		modify();
+		for (auto const& saved : agents)
+		{
+			auto sector = getSectorAtPosition(saved.layer, saved.position.x, saved.position.y);
+			if (!sector) continue;
+			auto agent = make_unique<Agent>(saved.name);
+			agent->setFlags(saved.flags);
+			auto* raw = agent.get();
+			raw->attachToBuilding(this);
+			raw->mPosition = SectorPosition(sector.get(), saved.position - sector->getPosition());
+			_getSector(sector->getIndex())->mAgents.insert(raw);
+			mAgents.restore(saved.id, std::move(agent));
+			mAgentIds.emplace(raw, saved.id);
+		}
+		return getSector(plan.sectorIndex)->getObject(newObjectIndex);
 	}
 
 	Building::LocationEditPlan Building::planResizeLocation(uint32_t sectorIndex,

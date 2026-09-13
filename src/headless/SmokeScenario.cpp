@@ -285,6 +285,32 @@ namespace
 			&& building.isTraversalTopologyValid();
 	}
 
+	bool objectMoveValidatesAndRebuildsOnceCommitted()
+	{
+		core::Building building("Object movement", 10, 3);
+		auto corridor = building.addCorridor(0, 0, 8);
+		building.addRoom("Back room", CORE_LAYER_BACK, 0, 0, 8, 1);
+		auto created = building.addSectorDoor(0, 1);
+		building.addSectorMarker(corridor, 0, 5.5f);
+		building.finishBuild();
+		building.pauseSimulation();
+		auto agentId = building.createAgent("Stationary", corridor, 0, 0.5f);
+
+		auto outsideBothSectors = building.planMoveSectorObject(
+			created.door.sector->getIndex(), created.door.index, 1, 1);
+		auto blocked = building.planMoveSectorObject(
+			created.door.sector->getIndex(), created.door.index, 5, 0);
+		auto valid = building.planMoveSectorObject(
+			created.door.sector->getIndex(), created.door.index, 3, 0);
+		if (outsideBothSectors.valid || blocked.valid || !valid.valid) return false;
+
+		auto moved = building.applyObjectMove(valid);
+		return moved && moved->getObjectType() == core::SectorObjectType::Door
+			&& moved->getCellX() == 3 && moved->getCellY() == 0
+			&& building.lookupAgent(agentId).entity != nullptr
+			&& building.isSimulationPaused() && building.isTraversalTopologyValid();
+	}
+
 	bool ordinaryTraversalCommitsOnlyAtDestination()
 	{
 		core::Building building("Ordinary transition", 10, 2);
@@ -2174,6 +2200,11 @@ int main()
 		if (!corridorDoorPlacementEnforcesPaletteRules())
 		{
 			std::cerr << "FAIL: Door placement did not enforce corridor/Room or obstruction rules\n";
+			return 1;
+		}
+		if (!objectMoveValidatesAndRebuildsOnceCommitted())
+		{
+			std::cerr << "FAIL: Object movement did not validate and rebuild atomically\n";
 			return 1;
 		}
 		if (!ordinaryTraversalCommitsOnlyAtDestination())

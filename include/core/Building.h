@@ -180,6 +180,15 @@ namespace core
 			InteractionPointId interiorSelector;
 		};
 
+		struct ObjectMovePlan
+		{
+			bool valid{ false };
+			uint32_t sectorIndex{ ~0u };
+			uint32_t objectIndex{ ~0u };
+			uint32_t x{ 0 }, y{ 0 };
+			std::string diagnostic;
+		};
+
 		struct LocationEditPlan
 		{
 			bool valid{ false };
@@ -324,6 +333,10 @@ namespace core
 
 		bool prepareLocationEdit(LocationEditPlan const& plan,
 			std::vector<ConstructionRecord>& records, uint32_t& newSectorIndex,
+			std::string& diagnostic) const;
+
+		bool prepareObjectMove(ObjectMovePlan const& plan,
+			std::vector<ConstructionRecord>& records, uint32_t& newObjectIndex,
 			std::string& diagnostic) const;
 
 		void resetForDeserialization(std::string name, uint32_t cellsWide, uint32_t decksHigh);
@@ -647,6 +660,11 @@ namespace core
 		LocationEditPlan planRemoveLocation(uint32_t sectorIndex) const;
 
 		uint32_t applyLocationEdit(LocationEditPlan const& plan);
+
+		ObjectMovePlan planMoveSectorObject(uint32_t sectorIndex, uint32_t objectIndex,
+			uint32_t x, uint32_t y) const;
+
+		std::shared_ptr<const SectorObject> applyObjectMove(ObjectMovePlan const& plan);
 
 		void removeLocationWall(uint32_t sectorIndex, uint32_t deckIndex, int side);
 
