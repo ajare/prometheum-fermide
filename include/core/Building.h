@@ -467,11 +467,18 @@ namespace core
 
 		void moveInteractions(float frameTime);
 
+		void tryPressUpcomingDoorButton(Agent& agent, Vector2 const& movementStart,
+			Vector2 const& movementEnd);
+
+		void pressPhysicalControl(InteractionPointId point);
+
 		void updateInteractionResults();
 
 		void detachInteractionRequester(InteractionRequest& request);
 
 		InteractionRequestId requestInteractionForTraversal(InteractionPointId point, AgentId actor);
+
+		InteractionRequestId requestInteractionWhilePassing(InteractionPointId point, AgentId actor);
 
 		void allocateRemoteDoorPreparation(TraversalRequestId requestId, TraversalResource& resource);
 

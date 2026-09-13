@@ -80,6 +80,11 @@ namespace core
 		// of walking and advances itself during the movement phase.
 		std::optional<Vector2> mTraversalLocalGoal;
 
+		// Prevent repeated opportunistic presses while following the same immediate
+		// Door edge. This is transient locomotion state, not authored simulation data.
+		TraversalResourceId mEarlyDoorPressResource;
+		bool mEarlyDoorPressAttempted{ false };
+
 	private:
 
 		bool childrenModified() const override;

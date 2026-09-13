@@ -279,6 +279,8 @@ namespace core
 	void Agent::clearPath()
 	{
 		cancelTraversal();
+		mEarlyDoorPressResource = {};
+		mEarlyDoorPressAttempted = false;
 		mPath.path = nullptr;
 		mPath.targetNode = 0;
 		mState = State::Idle;
@@ -326,6 +328,8 @@ namespace core
 	void Agent::startIdling()
 	{
 		cancelTraversal();
+		mEarlyDoorPressResource = {};
+		mEarlyDoorPressAttempted = false;
 		mState = State::Idle;
 		mPath.path = nullptr;
 		mPath.targetNode = 0;

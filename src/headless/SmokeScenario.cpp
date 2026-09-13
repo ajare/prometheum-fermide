@@ -769,6 +769,71 @@ namespace
 		return true;
 	}
 
+	bool agentsPressUpcomingDoorButtonsWhilePassing()
+	{
+		// Reproduce the Citadel route: the Button's Interactable vertex is part of
+		// the in-sector path leading from the far Door to the controlled Door.
+		core::Building building("Opportunistic remote door", 8, 2);
+		auto corridor = building.addCorridor(0, 1, 5);
+		building.addRoom("Destination", CORE_LAYER_BACK, 0, 0, 3, 1);
+		building.addRoom("Far room", CORE_LAYER_BACK, 0, 4, 3, 1);
+		uint32_t markerId;
+		building.addSectorMarker(1, 0, 0.5f, &markerId);
+		core::Building::CreateDoorOptions remote;
+		remote.activationMode = core::DoorActivationMode::RemoteControlled;
+		remote.controls[0] = true;
+		auto created = building.addSectorDoor(0, 1, remote);
+		building.addSectorDoor(0, 5);
+		building.finishBuild();
+
+		auto target = building.getGraph()->getVertexByIdentifier(markerId);
+		std::vector<core::AgentId> ids = {
+			building.createAgent("Early presser one", corridor, 0, 2.75f),
+			building.createAgent("Early presser two", corridor, 0, 2.75f)
+		};
+		for (auto id : ids)
+		{
+			auto agent = building.lookupAgent(id).entity;
+			auto path = building.getGraph()->calculatePath(agent, target);
+			if (!path || path->nodes.size() < 3) return false;
+			bool reachesButtonBeforeDoor = false;
+			for (auto const& node : path->nodes)
+			{
+				if (node.edge && node.edge->getType() == core::EdgeType::Door) break;
+				reachesButtonBeforeDoor = reachesButtonBeforeDoor || (node.targetVertex
+					&& node.targetVertex->getSubType() == core::VertexSubType::Interactable);
+			}
+			if (!reachesButtonBeforeDoor) return false;
+			agent->setPath(std::move(path), true);
+		}
+
+		bool observedIndependentPressesBeforeDoorRequest = false;
+		for (uint32_t tick = 0; tick < MaximumSimulationTicks * 2; ++tick)
+		{
+			building.advanceTick();
+			auto snapshot = building.getSimulationSnapshot();
+			bool hasDoorRequest = std::any_of(snapshot.traversalRequests.begin(),
+				snapshot.traversalRequests.end(), [](auto const& request)
+					{ return request.edgeType == core::EdgeType::Door; });
+			if (!hasDoorRequest && snapshot.interactionRequests.size() == 2
+				&& snapshot.deviceOperations.size() == 1
+				&& snapshot.deviceOperations.front().requesters.size() == 2)
+			{
+				observedIndependentPressesBeforeDoorRequest = true;
+			}
+			if (std::all_of(ids.begin(), ids.end(), [&](auto id)
+				{ return building.lookupAgent(id).entity->getState() == core::Agent::State::Idle; })) break;
+		}
+
+		return observedIndependentPressesBeforeDoorRequest
+			&& std::all_of(ids.begin(), ids.end(), [&](auto id)
+			{
+				return building.lookupAgent(id).entity->getSector() == building.getSector(1).get();
+			})
+			&& building.lookupInteractionPoint(created.controls[0].interactionPoint).entity->getReach()
+				== CORE_AGENT_MAX_HEIGHT * 0.4f;
+	}
+
 	bool remoteDoorUsesOnePhysicalOperatorAndSharedOperation()
 	{
 		core::Building building("Shared remote door", 7, 2);
@@ -2292,6 +2357,11 @@ int main()
 		if (!pausedTopologyRebuildIsAtomicAndCleansOwnership())
 		{
 			std::cerr << "FAIL: paused topology rebuild was not safe and atomic\n";
+			return 1;
+		}
+		if (!agentsPressUpcomingDoorButtonsWhilePassing())
+		{
+			std::cerr << "FAIL: agents did not press upcoming Door Buttons while passing\n";
 			return 1;
 		}
 		if (!remoteDoorUsesOnePhysicalOperatorAndSharedOperation())

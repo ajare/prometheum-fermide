@@ -1826,15 +1826,19 @@ namespace core
 
 		auto control = _createDoorButton(sector, doorObject->getCellX(),
 			doorObject->getCellY(), door->getCellsWide(), CORE_BUTTON_F_AUTO_REENABLE);
-		auto controlObject = sector->_getObject(control.index);
+		auto controlObject = sector->_getObject(control.index)->_getObject();
 		auto controlPosition = controlObject->getPosition() + controlObject->getSize() * 0.5f;
+		// The Button is drawn above the floor, but its interaction target is the
+		// standing position below it. Agents must not climb to the rendered control.
+		controlPosition.y = (float)doorObject->getCellY();
 		DeviceCommand command;
 		command.type = DeviceCommandType::OpenDoor;
 		command.desiredState = true;
 		command.traversalResource = door->getTraversalResourceId();
 		auto point = createInteractionPoint("Door button",
 			SectorId{ (uint64_t)sector->getIndex() + 1 }, controlPosition,
-			0.15f, getFixedTimestep(), { { command, InteractionBindingRequirement::Required } });
+			CORE_AGENT_MAX_HEIGHT * 0.4f, getFixedTimestep(),
+			{ { command, InteractionBindingRequirement::Required } });
 		bindPhysicalControl(control, point);
 		if (!addTraversalControl(door->getTraversalResourceId(), point))
 		{
@@ -1993,15 +1997,18 @@ namespace core
 
 				if (!controlsAreExternallyBound)
 				{
-					auto controlObject = sectors[i]->_getObject(createdControls[i].index);
+					auto controlObject = sectors[i]->_getObject(createdControls[i].index)->_getObject();
 					auto controlPosition = controlObject->getPosition() + controlObject->getSize() * 0.5f;
+					// The rendered Button is wall-mounted; agents interact from the floor.
+					controlPosition.y = (float)y;
 					DeviceCommand command;
 					command.type = DeviceCommandType::OpenDoor;
 					command.desiredState = true;
 					command.traversalResource = traversalResource;
 					auto point = createInteractionPoint("Door button",
 						SectorId{ (uint64_t)sectors[i]->getIndex() + 1 }, controlPosition,
-						0.15f, getFixedTimestep(), { { command, InteractionBindingRequirement::Required } });
+						CORE_AGENT_MAX_HEIGHT * 0.4f, getFixedTimestep(),
+						{ { command, InteractionBindingRequirement::Required } });
 					bindPhysicalControl(createdControls[i], point);
 					addTraversalControl(traversalResource, point);
 				}
@@ -5440,6 +5447,9 @@ namespace core
 			denyTraversalRequest(requestId, TraversalFailureReason::NoReachableControl);
 			return;
 		}
+		// An opportunistic press may already have started opening the Door. Wait for
+		// that idempotent command rather than assigning another physical operator.
+		if (resource.mDoor->isOpening() && !resource.mActivePreparation) return;
 
 		bool failedPreparation = false;
 		bool completedPreparation = false;
@@ -6316,6 +6326,44 @@ namespace core
 	InteractionRequestId Building::requestInteractionForTraversal(InteractionPointId point, AgentId actor)
 	{
 		return requestInteraction(point, actor);
+	}
+
+	InteractionRequestId Building::requestInteractionWhilePassing(
+		InteractionPointId pointId, AgentId actorId)
+	{
+		auto point = mInteractionPoints.find(pointId);
+		auto actor = mAgents.find(actorId);
+		if (!point || !actor
+			|| actor->getSector() != mSectors[(size_t)point->mSector.value - 1].get())
+		{
+			return {};
+		}
+		for (auto const& [id, request] : mInteractionRequests.entries())
+		{
+			(void)id;
+			if (request->mActor == actorId && request->mResult == InteractionResult::Pending)
+				return {};
+		}
+
+		auto id = mInteractionRequests.add(unique_ptr<InteractionRequest>(
+			new InteractionRequest(pointId, actorId)));
+		auto request = mInteractionRequests.find(id);
+		for (auto const& binding : point->mBindings)
+		{
+			auto operationId = findOrCreateDeviceOperation(binding.command, actorId);
+			request->mOperations.emplace_back(operationId, binding.requirement);
+			if (auto operation = mDeviceOperations.find(operationId)) operation->mActivated = true;
+		}
+		pressPhysicalControl(pointId);
+
+		SimulationEvent event;
+		event.sequence = mNextEventSequence++;
+		event.tick = mSimulationTick;
+		event.type = SimulationEventType::InteractionRequestAdded;
+		event.phase = mCurrentPhase;
+		event.interactionRequest = makeInteractionRequestSnapshot(id, *request);
+		mEvents.push_back(std::move(event));
+		return id;
 	}
 
 	EntityLookup<InteractionRequest const> Building::lookupInteractionRequest(InteractionRequestId id) const
@@ -7458,6 +7506,125 @@ namespace core
 		}
 	}
 
+	void Building::pressPhysicalControl(InteractionPointId pointId)
+	{
+		for (auto const& sector : mSectors)
+		{
+			for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
+			{
+				auto object = sector->getObject(i);
+				auto button = object
+					? dynamic_pointer_cast<Button>(object->_getObject()) : nullptr;
+				if (button && button->getInteractionPointId() == pointId)
+				{
+					button->disable();
+					return;
+				}
+			}
+		}
+	}
+
+	void Building::tryPressUpcomingDoorButton(Agent& agent,
+		Vector2 const& movementStart, Vector2 const& movementEnd)
+	{
+		auto const& path = agent.mPath.path;
+		auto const target = agent.mPath.targetNode;
+		if (!path || target + 1 >= path->nodes.size())
+		{
+			agent.mEarlyDoorPressResource = {};
+			agent.mEarlyDoorPressAttempted = false;
+			return;
+		}
+
+		// A Door Button contributes an Interactable vertex to the in-sector route.
+		// Follow that route through its in-sector edges to find the next Door
+		// threshold without looking beyond the current Sector.
+		TraversalResourceId resourceId;
+		auto currentSector = agent.getSector();
+		for (uint32_t i = target + 1; i < path->nodes.size(); ++i)
+		{
+			auto const& node = path->nodes[i];
+			if (!node.edge || !node.targetVertex) break;
+			if (node.edge->getType() == EdgeType::Door)
+			{
+				auto sourceVertex = path->nodes[i - 1].targetVertex;
+				if (sourceVertex && sourceVertex->getSector().get() == currentSector)
+					resourceId = node.edge->getTraversalResourceId();
+				break;
+			}
+			if (node.targetVertex->getSector().get() != currentSector) break;
+		}
+		auto resource = mTraversalResources.find(resourceId);
+		if (!resource || !resource->mDoor
+			|| resource->mDoorActivationMode != DoorActivationMode::RemoteControlled)
+		{
+			agent.mEarlyDoorPressResource = {};
+			agent.mEarlyDoorPressAttempted = false;
+			return;
+		}
+		if (agent.mEarlyDoorPressResource != resourceId)
+		{
+			agent.mEarlyDoorPressResource = resourceId;
+			agent.mEarlyDoorPressAttempted = false;
+		}
+		if (agent.mEarlyDoorPressAttempted || !resource->mEnabled
+			|| resource->mDoor->isOpen() || resource->mDoor->isOpening())
+		{
+			return;
+		}
+
+		auto actorId = getAgentId(&agent);
+		for (auto const& [id, interaction] : mInteractionRequests.entries())
+		{
+			(void)id;
+			if (interaction->mActor == actorId
+				&& interaction->mResult == InteractionResult::Pending) return;
+		}
+
+		auto distanceToSegment = [&](Vector2 const& point)
+		{
+			auto delta = movementEnd - movementStart;
+			auto lengthSquared = delta.x * delta.x + delta.y * delta.y;
+			float amount = 0.0f;
+			if (lengthSquared > 0.0f)
+			{
+				auto fromStart = point - movementStart;
+				amount = clamp((fromStart.x * delta.x + fromStart.y * delta.y)
+					/ lengthSquared, 0.0f, 1.0f);
+			}
+			return point.distanceTo(movementStart + delta * amount);
+		};
+
+		InteractionPointId selected;
+		float selectedDistance = numeric_limits<float>::max();
+		auto sourceSector = SectorId{ (uint64_t)agent.getSector()->getIndex() + 1 };
+		for (auto pointId : resource->mControls)
+		{
+			auto point = mInteractionPoints.find(pointId);
+			if (!point || point->mSector != sourceSector) continue;
+			bool opensDoor = any_of(point->mBindings.begin(), point->mBindings.end(),
+				[&](InteractionBinding const& binding)
+				{
+					return binding.command.type == DeviceCommandType::OpenDoor
+						&& binding.command.desiredState
+						&& binding.command.traversalResource == resourceId;
+				});
+			if (!opensDoor) continue;
+			auto distance = distanceToSegment(point->mPosition);
+			if (distance > point->mReach) continue;
+			if (!selected || distance < selectedDistance - 0.001f
+				|| (abs(distance - selectedDistance) <= 0.001f && pointId < selected))
+			{
+				selected = pointId;
+				selectedDistance = distance;
+			}
+		}
+		if (!selected) return;
+
+		if (requestInteractionWhilePassing(selected, actorId))
+			agent.mEarlyDoorPressAttempted = true;
+	}
+
 	void Building::allocateInteractions()
 	{
 		for (auto const& [pointId, point] : mInteractionPoints.entries())
@@ -7531,6 +7698,9 @@ namespace core
 			}
 			if (point->mInteractionTicksRemaining == 0)
 			{
+				// Reflect the physical press in the rendered control. Auto-reenabling
+				// Buttons return to their normal colour after the configured delay.
+				pressPhysicalControl(pointId);
 				for (auto const& [operationId, requirement] : request->mOperations)
 				{
 					(void)requirement;
@@ -7645,7 +7815,14 @@ namespace core
 			for (auto const& [id, agent] : mAgents.entries())
 			{
 				(void)id;
+				auto const movementStart = agent->getGlobalPosition();
+				auto const approachingDoor = agent->getState() == Agent::State::MovingToVertex
+					|| (agent->getState() == Agent::State::TraversingEdge && agent->mTraversalTask
+						&& agent->mTraversalTask->edge
+						&& agent->mTraversalTask->edge->getType() != EdgeType::Door);
 				agent->update(timestep);
+				if (approachingDoor)
+					tryPressUpcomingDoorButton(*agent, movementStart, agent->getGlobalPosition());
 			}
 			moveInteractions(timestep);
 			break;
