@@ -212,6 +212,7 @@ namespace core
 		mTraversalPermits = {};
 		mSectors.clear();
 		mConstructionRecords.clear();
+		mPhysicalControlPlacements.clear();
 
 		mName = std::move(name);
 		mCellsWide = cellsWide;

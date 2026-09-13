@@ -21,6 +21,12 @@ namespace core
 	{
 	}
 
+	void Area::setCellPosition(uint32_t cellX, uint32_t cellY)
+	{
+		mCellX = cellX;
+		mCellY = cellY;
+	}
+
 	uint32_t Area::getCellX() const
 	{
 		return mCellX;

@@ -1,7 +1,9 @@
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include "core/Building.h"
 #include "core/Defines.h"
@@ -274,6 +276,89 @@ namespace
 		require(building.getNumSectors() == 0, "Deleted Location was retained");
 	}
 
+	float controlCenterX(core::Building::CreateObjectResult const& control)
+	{
+		auto object = control.sector->getObject(control.index)->_getObject();
+		return object->getPosition().x + object->getSize().x * 0.5f;
+	}
+
+	float controlCenterY(core::Building::CreateObjectResult const& control)
+	{
+		auto object = control.sector->getObject(control.index)->_getObject();
+		return object->getPosition().y + object->getSize().y * 0.5f;
+	}
+
+	void physicalControlsPreferDistinctWallPositions()
+	{
+		core::Building building("Control placement", 9, 2);
+		building.addCorridor(0, 1, 7);
+		auto room = building.addRoom("Back room", CORE_LAYER_BACK, 0, 4, 3, 1);
+		core::Building::CreateDoorOptions options;
+		options.activationMode = core::DoorActivationMode::RemoteControlled;
+		options.controls[CORE_LAYER_BACK] = true;
+
+		auto first = building.addSectorDoor(0, 5, options);
+		auto second = building.addSectorDoor(0, 6, options);
+		require(std::abs(controlCenterX(first.controls[CORE_LAYER_BACK]) - 5.0f) < 0.0001f
+			&& std::abs(controlCenterX(second.controls[CORE_LAYER_BACK]) - 6.0f) < 0.0001f,
+			"Adjacent Citadel-style Door controls did not choose distinct X positions");
+		auto standardY = CORE_BUTTON_Y_OFFSET
+			+ first.controls[CORE_LAYER_BACK].sector->getObject(first.controls[CORE_LAYER_BACK].index)
+				->_getObject()->getSize().y * 0.5f;
+		require(std::abs(controlCenterY(first.controls[CORE_LAYER_BACK]) - standardY) < 0.0001f
+			&& std::abs(controlCenterY(second.controls[CORE_LAYER_BACK]) - standardY) < 0.0001f,
+			"Separated Door controls retained obsolete height offsets");
+
+		core::SerializationWorkData workData;
+		auto writer = core::YamlSerializer::toString();
+		building.serialize(*writer, workData);
+		writer->serialize();
+		core::Building replayed("placeholder", 1, 1);
+		auto reader = core::YamlSerializer::fromString(writer->getSerializedString());
+		reader->deserialize();
+		require(replayed.deserialize(*reader, workData), "Control-placement replay failed");
+		std::vector<float> replayedCenters;
+		for (uint32_t i = 0; i < replayed.getSector(room)->getNumObjects(); ++i)
+		{
+			auto object = replayed.getSector(room)->getObject(i);
+			if (object && object->getObjectType() == core::SectorObjectType::InteractionPoint)
+				replayedCenters.push_back(object->_getObject()->getPosition().x
+					+ object->_getObject()->getSize().x * 0.5f);
+		}
+		std::sort(replayedCenters.begin(), replayedCenters.end());
+		require(replayedCenters.size() == 2
+			&& std::abs(replayedCenters[0] - 5.0f) < 0.0001f
+			&& std::abs(replayedCenters[1] - 6.0f) < 0.0001f,
+			"Control placement was not deterministic after YAML replay");
+
+		building.finishBuild();
+		building.pauseSimulation();
+		require(building.removeSectorDoor(second.door.sector->getIndex(), second.door.index),
+			"Adjacent Door could not be removed");
+		std::vector<float> remainingCenters;
+		for (uint32_t i = 0; i < building.getSector(room)->getNumObjects(); ++i)
+		{
+			auto object = building.getSector(room)->getObject(i);
+			if (object && object->getObjectType() == core::SectorObjectType::InteractionPoint)
+				remainingCenters.push_back(object->_getObject()->getPosition().x
+					+ object->_getObject()->getSize().x * 0.5f);
+		}
+		require(remainingCenters.size() == 1
+			&& std::abs(remainingCenters[0] - 6.0f) < 0.0001f,
+			"Remaining Door control did not return to its preferred position after removal");
+
+		core::Building fallback("Control fallback", 4, 2);
+		fallback.addCorridor(0, 0, 2);
+		fallback.addRoom("Narrow back room", CORE_LAYER_BACK, 0, 0, 2, 1);
+		auto left = fallback.addSectorDoor(0, 0, options);
+		auto right = fallback.addSectorDoor(0, 1, options);
+		require(std::abs(controlCenterX(left.controls[CORE_LAYER_BACK])
+				- controlCenterX(right.controls[CORE_LAYER_BACK])) < 0.0001f
+			&& std::abs(controlCenterY(left.controls[CORE_LAYER_BACK])
+				- controlCenterY(right.controls[CORE_LAYER_BACK])) > 0.049f,
+			"Unavoidable same-X controls did not use the height fallback");
+	}
+
 	void serializableTracksModificationState()
 	{
 		SerializableProbe probe;
@@ -314,5 +399,6 @@ void runSerializationSmokeChecks()
 	malformedValuesAndInvalidUsageThrowUsefulErrors();
 	buildingRoundTripsAuthoredStateAndAgents();
 	locationEditsArePlannedAndAppliedAtomically();
+	physicalControlsPreferDistinctWallPositions();
 	serializableTracksModificationState();
 }

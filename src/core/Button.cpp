@@ -27,10 +27,8 @@ namespace core
 			enable();
 	}
 
-	void Button::_adjustY(float delta)
+	void Button::_setPlacement(float centerX, float baseY, float yAdjustment)
 	{
-		auto pos = getPosition();
-		pos.y += delta;
-		setPosition(pos);
+		setPosition({ centerX - getSize().x * 0.5f, baseY + yAdjustment });
 	}
 }

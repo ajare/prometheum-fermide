@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <set>
 #include <iterator>
 #include <limits>
@@ -728,82 +729,245 @@ namespace core
 		};
 	}
 
-	Building::CreateObjectResult Building::createPhysicalControl(string const& name, uint32_t layerIndex, uint32_t x, uint32_t y, int side, uint32_t flags, uint32_t* vertexIdentifier)
+	Building::CreateObjectResult Building::createPhysicalControl(string const& name,
+		uint32_t layerIndex, uint32_t x, uint32_t y, int side, uint32_t flags,
+		uint32_t* vertexIdentifier, uint32_t alternateX, int alternateSide)
 	{
 		string caller = format("Building::createPhysicalControl({}, {}, {}, {}, {})", layerIndex, x, y, side, flags);
-		
-		validateCellOccupied(caller, layerIndex, x, y);
-		validateCellHasNoPhysicalControl(caller, layerIndex, x, y, side);
+		vector<PhysicalControlCandidate> candidates{ { x, side } };
+		if (alternateX != ~0u && alternateSide >= CORE_SIDE_LEFT
+			&& alternateSide <= CORE_SIDE_MIDDLE
+			&& (alternateX != x || alternateSide != side))
+		{
+			candidates.push_back({ alternateX, alternateSide });
+		}
 
-		// Create physical control
-		auto& cellDef = mLayers[layerIndex]->getCellDefinition(x, y);
+		uint32_t initialCandidate = ~0u;
+		uint32_t sectorIndex = ~0u;
+		for (uint32_t i = 0; i < candidates.size(); ++i)
+		{
+			auto const& candidate = candidates[i];
+			validateCellOccupied(caller, layerIndex, candidate.cellX, y);
+			auto const& cell = mLayers[layerIndex]->getCellDefinition(candidate.cellX, y);
+			if (sectorIndex == ~0u) sectorIndex = cell.sectorIndex;
+			else if (sectorIndex != cell.sectorIndex)
+				throw BuildingException(this, format("{} - candidate positions cross Sector boundaries", caller));
+			if (cell.controls[candidate.side] == ~0u && initialCandidate == ~0u)
+				initialCandidate = i;
+		}
+		if (initialCandidate == ~0u)
+		{
+			// Include the not-yet-created control in the row optimization. This can
+			// move a flexible existing control out of the required slot before the
+			// new object is constructed.
+			mPhysicalControlPlacements.push_back({ layerIndex, sectorIndex, ~0u, y,
+				candidates, 0, 0 });
+			try
+			{
+				reflowPhysicalControls(layerIndex, sectorIndex, y);
+				initialCandidate = mPhysicalControlPlacements.back().currentCandidate;
+			}
+			catch (...)
+			{
+				mPhysicalControlPlacements.pop_back();
+				throw;
+			}
+			mPhysicalControlPlacements.pop_back();
+		}
+
+		auto const& initial = candidates[initialCandidate];
+		validateCellHasNoPhysicalControl(caller, layerIndex, initial.cellX, y, initial.side);
+		auto& cellDef = mLayers[layerIndex]->getCellDefinition(initial.cellX, y);
 		auto sector = _getSector(cellDef.sectorIndex);
 
-		// Calculate x and y offset within cell.
-		// - If side is left or right, then x offset is either -.x or 1.x, respectively, relative to x
-		// - If side is middle, then x offset is 0.5
-		float xOffset, yOffset;
+		float xOffset = initial.side == CORE_SIDE_MIDDLE
+			? 0.5f - CORE_BUTTON_SIZE * 0.5f
+			: initial.side - CORE_BUTTON_SIZE * 0.5f;
+		auto controlIndex = sector->createPhysicalControl(sector, name, initial.cellX, y,
+			xOffset, CORE_BUTTON_Y_OFFSET, flags, vertexIdentifier);
+		cellDef.controls[initial.side] = controlIndex;
+		mPhysicalControlPlacements.push_back({ layerIndex, sector->getIndex(), controlIndex, y,
+			std::move(candidates), 0, initialCandidate });
+		reflowPhysicalControls(layerIndex, sector->getIndex(), y);
 
-		switch (side)
+		return { controlIndex, SectorObjectType::InteractionPoint, sector };
+	}
+
+	void Building::reflowPhysicalControls(uint32_t layerIndex, uint32_t sectorIndex, uint32_t y)
+	{
+		vector<uint32_t> row;
+		for (uint32_t i = 0; i < mPhysicalControlPlacements.size(); ++i)
 		{
-		case CORE_SIDE_LEFT:
-		case CORE_SIDE_RIGHT:
-			xOffset = side - CORE_BUTTON_SIZE * 0.5f;
-			yOffset = CORE_BUTTON_Y_OFFSET;
-			break;
-
-		case CORE_SIDE_MIDDLE:
-			xOffset = 0.5f - CORE_BUTTON_SIZE * 0.5f;
-			yOffset = CORE_BUTTON_Y_OFFSET;
-			break;
-
-		default:
-			throw UnhandledException(side, "side");
+			auto const& placement = mPhysicalControlPlacements[i];
+			if (placement.layerIndex == layerIndex && placement.sectorIndex == sectorIndex
+				&& placement.cellY == y)
+				row.push_back(i);
 		}
+		if (row.empty()) return;
 
-		// Adjust the height when physical controls would overlap.
-		if (side == CORE_SIDE_LEFT && x > 0)
+		auto centerKey = [](PhysicalControlCandidate const& candidate)
 		{
-			auto& lcd = mLayers[layerIndex]->getCellDefinition(x - 1, y);
-			if (lcd.sectorIndex == cellDef.sectorIndex)
-			{
-				if (lcd.controls[CORE_SIDE_RIGHT] != ~0u)
-				{
-					// Clash: adjust heights
-					auto ctrl = _getSector(lcd.sectorIndex)->getObject(lcd.controls[CORE_SIDE_RIGHT]);
-					auto button = static_pointer_cast<Button>(ctrl->_getObject());
-
-					button->_adjustY(0.025f);
-					yOffset -= 0.025f;
-				}
-			}
-		}
-		else if (side == CORE_SIDE_RIGHT && x < (getCellsWide() - 1))
-		{
-			auto& lcd = mLayers[layerIndex]->getCellDefinition(x + 1, y);
-
-			if (lcd.sectorIndex == cellDef.sectorIndex)
-			{
-				if (lcd.controls[CORE_SIDE_LEFT] != ~0u)
-				{
-					// Clash: adjust heights
-					auto ctrl = _getSector(lcd.sectorIndex)->getObject(lcd.controls[CORE_SIDE_LEFT]);
-					auto button = static_pointer_cast<Button>(ctrl->_getObject());
-
-					button->_adjustY(-0.025f);
-					yOffset += 0.025f;
-				}
-			}
-		}
-
-		auto controlIndex = sector->createPhysicalControl(sector, name, x, y, xOffset, yOffset, flags, vertexIdentifier);
-		cellDef.controls[side] = controlIndex;
-
-		return {
-			controlIndex,
-			SectorObjectType::InteractionPoint,
-			sector
+			return static_cast<int64_t>(candidate.cellX) * 2
+				+ (candidate.side == CORE_SIDE_RIGHT ? 2
+					: candidate.side == CORE_SIDE_MIDDLE ? 1 : 0);
 		};
+		auto connected = [&](uint32_t left, uint32_t right)
+		{
+			for (auto const& a : mPhysicalControlPlacements[left].candidates)
+				for (auto const& b : mPhysicalControlPlacements[right].candidates)
+					if (centerKey(a) == centerKey(b)) return true;
+			return false;
+		};
+
+		vector<bool> visited(row.size(), false);
+		for (uint32_t root = 0; root < row.size(); ++root)
+		{
+			if (visited[root]) continue;
+			vector<uint32_t> component;
+			vector<uint32_t> pending{ root };
+			visited[root] = true;
+			while (!pending.empty())
+			{
+				auto local = pending.back();
+				pending.pop_back();
+				component.push_back(row[local]);
+				for (uint32_t other = 0; other < row.size(); ++other)
+				{
+					if (!visited[other] && connected(row[local], row[other]))
+					{
+						visited[other] = true;
+						pending.push_back(other);
+					}
+				}
+			}
+			sort(component.begin(), component.end());
+
+			vector<uint32_t> choice(component.size()), bestChoice;
+			set<pair<uint32_t, int>> occupiedSlots;
+			bool haveBest = false;
+			uint32_t bestUnique = 0, bestMoved = 0, bestDefaults = 0;
+			function<void(uint32_t)> search = [&](uint32_t depth)
+			{
+				if (depth != component.size())
+				{
+					auto const& placement = mPhysicalControlPlacements[component[depth]];
+					for (uint32_t candidateIndex = 0; candidateIndex < placement.candidates.size(); ++candidateIndex)
+					{
+						auto const& candidate = placement.candidates[candidateIndex];
+						auto slot = make_pair(candidate.cellX, candidate.side);
+						if (!occupiedSlots.insert(slot).second) continue;
+						choice[depth] = candidateIndex;
+						search(depth + 1);
+						occupiedSlots.erase(slot);
+					}
+					return;
+				}
+
+				set<int64_t> centers;
+				uint32_t moved = 0, defaults = 0;
+				for (uint32_t i = 0; i < component.size(); ++i)
+				{
+					auto const& placement = mPhysicalControlPlacements[component[i]];
+					centers.insert(centerKey(placement.candidates[choice[i]]));
+					moved += choice[i] != placement.currentCandidate;
+					defaults += choice[i] == placement.defaultCandidate;
+				}
+				auto unique = static_cast<uint32_t>(centers.size());
+				bool better = !haveBest || unique > bestUnique
+					|| (unique == bestUnique && moved < bestMoved);
+				if (!better && haveBest && unique == bestUnique && moved == bestMoved)
+				{
+					for (uint32_t i = 0; i < component.size(); ++i)
+					{
+						auto const& placement = mPhysicalControlPlacements[component[i]];
+						bool retained = choice[i] == placement.currentCandidate;
+						bool bestRetained = bestChoice[i] == placement.currentCandidate;
+						if (retained != bestRetained) { better = retained; break; }
+					}
+					if (!better)
+					{
+						bool sameRetention = true;
+						for (uint32_t i = 0; i < component.size(); ++i)
+						{
+							auto const& placement = mPhysicalControlPlacements[component[i]];
+							if ((choice[i] == placement.currentCandidate)
+								!= (bestChoice[i] == placement.currentCandidate))
+							{ sameRetention = false; break; }
+						}
+						if (sameRetention && (defaults > bestDefaults
+							|| (defaults == bestDefaults && choice < bestChoice))) better = true;
+					}
+				}
+				if (better)
+				{
+					haveBest = true;
+					bestUnique = unique;
+					bestMoved = moved;
+					bestDefaults = defaults;
+					bestChoice = choice;
+				}
+			};
+			search(0);
+			if (!haveBest) throw BuildingException(this, "Physical-control placement constraints cannot be satisfied");
+			for (uint32_t i = 0; i < component.size(); ++i)
+				mPhysicalControlPlacements[component[i]].currentCandidate = bestChoice[i];
+		}
+
+		// Replace cell-side registrations atomically after all assignments are known.
+		for (auto index : row)
+		{
+			auto const& placement = mPhysicalControlPlacements[index];
+			if (placement.objectIndex == ~0u) continue;
+			for (auto const& candidate : placement.candidates)
+			{
+				auto& slot = mLayers[layerIndex]->getCellDefinition(candidate.cellX, y).controls[candidate.side];
+				if (slot == placement.objectIndex) slot = ~0u;
+			}
+		}
+		map<int64_t, vector<uint32_t>> collisions;
+		for (auto index : row)
+		{
+			auto& placement = mPhysicalControlPlacements[index];
+			auto const& candidate = placement.candidates[placement.currentCandidate];
+			if (placement.objectIndex != ~0u)
+			{
+				auto& slot = mLayers[layerIndex]->getCellDefinition(candidate.cellX, y).controls[candidate.side];
+				if (slot != ~0u) throw BuildingException(this, "Physical-control slot assignment collided with an existing control");
+				slot = placement.objectIndex;
+			}
+			collisions[centerKey(candidate)].push_back(index);
+		}
+
+		for (auto const& [center, controls] : collisions)
+		{
+			(void)center;
+			for (auto index : controls)
+			{
+				auto& placement = mPhysicalControlPlacements[index];
+				if (placement.objectIndex == ~0u) continue;
+				auto const& candidate = placement.candidates[placement.currentCandidate];
+				float centerX = candidate.cellX + (candidate.side == CORE_SIDE_RIGHT ? 1.0f
+					: candidate.side == CORE_SIDE_MIDDLE ? 0.5f : 0.0f);
+				float adjustment = 0.0f;
+				if (controls.size() > 1)
+				{
+					if (candidate.side == CORE_SIDE_RIGHT) adjustment = 0.025f;
+					else if (candidate.side == CORE_SIDE_LEFT) adjustment = -0.025f;
+				}
+				auto control = static_pointer_cast<ButtonSectorObject>(
+					mSectors[sectorIndex]->_getObject(placement.objectIndex));
+				control->_setCellPosition(candidate.cellX, y);
+				auto button = static_pointer_cast<Button>(control->_getObject());
+				button->_setPlacement(centerX, y + CORE_BUTTON_Y_OFFSET, adjustment);
+				if (placement.hasInteractionOffset)
+				{
+					auto point = mInteractionPoints.find(button->getInteractionPointId());
+					if (point)
+						point->mPosition = button->getPosition() + button->getSize() * 0.5f
+							+ placement.interactionOffset;
+				}
+			}
+		}
 	}
 
 	void Building::bindPhysicalControl(CreateObjectResult& control, InteractionPointId point)
@@ -813,6 +977,19 @@ namespace core
 		auto button = dynamic_pointer_cast<Button>(object);
 		if (!button) throw logic_error("Physical control is not backed by a Button");
 		button->_setInteractionPointId(point);
+		for (auto& placement : mPhysicalControlPlacements)
+		{
+			if (placement.sectorIndex != control.sector->getIndex()
+				|| placement.objectIndex != control.index) continue;
+			auto interaction = mInteractionPoints.find(point);
+			if (interaction)
+			{
+				placement.interactionOffset = interaction->mPosition
+					- (button->getPosition() + button->getSize() * 0.5f);
+				placement.hasInteractionOffset = true;
+			}
+			break;
+		}
 	}
 
 	Building::CreateObjectResult Building::createWalkway(uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t* vertexIdentifier)
@@ -1649,8 +1826,21 @@ namespace core
 	{
 		int side = ((x + cellsWide) - 1) == sector->getCellX1() ? CORE_SIDE_LEFT : CORE_SIDE_RIGHT;
 		uint32_t buttonX = x + (side == CORE_SIDE_LEFT ? 0 : cellsWide - 1);
-		
-		auto obj = createPhysicalControl("Door button", sector->getLayerIndex(), buttonX, y, side, flags);
+		uint32_t alternateX = ~0u;
+		int alternateSide = -1;
+		if (side == CORE_SIDE_RIGHT && x > sector->getCellX0())
+		{
+			alternateX = x;
+			alternateSide = CORE_SIDE_LEFT;
+		}
+		else if (side == CORE_SIDE_LEFT && x + cellsWide - 1 < sector->getCellX1())
+		{
+			alternateX = x + cellsWide - 1;
+			alternateSide = CORE_SIDE_RIGHT;
+		}
+
+		auto obj = createPhysicalControl("Door button", sector->getLayerIndex(), buttonX, y,
+			side, flags, nullptr, alternateX, alternateSide);
 
 		if (index)
 		{

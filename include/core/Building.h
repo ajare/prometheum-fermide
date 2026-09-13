@@ -319,6 +319,27 @@ namespace core
 		std::vector<ConstructionRecord> mConstructionRecords;
 		bool mDeserializingConstruction{ false };
 
+		struct PhysicalControlCandidate
+		{
+			uint32_t cellX{ 0 };
+			int side{ CORE_SIDE_MIDDLE };
+		};
+
+		struct PhysicalControlPlacement
+		{
+			uint32_t layerIndex{ 0 };
+			uint32_t sectorIndex{ 0 };
+			uint32_t objectIndex{ 0 };
+			uint32_t cellY{ 0 };
+			std::vector<PhysicalControlCandidate> candidates;
+			uint32_t defaultCandidate{ 0 };
+			uint32_t currentCandidate{ 0 };
+			Vector2 interactionOffset;
+			bool hasInteractionOffset{ false };
+		};
+
+		std::vector<PhysicalControlPlacement> mPhysicalControlPlacements;
+
 	private:
 
 		bool childrenModified() const override;
@@ -415,7 +436,10 @@ namespace core
 
 		CreateObjectResult createBulkheadDoor(uint32_t layerIndex, uint32_t x, uint32_t y, int side);
 
-		CreateObjectResult createPhysicalControl(std::string const& name, uint32_t layerIndex, uint32_t x, uint32_t y, int side, uint32_t flags, uint32_t* vertexIdentifier = nullptr);
+		CreateObjectResult createPhysicalControl(std::string const& name, uint32_t layerIndex, uint32_t x, uint32_t y, int side, uint32_t flags, uint32_t* vertexIdentifier = nullptr,
+			uint32_t alternateX = ~0u, int alternateSide = -1);
+
+		void reflowPhysicalControls(uint32_t layerIndex, uint32_t sectorIndex, uint32_t y);
 		void bindPhysicalControl(CreateObjectResult& control, InteractionPointId point);
 
 		CreateObjectResult createWalkway(uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t* vertexIdentifier = nullptr);

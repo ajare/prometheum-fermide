@@ -29,6 +29,6 @@ namespace core
 		void enable();
 		void disable();
 		void update(float frameTime) override;
-		void _adjustY(float delta);
+		void _setPlacement(float centerX, float baseY, float yAdjustment = 0.0f);
 	};
 }

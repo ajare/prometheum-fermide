@@ -19,6 +19,9 @@ namespace core
 
 		Vector2 mSize;
 
+	protected:
+		void setCellPosition(uint32_t cellX, uint32_t cellY);
+
 	public:
 
 		Area(uint32_t cellX, uint32_t cellY, float xCellOffset, float yCellOffset, float width, float height);
