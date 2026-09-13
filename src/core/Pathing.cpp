@@ -154,7 +154,12 @@ namespace core
                 {
                     auto nextVertex = edge->getOtherVertex(curVertex);
 
-                    auto newCost = costSoFar[curVertex] + edge->getWeight(nextVertex, agent, true);
+                    auto edgeCost = edge->getWeight(nextVertex, agent, true);
+                    if (!isfinite(edgeCost))
+                    {
+                        continue; // A conditional resource has no reachable preparation control.
+                    }
+                    auto newCost = costSoFar[curVertex] + edgeCost;
 
                     if (costSoFar.find(nextVertex) == costSoFar.end() || newCost < costSoFar[nextVertex])
                     {

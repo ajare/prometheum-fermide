@@ -88,7 +88,7 @@ namespace core
 
 	bool ExtensibleObject::retract()
 	{
-		if (!isExtensible())
+		if (!isExtensible() || mExtensionLeaseCount != 0)
 		{
 			return false;
 		}
@@ -125,7 +125,9 @@ namespace core
 
 	bool ExtensibleObject::validateAction(ControllableActionType type) const
 	{
-		return type == ControllableActionType::Toggle;
+		return type == ControllableActionType::Toggle
+			|| type == ControllableActionType::Extend
+			|| type == ControllableActionType::Retract;
 	}
 
 	ControllableActionStatus ExtensibleObject::startAction(ControllableAction const& action)
@@ -133,7 +135,14 @@ namespace core
 		switch (action.type)
 		{
 		case ControllableActionType::Toggle:
-			toggle();
+			return toggle() ? ControllableActionStatus::InProgress : ControllableActionStatus::Rejected;
+		case ControllableActionType::Extend:
+			if (isExtended()) return ControllableActionStatus::CompletedSuccess;
+			extend();
+			return ControllableActionStatus::InProgress;
+		case ControllableActionType::Retract:
+			if (isRetracted()) return ControllableActionStatus::CompletedSuccess;
+			if (!retract()) return ControllableActionStatus::Rejected;
 			return ControllableActionStatus::InProgress;
 
 		default:
@@ -146,6 +155,8 @@ namespace core
 		switch (action.type)
 		{
 		case ControllableActionType::Toggle:
+		case ControllableActionType::Extend:
+		case ControllableActionType::Retract:
 			if (mState == State::Extending)
 			{
 				mState = State::Extended;
@@ -168,6 +179,8 @@ namespace core
 		switch (action.type)
 		{
 		case ControllableActionType::Toggle:
+		case ControllableActionType::Extend:
+		case ControllableActionType::Retract:
 			if (mState == State::Extending)
 			{
 				mExtendedPct = min(mExtendedPct + frameTime / getExtendRetractTime(), 1.0f);

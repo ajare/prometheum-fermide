@@ -19,6 +19,12 @@ namespace core
 		case ControllableActionType::Close:
 			return "Close";
 
+		case ControllableActionType::Extend:
+			return "Extend";
+
+		case ControllableActionType::Retract:
+			return "Retract";
+
 		case ControllableActionType::Toggle:
 			return "Toggle";
 

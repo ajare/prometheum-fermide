@@ -921,6 +921,56 @@ namespace
 			&& resource->admissionQueue.empty();
 	}
 
+	bool extensibleLadderUsesDesiredStateAndLeases()
+	{
+		core::Building building("Extensible ladder", 4, 4);
+		auto lower = building.addCorridor(0, 0, 3);
+		auto upper = building.addCorridor(2, 0, 3);
+		core::Building::CreateLadderOptions options{ 3, true, false };
+		options.agentSpacing = 10.0f;
+		auto created = building.addLadder(0, 1, options);
+		building.finishBuild();
+
+		auto target = building.getGraph()->getClosestVertexInSector(
+			building.getSector(upper).get(), { 1.5f, 2.0f });
+		auto first = building.createAgent("Extension owner", lower, 0, 1.5f);
+		auto second = building.createAgent("Shared extension owner", lower, 0, 1.5f);
+		for (auto id : { first, second })
+		{
+			auto agent = building.lookupAgent(id).entity;
+			auto path = building.getGraph()->calculatePath(agent, target);
+			if (!path) return false;
+			agent->setPath(path, true);
+		}
+
+		bool sawSharedOperation = false;
+		bool sawLease = false;
+		for (uint32_t i = 0; i < MaximumSimulationTicks * 3; ++i)
+		{
+			building.advanceTick();
+			auto snapshot = building.getSimulationSnapshot();
+			auto resource = std::find_if(snapshot.traversalResources.begin(), snapshot.traversalResources.end(),
+				[&](auto const& value) { return value.id == created.traversalResource; });
+			if (resource == snapshot.traversalResources.end() || !resource->isExtensible) return false;
+			sawLease = sawLease || resource->extensionRequestLeaseCount > 0
+				|| resource->extensionOccupantLeaseCount > 0;
+			for (auto const& operation : snapshot.deviceOperations)
+				if (operation.command.type == core::DeviceCommandType::SetExtendedState
+					&& operation.command.desiredState && operation.requesters.size() == 2)
+					sawSharedOperation = true;
+			if (building.lookupAgent(first).entity->getState() == core::Agent::State::Idle
+				&& building.lookupAgent(second).entity->getState() == core::Agent::State::Idle) break;
+		}
+		auto snapshot = building.getSimulationSnapshot();
+		auto resource = std::find_if(snapshot.traversalResources.begin(), snapshot.traversalResources.end(),
+			[&](auto const& value) { return value.id == created.traversalResource; });
+		return sawSharedOperation && sawLease && resource != snapshot.traversalResources.end()
+			&& resource->extended && resource->extensionRequestLeaseCount == 0
+			&& resource->extensionOccupantLeaseCount == 0
+			&& building.lookupAgent(first).entity->getSector() == building.getSector(upper).get()
+			&& building.lookupAgent(second).entity->getSector() == building.getSector(upper).get();
+	}
+
 	bool directionalLadderBoundsBatchesAndPreventsOpposingAdmission()
 	{
 		core::Building building("Directional ladder", 4, 4);
@@ -1242,6 +1292,11 @@ int main()
 		if (!directionalLadderBoundsBatchesAndPreventsOpposingAdmission())
 		{
 			std::cerr << "FAIL: directional ladder admission or bounded-batch fairness failed\n";
+			return 1;
+		}
+		if (!extensibleLadderUsesDesiredStateAndLeases())
+		{
+			std::cerr << "FAIL: extensible ladder preparation or leases failed\n";
 			return 1;
 		}
 		if (!staircaseCoordinationIsExplicitlyOptIn())

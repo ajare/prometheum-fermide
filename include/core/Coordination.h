@@ -18,6 +18,8 @@ namespace core
 {
 	class Building;
 	class Door;
+	class ExtensibleObject;
+	class ForceBridge;
 	class Ladder;
 	class Staircase;
 
@@ -34,7 +36,8 @@ namespace core
 	enum struct DeviceCommandType
 	{
 		SetSectorLights,
-		OpenDoor
+		OpenDoor,
+		SetExtendedState
 	};
 
 	enum struct DoorOpenLeaseKind
@@ -218,6 +221,8 @@ namespace core
 		friend class Building;
 		std::string mName;
 		std::shared_ptr<Door> mDoor;
+		std::shared_ptr<ExtensibleObject> mExtensible;
+		std::shared_ptr<ForceBridge> mForceBridge;
 		std::shared_ptr<Ladder> mLadder;
 		std::shared_ptr<Staircase> mStaircase;
 		SectorId mLadderSector;
@@ -227,6 +232,11 @@ namespace core
 		std::vector<AgentId> mOccupants;
 		std::vector<TraversalRequestId> mAdmissionReservations;
 		std::vector<TraversalRequestId> mAdmissionQueue;
+		// Request leases cover preparation, admission, and active crossings;
+		// occupant leases persist independently after a ladder entry commits.
+		std::set<TraversalRequestId> mExtensionRequestLeases;
+		std::set<AgentId> mExtensionOccupantLeases;
+		bool mRetractionPending{ false };
 		TraversalDirection mActiveDirection{ TraversalDirection::None };
 		uint32_t mDirectionalBatchCount{ 0 };
 		uint32_t mDirectionalBatchLimit{ 1 };
@@ -249,12 +259,15 @@ namespace core
 			: mName(std::move(name)), mDoor(std::move(door)),
 			  mDoorActivationMode(mode), mHoldOpenTicks(holdOpenTicks) {}
 		TraversalResource(std::string name, std::shared_ptr<Ladder> ladder,
-			SectorId ladderSector, float spacing, uint32_t capacity,
-			uint32_t batchLimit, std::vector<Vector2> positions)
-			: mName(std::move(name)), mLadder(std::move(ladder)),
+			std::shared_ptr<ExtensibleObject> extensible, SectorId ladderSector,
+			float spacing, uint32_t capacity, uint32_t batchLimit, std::vector<Vector2> positions)
+			: mName(std::move(name)), mExtensible(std::move(extensible)), mLadder(std::move(ladder)),
 			  mLadderSector(ladderSector), mLadderSpacing(spacing), mCapacity(capacity),
 			  mCapacityPositions(std::move(positions)), mOccupants(capacity),
 			  mAdmissionReservations(capacity), mDirectionalBatchLimit(batchLimit) {}
+		TraversalResource(std::string name, std::shared_ptr<ForceBridge> forceBridge,
+			std::shared_ptr<ExtensibleObject> extensible)
+			: mName(std::move(name)), mExtensible(std::move(extensible)), mForceBridge(std::move(forceBridge)) {}
 		TraversalResource(std::string name, std::shared_ptr<Staircase> staircase,
 			SectorId staircaseSector, uint32_t capacity, uint32_t batchLimit,
 			std::vector<Vector2> positions)
@@ -268,6 +281,8 @@ namespace core
 		std::string const& getName() const { return mName; }
 		bool isDoor() const { return mDoor != nullptr; }
 		bool isLadder() const { return mLadder != nullptr; }
+		bool isForceBridge() const { return mForceBridge != nullptr; }
+		bool isExtensible() const { return mExtensible != nullptr; }
 		bool isNarrowStaircase() const { return mStaircase != nullptr; }
 		bool isEnabled() const { return mEnabled; }
 		uint32_t getCapacity() const { return mCapacity; }

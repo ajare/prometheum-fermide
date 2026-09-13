@@ -10,6 +10,8 @@ namespace core
 		None,
 		Open,
 		Close,
+		Extend,
+		Retract,
 		Toggle,
 		ToggleLights,
 		CallToStop,

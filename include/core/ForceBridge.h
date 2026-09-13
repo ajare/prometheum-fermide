@@ -5,6 +5,7 @@
 
 #include "core/ExtensibleObject.h"
 #include "core/DependentPathControllable.h"
+#include "core/EntityId.h"
 
 
 namespace core
@@ -18,6 +19,8 @@ namespace core
 
 		int mFromSide;
 
+		TraversalResourceId mTraversalResource;
+
 	public:
 
 		ForceBridge(uint32_t cellX, uint32_t cellY, uint32_t cellsWide, int fromSide, bool extensible, bool startExtended);
@@ -25,6 +28,10 @@ namespace core
 		~ForceBridge() = default;
 
 		[[nodiscard]] int getFromSide() const;
+
+		[[nodiscard]] TraversalResourceId getTraversalResourceId() const { return mTraversalResource; }
+
+		void configureTraversal(TraversalResourceId resource) { mTraversalResource = resource; }
 
 		// Overridden from Object
 		[[nodiscard]] std::string getDescription() const override;

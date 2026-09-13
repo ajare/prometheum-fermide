@@ -1036,6 +1036,19 @@ namespace core
 			SectorId{ (uint64_t)sectorIndex + 1 }, options.agentSpacing,
 			options.directionalBatchLimit);
 		ladder->configureTraversal(traversalResource);
+		auto registerExtensionControl = [&](CreateObjectResult const& control)
+		{
+			auto object = control.sector->_getObject(control.index);
+			DeviceCommand command;
+			command.type = DeviceCommandType::SetExtendedState;
+			command.desiredState = true;
+			command.traversalResource = traversalResource;
+			auto point = createInteractionPoint("Ladder extension control",
+				SectorId{ (uint64_t)control.sector->getIndex() + 1 },
+				object->getPosition() + object->getSize() * 0.5f, 0.15f,
+				getFixedTimestep(), { { command, InteractionBindingRequirement::Required } });
+			addTraversalControl(traversalResource, point);
+		};
 
 		// See if we need an Controller
 		CreateObjectResult createdCtrls[2];
@@ -1054,6 +1067,7 @@ namespace core
 
 			// Lower
 			createdCtrls[CORE_LEVEL_LOW] = _createLadderButton(foreSector0, x, y0, side, 0);
+			registerExtensionControl(createdCtrls[CORE_LEVEL_LOW]);
 
 			auto buttonSectorObject = dynamic_pointer_cast<ButtonSectorObject>(createdCtrls[CORE_LEVEL_LOW].sector->_getObject(createdCtrls[CORE_LEVEL_LOW].index));
 			orchSystem->addButton(dynamic_pointer_cast<Button>(buttonSectorObject->_getObject()));
@@ -1064,6 +1078,7 @@ namespace core
 			side = x == locX1 ? CORE_SIDE_LEFT : CORE_SIDE_RIGHT;
 
 			createdCtrls[CORE_LEVEL_HIGH] = _createLadderButton(foreSector1, x, y1, side, 0);
+			registerExtensionControl(createdCtrls[CORE_LEVEL_HIGH]);
 
 			buttonSectorObject = dynamic_pointer_cast<ButtonSectorObject>(createdCtrls[CORE_LEVEL_HIGH].sector->_getObject(createdCtrls[CORE_LEVEL_HIGH].index));
 			orchSystem->addButton(dynamic_pointer_cast<Button>(buttonSectorObject->_getObject()));
@@ -1951,6 +1966,11 @@ namespace core
 		cellDef.floorIndex = fbObject.index;
 		cellDef.floorType = CellFloorType::ForceBridge;
 
+		auto forceBridge = dynamic_pointer_cast<ForceBridgeSectorObject>(
+			fbObject.sector->_getObject(fbObject.index))->getForceBridge();
+		auto traversalResource = createForceBridgeTraversalResource("Force bridge", forceBridge);
+		forceBridge->configureTraversal(traversalResource);
+
 		// See if we need an Controller
 		CreateObjectResult createdCtrls[2];
 
@@ -1961,8 +1981,6 @@ namespace core
 				throw BuildingException(this, format("{} - No space to place Buttons for Ladder", caller));
 			}
 
-			auto forceBridge = dynamic_pointer_cast<ForceBridgeSectorObject>(fbObject.sector->_getObject(fbObject.index))->getForceBridge();
-
 			// Set up the ForceBridge and Button with an appropriate Orchestrator
 			auto orchSystem = make_shared<ButtonExtensibleObjectOrchestratedSystem>(mOrchestrator);
 
@@ -1971,6 +1989,13 @@ namespace core
 			if (options.controllerCount > 0)
 			{
 				createdCtrls[0] = _createForceBridgeButton(fbObject.sector, x, y, options.width, options.fromSide, 0);
+				auto object = createdCtrls[0].sector->_getObject(createdCtrls[0].index);
+				DeviceCommand command{ DeviceCommandType::SetExtendedState, {}, true, traversalResource };
+				auto point = createInteractionPoint("Force bridge extension control",
+					SectorId{ (uint64_t)createdCtrls[0].sector->getIndex() + 1 },
+					object->getPosition() + object->getSize() * 0.5f, 0.15f,
+					getFixedTimestep(), { { command, InteractionBindingRequirement::Required } });
+				addTraversalControl(traversalResource, point);
 
 				auto buttonSectorObject = dynamic_pointer_cast<ButtonSectorObject>(createdCtrls[0].sector->_getObject(createdCtrls[0].index));
 				orchSystem->addButton(dynamic_pointer_cast<Button>(buttonSectorObject->_getObject()));
@@ -1978,6 +2003,13 @@ namespace core
 			if (options.controllerCount > 1)
 			{
 				createdCtrls[1] = _createForceBridgeButton(fbObject.sector, x, y, options.width, 1 - options.fromSide, 0);
+				auto object = createdCtrls[1].sector->_getObject(createdCtrls[1].index);
+				DeviceCommand command{ DeviceCommandType::SetExtendedState, {}, true, traversalResource };
+				auto point = createInteractionPoint("Force bridge extension control",
+					SectorId{ (uint64_t)createdCtrls[1].sector->getIndex() + 1 },
+					object->getPosition() + object->getSize() * 0.5f, 0.15f,
+					getFixedTimestep(), { { command, InteractionBindingRequirement::Required } });
+				addTraversalControl(traversalResource, point);
 
 				auto buttonSectorObject = dynamic_pointer_cast<ButtonSectorObject>(createdCtrls[1].sector->_getObject(createdCtrls[1].index));
 				orchSystem->addButton(dynamic_pointer_cast<Button>(buttonSectorObject->_getObject()));
@@ -1988,7 +2020,8 @@ namespace core
 
 		return {
 			fbObject,
-			{ createdCtrls[0], createdCtrls[1] }
+			{ createdCtrls[0], createdCtrls[1] },
+			traversalResource
 		};
 	}
 
@@ -2036,6 +2069,19 @@ namespace core
 			SectorId{ (uint64_t)sectorIndex + 1 }, options.agentSpacing,
 			options.directionalBatchLimit);
 		ladder->configureTraversal(traversalResource);
+		auto registerExtensionControl = [&](CreateObjectResult const& control)
+		{
+			auto object = control.sector->_getObject(control.index);
+			DeviceCommand command;
+			command.type = DeviceCommandType::SetExtendedState;
+			command.desiredState = true;
+			command.traversalResource = traversalResource;
+			auto point = createInteractionPoint("Ladder extension control",
+				SectorId{ (uint64_t)control.sector->getIndex() + 1 },
+				object->getPosition() + object->getSize() * 0.5f, 0.15f,
+				getFixedTimestep(), { { command, InteractionBindingRequirement::Required } });
+			addTraversalControl(traversalResource, point);
+		};
 
 		for (uint32_t iy = y0; iy <= y1; ++iy)
 		{
@@ -2065,12 +2111,14 @@ namespace core
 
 			// Lower
 			createdCtrls[CORE_LEVEL_LOW] = _createLadderButton(ladderObject.sector, x, y0, side, 0);
+			registerExtensionControl(createdCtrls[CORE_LEVEL_LOW]);
 
 			auto buttonSectorObject = dynamic_pointer_cast<ButtonSectorObject>(createdCtrls[CORE_LEVEL_LOW].sector->_getObject(createdCtrls[CORE_LEVEL_LOW].index));
 			orchSystem->addButton(dynamic_pointer_cast<Button>(buttonSectorObject->_getObject()));
 
 			// Upper
 			createdCtrls[CORE_LEVEL_HIGH] = _createLadderButton(ladderObject.sector, x, y1, side, 0);
+			registerExtensionControl(createdCtrls[CORE_LEVEL_HIGH]);
 
 			buttonSectorObject = dynamic_pointer_cast<ButtonSectorObject>(createdCtrls[CORE_LEVEL_HIGH].sector->_getObject(createdCtrls[CORE_LEVEL_HIGH].index));
 			orchSystem->addButton(dynamic_pointer_cast<Button>(buttonSectorObject->_getObject()));
@@ -2483,6 +2531,12 @@ namespace core
 		result.name = resource.getName();
 		result.isDoor = resource.mDoor != nullptr;
 		result.isLadder = resource.mLadder != nullptr;
+		result.isForceBridge = resource.mForceBridge != nullptr;
+		result.isExtensible = resource.mExtensible && resource.mExtensible->isExtensible();
+		result.extended = resource.mExtensible && resource.mExtensible->isExtended();
+		result.retractionPending = resource.mRetractionPending;
+		result.extensionRequestLeaseCount = (uint32_t)resource.mExtensionRequestLeases.size();
+		result.extensionOccupantLeaseCount = (uint32_t)resource.mExtensionOccupantLeases.size();
 		result.isNarrowStaircase = resource.mStaircase != nullptr;
 		result.enabled = resource.mEnabled;
 		result.capacity = resource.mCapacity;
@@ -2623,6 +2677,8 @@ namespace core
 		request->mResource = edge->getTraversalResourceId();
 		if (auto resource = mTraversalResources.find(request->mResource); resource)
 		{
+			if (resource->mExtensible && resource->mExtensionRequestLeases.insert(id).second)
+				resource->mExtensible->acquireExtensionLease();
 			if (resource->mDoor) attachDoorQueueTicket(id, *resource);
 			else if ((resource->mLadder || resource->mStaircase)
 				&& isLadderAdmission(*request, *resource))
@@ -3010,7 +3066,8 @@ namespace core
 
 	void Building::tryGrantLadderAdmissions(TraversalResource& resource)
 	{
-		if (!resource.mEnabled || (!resource.mLadder && !resource.mStaircase)) return;
+		if (!resource.mEnabled || (!resource.mLadder && !resource.mStaircase)
+			|| (resource.mExtensible && !resource.mExtensible->isExtended())) return;
 
 		auto hasInFlight = any_of(resource.mOccupants.begin(), resource.mOccupants.end(),
 			[](auto id) { return (bool)id; })
@@ -3171,6 +3228,21 @@ namespace core
 			if (!resource)
 			{
 				denyTraversalRequest(requestId);
+				return;
+			}
+			if (resource->mExtensible && !resource->mExtensible->isExtended())
+			{
+				allocateExtensiblePreparation(requestId, *resource);
+				return;
+			}
+			if (resource->mForceBridge)
+			{
+				if (!resource->mEnabled)
+				{
+					denyTraversalRequest(requestId, TraversalFailureReason::ResourceDisabled);
+					return;
+				}
+				grantTraversalRequest(requestId);
 				return;
 			}
 			if (resource->mLadder || resource->mStaircase)
@@ -3438,6 +3510,93 @@ namespace core
 		}
 	}
 
+	void Building::allocateExtensiblePreparation(TraversalRequestId requestId, TraversalResource& resource)
+	{
+		auto request = mTraversalRequests.find(requestId);
+		if (!request || request->mState != TraversalRequestState::Pending) return;
+		if (!resource.mEnabled)
+		{
+			denyTraversalRequest(requestId, TraversalFailureReason::ResourceDisabled);
+			return;
+		}
+		if (resource.mExtensible->isExtended())
+		{
+			if (resource.mLadder)
+			{
+				attachLadderAdmissionRequest(requestId, resource);
+				tryGrantLadderAdmissions(resource);
+			}
+			else grantTraversalRequest(requestId);
+			return;
+		}
+
+		auto controlFor = [&](TraversalRequest const& candidate)
+		{
+			for (auto pointId : resource.mControls)
+				if (auto point = mInteractionPoints.find(pointId); point && point->mSector == candidate.mSourceSector)
+					return pointId;
+			return InteractionPointId{};
+		};
+		if (!controlFor(*request))
+		{
+			denyTraversalRequest(requestId, TraversalFailureReason::NoReachableControl);
+			return;
+		}
+
+		if (resource.mActivePreparation)
+		{
+			auto active = mInteractionRequests.find(resource.mActivePreparation);
+			if (active && active->mResult == InteractionResult::Pending)
+			{
+				request->mPreparationRequested = true;
+				for (auto const& [operationId, requirement] : active->mOperations)
+				{
+					(void)requirement;
+					request->mPreparationOperation = operationId;
+					if (auto operation = mDeviceOperations.find(operationId))
+						operation->mRequesters.insert(request->mOwner);
+				}
+				return;
+			}
+			if (active && (active->mResult == InteractionResult::Failed
+				|| active->mResult == InteractionResult::Rejected))
+			{
+				denyTraversalRequest(requestId, active->mResult == InteractionResult::Rejected
+					? TraversalFailureReason::ControlRejected : TraversalFailureReason::PreparationFailed);
+			}
+			resource.mActivePreparation = {};
+			resource.mPreparationOperator = {};
+			resource.mSharedPreparationOperation = {};
+			if (request->mState != TraversalRequestState::Pending) return;
+			if (resource.mExtensible->isExtended())
+			{
+				if (resource.mLadder) { attachLadderAdmissionRequest(requestId, resource); tryGrantLadderAdmissions(resource); }
+				else grantTraversalRequest(requestId);
+				return;
+			}
+		}
+
+		TraversalRequestId selected;
+		for (auto const& [candidateId, candidate] : mTraversalRequests.entries())
+			if (candidate->mResource == request->mResource
+				&& candidate->mState == TraversalRequestState::Pending && controlFor(*candidate)
+				&& (!selected || candidateId < selected)) selected = candidateId;
+		if (selected != requestId) return;
+		auto interactionId = requestInteractionForTraversal(controlFor(*request), request->mOwner);
+		if (!interactionId) return;
+		auto interaction = mInteractionRequests.find(interactionId);
+		if (!interaction || interaction->mOperations.empty())
+		{
+			denyTraversalRequest(requestId, TraversalFailureReason::ControlRejected);
+			return;
+		}
+		resource.mActivePreparation = interactionId;
+		resource.mPreparationOperator = requestId;
+		resource.mSharedPreparationOperation = interaction->mOperations.front().first;
+		request->mPreparationRequested = true;
+		request->mPreparationOperation = resource.mSharedPreparationOperation;
+	}
+
 	void Building::denyTraversalRequest(TraversalRequestId requestId, TraversalFailureReason reason)
 	{
 		auto request = mTraversalRequests.find(requestId);
@@ -3449,6 +3608,8 @@ namespace core
 		request->mFailureReason = reason;
 		if (auto resource = mTraversalResources.find(request->mResource); resource)
 		{
+			if (resource->mExtensible && resource->mExtensionRequestLeases.erase(requestId))
+				resource->mExtensible->releaseExtensionLease();
 			if (resource->mDoor)
 			{
 				if (request->mPreparationLease) releaseDoorOpenLease(*resource, request->mPreparationLease);
@@ -3524,12 +3685,21 @@ namespace core
 				auto position = request->mCapacityPosition;
 				resource->mAdmissionReservations[position] = {};
 				resource->mOccupants[position] = owner;
+				if (resource->mExtensible)
+				{
+					if (resource->mExtensionRequestLeases.erase(requestId))
+						resource->mExtensible->releaseExtensionLease();
+					if (resource->mExtensionOccupantLeases.insert(owner).second)
+						resource->mExtensible->acquireExtensionLease();
+				}
 				request->mCapacityPosition = ~0u;
 			}
 			else if (resource->mLadder && request->mSourceSector == resource->mLadderSector
 				&& request->mDestinationSector != resource->mLadderSector)
 			{
 				releaseLadderOccupancy(owner, *resource);
+				if (resource->mExtensible && resource->mExtensionOccupantLeases.erase(owner))
+					resource->mExtensible->releaseExtensionLease();
 			}
 			else if (request->mCapacityPosition != ~0u)
 			{
@@ -3540,6 +3710,10 @@ namespace core
 			tryGrantLadderAdmissions(*resource);
 		}
 
+		if (auto resource = mTraversalResources.find(request->mResource);
+			resource && resource->mForceBridge
+			&& resource->mExtensionRequestLeases.erase(requestId))
+			resource->mExtensible->releaseExtensionLease();
 		permit->mState = TraversalPermitState::Committed;
 		request->mState = TraversalRequestState::Committed;
 
@@ -3565,6 +3739,9 @@ namespace core
 	{
 		if (auto request = mTraversalRequests.find(requestId))
 		{
+			if (auto resource = mTraversalResources.find(request->mResource);
+				resource && resource->mExtensible && resource->mExtensionRequestLeases.erase(requestId))
+				resource->mExtensible->releaseExtensionLease();
 			if (auto resource = mTraversalResources.find(request->mResource);
 				resource && resource->mPreparationOperator == requestId)
 			{
@@ -3621,6 +3798,8 @@ namespace core
 		{
 			if (auto resource = mTraversalResources.find(request->mResource); resource)
 			{
+				if (resource->mExtensible && resource->mExtensionRequestLeases.erase(requestId))
+					resource->mExtensible->releaseExtensionLease();
 				if (resource->mDoor)
 				{
 					if (request->mPreparationLease) releaseDoorOpenLease(*resource, request->mPreparationLease);
@@ -3794,9 +3973,12 @@ namespace core
 		}
 		for (auto const& binding : bindings)
 		{
-			bool validTarget = binding.command.type == DeviceCommandType::SetSectorLights
-				? binding.command.target && binding.command.target.value <= mSectors.size()
-				: binding.command.traversalResource && mTraversalResources.find(binding.command.traversalResource);
+			bool validTarget = false;
+			if (binding.command.type == DeviceCommandType::SetSectorLights)
+				validTarget = binding.command.target && binding.command.target.value <= mSectors.size();
+			else if (auto resource = mTraversalResources.find(binding.command.traversalResource))
+				validTarget = binding.command.type == DeviceCommandType::OpenDoor ? resource->mDoor != nullptr
+					: binding.command.type == DeviceCommandType::SetExtendedState && resource->mExtensible != nullptr;
 			if (!validTarget)
 			{
 				throw invalid_argument("An interaction binding requires a valid command target");
@@ -3872,7 +4054,10 @@ namespace core
 		}
 		auto name = command.type == DeviceCommandType::SetSectorLights
 			? string("Set sector lights ") + (command.desiredState ? "on" : "off")
-			: command.type == DeviceCommandType::OpenDoor ? "Open door" : "Device command";
+			: command.type == DeviceCommandType::OpenDoor ? "Open door"
+			: command.type == DeviceCommandType::SetExtendedState
+				? string(command.desiredState ? "Extend resource" : "Retract resource")
+				: "Device command";
 		auto id = mDeviceOperations.add(unique_ptr<DeviceOperation>(new DeviceOperation(name, requester, command)));
 		SimulationEvent event;
 		event.sequence = mNextEventSequence++;
@@ -4115,8 +4300,8 @@ namespace core
 		}
 
 		auto id = mTraversalResources.add(unique_ptr<TraversalResource>(new TraversalResource(
-			name, ladder, ladderSector, agentSpacing, capacity, directionalBatchLimit,
-			std::move(positions))));
+			name, ladder, ladder->isExtensible() ? static_pointer_cast<ExtensibleObject>(ladder) : nullptr,
+			ladderSector, agentSpacing, capacity, directionalBatchLimit, std::move(positions))));
 		SimulationEvent event;
 		event.sequence = mNextEventSequence++;
 		event.tick = mSimulationTick;
@@ -4145,6 +4330,22 @@ namespace core
 		}
 		auto id = mTraversalResources.add(unique_ptr<TraversalResource>(new TraversalResource(
 			name, staircase, staircaseSector, capacity, directionalBatchLimit, std::move(positions))));
+		SimulationEvent event;
+		event.sequence = mNextEventSequence++;
+		event.tick = mSimulationTick;
+		event.type = SimulationEventType::TraversalResourceAdded;
+		event.traversalResource = makeTraversalResourceSnapshot(id, *mTraversalResources.find(id));
+		mEvents.push_back(std::move(event));
+		return id;
+	}
+
+	TraversalResourceId Building::createForceBridgeTraversalResource(string const& name,
+		shared_ptr<ForceBridge> forceBridge)
+	{
+		if (!forceBridge) throw invalid_argument("A force bridge traversal resource requires a ForceBridge");
+		auto id = mTraversalResources.add(unique_ptr<TraversalResource>(new TraversalResource(
+			name, forceBridge, forceBridge->isExtensible()
+				? static_pointer_cast<ExtensibleObject>(forceBridge) : nullptr)));
 		SimulationEvent event;
 		event.sequence = mNextEventSequence++;
 		event.tick = mSimulationTick;
@@ -4304,13 +4505,14 @@ namespace core
 	{
 		auto resource = mTraversalResources.find(resourceId);
 		auto control = mInteractionPoints.find(controlId);
-		if (!resource || !resource->mDoor || !control)
+		if (!resource || (!resource->mDoor && !resource->mExtensible) || !control)
 		{
 			return false;
 		}
 		if (find(resource->mControls.begin(), resource->mControls.end(), controlId) == resource->mControls.end())
 		{
 			resource->mControls.push_back(controlId);
+			if (resource->mExtensible) resource->mExtensible->addExtensionControlSector(control->mSector);
 			sort(resource->mControls.begin(), resource->mControls.end());
 		}
 		return true;
@@ -4498,6 +4700,28 @@ namespace core
 						operation->mState = DeviceOperationState::Rejected;
 					}
 				}
+				else if (operation->mCommand.type == DeviceCommandType::SetExtendedState)
+				{
+					auto resource = mTraversalResources.find(operation->mCommand.traversalResource);
+					if (!resource || !resource->mExtensible || !resource->mExtensible->isExtensible())
+					{
+						operation->mState = DeviceOperationState::Rejected;
+					}
+					else if (operation->mCommand.desiredState)
+					{
+						resource->mRetractionPending = false;
+						resource->mEnabled = true;
+						if (resource->mExtensible->handleAction(ControllableActionType::Extend) == ~0u)
+							operation->mState = DeviceOperationState::Rejected;
+					}
+					else
+					{
+						// Accepting a safe retract closes admission immediately. Physical
+						// retraction starts only after every independently-owned lease drains.
+						resource->mRetractionPending = true;
+						resource->mEnabled = false;
+					}
+				}
 				continue;
 			}
 			if (operation->mState != DeviceOperationState::Running)
@@ -4511,6 +4735,32 @@ namespace core
 				auto sector = mSectors[(size_t)operation->mCommand.target.value - 1];
 				bool succeeded = operation->mCommand.desiredState ? sector->lightsOn() : sector->lightsOff();
 				operation->mState = succeeded ? DeviceOperationState::Succeeded : DeviceOperationState::Failed;
+			}
+			else if (operation->mCommand.type == DeviceCommandType::SetExtendedState)
+			{
+				auto resource = mTraversalResources.find(operation->mCommand.traversalResource);
+				if (!resource || !resource->mExtensible)
+				{
+					operation->mState = DeviceOperationState::Failed;
+				}
+				else if (operation->mCommand.desiredState && resource->mExtensible->isExtended())
+				{
+					operation->mState = DeviceOperationState::Succeeded;
+				}
+				else if (!operation->mCommand.desiredState)
+				{
+					if (resource->mExtensionRequestLeases.empty()
+						&& resource->mExtensionOccupantLeases.empty())
+					{
+						if (!resource->mExtensible->isRetracted() && !resource->mExtensible->isRetracting())
+							resource->mExtensible->handleAction(ControllableActionType::Retract);
+						if (resource->mExtensible->isRetracted())
+						{
+							resource->mRetractionPending = false;
+							operation->mState = DeviceOperationState::Succeeded;
+						}
+					}
+				}
 			}
 			else if (operation->mCommand.type == DeviceCommandType::OpenDoor)
 			{

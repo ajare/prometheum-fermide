@@ -2,8 +2,10 @@
 
 #include <cstdint>
 #include <memory>
+#include <set>
 
 #include "core/Object.h"
+#include "core/EntityId.h"
 
 
 namespace core
@@ -26,6 +28,10 @@ namespace core
 		bool mIsExtensible;
 
 		float mExtendedPct;
+
+		uint32_t mExtensionLeaseCount{ 0 };
+
+		std::set<SectorId> mExtensionControlSectors;
 
 	private:
 
@@ -76,6 +82,27 @@ namespace core
 		bool retract();
 
 		bool toggle();
+
+		void acquireExtensionLease() { ++mExtensionLeaseCount; }
+
+		bool releaseExtensionLease()
+		{
+			if (mExtensionLeaseCount == 0) return false;
+			--mExtensionLeaseCount;
+			return true;
+		}
+
+		[[nodiscard]] uint32_t getExtensionLeaseCount() const { return mExtensionLeaseCount; }
+
+
+		void addExtensionControlSector(SectorId sector) { if (sector) mExtensionControlSectors.insert(sector); }
+
+		[[nodiscard]] bool canPrepareFrom(SectorId sector) const
+		{
+			return isExtended() || !isExtensible() || mExtensionControlSectors.contains(sector);
+		}
+
+		[[nodiscard]] bool hasExtensionControl() const { return !mExtensionControlSectors.empty(); }
 	};
 
 } // core

@@ -1,8 +1,10 @@
 #include <cassert>
+#include <limits>
 
 #include "core/Defines.h"
 #include "core/LadderMountEdge.h"
 #include "core/Agent.h"
+#include "core/Vertex.h"
 #include "core/Exceptions.h"
 
 
@@ -61,6 +63,15 @@ namespace core
 
 	float LadderMountEdge::getWeight(shared_ptr<const Vertex> targetVertex, Agent const* agent, bool edgeVisible) const
 	{
+		if (!mLadder->isExtended())
+		{
+			auto source = getOtherVertex(targetVertex);
+			auto sourceSector = source && source->getSector()
+				? SectorId{ (uint64_t)source->getSector()->getIndex() + 1 } : SectorId{};
+			if (source && source->getType() != VertexType::Ladder
+				&& !mLadder->canPrepareFrom(sourceSector))
+				return numeric_limits<float>::infinity();
+		}
 		return CORE_GRAPH_EDGE_MIN_TRAVERSAL_TIME;
 	}
 

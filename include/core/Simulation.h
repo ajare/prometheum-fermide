@@ -107,6 +107,12 @@ namespace core
 		std::string name;
 		bool isDoor{ false };
 		bool isLadder{ false };
+		bool isForceBridge{ false };
+		bool isExtensible{ false };
+		bool extended{ false };
+		bool retractionPending{ false };
+		uint32_t extensionRequestLeaseCount{ 0 };
+		uint32_t extensionOccupantLeaseCount{ 0 };
 		bool isNarrowStaircase{ false };
 		bool enabled{ true };
 		uint32_t capacity{ 0 };

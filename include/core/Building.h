@@ -77,6 +77,7 @@ namespace core
 		{
 			CreateObjectResult forceBridge;
 			CreateObjectResult controllers[2];
+			TraversalResourceId traversalResource;
 		};
 
 		struct CreateLadderOptions
@@ -327,6 +328,8 @@ namespace core
 
 		void allocateRemoteDoorPreparation(TraversalRequestId requestId, TraversalResource& resource);
 
+		void allocateExtensiblePreparation(TraversalRequestId requestId, TraversalResource& resource);
+
 		void attachDoorQueueTicket(TraversalRequestId requestId, TraversalResource& resource);
 
 		void refreshDoorQueuePositions(TraversalResource& resource);
@@ -507,6 +510,9 @@ namespace core
 			std::shared_ptr<Ladder> ladder, SectorId ladderSector, float agentSpacing,
 			uint32_t directionalBatchLimit);
 
+		TraversalResourceId createForceBridgeTraversalResource(std::string const& name,
+			std::shared_ptr<ForceBridge> forceBridge);
+
 		TraversalResourceId createStaircaseTraversalResource(std::string const& name,
 			std::shared_ptr<Staircase> staircase, SectorId staircaseSector,
 			uint32_t capacity, uint32_t directionalBatchLimit);
@@ -535,7 +541,7 @@ namespace core
 		bool setTraversalResourceEnabled(TraversalResourceId resource, bool enabled);
 
 		// Registers a physical control as applicable from its interaction point's sector.
-		// Remote-controlled traversal never falls back to opening the Door directly.
+		// Controlled traversal never falls back to operating the resource directly.
 		bool addTraversalControl(TraversalResourceId resource, InteractionPointId control);
 
 		EntityLookup<TraversalResource> lookupTraversalResource(TraversalResourceId id);
