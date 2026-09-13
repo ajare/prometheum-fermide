@@ -6717,6 +6717,21 @@ namespace core
 			: EntityLookup<TraversalResource const>{ nullptr, format("TraversalResource handle {} is invalid or has been removed", id.value) };
 	}
 
+	TraversalResourceId Building::getTraversalResourceId(Object const* object) const
+	{
+		if (!object) return {};
+		for (auto const& [id, resource] : mTraversalResources.entries())
+		{
+			bool matches = resource->mDoor.get() == object || resource->mWindow.get() == object
+				|| resource->mLadder.get() == object || resource->mForceBridge.get() == object
+				|| resource->mLift.get() == object || resource->mShuttle.get() == object
+				|| resource->mStaircase.get() == object;
+			if (!matches) continue;
+			return resource->mLiftCoordinator ? resource->mLiftCoordinator : id;
+		}
+		return {};
+	}
+
 	EntityRemovalResult Building::removeTraversalResource(TraversalResourceId id)
 	{
 		auto found = lookupTraversalResource(id);

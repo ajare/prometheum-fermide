@@ -2,6 +2,7 @@
 #include <cfloat>
 #include <set>
 #include <algorithm>
+#include <limits>
 
 #include <Windows.h>
 #include <gl/GL.h>
@@ -92,6 +93,184 @@ void transformPosition(float& x, float& y)
 	y = p.y;
 }
 
+
+void renderSelectedQueues(shared_ptr<const core::Building> const& building, int layer,
+	ImDrawList* drawList)
+{
+	shared_ptr<const core::Object> selectedObject;
+	if (gSelectedSectorObject)
+	{
+		selectedObject = gSelectedSectorObject->_getObject();
+	}
+	else if (gSelectedSector)
+	{
+		switch (gSelectedSector->getType())
+		{
+		case core::SectorType::Ladder:
+			selectedObject = static_pointer_cast<const core::LadderTransit>(gSelectedSector)->getLadder();
+			break;
+		case core::SectorType::Lift:
+			selectedObject = static_pointer_cast<const core::LiftTransit>(gSelectedSector)->getLift();
+			break;
+		case core::SectorType::Shuttle:
+			selectedObject = static_pointer_cast<const core::ShuttleTransit>(gSelectedSector)->getShuttle();
+			break;
+		case core::SectorType::Staircase:
+			selectedObject = static_pointer_cast<const core::StaircaseTransit>(gSelectedSector)->getStaircase();
+			break;
+		default:
+			break;
+		}
+	}
+
+	auto resourceId = building->getTraversalResourceId(selectedObject.get());
+	if (!resourceId) return;
+	auto snapshot = building->getSimulationSnapshot();
+	auto resource = find_if(snapshot.traversalResources.begin(), snapshot.traversalResources.end(),
+		[resourceId](auto const& candidate) { return candidate.id == resourceId; });
+	if (resource == snapshot.traversalResources.end()) return;
+
+	const ImColor laneColour(0, 210, 255, 210);
+	const ImColor occupiedColour(255, 170, 0, 230);
+	const float slotRadius = max(5.0f, CORE_AGENT_MAX_WIDTH * CORE_CELL_WIDTH_PIXELS * 0.35f);
+
+	// Door lanes have explicit world geometry. A regular door combines both
+	// approach lanes into one visible row; bulkhead queues remain side-specific.
+	bool regularDoor = gSelectedSectorObject
+		&& gSelectedSectorObject->getObjectType() == core::SectorObjectType::Door;
+	vector<core::QueuePositionSnapshot> visiblePositions;
+	vector<core::TraversalRequestId> regularDoorOwners;
+	uint32_t regularDoorSpotCount = 0;
+	float regularDoorQueueY = 0.0f;
+	float regularDoorFloorMin = -numeric_limits<float>::infinity();
+	float regularDoorFloorMax = numeric_limits<float>::infinity();
+	for (auto const& lane : resource->queueLanes)
+	{
+		if (!lane.sector) continue;
+		auto sector = building->getSector((uint32_t)lane.sector.value - 1);
+		if (!sector || (!regularDoor && sector->getLayerIndex() != (uint32_t)layer)) continue;
+		if (regularDoor)
+		{
+			regularDoorSpotCount = max(regularDoorSpotCount, (uint32_t)lane.positions.size());
+			regularDoorQueueY = lane.origin.y;
+			auto halfAgentWidth = CORE_AGENT_MAX_WIDTH * 0.5f;
+			regularDoorFloorMin = max(regularDoorFloorMin, sector->getCellX0() + halfAgentWidth);
+			regularDoorFloorMax = min(regularDoorFloorMax, sector->getCellX1() + 1.0f - halfAgentWidth);
+			for (auto const& position : lane.positions)
+				if (position.owner) regularDoorOwners.push_back(position.owner);
+		}
+		else
+		{
+			auto start = lane.origin;
+			auto end = lane.origin + lane.direction * lane.extent;
+			transformPosition(start);
+			transformPosition(end);
+			drawList->AddLine({ start.x, start.y }, { end.x, end.y }, laneColour, 3.0f);
+			visiblePositions.insert(visiblePositions.end(), lane.positions.begin(), lane.positions.end());
+		}
+	}
+	core::Vector2 objectBounds0, objectBounds1;
+	selectedObject->getCurrentShape(objectBounds0, objectBounds1);
+	if (regularDoor && regularDoorSpotCount > 0)
+	{
+		// Present both approach queues as one non-overlapping row. Candidate spots
+		// are rebuilt from the current sector geometry every frame, ordered by
+		// distance from the door, and truncated when the shared floor is too short.
+		auto centreX = (objectBounds0.x + objectBounds1.x) * 0.5f;
+		auto spacing = (float)CORE_DOOR_QUEUE_STOP_WIDTH;
+		vector<float> candidateX;
+		if (centreX >= regularDoorFloorMin && centreX <= regularDoorFloorMax)
+			candidateX.push_back(centreX);
+		for (uint32_t step = 1; candidateX.size() < regularDoorSpotCount; ++step)
+		{
+			auto left = centreX - step * spacing;
+			auto right = centreX + step * spacing;
+			bool leftFits = left >= regularDoorFloorMin;
+			bool rightFits = right <= regularDoorFloorMax;
+			if (!leftFits && !rightFits) break;
+			if (leftFits) candidateX.push_back(left);
+			if (rightFits && candidateX.size() < regularDoorSpotCount) candidateX.push_back(right);
+		}
+		for (uint32_t index = 0; index < candidateX.size(); ++index)
+		{
+			core::QueuePositionSnapshot position;
+			position.position = { candidateX[index], regularDoorQueueY };
+			if (index < regularDoorOwners.size()) position.owner = regularDoorOwners[index];
+			visiblePositions.push_back(position);
+		}
+		auto start = visiblePositions.front().position;
+		auto end = visiblePositions.back().position;
+		if (visiblePositions.size() > 2)
+		{
+			start.x = min_element(visiblePositions.begin(), visiblePositions.end(), [](auto const& a, auto const& b)
+				{ return a.position.x < b.position.x; })->position.x;
+			end.x = max_element(visiblePositions.begin(), visiblePositions.end(), [](auto const& a, auto const& b)
+				{ return a.position.x < b.position.x; })->position.x;
+		}
+		transformPosition(start);
+		transformPosition(end);
+		drawList->AddLine({ start.x, start.y }, { end.x, end.y }, laneColour, 3.0f);
+	}
+	auto distanceToObject = [&](core::Vector2 const& point)
+	{
+		if (regularDoor)
+			return abs(point.x - (objectBounds0.x + objectBounds1.x) * 0.5f);
+		auto dx = max(max(objectBounds0.x - point.x, 0.0f), point.x - objectBounds1.x);
+		auto dy = max(max(objectBounds0.y - point.y, 0.0f), point.y - objectBounds1.y);
+		return sqrt(dx * dx + dy * dy);
+	};
+	sort(visiblePositions.begin(), visiblePositions.end(), [&](auto const& left, auto const& right)
+	{
+		auto leftDistance = distanceToObject(left.position);
+		auto rightDistance = distanceToObject(right.position);
+		if (abs(leftDistance - rightDistance) > 0.001f) return leftDistance < rightDistance;
+		return left.position.x < right.position.x;
+	});
+	for (uint32_t index = 0; index < visiblePositions.size(); ++index)
+	{
+		auto point = visiblePositions[index].position;
+		transformPosition(point);
+		auto colour = visiblePositions[index].owner ? occupiedColour : laneColour;
+		if (visiblePositions[index].owner)
+			drawList->AddCircleFilled({ point.x, point.y }, slotRadius, ImColor(255, 170, 0, 64));
+		drawList->AddCircle({ point.x, point.y }, slotRadius, colour, 0, 2.0f);
+		auto label = to_string(index + 1);
+		drawList->AddText({ point.x + slotRadius + 2.0f, point.y - 7.0f }, colour, label.c_str());
+	}
+
+	// Capacity and transport queues do not necessarily have external physical
+	// slots. Mark their waiting agents in place, preserving the resource's order.
+	vector<core::TraversalRequestId> queuedRequests;
+	auto appendUnique = [&](core::TraversalRequestId request)
+	{
+		if (request && find(queuedRequests.begin(), queuedRequests.end(), request) == queuedRequests.end())
+			queuedRequests.push_back(request);
+	};
+	for (auto const& lane : resource->queueLanes)
+		for (auto request : lane.queue) appendUnique(request);
+	for (auto request : resource->admissionQueue) appendUnique(request);
+	for (auto const& zone : resource->shuttleAccessZones)
+		for (auto request : zone.queue) appendUnique(request);
+	for (auto request : resource->liftConfirmationQueue) appendUnique(request);
+
+	for (uint32_t rank = 0; rank < queuedRequests.size(); ++rank)
+	{
+		auto request = find_if(snapshot.traversalRequests.begin(), snapshot.traversalRequests.end(),
+			[&](auto const& candidate) { return candidate.id == queuedRequests[rank]; });
+		if (request == snapshot.traversalRequests.end()) continue;
+		auto agent = find_if(snapshot.agents.begin(), snapshot.agents.end(),
+			[&](auto const& candidate) { return candidate.id == request->owner; });
+		if (agent == snapshot.agents.end() || !agent->sectorId) continue;
+		auto sector = building->getSector((uint32_t)agent->sectorId.value - 1);
+		if (!sector || sector->getLayerIndex() != (uint32_t)layer) continue;
+		auto point = agent->globalPosition
+			+ core::Vector2{ CORE_AGENT_MAX_WIDTH * 0.5f, CORE_AGENT_MAX_HEIGHT * 0.5f };
+		transformPosition(point);
+		drawList->AddCircle({ point.x, point.y }, slotRadius + 3.0f, occupiedColour, 0, 3.0f);
+		auto label = string("Q") + to_string(rank + 1);
+		drawList->AddText({ point.x + slotRadius + 5.0f, point.y - 7.0f }, occupiedColour, label.c_str());
+	}
+}
 
 void renderGrid(ImColor const& colour, float width, ImDrawList* drawList)
 {
@@ -1219,6 +1398,10 @@ void renderBuilding(shared_ptr<const core::Building> building)
 	{
 		renderSectors(building, 1 - (uint32_t)gUISettings.visibleLayer, false, true, drawList);
 	}
+
+	// Queue diagnostics are selection overlays and should remain visible above
+	// the selected object and agents.
+	renderSelectedQueues(building, (uint32_t)gUISettings.visibleLayer, drawList);
 
 	// Grid
 	if (gUISettings.renderGrid)

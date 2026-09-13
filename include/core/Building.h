@@ -799,6 +799,10 @@ namespace core
 
 		EntityLookup<TraversalResource const> lookupTraversalResource(TraversalResourceId id) const;
 
+		// Resolves physical geometry to the resource that owns its agent queue.
+		// Transport landing doors resolve to their vehicle coordinator.
+		TraversalResourceId getTraversalResourceId(Object const* object) const;
+
 		EntityRemovalResult removeTraversalResource(TraversalResourceId id);
 
 		EntityLookup<TraversalRequest const> lookupTraversalRequest(TraversalRequestId id) const;
