@@ -1,6 +1,6 @@
 # Headless simulation smoke scenario
 
-The `core` target builds the shared simulation as `phosphorus-fluoride-core.lib`. Both the `headless` and `imgui` projects reference that static library, so simulation sources are compiled once per configuration instead of being duplicated in each executable. The `headless` target builds deterministic smoke scenarios without SDL, ImGui, OpenGL, rendering, or audio dependencies. The scenarios route agents between marker vertices, verify ordinary request/permit/commit behavior, denial and cancellation, exercise manual, automatic, remote-controlled, unavailable, fair two-sided queued, and wide concurrent doors, verify scoped open leases, sensor-driven reopening, graceful deactivation, queue cancellation, physical waiting separation, logical queue overflow, compatible replan priority, deterministic permit expiry/reassignment, same-layer bulkhead coordination, conditional open-window traversal, and atomic paused topology rebuilds with ownership cleanup and failure diagnostics, advance buildings in fixed ticks, and exit unsuccessfully if an invariant fails or two identical runs produce different snapshots or events.
+The `core` target builds the shared simulation as `prometheum-fermide-core.lib`. Both the `headless` and `imgui` projects reference that static library, so simulation sources are compiled once per configuration instead of being duplicated in each executable. The `headless` target builds deterministic smoke scenarios without SDL, ImGui, OpenGL, rendering, or audio dependencies. The scenarios route agents between marker vertices, verify ordinary request/permit/commit behavior, denial and cancellation, exercise manual, automatic, remote-controlled, unavailable, fair two-sided queued, and wide concurrent doors, verify scoped open leases, sensor-driven reopening, graceful deactivation, queue cancellation, physical waiting separation, logical queue overflow, compatible replan priority, deterministic permit expiry/reassignment, same-layer bulkhead coordination, conditional open-window traversal, and atomic paused topology rebuilds with ownership cleanup and failure diagnostics, advance buildings in fixed ticks, and exit unsuccessfully if an invariant fails or two identical runs produce different snapshots or events.
 
 ## Deterministic simulation API
 
@@ -42,8 +42,8 @@ cmake -S . -B out\build -A x64
 Build and run only the headless smoke scenario:
 
 ```bat
-cmake --build out\build --config Debug --target phosphorus-fluoride-headless
-bin\x64\Debug\phosphorus-fluoride-headless.exe
+cmake --build out\build --config Debug --target prometheum-fermide-headless
+out\build\bin\x64\Debug\prometheum-fermide-headless.exe
 ```
 
 Build all targets and run the registered CTest smoke test:
@@ -53,20 +53,20 @@ cmake --build out\build --config Debug
 ctest --test-dir out\build -C Debug --output-on-failure
 ```
 
-Use `Release` instead of `Debug` for an optimized build. CMake places executables in `bin\x64\<Configuration>`. Building `imgui` also copies the matching bundled DLLs and the contents of `resources` beside the executable.
+Use `Release` instead of `Debug` for an optimized build. CMake places final executables and libraries in `bin\x64\<Configuration>` within its build directory (for example, `out\build\bin\x64\Debug`). Building `imgui` also copies the matching bundled DLLs and the contents of `resources` beside the executable.
 
 ## Build and run only the headless scenario with MSBuild
 
 ```bat
 msbuild build\headless.vcxproj /m /p:Configuration=Debug /p:Platform=x64
-bin\x64\Debug\phosphorus-fluoride-headless.exe
+bin\x64\Debug\prometheum-fermide-headless.exe
 ```
 
 Use `Release` in both paths to build and run the optimized configuration:
 
 ```bat
 msbuild build\headless.vcxproj /m /p:Configuration=Release /p:Platform=x64
-bin\x64\Release\phosphorus-fluoride-headless.exe
+bin\x64\Release\prometheum-fermide-headless.exe
 ```
 
 Building `headless.vcxproj` automatically builds its `core.vcxproj` project reference. A successful run prints scale observations followed by a `PASS` line and returns exit code 0. The representative run advances 500 active agents alongside 32 resources twice and compares deterministic event/snapshot digests. A 1,000-agent stretch run records elapsed time and process working-set memory. These observations are deliberately informational rather than machine-dependent performance thresholds; both runs still enforce ownership and capacity invariants. A failed assertion prints a `FAIL` line and returns a nonzero exit code.

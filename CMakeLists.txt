@@ -1,13 +1,13 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(phosphorus-fluoride LANGUAGES CXX)
+project(prometheum-fermide LANGUAGES CXX)
 
 if(NOT MSVC)
-    message(FATAL_ERROR "phosphorus-fluoride currently requires MSVC and the bundled Windows libraries")
+    message(FATAL_ERROR "prometheum-fermide currently requires MSVC and the bundled Windows libraries")
 endif()
 
 if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
-    message(FATAL_ERROR "phosphorus-fluoride only supports 64-bit builds; configure with -A x64")
+    message(FATAL_ERROR "prometheum-fermide only supports 64-bit builds; configure with -A x64")
 endif()
 
 # The bundled libraries are provided for these two configurations only.
@@ -22,7 +22,8 @@ add_compile_definitions(UNICODE _UNICODE)
 set(PF_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/include")
 set(PF_VENDOR_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/vendor/include")
 set(PF_VENDOR_LIBRARY_DIR "${CMAKE_CURRENT_SOURCE_DIR}/vendor/lib/x64")
-set(PF_OUTPUT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/bin/x64/$<CONFIG>")
+# Keep final executables and libraries in the generated build tree.
+set(PF_OUTPUT_DIR "${CMAKE_BINARY_DIR}/bin/x64/$<CONFIG>")
 
 function(pf_add_vendor_library target debug_filename release_filename)
     add_library(${target} UNKNOWN IMPORTED GLOBAL)
@@ -45,30 +46,30 @@ pf_add_vendor_library(pf_sdl2main SDL2maind.lib SDL2main.lib)
 file(GLOB PF_CORE_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/core/*.cpp")
 file(GLOB PF_CORE_HEADERS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/include/core/*.h")
 
-add_library(phosphorus-fluoride-core STATIC ${PF_CORE_SOURCES} ${PF_CORE_HEADERS})
-target_compile_features(phosphorus-fluoride-core PUBLIC cxx_std_20)
-target_compile_definitions(phosphorus-fluoride-core PUBLIC YAML_CPP_STATIC_DEFINE)
-target_compile_options(phosphorus-fluoride-core PRIVATE /W3 /permissive-)
-target_include_directories(phosphorus-fluoride-core
+add_library(prometheum-fermide-core STATIC ${PF_CORE_SOURCES} ${PF_CORE_HEADERS})
+target_compile_features(prometheum-fermide-core PUBLIC cxx_std_20)
+target_compile_definitions(prometheum-fermide-core PUBLIC YAML_CPP_STATIC_DEFINE)
+target_compile_options(prometheum-fermide-core PRIVATE /W3 /permissive-)
+target_include_directories(prometheum-fermide-core
     PUBLIC
         "${PF_INCLUDE_DIR}"
         "${PF_VENDOR_INCLUDE_DIR}"
 )
-target_link_libraries(phosphorus-fluoride-core PUBLIC pf_yaml_cpp)
-set_target_properties(phosphorus-fluoride-core PROPERTIES
+target_link_libraries(prometheum-fermide-core PUBLIC pf_yaml_cpp)
+set_target_properties(prometheum-fermide-core PROPERTIES
     ARCHIVE_OUTPUT_DIRECTORY "${PF_OUTPUT_DIR}"
-    OUTPUT_NAME "phosphorus-fluoride-core"
+    OUTPUT_NAME "prometheum-fermide-core"
 )
 
-add_executable(phosphorus-fluoride-headless
+add_executable(prometheum-fermide-headless
     src/headless/InteractionApiCompileCheck.cpp
     src/headless/SerializationSmokeChecks.cpp
     src/headless/SmokeScenario.cpp
 )
-target_compile_options(phosphorus-fluoride-headless PRIVATE /W3 /permissive-)
-target_compile_definitions(phosphorus-fluoride-headless PRIVATE _CONSOLE)
-target_link_libraries(phosphorus-fluoride-headless PRIVATE phosphorus-fluoride-core Psapi)
-set_target_properties(phosphorus-fluoride-headless PROPERTIES
+target_compile_options(prometheum-fermide-headless PRIVATE /W3 /permissive-)
+target_compile_definitions(prometheum-fermide-headless PRIVATE _CONSOLE)
+target_link_libraries(prometheum-fermide-headless PRIVATE prometheum-fermide-core Psapi)
+set_target_properties(prometheum-fermide-headless PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${PF_OUTPUT_DIR}"
 )
 
@@ -86,7 +87,7 @@ target_compile_definitions(imgui PRIVATE
 )
 target_include_directories(imgui PRIVATE "${PF_INCLUDE_DIR}/imgui")
 target_link_libraries(imgui PRIVATE
-    phosphorus-fluoride-core
+    prometheum-fermide-core
     pf_glew
     pf_nfd
     pf_spdlog
@@ -103,13 +104,13 @@ add_custom_command(TARGET imgui POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_CURRENT_SOURCE_DIR}/vendor/bin/x64/$<CONFIG>"
         "$<TARGET_FILE_DIR:imgui>"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_CURRENT_SOURCE_DIR}/resources"
-        "$<TARGET_FILE_DIR:imgui>"
-    COMMENT "Copying runtime libraries and resources"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_CURRENT_SOURCE_DIR}/resources/imgui.ini"
+        "$<TARGET_FILE_DIR:imgui>/imgui.ini"
+    COMMENT "Copying runtime libraries and ImGui configuration"
 )
 
 include(CTest)
 if(BUILD_TESTING)
-    add_test(NAME headless-smoke COMMAND phosphorus-fluoride-headless)
+    add_test(NAME headless-smoke COMMAND prometheum-fermide-headless)
 endif()

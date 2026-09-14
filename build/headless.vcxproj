@@ -44,12 +44,12 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <OutDir>$(ProjectDir)..\bin\$(Platform)\$(Configuration)\</OutDir>
     <IntDir>$(ProjectDir)..\obj\headless\$(Platform)\$(Configuration)\</IntDir>
-    <TargetName>phosphorus-fluoride-headless</TargetName>
+    <TargetName>prometheum-fermide-headless</TargetName>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <OutDir>$(ProjectDir)..\bin\$(Platform)\$(Configuration)\</OutDir>
     <IntDir>$(ProjectDir)..\obj\headless\$(Platform)\$(Configuration)\</IntDir>
-    <TargetName>phosphorus-fluoride-headless</TargetName>
+    <TargetName>prometheum-fermide-headless</TargetName>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>

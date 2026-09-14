@@ -2,6 +2,9 @@
 
 #include <Windows.h>
 
+#include <filesystem>
+#include <fstream>
+
 #include <glew/glew.h>
 #include <nfd/nfd.h>
 
@@ -50,9 +53,76 @@ GLuint gCellsTexture{ 0 };
 int gCellsTextureWidth{ 0 };
 int gCellsTextureHeight{ 0 };
 ImFont* gAgentIconFont{ nullptr };
+std::filesystem::path gResourceDirectory;
 
 using namespace std;
 
+namespace
+{
+	string trim(string value)
+	{
+		auto const first = value.find_first_not_of(" \t\r\n");
+		if (first == string::npos) return {};
+		auto const last = value.find_last_not_of(" \t\r\n");
+		return value.substr(first, last - first + 1);
+	}
+
+	filesystem::path executableDirectory()
+	{
+		wstring executablePath(MAX_PATH, L'\0');
+		auto const length = GetModuleFileNameW(nullptr, executablePath.data(), static_cast<DWORD>(executablePath.size()));
+		if (length == 0 || length == executablePath.size())
+		{
+			throw ExitApplicationException(1, "Could not determine the executable directory.");
+		}
+		executablePath.resize(length);
+		return filesystem::path(executablePath).parent_path();
+	}
+
+	filesystem::path loadResourceDirectory()
+	{
+		auto const configurationPath = executableDirectory() / "imgui.ini";
+		ifstream configuration(configurationPath);
+		if (!configuration)
+		{
+			throw ExitApplicationException(1, "Could not open ImGui configuration: " + configurationPath.string());
+		}
+
+		string section;
+		string resourceDirectory;
+		for (string line; getline(configuration, line);)
+		{
+			line = trim(line);
+			if (line.empty() || line.starts_with(';') || line.starts_with('#')) continue;
+			if (line.front() == '[' && line.back() == ']')
+			{
+				section = trim(line.substr(1, line.size() - 2));
+				continue;
+			}
+
+			auto const separator = line.find('=');
+			if (section == "Config" && separator != string::npos
+				&& trim(line.substr(0, separator)) == "ResourceDir")
+			{
+				resourceDirectory = trim(line.substr(separator + 1));
+			}
+		}
+
+		if (resourceDirectory.empty())
+		{
+			throw ExitApplicationException(1, "ImGui configuration does not define Config.ResourceDir.");
+		}
+
+		filesystem::path resourcePath(resourceDirectory);
+		if (resourcePath.is_relative()) resourcePath = executableDirectory() / resourcePath;
+		resourcePath = resourcePath.lexically_normal();
+		if (!filesystem::is_directory(resourcePath))
+		{
+			throw ExitApplicationException(1, "Configured resource directory does not exist: " + resourcePath.string());
+		}
+		return resourcePath;
+	}
+}
 
 SDL_Window* createWindow()
 {
@@ -222,6 +292,8 @@ void initialise()
 
 void setup()
 {
+	gResourceDirectory = loadResourceDirectory();
+
 	// Set up NFD (file dialogs)
 	NFD_Init();
 
@@ -241,7 +313,8 @@ void setup()
 	icons_config.MergeMode = true;
 	icons_config.PixelSnapH = true;
 	icons_config.GlyphMinAdvanceX = iconFontSize;
-	io.Fonts->AddFontFromFileTTF(FONT_ICON_FILE_NAME_FAS, iconFontSize, &icons_config, icons_ranges);
+	auto const iconFontPath = (gResourceDirectory / FONT_ICON_FILE_NAME_FAS).string();
+	io.Fonts->AddFontFromFileTTF(iconFontPath.c_str(), iconFontSize, &icons_config, icons_ranges);
 
 	// Palette items and world entities are rendered much larger than toolbar icons.
 	// Rasterize their glyphs at Agent height instead of enlarging the merged bitmap.
@@ -253,7 +326,7 @@ void setup()
 		0xf52a, 0xf52a, // Door Closed
 		0
 	};
-	gAgentIconFont = io.Fonts->AddFontFromFileTTF(FONT_ICON_FILE_NAME_FAS,
+	gAgentIconFont = io.Fonts->AddFontFromFileTTF(iconFontPath.c_str(),
 		CORE_AGENT_MAX_HEIGHT * CORE_DECK_HEIGHT_PIXELS, nullptr, agentIconRanges);
 	if (!gAgentIconFont)
 	{
@@ -560,7 +633,8 @@ std::shared_ptr<core::Building> createTestBuilding()
 void run()
 {
 	// Load cell images
-	if (!LoadTextureFromFile("..\\..\\..\\resources\\cells.png", &gCellsTexture, &gCellsTextureWidth, &gCellsTextureHeight))
+	auto const cellsTexturePath = (gResourceDirectory / "cells.png").string();
+	if (!LoadTextureFromFile(cellsTexturePath.c_str(), &gCellsTexture, &gCellsTextureWidth, &gCellsTextureHeight))
 	{
 		throw ExitApplicationException(1, "Could not load image for cells.");
 	}
@@ -691,6 +765,10 @@ int main(int, char**)
 	catch (ExitApplicationException& e)
 	{
 		exitCode = e.getExitCode();
+		if (exitCode != 0)
+		{
+			outputException(e.what());
+		}
 	}
 	catch (exception& e)
 	{
