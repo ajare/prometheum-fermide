@@ -4252,7 +4252,6 @@ namespace core
 				if (lane.positionOwners[i]) previousPositions[lane.positionOwners[i]] = i;
 			}
 			fill(lane.positionOwners.begin(), lane.positionOwners.end(), TraversalRequestId{});
-			uint32_t position = 0;
 			for (auto requestId : lane.queue)
 			{
 				auto request = mTraversalRequests.find(requestId);
@@ -4270,11 +4269,29 @@ namespace core
 				{
 					continue;
 				}
-				if (position < lane.positionOwners.size())
+				auto agent = mAgents.find(request->mOwner);
+				uint32_t position = ~0u;
+				float bestObjectDistance = numeric_limits<float>::max();
+				float bestAgentDistance = numeric_limits<float>::max();
+				for (uint32_t candidate = 0; candidate < lane.positionOwners.size(); ++candidate)
+				{
+					if (lane.positionOwners[candidate]) continue;
+					auto objectDistance = lane.positions[candidate].distanceTo(request->mSourceEndpoint);
+					auto agentDistance = agent
+						? lane.positions[candidate].distanceTo(agent->getGlobalPosition()) : 0.0f;
+					if (objectDistance < bestObjectDistance - 0.001f
+						|| (abs(objectDistance - bestObjectDistance) <= 0.001f
+							&& agentDistance < bestAgentDistance - 0.001f))
+					{
+						position = candidate;
+						bestObjectDistance = objectDistance;
+						bestAgentDistance = agentDistance;
+					}
+				}
+				if (position != ~0u)
 				{
 					lane.positionOwners[position] = requestId;
 					request->mQueuePosition = position;
-					auto agent = mAgents.find(request->mOwner);
 					if (agent)
 					{
 						agent->mTraversalLocalGoal = lane.positions[position];
@@ -4287,7 +4304,6 @@ namespace core
 							request->mBestPositionDistance = distance;
 						}
 					}
-					++position;
 				}
 			}
 		}

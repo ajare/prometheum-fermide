@@ -1034,6 +1034,58 @@ namespace
 			&& building.getSimulationSnapshot().traversalResources.front().crossingOwner == core::TraversalRequestId{};
 	}
 
+	bool queuePositionsPreferObjectProximityThenAgentProximity()
+	{
+		core::Building building("Nearest queue position", 8, 2);
+		auto fore = building.addRoom("Queue room", CORE_LAYER_FORE, 0, 0, 7, 1);
+		building.addRoom("Destination", CORE_LAYER_BACK, 0, 0, 7, 1);
+		building.addSectorDoor(0, 3);
+		building.finishBuild();
+		auto edge = *std::find_if(building.getGraph()->getEdges().begin(), building.getGraph()->getEdges().end(),
+			[](auto const& candidate) { return candidate->getType() == core::EdgeType::Door; });
+		auto source = edge->getVertex(0)->getSector()->getIndex() == fore ? edge->getVertex(0) : edge->getVertex(1);
+		auto destination = edge->getOtherVertex(source);
+		std::vector<core::AgentId> ids = {
+			building.createAgent("Queue head", fore, 0, 3.5f),
+			building.createAgent("Second waiter", fore, 0, 3.5f),
+			building.createAgent("Third waiter", fore, 0, 3.5f)
+		};
+		for (auto id : ids)
+			building.lookupAgent(id).entity->setPath(twoNodePath(source, destination, edge), true);
+
+		building.advanceTicks(3);
+		auto initial = building.getSimulationSnapshot();
+		if (initial.traversalRequests.size() != 3) return false;
+		auto initialThird = std::find_if(initial.traversalRequests.begin(), initial.traversalRequests.end(),
+			[&](auto const& request) { return request.owner == ids[2]; });
+		if (initialThird == initial.traversalRequests.end() || !initialThird->hasQueuePosition) return false;
+		auto const& initialLane = initial.traversalResources.front().queueLanes[initialThird->queueApproach];
+		auto initialThirdTarget = initialLane.positions[initialThird->queuePosition].position;
+
+		for (uint32_t tick = 0; tick < MaximumSimulationTicks; ++tick)
+		{
+			building.advanceTick();
+			auto snapshot = building.getSimulationSnapshot();
+			auto first = std::find_if(snapshot.traversalRequests.begin(), snapshot.traversalRequests.end(),
+				[&](auto const& request) { return request.owner == ids[0]; });
+			auto second = std::find_if(snapshot.traversalRequests.begin(), snapshot.traversalRequests.end(),
+				[&](auto const& request) { return request.owner == ids[1]; });
+			auto third = std::find_if(snapshot.traversalRequests.begin(), snapshot.traversalRequests.end(),
+				[&](auto const& request) { return request.owner == ids[2]; });
+			if (second == snapshot.traversalRequests.end() || third == snapshot.traversalRequests.end()) continue;
+			if ((first == snapshot.traversalRequests.end() || !first->hasQueuePosition)
+				&& second->hasQueuePosition && third->hasQueuePosition)
+			{
+				auto const& lane = snapshot.traversalResources.front().queueLanes[third->queueApproach];
+				auto secondTarget = lane.positions[second->queuePosition].position;
+				auto thirdTarget = lane.positions[third->queuePosition].position;
+				return secondTarget.distanceTo(source->getPosition()) <= 0.001f
+					&& thirdTarget.distanceTo(initialThirdTarget) <= 0.001f;
+			}
+		}
+		return false;
+	}
+
 	bool queuedCancellationReleasesAndAdvancesPositions()
 	{
 		core::Building building("Queue cancellation", 8, 2);
@@ -2641,6 +2693,11 @@ int main()
 		if (!fairDoorQueuesServeBothSidesInStableOrder())
 		{
 			std::cerr << "FAIL: two-sided door queues were not separated, FIFO, or fair\n";
+			return 1;
+		}
+		if (!queuePositionsPreferObjectProximityThenAgentProximity())
+		{
+			std::cerr << "FAIL: queue positions were not selected by object then agent proximity\n";
 			return 1;
 		}
 		if (!queuedCancellationReleasesAndAdvancesPositions())
