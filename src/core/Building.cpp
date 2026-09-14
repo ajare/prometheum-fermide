@@ -311,7 +311,7 @@ namespace core
 		{
 			for (uint32_t ix = x; ix < x + cellsWide; ++ix)
 			{
-				validateCellUnoccupied(caller, layerIndex, x, y);
+				validateCellUnoccupied(caller, layerIndex, ix, iy);
 			}
 		}
 	}
@@ -515,7 +515,8 @@ namespace core
 		return sectorIndex;
 	}
 
-	Building::CreateObjectResult Building::createLift(uint32_t x, uint32_t y, uint32_t cellsWide, vector<uint32_t> const& stopOffsets)
+	Building::CreateObjectResult Building::createLift(uint32_t x, uint32_t y, uint32_t cellsWide,
+		uint32_t decksHigh, vector<uint32_t> const& stopOffsets)
 	{
 		// Get Locations this Lift connects.
 		vector<TransitStop> stops;
@@ -535,7 +536,7 @@ namespace core
 		}
 
 		auto sectorIndex = (uint32_t)mSectors.size();
-		auto lift = make_shared<LiftTransit>(sectorIndex, x, y, cellsWide, stops);
+		auto lift = make_shared<LiftTransit>(sectorIndex, x, y, cellsWide, decksHigh, stops);
 
 		mSectors.push_back(lift);
 		
@@ -1415,6 +1416,40 @@ namespace core
 		return { sectorIndex, traversalResource };
 	}
 
+	Building::CreateLiftResult Building::addLift(uint32_t y, uint32_t x, uint32_t cellsWide,
+		uint32_t decksHigh)
+	{
+		CreateLiftOptions options;
+		options.cellsWide = cellsWide;
+		options.decksHigh = decksHigh;
+		if (cellsWide == 0 || cellsWide > 2 || decksHigh == 0)
+			throw BuildingException(this, "Editor lifts must be one or two cells wide and at least one deck high");
+		if (x < mCellsWide && y < mDecksHigh && cellsWide <= mCellsWide - x
+			&& decksHigh <= mDecksHigh - y)
+		{
+			for (uint32_t iy = y; iy < y + decksHigh; ++iy)
+			{
+				auto const& firstCell = mLayers[CORE_LAYER_FORE]->getCellDefinition(x, iy);
+				if (firstCell.sectorIndex == ~0u) continue;
+				auto corridor = dynamic_pointer_cast<const Location>(mSectors[firstCell.sectorIndex]);
+				if (!corridor || !corridor->isCorridor()) continue;
+				bool complete = true;
+				bool obstructed = false;
+				for (uint32_t ix = x; ix < x + cellsWide; ++ix)
+				{
+					auto const& cell = mLayers[CORE_LAYER_FORE]->getCellDefinition(ix, iy);
+					complete = complete && cell.sectorIndex == firstCell.sectorIndex
+						&& cell.isTraversableOnFoot();
+					obstructed = obstructed || cell.hasObject() || !cell.markers.empty();
+				}
+				if (complete && obstructed)
+					throw BuildingException(this, format("An object blocks the Lift landing at floor {}", iy));
+				if (complete) options.stopOffsets.push_back(iy - y);
+			}
+		}
+		return addLift(y, x, options);
+	}
+
 	Building::CreateLiftResult Building::addLift(uint32_t y, uint32_t x, CreateLiftOptions const& options)
 	{
 		beginStructuralEdit("addLift");
@@ -1425,8 +1460,12 @@ namespace core
 		string caller = format("Building::addLift({}, {}, {}, <stopOffsts>)", y, x, options.cellsWide);
 
 		validateLiftOptions(caller, options);
+		if (options.cellsWide > 2)
+			throw BuildingException(this, format("{} - enclosed Lift width must be one or two cells.", caller));
 
-		auto decksHigh = options.stopOffsets.back() + 1;
+		auto decksHigh = options.decksHigh ? options.decksHigh : options.stopOffsets.back() + 1;
+		if (options.stopOffsets.back() >= decksHigh)
+			throw BuildingException(this, format("{} - Lift stop is outside the shaft bounds.", caller));
 
 		validateBounds(caller, x, y, options.cellsWide, decksHigh);
 		validateLayerSpace(caller, CORE_LAYER_BACK, x, y, options.cellsWide, decksHigh);
@@ -1456,21 +1495,27 @@ namespace core
 					throw BuildingException(this, format("{} - foreground cell at {},{} is not occupied, which blocks lift being placed", caller, ix, iy));
 				}
 
-				// Lifts can only connect Locations
+				// Enclosed lifts only connect fully overlapping corridors.
 				auto const& foreSector = getSector(foreSectorIndex);
+				auto corridor = dynamic_pointer_cast<const Location>(foreSector);
 
-				if (foreSector->getType() != SectorType::Location)
+				if (!corridor || !corridor->isCorridor())
 				{
-					throw BuildingException(this, format("{} - foreground cell at {},{} is not a Location, which blocks lift being placed", caller, ix, iy));
+					throw BuildingException(this, format("{} - foreground cell at {},{} is not a Corridor, which blocks lift being placed", caller, ix, iy));
 				}
 
-				// Lifts must not be in the air
+				// Lifts must not be in the air and every intersecting landing must be clear.
 				validateCellTraversableOnFoot(caller, "Lift", CORE_LAYER_FORE, ix, iy);
+				if (cellDef.hasObject() || !cellDef.markers.empty())
+					throw BuildingException(this, format("{} - an object blocks the Lift landing at {},{}", caller, ix, iy));
 			}
+			if (x == getSector(deckSectorIndex)->getCellX0()
+				&& x + options.cellsWide - 1 == getSector(deckSectorIndex)->getCellX1())
+				throw BuildingException(this, format("{} - there is no space for a Lift call button at floor {}", caller, iy));
 		}
 
 		// Create lift
-		auto liftObject = createLift(x, y, options.cellsWide, options.stopOffsets);
+		auto liftObject = createLift(x, y, options.cellsWide, decksHigh, options.stopOffsets);
 
 		auto liftTransit = dynamic_pointer_cast<LiftTransit>(liftObject.sector);
 		auto lift = liftTransit->getLift();
@@ -1534,6 +1579,9 @@ namespace core
 			auto& control = liftRes.doors[i].controls[CORE_LAYER_FORE];
 			auto controlObject = control.sector->_getObject(control.index);
 			auto controlPosition = controlObject->getPosition() + controlObject->getSize() * 0.5f;
+			// The button is rendered above the floor, but agents interact from the
+			// landing rather than climbing vertically toward the wall-mounted control.
+			controlPosition.y = (float)(y + options.stopOffsets[i]);
 			DeviceCommand call;
 			call.type = DeviceCommandType::CallLift;
 			call.traversalResource = coordinator;
@@ -1559,7 +1607,7 @@ namespace core
 
 		ConstructionRecord record{ ConstructionType::Lift };
 		record.a = y; record.b = x; record.c = options.cellsWide; record.d = options.capacity;
-		record.g = options.initialStop;
+		record.e = decksHigh; record.g = options.initialStop;
 		record.x = options.minimumDwellSeconds; record.y = options.maximumBoardingSeconds;
 		record.values = options.stopOffsets;
 		recordConstruction(std::move(record));
@@ -1918,8 +1966,62 @@ namespace core
 		return obj;
 	}
 
+	bool Building::getLiftLandingGeometry(uint32_t y, uint32_t x,
+		uint32_t& landingX, uint32_t& landingWidth) const
+	{
+		if (x >= mCellsWide || y >= mDecksHigh) return false;
+		auto const& cell = mLayers[CORE_LAYER_BACK]->getCellDefinition(x, y);
+		if (cell.sectorIndex == ~0u) return false;
+		auto lift = dynamic_pointer_cast<const LiftTransit>(mSectors[cell.sectorIndex]);
+		if (!lift) return false;
+		landingX = lift->getCellX();
+		landingWidth = lift->getCellsWide();
+		return y >= lift->getCellY() && y <= lift->getCellY1();
+	}
+
+	bool Building::isLiftOwnedDoor(shared_ptr<const SectorObject> const& object,
+		uint32_t* liftSectorIndex, uint32_t* stopIndex) const
+	{
+		auto doorObject = dynamic_pointer_cast<const DoorSectorObject>(object);
+		if (!doorObject) return false;
+		auto resource = mTraversalResources.find(doorObject->getDoor()->getTraversalResourceId());
+		if (!resource || !resource->mLiftCoordinator) return false;
+		auto coordinator = mTraversalResources.find(resource->mLiftCoordinator);
+		if (!coordinator || !coordinator->mLift || !coordinator->mLiftSector) return false;
+		if (liftSectorIndex) *liftSectorIndex = (uint32_t)coordinator->mLiftSector.value - 1;
+		if (stopIndex) *stopIndex = resource->mLiftStopIndex;
+		return true;
+	}
+
+	bool Building::isLiftOwnedControl(shared_ptr<const SectorObject> const& object,
+		uint32_t* liftSectorIndex, uint32_t* stopIndex) const
+	{
+		if (!object || object->getObjectType() != SectorObjectType::InteractionPoint) return false;
+		auto button = dynamic_pointer_cast<const Button>(object->_getObject());
+		if (!button || !button->getInteractionPointId()) return false;
+		auto point = mInteractionPoints.find(button->getInteractionPointId());
+		if (!point) return false;
+		for (auto const& binding : point->mBindings)
+		{
+			if (binding.command.type != DeviceCommandType::CallLift) continue;
+			auto resource = mTraversalResources.find(binding.command.traversalResource);
+			if (!resource || !resource->mLift || !resource->mLiftSector) continue;
+			if (liftSectorIndex) *liftSectorIndex = (uint32_t)resource->mLiftSector.value - 1;
+			if (stopIndex) *stopIndex = binding.command.stopIndex;
+			return true;
+		}
+		return false;
+	}
+
 	bool Building::canAddCorridorDoor(uint32_t y, uint32_t x, string* diagnostic) const
 	{
+		uint32_t liftX, liftWidth;
+		if (getLiftLandingGeometry(y, x, liftX, liftWidth))
+		{
+			CreateDoorOptions options;
+			options.width = liftWidth;
+			return canAddCorridorDoor(y, liftX, options, diagnostic);
+		}
 		return canAddCorridorDoor(y, x, CreateDoorOptions{}, diagnostic);
 	}
 
@@ -1939,6 +2041,10 @@ namespace core
 		{
 			string const caller = "Building::canAddCorridorDoor";
 			validateSectorDoorOptions(caller, options);
+			uint32_t liftX, liftWidth;
+			bool const liftLanding = getLiftLandingGeometry(y, x, liftX, liftWidth);
+			if (liftLanding && (x != liftX || options.width != liftWidth))
+				return reject(format("Lift landing doors must start at {} and be {} cells wide", liftX, liftWidth));
 			if (options.activationMode != DoorActivationMode::RemoteControlled
 				&& (options.controls[0] || options.controls[1]))
 				return reject("Physical controls require a remote-controlled Door");
@@ -1951,13 +2057,18 @@ namespace core
 				auto const& foreCell = mLayers[CORE_LAYER_FORE]->getCellDefinition(ix, y);
 				auto const& backCell = mLayers[CORE_LAYER_BACK]->getCellDefinition(ix, y);
 				if (!foreCell.occupied()) return reject("Doors must be placed on a Fore Layer corridor");
-				if (!backCell.occupied()) return reject("A Back Layer Room is required here");
+				if (!backCell.occupied()) return reject("A Back Layer Room or Lift is required here");
 				sectors[0] = mSectors[foreCell.sectorIndex];
 				sectors[1] = mSectors[backCell.sectorIndex];
 				auto fore = dynamic_pointer_cast<const Location>(sectors[0]);
 				auto back = dynamic_pointer_cast<const Location>(sectors[1]);
 				if (!fore || !fore->isCorridor()) return reject("Doors must be placed on a Fore Layer corridor");
-				if (!back || back->isCorridor()) return reject("A Back Layer Room is required here");
+				if (liftLanding)
+				{
+					if (sectors[1]->getType() != SectorType::Lift)
+						return reject("The complete lift width must overlap one corridor");
+				}
+				else if (!back || back->isCorridor()) return reject("A Back Layer Room is required here");
 				if (foreCell.hasObject() || backCell.hasObject()
 					|| !foreCell.markers.empty() || !backCell.markers.empty())
 					return reject("Another object blocks Door placement");
@@ -1966,7 +2077,19 @@ namespace core
 				validateObjectAllowedInSector(caller, SectorObjectType::Door, foreCell.sectorIndex);
 				validateObjectAllowedInSector(caller, SectorObjectType::Door, backCell.sectorIndex);
 			}
-			for (int side = 0; side < 2; ++side)
+			if (liftLanding)
+			{
+				auto const lift = dynamic_pointer_cast<const LiftTransit>(sectors[1]);
+				for (uint32_t stop = 0; stop < lift->getNumStops(); ++stop)
+				{
+					auto const& existing = lift->getStop(stop);
+					if ((uint32_t)((int)existing.sector->getCellY() + existing.sectorOffsetY) == y)
+						return reject("This lift already has a stop on this floor");
+				}
+				if (x == sectors[0]->getCellX0() && x + options.width - 1 == sectors[0]->getCellX1())
+					return reject("There is no space to place the Lift call button");
+			}
+			else for (int side = 0; side < 2; ++side)
 				if (options.controls[side] && x == sectors[side]->getCellX0()
 					&& x + options.width - 1 == sectors[side]->getCellX1())
 					return reject("There is no space to place a Door Button on this side");
@@ -2006,6 +2129,37 @@ namespace core
 	Building::CreateDoorResult Building::addSectorDoor(uint32_t y, uint32_t x, CreateDoorOptions const& options)
 	{
 		beginStructuralEdit("addSectorDoor");
+		uint32_t liftX, liftWidth;
+		if (getLiftLandingGeometry(y, x, liftX, liftWidth))
+		{
+			string diagnostic;
+			CreateDoorOptions normalized;
+			normalized.width = liftWidth;
+			if (!canAddCorridorDoor(y, liftX, normalized, &diagnostic))
+				throw BuildingException(this, diagnostic);
+			auto const liftIndex = mLayers[CORE_LAYER_BACK]->getCellDefinition(liftX, y).sectorIndex;
+			auto lift = dynamic_pointer_cast<LiftTransit>(_getSector(liftIndex));
+			auto idlePlan = planResizeLift(liftIndex, lift->getCellX(), lift->getCellY(),
+				lift->getCellsWide(), lift->getDecksHigh());
+			if (!idlePlan.valid) throw BuildingException(this, idlePlan.diagnostic);
+			idlePlan.stopOffsets.clear();
+			for (uint32_t stop = 0; stop < lift->getNumStops(); ++stop)
+			{
+				auto const& value = lift->getStop(stop);
+				idlePlan.stopOffsets.push_back((uint32_t)((int)value.sector->getCellY()
+					+ value.sectorOffsetY - (int)lift->getCellY()));
+			}
+			idlePlan.stopOffsets.push_back(y - lift->getCellY());
+			sort(idlePlan.stopOffsets.begin(), idlePlan.stopOffsets.end());
+			vector<ConstructionRecord> records;
+			if (!prepareLiftEdit(idlePlan, records, diagnostic)) throw BuildingException(this, diagnostic);
+			rebuildFromConstructionRecords(std::move(records));
+			auto const& cell = mLayers[CORE_LAYER_FORE]->getCellDefinition(liftX, y);
+			auto sector = _getSector(cell.sectorIndex);
+			CreateObjectResult doorResult{ cell.sectorObjectIndex, SectorObjectType::Door, sector };
+			auto doorObject = dynamic_pointer_cast<DoorSectorObject>(sector->_getObject(cell.sectorObjectIndex));
+			return { doorResult, {}, doorObject->getDoor()->getTraversalResourceId() };
+		}
 		auto result = _addSectorDoor(y, x, options);
 		ConstructionRecord record{ ConstructionType::Door };
 		record.a = y; record.b = x; record.c = options.width; record.d = options.crossingLanes;
@@ -2027,6 +2181,8 @@ namespace core
 
 		auto doorObject = dynamic_pointer_cast<DoorSectorObject>(
 			mSectors[sectorIndex]->getObject(objectIndex));
+		if (doorObject && isLiftOwnedDoor(doorObject))
+			throw BuildingException(this, "Lift-owned Doors are read-only; their call button is managed by the Lift");
 		if (!doorObject)
 		{
 			throw BuildingException(this, "The selected object is not a Door");

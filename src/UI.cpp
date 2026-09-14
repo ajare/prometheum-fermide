@@ -37,6 +37,7 @@
 #include "core/BulkheadDoor.h"
 #include "core/ForceBridge.h"
 #include "core/Ladder.h"
+#include "core/Location.h"
 #include "core/ForceBridgeSectorObject.h"
 #include "core/LadderSectorObject.h"
 #include "core/LiftSectorObject.h"
@@ -211,7 +212,8 @@ namespace
 	{
 		None,
 		Room,
-		Corridor
+		Corridor,
+		Lift
 	};
 
 	struct PaintState
@@ -230,6 +232,7 @@ namespace
 		uint32_t y{ 0 };
 		uint32_t width{ 0 };
 		uint32_t height{ 0 };
+		string diagnostic;
 	};
 
 	PaintState gPaint;
@@ -247,14 +250,17 @@ namespace
 	struct SectorResizeState
 	{
 		bool dragging{ false };
+		bool lift{ false };
 		ResizeEdge edge{ ResizeEdge::None };
 		ImVec2 pressPosition{};
 		uint32_t originalX{ 0 }, originalY{ 0 }, originalWidth{ 0 }, originalHeight{ 0 };
 		core::Building::LocationEditPlan preview;
+		core::Building::LiftEditPlan liftPreview;
 	};
 
 	SectorResizeState gSectorResize;
 	optional<core::Building::LocationEditPlan> gPendingLocationEdit;
+	optional<core::Building::LiftEditPlan> gPendingLiftEdit;
 
 	struct ObjectMoveState
 	{
@@ -386,7 +392,11 @@ namespace
 		}
 		target.cellX = (uint32_t)floor(world.x);
 		target.cellY = (uint32_t)floor(world.y);
-		target.sector = building->getSectorAtPosition(CORE_LAYER_FORE, world.x, world.y);
+		uint32_t landingX, landingWidth;
+		if (building->getLiftLandingGeometry(target.cellY, target.cellX, landingX, landingWidth))
+			target.cellX = landingX;
+		target.sector = building->getSectorAtPosition(CORE_LAYER_FORE,
+			(float)target.cellX, world.y);
 		building->canAddCorridorDoor(target.cellY, target.cellX, &target.diagnostic);
 		return target;
 	}
@@ -533,6 +543,8 @@ namespace
 
 		auto world = screenToWorld(mousePosition);
 		int endX = clamp((int)floor(world.x), 0, (int)building->getCellsWide() - 1);
+		if (gPaint.tool == PaintTool::Lift)
+			endX = clamp(endX, gPaint.anchorX - 1, gPaint.anchorX + 1);
 		int endY = gPaint.tool == PaintTool::Corridor
 			? gPaint.anchorY
 			: clamp((int)floor(world.y), 0, (int)building->getDecksHigh() - 1);
@@ -566,9 +578,42 @@ namespace
 				if (area > bestArea || (area == bestArea && (uint32_t)width > best.width))
 				{
 					best = { true, (uint32_t)x, (uint32_t)y,
-						(uint32_t)width, (uint32_t)height };
+						(uint32_t)width, (uint32_t)height, {} };
 					bestArea = area;
 				}
+			}
+		}
+		if (best.valid && gPaint.tool == PaintTool::Lift)
+		{
+			uint32_t stops = 0;
+			auto fore = building->getLayer(CORE_LAYER_FORE);
+			for (uint32_t y = best.y; y < best.y + best.height; ++y)
+			{
+				auto const& first = fore->getCellDefinition(best.x, y);
+				if (first.sectorIndex == ~0u) continue;
+				auto sector = building->getSector(first.sectorIndex);
+				auto location = dynamic_pointer_cast<const core::Location>(sector);
+				if (!location || !location->isCorridor()) continue;
+				bool complete = true;
+				for (uint32_t x = best.x; x < best.x + best.width; ++x)
+				{
+					auto const& cell = fore->getCellDefinition(x, y);
+					complete = complete && cell.sectorIndex == first.sectorIndex
+						&& cell.isTraversableOnFoot() && !cell.hasObject() && cell.markers.empty();
+				}
+				if (complete && best.x == location->getCellX0()
+					&& best.x + best.width - 1 == location->getCellX1())
+				{
+					best.valid = false;
+					best.diagnostic = "There is no corridor space for a Lift call button";
+					return best;
+				}
+				stops += complete;
+			}
+			if (stops < 2)
+			{
+				best.valid = false;
+				best.diagnostic = "A Lift requires at least two fully overlapping corridor floors";
 			}
 		}
 		return best;
@@ -708,7 +753,8 @@ namespace
 
 		if (gPaint.dragging && gPaint.layer != (uint32_t)gUISettings.visibleLayer)
 			resetPaint(false);
-		if (gPaint.tool == PaintTool::Corridor && gUISettings.visibleLayer == CORE_LAYER_BACK)
+		if ((gPaint.tool == PaintTool::Corridor && gUISettings.visibleLayer == CORE_LAYER_BACK)
+			|| (gPaint.tool == PaintTool::Lift && gUISettings.visibleLayer == CORE_LAYER_FORE))
 			resetPaint();
 
 		if (gPegman.phase == PalettePhase::Falling)
@@ -722,17 +768,19 @@ namespace
 		}
 
 		auto trayBottomRight = canvasPos + canvasSize - ImVec2(PaletteInset, PaletteInset);
-		auto traySize = ImVec2(PalettePadding * 2.0f + PaletteSlotWidth * 3.0f + PaletteGap * 2.0f,
+		auto traySize = ImVec2(PalettePadding * 2.0f + PaletteSlotWidth * 4.0f + PaletteGap * 3.0f,
 			PalettePadding * 2.0f + PaletteSlotSize * 2.0f + PaletteGap);
 		auto trayTopLeft = trayBottomRight - traySize;
 		auto roomMin = trayTopLeft + ImVec2(PalettePadding, PalettePadding);
 		auto corridorMin = roomMin + ImVec2(PaletteSlotWidth + PaletteGap, 0.0f);
-		auto windowMin = corridorMin + ImVec2(PaletteSlotWidth + PaletteGap, 0.0f);
+		auto liftMin = corridorMin + ImVec2(PaletteSlotWidth + PaletteGap, 0.0f);
 		auto agentMin = roomMin + ImVec2(0.0f, PaletteSlotSize + PaletteGap);
 		auto markerMin = corridorMin + ImVec2(0.0f, PaletteSlotSize + PaletteGap);
-		auto doorMin = markerMin + ImVec2(PaletteSlotWidth + PaletteGap, 0.0f);
+		auto doorMin = liftMin + ImVec2(0.0f, PaletteSlotSize + PaletteGap);
+		auto windowMin = doorMin + ImVec2(PaletteSlotWidth + PaletteGap, 0.0f);
 		auto roomMax = roomMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
 		auto corridorMax = corridorMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
+		auto liftMax = liftMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
 		auto windowMax = windowMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
 		auto doorMax = doorMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
 		auto agentMax = agentMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
@@ -743,7 +791,9 @@ namespace
 		bool overTray = gWorldHovered && pointInRect(io.MousePos, trayTopLeft, trayBottomRight);
 		bool roomHovered = gWorldHovered && pointInRect(io.MousePos, roomMin, roomMax);
 		bool corridorHovered = gWorldHovered && pointInRect(io.MousePos, corridorMin, corridorMax);
+		bool liftHovered = gWorldHovered && pointInRect(io.MousePos, liftMin, liftMax);
 		bool corridorDisabled = gUISettings.visibleLayer == CORE_LAYER_BACK;
+		bool liftDisabled = gUISettings.visibleLayer == CORE_LAYER_FORE;
 		if (overTray) paletteConsumedMouse = true;
 
 		auto drawPaintButton = [&](ImVec2 min, ImVec2 max, char const* label,
@@ -757,18 +807,22 @@ namespace
 			drawList->AddText(textPosition, disabled ? disabledColour : IM_COL32_WHITE, label);
 		};
 
-		if (gPegman.phase == PalettePhase::Home && (roomHovered || corridorHovered))
+		if (gPegman.phase == PalettePhase::Home && (roomHovered || corridorHovered || liftHovered))
 		{
 			paletteConsumedMouse = true;
 			ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
 			if (corridorHovered && corridorDisabled)
 				ImGui::SetTooltip("Corridors can only be painted on the Fore Layer");
+			else if (liftHovered && liftDisabled)
+				ImGui::SetTooltip("Lifts can only be painted on the Back Layer");
 			else
-				ImGui::SetTooltip(roomHovered ? "Paint Room" : "Paint Corridor");
+				ImGui::SetTooltip(roomHovered ? "Paint Room" : corridorHovered ? "Paint Corridor" : "Paint Lift");
 
-			if (io.MouseClicked[0] && !(corridorHovered && corridorDisabled))
+			if (io.MouseClicked[0] && !(corridorHovered && corridorDisabled)
+				&& !(liftHovered && liftDisabled))
 			{
-				auto clickedTool = roomHovered ? PaintTool::Room : PaintTool::Corridor;
+				auto clickedTool = roomHovered ? PaintTool::Room
+					: corridorHovered ? PaintTool::Corridor : PaintTool::Lift;
 				gPaint.tool = gPaint.tool == clickedTool ? PaintTool::None : clickedTool;
 				gPaint.dragging = false;
 				resetPegman();
@@ -783,6 +837,7 @@ namespace
 		drawPaintButton(roomMin, roomMax, "Room", PaintTool::Room, roomHovered, false);
 		drawPaintButton(corridorMin, corridorMax, "Corridor", PaintTool::Corridor,
 			corridorHovered, corridorDisabled);
+		drawPaintButton(liftMin, liftMax, "Lift", PaintTool::Lift, liftHovered, liftDisabled);
 		drawWindowIcon(drawList, windowMin, windowMax, yellow);
 
 		bool paintWasActive = gPaint.tool != PaintTool::None;
@@ -825,13 +880,16 @@ namespace
 			}
 			else
 			{
-				auto topLeft = worldToScreen({ (float)gPaint.anchorX,
-					(float)(gPaint.anchorY + 1) });
-				auto bottomRight = worldToScreen({ (float)(gPaint.anchorX + 1),
-					(float)gPaint.anchorY });
+				auto x = paintRectangle.width ? paintRectangle.x : (uint32_t)gPaint.anchorX;
+				auto y = paintRectangle.height ? paintRectangle.y : (uint32_t)gPaint.anchorY;
+				auto width = paintRectangle.width ? paintRectangle.width : 1u;
+				auto height = paintRectangle.height ? paintRectangle.height : 1u;
+				auto topLeft = worldToScreen({ (float)x, (float)(y + height) });
+				auto bottomRight = worldToScreen({ (float)(x + width), (float)y });
 				drawList->AddRectFilled(topLeft, bottomRight, IM_COL32(244, 67, 54, 55));
 				drawList->AddRect(topLeft, bottomRight, red, 0.0f, 0, 2.0f);
-				ImGui::SetTooltip("The starting cell is occupied");
+				ImGui::SetTooltip("%s", paintRectangle.diagnostic.empty()
+					? "The starting cell is occupied" : paintRectangle.diagnostic.c_str());
 			}
 			ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
 
@@ -848,9 +906,12 @@ namespace
 							building->addRoom(nextRoomName(building), gPaint.layer,
 								paintRectangle.y, paintRectangle.x, paintRectangle.width,
 								paintRectangle.height, CORE_ROOM_MAX_HEIGHT);
-						else
+						else if (tool == PaintTool::Corridor)
 							building->addCorridor(paintRectangle.y, paintRectangle.x,
 								paintRectangle.width, 1);
+						else
+							building->addLift(paintRectangle.y, paintRectangle.x,
+								paintRectangle.width, paintRectangle.height);
 						building->finishBuild();
 						commitDocumentEdit(std::move(undo));
 					}
@@ -1176,6 +1237,7 @@ namespace
 		resetSectorResize();
 		resetObjectMove();
 		gPendingLocationEdit.reset();
+		gPendingLiftEdit.reset();
 		gUISettings.worldPaused = false;
 		if (clearHistory)
 		{
@@ -1430,6 +1492,39 @@ namespace
 		else commitLocationEdit(building, plan);
 	}
 
+	void commitLiftEdit(shared_ptr<core::Building> const& building,
+		core::Building::LiftEditPlan const& plan)
+	{
+		auto undo = captureDocumentSnapshot(building);
+		try
+		{
+			auto newIndex = building->applyLiftEdit(plan);
+			gUISettings.worldPaused = true;
+			gHoveredAgent = nullptr; gHoveredSector.reset(); gHoveredSectorObject.reset();
+			gSelectedAgent = nullptr; gSelectedSectorObject.reset();
+			gSelectedSector = plan.remove ? nullptr : building->getSector(newIndex);
+			commitDocumentEdit(std::move(undo));
+		}
+		catch (core::Exception const& error)
+		{ core::addLogMessage("Lift editor", 0, core::LogLevel::Error, error.getMessage()); }
+		catch (std::exception const& error)
+		{ core::addLogMessage("Lift editor", 0, core::LogLevel::Error, error.what()); }
+		resetSectorResize();
+	}
+
+	void queueLiftEdit(shared_ptr<core::Building> const& building,
+		core::Building::LiftEditPlan const& plan)
+	{
+		if (!building->isSimulationPaused()) building->pauseSimulation();
+		gUISettings.worldPaused = true;
+		if (plan.requiresConfirmation())
+		{
+			gPendingLiftEdit = plan;
+			gOpenLocationEditPopup = true;
+		}
+		else commitLiftEdit(building, plan);
+	}
+
 	void renderFilePopups(shared_ptr<core::Building>& building)
 	{
 		if (gOpenUnsavedChangesPopup)
@@ -1520,18 +1615,24 @@ namespace
 			if (gPendingLocationEdit)
 				for (auto const& consequence : gPendingLocationEdit->consequences)
 					ImGui::BulletText("%s", consequence.c_str());
+			if (gPendingLiftEdit)
+				for (auto const& consequence : gPendingLiftEdit->consequences)
+					ImGui::BulletText("%s", consequence.c_str());
 			ImGui::Separator();
-			if (ImGui::Button("OK") && building && gPendingLocationEdit)
+			if (ImGui::Button("OK") && building && (gPendingLocationEdit || gPendingLiftEdit))
 			{
-				auto plan = *gPendingLocationEdit;
-				gPendingLocationEdit.reset();
+				auto locationPlan = gPendingLocationEdit;
+				auto liftPlan = gPendingLiftEdit;
+				gPendingLocationEdit.reset(); gPendingLiftEdit.reset();
 				ImGui::CloseCurrentPopup();
-				commitLocationEdit(building, plan);
+				if (locationPlan) commitLocationEdit(building, *locationPlan);
+				else commitLiftEdit(building, *liftPlan);
 			}
 			ImGui::SameLine();
 			if (ImGui::Button("Cancel"))
 			{
 				gPendingLocationEdit.reset();
+				gPendingLiftEdit.reset();
 				resetSectorResize();
 				ImGui::CloseCurrentPopup();
 			}
@@ -1862,7 +1963,7 @@ namespace
 	{
 		if (!building) return;
 		if (gPegman.phase != PalettePhase::Home || gPaint.tool != PaintTool::None
-			|| gObjectMove.dragging || gSectorResize.dragging || gPendingLocationEdit)
+			|| gObjectMove.dragging || gSectorResize.dragging || gPendingLocationEdit || gPendingLiftEdit)
 		{
 			reportClipboardError("Finish the current placement first");
 			return;
@@ -1937,6 +2038,13 @@ namespace
 			{
 				if (gUISettings.visibleLayer != CORE_LAYER_FORE)
 					throw runtime_error("Doors can only be placed on the Fore Layer");
+				uint32_t landingX, landingWidth;
+				if (building->getLiftLandingGeometry(y, x, landingX, landingWidth))
+				{
+					x = landingX;
+					definition.door = {};
+					definition.door.width = landingWidth;
+				}
 				if (!building->canAddCorridorDoor(y, x, definition.door, &diagnostic))
 					throw runtime_error(diagnostic);
 			}
@@ -2075,10 +2183,19 @@ void handleShortcuts(shared_ptr<core::Building>& building)
 		{
 			if (gUISettings.selectionMode == UISettings::SelectionMode::Sector && gSelectedSector)
 			{
-				auto plan = building->planRemoveLocation(gSelectedSector->getIndex());
-				if (!plan.valid)
-					core::addLogMessage("Sector editor", 0, core::LogLevel::Error, plan.diagnostic);
-				else queueLocationEdit(building, plan);
+				if (gSelectedSector->getType() == core::SectorType::Lift)
+				{
+					auto plan = building->planRemoveLift(gSelectedSector->getIndex());
+					if (!plan.valid) core::addLogMessage("Lift editor", 0, core::LogLevel::Error, plan.diagnostic);
+					else queueLiftEdit(building, plan);
+				}
+				else
+				{
+					auto plan = building->planRemoveLocation(gSelectedSector->getIndex());
+					if (!plan.valid)
+						core::addLogMessage("Sector editor", 0, core::LogLevel::Error, plan.diagnostic);
+					else queueLocationEdit(building, plan);
+				}
 			}
 			else if (gSelectedAgent)
 			{
@@ -2101,7 +2218,14 @@ void handleShortcuts(shared_ptr<core::Building>& building)
 					|| gSelectedSectorObject->getObjectType() == core::SectorObjectType::Door
 					|| gSelectedSectorObject->getObjectType() == core::SectorObjectType::Window))
 			{
-				try
+				uint32_t liftIndex, stopIndex;
+				if (building->isLiftOwnedDoor(gSelectedSectorObject, &liftIndex, &stopIndex))
+				{
+					auto plan = building->planRemoveLiftStop(liftIndex, stopIndex);
+					if (!plan.valid) core::addLogMessage("Lift editor", 0, core::LogLevel::Error, plan.diagnostic);
+					else queueLiftEdit(building, plan);
+				}
+				else try
 				{
 					auto undo = captureDocumentSnapshot(building);
 					auto selected = gSelectedSectorObject;
@@ -2202,7 +2326,13 @@ void handleWorldInteraction(shared_ptr<core::Building> building,
 		}
 		else if (gHoveredInteractionPoint)
 		{
-			if (!gUISettings.worldPaused && gSelectedAgent)
+			if (gUISettings.worldPaused && gHoveredSectorObject)
+			{
+				setSelectionMode(UISettings::SelectionMode::Object);
+				gSelectedAgent = nullptr; gSelectedSector.reset();
+				gSelectedSectorObject = gHoveredSectorObject;
+			}
+			else if (!gUISettings.worldPaused && gSelectedAgent)
 			{
 				auto actor = building->getAgentId(gSelectedAgent);
 				if (actor) building->requestInteraction(gHoveredInteractionPoint, actor);
@@ -2873,7 +3003,18 @@ void renderDoorPanel(shared_ptr<core::Building> const& building,
 	ImGui::Text("From: %s", door->getSector(CORE_LAYER_FORE)->getDescription().c_str());
 	ImGui::Text("To: %s", door->getSector(CORE_LAYER_BACK)->getDescription().c_str());
 
-	ImGui::BeginDisabled(!building->isSimulationPaused());
+	uint32_t liftSector, stopIndex;
+	bool const liftOwned = building->isLiftOwnedDoor(object, &liftSector, &stopIndex);
+	if (liftOwned)
+	{
+		ImGui::Separator();
+		ImGui::TextUnformatted("Owned by Lift");
+		ImGui::Text("Lift sector: %u", liftSector);
+		ImGui::Text("Stop: %u (floor %u)", stopIndex, object->getCellY());
+		ImGui::TextDisabled("Landing geometry and controls are managed by the Lift.");
+	}
+
+	ImGui::BeginDisabled(!building->isSimulationPaused() || liftOwned);
 	if (ImGui::Button("Add Door Button"))
 	{
 		auto undo = captureDocumentSnapshot(building);
@@ -2908,6 +3049,20 @@ void renderDoorPanel(shared_ptr<core::Building> const& building,
 	ImGui::EndDisabled();
 }
 
+
+void renderLiftOwnedControlPanel(shared_ptr<core::Building> const& building,
+	shared_ptr<const core::SectorObject> object)
+{
+	uint32_t liftSector, stopIndex;
+	if (!building->isLiftOwnedControl(object, &liftSector, &stopIndex)) return;
+	ImGui::TextUnformatted("Lift call button");
+	ImGui::Text("Position: %u, %u", object->getCellX(), object->getCellY());
+	ImGui::Separator();
+	ImGui::TextUnformatted("Owned by Lift");
+	ImGui::Text("Lift sector: %u", liftSector);
+	ImGui::Text("Stop: %u (floor %u)", stopIndex, object->getCellY());
+	ImGui::TextDisabled("This button is managed by its Lift landing and is read-only.");
+}
 
 void renderForceBridgePanel(shared_ptr<const core::SectorObject> object)
 {
@@ -3285,6 +3440,10 @@ void renderSelectedObjectPanel(shared_ptr<core::Building> const& building)
 
 		case core::SectorObjectType::Door:
 			renderDoorPanel(building, gSelectedSectorObject);
+			break;
+
+		case core::SectorObjectType::InteractionPoint:
+			renderLiftOwnedControlPanel(building, gSelectedSectorObject);
 			break;
 
 		case core::SectorObjectType::ForceBridge:
@@ -3747,7 +3906,8 @@ namespace
 
 	ResizeEdge hoveredResizeEdge(shared_ptr<const core::Sector> const& sector, ImVec2 mouse)
 	{
-		if (!sector || sector->getType() != core::SectorType::Location) return ResizeEdge::None;
+		if (!sector || (sector->getType() != core::SectorType::Location
+			&& sector->getType() != core::SectorType::Lift)) return ResizeEdge::None;
 		auto topLeft = worldToScreen({ (float)sector->getCellX(),
 			(float)(sector->getCellY() + sector->getDecksHigh()) });
 		auto bottomRight = worldToScreen({ (float)(sector->getCellX() + sector->getCellsWide()),
@@ -3760,7 +3920,8 @@ namespace
 			candidates.push_back({ ResizeEdge::Left, abs(mouse.x - topLeft.x) });
 			candidates.push_back({ ResizeEdge::Right, abs(mouse.x - bottomRight.x) });
 		}
-		bool corridor = sector->getTopDeckHeight() == CORE_CORRIDOR_HEIGHT;
+		bool corridor = sector->getType() == core::SectorType::Location
+			&& sector->getTopDeckHeight() == CORE_CORRIDOR_HEIGHT;
 		if (!corridor && mouse.x >= topLeft.x - tolerance && mouse.x <= bottomRight.x + tolerance)
 		{
 			candidates.push_back({ ResizeEdge::Top, abs(mouse.y - topLeft.y) });
@@ -3794,6 +3955,12 @@ namespace
 			return;
 		}
 
+		if (building->isLiftOwnedDoor(gSelectedSectorObject)
+			|| building->isLiftOwnedControl(gSelectedSectorObject))
+		{
+			resetObjectMove();
+			return;
+		}
 		auto owner = gSelectedSectorObject->getSector();
 		uint32_t objectIndex = ~0u;
 		for (uint32_t i = 0; i < owner->getNumObjects(); ++i)
@@ -3895,21 +4062,28 @@ namespace
 
 		if (!gSectorResize.dragging && gWorldHovered && hoverEdge != ResizeEdge::None && io.MouseClicked[0])
 		{
-			if (hoverEdge != ResizeEdge::Move)
+			bool const selectedLift = gSelectedSector->getType() == core::SectorType::Lift;
+			if (hoverEdge != ResizeEdge::Move && !selectedLift)
 			{
 				if (!building->isSimulationPaused()) building->pauseSimulation();
 				gUISettings.worldPaused = true;
 			}
 			gSectorResize.dragging = true;
+			gSectorResize.lift = selectedLift;
 			gSectorResize.edge = hoverEdge;
 			gSectorResize.pressPosition = io.MousePos;
 			gSectorResize.originalX = gSelectedSector->getCellX();
 			gSectorResize.originalY = gSelectedSector->getCellY();
 			gSectorResize.originalWidth = gSelectedSector->getCellsWide();
 			gSectorResize.originalHeight = gSelectedSector->getDecksHigh();
-			gSectorResize.preview = building->planResizeLocation(gSelectedSector->getIndex(),
-				gSectorResize.originalX, gSectorResize.originalY,
-				gSectorResize.originalWidth, gSectorResize.originalHeight);
+			if (gSectorResize.lift)
+				gSectorResize.liftPreview = building->planResizeLift(gSelectedSector->getIndex(),
+					gSectorResize.originalX, gSectorResize.originalY,
+					gSectorResize.originalWidth, gSectorResize.originalHeight);
+			else
+				gSectorResize.preview = building->planResizeLocation(gSelectedSector->getIndex(),
+					gSectorResize.originalX, gSectorResize.originalY,
+					gSectorResize.originalWidth, gSectorResize.originalHeight);
 		}
 		if (!gSectorResize.dragging) return;
 
@@ -3930,8 +4104,13 @@ namespace
 		int desired = 0;
 		switch (gSectorResize.edge)
 		{
-		case ResizeEdge::Left: moving = &left; desired = clamp(left + deltaX, 0, right - 1); break;
-		case ResizeEdge::Right: moving = &right; desired = clamp(right + deltaX, left + 1, (int)building->getCellsWide() - 1); break;
+		case ResizeEdge::Left:
+			moving = &left; desired = clamp(left + deltaX,
+				gSectorResize.lift ? max(0, right - 2) : 0, right - 1); break;
+		case ResizeEdge::Right:
+			moving = &right; desired = clamp(right + deltaX, left + 1,
+				gSectorResize.lift ? min(left + 2, (int)building->getCellsWide() - 1)
+					: (int)building->getCellsWide() - 1); break;
 		case ResizeEdge::Bottom: moving = &bottom; desired = clamp(bottom + deltaY, 0, top - 1); break;
 		case ResizeEdge::Top: moving = &top; desired = clamp(top + deltaY, bottom + 1, (int)building->getDecksHigh() - 1); break;
 		case ResizeEdge::Move:
@@ -3942,7 +4121,8 @@ namespace
 			bottom = clamp(bottom + deltaY, 0, (int)building->getDecksHigh() - height - 1);
 			right = left + width;
 			top = bottom + height;
-			if ((deltaX != 0 || deltaY != 0) && !building->isSimulationPaused())
+			if ((deltaX != 0 || deltaY != 0) && !gSectorResize.lift
+				&& !building->isSimulationPaused())
 			{
 				building->pauseSimulation();
 				gUISettings.worldPaused = true;
@@ -3965,7 +4145,16 @@ namespace
 				}
 			}
 		}
-		if (gSectorResize.preview.x != (uint32_t)left
+		if (gSectorResize.lift)
+		{
+			if (gSectorResize.liftPreview.x != (uint32_t)left
+				|| gSectorResize.liftPreview.y != (uint32_t)bottom
+				|| gSectorResize.liftPreview.cellsWide != (uint32_t)(right - left)
+				|| gSectorResize.liftPreview.decksHigh != (uint32_t)(top - bottom))
+				gSectorResize.liftPreview = building->planResizeLift(gSelectedSector->getIndex(),
+					(uint32_t)left, (uint32_t)bottom, (uint32_t)(right - left), (uint32_t)(top - bottom));
+		}
+		else if (gSectorResize.preview.x != (uint32_t)left
 			|| gSectorResize.preview.y != (uint32_t)bottom
 			|| gSectorResize.preview.cellsWide != (uint32_t)(right - left)
 			|| gSectorResize.preview.decksHigh != (uint32_t)(top - bottom))
@@ -3982,12 +4171,19 @@ namespace
 				&& right - left == (int)gSectorResize.originalWidth
 				&& top - bottom == (int)gSectorResize.originalHeight;
 			if (unchanged) resetSectorResize();
-			else if (!gSectorResize.preview.valid)
+			else if (gSectorResize.lift && !gSectorResize.liftPreview.valid)
+			{
+				core::addLogMessage("Lift editor", 0, core::LogLevel::Error,
+					gSectorResize.liftPreview.diagnostic);
+				resetSectorResize();
+			}
+			else if (!gSectorResize.lift && !gSectorResize.preview.valid)
 			{
 				core::addLogMessage("Sector editor", 0, core::LogLevel::Error,
 					gSectorResize.preview.diagnostic);
 				resetSectorResize();
 			}
+			else if (gSectorResize.lift) queueLiftEdit(building, gSectorResize.liftPreview);
 			else queueLocationEdit(building, gSectorResize.preview);
 		}
 	}
@@ -3995,7 +4191,7 @@ namespace
 	void drawSectorEditOverlay(ImDrawList* drawList)
 	{
 		if (gWorldHovered && gUISettings.selectionMode == UISettings::SelectionMode::Sector
-			&& gSelectedSector && !gSectorResize.dragging && !gPendingLocationEdit)
+			&& gSelectedSector && !gSectorResize.dragging && !gPendingLocationEdit && !gPendingLiftEdit)
 		{
 			auto edge = hoveredResizeEdge(gSelectedSector, ImGui::GetIO().MousePos);
 			auto topLeft = worldToScreen({ (float)gSelectedSector->getCellX(),
@@ -4016,18 +4212,41 @@ namespace
 			}
 		}
 
-		core::Building::LocationEditPlan const* plan = nullptr;
-		if (gSectorResize.dragging || (gSectorResize.preview.cellsWide && !gPendingLocationEdit))
-			plan = &gSectorResize.preview;
-		else if (gPendingLocationEdit) plan = &*gPendingLocationEdit;
-		if (!plan || plan->remove || plan->cellsWide == 0 || plan->decksHigh == 0) return;
-		auto topLeft = worldToScreen({ (float)plan->x, (float)(plan->y + plan->decksHigh) });
-		auto bottomRight = worldToScreen({ (float)(plan->x + plan->cellsWide), (float)plan->y });
-		auto colour = plan->valid ? IM_COL32(255, 255, 0, 255) : IM_COL32(255, 64, 64, 255);
+		bool hasPlan = false, valid = false, remove = false;
+		uint32_t x = 0, y = 0, width = 0, height = 0;
+		string diagnostic;
+		if (gSectorResize.lift && (gSectorResize.dragging || gSectorResize.liftPreview.cellsWide))
+		{
+			auto const& plan = gSectorResize.liftPreview;
+			hasPlan = true; valid = plan.valid; remove = plan.remove; x = plan.x; y = plan.y;
+			width = plan.cellsWide; height = plan.decksHigh; diagnostic = plan.diagnostic;
+		}
+		else if (gSectorResize.dragging || (gSectorResize.preview.cellsWide && !gPendingLocationEdit))
+		{
+			auto const& plan = gSectorResize.preview;
+			hasPlan = true; valid = plan.valid; remove = plan.remove; x = plan.x; y = plan.y;
+			width = plan.cellsWide; height = plan.decksHigh; diagnostic = plan.diagnostic;
+		}
+		else if (gPendingLiftEdit)
+		{
+			auto const& plan = *gPendingLiftEdit;
+			hasPlan = true; valid = plan.valid; remove = plan.remove; x = plan.x; y = plan.y;
+			width = plan.cellsWide; height = plan.decksHigh; diagnostic = plan.diagnostic;
+		}
+		else if (gPendingLocationEdit)
+		{
+			auto const& plan = *gPendingLocationEdit;
+			hasPlan = true; valid = plan.valid; remove = plan.remove; x = plan.x; y = plan.y;
+			width = plan.cellsWide; height = plan.decksHigh; diagnostic = plan.diagnostic;
+		}
+		if (!hasPlan || remove || width == 0 || height == 0) return;
+		auto topLeft = worldToScreen({ (float)x, (float)(y + height) });
+		auto bottomRight = worldToScreen({ (float)(x + width), (float)y });
+		auto colour = valid ? IM_COL32(255, 255, 0, 255) : IM_COL32(255, 64, 64, 255);
 		drawList->AddRectFilled(topLeft, bottomRight,
-			plan->valid ? IM_COL32(255, 255, 0, 45) : IM_COL32(255, 64, 64, 45));
+			valid ? IM_COL32(255, 255, 0, 45) : IM_COL32(255, 64, 64, 45));
 		drawList->AddRect(topLeft, bottomRight, colour, 0.0f, 0, 2.0f);
-		if (!plan->valid && !plan->diagnostic.empty()) ImGui::SetTooltip("%s", plan->diagnostic.c_str());
+		if (!valid && !diagnostic.empty()) ImGui::SetTooltip("%s", diagnostic.c_str());
 	}
 }
 
@@ -4065,7 +4284,8 @@ void renderWorldWindow(shared_ptr<core::Building> building, shared_ptr<const cor
 		if (gUISettings.selectionMode == UISettings::SelectionMode::Sector)
 		{
 			auto sector = building->getSectorAtPosition(gUISettings.visibleLayer, mousePos.x, mousePos.y);
-			if (sector && sector->getType() == core::SectorType::Location) gHoveredSector = sector;
+			if (sector && (sector->getType() == core::SectorType::Location
+				|| sector->getType() == core::SectorType::Lift)) gHoveredSector = sector;
 		}
 		else if (gUISettings.selectionMode == UISettings::SelectionMode::Object)
 		{

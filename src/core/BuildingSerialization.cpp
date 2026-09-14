@@ -2,6 +2,8 @@
 #include "core/SerializationException.h"
 #include "core/Exceptions.h"
 #include "core/Transit.h"
+#include "core/LiftTransit.h"
+#include "core/Location.h"
 #include "core/DoorSectorObject.h"
 #include "core/MarkerSectorObject.h"
 #include "core/WindowSectorObject.h"
@@ -260,7 +262,7 @@ namespace core
 			break;
 		case ConstructionType::Lift:
 			addLift(record.a, record.b,
-				{ record.c, record.values, record.d, record.x, record.y, record.g });
+				{ record.c, record.values, record.d, record.x, record.y, record.g, record.e });
 			break;
 		case ConstructionType::Shuttle:
 			addShuttle(record.a, record.b, record.c,
@@ -310,6 +312,310 @@ namespace core
 			_getSector(record.a)->addSectorObject(nullptr);
 			break;
 		}
+	}
+
+	vector<Building::ConstructionRecord> Building::canonicalConstructionRecords(
+		vector<ConstructionRecord> records) const
+	{
+		auto createsSector = [](ConstructionType type)
+		{
+			return type == ConstructionType::Corridor || type == ConstructionType::Room
+				|| type == ConstructionType::Ladder || type == ConstructionType::Staircase
+				|| type == ConstructionType::Lift || type == ConstructionType::Shuttle;
+		};
+		auto isLocation = [](ConstructionType type)
+		{
+			return type == ConstructionType::Corridor || type == ConstructionType::Room;
+		};
+		auto referencesSector = [](ConstructionType type)
+		{
+			return type == ConstructionType::LightSwitch || type == ConstructionType::ForceBridge
+				|| type == ConstructionType::SectorLadder || type == ConstructionType::PlatformLift
+				|| type == ConstructionType::Walkway || type == ConstructionType::Marker
+				|| type == ConstructionType::RemoveWall || type == ConstructionType::RemoveMarker
+				|| type == ConstructionType::ObjectTombstone;
+		};
+		struct Item { ConstructionRecord record; uint32_t oldSector{ ~0u }; };
+		vector<Item> locations, transits, other;
+		uint32_t oldSector = 0;
+		for (auto& record : records)
+		{
+			bool const producer = createsSector(record.type);
+			Item item{ std::move(record), producer ? oldSector++ : ~0u };
+			if (isLocation(item.record.type)) locations.push_back(std::move(item));
+			else if (createsSector(item.record.type)) transits.push_back(std::move(item));
+			else other.push_back(std::move(item));
+		}
+		vector<Item> ordered;
+		ordered.reserve(records.size());
+		for (auto& item : locations) ordered.push_back(std::move(item));
+		for (auto& item : transits) ordered.push_back(std::move(item));
+		for (auto& item : other) ordered.push_back(std::move(item));
+		vector<uint32_t> sectorMap(oldSector, ~0u);
+		uint32_t nextSector = 0;
+		for (auto const& item : ordered)
+			if (item.oldSector != ~0u) sectorMap[item.oldSector] = nextSector++;
+		vector<ConstructionRecord> result;
+		result.reserve(ordered.size());
+		for (auto& item : ordered)
+		{
+			if (referencesSector(item.record.type) && item.record.a < sectorMap.size())
+				item.record.a = sectorMap[item.record.a];
+			result.push_back(std::move(item.record));
+		}
+		return result;
+	}
+
+	bool Building::prepareLiftEdit(LiftEditPlan const& plan,
+		vector<ConstructionRecord>& records, string& diagnostic) const
+	{
+		records = mConstructionRecords;
+		uint32_t producerIndex = 0;
+		auto found = records.end();
+		for (auto it = records.begin(); it != records.end(); ++it)
+		{
+			bool producer = it->type == ConstructionType::Corridor || it->type == ConstructionType::Room
+				|| it->type == ConstructionType::Ladder || it->type == ConstructionType::Staircase
+				|| it->type == ConstructionType::Lift || it->type == ConstructionType::Shuttle;
+			if (!producer) continue;
+			if (producerIndex++ == plan.sectorIndex) { found = it; break; }
+		}
+		if (found == records.end() || found->type != ConstructionType::Lift)
+		{
+			diagnostic = "The selected Lift no longer has an authored definition";
+			return false;
+		}
+		if (plan.remove) records.erase(found);
+		else
+		{
+			found->a = plan.y; found->b = plan.x; found->c = plan.cellsWide;
+			found->e = plan.decksHigh; found->values = plan.stopOffsets;
+			auto oldPosition = 0.0f;
+			for (auto const& [id, resource] : mTraversalResources.entries())
+			{
+				(void)id;
+				if (resource->mLift && resource->mLiftSector.value == (uint64_t)plan.sectorIndex + 1)
+				{ oldPosition = resource->mLiftPosition; break; }
+			}
+			auto nearest = min_element(found->values.begin(), found->values.end(), [&](auto a, auto b)
+			{
+				auto da = abs((float)(plan.y + a) - oldPosition);
+				auto db = abs((float)(plan.y + b) - oldPosition);
+				return da == db ? a < b : da < db;
+			});
+			found->g = (uint32_t)distance(found->values.begin(), nearest);
+		}
+		records = canonicalConstructionRecords(std::move(records));
+		try
+		{
+			Building candidate(mName, mCellsWide, mDecksHigh);
+			candidate.mDeserializingConstruction = true;
+			for (auto const& record : records) candidate.applyConstructionRecord(record);
+			candidate.finishBuild();
+		}
+		catch (Exception const& error) { diagnostic = error.getMessage(); return false; }
+		catch (exception const& error) { diagnostic = error.what(); return false; }
+		return true;
+	}
+
+	void Building::rebuildFromConstructionRecords(vector<ConstructionRecord> records)
+	{
+		struct SavedAgent { AgentId id; string name; uint32_t flags; uint32_t layer; Vector2 position; };
+		vector<SavedAgent> agents;
+		for (auto const& [id, agent] : mAgents.entries())
+			agents.push_back({ id, agent->getName(), agent->getFlags(),
+				agent->getSector()->getLayerIndex(), agent->getGlobalPosition() });
+		resetForDeserialization(mName, mCellsWide, mDecksHigh);
+		mDeserializingConstruction = true;
+		try
+		{
+			for (auto const& record : records) applyConstructionRecord(record);
+			finishBuild();
+		}
+		catch (...) { mDeserializingConstruction = false; throw; }
+		mDeserializingConstruction = false;
+		mConstructionRecords = std::move(records);
+		mSimulationPaused = true;
+		modify();
+		for (auto const& saved : agents)
+		{
+			auto sector = getSectorAtPosition(saved.layer, saved.position.x, saved.position.y);
+			if (!sector) continue;
+			auto agent = make_unique<Agent>(saved.name);
+			agent->setFlags(saved.flags);
+			auto* raw = agent.get();
+			raw->attachToBuilding(this);
+			raw->mPosition = SectorPosition(sector.get(), saved.position - sector->getPosition());
+			_getSector(sector->getIndex())->mAgents.insert(raw);
+			mAgents.restore(saved.id, std::move(agent));
+			mAgentIds.emplace(raw, saved.id);
+		}
+	}
+
+	Building::LiftEditPlan Building::planResizeLift(uint32_t sectorIndex,
+		uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh) const
+	{
+		LiftEditPlan plan;
+		plan.sectorIndex = sectorIndex; plan.x = x; plan.y = y;
+		plan.cellsWide = cellsWide; plan.decksHigh = decksHigh;
+		if (sectorIndex >= mSectors.size() || !dynamic_pointer_cast<const LiftTransit>(mSectors[sectorIndex]))
+		{ plan.diagnostic = "Only enclosed Lifts can be resized"; return plan; }
+		auto lift = dynamic_pointer_cast<const LiftTransit>(mSectors[sectorIndex]);
+		plan.move = x != lift->getCellX() || y != lift->getCellY();
+		if (cellsWide < 1 || cellsWide > 2)
+		{ plan.diagnostic = "A Lift must be one or two cells wide"; return plan; }
+		if (decksHigh == 0 || x + cellsWide >= mCellsWide || y + decksHigh >= mDecksHigh)
+		{ plan.diagnostic = "The Lift shaft is outside the Building bounds"; return plan; }
+		if (!lift->getAgents().empty())
+		{ plan.diagnostic = "The Lift cannot be edited while agents occupy it"; return plan; }
+		for (auto const& [id, resource] : mTraversalResources.entries())
+		{
+			if (!resource->mLift || resource->mLiftSector.value != (uint64_t)sectorIndex + 1) continue;
+			bool active = !resource->mAdmissionQueue.empty() || !resource->mLiftConfirmationQueue.empty()
+				|| !resource->mLiftTripIntents.empty() || resource->mLiftMoving
+				|| any_of(resource->mOccupants.begin(), resource->mOccupants.end(), [](auto owner) { return (bool)owner; })
+				|| any_of(resource->mAdmissionReservations.begin(), resource->mAdmissionReservations.end(),
+					[](auto owner) { return (bool)owner; });
+			for (auto const& [landingId, landing] : mTraversalResources.entries())
+			{
+				(void)landingId;
+				if (landing->mLiftCoordinator != id) continue;
+				active = active || !landing->mOpenLeases.empty()
+					|| any_of(landing->mCrossingOwners.begin(), landing->mCrossingOwners.end(),
+						[](auto owner) { return (bool)owner; });
+				for (auto const& lane : landing->mQueueLanes) active = active || !lane.queue.empty();
+			}
+			if (active)
+			{ plan.diagnostic = "The Lift cannot be edited while it has active journeys, queues, or reservations"; return plan; }
+		}
+		for (uint32_t iy = y; iy < y + decksHigh; ++iy)
+			for (uint32_t ix = x; ix < x + cellsWide; ++ix)
+			{
+				auto occupant = mLayers[CORE_LAYER_BACK]->getCellDefinition(ix, iy).sectorIndex;
+				if (occupant != ~0u && occupant != sectorIndex)
+				{ plan.diagnostic = format("Sector at {},{} blocks the Lift", ix, iy); return plan; }
+			}
+		for (uint32_t iy = y; iy < y + decksHigh; ++iy)
+		{
+			auto const& first = mLayers[CORE_LAYER_FORE]->getCellDefinition(x, iy);
+			if (first.sectorIndex == ~0u) continue;
+			auto corridor = dynamic_pointer_cast<const Location>(mSectors[first.sectorIndex]);
+			if (!corridor || !corridor->isCorridor()) continue;
+			bool complete = true;
+			for (uint32_t ix = x; ix < x + cellsWide; ++ix)
+			{
+				auto const& cell = mLayers[CORE_LAYER_FORE]->getCellDefinition(ix, iy);
+				complete = complete && cell.sectorIndex == first.sectorIndex && cell.isTraversableOnFoot();
+				if (cell.hasObject())
+				{
+					auto owner = mSectors[cell.sectorIndex]->getObject(cell.sectorObjectIndex);
+					uint32_t ownerLift;
+					complete = complete && isLiftOwnedDoor(owner, &ownerLift) && ownerLift == sectorIndex;
+				}
+				complete = complete && cell.markers.empty();
+			}
+			if (complete) plan.stopOffsets.push_back(iy - y);
+		}
+		if (plan.stopOffsets.size() < 2)
+		{ plan.diagnostic = "The Lift requires at least two fully overlapping Fore-layer corridor floors"; return plan; }
+		vector<uint32_t> oldStops;
+		for (uint32_t i = 0; i < lift->getNumStops(); ++i)
+			oldStops.push_back((uint32_t)((int)lift->getStop(i).sector->getCellY() + lift->getStop(i).sectorOffsetY));
+		vector<uint32_t> newStops;
+		for (auto offset : plan.stopOffsets) newStops.push_back(y + offset);
+		if (x != lift->getCellX() || y != lift->getCellY())
+			plan.consequences.push_back("Move the Lift and rebuild every landing door and button");
+		if (cellsWide != lift->getCellsWide())
+			plan.consequences.push_back("Change the Lift width and rebuild every landing door and button");
+		if (decksHigh < lift->getDecksHigh())
+			plan.consequences.push_back("Shrink the Lift shaft");
+		for (auto floor : oldStops) if (find(newStops.begin(), newStops.end(), floor) == newStops.end())
+			plan.consequences.push_back(format("Remove Lift stop and landing at floor {}", floor));
+		bool const destructive = !plan.consequences.empty();
+		if (destructive)
+			for (auto floor : newStops) if (find(oldStops.begin(), oldStops.end(), floor) == oldStops.end())
+				plan.consequences.push_back(format("Create Lift stop and landing at floor {}", floor));
+		for (auto const& [id, resource] : mTraversalResources.entries())
+		{
+			(void)id;
+			if (!resource->mLift || resource->mLiftSector.value != (uint64_t)sectorIndex + 1) continue;
+			auto currentFloor = (uint32_t)round(resource->mLiftPosition);
+			if (find(newStops.begin(), newStops.end(), currentFloor) == newStops.end())
+				plan.consequences.push_back("Relocate the Lift car to the nearest remaining stop");
+		}
+		vector<ConstructionRecord> records;
+		plan.valid = prepareLiftEdit(plan, records, plan.diagnostic);
+		return plan;
+	}
+
+	Building::LiftEditPlan Building::planRemoveLift(uint32_t sectorIndex) const
+	{
+		if (sectorIndex >= mSectors.size() || !dynamic_pointer_cast<const LiftTransit>(mSectors[sectorIndex]))
+		{ LiftEditPlan plan; plan.diagnostic = "Only an enclosed Lift can be deleted"; return plan; }
+		auto lift = dynamic_pointer_cast<const LiftTransit>(mSectors[sectorIndex]);
+		auto plan = planResizeLift(sectorIndex, lift->getCellX(), lift->getCellY(),
+			lift->getCellsWide(), lift->getDecksHigh());
+		if (!plan.valid) return plan;
+		plan.remove = true;
+		plan.consequences.clear();
+		for (uint32_t stop = 0; stop < lift->getNumStops(); ++stop)
+			plan.consequences.push_back(format("Delete Lift landing and stop {}", stop));
+		vector<ConstructionRecord> records;
+		plan.valid = prepareLiftEdit(plan, records, plan.diagnostic);
+		return plan;
+	}
+
+	Building::LiftEditPlan Building::planRemoveLiftStop(uint32_t sectorIndex, uint32_t stopIndex) const
+	{
+		LiftEditPlan invalid;
+		if (sectorIndex >= mSectors.size())
+		{ invalid.diagnostic = "The selected Lift no longer exists"; return invalid; }
+		auto lift = dynamic_pointer_cast<const LiftTransit>(mSectors[sectorIndex]);
+		if (!lift || stopIndex >= lift->getNumStops())
+		{ invalid.diagnostic = "The selected Lift stop no longer exists"; return invalid; }
+		if (lift->getNumStops() <= 2)
+		{ invalid.diagnostic = "Deleting this landing would leave the Lift with fewer than two stops"; return invalid; }
+		auto plan = planResizeLift(sectorIndex, lift->getCellX(), lift->getCellY(),
+			lift->getCellsWide(), lift->getDecksHigh());
+		if (!plan.valid) return plan;
+		plan.stopOffsets.clear();
+		uint32_t removedFloor = 0;
+		for (uint32_t stop = 0; stop < lift->getNumStops(); ++stop)
+		{
+			auto const& value = lift->getStop(stop);
+			auto floor = (uint32_t)((int)value.sector->getCellY() + value.sectorOffsetY);
+			if (stop == stopIndex) { removedFloor = floor; continue; }
+			plan.stopOffsets.push_back(floor - lift->getCellY());
+		}
+		plan.consequences = { format("Delete Lift landing, button, pathing, and stop at floor {}", removedFloor) };
+		vector<ConstructionRecord> records;
+		plan.valid = prepareLiftEdit(plan, records, plan.diagnostic);
+		return plan;
+	}
+
+	uint32_t Building::applyLiftEdit(LiftEditPlan const& requested)
+	{
+		if (!mSimulationPaused) throw BuildingException(this, "Editing a Lift requires the simulation to be paused");
+		auto plan = requested.remove ? planRemoveLift(requested.sectorIndex)
+			: planResizeLift(requested.sectorIndex, requested.x, requested.y,
+				requested.cellsWide, requested.decksHigh);
+		if (!plan.valid) throw BuildingException(this, plan.diagnostic);
+		if (!requested.remove && requested.stopOffsets.size() >= 2
+			&& requested.stopOffsets != plan.stopOffsets)
+		{
+			plan.stopOffsets = requested.stopOffsets;
+			plan.consequences = requested.consequences;
+			vector<ConstructionRecord> validationRecords;
+			if (!prepareLiftEdit(plan, validationRecords, plan.diagnostic))
+				throw BuildingException(this, plan.diagnostic);
+		}
+		if (!plan.valid) throw BuildingException(this, plan.diagnostic);
+		vector<ConstructionRecord> records; string diagnostic;
+		if (!prepareLiftEdit(plan, records, diagnostic)) throw BuildingException(this, diagnostic);
+		rebuildFromConstructionRecords(std::move(records));
+		if (plan.remove) return ~0u;
+		auto const& cell = mLayers[CORE_LAYER_BACK]->getCellDefinition(plan.x, plan.y);
+		return cell.sectorIndex;
 	}
 
 	bool Building::prepareLocationEdit(LocationEditPlan const& plan,
@@ -382,6 +688,12 @@ namespace core
 
 				if (source.type == ConstructionType::Lift)
 				{
+					auto corridorAt = [&](uint32_t x, uint32_t y) -> shared_ptr<const Sector>
+					{
+						auto sector = locationAt(x, y);
+						auto location = dynamic_pointer_cast<const Location>(sector);
+						return location && location->isCorridor() ? sector : nullptr;
+					};
 					for (auto const& [id, resource] : mTraversalResources.entries())
 					{
 						(void)id;
@@ -396,10 +708,10 @@ namespace core
 					for (auto offset : originalStops)
 					{
 						auto y = source.a + offset;
-						auto first = locationAt(source.b, y);
+						auto first = corridorAt(source.b, y);
 						bool supported = first != nullptr;
 						for (uint32_t x = source.b; supported && x < source.b + source.c; ++x)
-							supported = locationAt(x, y) == first;
+							supported = corridorAt(x, y) == first;
 						if (supported) stops.push_back(offset);
 					}
 					if (stops.size() < 2)
@@ -690,6 +1002,29 @@ namespace core
 		auto object = dynamic_pointer_cast<DoorSectorObject>(
 			mSectors[sectorIndex]->getObject(objectIndex));
 		if (!object) return false;
+
+		uint32_t liftIndex, stopIndex;
+		if (isLiftOwnedDoor(object, &liftIndex, &stopIndex))
+		{
+			auto lift = dynamic_pointer_cast<const LiftTransit>(mSectors[liftIndex]);
+			if (!lift || lift->getNumStops() <= 2)
+				throw BuildingException(this, "Deleting this landing would leave the Lift with fewer than two stops");
+			auto plan = planResizeLift(liftIndex, lift->getCellX(), lift->getCellY(),
+				lift->getCellsWide(), lift->getDecksHigh());
+			if (!plan.valid) throw BuildingException(this, plan.diagnostic);
+			plan.stopOffsets.clear();
+			for (uint32_t stop = 0; stop < lift->getNumStops(); ++stop)
+			{
+				if (stop == stopIndex) continue;
+				auto const& value = lift->getStop(stop);
+				plan.stopOffsets.push_back((uint32_t)((int)value.sector->getCellY()
+					+ value.sectorOffsetY - (int)lift->getCellY()));
+			}
+			vector<ConstructionRecord> records; string diagnostic;
+			if (!prepareLiftEdit(plan, records, diagnostic)) throw BuildingException(this, diagnostic);
+			rebuildFromConstructionRecords(std::move(records));
+			return true;
+		}
 
 		auto door = object->getDoor();
 		auto source = find_if(mConstructionRecords.begin(), mConstructionRecords.end(),

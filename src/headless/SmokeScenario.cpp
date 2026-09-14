@@ -26,6 +26,8 @@
 #include "core/Button.h"
 #include "core/GapEdge.h"
 #include "core/Graph.h"
+#include "core/LiftTransit.h"
+#include "core/DoorSectorObject.h"
 #include "core/Path.h"
 #include "core/SectorEdge.h"
 #include "core/Simulation.h"
@@ -1623,7 +1625,6 @@ namespace
 		building.finishBuild();
 		if (!created.traversalResource || created.doors.size() != 2 || !created.interiorSelector)
 			return false;
-
 		auto target = building.getGraph()->getClosestVertexInSector(
 			building.getSector(upper).get(), { 2.5f, 2.0f });
 		auto passengerId = building.createAgent("Lift passenger", lower, 0, 0.5f);
@@ -1645,10 +1646,14 @@ namespace
 		bool sawOnboard = false;
 		bool sawConfirmedDestination = false;
 		bool sawMovingAttachedPassenger = false;
+		bool climbedTowardLandingCallButton = false;
 		for (uint32_t i = 0; i < MaximumSimulationTicks * 4
 			&& passenger->getState() != core::Agent::State::Idle; ++i)
 		{
 			building.advanceTick();
+			if (passenger->getSector() == building.getSector(lower).get()
+				&& passenger->getGlobalPosition().y > 0.001f)
+				climbedTowardLandingCallButton = true;
 			auto snapshot = building.getSimulationSnapshot();
 			auto lift = std::find_if(snapshot.traversalResources.begin(), snapshot.traversalResources.end(),
 				[&](auto const& resource) { return resource.id == created.traversalResource; });
@@ -1683,6 +1688,7 @@ namespace
 			[&](auto const& resource) { return resource.id == created.traversalResource; });
 		return sawIntentWithoutDispatch && sawReservedCapacity && sawOnboard
 			&& sawConfirmedDestination && sawMovingAttachedPassenger
+			&& !climbedTowardLandingCallButton
 			&& passenger->getState() == core::Agent::State::Idle
 			&& passenger->getSector() == building.getSector(upper).get()
 			&& lift != final.traversalResources.end() && !lift->liftPassenger
@@ -2051,6 +2057,60 @@ namespace
 				|| !final.traversalPermits.empty()) return false;
 		}
 		return true;
+	}
+
+	bool editorLiftAuthoringReconcilesOwnedLandings()
+	{
+		core::Building building("Editor lift authoring", 10, 8);
+		building.addCorridor(1, 0, 8);
+		building.addCorridor(4, 0, 8);
+		auto created = building.addLift(0, 2, 2, 6);
+		building.finishBuild();
+		auto lift = std::dynamic_pointer_cast<const core::LiftTransit>(created.lift.sector);
+		if (!lift || lift->getCellsWide() != 2 || lift->getDecksHigh() != 6
+			|| lift->getNumStops() != 2 || created.doors.size() != 2) return false;
+		for (auto const& door : created.doors)
+			if (!building.isLiftOwnedDoor(door.door.sector->getObject(door.door.index))) return false;
+
+		building.pauseSimulation();
+		building.addCorridor(3, 0, 8);
+		building.finishBuild();
+		lift = std::dynamic_pointer_cast<const core::LiftTransit>(
+			building.getSectorAtPosition(CORE_LAYER_BACK, 2.0f, 0.0f));
+		if (!lift || lift->getNumStops() != 2) return false; // Corridors do not create stops.
+		uint32_t landingX = 0, landingWidth = 0;
+		if (!building.getLiftLandingGeometry(3, 3, landingX, landingWidth)
+			|| landingX != 2 || landingWidth != 2) return false;
+		auto added = building.addSectorDoor(3, 3);
+		if (!building.isLiftOwnedDoor(added.door.sector->getObject(added.door.index))) return false;
+		lift = std::dynamic_pointer_cast<const core::LiftTransit>(
+			building.getSectorAtPosition(CORE_LAYER_BACK, 2.0f, 0.0f));
+		if (!lift || lift->getNumStops() != 3) return false;
+
+		auto move = building.planResizeLift(lift->getIndex(), 5, 0, 2, 6);
+		if (!move.valid || !move.move) return false;
+		auto movedIndex = building.applyLiftEdit(move);
+		lift = std::dynamic_pointer_cast<const core::LiftTransit>(building.getSector(movedIndex));
+		if (!lift || lift->getCellX() != 5 || lift->getDecksHigh() != 6
+			|| lift->getNumStops() != 3) return false;
+		for (uint32_t stop = 0; stop < lift->getNumStops(); ++stop)
+		{
+			auto floor = (uint32_t)((int)lift->getStop(stop).sector->getCellY()
+				+ lift->getStop(stop).sectorOffsetY);
+			auto const& cell = static_cast<core::Building const&>(building)
+				.getLayer(CORE_LAYER_FORE)->getCellDefinition(5, floor);
+			auto door = building.getSector(cell.sectorIndex)->getObject(cell.sectorObjectIndex);
+			if (!building.isLiftOwnedDoor(door)) return false;
+		}
+		auto removeStop = building.planRemoveLiftStop(lift->getIndex(), 1);
+		if (!removeStop.valid || !removeStop.requiresConfirmation()) return false;
+		auto afterStopRemoval = building.applyLiftEdit(removeStop);
+		lift = std::dynamic_pointer_cast<const core::LiftTransit>(building.getSector(afterStopRemoval));
+		if (!lift || lift->getNumStops() != 2) return false;
+		auto remove = building.planRemoveLift(lift->getIndex());
+		if (!remove.valid) return false;
+		building.applyLiftEdit(remove);
+		return !building.getSectorAtPosition(CORE_LAYER_BACK, 5.0f, 0.0f);
 	}
 
 	bool unavailableDoorRejectsTraversal()
@@ -2452,6 +2512,11 @@ int main()
 		if (!multiCarriageShuttleCoordinatesIndependentCarriagesAndAccessZones())
 		{
 			std::cerr << "FAIL: multi-carriage shuttle or access-zone coordination failed\n";
+			return 1;
+		}
+		if (!editorLiftAuthoringReconcilesOwnedLandings())
+		{
+			std::cerr << "FAIL: editor Lift authoring did not reconcile owned landings\n";
 			return 1;
 		}
 		if (!unavailableDoorRejectsTraversal())

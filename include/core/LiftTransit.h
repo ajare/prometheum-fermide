@@ -20,7 +20,8 @@ namespace core
 
 	public:
 
-		LiftTransit(uint32_t index, uint32_t cellX, uint32_t cellY, uint32_t cellsWide, std::vector<TransitStop> const& stops);
+		LiftTransit(uint32_t index, uint32_t cellX, uint32_t cellY, uint32_t cellsWide,
+			uint32_t decksHigh, std::vector<TransitStop> const& stops);
 
 		~LiftTransit() = default;
 

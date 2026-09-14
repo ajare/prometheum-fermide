@@ -20,20 +20,21 @@ namespace core
 		return vector<elem_t>{ r.begin(), r.end() };
 	}
 
-	LiftTransit::LiftTransit(uint32_t index, uint32_t cellX, uint32_t cellY, uint32_t cellsWide, vector<TransitStop> const& stops)
+	LiftTransit::LiftTransit(uint32_t index, uint32_t cellX, uint32_t cellY, uint32_t cellsWide,
+		uint32_t decksHigh, vector<TransitStop> const& stops)
 		: Transit(SectorType::Lift, "Lift", CORE_LAYER_BACK, index,
 			cellX, cellY,
 			0.0f, 0.0f,
-			(float)cellsWide, (float)((stops.back().sector->getCellY() + stops.back().sectorOffsetX) - cellY) + 1.0f,
-			cellsWide, ((stops.back().sector->getCellY() + stops.back().sectorOffsetX) - cellY) + 1,
+			(float)cellsWide, (float)decksHigh,
+			cellsWide, decksHigh,
 			1.0f,
 			~0u,
 			stops)
 		, VerticalEdgeCreator()
 	{
-		vector<uint32_t> stopOffsets = to_vector(views::transform(stops, [](auto const& stop)
+		vector<uint32_t> stopOffsets = to_vector(views::transform(stops, [cellY](auto const& stop)
 		{
-			return stop.sector->getCellY() + stop.sectorOffsetY;
+			return (uint32_t)((int)stop.sector->getCellY() + stop.sectorOffsetY - (int)cellY);
 		}));
 
 		mLift = make_shared<CarLift>(cellX, cellY, cellsWide, stopOffsets);

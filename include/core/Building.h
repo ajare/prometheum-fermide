@@ -141,6 +141,8 @@ namespace core
 			float minimumDwellSeconds{ CORE_LIFT_DOOR_PAUSE_TIME };
 			float maximumBoardingSeconds{ CORE_DOOR_STAY_OPEN_TIME };
 			uint32_t initialStop{ 0 };
+			// Zero preserves the legacy API behaviour of ending at the highest stop.
+			uint32_t decksHigh{ 0 };
 		};
 
 		struct CreateLiftResult
@@ -203,6 +205,20 @@ namespace core
 			{
 				return !consequences.empty();
 			}
+		};
+
+		struct LiftEditPlan
+		{
+			bool valid{ false };
+			bool remove{ false };
+			bool move{ false };
+			uint32_t sectorIndex{ ~0u };
+			uint32_t x{ 0 }, y{ 0 }, cellsWide{ 0 }, decksHigh{ 0 };
+			std::vector<uint32_t> stopOffsets;
+			std::string diagnostic;
+			std::vector<std::string> consequences;
+
+			[[nodiscard]] bool requiresConfirmation() const { return !consequences.empty(); }
 		};
 
 	public:
@@ -360,6 +376,14 @@ namespace core
 			std::vector<ConstructionRecord>& records, uint32_t& newObjectIndex,
 			std::string& diagnostic) const;
 
+		bool prepareLiftEdit(LiftEditPlan const& plan,
+			std::vector<ConstructionRecord>& records, std::string& diagnostic) const;
+
+		std::vector<ConstructionRecord> canonicalConstructionRecords(
+			std::vector<ConstructionRecord> records) const;
+
+		void rebuildFromConstructionRecords(std::vector<ConstructionRecord> records);
+
 		void resetForDeserialization(std::string name, uint32_t cellsWide, uint32_t decksHigh);
 
 		void validateCellOccupied(std::string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y) const;
@@ -426,7 +450,8 @@ namespace core
 
 		uint32_t createStaircase(uint32_t x, uint32_t y, uint32_t decksHigh, int mountSide);
 
-		CreateObjectResult createLift(uint32_t x, uint32_t y, uint32_t cellsWide, std::vector<uint32_t> const& stopOffsets);
+		CreateObjectResult createLift(uint32_t x, uint32_t y, uint32_t cellsWide,
+			uint32_t decksHigh, std::vector<uint32_t> const& stopOffsets);
 
 		CreateObjectResult createShuttle(uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t numCars, uint32_t carWidth, std::vector<uint32_t> const& stopOffsets);
 
@@ -648,6 +673,9 @@ namespace core
 
 		CreateLiftResult addLift(uint32_t y, uint32_t x, CreateLiftOptions const& options);
 
+		// Derives stops from every fully overlapping Fore-layer corridor row.
+		CreateLiftResult addLift(uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t decksHigh);
+
 		CreateShuttleResult addShuttle(uint32_t y, uint32_t x, uint32_t cellsWide, CreateShuttleOptions const& options);
 
 		// Sector object types
@@ -657,6 +685,16 @@ namespace core
 
 		bool canAddCorridorDoor(uint32_t y, uint32_t x, CreateDoorOptions const& options,
 			std::string* diagnostic = nullptr) const;
+
+		// Resolves a cell over a lift to its complete landing-door footprint.
+		bool getLiftLandingGeometry(uint32_t y, uint32_t x,
+			uint32_t& landingX, uint32_t& landingWidth) const;
+
+		bool isLiftOwnedDoor(std::shared_ptr<const SectorObject> const& object,
+			uint32_t* liftSectorIndex = nullptr, uint32_t* stopIndex = nullptr) const;
+
+		bool isLiftOwnedControl(std::shared_ptr<const SectorObject> const& object,
+			uint32_t* liftSectorIndex = nullptr, uint32_t* stopIndex = nullptr) const;
 
 		bool getSectorDoorOptions(uint32_t y, uint32_t x, uint32_t width,
 			CreateDoorOptions& options) const;
@@ -721,6 +759,15 @@ namespace core
 		LocationEditPlan planRemoveLocation(uint32_t sectorIndex) const;
 
 		uint32_t applyLocationEdit(LocationEditPlan const& plan);
+
+		LiftEditPlan planResizeLift(uint32_t sectorIndex, uint32_t x, uint32_t y,
+			uint32_t cellsWide, uint32_t decksHigh) const;
+
+		LiftEditPlan planRemoveLift(uint32_t sectorIndex) const;
+
+		LiftEditPlan planRemoveLiftStop(uint32_t sectorIndex, uint32_t stopIndex) const;
+
+		uint32_t applyLiftEdit(LiftEditPlan const& plan);
 
 		ObjectMovePlan planMoveSectorObject(uint32_t sectorIndex, uint32_t objectIndex,
 			uint32_t x, uint32_t y) const;
