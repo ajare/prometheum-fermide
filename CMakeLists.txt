@@ -116,7 +116,12 @@ endif()
 file(GLOB PF_CORE_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/core/*.cpp")
 file(GLOB PF_CORE_HEADERS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/include/core/*.h")
 
-add_library(prometheum-fermide-core STATIC ${PF_CORE_SOURCES} ${PF_CORE_HEADERS})
+add_library(prometheum-fermide-core STATIC
+    ${PF_CORE_SOURCES}
+    ${PF_CORE_HEADERS}
+    src/RecentFiles.cpp
+    include/RecentFiles.h
+)
 target_compile_features(prometheum-fermide-core PUBLIC cxx_std_20)
 target_compile_definitions(prometheum-fermide-core PUBLIC YAML_CPP_STATIC_DEFINE)
 target_include_directories(prometheum-fermide-core PUBLIC "${PF_INCLUDE_DIR}")

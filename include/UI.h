@@ -1,5 +1,6 @@
 #pragma once
 
+#include <filesystem>
 #include <memory>
 
 #include "core/Building.h"
@@ -9,6 +10,9 @@
 #include "MouseButtonStatus.h"
 
 MouseButtonStatus getMouseButtonStatus();
+
+// Loads the recent-file list, creating its storage file when needed.
+void initializeRecentFiles(std::filesystem::path const& filepath);
 
 void handleShortcuts(std::shared_ptr<core::Building>& building);
 

@@ -52,6 +52,7 @@
 #include "core/YamlSerializer.h"
 
 #include "Main.h"
+#include "RecentFiles.h"
 #include "UI.h"
 #include "Render.h"
 #include "UISettings.h"
@@ -1209,7 +1210,7 @@ namespace
 
 	constexpr size_t MaximumRecentFiles{ 5 };
 	string gBuildingFilepath;
-	deque<string> gRecentFiles;
+	RecentFiles gRecentFiles{ MaximumRecentFiles };
 	string gPendingRecentFilepath;
 	PendingFileAction gPendingFileAction{ PendingFileAction::None };
 	bool gOpenUnsavedChangesPopup{ false };
@@ -1356,11 +1357,15 @@ namespace
 
 	void addRecentFile(string const& filepath)
 	{
-		auto const normalized = normalizedFilepath(filepath);
-		gRecentFiles.erase(remove(gRecentFiles.begin(), gRecentFiles.end(), normalized),
-			gRecentFiles.end());
-		gRecentFiles.push_front(normalized);
-		if (gRecentFiles.size() > MaximumRecentFiles) gRecentFiles.pop_back();
+		try
+		{
+			gRecentFiles.add(normalizedFilepath(filepath));
+		}
+		catch (std::exception const& error)
+		{
+			core::addLogMessage("File", 0, core::LogLevel::Error,
+				"Could not persist recent files: " + string(error.what()));
+		}
 	}
 
 	void openBuilding(shared_ptr<core::Building>& building, string const& filepath)
@@ -2525,6 +2530,10 @@ namespace imgui
 
 } // imgui
 
+void initializeRecentFiles(filesystem::path const& filepath)
+{
+	gRecentFiles.initialize(filepath);
+}
 
 ImVec2 gMainMenuWindowSize;
 
@@ -2541,7 +2550,7 @@ void renderMenu(shared_ptr<core::Building>& building)
 				requestFileAction(PendingFileAction::Open, building);
 			if (ImGui::BeginMenu("Open Recent", !gRecentFiles.empty()))
 			{
-				for (auto const& filepath : gRecentFiles)
+				for (auto const& filepath : gRecentFiles.entries())
 				{
 					if (ImGui::MenuItem(filepath.c_str())) recentFileToOpen = filepath;
 				}

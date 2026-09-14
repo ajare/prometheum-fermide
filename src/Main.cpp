@@ -336,6 +336,7 @@ void initialise()
 void setup()
 {
 	gResourceDirectory = loadResourceDirectory();
+	initializeRecentFiles(executableDirectory() / "recent-files.txt");
 
 	// Set up NFD (file dialogs)
 	NFD_Init();

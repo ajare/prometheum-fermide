@@ -1,10 +1,12 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
+#include "RecentFiles.h"
 #include "core/Building.h"
 #include "core/Defines.h"
 #include "core/Serializable.h"
@@ -359,6 +361,28 @@ namespace
 			"Unavoidable same-X controls did not use the height fallback");
 	}
 
+	void recentFilesPersistAcrossStartup()
+	{
+		auto directory = std::filesystem::temp_directory_path() / "prometheum-fermide-recent-files-smoke";
+		std::filesystem::remove_all(directory);
+		std::filesystem::create_directories(directory);
+		auto file = directory / "recent-files.txt";
+		RecentFiles first(3);
+		first.initialize(file);
+		require(std::filesystem::exists(file), "Recent-file storage was not created on first startup");
+		first.add("/tmp/alpha.yaml");
+		first.add("/tmp/beta.yaml");
+		first.add("/tmp/alpha.yaml");
+		RecentFiles restarted(3);
+		restarted.initialize(file);
+		require(restarted.entries().size() == 2,
+			"Recent files were not restored after startup");
+		require(restarted.entries()[0] == "/tmp/alpha.yaml"
+			&& restarted.entries()[1] == "/tmp/beta.yaml",
+			"Recent files did not retain most-recent-first order or deduplication");
+		std::filesystem::remove_all(directory);
+	}
+
 	void serializableTracksModificationState()
 	{
 		SerializableProbe probe;
@@ -400,5 +424,6 @@ void runSerializationSmokeChecks()
 	buildingRoundTripsAuthoredStateAndAgents();
 	locationEditsArePlannedAndAppliedAtomically();
 	physicalControlsPreferDistinctWallPositions();
+	recentFilesPersistAcrossStartup();
 	serializableTracksModificationState();
 }
