@@ -1141,7 +1141,8 @@ namespace
 		None,
 		New,
 		Open,
-		Close
+		Close,
+		Exit
 	};
 
 	string gBuildingFilepath;
@@ -1329,6 +1330,8 @@ namespace
 			gBuildingFilepath.clear();
 			clearDocumentState();
 			break;
+		case PendingFileAction::Exit:
+			throw ExitApplicationException(0, "Exit");
 		case PendingFileAction::None:
 			break;
 		}
@@ -1954,6 +1957,13 @@ namespace
 	}
 }
 
+bool requestApplicationClose(shared_ptr<core::Building>& building)
+{
+	if (!isDocumentStale(building)) return true;
+	requestFileAction(PendingFileAction::Exit, building);
+	return false;
+}
+
 void handleShortcuts(shared_ptr<core::Building>& building)
 {
 	if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_N, 0, ImGuiInputFlags_RouteGlobalLow))
@@ -2343,12 +2353,6 @@ namespace imgui
 } // imgui
 
 
-void exitApp()
-{
-	throw ExitApplicationException(0, "Exit");
-}
-
-
 ImVec2 gMainMenuWindowSize;
 
 void renderMenu(shared_ptr<core::Building>& building)
@@ -2369,9 +2373,7 @@ void renderMenu(shared_ptr<core::Building>& building)
 				requestFileAction(PendingFileAction::Close, building);
 			ImGui::Separator();
 			if (ImGui::MenuItem("Exit"))
-			{
-				exitApp();
-			}
+				requestFileAction(PendingFileAction::Exit, building);
 
 			ImGui::EndMenu();
 		}

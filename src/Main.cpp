@@ -722,8 +722,9 @@ void run()
 #error "Unsupported platform"
 #endif
 
-		// Events
-		done = processEvents(gWindow);
+		// Events. Window-manager close requests are resolved after NewFrame so the
+		// UI can open the same unsaved-changes confirmation used by File actions.
+		bool const closeRequested = processEvents(gWindow);
 
 		// Logic
 		float updateTimeSecs = updateTimeMicros / 1'000'000.0f;
@@ -750,6 +751,7 @@ void run()
 
 		ImGui::NewFrame();
 
+		if (closeRequested) done = requestApplicationClose(building);
 		handleShortcuts(building);
 		if (building) handleContinuousKeyboardInput(building, updateTimeMicros);
 

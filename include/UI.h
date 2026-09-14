@@ -12,6 +12,10 @@ MouseButtonStatus getMouseButtonStatus();
 
 void handleShortcuts(std::shared_ptr<core::Building>& building);
 
+// Returns true when the application may close immediately. A modified document
+// instead opens the existing save/discard/cancel confirmation and returns false.
+bool requestApplicationClose(std::shared_ptr<core::Building>& building);
+
 void handleWorldInteraction(std::shared_ptr<core::Building> building,
 	std::shared_ptr<const core::Graph> graph, MouseButtonStatus const& mouseStatus);
 
