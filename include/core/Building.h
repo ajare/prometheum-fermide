@@ -655,6 +655,12 @@ namespace core
 		bool canAddCorridorDoor(uint32_t y, uint32_t x,
 			std::string* diagnostic = nullptr) const;
 
+		bool canAddCorridorDoor(uint32_t y, uint32_t x, CreateDoorOptions const& options,
+			std::string* diagnostic = nullptr) const;
+
+		bool getSectorDoorOptions(uint32_t y, uint32_t x, uint32_t width,
+			CreateDoorOptions& options) const;
+
 		CreateDoorResult addSectorDoor(uint32_t y, uint32_t x);
 
 		CreateDoorResult addSectorDoor(uint32_t y, uint32_t x, CreateDoorOptions const& options);
@@ -673,6 +679,9 @@ namespace core
 
 		CreateWindowResult addSectorWindow(uint32_t layerIndex, uint32_t y, uint32_t x,
 			uint32_t cellsWide, uint32_t decksHigh, CreateWindowOptions const& options);
+
+		bool getSectorWindowOptions(uint32_t layerIndex, uint32_t y, uint32_t x,
+			uint32_t cellsWide, uint32_t decksHigh, CreateWindowOptions& options) const;
 
 		bool removeSectorWindow(uint32_t sectorIndex, uint32_t objectIndex);
 

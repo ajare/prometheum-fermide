@@ -40,6 +40,8 @@
 #include "core/ForceBridgeSectorObject.h"
 #include "core/LadderSectorObject.h"
 #include "core/LiftSectorObject.h"
+#include "core/DoorSectorObject.h"
+#include "core/WindowSectorObject.h"
 #include "core/MarkerSectorObject.h"
 #include "core/WindowSectorObject.h"
 #include "core/Marker.h"
@@ -160,6 +162,8 @@ namespace
 		float floorY{ 0.0f };
 		float velocity{ 0.0f };
 		uint64_t nextAgentNumber{ 1 };
+		string pastedAgentName;
+		uint32_t pastedAgentFlags{ 0 };
 	};
 
 	struct PegmanTarget
@@ -576,6 +580,8 @@ namespace
 		gPegman.item = PaletteItem::None;
 		gPegman.sector.reset();
 		gPegman.velocity = 0.0f;
+		gPegman.pastedAgentName.clear();
+		gPegman.pastedAgentFlags = 0;
 	}
 
 	void setWorldPaused(shared_ptr<core::Building> const& building, bool paused)
@@ -673,9 +679,12 @@ namespace
 		if (gUISettings.worldPaused && locationHasCapacity(gPegman.sector))
 		{
 			auto undo = captureDocumentSnapshot(building);
-			auto id = building->createAgent(nextAgentName(building), gPegman.sector->getIndex(),
+			auto const name = gPegman.pastedAgentName.empty()
+				? nextAgentName(building) : gPegman.pastedAgentName;
+			auto id = building->createAgent(name, gPegman.sector->getIndex(),
 				gPegman.deckOffset, gPegman.localX);
 			auto created = building->lookupAgent(id).entity;
+			if (created) created->setFlags(gPegman.pastedAgentFlags);
 			setSelectionMode(UISettings::SelectionMode::Object);
 			gSelectedAgent = created;
 			gSelectedSector.reset();
@@ -1483,6 +1492,466 @@ namespace
 			ImGui::EndPopup();
 		}
 	}
+
+	enum class ClipboardObjectType { Agent, Door, Window, Marker };
+	struct ClipboardDefinition
+	{
+		ClipboardObjectType type{};
+		bool cut{ false };
+		string name;
+		uint32_t flags{ 0 };
+		core::Building::CreateDoorOptions door;
+		core::Building::CreateWindowOptions window;
+		uint32_t width{ 1 }, height{ 1 };
+	};
+
+	optional<core::Vector2> gLastWorldCursor;
+	string gClipboardError;
+	double gClipboardErrorUntil{ 0.0 };
+	string gConsumedCutClipboard;
+
+	void reportClipboardError(string message)
+	{
+		gClipboardError = std::move(message);
+		gClipboardErrorUntil = ImGui::GetTime() + 3.0;
+		core::addLogMessage("Clipboard", 0, core::LogLevel::Error, gClipboardError);
+	}
+
+	bool hasClipboardSelection()
+	{
+		if (gUISettings.selectionMode != UISettings::SelectionMode::Object) return false;
+		if (gSelectedAgent) return true;
+		if (!gSelectedSectorObject) return false;
+		auto type = gSelectedSectorObject->getObjectType();
+		return type == core::SectorObjectType::Door || type == core::SectorObjectType::Window
+			|| type == core::SectorObjectType::Marker;
+	}
+
+	char const* activationModeName(core::DoorActivationMode mode)
+	{
+		switch (mode)
+		{
+		case core::DoorActivationMode::Automatic: return "Automatic";
+		case core::DoorActivationMode::Manual: return "Manual";
+		case core::DoorActivationMode::RemoteControlled: return "RemoteControlled";
+		case core::DoorActivationMode::Unavailable: return "Unavailable";
+		}
+		return "Manual";
+	}
+
+	char const* windowStateName(core::Window::State state)
+	{
+		switch (state)
+		{
+		case core::Window::State::Open: return "Open";
+		case core::Window::State::Opening: return "Opening";
+		case core::Window::State::Closed: return "Closed";
+		case core::Window::State::Closing: return "Closing";
+		case core::Window::State::Broken: return "Broken";
+		case core::Window::State::Frosted: return "Frosted";
+		case core::Window::State::Frosting: return "Frosting";
+		case core::Window::State::Unfrosting: return "Unfrosting";
+		case core::Window::State::Tinted: return "Tinted";
+		case core::Window::State::Tinting: return "Tinting";
+		case core::Window::State::Untinting: return "Untinting";
+		}
+		return "Closed";
+	}
+
+	char const* windowStyleName(core::Window::Style style)
+	{
+		switch (style)
+		{
+		case core::Window::Style::Clear: return "Clear";
+		case core::Window::Style::Tinted: return "Tinted";
+		case core::Window::Style::Frosted: return "Frosted";
+		}
+		return "Clear";
+	}
+
+	string uniqueAgentName(shared_ptr<const core::Building> const& building, string base)
+	{
+		set<string> names;
+		for (auto const& agent : building->getSimulationSnapshot().agents) names.insert(agent.name);
+		if (!names.contains(base)) return base;
+		for (uint32_t suffix = 2;; ++suffix)
+		{
+			auto candidate = format("{} {}", base, suffix);
+			if (!names.contains(candidate)) return candidate;
+		}
+	}
+
+	optional<string> serializeClipboardSelection(shared_ptr<const core::Building> const& building,
+		bool cut)
+	{
+		if (!hasClipboardSelection()) return nullopt;
+		YAML::Emitter output;
+		output << YAML::BeginMap << YAML::Key << "prometheumClipboard" << YAML::Value
+			<< YAML::BeginMap << YAML::Key << "version" << YAML::Value << 1
+			<< YAML::Key << "operation" << YAML::Value << (cut ? "cut" : "copy");
+		if (gSelectedAgent)
+		{
+			auto name = cut ? gSelectedAgent->getName()
+				: uniqueAgentName(building, gSelectedAgent->getName() + " copy");
+			output << YAML::Key << "type" << YAML::Value << "Agent"
+				<< YAML::Key << "object" << YAML::Value << YAML::BeginMap
+				<< YAML::Key << "name" << YAML::Value << name
+				<< YAML::Key << "flags" << YAML::Value << gSelectedAgent->getFlags()
+				<< YAML::EndMap;
+		}
+		else if (gSelectedSectorObject->getObjectType() == core::SectorObjectType::Door)
+		{
+			auto door = static_pointer_cast<const core::DoorSectorObject>(gSelectedSectorObject)->getDoor();
+			core::Building::CreateDoorOptions options;
+			if (!building->getSectorDoorOptions(gSelectedSectorObject->getCellY(),
+				gSelectedSectorObject->getCellX(), door->getCellsWide(), options))
+				throw runtime_error("The selected Door has no authored definition");
+			output << YAML::Key << "type" << YAML::Value << "Door"
+				<< YAML::Key << "object" << YAML::Value << YAML::BeginMap
+				<< YAML::Key << "width" << YAML::Value << options.width
+				<< YAML::Key << "controls" << YAML::Value << YAML::Flow << YAML::BeginSeq
+				<< options.controls[0] << options.controls[1] << YAML::EndSeq
+				<< YAML::Key << "activationMode" << YAML::Value << activationModeName(options.activationMode)
+				<< YAML::Key << "holdOpenSeconds" << YAML::Value << options.holdOpenSeconds
+				<< YAML::Key << "crossingLanes" << YAML::Value << options.crossingLanes
+				<< YAML::EndMap;
+		}
+		else if (gSelectedSectorObject->getObjectType() == core::SectorObjectType::Window)
+		{
+			auto window = static_pointer_cast<const core::WindowSectorObject>(gSelectedSectorObject)->getWindow();
+			core::Building::CreateWindowOptions options;
+			bool found = false;
+			for (uint32_t layer = 0; layer < CORE_NUM_LAYERS && !found; ++layer)
+				found = building->getSectorWindowOptions(layer, gSelectedSectorObject->getCellY(),
+					gSelectedSectorObject->getCellX(), window->getCellsWide(), window->getDecksHigh(), options);
+			if (!found) throw runtime_error("The selected Window has no authored definition");
+			output << YAML::Key << "type" << YAML::Value << "Window"
+				<< YAML::Key << "object" << YAML::Value << YAML::BeginMap
+				<< YAML::Key << "width" << YAML::Value << window->getCellsWide()
+				<< YAML::Key << "height" << YAML::Value << window->getDecksHigh()
+				<< YAML::Key << "traversable" << YAML::Value << options.traversable
+				<< YAML::Key << "initialState" << YAML::Value << windowStateName(options.initialState)
+				<< YAML::Key << "style" << YAML::Value << windowStyleName(options.style)
+				<< YAML::EndMap;
+		}
+		else
+		{
+			output << YAML::Key << "type" << YAML::Value << "Marker"
+				<< YAML::Key << "object" << YAML::Value << YAML::BeginMap << YAML::EndMap;
+		}
+		output << YAML::EndMap << YAML::EndMap;
+		if (!output.good()) throw runtime_error(output.GetLastError());
+		return string(output.c_str());
+	}
+
+	template<typename T>
+	T requiredYaml(YAML::Node const& map, char const* field)
+	{
+		if (!map[field]) throw runtime_error(format("Clipboard field '{}' is required", field));
+		try { return map[field].as<T>(); }
+		catch (std::exception const&) { throw runtime_error(format("Clipboard field '{}' has an invalid value", field)); }
+	}
+
+	ClipboardDefinition parseClipboard(string const& text)
+	{
+		auto document = YAML::Load(text);
+		auto root = document["prometheumClipboard"];
+		if (!root || !root.IsMap()) throw runtime_error("Clipboard does not contain a supported object");
+		if (requiredYaml<uint32_t>(root, "version") != 1)
+			throw runtime_error("Clipboard object version is not supported");
+		ClipboardDefinition definition;
+		auto operation = requiredYaml<string>(root, "operation");
+		if (operation != "copy" && operation != "cut") throw runtime_error("Clipboard operation is not supported");
+		definition.cut = operation == "cut";
+		auto type = requiredYaml<string>(root, "type");
+		auto object = root["object"];
+		if (!object || !object.IsMap()) throw runtime_error("Clipboard object definition is required");
+		if (type == "Agent")
+		{
+			definition.type = ClipboardObjectType::Agent;
+			definition.name = requiredYaml<string>(object, "name");
+			definition.flags = requiredYaml<uint32_t>(object, "flags");
+			if (definition.name.empty()) throw runtime_error("Agent name cannot be empty");
+		}
+		else if (type == "Door")
+		{
+			definition.type = ClipboardObjectType::Door;
+			definition.door.width = requiredYaml<uint32_t>(object, "width");
+			auto controls = object["controls"];
+			if (!controls || !controls.IsSequence() || controls.size() != 2)
+				throw runtime_error("Door controls must contain two values");
+			definition.door.controls[0] = controls[0].as<bool>();
+			definition.door.controls[1] = controls[1].as<bool>();
+			auto mode = requiredYaml<string>(object, "activationMode");
+			if (mode == "Automatic") definition.door.activationMode = core::DoorActivationMode::Automatic;
+			else if (mode == "Manual") definition.door.activationMode = core::DoorActivationMode::Manual;
+			else if (mode == "RemoteControlled") definition.door.activationMode = core::DoorActivationMode::RemoteControlled;
+			else if (mode == "Unavailable") definition.door.activationMode = core::DoorActivationMode::Unavailable;
+			else throw runtime_error("Door activationMode is invalid");
+			definition.door.holdOpenSeconds = requiredYaml<float>(object, "holdOpenSeconds");
+			definition.door.crossingLanes = requiredYaml<uint32_t>(object, "crossingLanes");
+		}
+		else if (type == "Window")
+		{
+			definition.type = ClipboardObjectType::Window;
+			definition.width = requiredYaml<uint32_t>(object, "width");
+			definition.height = requiredYaml<uint32_t>(object, "height");
+			definition.window.traversable = requiredYaml<bool>(object, "traversable");
+			auto state = requiredYaml<string>(object, "initialState");
+			map<string, core::Window::State> states = {
+				{ "Open", core::Window::State::Open }, { "Opening", core::Window::State::Opening },
+				{ "Closed", core::Window::State::Closed }, { "Closing", core::Window::State::Closing },
+				{ "Broken", core::Window::State::Broken }, { "Frosted", core::Window::State::Frosted },
+				{ "Frosting", core::Window::State::Frosting }, { "Unfrosting", core::Window::State::Unfrosting },
+				{ "Tinted", core::Window::State::Tinted }, { "Tinting", core::Window::State::Tinting },
+				{ "Untinting", core::Window::State::Untinting }
+			};
+			if (!states.contains(state)) throw runtime_error("Window initialState is invalid");
+			definition.window.initialState = states[state];
+			auto style = requiredYaml<string>(object, "style");
+			if (style == "Clear") definition.window.style = core::Window::Style::Clear;
+			else if (style == "Tinted") definition.window.style = core::Window::Style::Tinted;
+			else if (style == "Frosted") definition.window.style = core::Window::Style::Frosted;
+			else throw runtime_error("Window style is invalid");
+		}
+		else if (type == "Marker") definition.type = ClipboardObjectType::Marker;
+		else throw runtime_error("Clipboard object type is not supported");
+		return definition;
+	}
+
+	bool removeClipboardSelection(shared_ptr<core::Building> const& building)
+	{
+		if (gSelectedAgent)
+		{
+			auto id = building->getAgentId(gSelectedAgent);
+			if (!id) return false;
+			auto selected = gSelectedAgent;
+			selected->clearPath();
+			if (!building->removeAgent(id)) return false;
+			if (gHoveredAgent == selected) gHoveredAgent = nullptr;
+			gSelectedAgent = nullptr;
+			return true;
+		}
+		auto selected = gSelectedSectorObject;
+		if (!selected) return false;
+		auto sector = selected->getSector();
+		for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
+		{
+			if (sector->getObject(i) != selected) continue;
+			if (!building->isSimulationPaused()) building->pauseSimulation();
+			gUISettings.worldPaused = true;
+			auto type = selected->getObjectType();
+			bool removed = type == core::SectorObjectType::Marker
+				? building->removeSectorMarker(sector->getIndex(), i)
+				: type == core::SectorObjectType::Door
+					? building->removeSectorDoor(sector->getIndex(), i)
+					: building->removeSectorWindow(sector->getIndex(), i);
+			if (!removed) return false;
+			if (type == core::SectorObjectType::Marker) building->finishBuild();
+			if (gHoveredSectorObject == selected) gHoveredSectorObject.reset();
+			gSelectedSectorObject.reset();
+			return true;
+		}
+		return false;
+	}
+
+	void restoreClipboardSnapshot(shared_ptr<core::Building>& building,
+		DocumentSnapshot const& snapshot, bool wasPaused);
+
+	void copyOrCutSelection(shared_ptr<core::Building>& building, bool cut)
+	{
+		if (!building || !hasClipboardSelection()) return;
+		try
+		{
+			auto text = serializeClipboardSelection(building, cut);
+			if (!text) return;
+			auto previousClipboard = ImGui::GetClipboardText();
+			string const previousText = previousClipboard ? previousClipboard : "";
+			ImGui::SetClipboardText(text->c_str());
+			auto readBack = ImGui::GetClipboardText();
+			if (!readBack || *text != readBack)
+			{
+				ImGui::SetClipboardText(previousText.c_str());
+				throw runtime_error("Could not update the system clipboard");
+			}
+			if (!cut) return;
+			auto undo = captureDocumentSnapshot(building);
+			if (!undo) throw runtime_error("Could not capture editor state");
+			bool const wasPaused = building->isSimulationPaused();
+			try
+			{
+				if (!wasPaused) building->pauseSimulation();
+				gUISettings.worldPaused = true;
+				if (!removeClipboardSelection(building)) throw runtime_error("Could not remove the selected object");
+				gConsumedCutClipboard.clear();
+				commitDocumentEdit(std::move(undo));
+			}
+			catch (...)
+			{
+				auto failure = current_exception();
+				ImGui::SetClipboardText(previousText.c_str());
+				restoreClipboardSnapshot(building, *undo, wasPaused);
+				rethrow_exception(failure);
+			}
+		}
+		catch (core::Exception const& error) { reportClipboardError(error.getMessage()); }
+		catch (std::exception const& error) { reportClipboardError(error.what()); }
+	}
+
+	void restoreClipboardSnapshot(shared_ptr<core::Building>& building,
+		DocumentSnapshot const& snapshot, bool wasPaused)
+	{
+		auto loaded = make_shared<core::Building>("Loading", 1, 1);
+		auto serializer = core::YamlSerializer::fromString(snapshot.yaml);
+		serializer->deserialize();
+		core::SerializationWorkData workData;
+		loaded->deserialize(*serializer, workData);
+		building = std::move(loaded);
+		clearDocumentState(false);
+		if (wasPaused) setWorldPaused(building, true);
+		else gUISettings.worldPaused = false;
+	}
+
+	void pasteClipboard(shared_ptr<core::Building>& building, bool useCurrentCursor = false)
+	{
+		if (!building) return;
+		if (gPegman.phase != PalettePhase::Home || gPaint.tool != PaintTool::None
+			|| gObjectMove.dragging || gSectorResize.dragging || gPendingLocationEdit)
+		{
+			reportClipboardError("Finish the current placement first");
+			return;
+		}
+		if (useCurrentCursor)
+		{
+			auto const mouse = ImGui::GetIO().MousePos;
+			auto const canvasMin = ImVec2(gUISettings.worldViewportX, gUISettings.worldViewportY);
+			auto const canvasMax = canvasMin + ImVec2(gUISettings.worldViewportWidth,
+				gUISettings.worldViewportHeight);
+			if (!pointInRect(mouse, canvasMin, canvasMax))
+			{
+				reportClipboardError("Paste position is outside the world");
+				return;
+			}
+			gLastWorldCursor = screenToWorld(mouse);
+		}
+		if (!gLastWorldCursor)
+		{
+			reportClipboardError("Move the cursor over the world before pasting");
+			return;
+		}
+		auto clipboard = ImGui::GetClipboardText();
+		if (!clipboard || !*clipboard) { reportClipboardError("Clipboard does not contain a supported object"); return; }
+		string const clipboardText = clipboard;
+		try
+		{
+			auto definition = parseClipboard(clipboardText);
+			auto world = *gLastWorldCursor;
+			if (world.x < 0.0f || world.y < 0.0f) throw runtime_error("Paste position is outside the building");
+			auto x = static_cast<uint32_t>(floor(world.x));
+			auto y = static_cast<uint32_t>(floor(world.y));
+			if (definition.type == ClipboardObjectType::Agent)
+			{
+				auto sector = building->getSectorAtPosition(gUISettings.visibleLayer, world.x, world.y);
+				if (!locationHasCapacity(sector) || !sector->pointInBounds(world.x, world.y))
+					throw runtime_error("Agents require a viable sector with available capacity");
+				if (y < sector->getCellY() || y >= sector->getCellY() + sector->getDecksHigh())
+					throw runtime_error("Agent deck is outside the sector");
+				bool consumedCut = definition.cut && clipboardText == gConsumedCutClipboard;
+				if (definition.cut && !consumedCut)
+				{
+					auto unique = uniqueAgentName(building, definition.name);
+					if (unique != definition.name) throw runtime_error("An Agent with this name already exists");
+				}
+				else definition.name = uniqueAgentName(building,
+					consumedCut ? definition.name + " copy" : definition.name);
+				if (!building->isSimulationPaused()) building->pauseSimulation();
+				gUISettings.worldPaused = true;
+				float halfWidth = CORE_AGENT_MAX_WIDTH * 0.5f;
+				float localX = clamp(world.x - sector->getPosition().x, halfWidth,
+					max(halfWidth, sector->getSize().x - halfWidth));
+				gPegman.phase = PalettePhase::Falling;
+				gPegman.item = PaletteItem::Agent;
+				gPegman.sector = sector;
+				gPegman.deckOffset = y - sector->getCellY();
+				gPegman.localX = localX;
+				gPegman.feetY = world.y;
+				gPegman.floorY = static_cast<float>(y);
+				gPegman.velocity = 0.0f;
+				gPegman.pastedAgentName = definition.name;
+				gPegman.pastedAgentFlags = definition.flags;
+				if (definition.cut) gConsumedCutClipboard = clipboardText;
+				if (gPegman.feetY <= gPegman.floorY) landPegman(building);
+				return;
+			}
+
+			string diagnostic;
+			shared_ptr<const core::Sector> markerSector;
+			float markerOffset = 0.0f;
+			if (definition.type == ClipboardObjectType::Door)
+			{
+				if (gUISettings.visibleLayer != CORE_LAYER_FORE)
+					throw runtime_error("Doors can only be placed on the Fore Layer");
+				if (!building->canAddCorridorDoor(y, x, definition.door, &diagnostic))
+					throw runtime_error(diagnostic);
+			}
+			else if (definition.type == ClipboardObjectType::Window)
+			{
+				if (!building->canAddSectorWindow(gUISettings.visibleLayer, y, x,
+					definition.width, definition.height, &diagnostic)) throw runtime_error(diagnostic);
+			}
+			else
+			{
+				markerSector = building->getSectorAtPosition(gUISettings.visibleLayer, world.x, world.y);
+				if (!markerSector || !markerSector->pointInBounds(world.x, world.y))
+					throw runtime_error("Markers require a viable sector");
+				markerOffset = world.x - markerSector->getPosition().x;
+				if (!building->canAddSectorMarker(markerSector->getIndex(),
+					y - markerSector->getCellY(), markerOffset, &diagnostic)) throw runtime_error(diagnostic);
+			}
+
+			auto undo = captureDocumentSnapshot(building);
+			if (!undo) throw runtime_error("Could not capture editor state");
+			bool wasPaused = building->isSimulationPaused();
+			try
+			{
+				if (!wasPaused) building->pauseSimulation();
+				gUISettings.worldPaused = true;
+				shared_ptr<const core::SectorObject> created;
+				if (definition.type == ClipboardObjectType::Door)
+				{
+					auto result = building->addSectorDoor(y, x, definition.door);
+					created = result.door.sector->getObject(result.door.index);
+				}
+				else if (definition.type == ClipboardObjectType::Window)
+				{
+					auto result = building->addSectorWindow(gUISettings.visibleLayer, y, x,
+						definition.width, definition.height, definition.window);
+					created = result.window.sector->getObject(result.window.index);
+				}
+				else
+				{
+					auto result = building->addSectorMarker(markerSector->getIndex(),
+						y - markerSector->getCellY(), markerOffset);
+					created = result.sector->getObject(result.index);
+				}
+				building->finishBuild();
+				setSelectionMode(UISettings::SelectionMode::Object);
+				gSelectedAgent = nullptr;
+				gSelectedSector.reset();
+				gSelectedSectorObject = created;
+				commitDocumentEdit(std::move(undo));
+				if (definition.cut) gConsumedCutClipboard = clipboardText;
+			}
+			catch (...)
+			{
+				auto failure = current_exception();
+				restoreClipboardSnapshot(building, *undo, wasPaused);
+				rethrow_exception(failure);
+			}
+		}
+		catch (core::Exception const& error) { reportClipboardError(error.getMessage()); }
+		catch (std::exception const& error) { reportClipboardError(error.what()); }
+	}
 }
 
 void handleShortcuts(shared_ptr<core::Building>& building)
@@ -1496,6 +1965,19 @@ void handleShortcuts(shared_ptr<core::Building>& building)
 		saveBuilding(building, false);
 
 	if (!building) return;
+
+	bool const clipboardShortcutAvailable = !ImGui::IsAnyItemActive() && !ImGui::IsAnyItemFocused();
+	if (clipboardShortcutAvailable
+		&& ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_X, 0, ImGuiInputFlags_RouteGlobalLow))
+		copyOrCutSelection(building, true);
+	if (clipboardShortcutAvailable
+		&& ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_C, 0, ImGuiInputFlags_RouteGlobalLow))
+		copyOrCutSelection(building, false);
+	if (clipboardShortcutAvailable
+		&& ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_V, 0, ImGuiInputFlags_RouteGlobalLow))
+	{
+		pasteClipboard(building, true);
+	}
 
 	if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Z, 0, ImGuiInputFlags_RouteGlobalLow))
 		restoreDocumentSnapshot(building, false);
@@ -1903,6 +2385,13 @@ void renderMenu(shared_ptr<core::Building>& building)
 				building != nullptr && !gRedoHistory.empty()))
 				restoreDocumentSnapshot(building, true);
 			ImGui::Separator();
+			bool const canCopy = building != nullptr && hasClipboardSelection();
+			if (ImGui::MenuItem("Cut", "Ctrl+X", false, canCopy)) copyOrCutSelection(building, true);
+			if (ImGui::MenuItem("Copy", "Ctrl+C", false, canCopy)) copyOrCutSelection(building, false);
+			auto clipboard = ImGui::GetClipboardText();
+			if (ImGui::MenuItem("Paste", "Ctrl+V", false,
+				building != nullptr && clipboard && *clipboard)) pasteClipboard(building);
+			ImGui::Separator();
 
 			if (ImGui::BeginMenu("Selection"))
 			{
@@ -2031,6 +2520,30 @@ void renderDocumentToolbar(shared_ptr<core::Building>& building)
 	if (ImGui::Button(ICON_FA_REDO "##Redo")) restoreDocumentSnapshot(building, true);
 	if (ImGui::IsItemHovered()) ImGui::SetTooltip("Redo (Ctrl+Y)");
 	ImGui::EndDisabled();
+
+	ImGui::SameLine(0.0f, style.ItemSpacing.x * 2.0f);
+	ImGui::BeginDisabled(building == nullptr || !hasClipboardSelection());
+	if (ImGui::Button(ICON_FA_CUT "##Cut")) copyOrCutSelection(building, true);
+	if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cut (Ctrl+X)");
+	ImGui::SameLine();
+	if (ImGui::Button(ICON_FA_COPY "##Copy")) copyOrCutSelection(building, false);
+	if (ImGui::IsItemHovered()) ImGui::SetTooltip("Copy (Ctrl+C)");
+	ImGui::EndDisabled();
+
+	auto clipboard = ImGui::GetClipboardText();
+	ImGui::SameLine();
+	ImGui::BeginDisabled(building == nullptr || !clipboard || !*clipboard);
+	if (ImGui::Button(ICON_FA_PASTE "##Paste")) pasteClipboard(building);
+	if (ImGui::IsItemHovered()) ImGui::SetTooltip("Paste (Ctrl+V)");
+	ImGui::EndDisabled();
+
+	if (!gClipboardError.empty() && ImGui::GetTime() < gClipboardErrorUntil)
+	{
+		auto width = ImGui::CalcTextSize(gClipboardError.c_str()).x;
+		ImGui::SameLine(max(ImGui::GetCursorPosX() + style.ItemSpacing.x,
+			ImGui::GetWindowWidth() - width - style.WindowPadding.x));
+		ImGui::TextColored(ImVec4(1.0f, 0.25f, 0.25f, 1.0f), "%s", gClipboardError.c_str());
+	}
 
 	ImGui::End();
 }
@@ -3491,6 +4004,7 @@ void renderWorldWindow(shared_ptr<core::Building> building, shared_ptr<const cor
 	if (gWorldHovered)
 	{
 		auto mousePos = getMouseWorldPosition();
+		gLastWorldCursor = mousePos;
 		if (gUISettings.selectionMode == UISettings::SelectionMode::Sector)
 		{
 			auto sector = building->getSectorAtPosition(gUISettings.visibleLayer, mousePos.x, mousePos.y);

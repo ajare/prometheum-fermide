@@ -1920,34 +1920,81 @@ namespace core
 
 	bool Building::canAddCorridorDoor(uint32_t y, uint32_t x, string* diagnostic) const
 	{
+		return canAddCorridorDoor(y, x, CreateDoorOptions{}, diagnostic);
+	}
+
+	bool Building::canAddCorridorDoor(uint32_t y, uint32_t x,
+		CreateDoorOptions const& options, string* diagnostic) const
+	{
 		auto reject = [diagnostic](string reason)
 		{
 			if (diagnostic) *diagnostic = std::move(reason);
 			return false;
 		};
-
-		// addSectorDoor's bounds convention leaves the final column as a world boundary.
-		if (x >= mCellsWide || y >= mDecksHigh || x + 1 >= mCellsWide)
+		// Door authoring reserves the final column as the building boundary.
+		if (options.width == 0 || x >= mCellsWide || options.width > mCellsWide - x
+			|| x + options.width >= mCellsWide || y >= mDecksHigh)
 			return reject("Door position is outside the building");
-
-		auto const& foreCell = mLayers[CORE_LAYER_FORE]->getCellDefinition(x, y);
-		if (!foreCell.occupied()) return reject("Doors must be placed on a Fore Layer corridor");
-		auto fore = dynamic_pointer_cast<const Location>(mSectors[foreCell.sectorIndex]);
-		if (!fore || !fore->isCorridor())
-			return reject("Doors must be placed on a Fore Layer corridor");
-
-		auto const& backCell = mLayers[CORE_LAYER_BACK]->getCellDefinition(x, y);
-		if (!backCell.occupied()) return reject("A Back Layer Room is required here");
-		auto back = dynamic_pointer_cast<const Location>(mSectors[backCell.sectorIndex]);
-		if (!back || back->isCorridor()) return reject("A Back Layer Room is required here");
-
-		if (foreCell.hasObject() || backCell.hasObject()
-			|| !foreCell.markers.empty() || !backCell.markers.empty())
-			return reject("Another object blocks Door placement");
-		if (!foreCell.isTraversableOnFoot() || !backCell.isTraversableOnFoot())
-			return reject("Door placement requires a traversable floor on both layers");
-
+		try
+		{
+			string const caller = "Building::canAddCorridorDoor";
+			validateSectorDoorOptions(caller, options);
+			if (options.activationMode != DoorActivationMode::RemoteControlled
+				&& (options.controls[0] || options.controls[1]))
+				return reject("Physical controls require a remote-controlled Door");
+			validateBounds(caller, x, y, options.width, 1);
+			validateSpaceOnlyInOneSector(caller, CORE_LAYER_FORE, x, y, options.width, 1);
+			validateSpaceOnlyInOneSector(caller, CORE_LAYER_BACK, x, y, options.width, 1);
+			shared_ptr<const Sector> sectors[2];
+			for (uint32_t ix = x; ix < x + options.width; ++ix)
+			{
+				auto const& foreCell = mLayers[CORE_LAYER_FORE]->getCellDefinition(ix, y);
+				auto const& backCell = mLayers[CORE_LAYER_BACK]->getCellDefinition(ix, y);
+				if (!foreCell.occupied()) return reject("Doors must be placed on a Fore Layer corridor");
+				if (!backCell.occupied()) return reject("A Back Layer Room is required here");
+				sectors[0] = mSectors[foreCell.sectorIndex];
+				sectors[1] = mSectors[backCell.sectorIndex];
+				auto fore = dynamic_pointer_cast<const Location>(sectors[0]);
+				auto back = dynamic_pointer_cast<const Location>(sectors[1]);
+				if (!fore || !fore->isCorridor()) return reject("Doors must be placed on a Fore Layer corridor");
+				if (!back || back->isCorridor()) return reject("A Back Layer Room is required here");
+				if (foreCell.hasObject() || backCell.hasObject()
+					|| !foreCell.markers.empty() || !backCell.markers.empty())
+					return reject("Another object blocks Door placement");
+				if (!foreCell.isTraversableOnFoot() || !backCell.isTraversableOnFoot())
+					return reject("Door placement requires a traversable floor on both layers");
+				validateObjectAllowedInSector(caller, SectorObjectType::Door, foreCell.sectorIndex);
+				validateObjectAllowedInSector(caller, SectorObjectType::Door, backCell.sectorIndex);
+			}
+			for (int side = 0; side < 2; ++side)
+				if (options.controls[side] && x == sectors[side]->getCellX0()
+					&& x + options.width - 1 == sectors[side]->getCellX1())
+					return reject("There is no space to place a Door Button on this side");
+		}
+		catch (std::exception const& error)
+		{
+			return reject(error.what());
+		}
 		if (diagnostic) diagnostic->clear();
+		return true;
+	}
+
+	bool Building::getSectorDoorOptions(uint32_t y, uint32_t x, uint32_t width,
+		CreateDoorOptions& options) const
+	{
+		auto found = find_if(mConstructionRecords.rbegin(), mConstructionRecords.rend(),
+			[&](ConstructionRecord const& record)
+			{
+				return record.type == ConstructionType::Door
+					&& record.a == y && record.b == x && record.c == width;
+			});
+		if (found == mConstructionRecords.rend()) return false;
+		options.width = found->c;
+		options.controls[0] = found->p;
+		options.controls[1] = found->q;
+		options.activationMode = static_cast<DoorActivationMode>(found->i);
+		options.holdOpenSeconds = found->x;
+		options.crossingLanes = found->d;
 		return true;
 	}
 
@@ -2325,6 +2372,23 @@ namespace core
 		record.j = static_cast<int32_t>(options.style);
 		recordConstruction(std::move(record));
 		return { { windowIndex, windowObjType, windowSector }, window, traversalResource };
+	}
+
+	bool Building::getSectorWindowOptions(uint32_t layerIndex, uint32_t y, uint32_t x,
+		uint32_t cellsWide, uint32_t decksHigh, CreateWindowOptions& options) const
+	{
+		auto found = find_if(mConstructionRecords.rbegin(), mConstructionRecords.rend(),
+			[&](ConstructionRecord const& record)
+			{
+				return record.type == ConstructionType::Window && record.a == layerIndex
+					&& record.b == y && record.c == x && record.d == cellsWide
+					&& record.e == decksHigh;
+			});
+		if (found == mConstructionRecords.rend()) return false;
+		options.traversable = found->p;
+		options.initialState = static_cast<Window::State>(found->i);
+		options.style = static_cast<Window::Style>(found->j);
+		return true;
 	}
 
 	Building::CreateBulkheadDoorResult Building::addSectorBulkheadDoor(uint32_t layerIndex, uint32_t y,
