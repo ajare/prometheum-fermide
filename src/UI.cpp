@@ -1141,11 +1141,15 @@ namespace
 		None,
 		New,
 		Open,
+		OpenRecent,
 		Close,
 		Exit
 	};
 
+	constexpr size_t MaximumRecentFiles{ 5 };
 	string gBuildingFilepath;
+	deque<string> gRecentFiles;
+	string gPendingRecentFilepath;
 	PendingFileAction gPendingFileAction{ PendingFileAction::None };
 	bool gOpenUnsavedChangesPopup{ false };
 	bool gOpenNewBuildingPopup{ false };
@@ -1279,6 +1283,49 @@ namespace
 		}
 	}
 
+	string normalizedFilepath(string const& filepath)
+	{
+		filesystem::path path(filepath);
+		error_code error;
+		auto const absolute = filesystem::absolute(path, error);
+		if (!error) path = absolute;
+		return path.lexically_normal().string();
+	}
+
+	void addRecentFile(string const& filepath)
+	{
+		auto const normalized = normalizedFilepath(filepath);
+		gRecentFiles.erase(remove(gRecentFiles.begin(), gRecentFiles.end(), normalized),
+			gRecentFiles.end());
+		gRecentFiles.push_front(normalized);
+		if (gRecentFiles.size() > MaximumRecentFiles) gRecentFiles.pop_back();
+	}
+
+	void openBuilding(shared_ptr<core::Building>& building, string const& filepath)
+	{
+		try
+		{
+			auto const normalized = normalizedFilepath(filepath);
+			auto loaded = make_shared<core::Building>("Loading", 1, 1);
+			auto serializer = core::YamlSerializer::fromFile(normalized);
+			serializer->deserialize();
+			core::SerializationWorkData workData;
+			loaded->deserialize(*serializer, workData);
+			building = std::move(loaded);
+			gBuildingFilepath = normalized;
+			addRecentFile(gBuildingFilepath);
+			clearDocumentState();
+			gSavedStateId = gCurrentStateId;
+			setWorldPaused(building, true);
+			core::addLogMessage("File", 0, core::LogLevel::Info,
+				"Opened Building from " + gBuildingFilepath);
+		}
+		catch (std::exception const& error)
+		{
+			reportFileError("Could not open Building: " + string(error.what()));
+		}
+	}
+
 	void openBuilding(shared_ptr<core::Building>& building)
 	{
 		nfdu8char_t* selectedPathRaw{ nullptr };
@@ -1294,25 +1341,7 @@ namespace
 			return;
 		}
 
-		try
-		{
-			auto loaded = make_shared<core::Building>("Loading", 1, 1);
-			auto serializer = core::YamlSerializer::fromFile(selectedPath.get());
-			serializer->deserialize();
-			core::SerializationWorkData workData;
-			loaded->deserialize(*serializer, workData);
-			building = std::move(loaded);
-			gBuildingFilepath = selectedPath.get();
-			clearDocumentState();
-			gSavedStateId = gCurrentStateId;
-			setWorldPaused(building, true);
-			core::addLogMessage("File", 0, core::LogLevel::Info,
-				"Opened Building from " + gBuildingFilepath);
-		}
-		catch (std::exception const& error)
-		{
-			reportFileError("Could not open Building: " + string(error.what()));
-		}
+		openBuilding(building, selectedPath.get());
 	}
 
 	void executeFileAction(PendingFileAction action, shared_ptr<core::Building>& building)
@@ -1325,6 +1354,13 @@ namespace
 		case PendingFileAction::Open:
 			openBuilding(building);
 			break;
+		case PendingFileAction::OpenRecent:
+		{
+			auto const filepath = std::move(gPendingRecentFilepath);
+			gPendingRecentFilepath.clear();
+			openBuilding(building, filepath);
+			break;
+		}
 		case PendingFileAction::Close:
 			building.reset();
 			gBuildingFilepath.clear();
@@ -1346,6 +1382,12 @@ namespace
 			return;
 		}
 		executeFileAction(action, building);
+	}
+
+	void requestRecentFile(string const& filepath, shared_ptr<core::Building>& building)
+	{
+		gPendingRecentFilepath = filepath;
+		requestFileAction(PendingFileAction::OpenRecent, building);
 	}
 
 	void commitLocationEdit(shared_ptr<core::Building> const& building,
@@ -1420,6 +1462,7 @@ namespace
 			if (ImGui::Button("Cancel"))
 			{
 				gPendingFileAction = PendingFileAction::None;
+				gPendingRecentFilepath.clear();
 				ImGui::CloseCurrentPopup();
 			}
 			ImGui::EndPopup();
@@ -2357,6 +2400,7 @@ ImVec2 gMainMenuWindowSize;
 
 void renderMenu(shared_ptr<core::Building>& building)
 {
+	optional<string> recentFileToOpen;
 	if (ImGui::BeginMainMenuBar())
 	{
 		if (ImGui::BeginMenu("File"))
@@ -2365,6 +2409,15 @@ void renderMenu(shared_ptr<core::Building>& building)
 				requestFileAction(PendingFileAction::New, building);
 			if (ImGui::MenuItem("Open...", "Ctrl+O"))
 				requestFileAction(PendingFileAction::Open, building);
+			if (ImGui::BeginMenu("Open Recent", !gRecentFiles.empty()))
+			{
+				for (auto const& filepath : gRecentFiles)
+				{
+					if (ImGui::MenuItem(filepath.c_str())) recentFileToOpen = filepath;
+				}
+				ImGui::EndMenu();
+			}
+			ImGui::Separator();
 			if (ImGui::MenuItem("Save", "Ctrl+S", false, isDocumentStale(building)))
 				saveBuilding(building, false);
 			if (ImGui::MenuItem("Save As...", nullptr, false, building != nullptr))
@@ -2478,6 +2531,8 @@ void renderMenu(shared_ptr<core::Building>& building)
 		gMainMenuWindowSize = ImGui::GetWindowSize();
 		ImGui::EndMainMenuBar();
 	}
+
+	if (recentFileToOpen) requestRecentFile(*recentFileToOpen, building);
 }
 
 
