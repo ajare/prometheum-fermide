@@ -21,15 +21,7 @@ elseif(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
 
-if(WIN32)
-    set(PF_BUILD_GUI_DEFAULT ON)
-else()
-    # The Linux GUI needs platform development packages (SDL2, GLEW, spdlog,
-    # nativefiledialog-extended, and their window-system backends). Keep a
-    # fresh Linux checkout buildable with only a compiler, CMake, and Git.
-    set(PF_BUILD_GUI_DEFAULT OFF)
-endif()
-option(PF_BUILD_GUI "Build the SDL/OpenGL graphical application" ${PF_BUILD_GUI_DEFAULT})
+option(PF_BUILD_GUI "Build the SDL/OpenGL graphical application" ON)
 
 set(PF_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/include")
 set(PF_VENDOR_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/vendor/include")
@@ -59,19 +51,20 @@ if(WIN32)
         pf_add_vendor_library(pf_sdl2main SDL2maind.lib SDL2main.lib)
     endif()
 else()
+    include(FetchContent)
+    # CMake 4 requires an explicit policy floor when configuring dependencies
+    # that retain compatibility with older CMake releases.
+    set(CMAKE_POLICY_VERSION_MINIMUM 3.10)
+
     # Prefer a distro package, but keep a fresh checkout buildable when the
     # yaml-cpp development package is not installed.
     find_package(yaml-cpp CONFIG QUIET)
     if(NOT TARGET yaml-cpp::yaml-cpp AND NOT TARGET yaml-cpp)
-        include(FetchContent)
         set(YAML_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
         set(YAML_CPP_BUILD_CONTRIB OFF CACHE BOOL "" FORCE)
         set(YAML_CPP_BUILD_TESTS OFF CACHE BOOL "" FORCE)
         set(YAML_CPP_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
         set(YAML_CPP_INSTALL OFF CACHE BOOL "" FORCE)
-        # CMake 4 requires an explicit policy floor when configuring
-        # dependencies that retain compatibility with older CMake releases.
-        set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
         FetchContent_Declare(yaml-cpp
             GIT_REPOSITORY https://github.com/jbeder/yaml-cpp.git
             # Pinned newer than 0.8.0, which does not compile with GCC 15.
@@ -89,21 +82,55 @@ else()
     endif()
 
     if(PF_BUILD_GUI)
+        # OpenGL and the window-system/DBus interfaces come from the host. The
+        # portable third-party libraries are pinned and built from source.
         find_package(OpenGL REQUIRED)
-        find_package(GLEW REQUIRED)
-        find_package(SDL2 REQUIRED)
-        find_package(spdlog CONFIG REQUIRED)
-        find_package(nfd CONFIG REQUIRED)
 
-        if(TARGET nfd::nfd)
-            set(PF_NFD_TARGET nfd::nfd)
-        elseif(TARGET NFD::nfd)
-            set(PF_NFD_TARGET NFD::nfd)
-        elseif(TARGET nfd)
-            set(PF_NFD_TARGET nfd)
-        else()
-            message(FATAL_ERROR "The nfd package did not provide nfd::nfd, NFD::nfd, or nfd")
-        endif()
+        set(glew-cmake_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+        set(glew-cmake_BUILD_STATIC ON CACHE BOOL "" FORCE)
+        set(ONLY_LIBS ON CACHE BOOL "" FORCE)
+        set(USE_GLU OFF CACHE BOOL "" FORCE)
+        FetchContent_Declare(glew
+            GIT_REPOSITORY https://github.com/Perlmint/glew-cmake.git
+            GIT_TAG f456deace7b408655109aaeff71421ef2d3858c6
+        )
+
+        set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+        set(SDL_STATIC ON CACHE BOOL "" FORCE)
+        set(SDL_TEST OFF CACHE BOOL "" FORCE)
+        set(SDL_TESTS OFF CACHE BOOL "" FORCE)
+        set(SDL2_DISABLE_INSTALL ON CACHE BOOL "" FORCE)
+        set(SDL2_DISABLE_SDL2MAIN ON CACHE BOOL "" FORCE)
+        FetchContent_Declare(SDL2
+            GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
+            GIT_TAG 5d249570393f7a37e037abf22cd6012a4cc56a71
+        )
+
+        set(SPDLOG_BUILD_EXAMPLE OFF CACHE BOOL "" FORCE)
+        set(SPDLOG_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+        set(SPDLOG_BUILD_BENCH OFF CACHE BOOL "" FORCE)
+        set(SPDLOG_INSTALL OFF CACHE BOOL "" FORCE)
+        FetchContent_Declare(spdlog
+            GIT_REPOSITORY https://github.com/gabime/spdlog.git
+            GIT_TAG 6fa36017cfd5731d617e1a934f0e5ea9c4445b13
+        )
+
+        # The portal backend avoids a GTK development dependency and works on
+        # both X11 and Wayland desktops through xdg-desktop-portal.
+        set(NFD_PORTAL ON CACHE BOOL "" FORCE)
+        set(NFD_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+        set(NFD_BUILD_SDL2_TESTS OFF CACHE BOOL "" FORCE)
+        set(NFD_INSTALL OFF CACHE BOOL "" FORCE)
+        FetchContent_Declare(nfd
+            GIT_REPOSITORY https://github.com/btzy/nativefiledialog-extended.git
+            GIT_TAG 86d5f2005fe1c00747348a12070fec493ea2407e
+        )
+
+        FetchContent_MakeAvailable(glew SDL2 spdlog nfd)
+        # SDL 2.32's C23 bsearch wrapper triggers this GCC 15 diagnostic.
+        target_compile_options(SDL2-static PRIVATE
+            $<$<COMPILE_LANG_AND_ID:C,GNU>:-Wno-discarded-qualifiers>
+        )
     endif()
 endif()
 
@@ -171,8 +198,8 @@ if(PF_BUILD_GUI)
     else()
         target_compile_options(imgui PRIVATE -Wall -Wextra -Wpedantic)
         target_link_libraries(imgui PRIVATE
-            prometheum-fermide-core GLEW::GLEW ${PF_NFD_TARGET}
-            spdlog::spdlog SDL2::SDL2 OpenGL::GL
+            prometheum-fermide-core libglew_static nfd::nfd
+            spdlog::spdlog SDL2::SDL2-static OpenGL::GL
         )
     endif()
     set_target_properties(imgui PROPERTIES

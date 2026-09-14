@@ -4,13 +4,16 @@ set -u
 
 CONFIG="Release"
 BUILD_DIR="build-linux"
+BUILD_GUI="ON"
 
 print_usage() {
     cat <<EOF
-Usage: $(basename "$0") [--config Debug|Release] [--build-dir path]
+Usage: $(basename "$0") [--config Debug|Release] [--build-dir path] [--no-gui]
 
   --config     Build configuration. Defaults to Release.
   --build-dir  CMake build directory. Defaults to build-linux.
+  --gui        Build the graphical application (default).
+  --no-gui     Build only the core and headless application.
   --help       Show this help message.
 EOF
 }
@@ -32,6 +35,14 @@ while (( $# > 0 )); do
             (( $# >= 2 )) || usage_error "--build-dir requires a value."
             BUILD_DIR="$2"
             shift 2
+            ;;
+        --gui)
+            BUILD_GUI="ON"
+            shift
+            ;;
+        --no-gui)
+            BUILD_GUI="OFF"
+            shift
             ;;
         --help|-h)
             print_usage
@@ -59,7 +70,11 @@ cd -- "$SCRIPT_DIR" || {
 
 if [[ ! -f "$BUILD_DIR/CMakeCache.txt" ]]; then
     echo "No CMake build found in \"$BUILD_DIR\"; creating a fresh build."
-    "$SCRIPT_DIR/build_from_scratch.sh" --config "$CONFIG" --build-dir "$BUILD_DIR"
+    fresh_arguments=(--config "$CONFIG" --build-dir "$BUILD_DIR")
+    if [[ "$BUILD_GUI" == "OFF" ]]; then
+        fresh_arguments+=(--no-gui)
+    fi
+    "$SCRIPT_DIR/build_from_scratch.sh" "${fresh_arguments[@]}"
     exit $?
 fi
 
@@ -69,7 +84,7 @@ if ! command -v cmake >/dev/null 2>&1; then
 fi
 
 echo "Checking CMake build files..."
-cmake -S . -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE="$CONFIG"
+cmake -S . -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE="$CONFIG" -DPF_BUILD_GUI="$BUILD_GUI"
 result=$?
 if (( result != 0 )); then
     echo "Build failed with exit code $result." >&2
