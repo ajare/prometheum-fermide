@@ -272,6 +272,16 @@ namespace
 	};
 
 	ObjectMoveState gObjectMove;
+
+	struct AgentMoveState
+	{
+		bool dragging{ false };
+		ImVec2 pressPosition{};
+		core::Vector2 originalPosition{};
+		PegmanTarget preview;
+	};
+
+	AgentMoveState gAgentMove;
 	bool gOpenLocationEditPopup{ false };
 
 	void resetSectorResize()
@@ -282,6 +292,30 @@ namespace
 	void resetObjectMove()
 	{
 		gObjectMove = {};
+	}
+
+	void resetAgentMove()
+	{
+		gAgentMove = {};
+	}
+
+	void beginObjectMove(shared_ptr<const core::Building> const& building,
+		shared_ptr<const core::SectorObject> const& object, uint32_t objectIndex)
+	{
+		if (!building || !object || gObjectMove.dragging) return;
+		auto owner = object->getSector();
+		gObjectMove.dragging = true;
+		gObjectMove.pressPosition = ImGui::GetIO().MousePos;
+		gObjectMove.originalX = object->getCellX();
+		gObjectMove.originalY = object->getCellY();
+		if (object->getObjectType() == core::SectorObjectType::Marker)
+		{
+			auto marker = static_pointer_cast<const core::MarkerSectorObject>(object)->getMarker();
+			gObjectMove.originalX = marker->getCellX() + (uint32_t)floor(marker->getOffset());
+			gObjectMove.originalY = marker->getCellY();
+		}
+		gObjectMove.preview = building->planMoveSectorObject(owner->getIndex(), objectIndex,
+			gObjectMove.originalX, gObjectMove.originalY);
 	}
 
 	void resetPaint(bool clearTool = true)
@@ -345,6 +379,30 @@ namespace
 
 		return { sector, deckOffset, localX, world.y,
 			(float)sector->getCellY() + deckOffset, {} };
+	}
+
+	PegmanTarget getAgentMoveTarget(shared_ptr<const core::Building> const& building,
+		core::Agent const* agent, core::Vector2 world)
+	{
+		if (world.x < 0.0f || world.y < 0.0f
+			|| world.x >= building->getCellsWide() || world.y >= building->getDecksHigh())
+			return { nullptr, 0, 0.0f, world.y, world.y, "Drop the Agent inside the world" };
+		auto sector = building->getSectorAtPosition(gUISettings.visibleLayer, world.x, world.y);
+		bool const retainsCapacity = sector && agent && agent->getSector() == sector.get();
+		if (!sector || sector->getType() != core::SectorType::Location
+			|| (!retainsCapacity && !locationHasCapacity(sector))
+			|| !sector->pointInBounds(world.x, world.y))
+			return { nullptr, 0, 0.0f, world.y, world.y,
+				"Agents require a viable sector with available capacity" };
+
+		auto cellY = (uint32_t)floor(world.y);
+		if (cellY < sector->getCellY() || cellY >= sector->getCellY() + sector->getDecksHigh())
+			return { nullptr, 0, 0.0f, world.y, world.y, "Agent deck is outside the sector" };
+		float halfWidth = CORE_AGENT_MAX_WIDTH * 0.5f;
+		float localX = clamp(world.x - sector->getPosition().x, halfWidth,
+			max(halfWidth, sector->getSize().x - halfWidth));
+		return { sector, cellY - sector->getCellY(), localX, world.y,
+			(float)cellY, {} };
 	}
 
 	PegmanTarget getMarkerTarget(shared_ptr<const core::Building> const& building,
@@ -1081,7 +1139,7 @@ namespace
 		}
 
 		gPegmanConsumesLeftMouse = gSectorResize.dragging || gObjectMove.dragging
-			|| paletteConsumedMouse || gPaint.tool != PaintTool::None
+			|| gAgentMove.dragging || paletteConsumedMouse || gPaint.tool != PaintTool::None
 			|| gPaint.dragging || paintWasActive;
 	}
 }
@@ -1160,6 +1218,7 @@ void setSelectionMode(UISettings::SelectionMode mode)
 	if (gUISettings.selectionMode != mode)
 	{
 		resetObjectMove();
+		resetAgentMove();
 		gUISettings.selectionMode = mode;
 		gSelectedAgent = nullptr;
 		gSelectedVertex.reset();
@@ -1186,6 +1245,7 @@ void clearSelections()
 	case UISettings::SelectionMode::Object:
 		gSelectedAgent = nullptr;
 		gSelectedSector = nullptr;
+		resetAgentMove();
 		gSelectedSectorObject = nullptr;
 		break;
 
@@ -1237,6 +1297,7 @@ namespace
 		endAgentPathSelection();
 		resetSectorResize();
 		resetObjectMove();
+		resetAgentMove();
 		gPendingLocationEdit.reset();
 		gPendingLiftEdit.reset();
 		gUISettings.worldPaused = false;
@@ -1968,7 +2029,8 @@ namespace
 	{
 		if (!building) return;
 		if (gPegman.phase != PalettePhase::Home || gPaint.tool != PaintTool::None
-			|| gObjectMove.dragging || gSectorResize.dragging || gPendingLocationEdit || gPendingLiftEdit)
+			|| gAgentMove.dragging || gObjectMove.dragging || gSectorResize.dragging
+			|| gPendingLocationEdit || gPendingLiftEdit)
 		{
 			reportClipboardError("Finish the current placement first");
 			return;
@@ -2733,6 +2795,13 @@ void renderDocumentToolbar(shared_ptr<core::Building>& building)
 	if (ImGui::IsItemHovered()) ImGui::SetTooltip("Paste (Ctrl+V)");
 	ImGui::EndDisabled();
 
+	ImGui::SameLine(0.0f, style.ItemSpacing.x * 2.0f);
+	imgui::ToggleButton("ToggleNonVisibleLayer", "Show non-visible layer", &gUISettings.renderNonVisibleLayer);
+	ImGui::SameLine();
+	imgui::ToggleButton("ToggleGraph", "Building graph", &gUISettings.renderGraph);
+	ImGui::SameLine();
+	imgui::ToggleButton("Agent Debug", "Agent debug", &gUISettings.renderAgentDebug);
+
 	if (!gClipboardError.empty() && ImGui::GetTime() < gClipboardErrorUntil)
 	{
 		auto width = ImGui::CalcTextSize(gClipboardError.c_str()).x;
@@ -2801,11 +2870,6 @@ void renderToolbar(shared_ptr<core::Building> building)
 			setSelectionMode((UISettings::SelectionMode)selectedMode);
 		}
 
-		// View
-		imgui::ToggleButton("ToggleNonVisibleLayer", "Show non-visible layer", &gUISettings.renderNonVisibleLayer);
-		imgui::ToggleButton("ToggleGraph", "Building graph", &gUISettings.renderGraph);
-		imgui::ToggleButton("ToggleNearestVertex", "Highlight nearest vertex", &gUISettings.highlightNearestVertex);
-		imgui::ToggleButton("Agent Debug", "Agent debug", &gUISettings.renderAgentDebug);
 }
 
 
@@ -3128,7 +3192,8 @@ void renderLadderPanel(shared_ptr<const core::SectorObject> object)
 }
 
 
-void renderLiftPanel(shared_ptr<const core::Lift> lift)
+void renderLiftPanel(shared_ptr<const core::Building> const& building,
+	shared_ptr<const core::Lift> lift, bool includeAgentDebug = false)
 {
 	ImGuiTableFlags flags =
 		ImGuiTableFlags_SizingStretchSame |
@@ -3159,6 +3224,67 @@ void renderLiftPanel(shared_ptr<const core::Lift> lift)
 			ImGui::TextUnformatted(value.c_str());
 		}
 
+		ImGui::EndTable();
+	}
+
+	if (!includeAgentDebug || !building) return;
+	auto resourceId = building->getTraversalResourceId(lift.get());
+	auto snapshot = building->getSimulationSnapshot();
+	auto resource = find_if(snapshot.traversalResources.begin(), snapshot.traversalResources.end(),
+		[resourceId](auto const& candidate) { return candidate.id == resourceId; });
+	if (!resourceId || resource == snapshot.traversalResources.end())
+	{
+		ImGui::TextDisabled("Lift traversal resource is unavailable.");
+		return;
+	}
+
+	const char* phase = "Idle";
+	switch (resource->liftStopPhase)
+	{
+	case core::LiftStopPhase::Opening: phase = "Opening"; break;
+	case core::LiftStopPhase::Disembarking: phase = "Disembarking"; break;
+	case core::LiftStopPhase::Boarding: phase = "Boarding"; break;
+	case core::LiftStopPhase::Closing: phase = "Closing"; break;
+	case core::LiftStopPhase::Moving: phase = "Moving"; break;
+	case core::LiftStopPhase::Idle: break;
+	}
+	ImGui::Separator();
+	ImGui::Text("Resource: %llu", (unsigned long long)resourceId.value);
+	ImGui::Text("Position: %.2f", resource->liftPosition);
+	ImGui::Text("Current stop: %u", resource->liftCurrentStop);
+	if (resource->liftTargetStop == ~0u) ImGui::TextUnformatted("Target stop: <none>");
+	else ImGui::Text("Target stop: %u", resource->liftTargetStop);
+	ImGui::Text("Phase: %s", phase);
+	ImGui::Text("Capacity: %u (%u occupied, %u reserved)", resource->capacity,
+		resource->occupantCount, resource->admissionReservationCount);
+
+	ImGui::TextUnformatted("Agents using lift");
+	if (ImGui::BeginTable("LiftAgents", 3, flags))
+	{
+		ImGui::TableSetupColumn("Agent");
+		ImGui::TableSetupColumn("State");
+		ImGui::TableSetupColumn("Target floor");
+		ImGui::TableHeadersRow();
+		for (auto const& passenger : resource->liftAgents)
+		{
+			auto agent = find_if(snapshot.agents.begin(), snapshot.agents.end(),
+				[&](auto const& candidate) { return candidate.id == passenger.agent; });
+			if (agent == snapshot.agents.end()) continue;
+			const char* state = "Queuing at door";
+			switch (passenger.state)
+			{
+			case core::LiftAgentState::Entering: state = "Entering"; break;
+			case core::LiftAgentState::InLift: state = "In lift"; break;
+			case core::LiftAgentState::Exiting: state = "Exiting"; break;
+			case core::LiftAgentState::QueuingAtDoor: break;
+			}
+			ImGui::TableNextRow();
+			ImGui::TableSetColumnIndex(0); ImGui::TextUnformatted(agent->name.c_str());
+			ImGui::TableSetColumnIndex(1); ImGui::TextUnformatted(state);
+			ImGui::TableSetColumnIndex(2);
+			if (passenger.targetStop == ~0u) ImGui::TextUnformatted("<unknown>");
+			else ImGui::Text("%.0f", passenger.targetFloor);
+		}
 		ImGui::EndTable();
 	}
 }
@@ -3413,7 +3539,8 @@ void renderSelectedObjectPanel(shared_ptr<core::Building> const& building)
 		switch (gSelectedSector->getType())
 		{
 		case core::SectorType::Lift:
-			renderLiftPanel(static_pointer_cast<const core::LiftTransit>(gSelectedSector)->getLift());
+			renderLiftPanel(building,
+				static_pointer_cast<const core::LiftTransit>(gSelectedSector)->getLift(), true);
 			break;
 
 		case core::SectorType::Shuttle:
@@ -3449,7 +3576,8 @@ void renderSelectedObjectPanel(shared_ptr<core::Building> const& building)
 			break;
 
 		case core::SectorObjectType::Lift:
-			renderLiftPanel(static_pointer_cast<const core::LiftSectorObject>(gSelectedSectorObject)->getLift());
+			renderLiftPanel(building,
+				static_pointer_cast<const core::LiftSectorObject>(gSelectedSectorObject)->getLift());
 			break;
 
 		case core::SectorObjectType::Marker:
@@ -3929,9 +4057,101 @@ namespace
 			? ResizeEdge::Move : ResizeEdge::None;
 	}
 
+	void updateAgentMove(shared_ptr<core::Building> const& building)
+	{
+		auto& io = ImGui::GetIO();
+		if (gUISettings.selectionMode != UISettings::SelectionMode::Object)
+		{
+			resetAgentMove();
+			return;
+		}
+		if (!gAgentMove.dragging && gWorldHovered && gHoveredAgent && io.MouseClicked[0])
+		{
+			gSelectedAgent = gHoveredAgent;
+			gSelectedSector.reset();
+			gSelectedSectorObject.reset();
+			gAgentMove.dragging = true;
+			gAgentMove.pressPosition = io.MousePos;
+			gAgentMove.originalPosition = gSelectedAgent->getGlobalPosition();
+			gAgentMove.preview = getAgentMoveTarget(building, gSelectedAgent,
+				gAgentMove.originalPosition);
+		}
+		if (!gAgentMove.dragging) return;
+		if (!gSelectedAgent)
+		{
+			resetAgentMove();
+			return;
+		}
+
+		ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+		if (ImGui::IsKeyPressed(ImGuiKey_Escape) || io.MouseClicked[1])
+		{
+			resetAgentMove();
+			return;
+		}
+		auto target = gAgentMove.originalPosition + core::Vector2{
+			(io.MousePos.x - gAgentMove.pressPosition.x) / CORE_CELL_WIDTH_PIXELS,
+			-(io.MousePos.y - gAgentMove.pressPosition.y) / CORE_DECK_HEIGHT_PIXELS };
+		gAgentMove.preview = getAgentMoveTarget(building, gSelectedAgent, target);
+
+		if (!io.MouseReleased[0]) return;
+		if (!gWorldHovered)
+		{
+			resetAgentMove();
+			return;
+		}
+		if (!gAgentMove.preview)
+		{
+			core::addLogMessage("Agent editor", 0, core::LogLevel::Error,
+				gAgentMove.preview.diagnostic);
+			resetAgentMove();
+			return;
+		}
+		auto destinationPosition = core::Vector2{
+			gAgentMove.preview.sector->getPosition().x + gAgentMove.preview.localX,
+			gAgentMove.preview.floorY };
+		if (abs(destinationPosition.x - gAgentMove.originalPosition.x) <= 0.001f
+			&& abs(destinationPosition.y - gAgentMove.originalPosition.y) <= 0.001f)
+		{
+			resetAgentMove();
+			return;
+		}
+		try
+		{
+			auto undo = captureDocumentSnapshot(building);
+			if (!building->isSimulationPaused()) building->pauseSimulation();
+			gUISettings.worldPaused = true;
+			gSelectedAgent->clearPath();
+			auto source = const_cast<core::Sector*>(gSelectedAgent->getSector());
+			auto destination = const_cast<core::Sector*>(gAgentMove.preview.sector.get());
+			if (source) source->exitAgent(gSelectedAgent);
+			destination->enterAgent(gSelectedAgent, gAgentMove.preview.deckOffset,
+				gAgentMove.preview.localX);
+			gHoveredAgent = nullptr;
+			commitDocumentEdit(std::move(undo));
+		}
+		catch (core::Exception const& error)
+		{
+			core::addLogMessage("Agent editor", 0, core::LogLevel::Error, error.getMessage());
+		}
+		catch (std::exception const& error)
+		{
+			core::addLogMessage("Agent editor", 0, core::LogLevel::Error, error.what());
+		}
+		resetAgentMove();
+	}
+
 	void updateObjectMove(shared_ptr<core::Building> const& building)
 	{
 		auto& io = ImGui::GetIO();
+		if (!gObjectMove.dragging && gWorldHovered
+			&& gUISettings.selectionMode == UISettings::SelectionMode::Object
+			&& gHoveredSectorObject && io.MouseClicked[0])
+		{
+			gSelectedAgent = nullptr;
+			gSelectedSector.reset();
+			gSelectedSectorObject = gHoveredSectorObject;
+		}
 		bool objectOnVisibleLayer = gSelectedSectorObject
 			&& gSelectedSectorObject->getSector()->getLayerIndex() == (uint32_t)gUISettings.visibleLayer;
 		if (gSelectedSectorObject
@@ -3967,21 +4187,7 @@ namespace
 
 		if (!gObjectMove.dragging && gWorldHovered
 			&& gHoveredSectorObject == gSelectedSectorObject && io.MouseClicked[0])
-		{
-			gObjectMove.dragging = true;
-			gObjectMove.pressPosition = io.MousePos;
-			gObjectMove.originalX = gSelectedSectorObject->getCellX();
-			gObjectMove.originalY = gSelectedSectorObject->getCellY();
-			if (gSelectedSectorObject->getObjectType() == core::SectorObjectType::Marker)
-			{
-				auto marker = static_pointer_cast<const core::MarkerSectorObject>(
-					gSelectedSectorObject)->getMarker();
-				gObjectMove.originalX = marker->getCellX() + (uint32_t)floor(marker->getOffset());
-				gObjectMove.originalY = marker->getCellY();
-			}
-			gObjectMove.preview = building->planMoveSectorObject(owner->getIndex(), objectIndex,
-				gObjectMove.originalX, gObjectMove.originalY);
-		}
+			beginObjectMove(building, gSelectedSectorObject, objectIndex);
 		if (!gObjectMove.dragging) return;
 
 		ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
@@ -3993,18 +4199,29 @@ namespace
 
 		int deltaX = (int)round((io.MousePos.x - gObjectMove.pressPosition.x) / CORE_CELL_WIDTH_PIXELS);
 		int deltaY = (int)round(-(io.MousePos.y - gObjectMove.pressPosition.y) / CORE_DECK_HEIGHT_PIXELS);
-		int targetX = max(0, (int)gObjectMove.originalX + deltaX);
-		int targetY = max(0, (int)gObjectMove.originalY + deltaY);
-		if (gObjectMove.preview.x != (uint32_t)targetX || gObjectMove.preview.y != (uint32_t)targetY)
+		int targetX = (int)gObjectMove.originalX + deltaX;
+		int targetY = (int)gObjectMove.originalY + deltaY;
+		bool const targetInWorld = targetX >= 0 && targetY >= 0
+			&& targetX < (int)building->getCellsWide() && targetY < (int)building->getDecksHigh();
+		if (!targetInWorld)
 		{
-			if (!building->isSimulationPaused()) building->pauseSimulation();
-			gUISettings.worldPaused = true;
+			gObjectMove.preview.valid = false;
+			gObjectMove.preview.diagnostic = "Drop the object inside the world";
+		}
+		else if (gObjectMove.preview.x != (uint32_t)targetX || gObjectMove.preview.y != (uint32_t)targetY
+			|| gObjectMove.preview.diagnostic == "Drop the object inside the world")
+		{
 			gObjectMove.preview = building->planMoveSectorObject(owner->getIndex(), objectIndex,
 				(uint32_t)targetX, (uint32_t)targetY);
 		}
 
 		if (io.MouseReleased[0])
 		{
+			if (!gWorldHovered)
+			{
+				resetObjectMove();
+				return;
+			}
 			if (gObjectMove.preview.x == gObjectMove.originalX
 				&& gObjectMove.preview.y == gObjectMove.originalY)
 			{
@@ -4021,6 +4238,8 @@ namespace
 			try
 			{
 				auto undo = captureDocumentSnapshot(building);
+				if (!building->isSimulationPaused()) building->pauseSimulation();
+				gUISettings.worldPaused = true;
 				gSelectedSectorObject = building->applyObjectMove(gObjectMove.preview);
 				gHoveredSectorObject.reset();
 				gSelectedSector.reset();
@@ -4362,9 +4581,10 @@ void renderWorldWindow(shared_ptr<core::Building> building, shared_ptr<const cor
 			ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
 	}
 
+	updateAgentMove(building);
 	updateObjectMove(building);
 	updateSectorResize(building);
-	if (gObjectMove.dragging) gPegmanConsumesLeftMouse = true;
+	if (gAgentMove.dragging || gObjectMove.dragging) gPegmanConsumesLeftMouse = true;
 
 	if (gSelectingAgentPathDestination) gUISettings.renderGraph = true;
 
@@ -4379,6 +4599,20 @@ void renderWorldWindow(shared_ptr<core::Building> building, shared_ptr<const cor
 	renderBuilding(building);
 	renderGraph(graph, building);
 	drawSectorEditOverlay(drawList);
+	if (gAgentMove.dragging)
+	{
+		auto const& preview = gAgentMove.preview;
+		if (preview)
+		{
+			auto position = core::Vector2{ preview.sector->getPosition().x + preview.localX,
+				preview.floorY };
+			drawPegman(drawList, worldToScreen(position),
+				CORE_AGENT_MAX_WIDTH * CORE_CELL_WIDTH_PIXELS,
+				CORE_AGENT_MAX_HEIGHT * CORE_DECK_HEIGHT_PIXELS,
+				IM_COL32(255, 255, 0, 255));
+		}
+		else if (!preview.diagnostic.empty()) ImGui::SetTooltip("%s", preview.diagnostic.c_str());
+	}
 	if (gObjectMove.dragging)
 	{
 		auto const& plan = gObjectMove.preview;

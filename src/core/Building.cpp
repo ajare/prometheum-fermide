@@ -1575,6 +1575,23 @@ namespace core
 			auto landing = mTraversalResources.find(liftRes.doors[i].traversalResource);
 			landing->mLiftCoordinator = coordinator;
 			landing->mLiftStopIndex = i;
+			// The car-side lane represents standing capacity, not corridor waiting
+			// space. Give it exactly one spot per passenger position.
+			for (auto& lane : landing->mQueueLanes)
+			{
+				if (lane.sector != liftResource->mLiftSector) continue;
+				lane.positions.clear();
+				for (auto const& position : liftResource->mCapacityPositions)
+					lane.positions.push_back({ liftTransit->getPosition().x + position.x,
+						liftStops[i].globalPosition + position.y });
+				lane.positionOwners.assign(lane.positions.size(), {});
+				if (!lane.positions.empty())
+				{
+					lane.origin = lane.positions.front();
+					lane.direction = Vector2::UNIT_X;
+					lane.extent = lane.positions.back().x - lane.positions.front().x;
+				}
+			}
 
 			auto& control = liftRes.doors[i].controls[CORE_LAYER_FORE];
 			auto controlObject = control.sector->_getObject(control.index);
@@ -1768,8 +1785,30 @@ namespace core
 				landing->mLiftStopIndex = stop;
 				shuttleResource->mShuttleDoors.push_back({ stop, carriage, zone->second,
 					locationId, doorResult.traversalResource });
-				shuttleResource->mShuttleCarriages[carriage].stopDoors[stop].push_back(
-					doorResult.traversalResource);
+				auto& carriageState = shuttleResource->mShuttleCarriages[carriage];
+				carriageState.stopDoors[stop].push_back(doorResult.traversalResource);
+				// Car-side Door spots mirror this carriage's declared capacity. They
+				// remain independent from the platform-side queue, even where the two
+				// layers' spots overlap visually.
+				for (auto& lane : landing->mQueueLanes)
+				{
+					if (lane.sector != shuttleResource->mLiftSector) continue;
+					lane.positions.clear();
+					for (uint32_t position = 0; position < carriageState.capacity; ++position)
+					{
+						auto capacityIndex = carriageState.firstCapacityPosition + position;
+						auto const& local = shuttleResource->mCapacityPositions[capacityIndex];
+						lane.positions.push_back({ stops[stop].globalPosition + local.x,
+							(float)y + local.y });
+					}
+					lane.positionOwners.assign(lane.positions.size(), {});
+					if (!lane.positions.empty())
+					{
+						lane.origin = lane.positions.front();
+						lane.direction = Vector2::UNIT_X;
+						lane.extent = lane.positions.back().x - lane.positions.front().x;
+					}
+				}
 
 				auto& control = doorResult.controls[CORE_LAYER_FORE];
 				auto controlObject = control.sector->_getObject(control.index);
@@ -2335,33 +2374,34 @@ namespace core
 				max(0.0f, available - firstDistance));
 		}
 
-		// Regular doors use one shared, centre-first physical queue. Constrain it
-		// to floor space common to both approach sectors so every generated target
-		// remains valid regardless of which side supplied the request.
+		// Each side owns an independent centre-first queue. This allows a Door
+		// between differently sized sectors to expose all usable waiting space on
+		// either side instead of truncating both sides to their shared floor width.
 		auto queueResource = mTraversalResources.find(traversalResource);
 		auto const halfWidth = CORE_AGENT_MAX_WIDTH * 0.5f;
-		auto floorMin = max(sectors[0]->getCellX0(), sectors[1]->getCellX0()) + halfWidth;
-		auto floorMax = min(sectors[0]->getCellX1(), sectors[1]->getCellX1()) + 1.0f - halfWidth;
-		vector<Vector2> positions;
-		if (threshold.x >= floorMin && threshold.x <= floorMax) positions.push_back(threshold);
-		for (uint32_t step = 1;; ++step)
-		{
-			auto distance = step * (float)CORE_DOOR_QUEUE_STOP_WIDTH;
-			auto left = threshold.x - distance;
-			auto right = threshold.x + distance;
-			bool leftFits = left >= floorMin;
-			bool rightFits = right <= floorMax;
-			if (!leftFits && !rightFits) break;
-			if (leftFits) positions.push_back({ left, threshold.y });
-			if (rightFits) positions.push_back({ right, threshold.y });
-		}
 		for (auto& lane : queueResource->mQueueLanes)
 		{
+			auto sector = mSectors[(size_t)lane.sector.value - 1];
+			auto floorMin = sector->getCellX0() + halfWidth;
+			auto floorMax = sector->getCellX1() + 1.0f - halfWidth;
+			vector<Vector2> positions;
+			if (threshold.x >= floorMin && threshold.x <= floorMax) positions.push_back(threshold);
+			for (uint32_t step = 1;; ++step)
+			{
+				auto distance = step * (float)CORE_DOOR_QUEUE_STOP_WIDTH;
+				auto left = threshold.x - distance;
+				auto right = threshold.x + distance;
+				bool leftFits = left >= floorMin;
+				bool rightFits = right <= floorMax;
+				if (!leftFits && !rightFits) break;
+				if (leftFits) positions.push_back({ left, threshold.y });
+				if (rightFits) positions.push_back({ right, threshold.y });
+			}
 			lane.origin = threshold;
 			lane.direction = Vector2::UNIT_X;
 			lane.extent = max(threshold.x - floorMin, floorMax - threshold.x);
-			lane.positions = positions;
-			lane.positionOwners.assign(positions.size(), {});
+			lane.positions = std::move(positions);
+			lane.positionOwners.assign(lane.positions.size(), {});
 		}
 
 		// Set layers
@@ -3850,6 +3890,46 @@ namespace core
 			result.liftStopOldestRequestTicks.push_back(oldest == ticks.end() ? 0 : oldest->second);
 			if (!resource.mLiftStopRequestOwners[stop].empty()) result.liftScheduledStops.push_back(stop);
 		}
+		if (resource.mLift || resource.mShuttle)
+		{
+			for (auto const& [agentId, agent] : mAgents.entries())
+			{
+				auto request = mTraversalRequests.find(agent->getTraversalRequestId());
+				bool associatedRequest = false;
+				if (request)
+				{
+					auto requestResource = mTraversalResources.find(request->mResource);
+					associatedRequest = request->mResource == id
+						|| (requestResource && requestResource->mLiftCoordinator == id);
+				}
+				bool const occupant = find(resource.mOccupants.begin(), resource.mOccupants.end(), agentId)
+					!= resource.mOccupants.end();
+				bool const queued = resource.mLiftTripIntents.contains(agentId);
+				if (!associatedRequest && !occupant && !queued) continue;
+
+				LiftAgentSnapshot passenger;
+				passenger.agent = agentId;
+				if (associatedRequest && request->mSourceSector == resource.mLiftSector
+					&& request->mDestinationSector != resource.mLiftSector)
+					passenger.state = LiftAgentState::Exiting;
+				else if (associatedRequest && request->mSourceSector != resource.mLiftSector
+					&& request->mDestinationSector == resource.mLiftSector
+					&& request->mState != TraversalRequestState::Pending)
+					passenger.state = LiftAgentState::Entering;
+				else if (occupant) passenger.state = LiftAgentState::InLift;
+				else passenger.state = LiftAgentState::QueuingAtDoor;
+
+				auto intent = resource.mLiftTripIntents.find(agentId);
+				auto destination = resource.mLiftPassengerDestinations.find(agentId);
+				passenger.targetStop = intent != resource.mLiftTripIntents.end()
+					? intent->second.destinationStop
+					: destination != resource.mLiftPassengerDestinations.end()
+						? destination->second : findAgentLiftDestination(*agent, resource);
+				if (passenger.targetStop < resource.mLiftStops.size())
+					passenger.targetFloor = resource.mLiftStops[passenger.targetStop].globalPosition;
+				result.liftAgents.push_back(passenger);
+			}
+		}
 		result.liftAligned = !resource.mLiftMoving && resource.mLiftCurrentStop < resource.mLiftStops.size()
 			&& abs(resource.mLiftPosition - resource.mLiftStops[resource.mLiftCurrentStop].globalPosition) < 0.001f;
 		result.isExtensible = resource.mExtensible && resource.mExtensible->isExtensible();
@@ -4164,82 +4244,6 @@ namespace core
 
 	void Building::refreshDoorQueuePositions(TraversalResource& resource)
 	{
-		if (resource.mDoor && dynamic_cast<BulkheadDoor*>(resource.mDoor.get()) == nullptr)
-		{
-			map<TraversalRequestId, uint32_t> previousPositions;
-			vector<pair<uint32_t, TraversalRequestId>> waiting;
-			for (uint32_t laneIndex = 0; laneIndex < resource.mQueueLanes.size(); ++laneIndex)
-			{
-				auto& lane = resource.mQueueLanes[laneIndex];
-				for (uint32_t i = 0; i < lane.positionOwners.size(); ++i)
-					if (lane.positionOwners[i]) previousPositions[lane.positionOwners[i]] = i;
-				fill(lane.positionOwners.begin(), lane.positionOwners.end(), TraversalRequestId{});
-				for (auto requestId : lane.queue)
-				{
-					auto request = mTraversalRequests.find(requestId);
-					if (!request || request->mState != TraversalRequestState::Pending) continue;
-					request->mQueuePosition = ~0u;
-					if (auto agent = mAgents.find(request->mOwner)) agent->mTraversalLocalGoal.reset();
-					if (resource.mPreparationOperator != requestId
-						&& mSimulationTick >= request->mPositionRetryAtTick)
-						waiting.push_back({ laneIndex, requestId });
-				}
-			}
-			sort(waiting.begin(), waiting.end(), [&](auto const& left, auto const& right)
-			{
-				auto leftRequest = mTraversalRequests.find(left.second);
-				auto rightRequest = mTraversalRequests.find(right.second);
-				if (leftRequest->mQueuedAtTick != rightRequest->mQueuedAtTick)
-					return leftRequest->mQueuedAtTick < rightRequest->mQueuedAtTick;
-				return leftRequest->mOwner < rightRequest->mOwner;
-			});
-			auto capacity = resource.mQueueLanes[0].positions.size();
-			vector<bool> occupied(capacity, false);
-			for (uint32_t waitingIndex = 0; waitingIndex < waiting.size() && waitingIndex < capacity; ++waitingIndex)
-			{
-				auto laneIndex = waiting[waitingIndex].first;
-				auto requestId = waiting[waitingIndex].second;
-				auto request = mTraversalRequests.find(requestId);
-				auto& lane = resource.mQueueLanes[laneIndex];
-				auto agent = mAgents.find(request->mOwner);
-				auto agentPosition = agent ? agent->getGlobalPosition() : request->mSourceEndpoint;
-				uint32_t position = ~0u;
-				float bestTotalDistance = numeric_limits<float>::max();
-				float bestAgentDistance = numeric_limits<float>::max();
-				for (uint32_t candidate = 0; candidate < capacity; ++candidate)
-				{
-					if (occupied[candidate]) continue;
-					auto agentDistance = agentPosition.distanceTo(lane.positions[candidate]);
-					auto totalDistance = agentDistance
-						+ lane.positions[candidate].distanceTo(request->mSourceEndpoint);
-					if (totalDistance < bestTotalDistance - 0.001f
-						|| (abs(totalDistance - bestTotalDistance) <= 0.001f
-							&& agentDistance < bestAgentDistance - 0.001f))
-					{
-						position = candidate;
-						bestTotalDistance = totalDistance;
-						bestAgentDistance = agentDistance;
-					}
-				}
-				if (position == ~0u) break;
-				occupied[position] = true;
-				lane.positionOwners[position] = requestId;
-				request->mQueuePosition = position;
-				if (agent)
-				{
-					agent->mTraversalLocalGoal = lane.positions[position];
-					auto previous = previousPositions.find(requestId);
-					if (previous == previousPositions.end() || previous->second != position)
-					{
-						request->mPositionAssignedAtTick = mSimulationTick;
-						request->mLastPositionProgressTick = mSimulationTick;
-						request->mBestPositionDistance = bestAgentDistance;
-					}
-				}
-			}
-			return;
-		}
-
 		for (auto& lane : resource.mQueueLanes)
 		{
 			map<TraversalRequestId, uint32_t> previousPositions;
@@ -4404,6 +4408,26 @@ namespace core
 			if (request->mCrossingLease) releaseDoorOpenLease(*resource, request->mCrossingLease);
 			request->mCrossingLease = {};
 			request->mCrossingLane = ~0u;
+			auto coordinator = mTraversalResources.find(resource->mLiftCoordinator);
+			if (coordinator && request->mSourceSector != coordinator->mLiftSector)
+			{
+				for (uint32_t approach = 0; approach < resource->mQueueLanes.size(); ++approach)
+				{
+					auto& queueLane = resource->mQueueLanes[approach];
+					if (queueLane.sector != request->mSourceSector) continue;
+					request->mQueueApproach = approach;
+					if (find(queueLane.queue.begin(), queueLane.queue.end(), requestId) == queueLane.queue.end())
+						queueLane.queue.push_back(requestId);
+					sort(queueLane.queue.begin(), queueLane.queue.end(), [&](auto left, auto right)
+					{
+						auto lhs = mTraversalRequests.find(left);
+						auto rhs = mTraversalRequests.find(right);
+						return lhs && rhs ? lhs->mQueueTicket < rhs->mQueueTicket : left < right;
+					});
+					refreshDoorQueuePositions(*resource);
+					break;
+				}
+			}
 		}
 		else if (auto resource = mTraversalResources.find(request->mResource); resource && resource->mDoor)
 		{
@@ -5625,8 +5649,13 @@ namespace core
 			}
 			if (!request->mQueueTicket)
 			{
-				request->mQueueTicket = QueueTicketId{ mNextQueueTicketValue++ };
-				request->mQueuedAtTick = mSimulationTick;
+				if (coordinator->mLift) attachDoorQueueTicket(requestId, edgeResource);
+				else
+				{
+					request->mQueueTicket = QueueTicketId{ mNextQueueTicketValue++ };
+					request->mQueuedAtTick = mSimulationTick;
+				}
+				if (!request->mQueueTicket) return;
 				coordinator->mAdmissionQueue.push_back(requestId);
 				coordinator->mLiftTripIntents[request->mOwner] = { stop, desiredStop, mSimulationTick };
 			}
@@ -5680,7 +5709,8 @@ namespace core
 				if (selected == coordinator->mAdmissionQueue.end() || *selected != requestId) return;
 				if (coordinator->mShuttle && !assignShuttleBoardingDoor(requestId, *coordinator, stop)) return;
 				boardingLanding = mTraversalResources.find(request->mResource);
-				if (!boardingLanding || (usesCarriageQueue && request->mQueuePosition == ~0u)) return;
+				if (!boardingLanding
+					|| ((coordinator->mLift || usesCarriageQueue) && request->mQueuePosition == ~0u)) return;
 
 				uint32_t first = 0, count = coordinator->mCapacity;
 				if (coordinator->mShuttle)
@@ -5699,7 +5729,17 @@ namespace core
 				request->mCapacityPosition = position;
 				coordinator->mAdmissionQueue.erase(selected);
 			}
-			if (coordinator->mShuttle && request->mQueuePosition != ~0u)
+			if (coordinator->mLift)
+			{
+				boardingLanding = mTraversalResources.find(request->mResource);
+				if (!boardingLanding || request->mQueueApproach >= boardingLanding->mQueueLanes.size()
+					|| request->mQueuePosition == ~0u) return;
+				auto const& queueLane = boardingLanding->mQueueLanes[request->mQueueApproach];
+				if (request->mQueuePosition >= queueLane.positions.size()
+					|| !actor || actor->getGlobalPosition().distanceTo(
+						queueLane.positions[request->mQueuePosition]) > 0.001f) return;
+			}
+			else if (request->mQueuePosition != ~0u)
 			{
 				boardingLanding = mTraversalResources.find(request->mResource);
 				if (!boardingLanding || request->mQueueApproach >= boardingLanding->mQueueLanes.size()) return;
@@ -5710,7 +5750,7 @@ namespace core
 				auto& laneQueue = boardingLanding->mQueueLanes[request->mQueueApproach].queue;
 				laneQueue.erase(remove(laneQueue.begin(), laneQueue.end(), requestId), laneQueue.end());
 				request->mQueuePosition = ~0u;
-				if (auto actor = mAgents.find(request->mOwner)) actor->mTraversalLocalGoal.reset();
+				if (actor) actor->mTraversalLocalGoal.reset();
 				refreshDoorQueuePositions(*boardingLanding);
 			}
 			if (!request->mPreparationLease)
@@ -5723,6 +5763,14 @@ namespace core
 			}
 			auto lane = find(boardingLanding->mCrossingOwners.begin(), boardingLanding->mCrossingOwners.end(), TraversalRequestId{});
 			if (lane == boardingLanding->mCrossingOwners.end()) return;
+			if (coordinator->mLift)
+			{
+				auto& laneQueue = boardingLanding->mQueueLanes[request->mQueueApproach].queue;
+				laneQueue.erase(remove(laneQueue.begin(), laneQueue.end(), requestId), laneQueue.end());
+				request->mQueuePosition = ~0u;
+				actor->mTraversalLocalGoal.reset();
+				refreshDoorQueuePositions(*boardingLanding);
+			}
 			request->mCrossingLane = (uint32_t)distance(boardingLanding->mCrossingOwners.begin(), lane);
 			*lane = requestId;
 			coordinator->mLiftAdmissionReservation = requestId;

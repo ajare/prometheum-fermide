@@ -137,7 +137,7 @@ namespace core
 		{
 			uint32_t cellsWide{ 1 };
 			std::vector<uint32_t> stopOffsets;
-			uint32_t capacity{ 1 };
+			uint32_t capacity{ 2 };
 			float minimumDwellSeconds{ CORE_LIFT_DOOR_PAUSE_TIME };
 			float maximumBoardingSeconds{ CORE_DOOR_STAY_OPEN_TIME };
 			uint32_t initialStop{ 0 };
@@ -366,6 +366,14 @@ namespace core
 
 		void recordConstruction(ConstructionRecord record);
 
+		static std::string constructionTypeName(ConstructionType type);
+
+		static ConstructionType constructionTypeFromName(std::string const& name);
+
+		void serializeConstructionRecord(Serializer& serializer, ConstructionRecord const& record) const;
+
+		ConstructionRecord deserializeConstructionRecord(Serializer& serializer, uint32_t version) const;
+
 		void applyConstructionRecord(ConstructionRecord const& record);
 
 		bool prepareLocationEdit(LocationEditPlan const& plan,
@@ -373,8 +381,8 @@ namespace core
 			std::string& diagnostic) const;
 
 		bool prepareObjectMove(ObjectMovePlan const& plan,
-			std::vector<ConstructionRecord>& records, uint32_t& newObjectIndex,
-			std::string& diagnostic) const;
+			std::vector<ConstructionRecord>& records, uint32_t& newSectorIndex,
+			uint32_t& newObjectIndex, std::string& diagnostic) const;
 
 		bool prepareLiftEdit(LiftEditPlan const& plan,
 			std::vector<ConstructionRecord>& records, std::string& diagnostic) const;

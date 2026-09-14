@@ -92,6 +92,7 @@ namespace core
 		bool hasField(std::string const& name) const override;
 		bool fieldIsMap(std::string const& name) const override;
 
+		void writeBool(std::string const& name, bool value) override;
 		void writeUint8(std::string const& name, uint8_t value) override;
 		void writeUint16(std::string const& name, uint16_t value) override;
 		void writeUint32(std::string const& name, uint32_t value) override;
@@ -113,6 +114,7 @@ namespace core
 		void serialize() override;
 		void deserialize() override;
 
+		bool readBool(std::string const& name = "", bool optional = false, bool defaultValue = false) override;
 		uint8_t readUint8(std::string const& name = "", bool optional = false, uint8_t defaultValue = 0) override;
 		uint16_t readUint16(std::string const& name = "", bool optional = false, uint16_t defaultValue = 0) override;
 		uint32_t readUint32(std::string const& name = "", bool optional = false, uint32_t defaultValue = 0) override;

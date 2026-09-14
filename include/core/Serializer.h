@@ -26,7 +26,7 @@ namespace core
 			return true;
 		}
 
-		void writeBool(std::string const& name, bool value);
+		virtual void writeBool(std::string const& name, bool value);
 		virtual void writeUint8(std::string const& name, uint8_t value) = 0;
 		virtual void writeUint16(std::string const& name, uint16_t value) = 0;
 		virtual void writeUint32(std::string const& name, uint32_t value) = 0;
@@ -49,7 +49,7 @@ namespace core
 		virtual void serialize() = 0;
 		virtual void deserialize() = 0;
 
-		bool readBool(std::string const& name = "", bool optional = false, bool defaultValue = false);
+		virtual bool readBool(std::string const& name = "", bool optional = false, bool defaultValue = false);
 		virtual uint8_t readUint8(std::string const& name = "", bool optional = false, uint8_t defaultValue = 0) = 0;
 		virtual uint16_t readUint16(std::string const& name = "", bool optional = false, uint16_t defaultValue = 0) = 0;
 		virtual uint32_t readUint32(std::string const& name = "", bool optional = false, uint32_t defaultValue = 0) = 0;

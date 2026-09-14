@@ -33,10 +33,170 @@ namespace core
 		}
 	}
 
+	string Building::constructionTypeName(ConstructionType type)
+	{
+		switch (type)
+		{
+		case ConstructionType::Corridor: return "corridor";
+		case ConstructionType::Room: return "room";
+		case ConstructionType::Ladder: return "ladder";
+		case ConstructionType::Staircase: return "staircase";
+		case ConstructionType::Lift: return "lift";
+		case ConstructionType::Shuttle: return "shuttle";
+		case ConstructionType::Door: return "door";
+		case ConstructionType::Window: return "window";
+		case ConstructionType::BulkheadDoor: return "bulkheadDoor";
+		case ConstructionType::LightSwitch: return "lightSwitch";
+		case ConstructionType::ForceBridge: return "forceBridge";
+		case ConstructionType::SectorLadder: return "sectorLadder";
+		case ConstructionType::PlatformLift: return "platformLift";
+		case ConstructionType::Walkway: return "walkway";
+		case ConstructionType::Marker: return "marker";
+		case ConstructionType::RemoveWall: return "removeWall";
+		case ConstructionType::RemoveMarker: return "removeMarker";
+		case ConstructionType::ObjectTombstone: return "objectTombstone";
+		}
+		throw SerializationException("Unknown Building construction record type");
+	}
+
+	Building::ConstructionType Building::constructionTypeFromName(string const& name)
+	{
+		for (uint32_t value = 0; value <= static_cast<uint32_t>(ConstructionType::ObjectTombstone); ++value)
+		{
+			auto const type = static_cast<ConstructionType>(value);
+			if (constructionTypeName(type) == name) return type;
+		}
+		throw SerializationException(format("Unknown Building construction record type: {}", name));
+	}
+
+	void Building::serializeConstructionRecord(Serializer& serializer, ConstructionRecord const& record) const
+	{
+		auto writeStops = [&]
+		{
+			serializer.beginArray("stopOffsets", false);
+			for (auto value : record.values) serializer.writeUint32("", value);
+			serializer.endArray();
+		};
+		auto layerName = [](uint32_t layer)
+		{
+			if (layer == CORE_LAYER_FORE) return "fore";
+			if (layer == CORE_LAYER_BACK) return "back";
+			throw SerializationException("Cannot serialize an unknown Building layer");
+		};
+		auto sideName = [](int side)
+		{
+			if (side == CORE_SIDE_LEFT) return "left";
+			if (side == CORE_SIDE_RIGHT) return "right";
+			throw SerializationException("Cannot serialize an unknown side");
+		};
+		auto activationName = [](int32_t mode)
+		{
+			switch (static_cast<DoorActivationMode>(mode))
+			{
+			case DoorActivationMode::Automatic: return "automatic";
+			case DoorActivationMode::Manual: return "manual";
+			case DoorActivationMode::RemoteControlled: return "remoteControlled";
+			case DoorActivationMode::Unavailable: return "unavailable";
+			}
+			throw SerializationException("Cannot serialize an unknown Door activation mode");
+		};
+
+		serializer.writeString("type", constructionTypeName(record.type));
+		switch (record.type)
+		{
+		case ConstructionType::Corridor:
+			serializer.writeUint32("y", record.a); serializer.writeUint32("x", record.b);
+			serializer.writeUint32("cellsWide", record.c); serializer.writeUint32("decksHigh", record.d); break;
+		case ConstructionType::Room:
+			serializer.writeString("name", record.name); serializer.writeString("layer", layerName(record.a));
+			serializer.writeUint32("y", record.b); serializer.writeUint32("x", record.c);
+			serializer.writeUint32("cellsWide", record.d); serializer.writeUint32("decksHigh", record.e);
+			serializer.writeFloat("topDeckHeight", record.x); break;
+		case ConstructionType::Ladder:
+			serializer.writeUint32("y", record.a); serializer.writeUint32("x", record.b);
+			serializer.writeUint32("decksHigh", record.c); serializer.writeBool("extensible", record.p);
+			serializer.writeBool("startExtended", record.q); serializer.writeFloat("agentSpacing", record.x);
+			serializer.writeUint32("directionalBatchLimit", record.d); break;
+		case ConstructionType::Staircase:
+			serializer.writeUint32("y", record.a); serializer.writeUint32("x", record.b);
+			serializer.writeUint32("decksHigh", record.c); serializer.writeString("mountSide", sideName(record.i));
+			serializer.writeUint32("directionalCapacity", record.d);
+			serializer.writeUint32("directionalBatchLimit", record.e); break;
+		case ConstructionType::Lift:
+			serializer.writeUint32("y", record.a); serializer.writeUint32("x", record.b);
+			serializer.writeUint32("cellsWide", record.c); serializer.writeUint32("decksHigh", record.e);
+			writeStops(); serializer.writeUint32("capacity", record.d);
+			serializer.writeFloat("minimumDwellSeconds", record.x);
+			serializer.writeFloat("maximumBoardingSeconds", record.y);
+			serializer.writeUint32("initialStop", record.g); break;
+		case ConstructionType::Shuttle:
+			serializer.writeUint32("y", record.a); serializer.writeUint32("x", record.b);
+			serializer.writeUint32("cellsWide", record.c); serializer.writeUint32("numCars", record.d);
+			serializer.writeUint32("carWidth", record.e); writeStops();
+			serializer.writeUint32("initialStop", record.f); serializer.writeUint32("capacityPerCarriage", record.g);
+			serializer.writeFloat("minimumDwellSeconds", record.x);
+			serializer.writeFloat("maximumBoardingSeconds", record.y);
+			serializer.writeBool("allowPartialLandings", record.p); break;
+		case ConstructionType::Door:
+			serializer.writeUint32("y", record.a); serializer.writeUint32("x", record.b);
+			serializer.writeUint32("width", record.c); serializer.writeBool("foreControl", record.p);
+			serializer.writeBool("backControl", record.q); serializer.writeString("activationMode", activationName(record.i));
+			serializer.writeFloat("holdOpenSeconds", record.x); serializer.writeUint32("crossingLanes", record.d); break;
+		case ConstructionType::Window:
+		{
+			static char const* states[] = { "open", "opening", "closed", "closing", "broken", "frosted", "frosting", "unfrosting", "tinted", "tinting", "untinting" };
+			static char const* styles[] = { "clear", "tinted", "frosted" };
+			if (record.i < 0 || record.i >= static_cast<int32_t>(size(states)) || record.j < 0 || record.j >= static_cast<int32_t>(size(styles)))
+				throw SerializationException("Cannot serialize an unknown Window state or style");
+			serializer.writeString("layer", layerName(record.a)); serializer.writeUint32("y", record.b);
+			serializer.writeUint32("x", record.c); serializer.writeUint32("cellsWide", record.d);
+			serializer.writeUint32("decksHigh", record.e); serializer.writeBool("traversable", record.p);
+			serializer.writeString("initialState", states[record.i]); serializer.writeString("style", styles[record.j]); break;
+		}
+		case ConstructionType::BulkheadDoor:
+			serializer.writeString("layer", layerName(record.a)); serializer.writeUint32("y", record.b);
+			serializer.writeUint32("x", record.c); serializer.writeString("side", sideName(record.i));
+			serializer.writeBool("foreControl", record.p); serializer.writeBool("backControl", record.q);
+			serializer.writeString("activationMode", activationName(record.j));
+			serializer.writeFloat("holdOpenSeconds", record.x); serializer.writeUint32("crossingLanes", record.d); break;
+		case ConstructionType::LightSwitch:
+			serializer.writeUint32("sectorIndex", record.a); serializer.writeUint32("xOffset", record.b); break;
+		case ConstructionType::ForceBridge:
+			serializer.writeUint32("sectorIndex", record.a); serializer.writeUint32("deckIndex", record.b);
+			serializer.writeUint32("xOffset", record.c); serializer.writeUint32("width", record.d);
+			serializer.writeString("fromSide", sideName(record.i)); serializer.writeBool("extensible", record.p);
+			serializer.writeBool("startExtended", record.q); serializer.writeUint32("controlCount", record.e); break;
+		case ConstructionType::SectorLadder:
+			serializer.writeUint32("sectorIndex", record.a); serializer.writeUint32("deckIndex", record.b);
+			serializer.writeUint32("xOffset", record.c); serializer.writeUint32("decksHigh", record.d);
+			serializer.writeBool("extensible", record.p); serializer.writeBool("startExtended", record.q);
+			serializer.writeFloat("agentSpacing", record.x); serializer.writeUint32("directionalBatchLimit", record.e); break;
+		case ConstructionType::PlatformLift:
+			serializer.writeUint32("sectorIndex", record.a); serializer.writeUint32("deckIndex", record.b);
+			serializer.writeUint32("xOffset", record.c); serializer.writeUint32("cellsWide", record.d);
+			writeStops(); serializer.writeUint32("capacity", record.e);
+			serializer.writeFloat("minimumDwellSeconds", record.x);
+			serializer.writeFloat("maximumBoardingSeconds", record.y); break;
+		case ConstructionType::Walkway:
+			serializer.writeUint32("sectorIndex", record.a); serializer.writeUint32("deckIndex", record.b);
+			serializer.writeUint32("xOffset", record.c); break;
+		case ConstructionType::Marker:
+			serializer.writeUint32("sectorIndex", record.a); serializer.writeUint32("deckIndex", record.b);
+			serializer.writeFloat("xOffset", record.x); break;
+		case ConstructionType::RemoveWall:
+			serializer.writeUint32("sectorIndex", record.a); serializer.writeUint32("deckIndex", record.b);
+			serializer.writeString("side", sideName(record.i)); break;
+		case ConstructionType::RemoveMarker:
+			serializer.writeUint32("sectorIndex", record.a); serializer.writeUint32("objectIndex", record.b); break;
+		case ConstructionType::ObjectTombstone:
+			serializer.writeUint32("sectorIndex", record.a); break;
+		}
+	}
+
 	void Building::serializeImpl(Serializer& serializer, SerializationWorkData& workData) const
 	{
 		serializer.beginMap("building");
-		serializer.writeUint32("version", 1);
+		serializer.writeUint32("version", 2);
 		serializer.writeString("name", mName);
 		serializer.writeUint32("cellsWide", mCellsWide);
 		serializer.writeUint32("decksHigh", mDecksHigh);
@@ -45,27 +205,7 @@ namespace core
 		for (auto const& record : mConstructionRecords)
 		{
 			serializer.beginMap("");
-			serializer.writeUint32("kind", static_cast<uint32_t>(record.type));
-			serializer.writeString("name", record.name);
-			serializer.writeUint32("a", record.a);
-			serializer.writeUint32("b", record.b);
-			serializer.writeUint32("c", record.c);
-			serializer.writeUint32("d", record.d);
-			serializer.writeUint32("e", record.e);
-			serializer.writeUint32("f", record.f);
-			serializer.writeUint32("g", record.g);
-			serializer.writeInt32("i", record.i);
-			serializer.writeInt32("j", record.j);
-			serializer.writeFloat("x", record.x);
-			serializer.writeFloat("y", record.y);
-			serializer.writeBool("p", record.p);
-			serializer.writeBool("q", record.q);
-			serializer.beginArray("values", false);
-			for (auto value : record.values)
-			{
-				serializer.writeUint32("", value);
-			}
-			serializer.endArray();
+			serializeConstructionRecord(serializer, record);
 			serializer.endMap();
 		}
 		serializer.endArray();
@@ -90,11 +230,160 @@ namespace core
 		serializer.endMap();
 	}
 
+	Building::ConstructionRecord Building::deserializeConstructionRecord(
+		Serializer& serializer, uint32_t version) const
+	{
+		ConstructionRecord record;
+		if (version == 1)
+		{
+			auto const kind = serializer.readUint32("kind");
+			if (kind > static_cast<uint32_t>(ConstructionType::ObjectTombstone))
+				throw SerializationException("Unknown Building construction record kind");
+			record.type = static_cast<ConstructionType>(kind);
+			record.name = serializer.readString("name");
+			record.a = serializer.readUint32("a"); record.b = serializer.readUint32("b");
+			record.c = serializer.readUint32("c"); record.d = serializer.readUint32("d");
+			record.e = serializer.readUint32("e"); record.f = serializer.readUint32("f");
+			record.g = serializer.readUint32("g"); record.i = serializer.readInt32("i");
+			record.j = serializer.readInt32("j"); record.x = serializer.readFloat("x");
+			record.y = serializer.readFloat("y"); record.p = serializer.readBool("p");
+			record.q = serializer.readBool("q");
+			serializer.beginArray("values", false);
+			while (serializer.nextArrayItem()) record.values.push_back(serializer.readUint32());
+			serializer.endArray();
+			return record;
+		}
+
+		auto readLayer = [&](char const* field)
+		{
+			auto const value = serializer.readString(field);
+			if (value == "fore") return static_cast<uint32_t>(CORE_LAYER_FORE);
+			if (value == "back") return static_cast<uint32_t>(CORE_LAYER_BACK);
+			throw SerializationException(format("Unknown layer: {}", value));
+		};
+		auto readSide = [&](char const* field)
+		{
+			auto const value = serializer.readString(field);
+			if (value == "left") return CORE_SIDE_LEFT;
+			if (value == "right") return CORE_SIDE_RIGHT;
+			throw SerializationException(format("Unknown side: {}", value));
+		};
+		auto readActivation = [&](char const* field)
+		{
+			auto const value = serializer.readString(field);
+			if (value == "automatic") return static_cast<int32_t>(DoorActivationMode::Automatic);
+			if (value == "manual") return static_cast<int32_t>(DoorActivationMode::Manual);
+			if (value == "remoteControlled") return static_cast<int32_t>(DoorActivationMode::RemoteControlled);
+			if (value == "unavailable") return static_cast<int32_t>(DoorActivationMode::Unavailable);
+			throw SerializationException(format("Unknown Door activation mode: {}", value));
+		};
+		auto readStops = [&]
+		{
+			serializer.beginArray("stopOffsets", false);
+			while (serializer.nextArrayItem()) record.values.push_back(serializer.readUint32());
+			serializer.endArray();
+		};
+
+		record.type = constructionTypeFromName(serializer.readString("type"));
+		switch (record.type)
+		{
+		case ConstructionType::Corridor:
+			record.a = serializer.readUint32("y"); record.b = serializer.readUint32("x");
+			record.c = serializer.readUint32("cellsWide"); record.d = serializer.readUint32("decksHigh"); break;
+		case ConstructionType::Room:
+			record.name = serializer.readString("name"); record.a = readLayer("layer");
+			record.b = serializer.readUint32("y"); record.c = serializer.readUint32("x");
+			record.d = serializer.readUint32("cellsWide"); record.e = serializer.readUint32("decksHigh");
+			record.x = serializer.readFloat("topDeckHeight"); break;
+		case ConstructionType::Ladder:
+			record.a = serializer.readUint32("y"); record.b = serializer.readUint32("x");
+			record.c = serializer.readUint32("decksHigh"); record.p = serializer.readBool("extensible");
+			record.q = serializer.readBool("startExtended"); record.x = serializer.readFloat("agentSpacing");
+			record.d = serializer.readUint32("directionalBatchLimit"); break;
+		case ConstructionType::Staircase:
+			record.a = serializer.readUint32("y"); record.b = serializer.readUint32("x");
+			record.c = serializer.readUint32("decksHigh"); record.i = readSide("mountSide");
+			record.d = serializer.readUint32("directionalCapacity");
+			record.e = serializer.readUint32("directionalBatchLimit"); break;
+		case ConstructionType::Lift:
+			record.a = serializer.readUint32("y"); record.b = serializer.readUint32("x");
+			record.c = serializer.readUint32("cellsWide"); record.e = serializer.readUint32("decksHigh");
+			readStops(); record.d = serializer.readUint32("capacity");
+			record.x = serializer.readFloat("minimumDwellSeconds");
+			record.y = serializer.readFloat("maximumBoardingSeconds");
+			record.g = serializer.readUint32("initialStop"); break;
+		case ConstructionType::Shuttle:
+			record.a = serializer.readUint32("y"); record.b = serializer.readUint32("x");
+			record.c = serializer.readUint32("cellsWide"); record.d = serializer.readUint32("numCars");
+			record.e = serializer.readUint32("carWidth"); readStops();
+			record.f = serializer.readUint32("initialStop"); record.g = serializer.readUint32("capacityPerCarriage");
+			record.x = serializer.readFloat("minimumDwellSeconds");
+			record.y = serializer.readFloat("maximumBoardingSeconds");
+			record.p = serializer.readBool("allowPartialLandings"); break;
+		case ConstructionType::Door:
+			record.a = serializer.readUint32("y"); record.b = serializer.readUint32("x");
+			record.c = serializer.readUint32("width"); record.p = serializer.readBool("foreControl");
+			record.q = serializer.readBool("backControl"); record.i = readActivation("activationMode");
+			record.x = serializer.readFloat("holdOpenSeconds"); record.d = serializer.readUint32("crossingLanes"); break;
+		case ConstructionType::Window:
+		{
+			static char const* states[] = { "open", "opening", "closed", "closing", "broken", "frosted", "frosting", "unfrosting", "tinted", "tinting", "untinting" };
+			static char const* styles[] = { "clear", "tinted", "frosted" };
+			record.a = readLayer("layer"); record.b = serializer.readUint32("y");
+			record.c = serializer.readUint32("x"); record.d = serializer.readUint32("cellsWide");
+			record.e = serializer.readUint32("decksHigh"); record.p = serializer.readBool("traversable");
+			auto const state = serializer.readString("initialState"); auto const style = serializer.readString("style");
+			auto stateIt = find(begin(states), end(states), state); auto styleIt = find(begin(styles), end(styles), style);
+			if (stateIt == end(states) || styleIt == end(styles)) throw SerializationException("Unknown Window state or style");
+			record.i = static_cast<int32_t>(distance(begin(states), stateIt));
+			record.j = static_cast<int32_t>(distance(begin(styles), styleIt)); break;
+		}
+		case ConstructionType::BulkheadDoor:
+			record.a = readLayer("layer"); record.b = serializer.readUint32("y");
+			record.c = serializer.readUint32("x"); record.i = readSide("side");
+			record.p = serializer.readBool("foreControl"); record.q = serializer.readBool("backControl");
+			record.j = readActivation("activationMode"); record.x = serializer.readFloat("holdOpenSeconds");
+			record.d = serializer.readUint32("crossingLanes"); break;
+		case ConstructionType::LightSwitch:
+			record.a = serializer.readUint32("sectorIndex"); record.b = serializer.readUint32("xOffset"); break;
+		case ConstructionType::ForceBridge:
+			record.a = serializer.readUint32("sectorIndex"); record.b = serializer.readUint32("deckIndex");
+			record.c = serializer.readUint32("xOffset"); record.d = serializer.readUint32("width");
+			record.i = readSide("fromSide"); record.p = serializer.readBool("extensible");
+			record.q = serializer.readBool("startExtended"); record.e = serializer.readUint32("controlCount"); break;
+		case ConstructionType::SectorLadder:
+			record.a = serializer.readUint32("sectorIndex"); record.b = serializer.readUint32("deckIndex");
+			record.c = serializer.readUint32("xOffset"); record.d = serializer.readUint32("decksHigh");
+			record.p = serializer.readBool("extensible"); record.q = serializer.readBool("startExtended");
+			record.x = serializer.readFloat("agentSpacing"); record.e = serializer.readUint32("directionalBatchLimit"); break;
+		case ConstructionType::PlatformLift:
+			record.a = serializer.readUint32("sectorIndex"); record.b = serializer.readUint32("deckIndex");
+			record.c = serializer.readUint32("xOffset"); record.d = serializer.readUint32("cellsWide");
+			readStops(); record.e = serializer.readUint32("capacity");
+			record.x = serializer.readFloat("minimumDwellSeconds");
+			record.y = serializer.readFloat("maximumBoardingSeconds"); break;
+		case ConstructionType::Walkway:
+			record.a = serializer.readUint32("sectorIndex"); record.b = serializer.readUint32("deckIndex");
+			record.c = serializer.readUint32("xOffset"); break;
+		case ConstructionType::Marker:
+			record.a = serializer.readUint32("sectorIndex"); record.b = serializer.readUint32("deckIndex");
+			record.x = serializer.readFloat("xOffset"); break;
+		case ConstructionType::RemoveWall:
+			record.a = serializer.readUint32("sectorIndex"); record.b = serializer.readUint32("deckIndex");
+			record.i = readSide("side"); break;
+		case ConstructionType::RemoveMarker:
+			record.a = serializer.readUint32("sectorIndex"); record.b = serializer.readUint32("objectIndex"); break;
+		case ConstructionType::ObjectTombstone:
+			record.a = serializer.readUint32("sectorIndex"); break;
+		}
+		return record;
+	}
+
 	bool Building::deserializeImpl(Serializer& serializer, SerializationWorkData& workData)
 	{
 		serializer.beginMap("building");
 		auto const version = serializer.readUint32("version");
-		if (version != 1)
+		if (version != 1 && version != 2)
 		{
 			throw SerializationException("Unsupported Building serialization version");
 		}
@@ -111,33 +400,7 @@ namespace core
 		while (serializer.nextArrayItem())
 		{
 			serializer.beginMap("");
-			ConstructionRecord record;
-			auto const kind = serializer.readUint32("kind");
-			if (kind > static_cast<uint32_t>(ConstructionType::ObjectTombstone))
-			{
-				throw SerializationException("Unknown Building construction record kind");
-			}
-			record.type = static_cast<ConstructionType>(kind);
-			record.name = serializer.readString("name");
-			record.a = serializer.readUint32("a");
-			record.b = serializer.readUint32("b");
-			record.c = serializer.readUint32("c");
-			record.d = serializer.readUint32("d");
-			record.e = serializer.readUint32("e");
-			record.f = serializer.readUint32("f");
-			record.g = serializer.readUint32("g");
-			record.i = serializer.readInt32("i");
-			record.j = serializer.readInt32("j");
-			record.x = serializer.readFloat("x");
-			record.y = serializer.readFloat("y");
-			record.p = serializer.readBool("p");
-			record.q = serializer.readBool("q");
-			serializer.beginArray("values", false);
-			while (serializer.nextArrayItem())
-			{
-				record.values.push_back(serializer.readUint32());
-			}
-			serializer.endArray();
+			auto record = deserializeConstructionRecord(serializer, version);
 			serializer.endMap();
 			records.push_back(std::move(record));
 		}
@@ -844,11 +1107,11 @@ namespace core
 	}
 
 	bool Building::prepareObjectMove(ObjectMovePlan const& plan,
-		vector<ConstructionRecord>& records, uint32_t& newObjectIndex,
-		string& diagnostic) const
+		vector<ConstructionRecord>& records, uint32_t& newSectorIndex,
+		uint32_t& newObjectIndex, string& diagnostic) const
 	{
 		records = mConstructionRecords;
-		newObjectIndex = ~0u;
+		newSectorIndex = newObjectIndex = ~0u;
 		if (plan.sectorIndex >= mSectors.size() || !mSectors[plan.sectorIndex]
 			|| plan.objectIndex >= mSectors[plan.sectorIndex]->getNumObjects())
 		{
@@ -896,8 +1159,9 @@ namespace core
 			{
 				auto marker = static_pointer_cast<MarkerSectorObject>(object)->getMarker();
 				return record.type == ConstructionType::Marker && record.a == plan.sectorIndex
+					&& owner->getCellX() + (uint32_t)floor(record.x) == marker->getCellX()
 					&& owner->getCellY() + record.b == marker->getCellY()
-					&& fabs(record.x - marker->getOffset()) <= 0.001f;
+					&& fabs(record.x - floor(record.x) - marker->getOffset()) <= 0.001f;
 			}
 			default:
 				return false;
@@ -911,37 +1175,41 @@ namespace core
 			return false;
 		}
 
+		auto const type = object->getObjectType();
+		bool const pastePlaced = type == SectorObjectType::Door
+			|| type == SectorObjectType::Window || type == SectorObjectType::Marker;
+		auto targetOwner = getSectorAtPosition(owner->getLayerIndex(),
+			(float)plan.x + 0.5f, (float)plan.y + 0.5f);
+		if (pastePlaced && !targetOwner)
+		{
+			diagnostic = type == SectorObjectType::Marker
+				? "Markers require a viable sector" : "The destination is outside a viable sector";
+			return false;
+		}
+
 		auto targetRight = (uint64_t)plan.x + (uint32_t)ceil(object->getSize().x);
 		auto targetTop = (uint64_t)plan.y + (uint32_t)ceil(object->getSize().y);
-		if (plan.x < owner->getCellX() || plan.y < owner->getCellY()
+		if (targetRight > mCellsWide || targetTop > mDecksHigh)
+		{
+			diagnostic = "The destination is outside the building";
+			return false;
+		}
+		if (!pastePlaced && (plan.x < owner->getCellX() || plan.y < owner->getCellY()
 			|| targetRight > (uint64_t)owner->getCellX() + owner->getCellsWide()
-			|| targetTop > (uint64_t)owner->getCellY() + owner->getDecksHigh())
+			|| targetTop > (uint64_t)owner->getCellY() + owner->getDecksHigh()))
 		{
 			diagnostic = "The object must remain inside its sector";
 			return false;
 		}
-
-		if (object->getObjectType() == SectorObjectType::Door)
+		if (type == SectorObjectType::Door)
 		{
-			auto door = static_pointer_cast<DoorSectorObject>(object)->getDoor();
 			for (uint32_t layer = 0; layer < CORE_NUM_LAYERS; ++layer)
 				for (uint32_t ix = plan.x; ix < targetRight; ++ix)
 				{
-					auto sector = getSectorAtPosition(layer, (float)ix, (float)plan.y);
-					if (sector != door->getSector(layer))
-					{
-						diagnostic = "The Door must remain within both sectors it connects";
-						return false;
-					}
 					auto const& cell = mLayers[layer]->getCellDefinition(ix, plan.y);
-					if (!cell.markers.empty())
-					{
-						diagnostic = "Another object blocks the Door's destination";
-						return false;
-					}
-					bool occupiedBySelectedDoor = ix >= sourceX
-						&& ix < sourceX + object->getSize().x && plan.y == sourceY;
-					if (cell.hasObject() && !occupiedBySelectedDoor)
+					bool const selectedDoorOccupiesCell = plan.y == sourceY
+						&& ix >= sourceX && ix < sourceX + object->getSize().x;
+					if (!cell.markers.empty() || (cell.hasObject() && !selectedDoorOccupiesCell))
 					{
 						diagnostic = "Another object blocks the Door's destination";
 						return false;
@@ -949,7 +1217,7 @@ namespace core
 				}
 		}
 
-		switch (object->getObjectType())
+		switch (type)
 		{
 		case SectorObjectType::Door: found->a = plan.y; found->b = plan.x; break;
 		case SectorObjectType::Window: found->b = plan.y; found->c = plan.x; break;
@@ -961,11 +1229,62 @@ namespace core
 			found->c = plan.x - owner->getCellX();
 			break;
 		case SectorObjectType::Marker:
-			found->b = plan.y - owner->getCellY();
-			found->x = (float)(plan.x - owner->getCellX()) + 0.5f;
+			found->a = targetOwner->getIndex();
+			found->b = plan.y - targetOwner->getCellY();
+			found->x = (float)(plan.x - targetOwner->getCellX()) + 0.5f;
 			break;
 		default: break;
 		}
+
+		// Paste-placed objects may change owners. Replacing their old authored slot
+		// with tombstones and appending the moved definition preserves all existing
+		// object indices, just as cutting and pasting does.
+		if (pastePlaced)
+		{
+			auto moved = *found;
+			vector<ConstructionRecord> tombstones;
+			set<uint32_t> owners;
+			if (type == SectorObjectType::Door)
+			{
+				auto door = static_pointer_cast<DoorSectorObject>(object)->getDoor();
+				for (uint32_t layer = 0; layer < CORE_NUM_LAYERS; ++layer)
+				{
+					auto sector = door->getSector(layer);
+					if (!sector) continue;
+					owners.insert(sector->getIndex());
+					ConstructionRecord tombstone{ ConstructionType::ObjectTombstone };
+					tombstone.a = sector->getIndex();
+					tombstones.push_back(tombstone);
+					bool hasControl = layer == CORE_LAYER_FORE ? moved.p : moved.q;
+					if (hasControl) tombstones.push_back(tombstone);
+				}
+			}
+			else if (type == SectorObjectType::Window)
+			{
+				auto window = static_pointer_cast<WindowSectorObject>(object)->getWindow();
+				for (uint32_t layer = 0; layer < CORE_NUM_LAYERS; ++layer)
+					if (auto sector = window->getSector(layer)) owners.insert(sector->getIndex());
+				for (auto index : owners)
+				{
+					ConstructionRecord tombstone{ ConstructionType::ObjectTombstone };
+					tombstone.a = index;
+					tombstones.push_back(tombstone);
+				}
+			}
+			else
+			{
+				ConstructionRecord tombstone{ ConstructionType::ObjectTombstone };
+				tombstone.a = owner->getIndex();
+				tombstones.push_back(tombstone);
+			}
+			auto position = (size_t)distance(records.begin(), found);
+			records.erase(records.begin() + position);
+			records.insert(records.begin() + position, tombstones.begin(), tombstones.end());
+			records.push_back(std::move(moved));
+			found = prev(records.end());
+			newSectorIndex = targetOwner->getIndex();
+		}
+		else newSectorIndex = owner->getIndex();
 
 		Building candidate(mName, mCellsWide, mDecksHigh);
 		candidate.mDeserializingConstruction = true;
@@ -973,8 +1292,8 @@ namespace core
 		{
 			for (auto const& record : records)
 			{
-				auto before = plan.sectorIndex < candidate.mSectors.size()
-					? candidate.mSectors[plan.sectorIndex]->getNumObjects() : 0;
+				auto before = newSectorIndex < candidate.mSectors.size()
+					? candidate.mSectors[newSectorIndex]->getNumObjects() : 0;
 				candidate.applyConstructionRecord(record);
 				if (&record == &*found) newObjectIndex = before;
 			}
@@ -1208,8 +1527,8 @@ namespace core
 		plan.x = x;
 		plan.y = y;
 		vector<ConstructionRecord> records;
-		uint32_t ignored;
-		plan.valid = prepareObjectMove(plan, records, ignored, plan.diagnostic);
+		uint32_t ignoredSector, ignoredObject;
+		plan.valid = prepareObjectMove(plan, records, ignoredSector, ignoredObject, plan.diagnostic);
 		return plan;
 	}
 
@@ -1219,9 +1538,9 @@ namespace core
 			throw BuildingException(this, "Moving an object requires the simulation to be paused");
 		auto plan = requested;
 		vector<ConstructionRecord> records;
-		uint32_t newObjectIndex;
+		uint32_t newSectorIndex, newObjectIndex;
 		string diagnostic;
-		if (!prepareObjectMove(plan, records, newObjectIndex, diagnostic))
+		if (!prepareObjectMove(plan, records, newSectorIndex, newObjectIndex, diagnostic))
 			throw BuildingException(this, diagnostic);
 
 		struct SavedAgent
@@ -1266,7 +1585,7 @@ namespace core
 			mAgents.restore(saved.id, std::move(agent));
 			mAgentIds.emplace(raw, saved.id);
 		}
-		return getSector(plan.sectorIndex)->getObject(newObjectIndex);
+		return getSector(newSectorIndex)->getObject(newObjectIndex);
 	}
 
 	Building::LocationEditPlan Building::planResizeLocation(uint32_t sectorIndex,

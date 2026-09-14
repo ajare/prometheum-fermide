@@ -100,6 +100,16 @@ namespace core
 		TraversalRequestId admissionReservation;
 	};
 
+	enum struct LiftAgentState { QueuingAtDoor, Entering, InLift, Exiting };
+
+	struct LiftAgentSnapshot
+	{
+		AgentId agent;
+		LiftAgentState state{ LiftAgentState::QueuingAtDoor };
+		uint32_t targetStop{ ~0u };
+		float targetFloor{ 0.0f };
+	};
+
 	struct ShuttleCarriageSnapshot
 	{
 		uint32_t index{ 0 };
@@ -159,6 +169,7 @@ namespace core
 		std::vector<uint32_t> liftStopRequestOwnerCounts;
 		std::vector<uint64_t> liftStopOldestRequestTicks;
 		std::vector<uint32_t> liftScheduledStops;
+		std::vector<LiftAgentSnapshot> liftAgents;
 		bool isExtensible{ false };
 		bool extended{ false };
 		bool retractionPending{ false };

@@ -177,6 +177,12 @@ namespace
 		original.serialize(*writer, workData);
 		writer->serialize();
 		auto const yaml = writer->getSerializedString();
+		require(yaml.find("version: 2") != std::string::npos
+			&& yaml.find("type: room") != std::string::npos
+			&& yaml.find("cellsWide:") != std::string::npos
+			&& yaml.find("foreControl: true") != std::string::npos
+			&& yaml.find("\n    a:") == std::string::npos,
+			"Building YAML did not use the explicit construction schema");
 		require(yaml.find("construction") != std::string::npos
 			&& yaml.find("agents") != std::string::npos,
 			"Building YAML omitted authored structure or agents");
@@ -211,6 +217,40 @@ namespace
 		require(!loaded.isModified(), "deserialized Building was unexpectedly modified");
 		require(loaded.removeAgent(agentId).removed, "deserialized Agent could not be removed");
 		require(loaded.isModified(), "removing an Agent did not modify its Building");
+	}
+
+	void legacyBuildingYamlStillLoads()
+	{
+		auto const yaml = R"yaml(version: 1
+name: Legacy
+cellsWide: 4
+decksHigh: 2
+construction:
+  - kind: 0
+    name: ""
+    a: 0
+    b: 0
+    c: 4
+    d: 1
+    e: 0
+    f: 0
+    g: 0
+    i: 0
+    j: 0
+    x: 0
+    y: 0
+    p: 0
+    q: 0
+    values: []
+agents: []
+)yaml";
+		core::Building loaded("placeholder", 1, 1);
+		core::SerializationWorkData workData;
+		auto reader = core::YamlSerializer::fromString(yaml);
+		reader->deserialize();
+		require(loaded.deserialize(*reader, workData), "version 1 Building YAML no longer loads");
+		require(loaded.getName() == "Legacy" && loaded.getNumSectors() == 1,
+			"version 1 Building YAML loaded incorrectly");
 	}
 
 	void locationEditsArePlannedAndAppliedAtomically()
@@ -438,6 +478,7 @@ void runSerializationSmokeChecks()
 	fileYamlRoundTrips();
 	malformedValuesAndInvalidUsageThrowUsefulErrors();
 	buildingRoundTripsAuthoredStateAndAgents();
+	legacyBuildingYamlStillLoads();
 	locationEditsArePlannedAndAppliedAtomically();
 	physicalControlsPreferDistinctWallPositions();
 	recentFilesPersistAcrossStartup();

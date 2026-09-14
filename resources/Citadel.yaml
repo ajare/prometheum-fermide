@@ -1,173 +1,99 @@
-version: 1
+version: 2
 name: Untitled
 cellsWide: 48
 decksHigh: 6
 construction:
-  - kind: 0
-    name: ""
-    a: 0
-    b: 1
-    c: 6
-    d: 1
-    e: 0
-    f: 0
-    g: 0
-    i: 0
-    j: 0
-    x: 0
+  - type: corridor
     y: 0
-    p: 0
-    q: 0
-    values: []
-  - kind: 1
+    x: 1
+    cellsWide: 10
+    decksHigh: 1
+  - type: room
     name: Room 1
-    a: 1
-    b: 0
-    c: 4
-    d: 3
-    e: 1
-    f: 0
-    g: 0
-    i: 0
-    j: 0
-    x: 0.899999976
+    layer: back
     y: 0
-    p: 0
-    q: 0
-    values: []
-  - kind: 1
+    x: 4
+    cellsWide: 3
+    decksHigh: 1
+    topDeckHeight: 0.9
+  - type: room
     name: Room 2
-    a: 1
-    b: 0
-    c: 0
-    d: 3
-    e: 1
-    f: 0
-    g: 0
-    i: 0
-    j: 0
-    x: 0.899999976
+    layer: back
     y: 0
-    p: 0
-    q: 0
-    values: []
-  - kind: 14
-    name: ""
-    a: 2
-    b: 0
-    c: 0
-    d: 0
-    e: 0
-    f: 0
-    g: 0
-    i: 0
-    j: 0
-    x: 0.484375
-    y: 0
-    p: 0
-    q: 0
-    values: []
-  - kind: 6
-    name: ""
-    a: 0
-    b: 1
-    c: 1
-    d: 0
-    e: 0
-    f: 0
-    g: 0
-    i: 2
-    j: 0
-    x: 5
-    y: 0
-    p: 1
-    q: 0
-    values: []
-  - kind: 6
-    name: ""
-    a: 0
-    b: 5
-    c: 1
-    d: 0
-    e: 0
-    f: 0
-    g: 0
-    i: 2
-    j: 0
-    x: 5
-    y: 0
-    p: 1
-    q: 0
-    values: []
-  - kind: 17
-    name: ""
-    a: 0
-    b: 0
-    c: 0
-    d: 0
-    e: 0
-    f: 0
-    g: 0
-    i: 0
-    j: 0
     x: 0
+    cellsWide: 3
+    decksHigh: 1
+    topDeckHeight: 0.9
+  - type: marker
+    sectorIndex: 2
+    deckIndex: 0
+    xOffset: 0.484375
+  - type: door
     y: 0
-    p: 0
-    q: 0
-    values: []
-  - kind: 17
-    name: ""
-    a: 1
-    b: 0
-    c: 0
-    d: 0
-    e: 0
-    f: 0
-    g: 0
-    i: 0
-    j: 0
-    x: 0
+    x: 1
+    width: 1
+    foreControl: true
+    backControl: false
+    activationMode: remoteControlled
+    holdOpenSeconds: 5
+    crossingLanes: 0
+  - type: door
     y: 0
-    p: 0
-    q: 0
-    values: []
-  - kind: 6
-    name: ""
-    a: 0
-    b: 6
-    c: 1
-    d: 0
-    e: 0
-    f: 0
-    g: 0
-    i: 2
-    j: 0
     x: 5
+    width: 1
+    foreControl: true
+    backControl: false
+    activationMode: remoteControlled
+    holdOpenSeconds: 5
+    crossingLanes: 0
+  - type: objectTombstone
+    sectorIndex: 0
+  - type: objectTombstone
+    sectorIndex: 1
+  - type: door
     y: 0
-    p: 1
-    q: 0
-    values: []
-  - kind: 14
-    name: ""
-    a: 1
-    b: 0
-    c: 0
-    d: 0
-    e: 0
-    f: 0
-    g: 0
-    i: 0
-    j: 0
-    x: 0.578125
+    x: 6
+    width: 1
+    foreControl: true
+    backControl: false
+    activationMode: remoteControlled
+    holdOpenSeconds: 5
+    crossingLanes: 0
+  - type: marker
+    sectorIndex: 1
+    deckIndex: 0
+    xOffset: 0.578125
+  - type: corridor
+    y: 1
+    x: 1
+    cellsWide: 10
+    decksHigh: 1
+  - type: lift
     y: 0
-    p: 0
-    q: 0
-    values: []
+    x: 9
+    cellsWide: 1
+    decksHigh: 3
+    stopOffsets: [0, 1]
+    capacity: 1
+    minimumDwellSeconds: 0.75
+    maximumBoardingSeconds: 5
+    initialStop: 0
+  - type: marker
+    sectorIndex: 3
+    deckIndex: 0
+    xOffset: 2.34375
 agents:
-  - id: 1
+  - id: 3
+    agent:
+      name: Agent 2
+      flags: 0
+    sector: 1
+    localX: 0.57812524
+    localY: 0
+  - id: 4
     agent:
       name: Agent 1
       flags: 0
-    sector: 1
-    localX: 0.578125238
+    sector: 3
+    localX: 2.34375
     localY: 0

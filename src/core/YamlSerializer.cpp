@@ -110,6 +110,7 @@ namespace core
 		return node.IsMap() && node[name].IsMap();
 	}
 
+	void YamlSerializer::writeBool(std::string const& name, bool value) { write(name, value); }
 	void YamlSerializer::writeUint8(std::string const& name, uint8_t value) { write(name, value); }
 	void YamlSerializer::writeUint16(std::string const& name, uint16_t value) { write(name, value); }
 	void YamlSerializer::writeUint32(std::string const& name, uint32_t value) { write(name, value); }
@@ -323,6 +324,32 @@ namespace core
 		{
 			throw SerializationException(std::format("Could not load YAML{}: {}",
 				mSourceIsFile ? std::format(" file {}", mSource) : std::string(), exception.what()));
+		}
+	}
+
+	bool YamlSerializer::readBool(std::string const& name, bool optional, bool defaultValue)
+	{
+		try
+		{
+			auto const node = readNode(name);
+			try
+			{
+				return node.as<bool>();
+			}
+			catch (std::exception const&)
+			{
+				// Version 1 files represented booleans as the integers 0 and 1.
+				return node.as<int32_t>() != 0;
+			}
+		}
+		catch (std::exception const& exception)
+		{
+			if (optional)
+			{
+				return defaultValue;
+			}
+			throw SerializationException(std::format("Could not read bool at {}: {}",
+				getPath(name), exception.what()));
 		}
 	}
 

@@ -360,8 +360,34 @@ namespace
 			for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
 				if (auto object = sector->getObject(i))
 					if (object->getObjectType() == core::SectorObjectType::Window) return false;
-		return windowBuilding.lookupAgent(windowAgent).entity != nullptr
-			&& windowBuilding.isSimulationPaused() && windowBuilding.isTraversalTopologyValid();
+		if (windowBuilding.lookupAgent(windowAgent).entity == nullptr
+			|| !windowBuilding.isSimulationPaused() || !windowBuilding.isTraversalTopologyValid()) return false;
+
+		core::Building pasteMoveBuilding("Paste-style movement", 10, 2);
+		pasteMoveBuilding.addCorridor(0, 0, 4);
+		auto right = pasteMoveBuilding.addCorridor(0, 6, 4);
+		pasteMoveBuilding.addRoom("Left back", CORE_LAYER_BACK, 0, 0, 4, 1);
+		pasteMoveBuilding.addRoom("Right back", CORE_LAYER_BACK, 0, 6, 4, 1);
+		auto crossSectorDoor = pasteMoveBuilding.addSectorDoor(0, 1);
+		pasteMoveBuilding.finishBuild();
+		pasteMoveBuilding.pauseSimulation();
+		auto doorPlan = pasteMoveBuilding.planMoveSectorObject(
+			crossSectorDoor.door.sector->getIndex(), crossSectorDoor.door.index, 7, 0);
+		if (!doorPlan.valid) return false;
+		auto movedAcrossSectors = pasteMoveBuilding.applyObjectMove(doorPlan);
+		if (!movedAcrossSectors || movedAcrossSectors->getSector()->getIndex() != right) return false;
+
+		core::Building markerMoveBuilding("Marker movement", 10, 1);
+		auto markerLeft = markerMoveBuilding.addCorridor(0, 0, 4);
+		auto markerRight = markerMoveBuilding.addCorridor(0, 6, 4);
+		auto marker = markerMoveBuilding.addSectorMarker(markerLeft, 0, 2.5f);
+		markerMoveBuilding.finishBuild();
+		markerMoveBuilding.pauseSimulation();
+		auto markerPlan = markerMoveBuilding.planMoveSectorObject(markerLeft, marker.index, 8, 0);
+		if (!markerPlan.valid) return false;
+		auto movedMarker = markerMoveBuilding.applyObjectMove(markerPlan);
+		return movedMarker && movedMarker->getSector()->getIndex() == markerRight
+			&& movedMarker->getCellX() == 8;
 	}
 
 	bool ordinaryTraversalCommitsOnlyAtDestination()
@@ -1625,6 +1651,11 @@ namespace
 		building.finishBuild();
 		if (!created.traversalResource || created.doors.size() != 2 || !created.interiorSelector)
 			return false;
+		auto initial = building.getSimulationSnapshot();
+		auto initialLift = std::find_if(initial.traversalResources.begin(),
+			initial.traversalResources.end(),
+			[&](auto const& resource) { return resource.id == created.traversalResource; });
+		if (initialLift == initial.traversalResources.end() || initialLift->capacity != 2) return false;
 		auto target = building.getGraph()->getClosestVertexInSector(
 			building.getSector(upper).get(), { 2.5f, 2.0f });
 		auto passengerId = building.createAgent("Lift passenger", lower, 0, 0.5f);
@@ -1646,6 +1677,8 @@ namespace
 		bool sawOnboard = false;
 		bool sawConfirmedDestination = false;
 		bool sawMovingAttachedPassenger = false;
+		bool sawQueuedDebug = false, sawEnteringDebug = false;
+		bool sawInLiftDebug = false, sawExitingDebug = false;
 		bool climbedTowardLandingCallButton = false;
 		for (uint32_t i = 0; i < MaximumSimulationTicks * 4
 			&& passenger->getState() != core::Agent::State::Idle; ++i)
@@ -1658,6 +1691,19 @@ namespace
 			auto lift = std::find_if(snapshot.traversalResources.begin(), snapshot.traversalResources.end(),
 				[&](auto const& resource) { return resource.id == created.traversalResource; });
 			if (lift == snapshot.traversalResources.end() || !lift->isLift) return false;
+			for (auto const& debug : lift->liftAgents)
+			{
+				if (debug.agent != passengerId || debug.targetStop != 1
+					|| std::abs(debug.targetFloor - 2.0f) > 0.001f) continue;
+				sawQueuedDebug = sawQueuedDebug
+					|| debug.state == core::LiftAgentState::QueuingAtDoor;
+				sawEnteringDebug = sawEnteringDebug
+					|| debug.state == core::LiftAgentState::Entering;
+				sawInLiftDebug = sawInLiftDebug
+					|| debug.state == core::LiftAgentState::InLift;
+				sawExitingDebug = sawExitingDebug
+					|| debug.state == core::LiftAgentState::Exiting;
+			}
 			if (!snapshot.traversalRequests.empty() && !lift->liftPassenger
 				&& std::any_of(snapshot.deviceOperations.begin(), snapshot.deviceOperations.end(),
 					[](auto const& operation)
@@ -1688,11 +1734,79 @@ namespace
 			[&](auto const& resource) { return resource.id == created.traversalResource; });
 		return sawIntentWithoutDispatch && sawReservedCapacity && sawOnboard
 			&& sawConfirmedDestination && sawMovingAttachedPassenger
+			&& sawQueuedDebug && sawEnteringDebug && sawInLiftDebug && sawExitingDebug
 			&& !climbedTowardLandingCallButton
 			&& passenger->getState() == core::Agent::State::Idle
 			&& passenger->getSector() == building.getSector(upper).get()
 			&& lift != final.traversalResources.end() && !lift->liftPassenger
 			&& lift->occupantCount == 0;
+	}
+
+	bool waitingLiftPassengersFillArrivingCar()
+	{
+		core::Building building("Arriving lift boards waiting capacity", 7, 4);
+		auto lower = building.addCorridor(0, 0, 6);
+		auto upper = building.addCorridor(2, 0, 6);
+		core::Building::CreateLiftOptions options;
+		options.cellsWide = 1;
+		options.stopOffsets = { 0, 2 };
+		options.capacity = 2;
+		options.minimumDwellSeconds = 0.1f;
+		options.maximumBoardingSeconds = 0.5f;
+		auto created = building.addLift(0, 2, options);
+		building.finishBuild();
+
+		auto lowerTarget = building.getGraph()->getClosestVertexInSector(
+			building.getSector(lower).get(), { 2.5f, 0.0f });
+		auto upperTarget = building.getGraph()->getClosestVertexInSector(
+			building.getSector(upper).get(), { 2.5f, 2.0f });
+		if (!lowerTarget || !upperTarget) return false;
+		auto downId = building.createAgent("Down passenger", upper, 0, 2.0f);
+		auto down = building.lookupAgent(downId).entity;
+		auto downPath = building.getGraph()->calculatePath(down, lowerTarget);
+		if (!downPath) return false;
+		down->setPath(downPath, true);
+
+		bool descending = false;
+		for (uint32_t tick = 0; tick < MaximumSimulationTicks * 4; ++tick)
+		{
+			building.advanceTick();
+			auto snapshot = building.getSimulationSnapshot();
+			auto lift = std::find_if(snapshot.traversalResources.begin(), snapshot.traversalResources.end(),
+				[&](auto const& resource) { return resource.id == created.traversalResource; });
+			if (lift != snapshot.traversalResources.end() && lift->liftMoving
+				&& lift->liftDirection == core::TraversalDirection::Descending
+				&& lift->occupantCount == 1)
+			{ descending = true; break; }
+		}
+		if (!descending) return false;
+
+		for (uint32_t i = 0; i < 2; ++i)
+		{
+			auto id = building.createAgent("Waiting passenger", lower, 0, 1.7f - i * 0.35f);
+			auto agent = building.lookupAgent(id).entity;
+			auto path = building.getGraph()->calculatePath(agent, upperTarget);
+			if (!path) return false;
+			agent->setPath(path, true);
+		}
+		bool sawBothWaiting = false;
+		for (uint32_t tick = 0; tick < MaximumSimulationTicks * 5; ++tick)
+		{
+			building.advanceTick();
+			auto snapshot = building.getSimulationSnapshot();
+			auto lift = std::find_if(snapshot.traversalResources.begin(), snapshot.traversalResources.end(),
+				[&](auto const& resource) { return resource.id == created.traversalResource; });
+			if (lift == snapshot.traversalResources.end()) return false;
+			auto waiting = std::count_if(snapshot.traversalRequests.begin(), snapshot.traversalRequests.end(),
+				[&](auto const& request)
+				{ return request.resource == created.doors.front().traversalResource
+					&& request.state == core::TraversalRequestState::Pending; });
+			sawBothWaiting = sawBothWaiting || waiting == 2;
+			if (lift->liftMoving && lift->liftDirection == core::TraversalDirection::Ascending
+				&& lift->liftCurrentStop == 0)
+				return sawBothWaiting && lift->occupantCount == options.capacity;
+		}
+		return false;
 	}
 
 	bool liftCapacityAndStopPhasesAreEnforced()
@@ -1708,6 +1822,34 @@ namespace
 		options.maximumBoardingSeconds = 0.5f;
 		auto created = building.addLift(0, 2, options);
 		building.finishBuild();
+		auto initial = building.getSimulationSnapshot();
+		for (auto const& door : created.doors)
+		{
+			auto resource = std::find_if(initial.traversalResources.begin(),
+				initial.traversalResources.end(),
+				[&](auto const& candidate) { return candidate.id == door.traversalResource; });
+			if (resource == initial.traversalResources.end()) return false;
+			bool foundCarLane = false, foundCorridorLane = false;
+			for (auto const& lane : resource->queueLanes)
+			{
+				auto sector = building.getSector((uint32_t)lane.sector.value - 1);
+				if (sector->getIndex() == created.lift.sector->getIndex())
+				{
+					foundCarLane = true;
+					auto landingY = door.door.sector->getObject(door.door.index)->getCellY();
+					if (lane.positions.size() != options.capacity
+						|| std::any_of(lane.positions.begin(), lane.positions.end(),
+							[landingY](auto const& position)
+							{ return std::abs(position.position.y - landingY) > 0.001f; })) return false;
+				}
+				else
+				{
+					foundCorridorLane = true;
+					if (lane.positions.size() <= options.capacity) return false;
+				}
+			}
+			if (!foundCarLane || !foundCorridorLane) return false;
+		}
 		auto target = building.getGraph()->getClosestVertexInSector(
 			building.getSector(upper).get(), { 2.5f, 2.0f });
 		std::vector<core::AgentId> passengers;
@@ -1723,15 +1865,41 @@ namespace
 
 		bool sawFullCarWithWaitingPassenger = false;
 		bool sawCutoffHonorReservations = false;
+		bool sawDistinctCorridorQueuePositions = false;
+		bool checkedFirstDepartureCapacity = false;
 		for (uint32_t tick = 0; tick < MaximumSimulationTicks * 8; ++tick)
 		{
 			building.advanceTick();
 			auto snapshot = building.getSimulationSnapshot();
+			std::vector<core::Vector2> corridorQueueTargets;
+			for (auto const& request : snapshot.traversalRequests)
+			{
+				if (request.resource != created.doors.front().traversalResource) continue;
+				if (request.state == core::TraversalRequestState::Pending
+					&& request.hasCapacityPosition && !request.hasQueuePosition) return false;
+				if (request.hasQueuePosition)
+					corridorQueueTargets.push_back(request.queuePositionTarget);
+			}
+			if (corridorQueueTargets.size() >= 2)
+			{
+				for (size_t i = 0; i < corridorQueueTargets.size(); ++i)
+					for (size_t j = i + 1; j < corridorQueueTargets.size(); ++j)
+						if (corridorQueueTargets[i].distanceTo(corridorQueueTargets[j])
+							< CORE_DOOR_QUEUE_STOP_WIDTH - 0.001f) return false;
+				sawDistinctCorridorQueuePositions = true;
+			}
 			auto lift = std::find_if(snapshot.traversalResources.begin(), snapshot.traversalResources.end(),
 				[&](auto const& resource) { return resource.id == created.traversalResource; });
 			if (lift == snapshot.traversalResources.end()
 				|| lift->occupantCount + lift->admissionReservationCount > options.capacity)
 				return false;
+			if (!checkedFirstDepartureCapacity && lift->liftMoving
+				&& lift->liftCurrentStop == 0
+				&& lift->liftDirection == core::TraversalDirection::Ascending)
+			{
+				checkedFirstDepartureCapacity = true;
+				if (lift->occupantCount != options.capacity) return false;
+			}
 			if (lift->occupantCount == options.capacity && !lift->admissionQueue.empty())
 				sawFullCarWithWaitingPassenger = true;
 			if (snapshot.tick > lift->liftBoardingCutoffTick && lift->admissionReservationCount > 0)
@@ -1742,7 +1910,10 @@ namespace
 					return agent && agent->getState() == core::Agent::State::Idle
 						&& agent->getSector() == building.getSector(upper).get();
 				}))
-				return sawFullCarWithWaitingPassenger && sawCutoffHonorReservations;
+			{
+				return sawFullCarWithWaitingPassenger && sawCutoffHonorReservations
+					&& sawDistinctCorridorQueuePositions && checkedFirstDepartureCapacity;
+			}
 		}
 		return false;
 	}
@@ -1834,6 +2005,19 @@ namespace
 		building.finishBuild();
 		if (!created.traversalResource || !created.interiorSelector || created.doors.size() != 2)
 			return false;
+		auto initial = building.getSimulationSnapshot();
+		for (auto const& door : created.doors)
+		{
+			auto landing = std::find_if(initial.traversalResources.begin(),
+				initial.traversalResources.end(),
+				[&](auto const& resource) { return resource.id == door.traversalResource; });
+			if (landing == initial.traversalResources.end()) return false;
+			auto carLane = std::find_if(landing->queueLanes.begin(), landing->queueLanes.end(),
+				[&](auto const& lane)
+				{ return lane.sector.value == created.shuttle.sector->getIndex() + 1; });
+			if (carLane == landing->queueLanes.end()
+				|| carLane->positions.size() != options.capacity) return false;
+		}
 		auto target = building.getGraph()->getClosestVertexInSector(
 			building.getSector(right).get(), { 8.5f, 0.0f });
 		if (!target) return false;
@@ -2487,6 +2671,11 @@ int main()
 		if (!openPlatformLiftUsesVirtualBoundaryAndTransportPolicy())
 		{
 			std::cerr << "FAIL: open platform lift journey, virtual boundary, or attachment failed\n";
+			return 1;
+		}
+		if (!waitingLiftPassengersFillArrivingCar())
+		{
+			std::cerr << "FAIL: waiting passengers did not fill an arriving lift with available capacity\n";
 			return 1;
 		}
 		if (!liftCapacityAndStopPhasesAreEnforced())
