@@ -2809,7 +2809,7 @@ void renderToolbar(shared_ptr<core::Building> building)
 }
 
 
-void renderStatusBar(shared_ptr<const core::Building> building)
+void renderStatusBar()
 {
 	ImGuiViewportP* viewport = (ImGuiViewportP*)(void*)ImGui::GetMainViewport();
 
@@ -2856,21 +2856,6 @@ void renderStatusBar(shared_ptr<const core::Building> building)
 				string objectData = format("{}", gHoveredVertex->getDescription());
 
 				ImGui::TextUnformatted(objectData.c_str());
-			}
-
-			// Keep status information on the left and the world scroll slider after it.
-			static float scrollX = 0.0f;
-			float viewportWidth = gUISettings.worldViewportWidth > 0.0f
-				? gUISettings.worldViewportWidth : (float)APP_WINDOW_WIDTH;
-			float scrollMax = (float)building->getCellsWide() * (float)CORE_CELL_WIDTH_PIXELS - viewportWidth;
-
-			if (scrollMax > 0)
-			{
-				ImGui::SetNextItemWidth(-1.0f);
-				if (ImGui::SliderFloat("##Scroll", &scrollX, 0, scrollMax))
-				{
-					gUISettings.xOffset = -scrollX;
-				}
 			}
 
 			ImGui::EndMenuBar();
@@ -4270,6 +4255,28 @@ void renderWorldWindow(shared_ptr<core::Building> building, shared_ptr<const cor
 	canvasSize.x = max(canvasSize.x, 1.0f);
 	canvasSize.y = max(canvasSize.y, 1.0f);
 
+	auto const& style = ImGui::GetStyle();
+	float const scrollbarThickness = ImGui::GetFrameHeight();
+	float const horizontalScrollbarSpace = scrollbarThickness + style.ItemSpacing.y;
+	float const verticalScrollbarSpace = scrollbarThickness + style.ItemSpacing.x;
+	float const worldWidth = (float)building->getCellsWide() * (float)CORE_CELL_WIDTH_PIXELS;
+	float const worldHeight = (float)building->getDecksHigh() * (float)CORE_DECK_HEIGHT_PIXELS;
+
+	bool showHorizontalScrollbar = worldWidth > canvasSize.x;
+	bool showVerticalScrollbar = worldHeight > canvasSize.y;
+	// One scrollbar reduces the other axis, which can make the other scrollbar necessary.
+	if (showHorizontalScrollbar && worldHeight > canvasSize.y - horizontalScrollbarSpace)
+		showVerticalScrollbar = true;
+	if (showVerticalScrollbar && worldWidth > canvasSize.x - verticalScrollbarSpace)
+		showHorizontalScrollbar = true;
+
+	if (showHorizontalScrollbar)
+		canvasSize.y = max(canvasSize.y - horizontalScrollbarSpace, 1.0f);
+	if (showVerticalScrollbar)
+		canvasSize.x = max(canvasSize.x - verticalScrollbarSpace, 1.0f);
+	float const horizontalScrollMax = max(worldWidth - canvasSize.x, 0.0f);
+	float const verticalScrollMax = max(worldHeight - canvasSize.y, 0.0f);
+
 	gUISettings.worldViewportX = canvasPos.x;
 	gUISettings.worldViewportY = canvasPos.y;
 	gUISettings.worldViewportWidth = canvasSize.x;
@@ -4279,6 +4286,37 @@ void renderWorldWindow(shared_ptr<core::Building> building, shared_ptr<const cor
 		ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
 	gWorldHovered = ImGui::IsItemHovered();
 	ImGui::SetItemAllowOverlap();
+
+	static float scrollX = 0.0f;
+	static float scrollY = 0.0f;
+	if (showVerticalScrollbar)
+	{
+		scrollY = clamp(scrollY, 0.0f, verticalScrollMax);
+		ImGui::SameLine();
+		ImGui::VSliderFloat("##WorldVerticalScroll",
+			{ scrollbarThickness, canvasSize.y }, &scrollY, 0.0f, verticalScrollMax, "",
+			ImGuiSliderFlags_NoInput);
+		gUISettings.yOffset = -scrollY;
+	}
+	else
+	{
+		scrollY = 0.0f;
+		if (gUISettings.yOffset < 0.0f) gUISettings.yOffset = 0.0f;
+	}
+
+	if (showHorizontalScrollbar)
+	{
+		scrollX = clamp(scrollX, 0.0f, horizontalScrollMax);
+		ImGui::SetNextItemWidth(canvasSize.x);
+		ImGui::SliderFloat("##WorldHorizontalScroll", &scrollX, 0.0f,
+			horizontalScrollMax, "", ImGuiSliderFlags_NoInput);
+		gUISettings.xOffset = -scrollX;
+	}
+	else
+	{
+		scrollX = 0.0f;
+		if (gUISettings.xOffset < 0.0f) gUISettings.xOffset = 0.0f;
+	}
 
 	gHoveredAgent = nullptr;
 	gHoveredInteractionPoint = {};
@@ -4382,7 +4420,7 @@ void renderUI(shared_ptr<core::Building>& building, shared_ptr<core::Agent> path
 	}
 
 	auto const graph = building->getGraph();
-	renderStatusBar(building);
+	renderStatusBar();
 	renderControlsWindow(building, graph, pathingAgent);
 	renderWorldWindow(building, graph);
 }
