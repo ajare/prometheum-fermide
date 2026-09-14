@@ -93,7 +93,7 @@ namespace ImGuiKnobs {
                 angle_sin = sinf(angle);
             }
 
-            void draw_dot(float size, float radius, float angle, color_set color, bool filled, int segments) {
+            void draw_dot(float size, float radius, float angle, color_set color, bool /* filled */, int segments) {
                 auto dot_size = size * this->radius;
                 auto dot_radius = radius * this->radius;
 
@@ -117,7 +117,7 @@ namespace ImGuiKnobs {
                         width * radius);
             }
 
-            void draw_circle(float size, color_set color, bool filled, int segments) {
+            void draw_circle(float size, color_set color, bool /* filled */, int /* segments */) {
                 auto circle_radius = size * radius;
 
                 ImGui::GetWindowDrawList()->AddCircleFilled(

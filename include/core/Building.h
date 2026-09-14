@@ -37,7 +37,7 @@ namespace core
 			uint32_t index{ ~0u };
 			SectorObjectType type{ SectorObjectType::None };
 			std::shared_ptr<Sector> sector;
-			InteractionPointId interactionPoint;
+			InteractionPointId interactionPoint{};
 		};
 
 		struct CreateDoorOptions
@@ -308,12 +308,12 @@ namespace core
 		struct ConstructionRecord
 		{
 			ConstructionType type{};
-			std::string name;
+			std::string name{};
 			uint32_t a{ 0 }, b{ 0 }, c{ 0 }, d{ 0 }, e{ 0 }, f{ 0 }, g{ 0 };
 			int32_t i{ 0 }, j{ 0 };
 			float x{ 0.0f }, y{ 0.0f };
 			bool p{ false }, q{ false };
-			std::vector<uint32_t> values;
+			std::vector<uint32_t> values{};
 		};
 
 		std::vector<ConstructionRecord> mConstructionRecords;
@@ -334,7 +334,7 @@ namespace core
 			std::vector<PhysicalControlCandidate> candidates;
 			uint32_t defaultCandidate{ 0 };
 			uint32_t currentCandidate{ 0 };
-			Vector2 interactionOffset;
+			Vector2 interactionOffset{};
 			bool hasInteractionOffset{ false };
 		};
 
@@ -655,7 +655,9 @@ namespace core
 		bool canAddCorridorDoor(uint32_t y, uint32_t x,
 			std::string* diagnostic = nullptr) const;
 
-		CreateDoorResult addSectorDoor(uint32_t y, uint32_t x, CreateDoorOptions const& options = {});
+		CreateDoorResult addSectorDoor(uint32_t y, uint32_t x);
+
+		CreateDoorResult addSectorDoor(uint32_t y, uint32_t x, CreateDoorOptions const& options);
 
 		// Adds a physical open control in the selected Door's owning Location.
 		// Placement against the left or right edge is derived from the Door and Location geometry.
@@ -675,11 +677,18 @@ namespace core
 		bool removeSectorWindow(uint32_t sectorIndex, uint32_t objectIndex);
 
 		CreateBulkheadDoorResult addSectorBulkheadDoor(uint32_t layerIndex, uint32_t y, uint32_t x,
-			int side, CreateBulkheadDoorOptions const& options = {});
+			int side);
+
+		CreateBulkheadDoorResult addSectorBulkheadDoor(uint32_t layerIndex, uint32_t y, uint32_t x,
+			int side, CreateBulkheadDoorOptions const& options);
 
 		CreateObjectResult addSectorLightSwitch(uint32_t sectorIndex, uint32_t xOffset);
 
-		CreateForceBridgeResult addSectorForceBridge(uint32_t sectorIndex, uint32_t deckIndex, uint32_t xOffset, CreateForceBridgeOptions const& options = {});
+		CreateForceBridgeResult addSectorForceBridge(uint32_t sectorIndex, uint32_t deckIndex,
+			uint32_t xOffset);
+
+		CreateForceBridgeResult addSectorForceBridge(uint32_t sectorIndex, uint32_t deckIndex,
+			uint32_t xOffset, CreateForceBridgeOptions const& options);
 
 		CreateLadderResult addSectorLadder(uint32_t sectorIndex, uint32_t deckIndex, uint32_t xOffset, CreateLadderOptions const& options);
 

@@ -212,20 +212,20 @@ namespace core
 		TraversalFailureReason failureReason{ TraversalFailureReason::None };
 		// Stable, read-only explanation of the request's current outcome or wait.
 		// Consumers need not reconstruct protocol state from resource internals.
-		std::string diagnostic;
-		QueueTicketId queueTicket;
+		std::string diagnostic{};
+		QueueTicketId queueTicket{};
 		uint64_t queuedAtTick{ 0 };
 		uint32_t queueApproach{ ~0u };
 		bool hasQueuePosition{ false };
 		uint32_t queuePosition{ ~0u };
-		Vector2 queuePositionTarget;
+		Vector2 queuePositionTarget{};
 		bool hasCrossingLane{ false };
 		uint32_t crossingLane{ ~0u };
 		bool hasCapacityPosition{ false };
 		uint32_t capacityPosition{ ~0u };
 		uint32_t shuttleCarriage{ ~0u };
 		uint32_t shuttleAccessZone{ ~0u };
-		TraversalResourceId shuttleDoor;
+		TraversalResourceId shuttleDoor{};
 		TraversalDirection direction{ TraversalDirection::None };
 		uint64_t positionAssignedAtTick{ 0 };
 		uint64_t lastPositionProgressTick{ 0 };

@@ -4,8 +4,14 @@
 #include <algorithm>
 #include <limits>
 
+#if defined(_WIN32)
 #include <Windows.h>
 #include <gl/GL.h>
+#elif defined(__linux__)
+#include <GL/glew.h>
+#else
+#error "Unsupported platform"
+#endif
 
 #include "imgui/imgui.h"
 #include "imgui/imgui_internal.h"
@@ -432,7 +438,6 @@ void renderGraph(shared_ptr<const core::Graph> graph, shared_ptr<const core::Bui
 		pos.y += yBump;
 
 		bool vertexIsInPath{ false };
-		bool pathCrossesLayers{ false };
 
 		if (path)
 		{
@@ -444,11 +449,6 @@ void renderGraph(shared_ptr<const core::Graph> graph, shared_ptr<const core::Bui
 			if (vertexNodeIt != path->nodes.end())
 			{
 				vertexIsInPath = true;
-
-				if (vertexNodeIt->edge)
-				{
-					pathCrossesLayers = vertexNodeIt->edge->isInterLayer();
-				}
 			}
 		}
 
@@ -486,7 +486,7 @@ void renderGraph(shared_ptr<const core::Graph> graph, shared_ptr<const core::Bui
 }
 
 
-void renderDoorVertFromFloor(shared_ptr<const core::Door> door, int layer, bool visibleLayer, bool selected, ImDrawList* drawList)
+void renderDoorVertFromFloor(shared_ptr<const core::Door> door, int layer, bool /* visibleLayer */, bool /* selected */, ImDrawList* drawList)
 {
 	core::Vector2 bounds0, bounds1, bounds2;
 
@@ -522,13 +522,13 @@ void renderDoorVertFromFloor(shared_ptr<const core::Door> door, int layer, bool 
 }
 
 
-void renderDoorHorzFromCentre(shared_ptr<const core::Door> door, int layer, bool visibleLayer, bool selected, ImDrawList* drawList)
+void renderDoorHorzFromCentre(shared_ptr<const core::Door> /* door */, int /* layer */, bool /* visibleLayer */, bool /* selected */, ImDrawList* /* drawList */)
 {
 	throw NotImplementedException("Lift-style Door rendering");
 }
 
 
-void renderDoorQuadIris(shared_ptr<const core::Door> door, int layer, bool visibleLayer, bool selected, ImDrawList* drawList)
+void renderDoorQuadIris(shared_ptr<const core::Door> /* door */, int /* layer */, bool /* visibleLayer */, bool /* selected */, ImDrawList* /* drawList */)
 {
 	throw NotImplementedException("Iris Door rendering");
 }
@@ -574,7 +574,7 @@ void renderDoor(shared_ptr<const core::Door> door, int layer, bool visibleLayer,
 }
 
 
-void renderBulkheadDoor(shared_ptr<const core::BulkheadDoor> door, int layer, bool visibleLayer, bool selected, ImDrawList* drawList)
+void renderBulkheadDoor(shared_ptr<const core::BulkheadDoor> door, int /* layer */, bool /* visibleLayer */, bool /* selected */, ImDrawList* drawList)
 {
 	core::Vector2 bounds0, bounds1;
 
@@ -588,7 +588,7 @@ void renderBulkheadDoor(shared_ptr<const core::BulkheadDoor> door, int layer, bo
 }
 
 
-void renderWindowClear(shared_ptr<const core::Window> window, int layer, bool visibleLayer, bool selected, ImDrawList* drawList)
+void renderWindowClear(shared_ptr<const core::Window> window, int layer, bool /* visibleLayer */, bool /* selected */, ImDrawList* drawList)
 {
 	core::Vector2 bounds0, bounds1;
 
@@ -633,13 +633,13 @@ void renderWindowClear(shared_ptr<const core::Window> window, int layer, bool vi
 }
 
 
-void renderWindowFrosted(shared_ptr<const core::Window> window, int layer, bool visibleLayer, bool selected, ImDrawList* drawList)
+void renderWindowFrosted(shared_ptr<const core::Window> /* window */, int /* layer */, bool /* visibleLayer */, bool /* selected */, ImDrawList* /* drawList */)
 {
 	throw NotImplementedException("Frosted Window rendering");
 }
 
 
-void renderWindowTinted(shared_ptr<const core::Window> window, int layer, bool visibleLayer, bool selected, ImDrawList* drawList)
+void renderWindowTinted(shared_ptr<const core::Window> /* window */, int /* layer */, bool /* visibleLayer */, bool /* selected */, ImDrawList* /* drawList */)
 {
 	throw NotImplementedException("Tinted Window rendering");
 }
@@ -685,7 +685,7 @@ void renderWindow(shared_ptr<const core::Window> window, int layer, bool visible
 }
 
 
-void renderPhysicalControl(shared_ptr<const core::Button> button, int layer, bool visibleLayer, bool selected, ImDrawList* drawList)
+void renderPhysicalControl(shared_ptr<const core::Button> button, int layer, bool visibleLayer, bool /* selected */, ImDrawList* drawList)
 {
 	if (layer != CORE_LAYER_BACK && !visibleLayer) return;
 
@@ -699,7 +699,7 @@ void renderPhysicalControl(shared_ptr<const core::Button> button, int layer, boo
 }
 
 
-void renderWalkway(shared_ptr<const core::Walkway> walkway, int layer, bool visibleLayer, bool selected, ImDrawList* drawList)
+void renderWalkway(shared_ptr<const core::Walkway> walkway, int /* layer */, bool /* visibleLayer */, bool /* selected */, ImDrawList* drawList)
 {
 	core::Vector2 bounds0, bounds1;
 
@@ -713,7 +713,7 @@ void renderWalkway(shared_ptr<const core::Walkway> walkway, int layer, bool visi
 }
 
 
-void renderMarker(shared_ptr<const core::Marker> marker, int layer, bool visibleLayer,
+void renderMarker(shared_ptr<const core::Marker> marker, int /* layer */, bool visibleLayer,
 	bool selected, ImDrawList* drawList)
 {
 	if (!visibleLayer) return;
@@ -737,7 +737,7 @@ void renderMarker(shared_ptr<const core::Marker> marker, int layer, bool visible
 }
 
 
-void renderForceBridge(shared_ptr<const core::ForceBridge> forceBridge, int layer, bool visibleLayer, bool selected, ImDrawList* drawList)
+void renderForceBridge(shared_ptr<const core::ForceBridge> forceBridge, int /* layer */, bool /* visibleLayer */, bool /* selected */, ImDrawList* drawList)
 {
 	core::Vector2 bounds0, bounds1;
 
@@ -751,7 +751,7 @@ void renderForceBridge(shared_ptr<const core::ForceBridge> forceBridge, int laye
 }
 
 
-void renderLadder(shared_ptr<const core::Ladder> ladder, int layer, bool visibleLayer, bool selected, ImDrawList* drawList)
+void renderLadder(shared_ptr<const core::Ladder> ladder, int /* layer */, bool /* visibleLayer */, bool /* selected */, ImDrawList* drawList)
 {
 	core::Vector2 bounds0, bounds1;
 
@@ -765,7 +765,7 @@ void renderLadder(shared_ptr<const core::Ladder> ladder, int layer, bool visible
 }
 
 
-void renderLift(shared_ptr<const core::Lift> lift, int layer, bool visibleLayer, bool selected, ImDrawList* drawList)
+void renderLift(shared_ptr<const core::Lift> lift, int /* layer */, bool /* visibleLayer */, bool /* selected */, ImDrawList* drawList)
 {
 	core::Vector2 bounds0, bounds1;
 
@@ -779,7 +779,7 @@ void renderLift(shared_ptr<const core::Lift> lift, int layer, bool visibleLayer,
 }
 
 
-void renderShuttle(shared_ptr<const core::Shuttle> shuttle, int layer, bool visibleLayer, bool selected, ImDrawList* drawList)
+void renderShuttle(shared_ptr<const core::Shuttle> shuttle, int /* layer */, bool /* visibleLayer */, bool /* selected */, ImDrawList* drawList)
 {
 	core::Vector2 bounds0, bounds1;
 
@@ -821,7 +821,7 @@ void renderShuttle(shared_ptr<const core::Shuttle> shuttle, int layer, bool visi
 }
 
 
-void renderStaircase(shared_ptr<const core::Staircase> staircase, int layer, bool visibleLayer, bool selected, ImDrawList* drawList)
+void renderStaircase(shared_ptr<const core::Staircase> staircase, int /* layer */, bool /* visibleLayer */, bool /* selected */, ImDrawList* drawList)
 {
 	core::Vector2 bounds0, bounds1;
 
@@ -844,7 +844,7 @@ void renderStaircase(shared_ptr<const core::Staircase> staircase, int layer, boo
 }
 
 
-void renderSelected(shared_ptr<const core::Object> object, int layer, bool visibleLayer, ImDrawList* drawList)
+void renderSelected(shared_ptr<const core::Object> object, int /* layer */, bool /* visibleLayer */, ImDrawList* drawList)
 {
 	core::Vector2 bounds0, bounds1;
 
@@ -863,7 +863,7 @@ void renderSelected(shared_ptr<const core::Object> object, int layer, bool visib
 }
 
 
-void renderSectorObjects(shared_ptr<const core::Sector> sector, int layer, bool visibleLayer, bool wireframe, int flags, ImDrawList* drawList)
+void renderSectorObjects(shared_ptr<const core::Sector> sector, int layer, bool visibleLayer, bool /* wireframe */, int flags, ImDrawList* drawList)
 {
 	// Sort so that Ladders and Lifts are rendered first, as these need to be behind everything else.
 	auto sortedObjects = sector->getSortedObjects([](auto obj1, auto obj2)
@@ -960,7 +960,6 @@ void renderSectorObjects(shared_ptr<const core::Sector> sector, int layer, bool 
 			if (true)
 			{
 				auto window = static_pointer_cast<const core::WindowSectorObject>(object)->getWindow();
-				bool isBackLayer = window->getSector(CORE_LAYER_BACK) == nullptr;
 
 				if ((flags & RENDER_SECTOR_OBJECTS_BEHIND))
 				{
@@ -1047,7 +1046,7 @@ void renderAgent(core::Agent const* agent, ImDrawList* drawList)
 }
 
 
-void renderSectorAgents(shared_ptr<const core::Sector> sector, int layer, bool visibleLayer, ImDrawList* drawList)
+void renderSectorAgents(shared_ptr<const core::Sector> sector, int /* layer */, bool /* visibleLayer */, ImDrawList* drawList)
 {
 	auto const& agents = sector->getAgents();
 
@@ -1118,6 +1117,9 @@ void renderSector(shared_ptr<const core::Sector> sector, int layer, bool visible
 
 	case core::SectorType::Staircase:
 		renderStaircase(static_pointer_cast<const core::StaircaseTransit>(sector)->getStaircase(), layer, visibleLayer, selected, drawList);
+		break;
+
+	default:
 		break;
 	}
 
@@ -1389,6 +1391,9 @@ void renderSectors(shared_ptr<const core::Building> building, int layer, bool vi
 
 			case core::SectorType::Staircase:
 				renderStaircaseTransit(static_pointer_cast<const core::StaircaseTransit>(sector), layer, visibleLayer, wireframe, BackLocationColour, selected, drawList);
+				break;
+
+			default:
 				break;
 			}
 		}

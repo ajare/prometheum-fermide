@@ -47,19 +47,19 @@ namespace core
 		return format("LiftMount edge for {}", mLift->getDescription());
 	}
 
-	bool LiftMountEdge::isTraversable(shared_ptr<const Vertex> targetVertex, shared_ptr<const Agent> agent) const
+	bool LiftMountEdge::isTraversable(shared_ptr<const Vertex> /* targetVertex */, shared_ptr<const Agent> /* agent */) const
 	{
 		// TODO: see if any Agents are on the Lift
 
 		return true;
 	}
 
-	EdgeTraversalRequestResult LiftMountEdge::requestTraversal(shared_ptr<const Vertex> targetVertex, shared_ptr<const Agent> agent) const
+	EdgeTraversalRequestResult LiftMountEdge::requestTraversal(shared_ptr<const Vertex> /* targetVertex */, shared_ptr<const Agent> /* agent */) const
 	{
 		return EdgeTraversalRequestResult::OK;
 	}
 
-	float LiftMountEdge::getWeight(shared_ptr<const Vertex> targetVertex, Agent const* agent, bool edgeVisible) const
+	float LiftMountEdge::getWeight(shared_ptr<const Vertex> /* targetVertex */, Agent const* /* agent */, bool /* edgeVisible */) const
 	{
 		return CORE_GRAPH_EDGE_MIN_TRAVERSAL_TIME;
 	}

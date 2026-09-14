@@ -14,7 +14,7 @@ namespace core
 
 	using namespace std;
 
-	shared_ptr<Object> createLiftSubclass(LiftSectorObjectType type, uint32_t cellX, uint32_t cellY, uint32_t cellsWide, vector<uint32_t> const& stopOffsets, shared_ptr<const Sector> sector)
+	shared_ptr<Object> createLiftSubclass(LiftSectorObjectType type, uint32_t cellX, uint32_t cellY, uint32_t cellsWide, vector<uint32_t> const& stopOffsets, shared_ptr<const Sector> /* sector */)
 	{
 		switch (type)
 		{
@@ -69,7 +69,7 @@ namespace core
 	- edgeCreator is actually a shared_ptr to this LiftSectorObject instance.  While this is awkward, it lets us
 	  capture the shared_ptr rather than the raw one, within the Edge.
 	*/
-	shared_ptr<Edge> LiftSectorObject::createCrossDeckEdge(shared_ptr<VerticalEdgeCreator> edgeCreator) const
+	shared_ptr<Edge> LiftSectorObject::createCrossDeckEdge([[maybe_unused]] shared_ptr<VerticalEdgeCreator> edgeCreator) const
 	{
 		ASSERT_PTR_EQ_THIS(edgeCreator);
 

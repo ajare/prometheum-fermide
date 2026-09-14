@@ -47,19 +47,19 @@ namespace core
 		return format("StaircaseMount edge for {}", mStaircase->getDescription());
 	}
 
-	bool StaircaseMountEdge::isTraversable(shared_ptr<const Vertex> targetVertex, shared_ptr<const Agent> agent) const
+	bool StaircaseMountEdge::isTraversable(shared_ptr<const Vertex> /* targetVertex */, shared_ptr<const Agent> /* agent */) const
 	{
 		// TODO: see if any Agents are on the Staircase
 
 		return true;
 	}
 
-	EdgeTraversalRequestResult StaircaseMountEdge::requestTraversal(shared_ptr<const Vertex> targetVertex, shared_ptr<const Agent> agent) const
+	EdgeTraversalRequestResult StaircaseMountEdge::requestTraversal(shared_ptr<const Vertex> /* targetVertex */, shared_ptr<const Agent> /* agent */) const
 	{
 		return EdgeTraversalRequestResult::OK;
 	}
 
-	float StaircaseMountEdge::getWeight(shared_ptr<const Vertex> targetVertex, Agent const* agent, bool edgeVisible) const
+	float StaircaseMountEdge::getWeight(shared_ptr<const Vertex> /* targetVertex */, Agent const* /* agent */, bool /* edgeVisible */) const
 	{
 		return CORE_GRAPH_EDGE_MIN_TRAVERSAL_TIME;
 	}

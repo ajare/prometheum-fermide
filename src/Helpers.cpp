@@ -60,13 +60,15 @@ bool LoadTextureFromFile(const char* file_name, GLuint* out_texture, int* out_wi
     }
 
     fseek(f, 0, SEEK_END);
-    size_t file_size = (size_t)ftell(f);
+    long const file_size_result = ftell(f);
 
-    if (file_size == -1)
+    if (file_size_result < 0)
     {
+        fclose(f);
         return false;
     }
-    
+
+    size_t const file_size = static_cast<size_t>(file_size_result);
     fseek(f, 0, SEEK_SET);
     void* file_data = IM_ALLOC(file_size);
     fread(file_data, 1, file_size, f);

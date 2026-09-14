@@ -1,8 +1,15 @@
 #pragma once
 
 #include <string>
+
+#if defined(_WIN32)
 #include <Windows.h>
 #include <gl/GL.h>
+#elif defined(__linux__)
+#include <GL/glew.h>
+#else
+#error "Unsupported platform"
+#endif
 
 #include "core/Vector2.h"
 

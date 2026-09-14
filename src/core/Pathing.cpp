@@ -37,11 +37,11 @@ namespace core
         }
 
         void addVertexToPath(
-            Agent const* agent,
-            Graph const* graph,
+            Agent const* /* agent */,
+            Graph const* /* graph */,
             node_type vertex,
             vector<PathNode>& nodes,
-            unordered_map<node_type, node_type> const& cameFrom,
+            unordered_map<node_type, node_type> const& /* cameFrom */,
             unordered_map<node_type, float> const& costSoFar,
             unordered_map<node_type, shared_ptr<const Edge>> const& edgeMap)
         {

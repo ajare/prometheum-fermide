@@ -54,7 +54,7 @@ namespace core
 	  capture the shared_ptr rather than the raw one, within the Vertex.
 	- user holds the side.
 	*/
-	shared_ptr<Vertex> BulkheadDoorSectorObject::createVertex(shared_ptr<SectorObject> object, shared_ptr<Sector> sector, void* user) const
+	shared_ptr<Vertex> BulkheadDoorSectorObject::createVertex(shared_ptr<SectorObject> object, shared_ptr<Sector> sector, void* /* user */) const
 	{
 		ASSERT_PTR_EQ_THIS(object);
 

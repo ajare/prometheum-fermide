@@ -39,17 +39,17 @@ namespace core
 		return "Sector edge";
 	}
 
-	bool SectorEdge::isTraversable(shared_ptr<const Vertex> targetVertex, shared_ptr<const Agent> agent) const
+	bool SectorEdge::isTraversable(shared_ptr<const Vertex> /* targetVertex */, shared_ptr<const Agent> /* agent */) const
 	{
 		return true;
 	}
 
-	EdgeTraversalRequestResult SectorEdge::requestTraversal(shared_ptr<const Vertex> targetVertex, shared_ptr<const Agent> agent) const
+	EdgeTraversalRequestResult SectorEdge::requestTraversal(shared_ptr<const Vertex> /* targetVertex */, shared_ptr<const Agent> /* agent */) const
 	{
 		return EdgeTraversalRequestResult::OK;
 	}
 
-	float SectorEdge::getWeight(shared_ptr<const Vertex> targetVertex, Agent const* agent, bool edgeVisible) const
+	float SectorEdge::getWeight(shared_ptr<const Vertex> /* targetVertex */, Agent const* agent, bool edgeVisible) const
 	{
 		CORE_VAR_UNUSED(edgeVisible);
 

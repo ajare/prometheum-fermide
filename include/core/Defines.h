@@ -131,10 +131,10 @@
 // Macros
 //
 #define ASSERT_INDEX_OK(index)				assert(index != ~0u && "Index is -1");
-#define ASSERT_LAYER_OK(layer)					assert(layer == CORE_LAYER_FORE || layer == CORE_LAYER_BACK && "Invalid layer")
-#define ASSERT_DIM_OK(dim)						assert(dim == CORE_DIM_X || dim == CORE_DIM_Y && "Invalid dimension")
-#define ASSERT_SIDE_OK(side)					assert(side == CORE_SIDE_LEFT || side == CORE_SIDE_RIGHT && "Invalid side")
-#define ASSERT_LEVEL_OK(level)					assert(level == CORE_LEVEL_LOW || level == CORE_LEVEL_HIGH && "Invalid level");
+#define ASSERT_LAYER_OK(layer)					assert((layer == CORE_LAYER_FORE || layer == CORE_LAYER_BACK) && "Invalid layer")
+#define ASSERT_DIM_OK(dim)						assert((dim == CORE_DIM_X || dim == CORE_DIM_Y) && "Invalid dimension")
+#define ASSERT_SIDE_OK(side)					assert((side == CORE_SIDE_LEFT || side == CORE_SIDE_RIGHT) && "Invalid side")
+#define ASSERT_LEVEL_OK(level)					assert((level == CORE_LEVEL_LOW || level == CORE_LEVEL_HIGH) && "Invalid level");
 #define ASSERT_PTR_EQ_THIS(ptr)					assert(ptr.get() == this && "shared_ptr not the same as 'this'");
 #define ASSERT_CONTAINTER_INDEX(index, cont)	assert(index <= cont.size() && "container index out of bounds");
 

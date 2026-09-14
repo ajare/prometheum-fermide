@@ -42,12 +42,12 @@ namespace core
 		return format("ForceBridge edge for {}", mForceBridge->getDescription());
 	}
 
-	bool ForceBridgeEdge::isTraversable(shared_ptr<const Vertex> targetVertex, shared_ptr<const Agent> agent) const
+	bool ForceBridgeEdge::isTraversable(shared_ptr<const Vertex> /* targetVertex */, shared_ptr<const Agent> /* agent */) const
 	{
 		return mForceBridge->isExtended();
 	}
 
-	EdgeTraversalRequestResult ForceBridgeEdge::requestTraversal(shared_ptr<const Vertex> targetVertex, shared_ptr<const Agent> agent) const
+	EdgeTraversalRequestResult ForceBridgeEdge::requestTraversal(shared_ptr<const Vertex> /* targetVertex */, shared_ptr<const Agent> /* agent */) const
 	{
 		return mForceBridge->extend() ? EdgeTraversalRequestResult::OK : EdgeTraversalRequestResult::Failed;
 	}

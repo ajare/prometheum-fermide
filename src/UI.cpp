@@ -6,10 +6,14 @@
 #include <optional>
 #include <set>
 
+#ifdef _MSC_VER
 #pragma warning(push)
 #pragma warning(disable: 4307)
+#endif
 #include <spdlog/spdlog.h>
+#ifdef _MSC_VER
 #pragma warning(pop)
+#endif
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/sinks/basic_file_sink.h>
 
@@ -19,7 +23,13 @@
 #include "imgui/imgui_internal.h"
 #include "imgui/IconsFontAwesome5.h"
 
+#if defined(_WIN32)
 #include <nfd/nfd.h>
+#elif defined(__linux__)
+#include <nfd.h>
+#else
+#error "Unsupported platform"
+#endif
 
 #include "core/Vector2.h"
 #include "core/Button.h"
@@ -1720,7 +1730,7 @@ void handleWorldInteraction(shared_ptr<core::Building> building,
 	}
 }
 
-void handleContinuousKeyboardInput(std::shared_ptr<core::Building> building, uint64_t updateTimeMicros)
+void handleContinuousKeyboardInput(std::shared_ptr<core::Building> /* building */, uint64_t updateTimeMicros)
 {
 	const float MoveSpeed{ 500.0f };
 
@@ -1733,7 +1743,7 @@ void handleContinuousKeyboardInput(std::shared_ptr<core::Building> building, uin
 
 	float frameTime = updateTimeMicros / 1000000.0f;
 
-	float moveSpeed = MoveSpeed * frameTime * (io.KeyShift ? 4.0f : 1.0f);
+	[[maybe_unused]] float moveSpeed = MoveSpeed * frameTime * (io.KeyShift ? 4.0f : 1.0f);
 
 	if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_RightArrow))
 	{
@@ -1831,7 +1841,7 @@ namespace imgui
 		draw_list->AddCircleFilled(ImVec2(p.x + radius + t * (width - radius * 2.0f), p.y + radius), radius - 1.5f, IM_COL32(255, 255, 255, 255));
 
 		ImGui::SameLine();
-		ImGui::Text(title);
+		ImGui::TextUnformatted(title);
 
 		return clicked;
 	}
@@ -2112,7 +2122,7 @@ void renderStatusBar(shared_ptr<const core::Building> building)
 			auto mousePos = getMouseWorldPosition();
 			string mouseData = format("{:.1f}, {:.1f}", mousePos.x, mousePos.y);
 
-			ImGui::Text(mouseData.c_str());
+			ImGui::TextUnformatted(mouseData.c_str());
 
 			if (gHoveredAgent)
 			{
@@ -2121,7 +2131,7 @@ void renderStatusBar(shared_ptr<const core::Building> building)
 
 				string objectData = format("{}", gHoveredAgent->getDescription());
 
-				ImGui::Text(objectData.c_str());
+				ImGui::TextUnformatted(objectData.c_str());
 			}
 			else if (gHoveredSectorObject)
 			{
@@ -2136,7 +2146,7 @@ void renderStatusBar(shared_ptr<const core::Building> building)
 
 				string objectData = format("{}", gHoveredVertex->getDescription());
 
-				ImGui::Text(objectData.c_str());
+				ImGui::TextUnformatted(objectData.c_str());
 			}
 
 			// Keep status information on the left and the world scroll slider after it.
@@ -2424,10 +2434,10 @@ void renderLiftPanel(shared_ptr<const core::Lift> lift)
 			ImGui::TableNextRow();
 
 			ImGui::TableSetColumnIndex(0);
-			ImGui::Text(key.c_str());
+			ImGui::TextUnformatted(key.c_str());
 
 			ImGui::TableSetColumnIndex(1);
-			ImGui::Text(value.c_str());
+			ImGui::TextUnformatted(value.c_str());
 		}
 
 		ImGui::EndTable();
@@ -2460,10 +2470,10 @@ void renderShuttlePanel(shared_ptr<const core::Shuttle> shuttle)
 			ImGui::TableNextRow();
 
 			ImGui::TableSetColumnIndex(0);
-			ImGui::Text(key.c_str());
+			ImGui::TextUnformatted(key.c_str());
 
 			ImGui::TableSetColumnIndex(1);
-			ImGui::Text(value.c_str());
+			ImGui::TextUnformatted(value.c_str());
 		}
 
 		ImGui::EndTable();
@@ -2524,7 +2534,7 @@ void renderAgentView(shared_ptr<const core::Building> building)
 
 					// Sector
 					ImGui::TableSetColumnIndex(1);
-					ImGui::Text(sector->getDescription().c_str());
+					ImGui::TextUnformatted(sector->getDescription().c_str());
 
 					// State
 					ImGui::TableSetColumnIndex(2);
@@ -2563,11 +2573,11 @@ void renderAgentView(shared_ptr<const core::Building> building)
 					
 					if (path)
 					{
-						ImGui::Text("%d/%d vertices", agent->getPathTargetNodeIndex(), path->nodes.size());
+						ImGui::Text("%u/%zu vertices", agent->getPathTargetNodeIndex(), path->nodes.size());
 					}
 					else
 					{
-						ImGui::Text("");
+						ImGui::TextUnformatted("");
 					}
 
 					ImGui::PopID();
@@ -2621,7 +2631,7 @@ void renderObjectView(shared_ptr<const core::Building> building)
 					thisNodeFlags |= (ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen);
 				}
 
-				bool nodeOpen = ImGui::TreeNodeEx((void*)(intptr_t)sector.get(), thisNodeFlags, text.c_str());
+				bool nodeOpen = ImGui::TreeNodeEx((void*)(intptr_t)sector.get(), thisNodeFlags, "%s", text.c_str());
 
 				if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
 				{
@@ -2648,7 +2658,7 @@ void renderObjectView(shared_ptr<const core::Building> building)
 						}
 
 						auto objectText = object->getDescription();
-						ImGui::TreeNodeEx((void*)(intptr_t)object.get(), thisNodeFlags, objectText.c_str());
+						ImGui::TreeNodeEx((void*)(intptr_t)object.get(), thisNodeFlags, "%s", objectText.c_str());
 
 						if (ImGui::IsItemClicked())
 						{
@@ -2690,6 +2700,9 @@ void renderSelectedObjectPanel(shared_ptr<core::Building> const& building)
 		case core::SectorType::Shuttle:
 			renderShuttlePanel(static_pointer_cast<const core::ShuttleTransit>(gSelectedSector)->getShuttle());
 			break;
+
+		default:
+			break;
 		}
 	}
 	else
@@ -2722,6 +2735,9 @@ void renderSelectedObjectPanel(shared_ptr<core::Building> const& building)
 
 		case core::SectorObjectType::Window:
 			renderWindowPanel(gSelectedSectorObject);
+			break;
+
+		default:
 			break;
 		}
 	}
@@ -2839,19 +2855,19 @@ void renderGraphPanel(shared_ptr<const core::Graph> graph)
 					ImGui::TableNextRow();
 
 					ImGui::TableSetColumnIndex(0);
-					ImGui::Text(edge->getDescription().c_str());
+					ImGui::TextUnformatted(edge->getDescription().c_str());
 
 					ImGui::TableSetColumnIndex(1);
-					ImGui::Text(edge->getVertex(0)->getDescription().c_str());
+					ImGui::TextUnformatted(edge->getVertex(0)->getDescription().c_str());
 
 					ImGui::TableSetColumnIndex(2);
-					ImGui::Text(edge->getVertex(0)->getSpec().c_str());
+					ImGui::TextUnformatted(edge->getVertex(0)->getSpec().c_str());
 
 					ImGui::TableSetColumnIndex(3);
-					ImGui::Text(edge->getVertex(1)->getDescription().c_str());
+					ImGui::TextUnformatted(edge->getVertex(1)->getDescription().c_str());
 
 					ImGui::TableSetColumnIndex(4);
-					ImGui::Text(edge->getVertex(1)->getSpec().c_str());
+					ImGui::TextUnformatted(edge->getVertex(1)->getSpec().c_str());
 				}
 
 				ImGui::EndTable();
@@ -2860,13 +2876,13 @@ void renderGraphPanel(shared_ptr<const core::Graph> graph)
 }
 
 
-void renderPathingPanel(shared_ptr<const core::Agent> agent)
+void renderPathingPanel(shared_ptr<const core::Agent> /* agent */)
 {
 		string selectedVertexText = format("Selected vertex: {}", gSelectedVertex ? gSelectedVertex->getDescription() : "<none>");
 		string hoveredVertexText = format("Hovered vertex: {}", gHoveredVertex ? gHoveredVertex->getDescription() : "<none>");
 
-		ImGui::Text(selectedVertexText.c_str());
-		ImGui::Text(hoveredVertexText.c_str());
+		ImGui::TextUnformatted(selectedVertexText.c_str());
+		ImGui::TextUnformatted(hoveredVertexText.c_str());
 
 		shared_ptr<core::Path> path = gSelectedAgent ? gSelectedAgent->getPath() : nullptr;
 
@@ -2947,23 +2963,23 @@ void renderPathingPanel(shared_ptr<const core::Agent> agent)
 
 					// Edge
 					ImGui::TableSetColumnIndex(0);
-					ImGui::Text(edgeText.c_str(), 0, curRow);
+					ImGui::TextUnformatted(edgeText.c_str());
 
 					// Target Vertex
 					ImGui::TableSetColumnIndex(1);
-					ImGui::Text(pathVertexText.c_str(), 1, curRow);
+					ImGui::TextUnformatted(pathVertexText.c_str());
 
 					// Vertex Action
 					ImGui::TableSetColumnIndex(2);
-					ImGui::Text(vertexActionText.c_str(), 1, curRow);
+					ImGui::TextUnformatted(vertexActionText.c_str());
 
 					// Edge weight
 					ImGui::TableSetColumnIndex(3);
-					ImGui::Text(curWeightText.c_str(), 2, curRow);
+					ImGui::TextUnformatted(curWeightText.c_str());
 
 					// Cumulative weight
 					ImGui::TableSetColumnIndex(4);
-					ImGui::Text(totalWeightText.c_str(), 3, curRow);
+					ImGui::TextUnformatted(totalWeightText.c_str());
 
 					curRow++;
 				}
@@ -3057,13 +3073,13 @@ void renderLogPanel()
 
 				ImGui::TableSetColumnIndex(0);
 
-				if (msg.sourceId == ~0)
+				if (msg.sourceId == ~0u)
 				{
 					ImGui::TextColored(textColour, "--");
 				}
 				else
 				{
-					ImGui::TextColored(textColour, to_string(msg.sourceId).c_str());
+					ImGui::TextColored(textColour, "%s", to_string(msg.sourceId).c_str());
 				}
 
 				ImGui::TableSetColumnIndex(1);

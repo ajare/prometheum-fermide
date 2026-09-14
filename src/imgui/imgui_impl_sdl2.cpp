@@ -79,8 +79,15 @@
 #endif
 
 // SDL
+#if defined(_WIN32)
 #include <SDL/SDL.h>
 #include <SDL/SDL_syswm.h>
+#elif defined(__linux__)
+#include <SDL.h>
+#include <SDL_syswm.h>
+#else
+#error "Unsupported platform"
+#endif
 #if defined(__APPLE__)
 #include <TargetConditionals.h>
 #endif

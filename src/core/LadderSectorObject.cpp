@@ -54,7 +54,7 @@ namespace core
 	- edgeCreator is actually a shared_ptr to this LadderSectorObject instance.  While this is awkward, it lets us
 	  capture the shared_ptr rather than the raw one, within the Edge.
 	*/
-	shared_ptr<Edge> LadderSectorObject::createCrossDeckEdge(shared_ptr<VerticalEdgeCreator> edgeCreator) const
+	shared_ptr<Edge> LadderSectorObject::createCrossDeckEdge([[maybe_unused]] shared_ptr<VerticalEdgeCreator> edgeCreator) const
 	{
 		ASSERT_PTR_EQ_THIS(edgeCreator);
 

@@ -351,7 +351,7 @@ namespace core
 		return reachedPos;
 	}
 
-	int Agent::chooseVertexOffset(int dim, pair<float, uint32_t> const* offsets, uint32_t numOffsets)
+	int Agent::chooseVertexOffset(int /* dim */, pair<float, uint32_t> const* offsets, uint32_t /* numOffsets */)
 	{
 		int chosen = 0;
 

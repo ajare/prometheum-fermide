@@ -1,27 +1,52 @@
 #define NOMINMAX
 
+#if defined(_WIN32)
 #include <Windows.h>
+#include <glew/glew.h>
+#include <nfd/nfd.h>
+#elif defined(__linux__)
+#include <GL/glew.h>
+#include <nfd.h>
+#include <unistd.h>
+#include <array>
+#include <chrono>
+#include <stdexcept>
+#else
+#error "Unsupported platform"
+#endif
 
 #include <filesystem>
 #include <fstream>
 
-#include <glew/glew.h>
-#include <nfd/nfd.h>
-
+#ifdef _MSC_VER
 #pragma warning(push)
 #pragma warning(disable: 4307)
+#endif
 #include <spdlog/spdlog.h>
+#ifdef _MSC_VER
 #pragma warning(pop)
+#endif
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/sinks/basic_file_sink.h>
 #include <spdlog/sinks/callback_sink.h>
 #include <spdlog/details/log_msg_buffer.h>
 
+#if defined(_WIN32)
 #include <SDL/SDL.h>
 #if defined(IMGUI_IMPL_OPENGL_ES2)
 #include <SDL/SDL_opengles2.h>
 #else
 #include <SDL/SDL_opengl.h>
+#endif
+#elif defined(__linux__)
+#include <SDL.h>
+#if defined(IMGUI_IMPL_OPENGL_ES2)
+#include <SDL_opengles2.h>
+#else
+#include <SDL_opengl.h>
+#endif
+#else
+#error "Unsupported platform"
 #endif
 
 #include "imgui/imgui.h"
@@ -69,6 +94,7 @@ namespace
 
 	filesystem::path executableDirectory()
 	{
+#if defined(_WIN32)
 		wstring executablePath(MAX_PATH, L'\0');
 		auto const length = GetModuleFileNameW(nullptr, executablePath.data(), static_cast<DWORD>(executablePath.size()));
 		if (length == 0 || length == executablePath.size())
@@ -77,6 +103,17 @@ namespace
 		}
 		executablePath.resize(length);
 		return filesystem::path(executablePath).parent_path();
+#elif defined(__linux__)
+		array<char, 4096> executablePath{};
+		auto const length = readlink("/proc/self/exe", executablePath.data(), executablePath.size() - 1);
+		if (length <= 0 || static_cast<size_t>(length) >= executablePath.size() - 1)
+		{
+			throw ExitApplicationException(1, "Could not determine the executable directory.");
+		}
+		return filesystem::path(string(executablePath.data(), static_cast<size_t>(length))).parent_path();
+#else
+#error "Unsupported platform"
+#endif
 	}
 
 	filesystem::path loadResourceDirectory()
@@ -281,7 +318,13 @@ void initialise()
 	glewExperimental = GL_TRUE;
 	if (glewInit() != GLEW_OK)
 	{
+#if defined(_WIN32)
 		throw exception("GLEW initialisation failed");
+#elif defined(__linux__)
+		throw runtime_error("GLEW initialisation failed");
+#else
+#error "Unsupported platform"
+#endif
 	}
 
 	//
@@ -406,9 +449,9 @@ std::shared_ptr<core::Building> createTestBuilding()
 		// 
 
 		// First corridor
-		auto reactorCorr1 = building->addCorridor(ReactorDeck, 1, 8);
+		building->addCorridor(ReactorDeck, 1, 8);
 		
-		auto pumpRoomIndex = building->addRoom("Pump Room", CORE_LAYER_BACK, ReactorDeck, 0, 4, 1);
+		building->addRoom("Pump Room", CORE_LAYER_BACK, ReactorDeck, 0, 4, 1);
 		
 		//building->addSectorLightSwitch(pumpRoomIndex, 0);
 
@@ -644,29 +687,40 @@ void run()
 
 	// Render settings
 	ImVec4 clearColour = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
-	ImGuiIO& io = ImGui::GetIO();
 
 	//
 	// Main loop
 	//
-	LARGE_INTEGER StartingTime, EndingTime, ElapsedMicroseconds;
-	LARGE_INTEGER Frequency;
-
-	QueryPerformanceFrequency(&Frequency);
-	QueryPerformanceCounter(&StartingTime);
+#if defined(_WIN32)
+	LARGE_INTEGER startingTime, endingTime, elapsedMicroseconds;
+	LARGE_INTEGER frequency;
+	QueryPerformanceFrequency(&frequency);
+	QueryPerformanceCounter(&startingTime);
+#elif defined(__linux__)
+	auto previousTime = chrono::steady_clock::now();
+#else
+#error "Unsupported platform"
+#endif
 
 	bool done = false, showDemoWindow = false;
 	while (!done)
 	{
 		// Get elapsed time
-		QueryPerformanceCounter(&EndingTime);
-		ElapsedMicroseconds.QuadPart = EndingTime.QuadPart - StartingTime.QuadPart;
-		ElapsedMicroseconds.QuadPart *= 1000000;
-		ElapsedMicroseconds.QuadPart /= Frequency.QuadPart;
-
-		StartingTime = EndingTime;
-
-		auto updateTimeMicros = ElapsedMicroseconds.QuadPart;
+#if defined(_WIN32)
+		QueryPerformanceCounter(&endingTime);
+		elapsedMicroseconds.QuadPart = endingTime.QuadPart - startingTime.QuadPart;
+		elapsedMicroseconds.QuadPart *= 1000000;
+		elapsedMicroseconds.QuadPart /= frequency.QuadPart;
+		startingTime = endingTime;
+		auto const updateTimeMicros = elapsedMicroseconds.QuadPart;
+#elif defined(__linux__)
+		auto const currentTime = chrono::steady_clock::now();
+		auto const updateTimeMicros = chrono::duration_cast<chrono::microseconds>(
+			currentTime - previousTime).count();
+		previousTime = currentTime;
+#else
+#error "Unsupported platform"
+#endif
 
 		// Events
 		done = processEvents(gWindow);
@@ -729,7 +783,7 @@ void run()
 
 void outputToDebugger(std::string const& msg)
 {
-#ifdef _DEBUG
+#if defined(_DEBUG) && defined(_WIN32)
 	char const* msgc = msg.c_str();
 
 	size_t reqLength = ::MultiByteToWideChar(CP_UTF8, 0, msgc, (int)strlen(msgc), 0, 0);
@@ -737,6 +791,8 @@ void outputToDebugger(std::string const& msg)
 
 	::MultiByteToWideChar(CP_UTF8, 0, msgc, (int)strlen(msgc), &ret[0], (int)ret.length());
 	OutputDebugString(ret.c_str());
+#else
+	(void)msg;
 #endif
 }
 

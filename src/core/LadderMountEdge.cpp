@@ -49,19 +49,19 @@ namespace core
 		return format("LadderMount edge for {}", mLadder->getDescription());
 	}
 
-	bool LadderMountEdge::isTraversable(shared_ptr<const Vertex> targetVertex, shared_ptr<const Agent> agent) const
+	bool LadderMountEdge::isTraversable(shared_ptr<const Vertex> /* targetVertex */, shared_ptr<const Agent> /* agent */) const
 	{
 		// TODO: see if any Agents are on the Ladder
 
 		return true;
 	}
 
-	EdgeTraversalRequestResult LadderMountEdge::requestTraversal(shared_ptr<const Vertex> targetVertex, shared_ptr<const Agent> agent) const
+	EdgeTraversalRequestResult LadderMountEdge::requestTraversal(shared_ptr<const Vertex> /* targetVertex */, shared_ptr<const Agent> /* agent */) const
 	{
 		return EdgeTraversalRequestResult::OK;
 	}
 
-	float LadderMountEdge::getWeight(shared_ptr<const Vertex> targetVertex, Agent const* agent, bool edgeVisible) const
+	float LadderMountEdge::getWeight(shared_ptr<const Vertex> targetVertex, Agent const* /* agent */, bool /* edgeVisible */) const
 	{
 		if (!mLadder->isExtended())
 		{

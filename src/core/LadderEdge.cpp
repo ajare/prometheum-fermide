@@ -41,19 +41,19 @@ namespace core
 		return format("Ladder edge for {}", mLadder->getDescription());
 	}
 
-	bool LadderEdge::isTraversable(shared_ptr<const Vertex> targetVertex, shared_ptr<const Agent> agent) const
+	bool LadderEdge::isTraversable(shared_ptr<const Vertex> /* targetVertex */, shared_ptr<const Agent> /* agent */) const
 	{
 		// TODO: this will depend on whether there are any Agents in the way.
 		return true;
 	}
 
-	EdgeTraversalRequestResult LadderEdge::requestTraversal(shared_ptr<const Vertex> targetVertex, shared_ptr<const Agent> agent) const
+	EdgeTraversalRequestResult LadderEdge::requestTraversal(shared_ptr<const Vertex> /* targetVertex */, shared_ptr<const Agent> /* agent */) const
 	{
 		// TODO: this will depend on whether there are any Agents in the way.
 		return EdgeTraversalRequestResult::OK;
 	}
 
-	float LadderEdge::getWeight(shared_ptr<const Vertex> targetVertex, Agent const* agent, bool edgeVisible) const
+	float LadderEdge::getWeight(shared_ptr<const Vertex> /* targetVertex */, Agent const* agent, bool edgeVisible) const
 	{
 		auto distance = getLength();
 		float traverseTime = distance == 0.0f ? 0.0f : distance / agent->getClimbSpeed();

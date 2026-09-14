@@ -1,12 +1,9 @@
 #pragma once
 
-#include <exception>
-#include <string>
 #include <format>
-
-#if _MSC_VER >= 1930
-#  include <source_location>
-#endif
+#include <source_location>
+#include <stdexcept>
+#include <string>
 
 #include "core/Building.h"
 
@@ -14,14 +11,14 @@
 namespace core
 {
 
-	class Exception : public std::exception
+	class Exception : public std::runtime_error
 	{
 		std::string mMessage;
 
 	public:
 
 		explicit Exception(std::string const& message)
-			: std::exception(message.c_str())
+			: std::runtime_error(message)
 			, mMessage(message)
 		{
 		}
@@ -37,17 +34,11 @@ namespace core
 	{
 	public:
 
-#if _MSC_VER < 1930
-		NotImplementedException()
-			: Exception("Not implemented yet.")
-		{
-		}
-#else
-		NotImplementedException(std::string const& message, std::source_location loc = std::source_location::current())
+		NotImplementedException(std::string const& message = "Not implemented yet.",
+			std::source_location loc = std::source_location::current())
 			: Exception(format("Function {} at {}:{} is not implemented yet: {}", loc.function_name(), loc.file_name(), loc.line(), message))
 		{
 		}
-#endif
 
 		NotImplementedException(std::string const& function, std::string const& message)
 			: Exception(function + ": " + message + " is not implemented yet.")
@@ -61,17 +52,11 @@ namespace core
 	{
 	public:
 
-#if _MSC_VER < 1930
-		UnhandledException()
-			: Exception("Unhandled case.")
-		{
-		}
-#else
-		UnhandledException(T value, std::string const& desc, std::source_location loc = std::source_location::current())
+		UnhandledException(T value, std::string const& desc,
+			std::source_location loc = std::source_location::current())
 			: Exception(format("Value {} for {} at {}:{} was either invalid or otherwise unexpected.", (int)value, desc, loc.file_name(), loc.line()))
 		{
 		}
-#endif
 	};
 
 	class BuildingException : public Exception

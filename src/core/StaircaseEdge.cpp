@@ -41,17 +41,17 @@ namespace core
 		return format("Staircase edge for {}", mStaircase->getDescription());
 	}
 
-	bool StaircaseEdge::isTraversable(shared_ptr<const Vertex> targetVertex, shared_ptr<const Agent> agent) const
+	bool StaircaseEdge::isTraversable(shared_ptr<const Vertex> /* targetVertex */, shared_ptr<const Agent> /* agent */) const
 	{
 		return true;
 	}
 
-	EdgeTraversalRequestResult StaircaseEdge::requestTraversal(shared_ptr<const Vertex> targetVertex, shared_ptr<const Agent> agent) const
+	EdgeTraversalRequestResult StaircaseEdge::requestTraversal(shared_ptr<const Vertex> /* targetVertex */, shared_ptr<const Agent> /* agent */) const
 	{
 		return EdgeTraversalRequestResult::OK;
 	}
 
-	float StaircaseEdge::getWeight(shared_ptr<const Vertex> targetVertex, Agent const* agent, bool edgeVisible) const
+	float StaircaseEdge::getWeight(shared_ptr<const Vertex> /* targetVertex */, Agent const* /* agent */, bool /* edgeVisible */) const
 	{
 		return CORE_GRAPH_EDGE_MIN_TRAVERSAL_TIME;
 	}

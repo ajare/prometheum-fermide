@@ -41,7 +41,7 @@ namespace core
 	- object is actually a shared_ptr to this ButtonSectorObject instance.  While this is awkward, it lets us
 	  capture the shared_ptr rather than the raw one, within the Vertex.
 	*/
-	shared_ptr<Vertex> ButtonSectorObject::createVertex(shared_ptr<SectorObject> object, shared_ptr<Sector> sector, void* user) const
+	shared_ptr<Vertex> ButtonSectorObject::createVertex(shared_ptr<SectorObject> object, shared_ptr<Sector> sector, void* /* user */) const
 	{
 		ASSERT_PTR_EQ_THIS(object);
 
@@ -50,20 +50,18 @@ namespace core
 		auto const& pos = button->getPosition();
 		auto const& size = button->getSize();
 
-		float xOffset, yOffset, height;
+		float xOffset, yOffset;
 
 		switch (mAnchorType)
 		{
 		case ButtonAnchorType::Ground:
 			xOffset = (button->getPosition().x - sector->getCellX()) + size.x * 0.5f;
 			yOffset = (float)(getCellY() - sector->getCellY());
-			height = CORE_BUTTON_Y_OFFSET + size.y;
 			break;
 
 		case ButtonAnchorType::UnAnchored:
 			xOffset = (pos.x - sector->getCellX()) + size.x * 0.5f;
 			yOffset = (pos.y - sector->getCellY()) + size.y * 0.5f;
-			height = size.y;
 			break;
 
 		default:

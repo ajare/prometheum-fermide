@@ -52,7 +52,7 @@ namespace core
 	- object is actually a shared_ptr to this MarkerSectorObject instance.  While this is awkward, it lets us
 	  capture the shared_ptr rather than the raw one, within the Vertex.
 	*/
-	shared_ptr<Vertex> MarkerSectorObject::createVertex(shared_ptr<SectorObject> object, shared_ptr<Sector> sector, void* user) const
+	shared_ptr<Vertex> MarkerSectorObject::createVertex(shared_ptr<SectorObject> object, shared_ptr<Sector> sector, void* /* user */) const
 	{
 		ASSERT_PTR_EQ_THIS(object);
 

@@ -1,6 +1,13 @@
 #define NOMINMAX
+#if defined(_WIN32)
 #include <Windows.h>
 #include <Psapi.h>
+#elif defined(__linux__)
+#include <unistd.h>
+#include <fstream>
+#else
+#error "Unsupported platform"
+#endif
 
 #include <algorithm>
 #include <bit>
@@ -24,7 +31,9 @@
 #include "core/Simulation.h"
 #include "core/Vector2.h"
 
+#ifdef _MSC_VER
 #pragma comment(lib, "Psapi.lib")
+#endif
 
 void runSerializationSmokeChecks();
 
@@ -2048,7 +2057,7 @@ namespace
 	{
 		core::Building building("Unavailable door", 6, 2);
 		auto fore = building.addRoom("Fore", CORE_LAYER_FORE, 0, 0, 5, 1);
-		auto back = building.addRoom("Back", CORE_LAYER_BACK, 0, 0, 5, 1);
+		building.addRoom("Back", CORE_LAYER_BACK, 0, 0, 5, 1);
 		core::Building::CreateDoorOptions options;
 		options.activationMode = core::DoorActivationMode::Unavailable;
 		building.addSectorDoor(0, 2, options);
@@ -2143,11 +2152,22 @@ namespace
 
 	size_t currentWorkingSetBytes()
 	{
+#if defined(_WIN32)
 		PROCESS_MEMORY_COUNTERS_EX counters{};
 		counters.cb = sizeof(counters);
 		return GetProcessMemoryInfo(GetCurrentProcess(),
 			reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&counters), sizeof(counters))
 			? counters.WorkingSetSize : 0;
+#elif defined(__linux__)
+		long totalPages = 0;
+		long residentPages = 0;
+		std::ifstream statm("/proc/self/statm");
+		if (!(statm >> totalPages >> residentPages)) return 0;
+		auto const pageSize = sysconf(_SC_PAGESIZE);
+		return pageSize > 0 ? static_cast<size_t>(residentPages) * static_cast<size_t>(pageSize) : 0;
+#else
+#error "Unsupported platform"
+#endif
 	}
 
 	ScaleObservation runScaledWorld(uint32_t agentCount, uint64_t ticks)

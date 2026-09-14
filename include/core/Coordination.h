@@ -84,7 +84,7 @@ namespace core
 		DeviceCommandType type{ DeviceCommandType::SetSectorLights };
 		SectorId target;
 		bool desiredState{ false };
-		TraversalResourceId traversalResource;
+		TraversalResourceId traversalResource{};
 		uint32_t stopIndex{ ~0u };
 
 		friend bool operator==(DeviceCommand const&, DeviceCommand const&) = default;

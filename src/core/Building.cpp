@@ -1951,6 +1951,11 @@ namespace core
 		return true;
 	}
 
+	Building::CreateDoorResult Building::addSectorDoor(uint32_t y, uint32_t x)
+	{
+		return addSectorDoor(y, x, CreateDoorOptions{});
+	}
+
 	Building::CreateDoorResult Building::addSectorDoor(uint32_t y, uint32_t x, CreateDoorOptions const& options)
 	{
 		beginStructuralEdit("addSectorDoor");
@@ -2322,6 +2327,12 @@ namespace core
 		return { { windowIndex, windowObjType, windowSector }, window, traversalResource };
 	}
 
+	Building::CreateBulkheadDoorResult Building::addSectorBulkheadDoor(uint32_t layerIndex, uint32_t y,
+		uint32_t x, int side)
+	{
+		return addSectorBulkheadDoor(layerIndex, y, x, side, CreateBulkheadDoorOptions{});
+	}
+
 	Building::CreateBulkheadDoorResult Building::addSectorBulkheadDoor(uint32_t layerIndex, uint32_t y, uint32_t x,
 		int side, CreateBulkheadDoorOptions const& options)
 	{
@@ -2572,6 +2583,12 @@ namespace core
 		return true;
 	}
 
+	Building::CreateForceBridgeResult Building::addSectorForceBridge(uint32_t sectorIndex,
+		uint32_t deckIndex, uint32_t xOffset)
+	{
+		return addSectorForceBridge(sectorIndex, deckIndex, xOffset, CreateForceBridgeOptions{});
+	}
+
 	Building::CreateForceBridgeResult Building::addSectorForceBridge(uint32_t sectorIndex, uint32_t deckIndex, uint32_t xOffset, CreateForceBridgeOptions const& options)
 	{
 		beginStructuralEdit("addSectorForceBridge");
@@ -2716,8 +2733,6 @@ namespace core
 
 		// Create
 		auto layer = getLayer(layerIndex);
-		auto const& cellDef0 = layer->getCellDefinition(x, y0);
-		auto const& cellDef1 = layer->getCellDefinition(x, y1);
 
 		auto ladderObject = createLadderSectorObject(layerIndex, x, y, options);
 		auto ladder = dynamic_pointer_cast<LadderSectorObject>(

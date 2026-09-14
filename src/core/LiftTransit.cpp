@@ -55,7 +55,7 @@ namespace core
 			|| type == SectorObjectType::Window;
 	}
 
-	shared_ptr<Edge> LiftTransit::createCrossDeckEdge(shared_ptr<VerticalEdgeCreator> edgeCreator) const
+	shared_ptr<Edge> LiftTransit::createCrossDeckEdge([[maybe_unused]] shared_ptr<VerticalEdgeCreator> edgeCreator) const
 	{
 		ASSERT_PTR_EQ_THIS(edgeCreator);
 

@@ -41,17 +41,17 @@ namespace core
 		return format("Shuttle edge for {}", mShuttle->getDescription());
 	}
 
-	bool ShuttleEdge::isTraversable(shared_ptr<const Vertex> targetVertex, shared_ptr<const Agent> agent) const
+	bool ShuttleEdge::isTraversable(shared_ptr<const Vertex> /* targetVertex */, shared_ptr<const Agent> /* agent */) const
 	{
 		return true;
 	}
 
-	EdgeTraversalRequestResult ShuttleEdge::requestTraversal(shared_ptr<const Vertex> targetVertex, shared_ptr<const Agent> agent) const
+	EdgeTraversalRequestResult ShuttleEdge::requestTraversal(shared_ptr<const Vertex> /* targetVertex */, shared_ptr<const Agent> /* agent */) const
 	{
 		return EdgeTraversalRequestResult::OK;
 	}
 
-	float ShuttleEdge::getWeight(shared_ptr<const Vertex> targetVertex, Agent const* agent, bool edgeVisible) const
+	float ShuttleEdge::getWeight(shared_ptr<const Vertex> targetVertex, Agent const* agent, bool /* edgeVisible */) const
 	{
 		auto resource = getTraversalResourceId();
 		return CORE_GRAPH_EDGE_MIN_TRAVERSAL_TIME

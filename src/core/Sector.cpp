@@ -172,7 +172,7 @@ namespace core
 		return nullptr;
 	}
 
-	SectorPosition Sector::findFreeAgentPosition(Agent const* agent) const
+	SectorPosition Sector::findFreeAgentPosition(Agent const* /* agent */) const
 	{
 		// For now just place in random cell on first level
 		float x = (rand() % getCellsWide()) + 0.5f;
@@ -194,7 +194,7 @@ namespace core
 
 	void Sector::addDoor(shared_ptr<DoorSectorObject> door)
 	{
-		auto x = door->getCellX();
+		[[maybe_unused]] auto x = door->getCellX();
 
 		assert(x >= getCellX0() && x <= getCellX1());
 
@@ -215,7 +215,7 @@ namespace core
 
 	uint32_t Sector::addWindow(shared_ptr<WindowSectorObject> window)
 	{
-		auto x = window->getCellX();
+		[[maybe_unused]] auto x = window->getCellX();
 
 		assert(x >= getCellX0() && x <= getCellX1());
 
@@ -361,7 +361,7 @@ namespace core
 	{
 		agent->setPosition(pos);
 
-		auto inserted = mAgents.insert(agent);
+		[[maybe_unused]] auto inserted = mAgents.insert(agent);
 		assert(inserted.second && "Agent already in Sector!");
 	}
 
@@ -397,7 +397,7 @@ namespace core
 
 	shared_ptr<Edge> Sector::exitAgent(Agent* agent)
 	{
-		auto erased = mAgents.erase(agent);
+		[[maybe_unused]] auto erased = mAgents.erase(agent);
 		assert(erased == 1 && "Agent not found in Sector!");
 
 		return {};

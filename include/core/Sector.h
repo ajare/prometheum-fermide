@@ -99,7 +99,7 @@ namespace core
 		void advanceResources(float frameTime);
 
 		// This is designed to be subclassed if required.
-		virtual void updateImpl(float frameTime) {}
+		virtual void updateImpl(float /* frameTime */) {}
 
 	protected:
 

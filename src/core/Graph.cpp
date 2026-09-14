@@ -470,7 +470,7 @@ namespace core
 		workVertices.push_back(vertex);
 	}
 
-	void Graph::processBulkheadDoor(ObjectData const& obj, PositionVertexMap& interLayerVertexLookup, VertexList& workVertices)
+	void Graph::processBulkheadDoor(ObjectData const& obj, PositionVertexMap& /* interLayerVertexLookup */, VertexList& workVertices)
 	{
 		ASSERT_INDEX_OK(obj.index);
 
@@ -491,12 +491,12 @@ namespace core
 		}
 	}
 
-	void Graph::processWalkway(ObjectData const& obj, PositionVertexMap& interLayerVertexLookup, VertexList& workVertices)
+	void Graph::processWalkway(ObjectData const& /* obj */, PositionVertexMap& /* interLayerVertexLookup */, VertexList& /* workVertices */)
 	{
 		// Nothing to do here currently.  We don't place vertices down.
 	}
 
-	void Graph::processForceBridge(ObjectData const& obj, PositionVertexMap& interLayerVertexLookup, VertexList& workVertices)
+	void Graph::processForceBridge(ObjectData const& obj, PositionVertexMap& /* interLayerVertexLookup */, VertexList& workVertices)
 	{
 		ASSERT_INDEX_OK(obj.index);
 
@@ -518,7 +518,7 @@ namespace core
 		addEdge(make_shared<ForceBridgeEdge>(sectorObject->getForceBridge()), left, right, false);
 	}
 
-	void Graph::processLadderObject(ObjectData const& obj, PositionVertexMap& interLayerVertexLookup, VertexList& workVertices, map<shared_ptr<VerticalEdgeCreator>, VertexList>& crossDeckVertices, int level)
+	void Graph::processLadderObject(ObjectData const& obj, PositionVertexMap& /* interLayerVertexLookup */, VertexList& workVertices, map<shared_ptr<VerticalEdgeCreator>, VertexList>& crossDeckVertices, int level)
 	{
 		ASSERT_INDEX_OK(obj.index);
 
@@ -556,7 +556,7 @@ namespace core
 		addCrossDeckVertex(ladderObject, ladderVertex, crossDeckVertices);
 	}
 
-	void Graph::processLiftObject(ObjectData const& obj, PositionVertexMap& interLayerVertexLookup, VertexList& workVertices, map<shared_ptr<VerticalEdgeCreator>, VertexList>& crossDeckVertices, uint32_t stopOffset)
+	void Graph::processLiftObject(ObjectData const& obj, PositionVertexMap& /* interLayerVertexLookup */, VertexList& workVertices, map<shared_ptr<VerticalEdgeCreator>, VertexList>& crossDeckVertices, uint32_t stopOffset)
 	{
 		ASSERT_INDEX_OK(obj.index);
 
@@ -807,7 +807,7 @@ namespace core
 		return true;
 	}
 
-	bool Graph::doVerticesCrossSector(uint32_t prevIndex, uint32_t nextIndex, int layerIndex, uint32_t nextX, uint32_t y) const
+	bool Graph::doVerticesCrossSector(uint32_t prevIndex, uint32_t nextIndex, int /* layerIndex */, uint32_t /* nextX */, uint32_t y) const
 	{
 		if (prevIndex == nextIndex)
 		{
