@@ -81,7 +81,7 @@ namespace
 
 	filesystem::path loadResourceDirectory()
 	{
-		auto const configurationPath = executableDirectory() / "imgui.ini";
+		auto const configurationPath = executableDirectory() / "prometheum-fermide.ini";
 		ifstream configuration(configurationPath);
 		if (!configuration)
 		{

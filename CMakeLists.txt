@@ -105,8 +105,8 @@ add_custom_command(TARGET imgui POST_BUILD
         "${CMAKE_CURRENT_SOURCE_DIR}/vendor/bin/x64/$<CONFIG>"
         "$<TARGET_FILE_DIR:imgui>"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${CMAKE_CURRENT_SOURCE_DIR}/resources/imgui.ini"
-        "$<TARGET_FILE_DIR:imgui>/imgui.ini"
+        "${CMAKE_CURRENT_SOURCE_DIR}/resources/prometheum-fermide.ini"
+        "$<TARGET_FILE_DIR:imgui>/prometheum-fermide.ini"
     COMMENT "Copying runtime libraries and ImGui configuration"
 )
 
