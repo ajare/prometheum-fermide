@@ -276,6 +276,22 @@ namespace
 		require(remove.valid, "Valid Location deletion was rejected");
 		building.applyLocationEdit(remove);
 		require(building.getNumSectors() == 0, "Deleted Location was retained");
+
+		core::Building fullWidthBuilding("Full width", 16, 2);
+		auto createdFullWidth = fullWidthBuilding.addCorridor(0, 0, 16);
+		require(fullWidthBuilding.getSector(createdFullWidth)->getCellX1() == 15,
+			"Location creation did not include the final world column");
+
+		core::Building boundaryBuilding("Boundary", 16, 2);
+		auto boundaryCorridor = boundaryBuilding.addCorridor(0, 0, 15);
+		boundaryBuilding.finishBuild();
+		auto boundaryResize = boundaryBuilding.planResizeLocation(boundaryCorridor, 0, 0, 16, 1);
+		require(boundaryResize.valid,
+			"Location could not be resized through the final world column");
+		boundaryBuilding.pauseSimulation();
+		auto fullWidthCorridor = boundaryBuilding.applyLocationEdit(boundaryResize);
+		require(boundaryBuilding.getSector(fullWidthCorridor)->getCellX1() == 15,
+			"Location resize did not include the final world column");
 	}
 
 	float controlCenterX(core::Building::CreateObjectResult const& control)

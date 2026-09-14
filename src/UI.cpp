@@ -4118,16 +4118,16 @@ namespace
 				gSectorResize.lift ? max(0, right - 2) : 0, right - 1); break;
 		case ResizeEdge::Right:
 			moving = &right; desired = clamp(right + deltaX, left + 1,
-				gSectorResize.lift ? min(left + 2, (int)building->getCellsWide() - 1)
-					: (int)building->getCellsWide() - 1); break;
+				gSectorResize.lift ? min(left + 2, (int)building->getCellsWide())
+					: (int)building->getCellsWide()); break;
 		case ResizeEdge::Bottom: moving = &bottom; desired = clamp(bottom + deltaY, 0, top - 1); break;
-		case ResizeEdge::Top: moving = &top; desired = clamp(top + deltaY, bottom + 1, (int)building->getDecksHigh() - 1); break;
+		case ResizeEdge::Top: moving = &top; desired = clamp(top + deltaY, bottom + 1, (int)building->getDecksHigh()); break;
 		case ResizeEdge::Move:
 		{
 			int width = right - left;
 			int height = top - bottom;
-			left = clamp(left + deltaX, 0, (int)building->getCellsWide() - width - 1);
-			bottom = clamp(bottom + deltaY, 0, (int)building->getDecksHigh() - height - 1);
+			left = clamp(left + deltaX, 0, (int)building->getCellsWide() - width);
+			bottom = clamp(bottom + deltaY, 0, (int)building->getDecksHigh() - height);
 			right = left + width;
 			top = bottom + height;
 			if ((deltaX != 0 || deltaY != 0) && !gSectorResize.lift
@@ -4332,9 +4332,14 @@ void renderWorldWindow(shared_ptr<core::Building> building, shared_ptr<const cor
 
 	ImDrawList* drawList = ImGui::GetWindowDrawList();
 	drawList->PushClipRect(canvasPos, canvasPos + canvasSize, true);
+
+	// Keep world geometry and editor overlays inside the dimensions declared by
+	// the building. The canvas can be larger than the world when docked or resized.
+	auto worldTopLeft = worldToScreen({ 0.0f, (float)building->getDecksHigh() });
+	auto worldBottomRight = worldToScreen({ (float)building->getCellsWide(), 0.0f });
+	drawList->PushClipRect(worldTopLeft, worldBottomRight, true);
 	renderBuilding(building);
 	renderGraph(graph, building);
-	renderObjectPalette(building, canvasPos, canvasSize, drawList);
 	drawSectorEditOverlay(drawList);
 	if (gObjectMove.dragging)
 	{
@@ -4349,6 +4354,10 @@ void renderWorldWindow(shared_ptr<core::Building> building, shared_ptr<const cor
 		drawList->AddRect(topLeft, bottomRight, colour, 0.0f, 0, 2.0f);
 		if (!plan.valid && !plan.diagnostic.empty()) ImGui::SetTooltip("%s", plan.diagnostic.c_str());
 	}
+	drawList->PopClipRect();
+
+	// The palette is editor chrome, so it remains available across the canvas.
+	renderObjectPalette(building, canvasPos, canvasSize, drawList);
 	drawList->PopClipRect();
 
 	ImGui::End();

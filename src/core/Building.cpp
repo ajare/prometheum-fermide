@@ -287,7 +287,7 @@ namespace core
 			throw BuildingException(this, format("{} - x={} is out of bounds", caller, x));
 		}
 
-		if ((x + cellsWide) >= mCellsWide)
+		if (cellsWide > mCellsWide - x)
 		{
 			throw BuildingException(this, format("{} - cellsWide={} is out of bounds", caller, cellsWide));
 		}
@@ -297,7 +297,7 @@ namespace core
 			throw BuildingException(this, format("{} - y={} is out of bounds", caller, y));
 		}
 
-		if ((y + decksHigh) >= mDecksHigh)
+		if (decksHigh > mDecksHigh - y)
 		{
 			throw BuildingException(this, format("{} - decksHigh={} is out of bounds", caller, decksHigh));
 		}

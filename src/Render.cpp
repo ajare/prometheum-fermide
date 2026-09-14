@@ -278,36 +278,27 @@ void renderSelectedQueues(shared_ptr<const core::Building> const& building, int 
 	}
 }
 
-void renderGrid(ImColor const& colour, float width, ImDrawList* drawList)
+void renderGrid(shared_ptr<const core::Building> const& building, ImColor const& colour,
+	float width, ImDrawList* drawList)
 {
-	core::Vector2 gridOffset;
+	core::Vector2 topLeft{ 0.0f, (float)building->getDecksHigh() };
+	core::Vector2 bottomRight{ (float)building->getCellsWide(), 0.0f };
+	transformPosition(topLeft);
+	transformPosition(bottomRight);
 
-	gridOffset.x = (float)fmod(-gUISettings.xOffset, CORE_CELL_WIDTH_PIXELS);
-	gridOffset.y = (float)fmod(gUISettings.yOffset, CORE_DECK_HEIGHT_PIXELS);
-
-	float xMin = gUISettings.worldViewportX;
-	float yMin = gUISettings.worldViewportY;
-	float xMax = xMin + gUISettings.worldViewportWidth;
-	float yMax = yMin + gUISettings.worldViewportHeight;
-
-	for (float x = xMin; x <= xMax; x += CORE_CELL_WIDTH_PIXELS)
+	// Include both outer edges, not just the cell separators. Building the grid
+	// from world coordinates also keeps its far-right and bottom lines present
+	// when the canvas is larger than the world.
+	for (uint32_t x = 0; x <= building->getCellsWide(); ++x)
 	{
-		drawList->AddLine(
-			{ x - gridOffset.x, yMax },
-			{ x - gridOffset.x, yMin },
-			colour,
-			width
-		);
+		float screenX = topLeft.x + x * CORE_CELL_WIDTH_PIXELS;
+		drawList->AddLine({ screenX, topLeft.y }, { screenX, bottomRight.y }, colour, width);
 	}
 
-	for (float y = yMin; y <= yMax; y += CORE_DECK_HEIGHT_PIXELS)
+	for (uint32_t y = 0; y <= building->getDecksHigh(); ++y)
 	{
-		drawList->AddLine(
-			{ xMin, yMax - (y - yMin + gridOffset.y) },
-			{ xMax, yMax - (y - yMin + gridOffset.y) },
-			colour,
-			width
-		);
+		float screenY = bottomRight.y - y * CORE_DECK_HEIGHT_PIXELS;
+		drawList->AddLine({ topLeft.x, screenY }, { bottomRight.x, screenY }, colour, width);
 	}
 }
 
@@ -1423,6 +1414,6 @@ void renderBuilding(shared_ptr<const core::Building> building)
 	// Grid
 	if (gUISettings.renderGrid)
 	{
-		renderGrid(ImColor(128, 128, 127), 1.0f, drawList);
+		renderGrid(building, ImColor(128, 128, 127), 1.0f, drawList);
 	}
 }

@@ -464,7 +464,7 @@ namespace core
 		plan.move = x != lift->getCellX() || y != lift->getCellY();
 		if (cellsWide < 1 || cellsWide > 2)
 		{ plan.diagnostic = "A Lift must be one or two cells wide"; return plan; }
-		if (decksHigh == 0 || x + cellsWide >= mCellsWide || y + decksHigh >= mDecksHigh)
+		if (decksHigh == 0 || x + cellsWide > mCellsWide || y + decksHigh > mDecksHigh)
 		{ plan.diagnostic = "The Lift shaft is outside the Building bounds"; return plan; }
 		if (!lift->getAgents().empty())
 		{ plan.diagnostic = "The Lift cannot be edited while agents occupy it"; return plan; }
@@ -1284,7 +1284,7 @@ namespace core
 		auto sector = mSectors[sectorIndex];
 		plan.move = (x != sector->getCellX() || y != sector->getCellY())
 			&& cellsWide == sector->getCellsWide() && decksHigh == sector->getDecksHigh();
-		if (cellsWide == 0 || decksHigh == 0 || x + cellsWide >= mCellsWide || y + decksHigh >= mDecksHigh)
+		if (cellsWide == 0 || decksHigh == 0 || x + cellsWide > mCellsWide || y + decksHigh > mDecksHigh)
 		{
 			plan.diagnostic = "The resized sector is outside the Building bounds";
 			return plan;
