@@ -53,7 +53,7 @@ cmake --build out\build --config Debug
 ctest --test-dir out\build -C Debug --output-on-failure
 ```
 
-Use `Release` instead of `Debug` for an optimized build. CMake places final executables and libraries in `bin\x64\<Configuration>` within its build directory (for example, `out\build\bin\x64\Debug`). Building `imgui` also copies the matching bundled DLLs and the contents of `resources` beside the executable.
+Use `Release` instead of `Debug` for an optimized build. CMake places final executables and libraries in `bin\x64\<Configuration>` within its build directory (for example, `out\build\bin\x64\Debug`). CMake fetches and statically links the graphical dependencies, then copies only `prometheum-fermide.ini` beside `imgui.exe`.
 
 ## Build and run only the headless scenario with MSBuild
 

@@ -6,15 +6,15 @@ if(NOT WIN32 AND NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
     message(FATAL_ERROR "prometheum-fermide supports Windows and Linux only")
 endif()
 if(WIN32 AND NOT MSVC)
-    message(FATAL_ERROR "Windows builds require MSVC and the bundled MSVC libraries")
+    message(FATAL_ERROR "Windows builds require MSVC")
 endif()
 
 if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
     message(FATAL_ERROR "prometheum-fermide only supports 64-bit builds")
 endif()
 
-# The bundled Windows libraries and supported Linux builds provide these two
-# configurations only. Single-configuration generators use Release by default.
+# Supported builds provide these two configurations only. Single-configuration
+# generators use Release by default.
 if(CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_CONFIGURATION_TYPES "Debug;Release" CACHE STRING "Available build configurations" FORCE)
 elseif(NOT CMAKE_BUILD_TYPE)
@@ -24,114 +24,93 @@ endif()
 option(PF_BUILD_GUI "Build the SDL/OpenGL graphical application" ON)
 
 set(PF_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/include")
-set(PF_VENDOR_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/vendor/include")
 set(PF_OUTPUT_DIR "${CMAKE_BINARY_DIR}/bin/x64/$<CONFIG>")
+
+include(FetchContent)
+# CMake 4 requires an explicit policy floor when configuring dependencies
+# that retain compatibility with older CMake releases.
+set(CMAKE_POLICY_VERSION_MINIMUM 3.10)
 
 if(WIN32)
     add_compile_definitions(UNICODE _UNICODE)
+    # FetchContent dependencies must use the same DLL runtime as the project.
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+endif()
 
-    set(PF_VENDOR_LIBRARY_DIR "${CMAKE_CURRENT_SOURCE_DIR}/vendor/lib/x64")
-    function(pf_add_vendor_library target debug_filename release_filename)
-        add_library(${target} UNKNOWN IMPORTED GLOBAL)
-        set_target_properties(${target} PROPERTIES
-            IMPORTED_LOCATION_DEBUG "${PF_VENDOR_LIBRARY_DIR}/Debug/${debug_filename}"
-            IMPORTED_LOCATION_RELEASE "${PF_VENDOR_LIBRARY_DIR}/Release/${release_filename}"
-            MAP_IMPORTED_CONFIG_RELWITHDEBINFO Release
-            MAP_IMPORTED_CONFIG_MINSIZEREL Release
-            INTERFACE_INCLUDE_DIRECTORIES "${PF_VENDOR_INCLUDE_DIR}"
-        )
-    endfunction()
+# Third-party libraries are pinned and built from source on every supported
+# platform so Windows no longer depends on the checked-in vendor libraries.
+set(YAML_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(YAML_CPP_BUILD_CONTRIB OFF CACHE BOOL "" FORCE)
+set(YAML_CPP_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(YAML_CPP_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+set(YAML_CPP_INSTALL OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(yaml-cpp
+    GIT_REPOSITORY https://github.com/jbeder/yaml-cpp.git
+    # Pinned newer than 0.8.0, which does not compile with GCC 15.
+    GIT_TAG 8eb618e889c003457d73f7c54777603835677ff4
+)
+FetchContent_MakeAvailable(yaml-cpp)
 
-    pf_add_vendor_library(pf_yaml_cpp yaml-cppd.lib yaml-cpp.lib)
-    if(PF_BUILD_GUI)
-        pf_add_vendor_library(pf_glew glew32.lib glew32.lib)
-        pf_add_vendor_library(pf_nfd nfd.lib nfd.lib)
-        pf_add_vendor_library(pf_spdlog spdlogd.lib spdlog.lib)
-        pf_add_vendor_library(pf_sdl2 SDL2d.lib SDL2.lib)
-        pf_add_vendor_library(pf_sdl2main SDL2maind.lib SDL2main.lib)
-    endif()
+if(TARGET yaml-cpp::yaml-cpp)
+    set(PF_YAML_TARGET yaml-cpp::yaml-cpp)
+elseif(TARGET yaml-cpp)
+    set(PF_YAML_TARGET yaml-cpp)
 else()
-    include(FetchContent)
-    # CMake 4 requires an explicit policy floor when configuring dependencies
-    # that retain compatibility with older CMake releases.
-    set(CMAKE_POLICY_VERSION_MINIMUM 3.10)
+    message(FATAL_ERROR "The yaml-cpp dependency did not provide a supported CMake target")
+endif()
 
-    # Prefer a distro package, but keep a fresh checkout buildable when the
-    # yaml-cpp development package is not installed.
-    find_package(yaml-cpp CONFIG QUIET)
-    if(NOT TARGET yaml-cpp::yaml-cpp AND NOT TARGET yaml-cpp)
-        set(YAML_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-        set(YAML_CPP_BUILD_CONTRIB OFF CACHE BOOL "" FORCE)
-        set(YAML_CPP_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-        set(YAML_CPP_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
-        set(YAML_CPP_INSTALL OFF CACHE BOOL "" FORCE)
-        FetchContent_Declare(yaml-cpp
-            GIT_REPOSITORY https://github.com/jbeder/yaml-cpp.git
-            # Pinned newer than 0.8.0, which does not compile with GCC 15.
-            GIT_TAG 8eb618e889c003457d73f7c54777603835677ff4
-        )
-        FetchContent_MakeAvailable(yaml-cpp)
-    endif()
+if(PF_BUILD_GUI)
+    # OpenGL is provided by the host; portable dependencies are built from
+    # their pinned source revisions.
+    find_package(OpenGL REQUIRED)
 
-    if(TARGET yaml-cpp::yaml-cpp)
-        set(PF_YAML_TARGET yaml-cpp::yaml-cpp)
-    elseif(TARGET yaml-cpp)
-        set(PF_YAML_TARGET yaml-cpp)
-    else()
-        message(FATAL_ERROR "The yaml-cpp package did not provide a supported CMake target")
-    endif()
+    set(glew-cmake_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+    set(glew-cmake_BUILD_STATIC ON CACHE BOOL "" FORCE)
+    set(ONLY_LIBS ON CACHE BOOL "" FORCE)
+    set(USE_GLU OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(glew
+        GIT_REPOSITORY https://github.com/Perlmint/glew-cmake.git
+        GIT_TAG f456deace7b408655109aaeff71421ef2d3858c6
+    )
 
-    if(PF_BUILD_GUI)
-        # OpenGL and the window-system/DBus interfaces come from the host. The
-        # portable third-party libraries are pinned and built from source.
-        find_package(OpenGL REQUIRED)
+    set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+    set(SDL_STATIC ON CACHE BOOL "" FORCE)
+    set(SDL_TEST OFF CACHE BOOL "" FORCE)
+    set(SDL_TESTS OFF CACHE BOOL "" FORCE)
+    set(SDL2_DISABLE_INSTALL ON CACHE BOOL "" FORCE)
+    set(SDL2_DISABLE_SDL2MAIN OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(SDL2
+        GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
+        GIT_TAG 5d249570393f7a37e037abf22cd6012a4cc56a71
+    )
 
-        set(glew-cmake_BUILD_SHARED OFF CACHE BOOL "" FORCE)
-        set(glew-cmake_BUILD_STATIC ON CACHE BOOL "" FORCE)
-        set(ONLY_LIBS ON CACHE BOOL "" FORCE)
-        set(USE_GLU OFF CACHE BOOL "" FORCE)
-        FetchContent_Declare(glew
-            GIT_REPOSITORY https://github.com/Perlmint/glew-cmake.git
-            GIT_TAG f456deace7b408655109aaeff71421ef2d3858c6
-        )
+    set(SPDLOG_BUILD_EXAMPLE OFF CACHE BOOL "" FORCE)
+    set(SPDLOG_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(SPDLOG_BUILD_BENCH OFF CACHE BOOL "" FORCE)
+    set(SPDLOG_INSTALL OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(spdlog
+        GIT_REPOSITORY https://github.com/gabime/spdlog.git
+        GIT_TAG 6fa36017cfd5731d617e1a934f0e5ea9c4445b13
+    )
 
-        set(SDL_SHARED OFF CACHE BOOL "" FORCE)
-        set(SDL_STATIC ON CACHE BOOL "" FORCE)
-        set(SDL_TEST OFF CACHE BOOL "" FORCE)
-        set(SDL_TESTS OFF CACHE BOOL "" FORCE)
-        set(SDL2_DISABLE_INSTALL ON CACHE BOOL "" FORCE)
-        set(SDL2_DISABLE_SDL2MAIN ON CACHE BOOL "" FORCE)
-        FetchContent_Declare(SDL2
-            GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
-            GIT_TAG 5d249570393f7a37e037abf22cd6012a4cc56a71
-        )
-
-        set(SPDLOG_BUILD_EXAMPLE OFF CACHE BOOL "" FORCE)
-        set(SPDLOG_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-        set(SPDLOG_BUILD_BENCH OFF CACHE BOOL "" FORCE)
-        set(SPDLOG_INSTALL OFF CACHE BOOL "" FORCE)
-        FetchContent_Declare(spdlog
-            GIT_REPOSITORY https://github.com/gabime/spdlog.git
-            GIT_TAG 6fa36017cfd5731d617e1a934f0e5ea9c4445b13
-        )
-
-        # The portal backend avoids a GTK development dependency and works on
-        # both X11 and Wayland desktops through xdg-desktop-portal.
+    # The portal backend avoids a GTK development dependency on Linux. NFD
+    # selects its native Windows backend automatically on Windows.
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         set(NFD_PORTAL ON CACHE BOOL "" FORCE)
-        set(NFD_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-        set(NFD_BUILD_SDL2_TESTS OFF CACHE BOOL "" FORCE)
-        set(NFD_INSTALL OFF CACHE BOOL "" FORCE)
-        FetchContent_Declare(nfd
-            GIT_REPOSITORY https://github.com/btzy/nativefiledialog-extended.git
-            GIT_TAG 86d5f2005fe1c00747348a12070fec493ea2407e
-        )
-
-        FetchContent_MakeAvailable(glew SDL2 spdlog nfd)
-        # SDL 2.32's C23 bsearch wrapper triggers this GCC 15 diagnostic.
-        target_compile_options(SDL2-static PRIVATE
-            $<$<COMPILE_LANG_AND_ID:C,GNU>:-Wno-discarded-qualifiers>
-        )
     endif()
+    set(NFD_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(NFD_BUILD_SDL2_TESTS OFF CACHE BOOL "" FORCE)
+    set(NFD_INSTALL OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(nfd
+        GIT_REPOSITORY https://github.com/btzy/nativefiledialog-extended.git
+        GIT_TAG 86d5f2005fe1c00747348a12070fec493ea2407e
+    )
+
+    FetchContent_MakeAvailable(glew SDL2 spdlog nfd)
+    # SDL 2.32's C23 bsearch wrapper triggers this GCC 15 diagnostic.
+    target_compile_options(SDL2-static PRIVATE
+        $<$<COMPILE_LANG_AND_ID:C,GNU>:-Wno-discarded-qualifiers>
+    )
 endif()
 
 file(GLOB PF_CORE_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/core/*.cpp")
@@ -146,11 +125,7 @@ if(MSVC)
 else()
     target_compile_options(prometheum-fermide-core PRIVATE -Wall -Wextra -Wpedantic)
 endif()
-if(WIN32)
-    target_link_libraries(prometheum-fermide-core PUBLIC pf_yaml_cpp)
-else()
-    target_link_libraries(prometheum-fermide-core PUBLIC ${PF_YAML_TARGET})
-endif()
+target_link_libraries(prometheum-fermide-core PUBLIC ${PF_YAML_TARGET})
 set_target_properties(prometheum-fermide-core PROPERTIES
     ARCHIVE_OUTPUT_DIRECTORY "${PF_OUTPUT_DIR}"
     OUTPUT_NAME "prometheum-fermide-core"
@@ -191,16 +166,16 @@ if(PF_BUILD_GUI)
     target_include_directories(imgui PRIVATE "${PF_INCLUDE_DIR}/imgui")
     if(MSVC)
         target_compile_options(imgui PRIVATE /W3 /permissive-)
-        target_link_libraries(imgui PRIVATE
-            prometheum-fermide-core pf_glew pf_nfd pf_spdlog pf_sdl2main pf_sdl2 opengl32
-        )
         target_link_options(imgui PRIVATE "$<$<CONFIG:Release>:/SUBSYSTEM:WINDOWS>")
     else()
         target_compile_options(imgui PRIVATE -Wall -Wextra -Wpedantic)
-        target_link_libraries(imgui PRIVATE
-            prometheum-fermide-core libglew_static nfd::nfd
-            spdlog::spdlog SDL2::SDL2-static OpenGL::GL
-        )
+    endif()
+    target_link_libraries(imgui PRIVATE
+        prometheum-fermide-core libglew_static nfd::nfd
+        spdlog::spdlog SDL2::SDL2-static OpenGL::GL
+    )
+    if(WIN32)
+        target_link_libraries(imgui PRIVATE SDL2::SDL2main)
     endif()
     set_target_properties(imgui PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${PF_OUTPUT_DIR}"
@@ -212,14 +187,6 @@ if(PF_BUILD_GUI)
             "$<TARGET_FILE_DIR:imgui>/prometheum-fermide.ini"
         COMMENT "Copying ImGui configuration"
     )
-    if(WIN32)
-        add_custom_command(TARGET imgui POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_directory
-                "${CMAKE_CURRENT_SOURCE_DIR}/vendor/bin/x64/$<CONFIG>"
-                "$<TARGET_FILE_DIR:imgui>"
-            COMMENT "Copying Windows runtime libraries"
-        )
-    endif()
 endif()
 
 include(CTest)

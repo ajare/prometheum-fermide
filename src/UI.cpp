@@ -24,7 +24,7 @@
 #include "imgui/IconsFontAwesome5.h"
 
 #if defined(_WIN32)
-#include <nfd/nfd.h>
+#include <nfd.h>
 #elif defined(__linux__)
 #include <nfd.h>
 #else

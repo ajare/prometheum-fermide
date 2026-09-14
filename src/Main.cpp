@@ -2,8 +2,8 @@
 
 #if defined(_WIN32)
 #include <Windows.h>
-#include <glew/glew.h>
-#include <nfd/nfd.h>
+#include <GL/glew.h>
+#include <nfd.h>
 #elif defined(__linux__)
 #include <GL/glew.h>
 #include <nfd.h>
@@ -32,11 +32,11 @@
 #include <spdlog/details/log_msg_buffer.h>
 
 #if defined(_WIN32)
-#include <SDL/SDL.h>
+#include <SDL2/SDL.h>
 #if defined(IMGUI_IMPL_OPENGL_ES2)
-#include <SDL/SDL_opengles2.h>
+#include <SDL2/SDL_opengles2.h>
 #else
-#include <SDL/SDL_opengl.h>
+#include <SDL2/SDL_opengl.h>
 #endif
 #elif defined(__linux__)
 #include <SDL.h>
