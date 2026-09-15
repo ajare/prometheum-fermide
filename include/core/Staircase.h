@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <memory>
 
@@ -30,6 +31,9 @@ namespace core
 		[[nodiscard]] uint32_t getDecksHigh() const;
 
 		[[nodiscard]] int getMountSide() const;
+
+		// Local pathing/render geometry for one connection to the next deck.
+		[[nodiscard]] std::array<Vector2, 4> getDeckPath(uint32_t deckOffset) const;
 
 		[[nodiscard]] TraversalResourceId getTraversalResourceId() const { return mTraversalResource; }
 

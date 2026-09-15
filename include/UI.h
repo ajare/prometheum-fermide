@@ -9,6 +9,20 @@
 
 #include "MouseButtonStatus.h"
 
+inline bool isCanvasSelectableSectorType(core::SectorType type)
+{
+	return type == core::SectorType::Location
+		|| type == core::SectorType::Lift
+		|| type == core::SectorType::Shuttle
+		|| type == core::SectorType::Staircase;
+}
+
+inline bool shouldDrawCanvasSectorEditOverlay(uint32_t sectorLayer,
+	uint32_t visibleLayer)
+{
+	return sectorLayer == visibleLayer;
+}
+
 MouseButtonStatus getMouseButtonStatus();
 
 // Loads the recent-file list, creating its storage file when needed.

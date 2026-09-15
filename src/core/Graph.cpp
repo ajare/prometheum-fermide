@@ -691,7 +691,6 @@ namespace core
 
 		auto backSector = mwBuilding->_getSector(backSectorIndex);
 		auto staircaseTransit = dynamic_pointer_cast<StaircaseTransit>(backSector);
-		auto mountSide = staircaseTransit->getMountSide();
 
 		auto xOffset0 = xOffset;
 
@@ -723,7 +722,9 @@ namespace core
 		if (layerIndex == CORE_LAYER_BACK)
 		{
 			auto staircase = staircaseTransit->getStaircase();
-			auto staircaseVert0 = make_shared<StaircaseVertex>(sector, staircase, xOffset0, yOffset, deckOffset);
+			auto path = staircase->getDeckPath(deckOffset);
+			auto staircaseVert0 = make_shared<StaircaseVertex>(sector, staircase,
+				path[0].x, path[0].y, deckOffset);
 
 			workVertices.push_back(staircaseVert0);
 
@@ -751,17 +752,15 @@ namespace core
 			if (y < (staircaseTransit->getCellY() + staircaseTransit->getDecksHigh() - 1))
 			{
 				// Lower landing
-				auto xOffset1 = xOffset + (mountSide == CORE_SIDE_LEFT ? 0.666f : -0.666f);
-
-				auto staircaseVert1 = make_shared<StaircaseVertex>(sector, staircase, xOffset1, yOffset + 0.25f, deckOffset);
+				auto staircaseVert1 = make_shared<StaircaseVertex>(sector, staircase,
+					path[1].x, path[1].y, deckOffset);
 
 				mVertices.push_back(staircaseVert1);
 				addCrossDeckVertex(staircaseTransit, staircaseVert1, crossDeckVertices);
 
 				// Upper landing
-				auto xOffset2 = xOffset + (mountSide == CORE_SIDE_RIGHT ? 0.666f : -0.666f);;
-
-				auto staircaseVert2 = make_shared<StaircaseVertex>(sector, staircase, xOffset2, yOffset + 0.75f, deckOffset);
+				auto staircaseVert2 = make_shared<StaircaseVertex>(sector, staircase,
+					path[2].x, path[2].y, deckOffset);
 
 				mVertices.push_back(staircaseVert2);
 				addCrossDeckVertex(staircaseTransit, staircaseVert2, crossDeckVertices);

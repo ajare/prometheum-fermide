@@ -1327,6 +1327,42 @@ namespace core
 		return result;
 	}
 
+	bool Building::canAddStaircase(uint32_t y, uint32_t x, uint32_t decksHigh,
+		string* diagnostic) const
+	{
+		auto reject = [&](string message)
+		{
+			if (diagnostic) *diagnostic = std::move(message);
+			return false;
+		};
+		if (diagnostic) diagnostic->clear();
+		if (decksHigh < 2) return reject("A Staircase must span at least two decks");
+		if (x >= mCellsWide || y >= mDecksHigh || x + 2 > mCellsWide
+			|| y + decksHigh > mDecksHigh)
+			return reject("The Staircase is outside the Building bounds");
+		for (uint32_t iy = y; iy < y + decksHigh; ++iy)
+		{
+			auto const& first = mLayers[CORE_LAYER_FORE]->getCellDefinition(x, iy);
+			if (first.sectorIndex == ~0u)
+				return reject(format("A Fore-layer Location is required at {},{}", x, iy));
+			auto sector = mSectors[first.sectorIndex];
+			if (!sector || sector->getType() != SectorType::Location)
+				return reject(format("A Fore-layer Location is required at {},{}", x, iy));
+			for (uint32_t ix = x; ix < x + 2; ++ix)
+			{
+				auto const& fore = mLayers[CORE_LAYER_FORE]->getCellDefinition(ix, iy);
+				if (fore.sectorIndex != first.sectorIndex)
+					return reject(format("The Staircase spans different Fore-layer Locations at deck {}", iy));
+				if (!fore.isTraversableOnFoot())
+					return reject(format("The Fore-layer floor at {},{} is not traversable", ix, iy));
+				auto const occupant = mLayers[CORE_LAYER_BACK]->getCellDefinition(ix, iy).sectorIndex;
+				if (occupant != ~0u)
+					return reject(format("A Back-layer Sector at {},{} blocks the Staircase", ix, iy));
+			}
+		}
+		return true;
+	}
+
 	uint32_t Building::addStaircase(uint32_t y, uint32_t x, uint32_t decksHigh, int mountSide)
 	{
 		beginStructuralEdit("addStaircase");

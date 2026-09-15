@@ -7,11 +7,15 @@
 #include <vector>
 
 #include "RecentFiles.h"
+#include "Render.h"
+#include "UI.h"
 #include "core/Building.h"
 #include "core/Defines.h"
 #include "core/Serializable.h"
 #include "core/SerializationException.h"
 #include "core/ShuttleTransit.h"
+#include "core/Staircase.h"
+#include "core/StaircaseTransit.h"
 #include "core/YamlSerializer.h"
 
 namespace
@@ -487,6 +491,102 @@ agents: []
 			"Unavoidable same-X controls did not use the height fallback");
 	}
 
+	void staircaseSectorsAreCanvasSelectable()
+	{
+		require(isCanvasSelectableSectorType(core::SectorType::Staircase),
+			"Placed Staircases cannot be selected by the canvas hit-test");
+		require(!shouldDrawCanvasSectorEditOverlay(CORE_LAYER_BACK, CORE_LAYER_FORE),
+			"A selected Back-layer Staircase is overlaid in front of the Fore layer");
+		require(!shouldRenderStaircaseGeometry(CORE_LAYER_BACK, false),
+			"Hidden Back-layer Staircase geometry is rendered over the Fore layer");
+		require(shouldRenderStaircaseGeometry(CORE_LAYER_BACK, true)
+			&& shouldRenderStaircaseGeometry(CORE_LAYER_FORE, true),
+			"Staircase geometry was suppressed from a visible or clipped Fore-layer pass");
+		core::Staircase leftStaircase(0, 0, 3, CORE_SIDE_LEFT);
+		core::Staircase rightStaircase(0, 0, 3, CORE_SIDE_RIGHT);
+		auto left = leftStaircase.getDeckPath(0);
+		auto right = rightStaircase.getDeckPath(0);
+		for (size_t i = 0; i < left.size(); ++i)
+			require(std::abs(left[i].x + right[i].x - 2.0f) < 0.0001f
+				&& left[i].y == right[i].y,
+				"Right-mounted Staircase path is not mirrored horizontally");
+		require(left[0].x == 1.0f && left[0].y == 0.0f
+			&& std::abs(left[1].x - 1.666f) < 0.0001f && left[1].y == 0.25f
+			&& std::abs(left[2].x - 0.334f) < 0.0001f && left[2].y == 0.75f
+			&& left[3].x == 1.0f && left[3].y == 1.0f,
+			"Staircase primitive endpoints do not match its path vertices");
+		auto nextDeck = leftStaircase.getDeckPath(1);
+		require(left[3] == nextDeck[0],
+			"Adjacent Staircase diagonal paths do not share a deck endpoint");
+	}
+
+	void staircasesCanBeValidatedEditedAndDeleted()
+	{
+		core::Building building("Staircase editing", 10, 5);
+		for (uint32_t y = 0; y < 5; ++y) building.addCorridor(y, 0, 10);
+		std::string diagnostic;
+		require(!building.canAddStaircase(0, 1, 1, &diagnostic)
+			&& diagnostic.find("at least two") != std::string::npos,
+			"Staircase placement accepted a one-deck footprint");
+		require(building.canAddStaircase(0, 1, 3, &diagnostic),
+			"Valid Staircase placement was rejected");
+		auto created = building.addStaircase(0, 1,
+			core::Building::CreateStaircaseOptions{ 3, CORE_SIDE_LEFT });
+		building.finishBuild();
+		building.pauseSimulation();
+		auto agentId = building.createAgent("Stair user", created.sectorIndex, 1, 1.0f);
+		auto originalAgentPosition = building.lookupAgent(agentId).entity->getGlobalPosition();
+
+		core::Building::CreateStaircaseOptions edited{ 3, CORE_SIDE_RIGHT, 2, 3 };
+		auto move = building.planResizeStaircase(created.sectorIndex, 4, 1, edited);
+		require(move.valid && move.move, "Valid Staircase move was not planned");
+		auto movedIndex = building.applyStaircaseEdit(move);
+		auto staircase = std::dynamic_pointer_cast<const core::StaircaseTransit>(
+			building.getSector(movedIndex));
+		require(staircase && staircase->getCellX() == 4 && staircase->getCellY() == 1
+			&& staircase->getDecksHigh() == 3 && staircase->getMountSide() == CORE_SIDE_RIGHT,
+			"Staircase geometry or mounting side was not edited");
+		auto movedAgent = building.lookupAgent(agentId).entity;
+		require(movedAgent
+			&& std::abs(movedAgent->getGlobalPosition().x - originalAgentPosition.x - 3.0f) < 0.001f
+			&& std::abs(movedAgent->getGlobalPosition().y - originalAgentPosition.y - 1.0f) < 0.001f,
+			"An occupying Agent did not move with the Staircase");
+		core::Building::CreateStaircaseOptions loaded{};
+		require(building.getStaircaseOptions(movedIndex, loaded)
+			&& loaded.directionalCapacity == 2 && loaded.directionalBatchLimit == 3,
+			"Staircase coordination properties were not retained");
+
+		core::SerializationWorkData workData;
+		auto writer = core::YamlSerializer::toString();
+		building.serialize(*writer, workData);
+		writer->serialize();
+		core::Building replayed("placeholder", 1, 1);
+		auto reader = core::YamlSerializer::fromString(writer->getSerializedString());
+		reader->deserialize();
+		require(replayed.deserialize(*reader, workData), "Edited Staircase YAML did not deserialize");
+		core::Building::CreateStaircaseOptions replayedOptions{};
+		auto replayedStaircase = std::dynamic_pointer_cast<const core::StaircaseTransit>(
+			replayed.getSector(movedIndex));
+		require(replayedStaircase && replayedStaircase->getCellX() == 4
+			&& replayedStaircase->getCellY() == 1
+			&& replayed.getStaircaseOptions(movedIndex, replayedOptions)
+			&& replayedOptions.mountSide == CORE_SIDE_RIGHT
+			&& replayedOptions.directionalCapacity == 2
+			&& replayedOptions.directionalBatchLimit == 3,
+			"Edited Staircase did not round-trip through YAML");
+
+		auto blocked = building.planResizeStaircase(movedIndex, 9, 1, edited);
+		require(!blocked.valid, "Out-of-bounds Staircase edit was accepted");
+		auto removal = building.planRemoveStaircase(movedIndex);
+		require(removal.valid && removal.requiresConfirmation(),
+			"Staircase deletion was not planned as a confirmed edit");
+		require(building.applyStaircaseEdit(removal) == ~0u,
+			"Staircase deletion did not return the removed-sector sentinel");
+		require(!static_cast<core::Building const&>(building).getLayer(CORE_LAYER_BACK)
+			->getCellDefinition(4, 1).occupied(),
+			"Deleted Staircase still occupies the Back layer");
+	}
+
 	void recentFilesPersistAcrossStartup()
 	{
 		auto directory = std::filesystem::temp_directory_path() / "prometheum-fermide-recent-files-smoke";
@@ -551,6 +651,8 @@ void runSerializationSmokeChecks()
 	legacyBuildingYamlStillLoads();
 	locationEditsArePlannedAndAppliedAtomically();
 	editedShuttleRoundTripsWithoutSchemaChanges();
+	staircaseSectorsAreCanvasSelectable();
+	staircasesCanBeValidatedEditedAndDeleted();
 	physicalControlsPreferDistinctWallPositions();
 	recentFilesPersistAcrossStartup();
 	serializableTracksModificationState();

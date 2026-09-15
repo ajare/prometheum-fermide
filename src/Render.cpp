@@ -46,9 +46,6 @@ extern std::shared_ptr<const core::Vertex> gSelectedVertex;
 extern std::shared_ptr<const core::Sector> gSelectedSector;
 extern std::shared_ptr<const core::SectorObject> gHoveredSectorObject, gSelectedSectorObject;
 
-extern GLuint gCellsTexture;
-extern int gCellsTextureWidth;
-extern int gCellsTextureHeight;
 extern ImFont* gAgentIconFont;
 
 using namespace std;
@@ -783,26 +780,46 @@ void renderShuttle(shared_ptr<const core::Shuttle> shuttle, int /* layer */, boo
 }
 
 
-void renderStaircase(shared_ptr<const core::Staircase> staircase, int /* layer */, bool /* visibleLayer */, bool /* selected */, ImDrawList* drawList)
+void renderStaircase(shared_ptr<const core::Staircase> staircase, int /* layer*/, bool /* visibleLayer */, bool /* selected */, ImDrawList* drawList)
 {
-	core::Vector2 bounds0, bounds1;
+	core::Vector2 worldMin, worldMax;
+	staircase->getCurrentShape(worldMin, worldMax);
 
-	staircase->getCurrentShape(bounds0, bounds1);
+	auto screenMin = worldMin;
+	auto screenMax = worldMax;
+	transformPosition(screenMin);
+	transformPosition(screenMax);
+	ImVec2 topLeft{ min(screenMin.x, screenMax.x), min(screenMin.y, screenMax.y) };
+	ImVec2 bottomRight{ max(screenMin.x, screenMax.x), max(screenMin.y, screenMax.y) };
+	drawList->AddRectFilled(topLeft, bottomRight, ImColor(255, 255, 255));
 
-	transformPosition(bounds0);
-	transformPosition(bounds1);
+	auto toScreen = [&](core::Vector2 point)
+	{
+		point += worldMin;
+		transformPosition(point);
+		return ImVec2{ point.x, point.y };
+	};
 
-	float x0 = staircase->getMountSide() == CORE_SIDE_LEFT ? 1.0f : 0.0f;
-	float x1 = staircase->getMountSide() == CORE_SIDE_LEFT ? 0.0f : 1.0f;
-
-	auto decksHigh = staircase->getDecksHigh();
-
-	drawList->AddImage((ImTextureID)(intptr_t)gCellsTexture,
-		{ bounds0.x, bounds0.y },
-		{ bounds1.x, bounds1.y },
-		{ x0, 0.0f },
-		{ x1, (float)decksHigh }
-	);
+	// Staircase::getDeckPath is also used to place the Graph vertices. Build one
+	// continuous polyline so adjacent flights share their exact deck endpoint.
+	vector<ImVec2> pathPoints;
+	if (staircase->getDecksHigh() > 1)
+		pathPoints.reserve(1 + (staircase->getDecksHigh() - 1) * 3);
+	for (uint32_t deck = 0; deck + 1 < staircase->getDecksHigh(); ++deck)
+	{
+		auto path = staircase->getDeckPath(deck);
+		if (pathPoints.empty()) pathPoints.push_back(toScreen(path[0]));
+		pathPoints.push_back(toScreen(path[1]));
+		pathPoints.push_back(toScreen(path[2]));
+		pathPoints.push_back(toScreen(path[3]));
+	}
+	if (pathPoints.size() >= 2)
+	{
+		drawList->AddPolyline(pathPoints.data(), (int)pathPoints.size(),
+			ImColor(223, 223, 223), ImDrawFlags_None, 10.0f);
+		drawList->AddPolyline(pathPoints.data(), (int)pathPoints.size(),
+			ImColor(0, 0, 0), ImDrawFlags_None, 4.0f);
+	}
 }
 
 
@@ -1083,7 +1100,9 @@ void renderSector(shared_ptr<const core::Sector> sector, int layer, bool visible
 		break;
 
 	case core::SectorType::Staircase:
-		renderStaircase(static_pointer_cast<const core::StaircaseTransit>(sector)->getStaircase(), layer, visibleLayer, selected, drawList);
+		if (shouldRenderStaircaseGeometry(layer, visibleLayer))
+			renderStaircase(static_pointer_cast<const core::StaircaseTransit>(sector)->getStaircase(),
+				layer, visibleLayer, selected, drawList);
 		break;
 
 	default:

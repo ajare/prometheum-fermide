@@ -59,6 +59,15 @@ namespace core
 		return mMountSide;
 	}
 
+	array<Vector2, 4> Staircase::getDeckPath(uint32_t deckOffset) const
+	{
+		float const lowerX = mMountSide == CORE_SIDE_LEFT ? 1.666f : 0.334f;
+		float const upperX = mMountSide == CORE_SIDE_LEFT ? 0.334f : 1.666f;
+		float const y = (float)deckOffset;
+		return { Vector2{ 1.0f, y }, Vector2{ lowerX, y + 0.25f },
+			Vector2{ upperX, y + 0.75f }, Vector2{ 1.0f, y + 1.0f } };
+	}
+
 	/***
 
 	getDescription()

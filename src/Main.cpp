@@ -74,9 +74,6 @@ SDL_Window* gWindow{ nullptr };
 SDL_GLContext gContext;
 UISettings gUISettings;
 
-GLuint gCellsTexture{ 0 };
-int gCellsTextureWidth{ 0 };
-int gCellsTextureHeight{ 0 };
 ImFont* gAgentIconFont{ nullptr };
 std::filesystem::path gResourceDirectory;
 
@@ -676,13 +673,6 @@ std::shared_ptr<core::Building> createTestBuilding()
 
 void run()
 {
-	// Load cell images
-	auto const cellsTexturePath = (gResourceDirectory / "cells.png").string();
-	if (!LoadTextureFromFile(cellsTexturePath.c_str(), &gCellsTexture, &gCellsTextureWidth, &gCellsTextureHeight))
-	{
-		throw ExitApplicationException(1, "Could not load image for cells.");
-	}
-
 	shared_ptr<core::Building> building;// createTestBuilding();
 	std::shared_ptr<core::Agent> pathingAgent = make_shared<core::Agent>("Pather");
 

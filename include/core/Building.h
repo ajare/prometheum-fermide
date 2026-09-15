@@ -238,6 +238,20 @@ namespace core
 			[[nodiscard]] bool requiresConfirmation() const { return !consequences.empty(); }
 		};
 
+		struct StaircaseEditPlan
+		{
+			bool valid{ false };
+			bool remove{ false };
+			bool move{ false };
+			uint32_t sectorIndex{ ~0u };
+			uint32_t x{ 0 }, y{ 0 }, decksHigh{ 0 };
+			CreateStaircaseOptions options{ 0, CORE_SIDE_LEFT };
+			std::string diagnostic;
+			std::vector<std::string> consequences;
+
+			[[nodiscard]] bool requiresConfirmation() const { return !consequences.empty(); }
+		};
+
 		struct ShuttleStopCandidate
 		{
 			uint32_t sectorIndex{ ~0u };
@@ -413,10 +427,14 @@ namespace core
 		bool prepareShuttleEdit(ShuttleEditPlan const& plan,
 			std::vector<ConstructionRecord>& records, std::string& diagnostic) const;
 
+		bool prepareStaircaseEdit(StaircaseEditPlan const& plan,
+			std::vector<ConstructionRecord>& records, std::string& diagnostic) const;
+
 		std::vector<ConstructionRecord> canonicalConstructionRecords(
 			std::vector<ConstructionRecord> records) const;
 
-		void rebuildFromConstructionRecords(std::vector<ConstructionRecord> records);
+		void rebuildFromConstructionRecords(std::vector<ConstructionRecord> records,
+			uint32_t movedSectorIndex = ~0u, int deltaX = 0, int deltaY = 0);
 
 		void resetForDeserialization(std::string name, uint32_t cellsWide, uint32_t decksHigh);
 
@@ -705,6 +723,11 @@ namespace core
 		CreateStaircaseResult addStaircase(uint32_t y, uint32_t x,
 			CreateStaircaseOptions const& options);
 
+		bool canAddStaircase(uint32_t y, uint32_t x, uint32_t decksHigh,
+			std::string* diagnostic = nullptr) const;
+
+		bool getStaircaseOptions(uint32_t sectorIndex, CreateStaircaseOptions& options) const;
+
 		CreateLiftResult addLift(uint32_t y, uint32_t x, CreateLiftOptions const& options);
 
 		// Derives stops from every fully overlapping Fore-layer corridor row.
@@ -829,6 +852,13 @@ namespace core
 		ShuttleEditPlan planAddShuttleStop(uint32_t sectorIndex, uint32_t stopOffset) const;
 
 		uint32_t applyShuttleEdit(ShuttleEditPlan const& plan);
+
+		StaircaseEditPlan planResizeStaircase(uint32_t sectorIndex, uint32_t x,
+			uint32_t y, CreateStaircaseOptions const& options) const;
+
+		StaircaseEditPlan planRemoveStaircase(uint32_t sectorIndex) const;
+
+		uint32_t applyStaircaseEdit(StaircaseEditPlan const& plan);
 
 		ObjectMovePlan planMoveSectorObject(uint32_t sectorIndex, uint32_t objectIndex,
 			uint32_t x, uint32_t y) const;

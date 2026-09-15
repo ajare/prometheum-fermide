@@ -4,6 +4,7 @@
 #include "core/Transit.h"
 #include "core/LiftTransit.h"
 #include "core/ShuttleTransit.h"
+#include "core/StaircaseTransit.h"
 #include "core/Location.h"
 #include "core/DoorSectorObject.h"
 #include "core/MarkerSectorObject.h"
@@ -732,13 +733,19 @@ namespace core
 		return true;
 	}
 
-	void Building::rebuildFromConstructionRecords(vector<ConstructionRecord> records)
+	void Building::rebuildFromConstructionRecords(vector<ConstructionRecord> records,
+		uint32_t movedSectorIndex, int deltaX, int deltaY)
 	{
 		struct SavedAgent { AgentId id; string name; uint32_t flags; uint32_t layer; Vector2 position; };
 		vector<SavedAgent> agents;
 		for (auto const& [id, agent] : mAgents.entries())
+		{
+			auto position = agent->getGlobalPosition();
+			if (agent->getSector() && agent->getSector()->getIndex() == movedSectorIndex)
+				position += Vector2{ (float)deltaX, (float)deltaY };
 			agents.push_back({ id, agent->getName(), agent->getFlags(),
-				agent->getSector()->getLayerIndex(), agent->getGlobalPosition() });
+				agent->getSector()->getLayerIndex(), position });
+		}
 		resetForDeserialization(mName, mCellsWide, mDecksHigh);
 		mDeserializingConstruction = true;
 		try
@@ -1217,6 +1224,206 @@ namespace core
 		vector<ConstructionRecord> records; string diagnostic;
 		if (!prepareShuttleEdit(plan, records, diagnostic)) throw BuildingException(this, diagnostic);
 		rebuildFromConstructionRecords(std::move(records));
+		if (plan.remove) return ~0u;
+		return mLayers[CORE_LAYER_BACK]->getCellDefinition(plan.x, plan.y).sectorIndex;
+	}
+
+	bool Building::getStaircaseOptions(uint32_t sectorIndex, CreateStaircaseOptions& options) const
+	{
+		uint32_t producerIndex = 0;
+		for (auto const& record : mConstructionRecords)
+		{
+			bool producer = record.type == ConstructionType::Corridor || record.type == ConstructionType::Room
+				|| record.type == ConstructionType::Ladder || record.type == ConstructionType::Staircase
+				|| record.type == ConstructionType::Lift || record.type == ConstructionType::Shuttle;
+			if (!producer) continue;
+			if (producerIndex++ != sectorIndex) continue;
+			if (record.type != ConstructionType::Staircase) return false;
+			options = { record.c, record.i, record.d, record.e };
+			return true;
+		}
+		return false;
+	}
+
+	bool Building::prepareStaircaseEdit(StaircaseEditPlan const& plan,
+		vector<ConstructionRecord>& records, string& diagnostic) const
+	{
+		auto createsSector = [](ConstructionType type)
+		{
+			return type == ConstructionType::Corridor || type == ConstructionType::Room
+				|| type == ConstructionType::Ladder || type == ConstructionType::Staircase
+				|| type == ConstructionType::Lift || type == ConstructionType::Shuttle;
+		};
+		auto referencesSector = [](ConstructionType type)
+		{
+			return type == ConstructionType::LightSwitch || type == ConstructionType::ForceBridge
+				|| type == ConstructionType::SectorLadder || type == ConstructionType::PlatformLift
+				|| type == ConstructionType::Walkway || type == ConstructionType::Marker
+				|| type == ConstructionType::RemoveWall || type == ConstructionType::RemoveMarker
+				|| type == ConstructionType::ObjectTombstone;
+		};
+
+		records = mConstructionRecords;
+		uint32_t producerIndex = 0;
+		auto found = records.end();
+		for (auto it = records.begin(); it != records.end(); ++it)
+		{
+			if (!createsSector(it->type)) continue;
+			if (producerIndex++ == plan.sectorIndex) { found = it; break; }
+		}
+		if (found == records.end() || found->type != ConstructionType::Staircase)
+		{
+			diagnostic = "The selected Staircase no longer has an authored definition";
+			return false;
+		}
+		if (plan.remove)
+		{
+			records.erase(found);
+			records.erase(remove_if(records.begin(), records.end(), [&](auto& record)
+			{
+				if (!referencesSector(record.type)) return false;
+				if (record.a == plan.sectorIndex) return true;
+				if (record.a > plan.sectorIndex) --record.a;
+				return false;
+			}), records.end());
+		}
+		else
+		{
+			found->a = plan.y; found->b = plan.x; found->c = plan.options.decksHigh;
+			found->i = plan.options.mountSide; found->d = plan.options.directionalCapacity;
+			found->e = plan.options.directionalBatchLimit;
+		}
+
+		try
+		{
+			Building candidate(mName, mCellsWide, mDecksHigh);
+			candidate.mDeserializingConstruction = true;
+			vector<ConstructionRecord> viable;
+			viable.reserve(records.size());
+			for (auto const& record : records)
+			{
+				try
+				{
+					candidate.applyConstructionRecord(record);
+					viable.push_back(record);
+				}
+				catch (Exception const& error)
+				{
+					if (createsSector(record.type))
+					{
+						diagnostic = error.getMessage();
+						return false;
+					}
+					// An independently authored object made invalid by this edit is
+					// intentionally removed as part of the confirmed cascade.
+				}
+			}
+			candidate.finishBuild();
+			records = std::move(viable);
+		}
+		catch (Exception const& error) { diagnostic = error.getMessage(); return false; }
+		catch (exception const& error) { diagnostic = error.what(); return false; }
+		return true;
+	}
+
+	Building::StaircaseEditPlan Building::planResizeStaircase(uint32_t sectorIndex,
+		uint32_t x, uint32_t y, CreateStaircaseOptions const& options) const
+	{
+		StaircaseEditPlan plan;
+		plan.sectorIndex = sectorIndex; plan.x = x; plan.y = y; plan.decksHigh = options.decksHigh;
+		plan.options = options;
+		if (sectorIndex >= mSectors.size() || !dynamic_pointer_cast<const StaircaseTransit>(mSectors[sectorIndex]))
+		{ plan.diagnostic = "Only Staircases can be edited"; return plan; }
+		auto staircase = dynamic_pointer_cast<const StaircaseTransit>(mSectors[sectorIndex]);
+		plan.move = x != staircase->getCellX() || y != staircase->getCellY();
+		if (options.mountSide != CORE_SIDE_LEFT && options.mountSide != CORE_SIDE_RIGHT)
+		{ plan.diagnostic = "The Staircase mounting side is invalid"; return plan; }
+		if (options.decksHigh < 2)
+		{ plan.diagnostic = "A Staircase must span at least two decks"; return plan; }
+		if (options.directionalCapacity > 0 && options.directionalBatchLimit == 0)
+		{ plan.diagnostic = "A constrained Staircase requires a positive directional batch limit"; return plan; }
+		if (options.directionalCapacity > 0
+			&& staircase->getAgents().size() > options.directionalCapacity)
+		{ plan.diagnostic = "Directional capacity is below the current Staircase occupancy"; return plan; }
+		if (x >= mCellsWide || y >= mDecksHigh || x + 2 > mCellsWide
+			|| y + options.decksHigh > mDecksHigh)
+		{ plan.diagnostic = "The Staircase is outside the Building bounds"; return plan; }
+		for (uint32_t iy = y; iy < y + options.decksHigh; ++iy)
+		{
+			auto const& first = mLayers[CORE_LAYER_FORE]->getCellDefinition(x, iy);
+			if (first.sectorIndex == ~0u || !mSectors[first.sectorIndex]
+				|| mSectors[first.sectorIndex]->getType() != SectorType::Location)
+			{ plan.diagnostic = format("A Fore-layer Location is required at {},{}", x, iy); return plan; }
+			for (uint32_t ix = x; ix < x + 2; ++ix)
+			{
+				auto const& fore = mLayers[CORE_LAYER_FORE]->getCellDefinition(ix, iy);
+				if (fore.sectorIndex != first.sectorIndex)
+				{ plan.diagnostic = format("The Staircase spans different Fore-layer Locations at deck {}", iy); return plan; }
+				if (!fore.isTraversableOnFoot())
+				{ plan.diagnostic = format("The Fore-layer floor at {},{} is not traversable", ix, iy); return plan; }
+				auto occupant = mLayers[CORE_LAYER_BACK]->getCellDefinition(ix, iy).sectorIndex;
+				if (occupant != ~0u && occupant != sectorIndex)
+				{ plan.diagnostic = format("A Back-layer Sector at {},{} blocks the Staircase", ix, iy); return plan; }
+			}
+		}
+
+		for (auto const& [id, agent] : mAgents.entries())
+		{
+			(void)id;
+			if (agent->getSector() != staircase.get() || plan.move) continue;
+			auto position = agent->getGlobalPosition();
+			if (position.y < y || position.y >= y + options.decksHigh)
+				plan.consequences.push_back("Delete Agent " + agent->getName());
+		}
+		vector<ConstructionRecord> records;
+		plan.valid = prepareStaircaseEdit(plan, records, plan.diagnostic);
+		if (plan.valid && records.size() < mConstructionRecords.size())
+			plan.consequences.push_back(format("Delete {} dependent authored object(s)",
+				mConstructionRecords.size() - records.size()));
+		return plan;
+	}
+
+	Building::StaircaseEditPlan Building::planRemoveStaircase(uint32_t sectorIndex) const
+	{
+		StaircaseEditPlan plan;
+		plan.remove = true; plan.sectorIndex = sectorIndex;
+		if (sectorIndex >= mSectors.size() || !dynamic_pointer_cast<const StaircaseTransit>(mSectors[sectorIndex]))
+		{ plan.diagnostic = "Only a Staircase can be deleted"; return plan; }
+		auto staircase = dynamic_pointer_cast<const StaircaseTransit>(mSectors[sectorIndex]);
+		plan.x = staircase->getCellX(); plan.y = staircase->getCellY();
+		if (!getStaircaseOptions(sectorIndex, plan.options))
+		{ plan.diagnostic = "The selected Staircase no longer has an authored definition"; return plan; }
+		plan.decksHigh = plan.options.decksHigh;
+		plan.consequences.push_back("Delete Staircase");
+		for (auto const& [id, agent] : mAgents.entries())
+		{
+			(void)id;
+			if (agent->getSector() == staircase.get())
+				plan.consequences.push_back("Delete Agent " + agent->getName());
+		}
+		vector<ConstructionRecord> records;
+		plan.valid = prepareStaircaseEdit(plan, records, plan.diagnostic);
+		if (plan.valid && records.size() + 1 < mConstructionRecords.size())
+			plan.consequences.push_back(format("Delete {} dependent authored object(s)",
+				mConstructionRecords.size() - records.size() - 1));
+		return plan;
+	}
+
+	uint32_t Building::applyStaircaseEdit(StaircaseEditPlan const& requested)
+	{
+		if (!mSimulationPaused)
+			throw BuildingException(this, "Editing a Staircase requires the simulation to be paused");
+		auto plan = requested.remove ? planRemoveStaircase(requested.sectorIndex)
+			: planResizeStaircase(requested.sectorIndex, requested.x, requested.y, requested.options);
+		if (!plan.valid) throw BuildingException(this, plan.diagnostic);
+		vector<ConstructionRecord> records;
+		string diagnostic;
+		if (!prepareStaircaseEdit(plan, records, diagnostic)) throw BuildingException(this, diagnostic);
+		auto old = mSectors[plan.sectorIndex];
+		int deltaX = plan.remove ? 0 : (int)plan.x - (int)old->getCellX();
+		int deltaY = plan.remove ? 0 : (int)plan.y - (int)old->getCellY();
+		rebuildFromConstructionRecords(std::move(records),
+			plan.remove ? ~0u : plan.sectorIndex, deltaX, deltaY);
 		if (plan.remove) return ~0u;
 		return mLayers[CORE_LAYER_BACK]->getCellDefinition(plan.x, plan.y).sectorIndex;
 	}
