@@ -83,6 +83,7 @@ flowchart TD
     CurrentWaiting{"Current direction still has demand?"}
     Reselect["Choose direction of oldest pending request<br/>reset batch count"]
     BatchStop{"Opposite side waiting and<br/>batch limit reached?"}
+    EntryClear{"Every in-flight climber<br/>cleared entry by a full spacing?"}
     Slot{"Free capacity position?"}
     Candidate{"A pending request in active direction<br/>is physically at source endpoint or<br/>its assigned queue position?"}
     Grant["Reserve position and grant permit"]
@@ -102,7 +103,9 @@ flowchart TD
     CurrentWaiting -- Yes --> BatchStop
     CurrentWaiting -- No --> Reselect --> BatchStop
     BatchStop -- Yes --> Wait
-    BatchStop -- No --> Slot
+    BatchStop -- No --> EntryClear
+    EntryClear -- No --> Wait
+    EntryClear -- Yes --> Slot
     Slot -- No --> Return
     Slot -- Yes --> Candidate
     Candidate -- No --> Return
@@ -119,7 +122,8 @@ flowchart TD
 4. `Building::refreshQueuePositions()` assigns scarce physical positions nearest the Ladder first, then nearest the waiting Agent. A request can retain its logical place without owning a physical position.
 5. While pending, `Agent::update()` walks toward `mTraversalLocalGoal`. Admission requires the Agent to have reached that queue position. An Agent already exactly at the source endpoint may be admitted directly when it did not approach through an early queue side.
 6. `Building::tryGrantLadderAdmissions()` admits only the active direction. Opposite-direction demand stops the current batch at `mDirectionalBatchLimit`; direction changes only after reservations/occupancy drain.
-7. Cancellation, denial, timeout, or completion calls `Building::releaseLadderAdmission()`, then queue positions are refreshed so waiting Agents advance.
+7. `Building::ladderEntryHasClearedSpacing()` staggers entry: every climber moves at the same climb speed, so a new climber is admitted only once all in-flight climbers (occupants and granted reservations still walking to the mount point) have cleared the entry altitude by a full `CORE_LADDER_AGENT_SPACING`. Without this, simultaneously admitted Agents would catch up and overlap on the span.
+8. Cancellation, denial, timeout, or completion calls `Building::releaseLadderAdmission()`, then queue positions are refreshed so waiting Agents advance.
 
 ## Capacity lifecycle for a Sector Ladder
 
@@ -169,6 +173,7 @@ For a Sector Ladder, the capacity position remains an **admission reservation** 
 | Attach and physically arrange waiters | `src/core/Building.cpp: Building::attachQueueTicket()` and `Building::refreshQueuePositions()` |
 | Allocate extension/admission | `src/core/Agent.cpp: Agent::allocateTraversal()` and `src/core/Building.cpp: Building::allocateTraversalRequest()` |
 | Decide when the next Agent can climb | `src/core/Building.cpp: Building::tryGrantLadderAdmissions()` |
+| Keep climbing entries physically spaced | `src/core/Building.cpp: Building::ladderEntryHasClearedSpacing()` |
 | Walk or climb | `src/core/Agent.cpp: Agent::update()` |
 | Commit climb and release capacity | `src/core/Agent.cpp: Agent::commitTraversal()` and `src/core/Building.cpp: Building::commitTraversal()` |
 | Release queue/reservation ownership | `src/core/Building.cpp: Building::releaseLadderAdmission()` |

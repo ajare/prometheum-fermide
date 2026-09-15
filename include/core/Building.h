@@ -675,6 +675,8 @@ namespace core
 
 		void attachLadderAdmissionRequest(TraversalRequestId requestId, TraversalResource& resource);
 
+		bool ladderEntryHasClearedSpacing(TraversalResource const& resource) const;
+
 		void tryGrantLadderAdmissions(TraversalResource& resource);
 
 		void releaseLadderAdmission(TraversalRequestId requestId, TraversalResource& resource);

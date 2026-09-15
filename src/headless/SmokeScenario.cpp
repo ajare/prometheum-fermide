@@ -1910,6 +1910,81 @@ namespace
 			&& final.traversalRequests.empty() && final.traversalPermits.empty();
 	}
 
+	bool ladderAdmissionsMaintainPhysicalSpacing()
+	{
+		// Mirrors resources/test-maps/sector-ladder-test-1.yaml: twelve Agents cross
+		// a four-deck Ladder in both directions. Admission must stagger entry so
+		// equal-speed climbers never overlap on the span.
+		core::Building building("Ladder spacing", 16, 6);
+		auto lower = building.addCorridor(1, 0, 16);
+		auto upper = building.addCorridor(4, 0, 16);
+		core::Building::CreateLadderOptions options{ 4, false, true };
+		options.directionalBatchLimit = 4;
+		auto created = building.addLadder(1, 8, options);
+		building.finishBuild();
+		if (!created.traversalResource || !created.ladder.sector) return false;
+
+		auto graph = building.getGraph();
+		auto upperRight = graph->getClosestVertexInSector(building.getSector(upper).get(), { 15.5f, 4.0f });
+		auto upperLeft = graph->getClosestVertexInSector(building.getSector(upper).get(), { 0.5f, 4.0f });
+		auto lowerRight = graph->getClosestVertexInSector(building.getSector(lower).get(), { 15.5f, 1.0f });
+		auto lowerLeft = graph->getClosestVertexInSector(building.getSector(lower).get(), { 0.5f, 1.0f });
+		if (!upperRight || !upperLeft || !lowerRight || !lowerLeft) return false;
+
+		std::vector<core::AgentId> ids;
+		auto addAgent = [&](char const* name, uint32_t sector, float x,
+			std::shared_ptr<const core::Vertex> const& target)
+		{
+			auto id = building.createAgent(name, sector, 0, x);
+			auto agent = building.lookupAgent(id).entity;
+			if (!agent) return false;
+			auto path = graph->calculatePath(agent, target);
+			if (!path) return false;
+			agent->setPath(path, true);
+			ids.push_back(id);
+			return true;
+		};
+		if (!addAgent("Lower Left 1", lower, 1.25f, upperRight)
+			|| !addAgent("Lower Left 2", lower, 2.0f, upperRight)
+			|| !addAgent("Lower Left 3", lower, 2.75f, upperRight)
+			|| !addAgent("Lower Right 1", lower, 14.75f, upperLeft)
+			|| !addAgent("Lower Right 2", lower, 14.0f, upperLeft)
+			|| !addAgent("Lower Right 3", lower, 13.25f, upperLeft)
+			|| !addAgent("Upper Left 1", upper, 1.25f, lowerRight)
+			|| !addAgent("Upper Left 2", upper, 2.0f, lowerRight)
+			|| !addAgent("Upper Left 3", upper, 2.75f, lowerRight)
+			|| !addAgent("Upper Right 1", upper, 14.75f, lowerLeft)
+			|| !addAgent("Upper Right 2", upper, 14.0f, lowerLeft)
+			|| !addAgent("Upper Right 3", upper, 13.25f, lowerLeft)) return false;
+
+		auto ladderSector = created.ladder.sector;
+		float minimumSeparation = std::numeric_limits<float>::max();
+		bool observedConcurrentClimbers = false;
+		for (uint32_t i = 0; i < MaximumSimulationTicks * 8; ++i)
+		{
+			building.advanceTick();
+			std::vector<core::Vector2> climbers;
+			for (auto id : ids)
+			{
+				auto agent = building.lookupAgent(id).entity;
+				if (agent->getSector() == ladderSector.get())
+					climbers.push_back(agent->getGlobalPosition());
+			}
+			observedConcurrentClimbers = observedConcurrentClimbers || climbers.size() > 1;
+			for (uint32_t a = 0; a < climbers.size(); ++a)
+				for (uint32_t b = a + 1; b < climbers.size(); ++b)
+					minimumSeparation = std::min(minimumSeparation,
+						climbers[a].distanceTo(climbers[b]));
+			if (std::all_of(ids.begin(), ids.end(), [&](auto id)
+				{ return building.lookupAgent(id).entity->getState() == core::Agent::State::Idle; }))
+				break;
+		}
+		return observedConcurrentClimbers
+			&& minimumSeparation >= CORE_AGENT_MAX_HEIGHT - 0.001f
+			&& std::all_of(ids.begin(), ids.end(), [&](auto id)
+				{ return building.lookupAgent(id).entity->getState() == core::Agent::State::Idle; });
+	}
+
 	bool extensibleLadderUsesDesiredStateAndLeases()
 	{
 		core::Building building("Extensible ladder", 4, 4);
@@ -3693,6 +3768,11 @@ int main()
 		if (!ladderQueuePositionsPreferAgentApproachSide())
 		{
 			std::cerr << "FAIL: Ladder queue spots ignored the Agents' approach sides\n";
+			return 1;
+		}
+		if (!ladderAdmissionsMaintainPhysicalSpacing())
+		{
+			std::cerr << "FAIL: Ladder admissions overlapped climbers on the span\n";
 			return 1;
 		}
 		if (!directionalLadderBoundsBatchesAndPreventsOpposingAdmission())

@@ -5383,6 +5383,41 @@ namespace core
 		}
 	}
 
+	bool Building::ladderEntryHasClearedSpacing(TraversalResource const& resource) const
+	{
+		// Every climber moves at the same climb speed, so the separation established
+		// when an Agent mounts persists for its whole climb. A new climber may only
+		// be admitted once every in-flight Agent has cleared the entry altitude by a
+		// full spacing; otherwise the newcomer catches up and overlaps on the span.
+		// Narrow staircases carry no spacing and remain governed by capacity alone.
+		if (!resource.mLadder || resource.mLadderSpacing <= 0.0f) return true;
+		auto const ascending = resource.mActiveDirection != TraversalDirection::Descending;
+		auto const entryAltitude = resource.mLadder->getPosition().y - CORE_LADDER_HEIGHT_OFF_GROUND
+			+ (ascending ? 0.0f : (float)(resource.mLadder->getDecksHigh() - 1));
+		auto cleared = [&](AgentId id)
+		{
+			auto agent = mAgents.find(id);
+			if (!agent) return true;
+			auto const progress = ascending
+				? agent->getGlobalPosition().y - entryAltitude
+				: entryAltitude - agent->getGlobalPosition().y;
+			return progress >= resource.mLadderSpacing - 0.001f;
+		};
+		for (auto occupant : resource.mOccupants)
+		{
+			if (occupant && !cleared(occupant)) return false;
+		}
+		// Granted-but-not-yet-committed Agents are still walking to the mount point;
+		// their zero progress correctly keeps the entry closed until they climb clear.
+		for (auto reservation : resource.mAdmissionReservations)
+		{
+			if (!reservation) continue;
+			auto request = mTraversalRequests.find(reservation);
+			if (request && !cleared(request->mOwner)) return false;
+		}
+		return true;
+	}
+
 	void Building::tryGrantLadderAdmissions(TraversalResource& resource)
 	{
 		// Disabled or moving/retracted equipment cannot safely accept a new climber.
@@ -5457,6 +5492,7 @@ namespace core
 		for (uint32_t position = 0; position < resource.mCapacity; ++position)
 		{
 			if (resource.mOccupants[position] || resource.mAdmissionReservations[position]) continue;
+			if (!ladderEntryHasClearedSpacing(resource)) break;
 			auto selected = find_if(resource.mAdmissionQueue.begin(), resource.mAdmissionQueue.end(),
 				[&](auto id)
 				{
