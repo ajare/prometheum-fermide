@@ -2517,6 +2517,7 @@ namespace
 		movedIndex = building.applyShuttleEdit(removeStop);
 		shuttle = dynamic_pointer_cast<const core::ShuttleTransit>(building.getSector(movedIndex));
 		if (!shuttle || shuttle->getNumStops() != 2) return false;
+		building.addSectorWindow(CORE_LAYER_FORE, 1, 10, 1, 1);
 		auto remove = building.planRemoveShuttle(movedIndex);
 		if (!remove.valid) return false;
 		building.applyShuttleEdit(remove);

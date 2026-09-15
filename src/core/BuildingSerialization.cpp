@@ -904,7 +904,22 @@ namespace core
 			diagnostic = "The selected Shuttle no longer has an authored definition";
 			return false;
 		}
-		if (plan.remove) records.erase(found);
+		if (plan.remove)
+		{
+			records.erase(found);
+			// Windows require occupied geometry on both layers. Any Window touching
+			// this Shuttle would become unreplayable once its Back-layer sector is
+			// removed, so delete that dependent authored object in the same edit.
+			records.erase(remove_if(records.begin(), records.end(), [&](ConstructionRecord const& record)
+			{
+				if (record.type != ConstructionType::Window) return false;
+				for (uint32_t iy = record.b; iy < record.b + record.e && iy < mDecksHigh; ++iy)
+					for (uint32_t ix = record.c; ix < record.c + record.d && ix < mCellsWide; ++ix)
+						if (mLayers[CORE_LAYER_BACK]->getCellDefinition(ix, iy).sectorIndex
+							== plan.sectorIndex) return true;
+				return false;
+			}), records.end());
+		}
 		else
 		{
 			auto oldCurrentStop = found->f;
@@ -1077,6 +1092,17 @@ namespace core
 		plan.remove = true; plan.consequences.clear();
 		for (uint32_t stop = 0; stop < transit->getNumStops(); ++stop)
 			plan.consequences.push_back(format("Delete Shuttle stop {} and all carriage landings", stop));
+		for (auto const& record : mConstructionRecords)
+		{
+			if (record.type != ConstructionType::Window) continue;
+			bool dependent = false;
+			for (uint32_t iy = record.b; !dependent && iy < record.b + record.e && iy < mDecksHigh; ++iy)
+				for (uint32_t ix = record.c; ix < record.c + record.d && ix < mCellsWide; ++ix)
+					if (mLayers[CORE_LAYER_BACK]->getCellDefinition(ix, iy).sectorIndex == sectorIndex)
+					{ dependent = true; break; }
+			if (dependent) plan.consequences.push_back(format(
+				"Delete dependent Window at {},{} ({} x {} cells)", record.c, record.b, record.d, record.e));
+		}
 		vector<ConstructionRecord> records;
 		plan.valid = prepareShuttleEdit(plan, records, plan.diagnostic);
 		return plan;

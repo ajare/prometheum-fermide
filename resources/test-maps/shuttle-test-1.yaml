@@ -53,6 +53,21 @@ construction:
     traversable: false
     initialState: closed
     style: clear
+  - type: corridor
+    y: 3
+    x: 1
+    cellsWide: 4
+    decksHigh: 1
+  - type: corridor
+    y: 3
+    x: 9
+    cellsWide: 4
+    decksHigh: 1
+  - type: corridor
+    y: 3
+    x: 17
+    cellsWide: 4
+    decksHigh: 1
 agents:
   - id: 1
     agent:

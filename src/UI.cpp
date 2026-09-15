@@ -1836,7 +1836,9 @@ namespace
 				auto& draft = *gShuttleDraft;
 				ImGui::Text("Track: deck %u, x %u..%u", draft.y, draft.x,
 					draft.x + draft.cellsWide - 1);
-				ImGui::InputInt("Carriages", &draft.numCars);
+				// Authoring is intentionally limited to a single carriage for now.
+				draft.numCars = 1;
+				ImGui::TextUnformatted("Carriages: 1");
 				ImGui::InputInt("Carriage width", &draft.carWidth);
 				if (draft.carWidth > 0 && draft.carWidth < 32)
 					draft.doorMask &= (1u << draft.carWidth) - 1;
@@ -1863,8 +1865,28 @@ namespace
 				draft.stopOffsets.erase(remove_if(draft.stopOffsets.begin(), draft.stopOffsets.end(),
 					[&](auto value) { return find(candidates.begin(), candidates.end(), value) == candidates.end(); }),
 					draft.stopOffsets.end());
+				auto vehicleWidth = (uint32_t)max(0,
+					draft.numCars * draft.carWidth + draft.numCars - 1);
+				vector<uint32_t> endpointSuggestions;
+				if (!candidates.empty())
+				{
+					auto last = find_if(candidates.rbegin(), candidates.rend(), [&](auto value)
+						{ return value - candidates.front() >= vehicleWidth; });
+					if (last != candidates.rend()) endpointSuggestions = { candidates.front(), *last };
+				}
 				ImGui::Separator();
-				ImGui::TextUnformatted("Stops");
+				ImGui::Text("Stops (%zu valid alignments)", candidates.size());
+				if (candidates.empty())
+				{
+					ImGui::TextColored(ImVec4(1, 0.65f, 0.2f, 1),
+						"No selectable platform alignments exist for this configuration.");
+					ImGui::TextWrapped("Each configured Door must align with an unobstructed "
+						"Fore-layer Location cell. Extend the platforms, change the Door layout, "
+						"or allow partial landings.");
+				}
+				else if (endpointSuggestions.empty())
+					ImGui::TextColored(ImVec4(1, 0.65f, 0.2f, 1),
+						"Valid alignments exist, but no two are at least %u cells apart.", vehicleWidth);
 				for (auto offset : candidates)
 				{
 					bool selected = find(draft.stopOffsets.begin(), draft.stopOffsets.end(), offset)
@@ -1894,19 +1916,9 @@ namespace
 						(uint32_t)draft.numCars * selectedDoors);
 					ImGui::PopID();
 				}
-				if (draft.stopOffsets.size() < 2 && ImGui::Button("Use endpoint suggestions"))
-				{
-					draft.stopOffsets.clear();
-					auto vehicleWidth = (uint32_t)max(0,
-						draft.numCars * draft.carWidth + draft.numCars - 1);
-					if (!candidates.empty())
-					{
-						draft.stopOffsets.push_back(candidates.front());
-						auto last = find_if(candidates.rbegin(), candidates.rend(), [&](auto value)
-							{ return value - candidates.front() >= vehicleWidth; });
-						if (last != candidates.rend()) draft.stopOffsets.push_back(*last);
-					}
-				}
+				if (draft.stopOffsets.size() < 2 && !endpointSuggestions.empty()
+					&& ImGui::Button("Use endpoint suggestions"))
+					draft.stopOffsets = endpointSuggestions;
 				sort(draft.stopOffsets.begin(), draft.stopOffsets.end());
 				bool valid = validateShuttleDraft(building, draft);
 				if (!draft.stopOffsets.empty())
@@ -3920,7 +3932,10 @@ void renderObjectView(shared_ptr<const core::Building> building)
 				if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
 				{
 					selectedNode = (void*)sector.get();
-					setSelectionMode(sector->getType() == core::SectorType::Location
+					auto sectorSelection = sector->getType() == core::SectorType::Location
+						|| sector->getType() == core::SectorType::Lift
+						|| sector->getType() == core::SectorType::Shuttle;
+					setSelectionMode(sectorSelection
 						? UISettings::SelectionMode::Sector : UISettings::SelectionMode::Object);
 					gSelectedAgent = nullptr;
 					gSelectedSector = sector;
@@ -3975,6 +3990,27 @@ void renderSelectedObjectPanel(shared_ptr<core::Building> const& building)
 
 	if (gSelectedSector)
 	{
+		const char* type = "Sector";
+		switch (gSelectedSector->getType())
+		{
+		case core::SectorType::Location:
+			type = gSelectedSector->getTopDeckHeight() == CORE_CORRIDOR_HEIGHT
+				? "Corridor" : "Room";
+			break;
+		case core::SectorType::Lift: type = "Lift"; break;
+		case core::SectorType::Shuttle: type = "Shuttle"; break;
+		case core::SectorType::Ladder: type = "Ladder"; break;
+		case core::SectorType::Staircase: type = "Staircase"; break;
+		default: break;
+		}
+		ImGui::Text("%s: %s", type, gSelectedSector->getName().c_str());
+		ImGui::Text("Sector index: %u", gSelectedSector->getIndex());
+		ImGui::Text("Layer: %s", gSelectedSector->getLayerIndex() == CORE_LAYER_FORE ? "Fore" : "Back");
+		ImGui::Text("Position: %u, %u", gSelectedSector->getCellX(), gSelectedSector->getCellY());
+		ImGui::Text("Size: %u x %u cells", gSelectedSector->getCellsWide(),
+			gSelectedSector->getDecksHigh());
+		ImGui::Text("Agents: %u", (uint32_t)gSelectedSector->getAgents().size());
+
 		switch (gSelectedSector->getType())
 		{
 		case core::SectorType::Lift:
@@ -3985,6 +4021,16 @@ void renderSelectedObjectPanel(shared_ptr<core::Building> const& building)
 		case core::SectorType::Shuttle:
 			renderShuttlePanel(building,
 				static_pointer_cast<const core::ShuttleTransit>(gSelectedSector)->getShuttle(), true);
+			ImGui::Separator();
+			if (ImGui::Button("Delete Shuttle"))
+			{
+				auto plan = building->planRemoveShuttle(gSelectedSector->getIndex());
+				if (!plan.valid)
+					core::addLogMessage("Shuttle editor", 0, core::LogLevel::Error, plan.diagnostic);
+				else queueShuttleEdit(building, plan);
+			}
+			ImGui::SameLine();
+			ImGui::TextDisabled("Delete key");
 			break;
 
 		default:
@@ -5054,7 +5100,8 @@ void renderWorldWindow(shared_ptr<core::Building> building, shared_ptr<const cor
 		{
 			auto sector = building->getSectorAtPosition(gUISettings.visibleLayer, mousePos.x, mousePos.y);
 			if (sector && (sector->getType() == core::SectorType::Location
-				|| sector->getType() == core::SectorType::Lift)) gHoveredSector = sector;
+				|| sector->getType() == core::SectorType::Lift
+				|| sector->getType() == core::SectorType::Shuttle)) gHoveredSector = sector;
 		}
 		else if (gUISettings.selectionMode == UISettings::SelectionMode::Object)
 		{
