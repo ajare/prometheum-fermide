@@ -535,6 +535,12 @@ agents: []
 		edgeBuilding.addCorridor(2, 0, 5);
 		auto edgeLadder = edgeBuilding.addLadder(0, 4, { 3, true, true });
 		auto interiorLadder = edgeBuilding.addLadder(0, 0, { 3, true, true });
+		auto retractedLadder = edgeBuilding.addLadder(0, 2, { 3, true, false });
+		core::Vector2 retractedMin, retractedMax;
+		std::static_pointer_cast<const core::LadderTransit>(retractedLadder.ladder.sector)
+			->getLadder()->getCurrentShape(retractedMin, retractedMax);
+		require(std::abs((retractedMax.y - retractedMin.y) - 0.2f) < 0.0001f,
+			"Retracted Ladders were not rendered at the minimum 0.2 length");
 		require(std::abs(controlCenterX(edgeLadder.controls[CORE_LEVEL_LOW]) - 4.2f) < 0.0001f
 			&& std::abs(controlCenterX(edgeLadder.controls[CORE_LEVEL_HIGH]) - 4.2f) < 0.0001f,
 			"Left-side Ladder controls were not placed at the cell's 0.2 offset");

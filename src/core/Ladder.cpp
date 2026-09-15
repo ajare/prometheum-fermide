@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cassert>
 
 #include "core/Defines.h"
@@ -113,7 +114,10 @@ namespace core
 	{
 		getFullShape(minExtent, maxExtent);
 
-		minExtent.y += (maxExtent.y - minExtent.y) * (1.0f - getExtendedPercentage());
+		auto const fullLength = maxExtent.y - minExtent.y;
+		auto const visibleLength = min(fullLength,
+			max(CORE_LADDER_MIN_RETRACTED_LENGTH, fullLength * getExtendedPercentage()));
+		minExtent.y = maxExtent.y - visibleLength;
 	}
 
 } // core

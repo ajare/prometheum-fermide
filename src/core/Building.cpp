@@ -3017,6 +3017,41 @@ namespace core
 		string diagnostic;
 		if (!canAddSectorWalkway(sectorIndex, deckIndex, xOffset, &diagnostic))
 			throw BuildingException(this, format("{} - {}", caller, diagnostic));
+
+		// Once editing an already-built document, replay the authored structure so
+		// every Ladder in this column can shorten to the newly nearest Walkway.
+		if (mBuildFinished && !mDeserializingConstruction)
+		{
+			beginStructuralEdit("addSectorWalkway");
+			auto room = _getSector(sectorIndex);
+			for (uint32_t i = 0; i < room->getNumObjects(); ++i)
+			{
+				auto ladderObject = dynamic_pointer_cast<LadderSectorObject>(room->getObject(i));
+				if (!ladderObject || ladderObject->getCellX() != room->getCellX() + xOffset) continue;
+				auto ladder = ladderObject->getLadder();
+				auto base = ladderObject->getCellY() - room->getCellY();
+				auto top = base + ladder->getDecksHigh() - 1;
+				if (deckIndex > base && deckIndex < top && roomLadderIsActive(ladder))
+					throw BuildingException(this, "A Room Ladder cannot be resized while it is in use");
+			}
+			auto records = mConstructionRecords;
+			ConstructionRecord record{ ConstructionType::Walkway };
+			record.a = sectorIndex; record.b = deckIndex; record.c = xOffset;
+			records.push_back(record);
+			if (!normalizeRoomLadderRecords(records, diagnostic))
+				throw BuildingException(this, diagnostic);
+			rebuildFromConstructionRecords(std::move(records));
+			auto rebuilt = _getSector(sectorIndex);
+			for (uint32_t i = 0; i < rebuilt->getNumObjects(); ++i)
+			{
+				auto object = rebuilt->getObject(i);
+				if (object && object->getObjectType() == SectorObjectType::Walkway
+					&& object->getCellX() == rebuilt->getCellX() + xOffset
+					&& object->getCellY() == rebuilt->getCellY() + deckIndex)
+					return { i, SectorObjectType::Walkway, rebuilt };
+			}
+			throw BuildingException(this, "Could not locate the added Walkway");
+		}
 		beginStructuralEdit("addSectorWalkway");
 
 		auto sector = _getSector(sectorIndex);
@@ -3236,6 +3271,76 @@ namespace core
 		return result;
 	}
 
+	bool Building::canAddRoomLadder(uint32_t sectorIndex, uint32_t deckIndex,
+		uint32_t xOffset, uint32_t* decksHigh, string* diagnostic) const
+	{
+		auto reject = [&](string reason)
+		{
+			if (decksHigh) *decksHigh = 0;
+			if (diagnostic) *diagnostic = std::move(reason);
+			return false;
+		};
+		if (sectorIndex >= mSectors.size()) return reject("Room does not exist");
+		auto room = dynamic_pointer_cast<const Location>(mSectors[sectorIndex]);
+		if (!room || room->isCorridor()) return reject("Room Ladders can only be placed in Rooms");
+		if (xOffset >= room->getCellsWide() || deckIndex >= room->getDecksHigh())
+			return reject("Ladder base is outside the Room");
+
+		auto const x = room->getCellX() + xOffset;
+		auto const y = room->getCellY() + deckIndex;
+		auto const& base = mLayers[room->getLayerIndex()]->getCellDefinition(x, y);
+		if (base.floorType != CellFloorType::Ground && base.floorType != CellFloorType::Walkway)
+			return reject("Drop the Room Ladder on Ground or a Walkway");
+
+		uint32_t topDeck = ~0u;
+		for (uint32_t offset = deckIndex + 1; offset < room->getDecksHigh(); ++offset)
+		{
+			auto const& cell = mLayers[room->getLayerIndex()]->getCellDefinition(
+				x, room->getCellY() + offset);
+			if (cell.floorType == CellFloorType::Walkway) { topDeck = offset; break; }
+		}
+		if (topDeck == ~0u) return reject("No Walkway exists above this position");
+
+		uint32_t const topY = room->getCellY() + topDeck;
+		for (uint32_t i = 0; i < room->getNumObjects(); ++i)
+		{
+			auto object = room->getObject(i);
+			if (!object || object->getObjectType() == SectorObjectType::Walkway) continue;
+			uint32_t const objectX0 = object->getCellX();
+			uint32_t const objectX1 = objectX0 + (uint32_t)ceil(object->getSize().x) - 1;
+			if (x < objectX0 || x > objectX1) continue;
+			uint32_t const objectY0 = object->getCellY();
+			uint32_t const objectY1 = objectY0 + (uint32_t)ceil(object->getSize().y) - 1;
+			if (object->getObjectType() == SectorObjectType::Ladder)
+			{
+				// Two independently authored ladders may meet, but never overlap.
+				if (max(y, objectY0) < min(topY, objectY1))
+					return reject("Another Ladder overlaps this Ladder's interior");
+			}
+			else if (max(y, objectY0) <= min(topY, objectY1))
+				return reject("Another object blocks the Ladder");
+		}
+		if (decksHigh) *decksHigh = topDeck - deckIndex + 1;
+		if (diagnostic) diagnostic->clear();
+		return true;
+	}
+
+	Building::CreateLadderResult Building::addRoomLadder(uint32_t sectorIndex,
+		uint32_t deckIndex, uint32_t xOffset)
+	{
+		return addRoomLadder(sectorIndex, deckIndex, xOffset, { 0, false, true });
+	}
+
+	Building::CreateLadderResult Building::addRoomLadder(uint32_t sectorIndex,
+		uint32_t deckIndex, uint32_t xOffset, CreateLadderOptions options)
+	{
+		uint32_t height{}; string diagnostic;
+		if (!canAddRoomLadder(sectorIndex, deckIndex, xOffset, &height, &diagnostic))
+			throw BuildingException(this, format("Building::addRoomLadder - {}", diagnostic));
+		options.decksHigh = height;
+		return addSectorLadder(sectorIndex, deckIndex, xOffset, options);
+	}
+
 	Building::CreateLadderResult Building::addSectorLadder(uint32_t sectorIndex, uint32_t deckIndex, uint32_t xOffset, CreateLadderOptions const& options)
 	{
 		beginStructuralEdit("addSectorLadder");
@@ -3265,9 +3370,18 @@ namespace core
 			throw BuildingException(this, format("{} - deckIndex={} out of bounds", caller, deckIndex));
 		}
 
-		validateCellHasNoObject(caller, layerIndex, x, y);
-		validateCellTraversableOnFoot(caller, "Ladder", layerIndex, x, y0);
-		validateCellTraversableOnFoot(caller, "Ladder", layerIndex, x, y1);
+		auto const& baseCell = mLayers[layerIndex]->getCellDefinition(x, y);
+		// Stacked Room Ladders may share exactly one Walkway endpoint.
+		if (baseCell.hasObject() && baseCell.sectorObjectType != SectorObjectType::Ladder)
+			validateCellHasNoObject(caller, layerIndex, x, y);
+		// Authored replays may encounter the Ladder before a later Walkway record;
+		// the normalized construction set guarantees both endpoint floors exist by
+		// finishBuild(). Interactive creation still validates immediately.
+		if (!mDeserializingConstruction)
+		{
+			validateCellTraversableOnFoot(caller, "Ladder", layerIndex, x, y0);
+			validateCellTraversableOnFoot(caller, "Ladder", layerIndex, x, y1);
+		}
 
 		// Create
 		auto layer = getLayer(layerIndex);
@@ -3316,14 +3430,23 @@ namespace core
 			int side = x == sector->getCellX1() ? CORE_SIDE_LEFT : CORE_SIDE_RIGHT;
 
 			// Lower
-			createdControls[CORE_LEVEL_LOW] = _createLadderButton(ladderObject.sector, x, y0, side, 0);
+			createdControls[CORE_LEVEL_LOW] = _createLadderButton(
+				ladderObject.sector, x, y0, side, 0, nullptr, true);
 			registerExtensionControl(createdControls[CORE_LEVEL_LOW]);
 
 
 			// Upper
-			createdControls[CORE_LEVEL_HIGH] = _createLadderButton(ladderObject.sector, x, y1, side, 0);
+			createdControls[CORE_LEVEL_HIGH] = _createLadderButton(
+				ladderObject.sector, x, y1, side, 0, nullptr, true);
 			registerExtensionControl(createdControls[CORE_LEVEL_HIGH]);
 
+		}
+		else
+		{
+			// Reserve the two control slots so toggling extensibility does not shift
+			// independently authored object indices in this Room.
+			sector->addSectorObject(nullptr);
+			sector->addSectorObject(nullptr);
 		}
 
 		CreateLadderResult result{

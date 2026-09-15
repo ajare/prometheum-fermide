@@ -28,6 +28,7 @@
 #include "core/Graph.h"
 #include "core/LiftTransit.h"
 #include "core/DoorSectorObject.h"
+#include "core/LadderSectorObject.h"
 #include "core/Path.h"
 #include "core/SectorEdge.h"
 #include "core/Simulation.h"
@@ -438,6 +439,95 @@ namespace
 			if (auto object = building.getSector(resizedRoom)->getObject(i))
 				if (object->getObjectType() == core::SectorObjectType::Walkway) return false;
 		return building.getSector(otherRoom) != nullptr && building.isTraversalTopologyValid();
+	}
+
+	bool roomLadderEditingCalculatesAndMaintainsWalkwayEndpoints()
+	{
+		core::Building building("Room Ladder editing", 8, 6);
+		auto room = building.addRoom("Ladder room", CORE_LAYER_FORE, 0, 0, 5, 5);
+		building.addSectorWalkway(room, 2, 1);
+		building.addSectorWalkway(room, 4, 1);
+		building.addSectorWalkway(room, 3, 3);
+		building.addSectorWalkway(room, 3, 4);
+		uint32_t height = 0; std::string diagnostic;
+		if (!building.canAddRoomLadder(room, 0, 1, &height, &diagnostic) || height != 3) return false;
+		auto lower = building.addRoomLadder(room, 0, 1);
+		auto upper = building.addRoomLadder(room, 2, 1);
+		if (std::static_pointer_cast<const core::LadderSectorObject>(
+			lower.ladder.sector->getObject(lower.ladder.index))->getLadder()->getDecksHigh() != 3) return false;
+		if (std::static_pointer_cast<const core::LadderSectorObject>(
+			upper.ladder.sector->getObject(upper.ladder.index))->getLadder()->getDecksHigh() != 3) return false;
+		if (building.canAddRoomLadder(room, 0, 2, &height, &diagnostic)
+			|| diagnostic.find("No Walkway") == std::string::npos) return false;
+		auto corridor = building.addCorridor(5, 0, 3);
+		if (building.canAddRoomLadder(corridor, 0, 0, &height, &diagnostic)) return false;
+
+		building.finishBuild();
+		building.pauseSimulation();
+		auto move = building.planMoveSectorObject(room, lower.ladder.index, 3, 0);
+		if (!move.valid || move.previewHeight != 4) return false;
+		auto moved = building.applyObjectMove(move);
+		if (!moved || std::static_pointer_cast<const core::LadderSectorObject>(moved)
+			->getLadder()->getDecksHigh() != 4) return false;
+
+		auto nearer = building.addSectorWalkway(room, 1, 3);
+		auto rebuiltRoom = building.getSector(room);
+		std::shared_ptr<const core::LadderSectorObject> recalculated;
+		for (uint32_t i = 0; i < rebuiltRoom->getNumObjects(); ++i)
+		{
+			auto ladder = std::dynamic_pointer_cast<const core::LadderSectorObject>(rebuiltRoom->getObject(i));
+			if (ladder && ladder->getCellX() == 3 && ladder->getCellY() == 0) recalculated = ladder;
+		}
+		if (!recalculated || recalculated->getLadder()->getDecksHigh() != 2) return false;
+		if (!building.removeSectorWalkway(room, nearer.index)) return false;
+		rebuiltRoom = building.getSector(room);
+		uint32_t movedIndex = ~0u;
+		for (uint32_t i = 0; i < rebuiltRoom->getNumObjects(); ++i)
+		{
+			auto ladder = std::dynamic_pointer_cast<const core::LadderSectorObject>(rebuiltRoom->getObject(i));
+			if (ladder && ladder->getCellX() == 3 && ladder->getCellY() == 0)
+			{
+				if (ladder->getLadder()->getDecksHigh() != 4) return false;
+				movedIndex = i;
+			}
+		}
+		if (movedIndex == ~0u) return false;
+		auto edited = building.applyRoomLadderOptions(room, movedIndex, { 0, true, false, 0.5f, 2 });
+		if (!edited) return false;
+		core::Building::CreateLadderOptions options{};
+		rebuiltRoom = building.getSector(room);
+		movedIndex = ~0u;
+		for (uint32_t i = 0; i < rebuiltRoom->getNumObjects(); ++i)
+			if (rebuiltRoom->getObject(i) == edited) { movedIndex = i; break; }
+		if (movedIndex == ~0u || !building.getRoomLadderOptions(room, movedIndex, options)
+			|| !options.extensible || options.startExtended || options.agentSpacing != 0.5f
+			|| options.directionalBatchLimit != 2) return false;
+		uint32_t insetControls = 0;
+		for (uint32_t i = 0; i < rebuiltRoom->getNumObjects(); ++i)
+		{
+			auto control = rebuiltRoom->getObject(i);
+			if (!control || control->getObjectType() != core::SectorObjectType::InteractionPoint
+				|| control->getCellX() != 3 || (control->getCellY() != 0 && control->getCellY() != 3)) continue;
+			auto button = control->_getObject();
+			float centerX = button->getPosition().x + button->getSize().x * 0.5f;
+			if (std::abs(centerX - 3.8f) < 0.0001f) ++insetControls;
+		}
+		if (insetControls != 2) return false;
+		if (!building.removeRoomLadder(room, movedIndex)) return false;
+		rebuiltRoom = building.getSector(room);
+		for (uint32_t i = 0; i < rebuiltRoom->getNumObjects(); ++i)
+		{
+			auto ladder = std::dynamic_pointer_cast<const core::LadderSectorObject>(rebuiltRoom->getObject(i));
+			if (ladder && ladder->getCellX() == 3 && ladder->getCellY() == 0) return false;
+		}
+		auto edge = building.addRoomLadder(room, 0, 4, { 0, true, true });
+		for (auto const& control : edge.controls)
+		{
+			auto button = control.sector->getObject(control.index)->_getObject();
+			float centerX = button->getPosition().x + button->getSize().x * 0.5f;
+			if (std::abs(centerX - 4.2f) >= 0.0001f) return false;
+		}
+		return true;
 	}
 
 	bool deletingWalkwayPreservesUnrelatedRoomDoor()
@@ -2931,6 +3021,11 @@ int main()
 		if (!deletingWalkwayPreservesUnrelatedRoomDoor())
 		{
 			std::cerr << "FAIL: deleting a Walkway removed an unrelated Room Door\n";
+			return 1;
+		}
+		if (!roomLadderEditingCalculatesAndMaintainsWalkwayEndpoints())
+		{
+			std::cerr << "FAIL: Room Ladder placement, stacking, movement, or Walkway recalculation failed\n";
 			return 1;
 		}
 		if (!ordinaryTraversalCommitsOnlyAtDestination())

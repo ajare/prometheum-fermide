@@ -169,7 +169,8 @@ namespace
 		Marker,
 		Door,
 		Window,
-		Walkway
+		Walkway,
+		RoomLadder
 	};
 
 	struct PaletteDropState
@@ -565,6 +566,39 @@ namespace
 		return target;
 	}
 
+	PegmanTarget getRoomLadderTarget(shared_ptr<const core::Building> const& building,
+		ImVec2 position, ImVec2 canvasPos, ImVec2 canvasSize)
+	{
+		PegmanTarget target;
+		if (!pointInRect(position, canvasPos, canvasPos + canvasSize))
+		{
+			target.diagnostic = "Drop inside the world";
+			return target;
+		}
+		auto world = screenToWorld(position);
+		if (world.x < 0.0f || world.y < 0.0f)
+		{
+			target.diagnostic = "Room Ladder position is outside the building";
+			return target;
+		}
+		target.cellX = (uint32_t)floor(world.x);
+		target.cellY = (uint32_t)floor(world.y);
+		target.sector = building->getSectorAtPosition(gUISettings.visibleLayer, world.x, world.y);
+		auto room = dynamic_pointer_cast<const core::Location>(target.sector);
+		if (!room || room->isCorridor() || !room->pointInBounds(world.x, world.y))
+			target.diagnostic = "Room Ladders can only be placed in Rooms";
+		else
+		{
+			target.deckOffset = target.cellY - room->getCellY();
+			target.localX = (float)(target.cellX - room->getCellX());
+			uint32_t height{};
+			building->canAddRoomLadder(room->getIndex(), target.deckOffset,
+				(uint32_t)target.localX, &height, &target.diagnostic);
+			target.floorY = (float)(target.cellY + height);
+		}
+		return target;
+	}
+
 	float fittedPegmanFontSize(float maximumWidth, float maximumHeight, ImVec2& renderedSize)
 	{
 		ImFont* font = gAgentIconFont ? gAgentIconFont : ImGui::GetFont();
@@ -628,6 +662,20 @@ namespace
 		drawObjectIcon(drawList, boundsMin, boundsMax, colour, ICON_FA_GRIP_LINES);
 	}
 
+	void drawLadderIcon(ImDrawList* drawList, ImVec2 boundsMin, ImVec2 boundsMax, ImU32 colour)
+	{
+		auto inset = ImVec2(18.0f, 6.0f);
+		auto min = boundsMin + inset;
+		auto max = boundsMax - inset;
+		drawList->AddLine({ min.x, min.y }, { min.x, max.y }, colour, 2.5f);
+		drawList->AddLine({ max.x, min.y }, { max.x, max.y }, colour, 2.5f);
+		for (int rung = 0; rung < 5; ++rung)
+		{
+			float y = min.y + (max.y - min.y) * (float)rung / 4.0f;
+			drawList->AddLine({ min.x, y }, { max.x, y }, colour, 2.0f);
+		}
+	}
+
 	shared_ptr<const core::SectorObject> markerAtScreenPosition(
 		shared_ptr<const core::Building> const& building, ImVec2 position)
 	{
@@ -646,6 +694,30 @@ namespace
 			}
 		}
 		return nullptr;
+	}
+
+	shared_ptr<const core::SectorObject> ladderAtScreenPosition(
+		shared_ptr<const core::Building> const& building, ImVec2 position)
+	{
+		auto world = screenToWorld(position);
+		shared_ptr<const core::SectorObject> selected;
+		for (auto const& sector : building->getSectors(gUISettings.visibleLayer))
+		{
+			for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
+			{
+				auto object = sector->getObject(i);
+				if (!object || object->getObjectType() != core::SectorObjectType::Ladder) continue;
+				auto ladder = static_pointer_cast<const core::LadderSectorObject>(object)->getLadder();
+				core::Vector2 min, max;
+				ladder->getCurrentShape(min, max);
+				float tolerance = 5.0f / (float)CORE_CELL_WIDTH_PIXELS;
+				if (world.x < min.x - tolerance || world.x > max.x + tolerance
+					|| world.y < min.y - tolerance || world.y > max.y + tolerance) continue;
+				// At a shared endpoint the upper segment has the greater base deck.
+				if (!selected || object->getCellY() > selected->getCellY()) selected = object;
+			}
+		}
+		return selected;
 	}
 
 	shared_ptr<const core::SectorObject> walkwayAtScreenPosition(
@@ -1009,6 +1081,30 @@ namespace
 		}
 	}
 
+	void placeRoomLadder(shared_ptr<core::Building> const& building, PegmanTarget const& target)
+	{
+		auto undo = captureDocumentSnapshot(building);
+		try
+		{
+			auto created = building->addRoomLadder(target.sector->getIndex(),
+				target.deckOffset, (uint32_t)target.localX);
+			building->finishBuild();
+			setSelectionMode(UISettings::SelectionMode::Object);
+			gSelectedAgent = nullptr;
+			gSelectedSector.reset();
+			gSelectedSectorObject = created.ladder.sector->getObject(created.ladder.index);
+			commitDocumentEdit(std::move(undo));
+		}
+		catch (core::Exception const& error)
+		{
+			core::addLogMessage("Room Ladder editor", 0, core::LogLevel::Error, error.getMessage());
+		}
+		catch (std::exception const& error)
+		{
+			core::addLogMessage("Room Ladder editor", 0, core::LogLevel::Error, error.what());
+		}
+	}
+
 	void landPegman(shared_ptr<core::Building> const& building)
 	{
 		if (gUISettings.worldPaused && locationHasCapacity(gPegman.sector))
@@ -1074,6 +1170,7 @@ namespace
 		auto doorMin = ladderMin + ImVec2(0.0f, PaletteSlotSize + PaletteGap);
 		auto windowMin = staircaseMin + ImVec2(0.0f, PaletteSlotSize + PaletteGap);
 		auto walkwayMin = liftMin + ImVec2(0.0f, PaletteSlotSize + PaletteGap);
+		auto roomLadderMin = shuttleMin + ImVec2(0.0f, PaletteSlotSize + PaletteGap);
 		auto roomMax = roomMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
 		auto corridorMax = corridorMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
 		auto ladderMax = ladderMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
@@ -1085,6 +1182,7 @@ namespace
 		auto agentMax = agentMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
 		auto markerMax = markerMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
 		auto walkwayMax = walkwayMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
+		auto roomLadderMax = roomLadderMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
 		drawList->AddRectFilled(trayTopLeft, trayBottomRight, trayColour, 5.0f);
 		drawList->AddRect(trayTopLeft, trayBottomRight, borderColour, 5.0f);
 
@@ -1159,6 +1257,7 @@ namespace
 			shuttleHovered, backOnlyDisabled);
 		drawWindowIcon(drawList, windowMin, windowMax, yellow);
 		drawWalkwayIcon(drawList, walkwayMin, walkwayMax, yellow);
+		drawLadderIcon(drawList, roomLadderMin, roomLadderMax, yellow);
 
 		bool paintWasActive = gPaint.tool != PaintTool::None;
 		if (paintWasActive && (ImGui::IsKeyPressed(ImGuiKey_Escape)
@@ -1272,11 +1371,14 @@ namespace
 			else if (pointInRect(io.MousePos, doorMin, doorMax)) hoveredItem = PaletteItem::Door;
 			else if (pointInRect(io.MousePos, windowMin, windowMax)) hoveredItem = PaletteItem::Window;
 			else if (pointInRect(io.MousePos, walkwayMin, walkwayMax)) hoveredItem = PaletteItem::Walkway;
+			else if (pointInRect(io.MousePos, roomLadderMin, roomLadderMax)) hoveredItem = PaletteItem::RoomLadder;
 		}
 		drawList->AddRect(windowMin, windowMax,
 			hoveredItem == PaletteItem::Window ? yellow : borderColour, 3.0f);
 		drawList->AddRect(walkwayMin, walkwayMax,
 			hoveredItem == PaletteItem::Walkway ? yellow : borderColour, 3.0f);
+		drawList->AddRect(roomLadderMin, roomLadderMax,
+			hoveredItem == PaletteItem::RoomLadder ? yellow : borderColour, 3.0f);
 		drawList->AddRect(agentMin, agentMax,
 			hoveredItem == PaletteItem::Agent ? yellow : borderColour, 3.0f);
 		drawList->AddRect(markerMin, markerMax,
@@ -1290,7 +1392,8 @@ namespace
 			ImGui::SetTooltip(hoveredItem == PaletteItem::Agent ? "Drag to add Agent"
 				: hoveredItem == PaletteItem::Marker ? "Drag to add Marker"
 				: hoveredItem == PaletteItem::Window ? "Drag to add Window"
-				: hoveredItem == PaletteItem::Walkway ? "Drag to add Walkway" : "Drag to add Door");
+				: hoveredItem == PaletteItem::Walkway ? "Drag to add Walkway"
+				: hoveredItem == PaletteItem::RoomLadder ? "Drag to add Room Ladder" : "Drag to add Door");
 			if (io.MouseClicked[0])
 			{
 				gPegman.phase = PalettePhase::Armed;
@@ -1324,6 +1427,8 @@ namespace
 				target = getWindowTarget(building, io.MousePos, canvasPos, canvasSize);
 			else if (gPegman.item == PaletteItem::Walkway)
 				target = getWalkwayTarget(building, io.MousePos, canvasPos, canvasSize);
+			else if (gPegman.item == PaletteItem::RoomLadder)
+				target = getRoomLadderTarget(building, io.MousePos, canvasPos, canvasSize);
 			else
 				target = getPegmanTarget(building, io.MousePos, canvasPos, canvasSize);
 			if (!gUISettings.worldPaused) target.diagnostic = "Pause simulation to place objects";
@@ -1348,6 +1453,11 @@ namespace
 				else if (target && gPegman.item == PaletteItem::Walkway)
 				{
 					placeWalkway(building, target);
+					resetPegman();
+				}
+				else if (target && gPegman.item == PaletteItem::RoomLadder)
+				{
+					placeRoomLadder(building, target);
 					resetPegman();
 				}
 				else if (target && gPegman.item == PaletteItem::Agent)
@@ -1390,6 +1500,15 @@ namespace
 					drawWalkwayIcon(drawList, topLeft, bottomRight, colour);
 				}
 				else drawWalkwayIcon(drawList, io.MousePos - ImVec2(24.0f, 18.0f),
+					io.MousePos + ImVec2(24.0f, 18.0f), colour);
+			}
+			else if (gPegman.item == PaletteItem::RoomLadder)
+			{
+				if (target.sector && target.floorY > (float)target.cellY)
+					drawLadderIcon(drawList,
+						worldToScreen({ (float)target.cellX, target.floorY }),
+						worldToScreen({ (float)target.cellX + 1.0f, (float)target.cellY }), colour);
+				else drawLadderIcon(drawList, io.MousePos - ImVec2(24.0f, 18.0f),
 					io.MousePos + ImVec2(24.0f, 18.0f), colour);
 			}
 			else if (gPegman.item == PaletteItem::Door
@@ -2309,7 +2428,7 @@ namespace
 		}
 	}
 
-	enum class ClipboardObjectType { Agent, Door, Window, Marker, Walkway };
+	enum class ClipboardObjectType { Agent, Door, Window, Marker, Walkway, RoomLadder };
 	struct ClipboardDefinition
 	{
 		ClipboardObjectType type{};
@@ -2318,6 +2437,7 @@ namespace
 		uint32_t flags{ 0 };
 		core::Building::CreateDoorOptions door;
 		core::Building::CreateWindowOptions window;
+		core::Building::CreateLadderOptions ladder{ 0, false, true };
 		uint32_t width{ 1 }, height{ 1 };
 	};
 
@@ -2340,7 +2460,8 @@ namespace
 		if (!gSelectedSectorObject) return false;
 		auto type = gSelectedSectorObject->getObjectType();
 		return type == core::SectorObjectType::Door || type == core::SectorObjectType::Window
-			|| type == core::SectorObjectType::Marker || type == core::SectorObjectType::Walkway;
+			|| type == core::SectorObjectType::Marker || type == core::SectorObjectType::Walkway
+			|| type == core::SectorObjectType::Ladder;
 	}
 
 	char const* activationModeName(core::DoorActivationMode mode)
@@ -2455,6 +2576,23 @@ namespace
 			output << YAML::Key << "type" << YAML::Value << "Walkway"
 				<< YAML::Key << "object" << YAML::Value << YAML::BeginMap << YAML::EndMap;
 		}
+		else if (gSelectedSectorObject->getObjectType() == core::SectorObjectType::Ladder)
+		{
+			auto owner = gSelectedSectorObject->getSector();
+			uint32_t index = ~0u;
+			for (uint32_t i = 0; i < owner->getNumObjects(); ++i)
+				if (owner->getObject(i) == gSelectedSectorObject) { index = i; break; }
+			core::Building::CreateLadderOptions options{};
+			if (index == ~0u || !building->getRoomLadderOptions(owner->getIndex(), index, options))
+				throw runtime_error("The selected Room Ladder has no authored definition");
+			output << YAML::Key << "type" << YAML::Value << "RoomLadder"
+				<< YAML::Key << "object" << YAML::Value << YAML::BeginMap
+				<< YAML::Key << "extensible" << YAML::Value << options.extensible
+				<< YAML::Key << "startExtended" << YAML::Value << options.startExtended
+				<< YAML::Key << "agentSpacing" << YAML::Value << options.agentSpacing
+				<< YAML::Key << "directionalBatchLimit" << YAML::Value << options.directionalBatchLimit
+				<< YAML::EndMap;
+		}
 		else
 		{
 			output << YAML::Key << "type" << YAML::Value << "Marker"
@@ -2537,6 +2675,14 @@ namespace
 		}
 		else if (type == "Marker") definition.type = ClipboardObjectType::Marker;
 		else if (type == "Walkway") definition.type = ClipboardObjectType::Walkway;
+		else if (type == "RoomLadder")
+		{
+			definition.type = ClipboardObjectType::RoomLadder;
+			definition.ladder.extensible = requiredYaml<bool>(object, "extensible");
+			definition.ladder.startExtended = requiredYaml<bool>(object, "startExtended");
+			definition.ladder.agentSpacing = requiredYaml<float>(object, "agentSpacing");
+			definition.ladder.directionalBatchLimit = requiredYaml<uint32_t>(object, "directionalBatchLimit");
+		}
 		else throw runtime_error("Clipboard object type is not supported");
 		return definition;
 	}
@@ -2569,7 +2715,9 @@ namespace
 					? building->removeSectorDoor(sector->getIndex(), i)
 					: type == core::SectorObjectType::Window
 						? building->removeSectorWindow(sector->getIndex(), i)
-						: building->removeSectorWalkway(sector->getIndex(), i);
+						: type == core::SectorObjectType::Ladder
+							? building->removeRoomLadder(sector->getIndex(), i)
+							: building->removeSectorWalkway(sector->getIndex(), i);
 			if (!removed) return false;
 			if (type == core::SectorObjectType::Marker) building->finishBuild();
 			if (gHoveredSectorObject == selected) gHoveredSectorObject.reset();
@@ -2741,6 +2889,16 @@ namespace
 					y - markerSector->getCellY(), x - markerSector->getCellX(), &diagnostic))
 					throw runtime_error(diagnostic);
 			}
+			else if (definition.type == ClipboardObjectType::RoomLadder)
+			{
+				markerSector = building->getSectorAtPosition(gUISettings.visibleLayer, world.x, world.y);
+				auto room = dynamic_pointer_cast<const core::Location>(markerSector);
+				if (!room || room->isCorridor() || !markerSector->pointInBounds(world.x, world.y))
+					throw runtime_error("Room Ladders can only be placed in Rooms");
+				if (!building->canAddRoomLadder(markerSector->getIndex(),
+					y - markerSector->getCellY(), x - markerSector->getCellX(), nullptr, &diagnostic))
+					throw runtime_error(diagnostic);
+			}
 			else
 			{
 				markerSector = building->getSectorAtPosition(gUISettings.visibleLayer, world.x, world.y);
@@ -2775,6 +2933,12 @@ namespace
 					auto result = building->addSectorWalkway(markerSector->getIndex(),
 						y - markerSector->getCellY(), x - markerSector->getCellX());
 					created = result.sector->getObject(result.index);
+				}
+				else if (definition.type == ClipboardObjectType::RoomLadder)
+				{
+					auto result = building->addRoomLadder(markerSector->getIndex(),
+						y - markerSector->getCellY(), x - markerSector->getCellX(), definition.ladder);
+					created = result.ladder.sector->getObject(result.ladder.index);
 				}
 				else
 				{
@@ -2929,7 +3093,8 @@ void handleShortcuts(shared_ptr<core::Building>& building)
 				&& (gSelectedSectorObject->getObjectType() == core::SectorObjectType::Marker
 					|| gSelectedSectorObject->getObjectType() == core::SectorObjectType::Door
 					|| gSelectedSectorObject->getObjectType() == core::SectorObjectType::Window
-					|| gSelectedSectorObject->getObjectType() == core::SectorObjectType::Walkway))
+					|| gSelectedSectorObject->getObjectType() == core::SectorObjectType::Walkway
+					|| gSelectedSectorObject->getObjectType() == core::SectorObjectType::Ladder))
 			{
 				uint32_t liftIndex, stopIndex;
 				if (building->isLiftOwnedDoor(gSelectedSectorObject, &liftIndex, &stopIndex))
@@ -2961,7 +3126,9 @@ void handleShortcuts(shared_ptr<core::Building>& building)
 								? building->removeSectorDoor(sector->getIndex(), i)
 								: type == core::SectorObjectType::Window
 									? building->removeSectorWindow(sector->getIndex(), i)
-									: building->removeSectorWalkway(sector->getIndex(), i);
+									: type == core::SectorObjectType::Ladder
+										? building->removeRoomLadder(sector->getIndex(), i)
+										: building->removeSectorWalkway(sector->getIndex(), i);
 						if (removed)
 						{
 							if (gHoveredSectorObject == selected) gHoveredSectorObject.reset();
@@ -3844,38 +4011,116 @@ void renderForceBridgePanel(shared_ptr<const core::SectorObject> object)
 }
 
 
-void renderLadderPanel(shared_ptr<const core::SectorObject> object)
+void renderLadderPanel(shared_ptr<core::Building> const& building,
+	shared_ptr<const core::SectorObject> object)
 {
 	auto ladderObject = static_pointer_cast<const core::LadderSectorObject>(object);
 	auto ladder = ladderObject->getLadder();
+	auto room = object->getSector();
+	uint32_t objectIndex = ~0u;
+	for (uint32_t i = 0; i < room->getNumObjects(); ++i)
+		if (room->getObject(i) == object) { objectIndex = i; break; }
 
-	float pct = ladder->getExtendedPercentage() * 100;
-
-	// State
+	ImGui::TextUnformatted("Room Ladder");
+	ImGui::Text("Room: %s", room->getName().c_str());
+	ImGui::Text("Layer: %s", room->getLayerIndex() == CORE_LAYER_FORE ? "Fore" : "Back");
+	ImGui::Text("Position: %u, %u", object->getCellX(), object->getCellY());
+	ImGui::Text("Calculated height: %u decks", ladder->getDecksHigh());
+	float pct = ladder->getExtendedPercentage() * 100.0f;
+	char const* state = "Extended";
 	switch (ladder->getState())
 	{
-	case core::ExtensibleObject::State::Extended:
-		ImGui::Text("Extended (%3.2f %% extended)", pct);
-		break;
-
-	case core::ExtensibleObject::State::Extending:
-		ImGui::Text("Extending (%3.2f %% extended)", pct);
-		break;
-
-	case core::ExtensibleObject::State::Retracted:
-		ImGui::Text("Retracted (%3.2f %% extended)", pct);
-		break;
-
-	case core::ExtensibleObject::State::Retracting:
-		ImGui::Text("Retracting (%3.2f %% extended)", pct);
-		break;
+	case core::ExtensibleObject::State::Extending: state = "Extending"; break;
+	case core::ExtensibleObject::State::Retracted: state = "Retracted"; break;
+	case core::ExtensibleObject::State::Retracting: state = "Retracting"; break;
+	case core::ExtensibleObject::State::Extended: break;
 	}
+	ImGui::Text("State: %s (%3.2f%% extended)", state, pct);
+	ImGui::Text("Extend/retract time: %3.2fs", ladder->getExtendRetractTime());
 
-	// Open/close time
-	ImGui::Text("Extend/retract time: %3.2f s", ladder->getExtendRetractTime());
+	static core::Building const* editedBuilding = nullptr;
+	static core::SectorObject const* editedObject = nullptr;
+	static bool extensible = false, initiallyExtended = true;
+	static float agentSpacing = CORE_AGENT_MAX_HEIGHT;
+	static int directionalBatchLimit = 4;
+	core::Building::CreateLadderOptions current{};
+	if ((editedBuilding != building.get() || editedObject != object.get())
+		&& objectIndex != ~0u && building->getRoomLadderOptions(room->getIndex(), objectIndex, current))
+	{
+		editedBuilding = building.get(); editedObject = object.get();
+		extensible = current.extensible;
+		initiallyExtended = current.extensible ? current.startExtended : true;
+		agentSpacing = current.agentSpacing;
+		directionalBatchLimit = (int)current.directionalBatchLimit;
+	}
+	auto commitSettings = [&](bool desiredExtensible, bool desiredInitiallyExtended,
+		float desiredSpacing, int desiredBatchLimit)
+	{
+		auto undo = captureDocumentSnapshot(building);
+		try
+		{
+			if (!building->isSimulationPaused()) building->pauseSimulation();
+			gUISettings.worldPaused = true;
+			gSelectedSectorObject = building->applyRoomLadderOptions(room->getIndex(), objectIndex,
+				{ ladder->getDecksHigh(), desiredExtensible,
+					desiredExtensible ? desiredInitiallyExtended : true,
+					desiredSpacing, (uint32_t)desiredBatchLimit });
+			editedObject = gSelectedSectorObject.get();
+			commitDocumentEdit(std::move(undo));
+			return true;
+		}
+		catch (core::Exception const& error)
+		{ core::addLogMessage("Room Ladder editor", 0, core::LogLevel::Error, error.getMessage()); }
+		catch (std::exception const& error)
+		{ core::addLogMessage("Room Ladder editor", 0, core::LogLevel::Error, error.what()); }
+		return false;
+	};
 
-	// Sectors
-	ImGui::Text("Decks: %d", ladder->getDecksHigh());
+	ImGui::Separator();
+	bool previousExtensible = extensible;
+	if (ImGui::Checkbox("Extensible", &extensible))
+	{
+		if (!extensible) initiallyExtended = true;
+		if (commitSettings(extensible, initiallyExtended, agentSpacing, directionalBatchLimit)) return;
+		extensible = previousExtensible;
+	}
+	ImGui::BeginDisabled(!extensible);
+	bool previousInitiallyExtended = initiallyExtended;
+	if (ImGui::Checkbox("Initially extended", &initiallyExtended))
+	{
+		if (commitSettings(extensible, initiallyExtended, agentSpacing, directionalBatchLimit)) return;
+		initiallyExtended = previousInitiallyExtended;
+	}
+	ImGui::EndDisabled();
+	if (!extensible) initiallyExtended = true;
+	ImGui::InputFloat("Agent spacing", &agentSpacing, 0.05f, 0.25f, "%.2f");
+	ImGui::InputInt("Directional batch limit", &directionalBatchLimit);
+	ImGui::BeginDisabled(objectIndex == ~0u || agentSpacing <= 0.0f || directionalBatchLimit <= 0);
+	if (ImGui::Button("Apply Ladder settings"))
+	{
+		if (commitSettings(extensible, initiallyExtended, agentSpacing, directionalBatchLimit)) return;
+	}
+	ImGui::EndDisabled();
+	ImGui::Separator();
+	if (ImGui::Button("Delete Room Ladder"))
+	{
+		auto undo = captureDocumentSnapshot(building);
+		try
+		{
+			if (!building->isSimulationPaused()) building->pauseSimulation();
+			gUISettings.worldPaused = true;
+			if (building->removeRoomLadder(room->getIndex(), objectIndex))
+			{
+				gSelectedSectorObject.reset(); gHoveredSectorObject.reset();
+				commitDocumentEdit(std::move(undo));
+			}
+		}
+		catch (core::Exception const& error)
+		{ core::addLogMessage("Room Ladder editor", 0, core::LogLevel::Error, error.getMessage()); }
+		catch (std::exception const& error)
+		{ core::addLogMessage("Room Ladder editor", 0, core::LogLevel::Error, error.what()); }
+	}
+	ImGui::SameLine(); ImGui::TextDisabled("Delete key");
 }
 
 
@@ -4381,39 +4626,44 @@ void renderSelectedObjectPanel(shared_ptr<core::Building> const& building)
 				agentSpacing = current.agentSpacing;
 				directionalBatchLimit = (int)current.directionalBatchLimit;
 			}
-			if (ImGui::Checkbox("Extensible", &extensible))
+			auto applyToggleImmediately = [&]()
 			{
 				core::Building::CreateLadderOptions options{};
 				if (!building->getLadderOptions(gSelectedSector->getIndex(), options))
 				{
 					core::addLogMessage("Ladder editor", 0, core::LogLevel::Error,
 						"The selected Ladder no longer has an authored definition");
-					extensible = !extensible;
+					return false;
 				}
-				else
+				options.extensible = extensible;
+				options.startExtended = extensible ? initiallyExtended : true;
+				auto plan = building->planResizeLadder(gSelectedSector->getIndex(),
+					gSelectedSector->getCellX(), gSelectedSector->getCellY(), options);
+				if (!plan.valid)
 				{
-					auto authored = options;
-					options.extensible = extensible;
-					options.startExtended = extensible ? initiallyExtended : true;
-					auto plan = building->planResizeLadder(gSelectedSector->getIndex(),
-						gSelectedSector->getCellX(), gSelectedSector->getCellY(), options);
-					if (!plan.valid)
-					{
-						core::addLogMessage("Ladder editor", 0, core::LogLevel::Error,
-							plan.diagnostic);
-						extensible = authored.extensible;
-						initiallyExtended = authored.extensible ? authored.startExtended : true;
-					}
-					else
-					{
-						if (!extensible) initiallyExtended = true;
-						queueLadderEdit(building, plan);
-						return;
-					}
+					core::addLogMessage("Ladder editor", 0, core::LogLevel::Error,
+						plan.diagnostic);
+					return false;
 				}
+				queueLadderEdit(building, plan);
+				return true;
+			};
+			bool previousExtensible = extensible;
+			bool previousInitiallyExtended = initiallyExtended;
+			if (ImGui::Checkbox("Extensible", &extensible))
+			{
+				if (!extensible) initiallyExtended = true;
+				if (applyToggleImmediately()) return;
+				extensible = previousExtensible;
+				initiallyExtended = previousInitiallyExtended;
 			}
 			ImGui::BeginDisabled(!extensible);
-			ImGui::Checkbox("Initially extended", &initiallyExtended);
+			previousInitiallyExtended = initiallyExtended;
+			if (ImGui::Checkbox("Initially extended", &initiallyExtended))
+			{
+				if (applyToggleImmediately()) return;
+				initiallyExtended = previousInitiallyExtended;
+			}
 			ImGui::EndDisabled();
 			ImGui::InputFloat("Agent spacing", &agentSpacing, 0.05f, 0.25f, "%.2f");
 			ImGui::InputInt("Directional batch limit", &directionalBatchLimit);
@@ -4546,7 +4796,7 @@ void renderSelectedObjectPanel(shared_ptr<core::Building> const& building)
 			break;
 
 		case core::SectorObjectType::Ladder:
-			renderLadderPanel(gSelectedSectorObject);
+			renderLadderPanel(building, gSelectedSectorObject);
 			break;
 
 		case core::SectorObjectType::Lift:
@@ -5697,6 +5947,8 @@ void renderWorldWindow(shared_ptr<core::Building> building, shared_ptr<const cor
 		{
 			gHoveredSectorObject = markerAtScreenPosition(building, ImGui::GetIO().MousePos);
 			if (!gHoveredSectorObject)
+				gHoveredSectorObject = ladderAtScreenPosition(building, ImGui::GetIO().MousePos);
+			if (!gHoveredSectorObject)
 				gHoveredSectorObject = walkwayAtScreenPosition(building, ImGui::GetIO().MousePos);
 			if (!gHoveredSectorObject)
 			{
@@ -5756,8 +6008,10 @@ void renderWorldWindow(shared_ptr<core::Building> building, shared_ptr<const cor
 	if (gObjectMove.dragging)
 	{
 		auto const& plan = gObjectMove.preview;
-		auto width = gSelectedSectorObject ? gSelectedSectorObject->getSize().x : 1.0f;
-		auto height = gSelectedSectorObject ? gSelectedSectorObject->getSize().y : 1.0f;
+		auto width = plan.previewWidth ? (float)plan.previewWidth
+			: gSelectedSectorObject ? gSelectedSectorObject->getSize().x : 1.0f;
+		auto height = plan.previewHeight ? (float)plan.previewHeight
+			: gSelectedSectorObject ? gSelectedSectorObject->getSize().y : 1.0f;
 		auto topLeft = worldToScreen({ (float)plan.x, (float)plan.y + height });
 		auto bottomRight = worldToScreen({ (float)plan.x + width, (float)plan.y });
 		auto colour = plan.valid ? IM_COL32(255, 255, 0, 255) : IM_COL32(255, 64, 64, 255);

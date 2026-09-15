@@ -191,6 +191,9 @@ namespace core
 			uint32_t sectorIndex{ ~0u };
 			uint32_t objectIndex{ ~0u };
 			uint32_t x{ 0 }, y{ 0 };
+			// Preview dimensions may differ from the source object (Room Ladders
+			// recalculate their height at the destination).
+			uint32_t previewWidth{ 0 }, previewHeight{ 0 };
 			std::string diagnostic;
 		};
 
@@ -435,6 +438,11 @@ namespace core
 		bool prepareObjectMove(ObjectMovePlan const& plan,
 			std::vector<ConstructionRecord>& records, uint32_t& newSectorIndex,
 			uint32_t& newObjectIndex, std::string& diagnostic) const;
+
+		bool normalizeRoomLadderRecords(std::vector<ConstructionRecord>& records,
+			std::string& diagnostic) const;
+
+		bool roomLadderIsActive(std::shared_ptr<const Ladder> const& ladder) const;
 
 		bool prepareLiftEdit(LiftEditPlan const& plan,
 			std::vector<ConstructionRecord>& records, std::string& diagnostic) const;
@@ -836,6 +844,25 @@ namespace core
 			uint32_t xOffset, CreateForceBridgeOptions const& options);
 
 		CreateLadderResult addSectorLadder(uint32_t sectorIndex, uint32_t deckIndex, uint32_t xOffset, CreateLadderOptions const& options);
+
+		// Room Ladders are point-placed objects. Their height is always derived
+		// from the nearest Walkway above their Ground/Walkway base.
+		bool canAddRoomLadder(uint32_t sectorIndex, uint32_t deckIndex, uint32_t xOffset,
+			uint32_t* decksHigh = nullptr, std::string* diagnostic = nullptr) const;
+
+		CreateLadderResult addRoomLadder(uint32_t sectorIndex, uint32_t deckIndex,
+			uint32_t xOffset);
+
+		CreateLadderResult addRoomLadder(uint32_t sectorIndex, uint32_t deckIndex,
+			uint32_t xOffset, CreateLadderOptions options);
+
+		bool getRoomLadderOptions(uint32_t sectorIndex, uint32_t objectIndex,
+			CreateLadderOptions& options) const;
+
+		std::shared_ptr<const SectorObject> applyRoomLadderOptions(uint32_t sectorIndex,
+			uint32_t objectIndex, CreateLadderOptions const& options);
+
+		bool removeRoomLadder(uint32_t sectorIndex, uint32_t objectIndex);
 
 		CreatePlatformLiftResult addSectorPlatformLift(uint32_t sectorIndex, uint32_t deckIndex, uint32_t xOffset, CreateLiftOptions const& options);
 

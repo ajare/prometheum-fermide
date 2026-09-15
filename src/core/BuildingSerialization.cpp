@@ -5,6 +5,7 @@
 #include "core/LiftTransit.h"
 #include "core/ShuttleTransit.h"
 #include "core/LadderTransit.h"
+#include "core/LadderSectorObject.h"
 #include "core/StaircaseTransit.h"
 #include "core/Location.h"
 #include "core/DoorSectorObject.h"
@@ -439,6 +440,9 @@ namespace core
 			records.push_back(std::move(record));
 		}
 		serializer.endArray();
+		string ladderDiagnostic;
+		if (!normalizeRoomLadderRecords(records, ladderDiagnostic))
+			throw SerializationException(ladderDiagnostic);
 
 		resetForDeserialization(std::move(name), cellsWide, decksHigh);
 		mDeserializingConstruction = true;
@@ -752,6 +756,46 @@ namespace core
 	void Building::rebuildFromConstructionRecords(vector<ConstructionRecord> records,
 		uint32_t movedSectorIndex, int deltaX, int deltaY)
 	{
+		struct ActiveLadder { uint32_t sector, deck, x, height; };
+		vector<ActiveLadder> activeLadders;
+		for (auto const& record : mConstructionRecords)
+		{
+			if (record.type != ConstructionType::SectorLadder || record.a >= mSectors.size()) continue;
+			auto sector = mSectors[record.a];
+			for (uint32_t i = 0; sector && i < sector->getNumObjects(); ++i)
+			{
+				auto object = dynamic_pointer_cast<LadderSectorObject>(sector->getObject(i));
+				if (object && object->getCellX() == sector->getCellX() + record.c
+					&& object->getCellY() == sector->getCellY() + record.b
+					&& roomLadderIsActive(object->getLadder()))
+					activeLadders.push_back({ record.a, record.b, record.c, record.d });
+			}
+		}
+		string ladderDiagnostic;
+		if (!normalizeRoomLadderRecords(records, ladderDiagnostic))
+			throw BuildingException(this, ladderDiagnostic);
+		for (auto const& active : activeLadders)
+		{
+			auto unchanged = find_if(records.begin(), records.end(), [&](ConstructionRecord const& record)
+			{
+				return record.type == ConstructionType::SectorLadder && record.a == active.sector
+					&& record.b == active.deck && record.c == active.x && record.d == active.height;
+			});
+			if (unchanged == records.end())
+				throw BuildingException(this, "A Room Ladder cannot be changed while it is in use");
+		}
+		// Validate the complete replay before touching the live Building. This also
+		// makes dependent Walkway/Ladder edits transactional.
+		try
+		{
+			Building candidate(mName, mCellsWide, mDecksHigh);
+			candidate.mDeserializingConstruction = true;
+			for (auto const& record : records) candidate.applyConstructionRecord(record);
+			candidate.finishBuild();
+		}
+		catch (Exception const&) { throw; }
+		catch (exception const& error) { throw BuildingException(this, error.what()); }
+
 		struct SavedAgent { AgentId id; string name; uint32_t flags; uint32_t layer; Vector2 position; };
 		vector<SavedAgent> agents;
 		for (auto const& [id, agent] : mAgents.entries())
@@ -1878,6 +1922,97 @@ namespace core
 		return true;
 	}
 
+	bool Building::normalizeRoomLadderRecords(vector<ConstructionRecord>& records,
+		string& diagnostic) const
+	{
+		struct LocationRecord { bool room{ false }; uint32_t width{ 0 }, height{ 0 }; };
+		map<uint32_t, LocationRecord> locations;
+		uint32_t sectorIndex = 0;
+		for (auto const& record : records)
+		{
+			if (record.type == ConstructionType::Corridor)
+				locations[sectorIndex++] = { false, record.c, record.d };
+			else if (record.type == ConstructionType::Room)
+				locations[sectorIndex++] = { true, record.d, record.e };
+			else if (record.type == ConstructionType::Ladder
+				|| record.type == ConstructionType::Staircase || record.type == ConstructionType::Lift
+				|| record.type == ConstructionType::Shuttle) ++sectorIndex;
+		}
+		auto hasWalkway = [&](uint32_t owner, uint32_t deck, uint32_t x)
+		{
+			return any_of(records.begin(), records.end(), [&](ConstructionRecord const& record)
+			{
+				return record.type == ConstructionType::Walkway && record.a == owner
+					&& record.b == deck && record.c == x;
+			});
+		};
+		for (auto& ladder : records)
+		{
+			if (ladder.type != ConstructionType::SectorLadder) continue;
+			auto owner = locations.find(ladder.a);
+			if (owner == locations.end() || !owner->second.room)
+			{
+				diagnostic = "Room Ladders can only be placed in Rooms";
+				return false;
+			}
+			if (ladder.b >= owner->second.height || ladder.c >= owner->second.width)
+			{
+				diagnostic = "A Room Ladder base is outside its Room";
+				return false;
+			}
+			if (ladder.b != 0 && !hasWalkway(ladder.a, ladder.b, ladder.c))
+			{
+				diagnostic = "A Room Ladder must remain based on Ground or a Walkway";
+				return false;
+			}
+			uint32_t top = ~0u;
+			for (auto const& walkway : records)
+				if (walkway.type == ConstructionType::Walkway && walkway.a == ladder.a
+					&& walkway.c == ladder.c && walkway.b > ladder.b
+					&& (top == ~0u || walkway.b < top)) top = walkway.b;
+			if (top == ~0u || top >= owner->second.height)
+			{
+				diagnostic = "No Walkway exists above a Room Ladder";
+				return false;
+			}
+			ladder.d = top - ladder.b + 1;
+		}
+		for (auto first = records.begin(); first != records.end(); ++first)
+		{
+			if (first->type != ConstructionType::SectorLadder) continue;
+			for (auto second = next(first); second != records.end(); ++second)
+			{
+				if (second->type != ConstructionType::SectorLadder || first->a != second->a
+					|| first->c != second->c) continue;
+				uint32_t firstTop = first->b + first->d - 1;
+				uint32_t secondTop = second->b + second->d - 1;
+				if (max(first->b, second->b) < min(firstTop, secondTop))
+				{
+					diagnostic = "Room Ladder interiors cannot overlap";
+					return false;
+				}
+			}
+		}
+		diagnostic.clear();
+		return true;
+	}
+
+	bool Building::roomLadderIsActive(shared_ptr<const Ladder> const& ladder) const
+	{
+		if (!ladder) return false;
+		for (auto const& [id, resource] : mTraversalResources.entries())
+		{
+			(void)id;
+			if (resource->mLadder.get() != ladder.get()) continue;
+			return !resource->mAdmissionQueue.empty()
+				|| any_of(resource->mOccupants.begin(), resource->mOccupants.end(), [](AgentId id) { return (bool)id; })
+				|| any_of(resource->mAdmissionReservations.begin(), resource->mAdmissionReservations.end(),
+					[](TraversalRequestId id) { return (bool)id; })
+				|| !resource->mExtensionRequestLeases.empty() || !resource->mExtensionOccupantLeases.empty();
+		}
+		return false;
+	}
+
 	bool Building::prepareObjectMove(ObjectMovePlan const& plan,
 		vector<ConstructionRecord>& records, uint32_t& newSectorIndex,
 		uint32_t& newObjectIndex, string& diagnostic) const
@@ -1954,6 +2089,25 @@ namespace core
 			diagnostic = "Move the Agent standing on this Walkway before moving it";
 			return false;
 		}
+		if (type == SectorObjectType::Walkway && (plan.x != sourceX || plan.y != sourceY))
+		{
+			for (uint32_t i = 0; i < owner->getNumObjects(); ++i)
+			{
+				auto ladderObject = dynamic_pointer_cast<LadderSectorObject>(owner->getObject(i));
+				if (ladderObject && (ladderObject->getCellX() == sourceX
+					|| ladderObject->getCellX() == plan.x) && roomLadderIsActive(ladderObject->getLadder()))
+				{
+					diagnostic = "A Room Ladder cannot be changed while it is in use";
+					return false;
+				}
+			}
+		}
+		if (type == SectorObjectType::Ladder
+			&& roomLadderIsActive(static_pointer_cast<LadderSectorObject>(object)->getLadder()))
+		{
+			diagnostic = "The Room Ladder cannot be moved while it is in use";
+			return false;
+		}
 		bool const pastePlaced = type == SectorObjectType::Door
 			|| type == SectorObjectType::Window || type == SectorObjectType::Marker;
 		auto targetOwner = getSectorAtPosition(owner->getLayerIndex(),
@@ -1966,11 +2120,62 @@ namespace core
 		}
 
 		auto targetRight = (uint64_t)plan.x + (uint32_t)ceil(object->getSize().x);
-		auto targetTop = (uint64_t)plan.y + (uint32_t)ceil(object->getSize().y);
+		uint64_t targetTop = (uint64_t)plan.y + (uint32_t)ceil(object->getSize().y);
+		if (type == SectorObjectType::Ladder)
+		{
+			if (plan.x < owner->getCellX() || plan.y < owner->getCellY()
+				|| plan.x >= owner->getCellX() + owner->getCellsWide()
+				|| plan.y >= owner->getCellY() + owner->getDecksHigh())
+			{
+				diagnostic = "The Room Ladder must remain inside its Room";
+				return false;
+			}
+			auto const& base = mLayers[owner->getLayerIndex()]->getCellDefinition(plan.x, plan.y);
+			if (base.floorType != CellFloorType::Ground && base.floorType != CellFloorType::Walkway)
+			{
+				diagnostic = "Drop the Room Ladder on Ground or a Walkway";
+				return false;
+			}
+			uint32_t top = ~0u;
+			for (uint32_t iy = plan.y + 1; iy < owner->getCellY() + owner->getDecksHigh(); ++iy)
+				if (mLayers[owner->getLayerIndex()]->getCellDefinition(plan.x, iy).floorType
+					== CellFloorType::Walkway) { top = iy; break; }
+			if (top == ~0u)
+			{
+				diagnostic = "No Walkway exists above this position";
+				return false;
+			}
+			targetTop = (uint64_t)top + 1;
+		}
 		if (targetRight > mCellsWide || targetTop > mDecksHigh)
 		{
 			diagnostic = "The destination is outside the building";
 			return false;
+		}
+		if (type == SectorObjectType::Ladder)
+		{
+			uint32_t topY = (uint32_t)targetTop - 1;
+			for (uint32_t i = 0; i < owner->getNumObjects(); ++i)
+			{
+				auto other = owner->getObject(i);
+				if (!other || other == object || other->getObjectType() == SectorObjectType::Walkway) continue;
+				uint32_t right = other->getCellX() + (uint32_t)ceil(other->getSize().x) - 1;
+				if (plan.x < other->getCellX() || plan.x > right) continue;
+				uint32_t otherTop = other->getCellY() + (uint32_t)ceil(other->getSize().y) - 1;
+				if (other->getObjectType() == SectorObjectType::Ladder)
+				{
+					if (max(plan.y, other->getCellY()) < min(topY, otherTop))
+					{
+						diagnostic = "Another Ladder overlaps this Ladder's interior";
+						return false;
+					}
+				}
+				else if (max(plan.y, other->getCellY()) <= min(topY, otherTop))
+				{
+					diagnostic = "Another object blocks the Ladder";
+					return false;
+				}
+			}
 		}
 		if (!pastePlaced && (plan.x < owner->getCellX() || plan.y < owner->getCellY()
 			|| targetRight > (uint64_t)owner->getCellX() + owner->getCellsWide()
@@ -2063,6 +2268,8 @@ namespace core
 			newSectorIndex = targetOwner->getIndex();
 		}
 		else newSectorIndex = owner->getIndex();
+
+		if (!normalizeRoomLadderRecords(records, diagnostic)) return false;
 
 		Building candidate(mName, mCellsWide, mDecksHigh);
 		candidate.mDeserializingConstruction = true;
@@ -2216,6 +2423,104 @@ namespace core
 		return true;
 	}
 
+	bool Building::getRoomLadderOptions(uint32_t sectorIndex, uint32_t objectIndex,
+		CreateLadderOptions& options) const
+	{
+		if (sectorIndex >= mSectors.size() || !mSectors[sectorIndex]
+			|| objectIndex >= mSectors[sectorIndex]->getNumObjects()) return false;
+		auto object = dynamic_pointer_cast<const LadderSectorObject>(
+			mSectors[sectorIndex]->getObject(objectIndex));
+		if (!object) return false;
+		auto source = find_if(mConstructionRecords.begin(), mConstructionRecords.end(),
+			[&](ConstructionRecord const& record)
+			{
+				return record.type == ConstructionType::SectorLadder && record.a == sectorIndex
+					&& mSectors[sectorIndex]->getCellX() + record.c == object->getCellX()
+					&& mSectors[sectorIndex]->getCellY() + record.b == object->getCellY();
+			});
+		if (source == mConstructionRecords.end()) return false;
+		options = { source->d, source->p, source->q, source->x, source->e };
+		return true;
+	}
+
+	shared_ptr<const SectorObject> Building::applyRoomLadderOptions(uint32_t sectorIndex,
+		uint32_t objectIndex, CreateLadderOptions const& options)
+	{
+		if (!mSimulationPaused)
+			throw BuildingException(this, "Editing a Room Ladder requires the simulation to be paused");
+		if (sectorIndex >= mSectors.size() || !mSectors[sectorIndex]
+			|| objectIndex >= mSectors[sectorIndex]->getNumObjects())
+			throw BuildingException(this, "The selected Room Ladder no longer exists");
+		auto object = dynamic_pointer_cast<LadderSectorObject>(mSectors[sectorIndex]->getObject(objectIndex));
+		if (!object) throw BuildingException(this, "The selected object is not a Room Ladder");
+		if (roomLadderIsActive(object->getLadder()))
+			throw BuildingException(this, "The Room Ladder cannot be edited while it is in use");
+		validateSectorLadderOptions("Building::applyRoomLadderOptions", options);
+
+		auto records = mConstructionRecords;
+		auto found = find_if(records.begin(), records.end(), [&](ConstructionRecord const& record)
+		{
+			return record.type == ConstructionType::SectorLadder && record.a == sectorIndex
+				&& mSectors[sectorIndex]->getCellX() + record.c == object->getCellX()
+				&& mSectors[sectorIndex]->getCellY() + record.b == object->getCellY();
+		});
+		if (found == records.end()) throw BuildingException(this, "The Room Ladder has no authored definition");
+		found->p = options.extensible;
+		found->q = options.extensible ? options.startExtended : true;
+		found->x = options.agentSpacing;
+		found->e = options.directionalBatchLimit;
+		string diagnostic;
+		if (!normalizeRoomLadderRecords(records, diagnostic)) throw BuildingException(this, diagnostic);
+		auto x = object->getCellX(), y = object->getCellY();
+		rebuildFromConstructionRecords(std::move(records));
+		auto sector = _getSector(sectorIndex);
+		for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
+		{
+			auto candidate = sector->getObject(i);
+			if (candidate && candidate->getObjectType() == SectorObjectType::Ladder
+				&& candidate->getCellX() == x && candidate->getCellY() == y) return candidate;
+		}
+		throw BuildingException(this, "Could not locate the edited Room Ladder");
+	}
+
+	bool Building::removeRoomLadder(uint32_t sectorIndex, uint32_t objectIndex)
+	{
+		if (!mSimulationPaused)
+			throw BuildingException(this, "Deleting a Room Ladder requires the simulation to be paused");
+		if (sectorIndex >= mSectors.size() || !mSectors[sectorIndex]
+			|| objectIndex >= mSectors[sectorIndex]->getNumObjects()) return false;
+		auto object = dynamic_pointer_cast<LadderSectorObject>(mSectors[sectorIndex]->getObject(objectIndex));
+		if (!object) return false;
+		if (roomLadderIsActive(object->getLadder()))
+			throw BuildingException(this, "The Room Ladder cannot be deleted while it is in use");
+		CreateLadderOptions authored{};
+		if (!getRoomLadderOptions(sectorIndex, objectIndex, authored)) return false;
+
+		vector<ConstructionRecord> records;
+		bool removed = false;
+		for (auto const& record : mConstructionRecords)
+		{
+			if (!removed && record.type == ConstructionType::SectorLadder && record.a == sectorIndex
+				&& mSectors[sectorIndex]->getCellX() + record.c == object->getCellX()
+				&& mSectors[sectorIndex]->getCellY() + record.b == object->getCellY())
+			{
+				for (uint32_t i = 0; i < 3; ++i)
+				{
+					ConstructionRecord tombstone{ ConstructionType::ObjectTombstone };
+					tombstone.a = sectorIndex;
+					records.push_back(std::move(tombstone));
+				}
+				removed = true;
+			}
+			else records.push_back(record);
+		}
+		if (!removed) return false;
+		string diagnostic;
+		if (!normalizeRoomLadderRecords(records, diagnostic)) throw BuildingException(this, diagnostic);
+		rebuildFromConstructionRecords(std::move(records));
+		return true;
+	}
+
 	bool Building::removeSectorWalkway(uint32_t sectorIndex, uint32_t objectIndex)
 	{
 		if (!mSimulationPaused)
@@ -2227,6 +2532,16 @@ namespace core
 		if (!object) return false;
 		if (walkwayHasOccupant(object->getSector(), object->getCellX(), object->getCellY()))
 			throw BuildingException(this, "Move the Agent standing on this Walkway before deleting it");
+		for (uint32_t i = 0; i < object->getSector()->getNumObjects(); ++i)
+		{
+			auto ladderObject = dynamic_pointer_cast<LadderSectorObject>(object->getSector()->getObject(i));
+			if (!ladderObject || ladderObject->getCellX() != object->getCellX()) continue;
+			auto ladder = ladderObject->getLadder();
+			uint32_t top = ladderObject->getCellY() + ladder->getDecksHigh() - 1;
+			if ((ladderObject->getCellY() == object->getCellY() || top == object->getCellY())
+				&& roomLadderIsActive(ladder))
+				throw BuildingException(this, "A Room Ladder cannot be changed while it is in use");
+		}
 
 		auto source = find_if(mConstructionRecords.begin(), mConstructionRecords.end(),
 			[&](ConstructionRecord const& record)
@@ -2354,6 +2669,21 @@ namespace core
 		vector<ConstructionRecord> records;
 		uint32_t ignoredSector, ignoredObject;
 		plan.valid = prepareObjectMove(plan, records, ignoredSector, ignoredObject, plan.diagnostic);
+		if (sectorIndex < mSectors.size() && objectIndex < mSectors[sectorIndex]->getNumObjects())
+		{
+			auto object = mSectors[sectorIndex]->getObject(objectIndex);
+			if (object)
+			{
+				plan.previewWidth = (uint32_t)ceil(object->getSize().x);
+				plan.previewHeight = (uint32_t)ceil(object->getSize().y);
+				if (plan.valid && object->getObjectType() == SectorObjectType::Ladder)
+					for (auto const& record : records)
+						if (record.type == ConstructionType::SectorLadder && record.a == sectorIndex
+							&& mSectors[sectorIndex]->getCellX() + record.c == x
+							&& mSectors[sectorIndex]->getCellY() + record.b == y)
+						{ plan.previewHeight = record.d; break; }
+			}
+		}
 		return plan;
 	}
 
