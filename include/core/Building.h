@@ -92,7 +92,7 @@ namespace core
 			int fromSide{ CORE_SIDE_LEFT };
 			bool extensible{ true };  // implies controlled
 			bool startExtended{ true };
-			uint32_t controlCount{ 0 };
+			uint32_t controlCount{ 1 };
 		};
 
 		struct CreateForceBridgeResult
@@ -443,6 +443,8 @@ namespace core
 			std::string& diagnostic) const;
 
 		bool roomLadderIsActive(std::shared_ptr<const Ladder> const& ladder) const;
+
+		bool forceBridgeIsActive(std::shared_ptr<const ForceBridge> const& forceBridge) const;
 
 		bool prepareLiftEdit(LiftEditPlan const& plan,
 			std::vector<ConstructionRecord>& records, std::string& diagnostic) const;
@@ -842,6 +844,26 @@ namespace core
 
 		CreateForceBridgeResult addSectorForceBridge(uint32_t sectorIndex, uint32_t deckIndex,
 			uint32_t xOffset, CreateForceBridgeOptions const& options);
+
+		bool canAddSectorForceBridge(uint32_t sectorIndex, uint32_t deckIndex,
+			uint32_t xOffset, CreateForceBridgeOptions const& options,
+			std::string* diagnostic = nullptr) const;
+
+		bool calculateSectorForceBridgeWidthToRight(uint32_t sectorIndex,
+			uint32_t deckIndex, uint32_t xOffset, uint32_t& width,
+			std::string* diagnostic = nullptr) const;
+
+		bool getSectorForceBridgeOptions(uint32_t sectorIndex, uint32_t objectIndex,
+			CreateForceBridgeOptions& options) const;
+
+		std::shared_ptr<const SectorObject> applySectorForceBridgeOptions(uint32_t sectorIndex,
+			uint32_t objectIndex, CreateForceBridgeOptions const& options);
+
+		bool removeSectorForceBridge(uint32_t sectorIndex, uint32_t objectIndex);
+
+		bool isForceBridgeOwnedControl(std::shared_ptr<const SectorObject> const& object,
+			uint32_t* forceBridgeSectorIndex = nullptr,
+			uint32_t* forceBridgeObjectIndex = nullptr) const;
 
 		CreateLadderResult addSectorLadder(uint32_t sectorIndex, uint32_t deckIndex, uint32_t xOffset, CreateLadderOptions const& options);
 

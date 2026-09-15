@@ -365,10 +365,13 @@ namespace core
 
 	void Building::validateSectorForceBridgeOptions(string const& caller, CreateForceBridgeOptions const& options) const
 	{
+		if (options.width == 0 || options.width > CORE_FORCEBRIDGE_MAX_SIZE)
+			throw BuildingException(this, format("{} - ForceBridge width must be [1,{}], not {}",
+				caller, CORE_FORCEBRIDGE_MAX_SIZE, options.width));
 		if (options.extensible && (options.controlCount < 1 || options.controlCount > 2))
-		{
 			throw BuildingException(this, format("{} - Physical control count must be [1,2] for a controlled ForceBridge, not {}", caller, options.controlCount));
-		}
+		if (!options.extensible && (options.controlCount != 0 || !options.startExtended))
+			throw BuildingException(this, format("{} - A non-extensible ForceBridge must be permanently extended and have no controls", caller));
 	}
 
 	void Building::validateSectorLadderOptions(string const& caller, CreateLadderOptions const& options) const
@@ -3162,59 +3165,97 @@ namespace core
 		return addSectorForceBridge(sectorIndex, deckIndex, xOffset, CreateForceBridgeOptions{});
 	}
 
+	bool Building::calculateSectorForceBridgeWidthToRight(uint32_t sectorIndex,
+		uint32_t deckIndex, uint32_t xOffset, uint32_t& width, string* diagnostic) const
+	{
+		width = 0;
+		auto reject = [&](string reason) { if (diagnostic) *diagnostic = std::move(reason); return false; };
+		if (sectorIndex >= mSectors.size()) return reject("Force Bridge Room does not exist");
+		auto room = dynamic_pointer_cast<const Location>(mSectors[sectorIndex]);
+		if (!room || room->isCorridor()) return reject("Force Bridges can only be placed in Rooms");
+		if (deckIndex >= room->getDecksHigh() || xOffset == 0 || xOffset >= room->getCellsWide())
+			return reject("The Force Bridge and both supports must remain inside its Room");
+		auto layer = mLayers[room->getLayerIndex()];
+		uint32_t x = room->getCellX() + xOffset, y = room->getCellY() + deckIndex;
+		auto const& left = layer->getCellDefinition(x - 1, y);
+		if (left.floorType != CellFloorType::Ground && left.floorType != CellFloorType::Walkway)
+			return reject("The Force Bridge requires Ground or a Walkway on its left");
+		uint32_t roomRight = room->getCellX() + room->getCellsWide();
+		for (uint32_t ix = x; ix < roomRight; ++ix)
+		{
+			auto const floor = layer->getCellDefinition(ix, y).floorType;
+			if (floor == CellFloorType::Walkway)
+			{
+				width = ix - x;
+				if (width == 0) return reject("Drop the Force Bridge in the gap before the Walkway");
+				if (width > CORE_FORCEBRIDGE_MAX_SIZE)
+					return reject(format("The next Walkway is farther than the maximum Force Bridge width of {}", CORE_FORCEBRIDGE_MAX_SIZE));
+				if (diagnostic) diagnostic->clear();
+				return true;
+			}
+			if (floor != CellFloorType::None)
+				return reject("Another floor object blocks the gap before the next Walkway");
+		}
+		return reject("No Walkway exists to the right of this gap");
+	}
+
+	bool Building::canAddSectorForceBridge(uint32_t sectorIndex, uint32_t deckIndex,
+		uint32_t xOffset, CreateForceBridgeOptions const& options, string* diagnostic) const
+	{
+		auto reject = [&](string reason) { if (diagnostic) *diagnostic = std::move(reason); return false; };
+		if (options.fromSide != CORE_SIDE_LEFT && options.fromSide != CORE_SIDE_RIGHT)
+			return reject("Force Bridge extension side is invalid");
+		if (options.width == 0 || options.width > CORE_FORCEBRIDGE_MAX_SIZE)
+			return reject(format("Force Bridge width must be [1,{}]", CORE_FORCEBRIDGE_MAX_SIZE));
+		if (options.extensible && (options.controlCount < 1 || options.controlCount > 2))
+			return reject("An extensible Force Bridge requires one or two controls");
+		if (!options.extensible && (options.controlCount != 0 || !options.startExtended))
+			return reject("A non-extensible Force Bridge must be permanently extended and have no controls");
+		if (sectorIndex >= mSectors.size()) return reject("Force Bridge Room does not exist");
+		auto room = dynamic_pointer_cast<const Location>(mSectors[sectorIndex]);
+		if (!room || room->isCorridor()) return reject("Force Bridges can only be placed in Rooms");
+		if (deckIndex >= room->getDecksHigh() || xOffset == 0
+			|| (uint64_t)xOffset + options.width >= room->getCellsWide())
+			return reject("The Force Bridge and both supports must remain inside its Room");
+		auto layer = mLayers[room->getLayerIndex()];
+		uint32_t x = room->getCellX() + xOffset, y = room->getCellY() + deckIndex;
+		for (uint32_t ix = x; ix < x + options.width; ++ix)
+			if (layer->getCellDefinition(ix, y).floorType != CellFloorType::None)
+				return reject("The Force Bridge span must be clear air");
+		auto supported = [](CellDefinition const& cell)
+			{ return cell.floorType == CellFloorType::Ground || cell.floorType == CellFloorType::Walkway; };
+		if (!supported(layer->getCellDefinition(x - 1, y)))
+			return reject("The Force Bridge requires Ground or a Walkway on its left");
+		if (!supported(layer->getCellDefinition(x + options.width, y)))
+			return reject("The Force Bridge requires Ground or a Walkway on its right");
+		if (diagnostic) diagnostic->clear();
+		return true;
+	}
+
 	Building::CreateForceBridgeResult Building::addSectorForceBridge(uint32_t sectorIndex, uint32_t deckIndex, uint32_t xOffset, CreateForceBridgeOptions const& options)
 	{
+		string caller = format("Building::addSectorForceBridge({}, {}, {}, {}, {}, {})", sectorIndex, deckIndex, xOffset, options.width, options.fromSide, options.startExtended);
+		string diagnostic;
+		if (!canAddSectorForceBridge(sectorIndex, deckIndex, xOffset, options, &diagnostic))
+			throw BuildingException(this, format("{} - {}", caller, diagnostic));
 		beginStructuralEdit("addSectorForceBridge");
 		ASSERT_SIDE_OK(options.fromSide);
-
-		string caller = format("Building::addSectorForceBridge({}, {}, {}, {}, {}, {})", sectorIndex, deckIndex, xOffset, options.width, options.fromSide, options.startExtended);
-
 		validateSectorForceBridgeOptions(caller, options);
-		validateObjectAllowedInSector(caller, SectorObjectType::ForceBridge, sectorIndex);
 
 		auto sector = _getSector(sectorIndex);
 		auto layerIndex = sector->getLayerIndex();
-
 		uint32_t x = sector->getCellX() + xOffset;
 		uint32_t y = sector->getCellY() + deckIndex;
-
-		validateCellHasNoFloorType(caller, "ForceBridge", layerIndex, x, y);
-		validateSpaceOnlyInOneSector(caller, layerIndex, x, y, options.width, 1);
-
 		auto layer = getLayer(layerIndex);
-		auto& cellDef = layer->getCellDefinition(x, y);
 
-		if (options.width > CORE_FORCEBRIDGE_MAX_SIZE)
-		{
-			throw BuildingException(this, format("{} - width={} is larger than {}", caller, options.width, CORE_FORCEBRIDGE_MAX_SIZE));
-		}
-
-		if (xOffset == 0 || xOffset == (getCellsWide() - 1))
-		{
-			throw BuildingException(this, format("{} - xOffset={} is out of bounds: force bridges cannot be on the end of a building", caller, xOffset));
-		}
-
-		// Make sure the Cells on either side are not air
-		auto const& cellDef0 = layer->getCellDefinition(x - 1, y);
-
-		if (cellDef0.floorType != CellFloorType::Walkway && cellDef0.floorType != CellFloorType::Ground)
-		{
-			throw BuildingException(this, format("{} - cell to the left has floorType={}, so cannot place force bridge here", caller, getCellFloorTypeString(cellDef0.floorType)));
-		}
-
-		auto const& cellDef1 = layer->getCellDefinition(x + 1, y);
-
-		if (cellDef1.floorType != CellFloorType::Walkway && cellDef1.floorType != CellFloorType::Ground)
-		{
-			throw BuildingException(this, format("{} - cell to the right has floorType={}, so cannot place force bridge here", caller, getCellFloorTypeString(cellDef1.floorType)));
-		}
-
-		// Create
+		// Create and mark every cell in the authored span as one floor object.
 		auto fbObject = createForceBridge(layerIndex, x, y, options);
-
-		// Set layers
-		cellDef.floorIndex = fbObject.index;
-		cellDef.floorType = CellFloorType::ForceBridge;
+		for (uint32_t ix = x; ix < x + options.width; ++ix)
+		{
+			auto& cellDef = layer->getCellDefinition(ix, y);
+			cellDef.floorIndex = fbObject.index;
+			cellDef.floorType = CellFloorType::ForceBridge;
+		}
 
 		auto forceBridge = dynamic_pointer_cast<ForceBridgeSectorObject>(
 			fbObject.sector->_getObject(fbObject.index))->getForceBridge();
@@ -3228,7 +3269,7 @@ namespace core
 		{
 			if (x == sector->getCellX0() && (x + options.width - 1) == sector->getCellX1())
 			{
-				throw BuildingException(this, format("{} - No space to place Buttons for Ladder", caller));
+				throw BuildingException(this, format("{} - No space to place Force Bridge controls", caller));
 			}
 
 			if (options.controlCount > 0)
@@ -3255,8 +3296,11 @@ namespace core
 				bindPhysicalControl(createdControls[1], point);
 				addTraversalControl(traversalResource, point);
 			}
-
 		}
+		// Keep the aggregate at three authored object slots (bridge plus two
+		// controls) so changing control count cannot shift unrelated object indices.
+		for (uint32_t i = options.controlCount; i < 2; ++i)
+			sector->addSectorObject(nullptr);
 
 		CreateForceBridgeResult result{
 			fbObject,

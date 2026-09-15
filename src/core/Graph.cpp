@@ -1141,21 +1141,16 @@ namespace core
 					}
 					else if (cellDef.floorType == CellFloorType::ForceBridge)
 					{
-						ObjectData obj = {
-							cellDef.floorIndex,
-							layerIndex,
-							x, y,
-							{
-								mwBuilding->_getSector(cellDef.sectorIndex),
-								mwBuilding->_getSector(cellDef.sectorIndex)
-							}
-						};
-
-						processForceBridge(
-							obj,
-							interLayerVertexLookup,
-							workVertices
-						);
+						auto sector = mwBuilding->_getSector(cellDef.sectorIndex);
+						auto floorObject = sector->_getObject(cellDef.floorIndex);
+						// A multi-cell bridge is referenced by every cell in its span, but
+						// contributes one pair of vertices and one traversal edge.
+						if (floorObject->getCellX() == x)
+						{
+							ObjectData obj = { cellDef.floorIndex, layerIndex, x, y,
+								{ sector, sector } };
+							processForceBridge(obj, interLayerVertexLookup, workVertices);
+						}
 					}
 
 

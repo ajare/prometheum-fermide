@@ -170,6 +170,7 @@ namespace
 		Door,
 		Window,
 		Walkway,
+		ForceBridge,
 		RoomLadder
 	};
 
@@ -199,6 +200,7 @@ namespace
 		string diagnostic;
 		uint32_t cellX{ 0 };
 		uint32_t cellY{ 0 };
+		uint32_t cellsWide{ 1 };
 
 		explicit operator bool() const { return sector != nullptr && diagnostic.empty(); }
 	};
@@ -566,6 +568,43 @@ namespace
 		return target;
 	}
 
+	PegmanTarget getForceBridgeTarget(shared_ptr<const core::Building> const& building,
+		ImVec2 position, ImVec2 canvasPos, ImVec2 canvasSize)
+	{
+		PegmanTarget target;
+		if (!pointInRect(position, canvasPos, canvasPos + canvasSize))
+		{
+			target.diagnostic = "Drop inside the world";
+			return target;
+		}
+		auto world = screenToWorld(position);
+		if (world.x < 0.0f || world.y < 0.0f)
+		{
+			target.diagnostic = "Force Bridge position is outside the building";
+			return target;
+		}
+		target.cellX = (uint32_t)floor(world.x);
+		target.cellY = (uint32_t)floor(world.y);
+		target.sector = building->getSectorAtPosition(gUISettings.visibleLayer, world.x, world.y);
+		auto room = dynamic_pointer_cast<const core::Location>(target.sector);
+		if (!room || room->isCorridor()) target.diagnostic = "Force Bridges can only be placed in Rooms";
+		else
+		{
+			target.deckOffset = target.cellY - room->getCellY();
+			target.localX = (float)(target.cellX - room->getCellX());
+			core::Building::CreateForceBridgeOptions options;
+			if (building->calculateSectorForceBridgeWidthToRight(room->getIndex(),
+				target.deckOffset, (uint32_t)target.localX, target.cellsWide,
+				&target.diagnostic))
+			{
+				options.width = target.cellsWide;
+				building->canAddSectorForceBridge(room->getIndex(), target.deckOffset,
+					(uint32_t)target.localX, options, &target.diagnostic);
+			}
+		}
+		return target;
+	}
+
 	PegmanTarget getRoomLadderTarget(shared_ptr<const core::Building> const& building,
 		ImVec2 position, ImVec2 canvasPos, ImVec2 canvasSize)
 	{
@@ -662,6 +701,15 @@ namespace
 		drawObjectIcon(drawList, boundsMin, boundsMax, colour, ICON_FA_GRIP_LINES);
 	}
 
+	void drawForceBridgeIcon(ImDrawList* drawList, ImVec2 boundsMin, ImVec2 boundsMax, ImU32 colour)
+	{
+		auto y = (boundsMin.y + boundsMax.y) * 0.5f;
+		auto left = boundsMin.x + 10.0f, right = boundsMax.x - 10.0f;
+		drawList->AddLine({ left, y }, { right, y }, colour, 2.5f);
+		drawList->AddTriangleFilled({ right, y }, { right - 7.0f, y - 4.0f },
+			{ right - 7.0f, y + 4.0f }, colour);
+	}
+
 	void drawLadderIcon(ImDrawList* drawList, ImVec2 boundsMin, ImVec2 boundsMax, ImU32 colour)
 	{
 		auto inset = ImVec2(18.0f, 6.0f);
@@ -718,6 +766,27 @@ namespace
 			}
 		}
 		return selected;
+	}
+
+	shared_ptr<const core::SectorObject> forceBridgeAtScreenPosition(
+		shared_ptr<const core::Building> const& building, ImVec2 position)
+	{
+		constexpr float tolerance = 8.0f;
+		for (auto const& sector : building->getSectors(gUISettings.visibleLayer))
+		{
+			for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
+			{
+				auto object = sector->getObject(i);
+				if (!object || object->getObjectType() != core::SectorObjectType::ForceBridge) continue;
+				auto bridge = static_pointer_cast<const core::ForceBridgeSectorObject>(object)->getForceBridge();
+				auto left = worldToScreen({ (float)object->getCellX(), (float)object->getCellY() });
+				auto right = worldToScreen({ (float)object->getCellX() + bridge->getSize().x,
+					(float)object->getCellY() });
+				if (position.x >= left.x && position.x <= right.x
+					&& abs(position.y - left.y) <= tolerance) return object;
+			}
+		}
+		return nullptr;
 	}
 
 	shared_ptr<const core::SectorObject> walkwayAtScreenPosition(
@@ -1081,6 +1150,32 @@ namespace
 		}
 	}
 
+	void placeForceBridge(shared_ptr<core::Building> const& building, PegmanTarget const& target)
+	{
+		auto undo = captureDocumentSnapshot(building);
+		try
+		{
+			core::Building::CreateForceBridgeOptions options;
+			options.width = target.cellsWide;
+			auto created = building->addSectorForceBridge(target.sector->getIndex(),
+				target.deckOffset, (uint32_t)target.localX, options);
+			building->finishBuild();
+			setSelectionMode(UISettings::SelectionMode::Object);
+			gSelectedAgent = nullptr;
+			gSelectedSector.reset();
+			gSelectedSectorObject = created.forceBridge.sector->getObject(created.forceBridge.index);
+			commitDocumentEdit(std::move(undo));
+		}
+		catch (core::Exception const& error)
+		{
+			core::addLogMessage("Force Bridge editor", 0, core::LogLevel::Error, error.getMessage());
+		}
+		catch (std::exception const& error)
+		{
+			core::addLogMessage("Force Bridge editor", 0, core::LogLevel::Error, error.what());
+		}
+	}
+
 	void placeRoomLadder(shared_ptr<core::Building> const& building, PegmanTarget const& target)
 	{
 		auto undo = captureDocumentSnapshot(building);
@@ -1156,7 +1251,7 @@ namespace
 		}
 
 		auto trayBottomRight = canvasPos + canvasSize - ImVec2(PaletteInset, PaletteInset);
-		auto traySize = ImVec2(PalettePadding * 2.0f + PaletteSlotWidth * 6.0f + PaletteGap * 5.0f,
+		auto traySize = ImVec2(PalettePadding * 2.0f + PaletteSlotWidth * 7.0f + PaletteGap * 6.0f,
 			PalettePadding * 2.0f + PaletteSlotSize * 2.0f + PaletteGap);
 		auto trayTopLeft = trayBottomRight - traySize;
 		auto roomMin = trayTopLeft + ImVec2(PalettePadding, PalettePadding);
@@ -1170,7 +1265,8 @@ namespace
 		auto doorMin = ladderMin + ImVec2(0.0f, PaletteSlotSize + PaletteGap);
 		auto windowMin = staircaseMin + ImVec2(0.0f, PaletteSlotSize + PaletteGap);
 		auto walkwayMin = liftMin + ImVec2(0.0f, PaletteSlotSize + PaletteGap);
-		auto roomLadderMin = shuttleMin + ImVec2(0.0f, PaletteSlotSize + PaletteGap);
+		auto forceBridgeMin = shuttleMin + ImVec2(0.0f, PaletteSlotSize + PaletteGap);
+		auto roomLadderMin = forceBridgeMin + ImVec2(PaletteSlotWidth + PaletteGap, 0.0f);
 		auto roomMax = roomMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
 		auto corridorMax = corridorMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
 		auto ladderMax = ladderMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
@@ -1182,6 +1278,7 @@ namespace
 		auto agentMax = agentMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
 		auto markerMax = markerMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
 		auto walkwayMax = walkwayMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
+		auto forceBridgeMax = forceBridgeMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
 		auto roomLadderMax = roomLadderMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
 		drawList->AddRectFilled(trayTopLeft, trayBottomRight, trayColour, 5.0f);
 		drawList->AddRect(trayTopLeft, trayBottomRight, borderColour, 5.0f);
@@ -1257,6 +1354,7 @@ namespace
 			shuttleHovered, backOnlyDisabled);
 		drawWindowIcon(drawList, windowMin, windowMax, yellow);
 		drawWalkwayIcon(drawList, walkwayMin, walkwayMax, yellow);
+		drawForceBridgeIcon(drawList, forceBridgeMin, forceBridgeMax, IM_COL32(0, 255, 0, 255));
 		drawLadderIcon(drawList, roomLadderMin, roomLadderMax, yellow);
 
 		bool paintWasActive = gPaint.tool != PaintTool::None;
@@ -1371,12 +1469,15 @@ namespace
 			else if (pointInRect(io.MousePos, doorMin, doorMax)) hoveredItem = PaletteItem::Door;
 			else if (pointInRect(io.MousePos, windowMin, windowMax)) hoveredItem = PaletteItem::Window;
 			else if (pointInRect(io.MousePos, walkwayMin, walkwayMax)) hoveredItem = PaletteItem::Walkway;
+			else if (pointInRect(io.MousePos, forceBridgeMin, forceBridgeMax)) hoveredItem = PaletteItem::ForceBridge;
 			else if (pointInRect(io.MousePos, roomLadderMin, roomLadderMax)) hoveredItem = PaletteItem::RoomLadder;
 		}
 		drawList->AddRect(windowMin, windowMax,
 			hoveredItem == PaletteItem::Window ? yellow : borderColour, 3.0f);
 		drawList->AddRect(walkwayMin, walkwayMax,
 			hoveredItem == PaletteItem::Walkway ? yellow : borderColour, 3.0f);
+		drawList->AddRect(forceBridgeMin, forceBridgeMax,
+			hoveredItem == PaletteItem::ForceBridge ? yellow : borderColour, 3.0f);
 		drawList->AddRect(roomLadderMin, roomLadderMax,
 			hoveredItem == PaletteItem::RoomLadder ? yellow : borderColour, 3.0f);
 		drawList->AddRect(agentMin, agentMax,
@@ -1393,6 +1494,7 @@ namespace
 				: hoveredItem == PaletteItem::Marker ? "Drag to add Marker"
 				: hoveredItem == PaletteItem::Window ? "Drag to add Window"
 				: hoveredItem == PaletteItem::Walkway ? "Drag to add Walkway"
+				: hoveredItem == PaletteItem::ForceBridge ? "Drag to add Force Bridge"
 				: hoveredItem == PaletteItem::RoomLadder ? "Drag to add Room Ladder" : "Drag to add Door");
 			if (io.MouseClicked[0])
 			{
@@ -1427,6 +1529,8 @@ namespace
 				target = getWindowTarget(building, io.MousePos, canvasPos, canvasSize);
 			else if (gPegman.item == PaletteItem::Walkway)
 				target = getWalkwayTarget(building, io.MousePos, canvasPos, canvasSize);
+			else if (gPegman.item == PaletteItem::ForceBridge)
+				target = getForceBridgeTarget(building, io.MousePos, canvasPos, canvasSize);
 			else if (gPegman.item == PaletteItem::RoomLadder)
 				target = getRoomLadderTarget(building, io.MousePos, canvasPos, canvasSize);
 			else
@@ -1453,6 +1557,11 @@ namespace
 				else if (target && gPegman.item == PaletteItem::Walkway)
 				{
 					placeWalkway(building, target);
+					resetPegman();
+				}
+				else if (target && gPegman.item == PaletteItem::ForceBridge)
+				{
+					placeForceBridge(building, target);
 					resetPegman();
 				}
 				else if (target && gPegman.item == PaletteItem::RoomLadder)
@@ -1500,6 +1609,16 @@ namespace
 					drawWalkwayIcon(drawList, topLeft, bottomRight, colour);
 				}
 				else drawWalkwayIcon(drawList, io.MousePos - ImVec2(24.0f, 18.0f),
+					io.MousePos + ImVec2(24.0f, 18.0f), colour);
+			}
+			else if (gPegman.item == PaletteItem::ForceBridge)
+			{
+				if (target.sector)
+					drawForceBridgeIcon(drawList,
+						worldToScreen({ (float)target.cellX, (float)target.cellY + 0.5f }),
+						worldToScreen({ (float)target.cellX + target.cellsWide,
+							(float)target.cellY - 0.5f }), colour);
+				else drawForceBridgeIcon(drawList, io.MousePos - ImVec2(24.0f, 18.0f),
 					io.MousePos + ImVec2(24.0f, 18.0f), colour);
 			}
 			else if (gPegman.item == PaletteItem::RoomLadder)
@@ -2428,7 +2547,7 @@ namespace
 		}
 	}
 
-	enum class ClipboardObjectType { Agent, Door, Window, Marker, Walkway, RoomLadder };
+	enum class ClipboardObjectType { Agent, Door, Window, Marker, Walkway, ForceBridge, RoomLadder };
 	struct ClipboardDefinition
 	{
 		ClipboardObjectType type{};
@@ -2437,6 +2556,7 @@ namespace
 		uint32_t flags{ 0 };
 		core::Building::CreateDoorOptions door;
 		core::Building::CreateWindowOptions window;
+		core::Building::CreateForceBridgeOptions forceBridge{ 1, CORE_SIDE_LEFT, true, true, 1 };
 		core::Building::CreateLadderOptions ladder{ 0, false, true };
 		uint32_t width{ 1 }, height{ 1 };
 	};
@@ -2446,11 +2566,16 @@ namespace
 	double gClipboardErrorUntil{ 0.0 };
 	string gConsumedCutClipboard;
 
-	void reportClipboardError(string message)
+	void reportEditorError(string const& source, string message)
 	{
 		gClipboardError = std::move(message);
 		gClipboardErrorUntil = ImGui::GetTime() + 3.0;
-		core::addLogMessage("Clipboard", 0, core::LogLevel::Error, gClipboardError);
+		core::addLogMessage(source, 0, core::LogLevel::Error, gClipboardError);
+	}
+
+	void reportClipboardError(string message)
+	{
+		reportEditorError("Clipboard", std::move(message));
 	}
 
 	bool hasClipboardSelection()
@@ -2461,7 +2586,7 @@ namespace
 		auto type = gSelectedSectorObject->getObjectType();
 		return type == core::SectorObjectType::Door || type == core::SectorObjectType::Window
 			|| type == core::SectorObjectType::Marker || type == core::SectorObjectType::Walkway
-			|| type == core::SectorObjectType::Ladder;
+			|| type == core::SectorObjectType::ForceBridge || type == core::SectorObjectType::Ladder;
 	}
 
 	char const* activationModeName(core::DoorActivationMode mode)
@@ -2576,6 +2701,25 @@ namespace
 			output << YAML::Key << "type" << YAML::Value << "Walkway"
 				<< YAML::Key << "object" << YAML::Value << YAML::BeginMap << YAML::EndMap;
 		}
+		else if (gSelectedSectorObject->getObjectType() == core::SectorObjectType::ForceBridge)
+		{
+			auto owner = gSelectedSectorObject->getSector();
+			uint32_t index = ~0u;
+			for (uint32_t i = 0; i < owner->getNumObjects(); ++i)
+				if (owner->getObject(i) == gSelectedSectorObject) { index = i; break; }
+			core::Building::CreateForceBridgeOptions options;
+			if (index == ~0u || !building->getSectorForceBridgeOptions(owner->getIndex(), index, options))
+				throw runtime_error("The selected Force Bridge has no authored definition");
+			output << YAML::Key << "type" << YAML::Value << "ForceBridge"
+				<< YAML::Key << "object" << YAML::Value << YAML::BeginMap
+				<< YAML::Key << "width" << YAML::Value << options.width
+				<< YAML::Key << "fromSide" << YAML::Value
+				<< (options.fromSide == CORE_SIDE_LEFT ? "left" : "right")
+				<< YAML::Key << "extensible" << YAML::Value << options.extensible
+				<< YAML::Key << "startExtended" << YAML::Value << options.startExtended
+				<< YAML::Key << "controlCount" << YAML::Value << options.controlCount
+				<< YAML::EndMap;
+		}
 		else if (gSelectedSectorObject->getObjectType() == core::SectorObjectType::Ladder)
 		{
 			auto owner = gSelectedSectorObject->getSector();
@@ -2675,6 +2819,27 @@ namespace
 		}
 		else if (type == "Marker") definition.type = ClipboardObjectType::Marker;
 		else if (type == "Walkway") definition.type = ClipboardObjectType::Walkway;
+		else if (type == "ForceBridge")
+		{
+			definition.type = ClipboardObjectType::ForceBridge;
+			definition.forceBridge.width = requiredYaml<uint32_t>(object, "width");
+			auto side = requiredYaml<string>(object, "fromSide");
+			if (side == "left") definition.forceBridge.fromSide = CORE_SIDE_LEFT;
+			else if (side == "right") definition.forceBridge.fromSide = CORE_SIDE_RIGHT;
+			else throw runtime_error("Force Bridge fromSide is invalid");
+			definition.forceBridge.extensible = requiredYaml<bool>(object, "extensible");
+			definition.forceBridge.startExtended = requiredYaml<bool>(object, "startExtended");
+			definition.forceBridge.controlCount = requiredYaml<uint32_t>(object, "controlCount");
+			if (definition.forceBridge.width == 0
+				|| definition.forceBridge.width > CORE_FORCEBRIDGE_MAX_SIZE)
+				throw runtime_error("Force Bridge width is invalid");
+			if (definition.forceBridge.extensible
+				&& (definition.forceBridge.controlCount < 1 || definition.forceBridge.controlCount > 2))
+				throw runtime_error("An extensible Force Bridge requires one or two controls");
+			if (!definition.forceBridge.extensible
+				&& (definition.forceBridge.controlCount != 0 || !definition.forceBridge.startExtended))
+				throw runtime_error("A non-extensible Force Bridge must be permanently extended and have no controls");
+		}
 		else if (type == "RoomLadder")
 		{
 			definition.type = ClipboardObjectType::RoomLadder;
@@ -2717,8 +2882,15 @@ namespace
 						? building->removeSectorWindow(sector->getIndex(), i)
 						: type == core::SectorObjectType::Ladder
 							? building->removeRoomLadder(sector->getIndex(), i)
-							: building->removeSectorWalkway(sector->getIndex(), i);
-			if (!removed) return false;
+							: type == core::SectorObjectType::ForceBridge
+								? building->removeSectorForceBridge(sector->getIndex(), i)
+								: building->removeSectorWalkway(sector->getIndex(), i);
+			if (!removed)
+			{
+				reportEditorError("Object editor", format("{} could not be deleted",
+					selected->getDescription()));
+				return false;
+			}
 			if (type == core::SectorObjectType::Marker) building->finishBuild();
 			if (gHoveredSectorObject == selected) gHoveredSectorObject.reset();
 			gSelectedSectorObject.reset();
@@ -2889,6 +3061,16 @@ namespace
 					y - markerSector->getCellY(), x - markerSector->getCellX(), &diagnostic))
 					throw runtime_error(diagnostic);
 			}
+			else if (definition.type == ClipboardObjectType::ForceBridge)
+			{
+				markerSector = building->getSectorAtPosition(gUISettings.visibleLayer, world.x, world.y);
+				auto room = dynamic_pointer_cast<const core::Location>(markerSector);
+				if (!room || room->isCorridor() || !markerSector->pointInBounds(world.x, world.y))
+					throw runtime_error("Force Bridges can only be placed in Rooms");
+				if (!building->canAddSectorForceBridge(markerSector->getIndex(),
+					y - markerSector->getCellY(), x - markerSector->getCellX(),
+					definition.forceBridge, &diagnostic)) throw runtime_error(diagnostic);
+			}
 			else if (definition.type == ClipboardObjectType::RoomLadder)
 			{
 				markerSector = building->getSectorAtPosition(gUISettings.visibleLayer, world.x, world.y);
@@ -2933,6 +3115,13 @@ namespace
 					auto result = building->addSectorWalkway(markerSector->getIndex(),
 						y - markerSector->getCellY(), x - markerSector->getCellX());
 					created = result.sector->getObject(result.index);
+				}
+				else if (definition.type == ClipboardObjectType::ForceBridge)
+				{
+					auto result = building->addSectorForceBridge(markerSector->getIndex(),
+						y - markerSector->getCellY(), x - markerSector->getCellX(),
+						definition.forceBridge);
+					created = result.forceBridge.sector->getObject(result.forceBridge.index);
 				}
 				else if (definition.type == ClipboardObjectType::RoomLadder)
 				{
@@ -3094,19 +3283,20 @@ void handleShortcuts(shared_ptr<core::Building>& building)
 					|| gSelectedSectorObject->getObjectType() == core::SectorObjectType::Door
 					|| gSelectedSectorObject->getObjectType() == core::SectorObjectType::Window
 					|| gSelectedSectorObject->getObjectType() == core::SectorObjectType::Walkway
+					|| gSelectedSectorObject->getObjectType() == core::SectorObjectType::ForceBridge
 					|| gSelectedSectorObject->getObjectType() == core::SectorObjectType::Ladder))
 			{
 				uint32_t liftIndex, stopIndex;
 				if (building->isLiftOwnedDoor(gSelectedSectorObject, &liftIndex, &stopIndex))
 				{
 					auto plan = building->planRemoveLiftStop(liftIndex, stopIndex);
-					if (!plan.valid) core::addLogMessage("Lift editor", 0, core::LogLevel::Error, plan.diagnostic);
+					if (!plan.valid) reportEditorError("Lift editor", plan.diagnostic);
 					else queueLiftEdit(building, plan);
 				}
 				else if (building->isShuttleOwnedDoor(gSelectedSectorObject, &liftIndex, &stopIndex))
 				{
 					auto plan = building->planRemoveShuttleStop(liftIndex, stopIndex);
-					if (!plan.valid) core::addLogMessage("Shuttle editor", 0, core::LogLevel::Error, plan.diagnostic);
+					if (!plan.valid) reportEditorError("Shuttle editor", plan.diagnostic);
 					else queueShuttleEdit(building, plan);
 				}
 				else try
@@ -3128,7 +3318,12 @@ void handleShortcuts(shared_ptr<core::Building>& building)
 									? building->removeSectorWindow(sector->getIndex(), i)
 									: type == core::SectorObjectType::Ladder
 										? building->removeRoomLadder(sector->getIndex(), i)
-										: building->removeSectorWalkway(sector->getIndex(), i);
+										: type == core::SectorObjectType::ForceBridge
+											? building->removeSectorForceBridge(sector->getIndex(), i)
+											: building->removeSectorWalkway(sector->getIndex(), i);
+						if (!removed)
+							reportEditorError("Object editor", format("{} could not be deleted",
+								selected->getDescription()));
 						if (removed)
 						{
 							if (gHoveredSectorObject == selected) gHoveredSectorObject.reset();
@@ -3143,11 +3338,11 @@ void handleShortcuts(shared_ptr<core::Building>& building)
 				}
 				catch (core::Exception const& error)
 				{
-					core::addLogMessage("Editor", 0, core::LogLevel::Error, error.getMessage());
+					reportEditorError("Object editor", error.getMessage());
 				}
 				catch (std::exception const& error)
 				{
-					core::addLogMessage("Editor", 0, core::LogLevel::Error, error.what());
+					reportEditorError("Object editor", error.what());
 				}
 			}
 		}
@@ -3777,11 +3972,11 @@ void renderWalkwayPanel(shared_ptr<core::Building> const& building,
 		}
 		catch (core::Exception const& error)
 		{
-			core::addLogMessage("Walkway editor", 0, core::LogLevel::Error, error.getMessage());
+			reportEditorError("Walkway editor", error.getMessage());
 		}
 		catch (std::exception const& error)
 		{
-			core::addLogMessage("Walkway editor", 0, core::LogLevel::Error, error.what());
+			reportEditorError("Walkway editor", error.what());
 		}
 	}
 	ImGui::SameLine();
@@ -3962,6 +4157,22 @@ void renderDoorPanel(shared_ptr<core::Building> const& building,
 void renderLiftOwnedControlPanel(shared_ptr<core::Building> const& building,
 	shared_ptr<const core::SectorObject> object)
 {
+	uint32_t bridgeSector, bridgeObject;
+	if (building->isForceBridgeOwnedControl(object, &bridgeSector, &bridgeObject))
+	{
+		ImGui::TextUnformatted("Force Bridge control");
+		ImGui::Text("Position: %u, %u", object->getCellX(), object->getCellY());
+		ImGui::Separator();
+		ImGui::Text("Owned by Force Bridge in Room %u", bridgeSector);
+		ImGui::TextDisabled("This control is managed by its Force Bridge and is read-only.");
+		if (ImGui::Button("Select Force Bridge"))
+		{
+			auto sector = building->getSector(bridgeSector);
+			if (sector && bridgeObject < sector->getNumObjects())
+				gSelectedSectorObject = sector->getObject(bridgeObject);
+		}
+		return;
+	}
 	uint32_t transportSector, stopIndex;
 	bool const liftOwned = building->isLiftOwnedControl(object, &transportSector, &stopIndex);
 	bool const shuttleOwned = building->isShuttleOwnedControl(object, &transportSector, &stopIndex);
@@ -3976,38 +4187,136 @@ void renderLiftOwnedControlPanel(shared_ptr<core::Building> const& building,
 	ImGui::TextDisabled("This button is managed by its transport landing and is read-only.");
 }
 
-void renderForceBridgePanel(shared_ptr<const core::SectorObject> object)
+void renderForceBridgePanel(shared_ptr<core::Building> const& building,
+	shared_ptr<const core::SectorObject> object)
 {
 	auto fbObject = static_pointer_cast<const core::ForceBridgeSectorObject>(object);
 	auto forceBridge = fbObject->getForceBridge();
+	auto room = object->getSector();
+	uint32_t objectIndex = ~0u;
+	for (uint32_t i = 0; i < room->getNumObjects(); ++i)
+		if (room->getObject(i) == object) { objectIndex = i; break; }
 
-	float pct = forceBridge->getExtendedPercentage() * 100;
-
-	// State
+	ImGui::TextUnformatted("Force Bridge");
+	ImGui::Text("Room: %s", room->getName().c_str());
+	ImGui::Text("Room index: %u", room->getIndex());
+	ImGui::Text("Layer: %s", room->getLayerIndex() == CORE_LAYER_FORE ? "Fore" : "Back");
+	ImGui::Text("Position: %u, %u", object->getCellX(), object->getCellY());
+	ImGui::Text("Deck offset: %u", object->getCellY() - room->getCellY());
+	float pct = forceBridge->getExtendedPercentage() * 100.0f;
+	char const* state = "Unknown";
 	switch (forceBridge->getState())
 	{
-	case core::ExtensibleObject::State::Extended:
-		ImGui::Text("Extended (%3.2f %% extended)", pct);
-		break;
+	case core::ExtensibleObject::State::Extended: state = "Extended"; break;
+	case core::ExtensibleObject::State::Extending: state = "Extending"; break;
+	case core::ExtensibleObject::State::Retracted: state = "Retracted"; break;
+	case core::ExtensibleObject::State::Retracting: state = "Retracting"; break;
+	}
+	ImGui::Text("Runtime state: %s (%.2f%%)", state, pct);
+	ImGui::Text("Extend/retract time: %.2fs", forceBridge->getExtendRetractTime());
 
-	case core::ExtensibleObject::State::Extending:
-		ImGui::Text("Extending (%3.2f %% extended)", pct);
-		break;
-
-	case core::ExtensibleObject::State::Retracted:
-		ImGui::Text("Retracted (%3.2f %% extended)", pct);
-		break;
-
-	case core::ExtensibleObject::State::Retracting:
-		ImGui::Text("Retracting (%3.2f %% extended)", pct);
-		break;
+	static core::Building const* editedBuilding = nullptr;
+	static core::SectorObject const* editedObject = nullptr;
+	static int width = 1, side = 0, controls = 1, previousControls = 1;
+	static bool extensible = true, initiallyExtended = true;
+	core::Building::CreateForceBridgeOptions current;
+	if ((editedBuilding != building.get() || editedObject != object.get())
+		&& objectIndex != ~0u
+		&& building->getSectorForceBridgeOptions(room->getIndex(), objectIndex, current))
+	{
+		editedBuilding = building.get(); editedObject = object.get();
+		width = (int)current.width;
+		side = current.fromSide == CORE_SIDE_LEFT ? 0 : 1;
+		extensible = current.extensible;
+		initiallyExtended = current.startExtended;
+		controls = (int)current.controlCount;
+		if (controls > 0) previousControls = controls;
 	}
 
-	// Open/close time
-	ImGui::Text("Extend/retract time: %3.2f s", forceBridge->getExtendRetractTime());
+	auto commitSettings = [&]()
+	{
+		try
+		{
+			auto undo = captureDocumentSnapshot(building);
+			if (!building->isSimulationPaused()) building->pauseSimulation();
+			gUISettings.worldPaused = true;
+			core::Building::CreateForceBridgeOptions options{ (uint32_t)width,
+				side == 0 ? CORE_SIDE_LEFT : CORE_SIDE_RIGHT, extensible,
+				extensible ? initiallyExtended : true, extensible ? (uint32_t)controls : 0u };
+			gSelectedSectorObject = building->applySectorForceBridgeOptions(
+				room->getIndex(), objectIndex, options);
+			gHoveredSectorObject.reset();
+			editedObject = nullptr;
+			commitDocumentEdit(std::move(undo));
+			return true;
+		}
+		catch (core::Exception const& error)
+		{
+			core::addLogMessage("Force Bridge editor", 0, core::LogLevel::Error, error.getMessage());
+		}
+		catch (std::exception const& error)
+		{
+			core::addLogMessage("Force Bridge editor", 0, core::LogLevel::Error, error.what());
+		}
+		return false;
+	};
 
-	// Sectors
-	ImGui::Text("From: %s", forceBridge->getFromSide() == CORE_SIDE_LEFT ? "left" : "right");
+	ImGui::Separator();
+	ImGui::InputInt("Width", &width);
+	ImGui::Combo("Extends from", &side, "Left\0Right\0");
+	if (ImGui::Checkbox("Extensible", &extensible))
+	{
+		if (!extensible)
+		{
+			if (controls > 0) previousControls = controls;
+			controls = 0;
+			initiallyExtended = true;
+		}
+		else controls = clamp(previousControls, 1, 2);
+	}
+	ImGui::BeginDisabled(!extensible);
+	bool previousInitiallyExtended = initiallyExtended;
+	if (ImGui::Checkbox("Initially extended", &initiallyExtended))
+	{
+		if (objectIndex != ~0u && commitSettings()) return;
+		initiallyExtended = previousInitiallyExtended;
+	}
+	int controlChoice = clamp(controls, 1, 2) - 1;
+	int previousControlCount = controls;
+	if (ImGui::Combo("Physical controls", &controlChoice,
+		"Extension side\0Both sides\0"))
+	{
+		controls = controlChoice + 1;
+		previousControls = controls;
+		if (objectIndex != ~0u && commitSettings()) return;
+		controls = previousControlCount;
+		previousControls = controls;
+	}
+	ImGui::EndDisabled();
+	bool basicValid = width >= 1 && width <= (int)CORE_FORCEBRIDGE_MAX_SIZE
+		&& (!extensible || (controls >= 1 && controls <= 2));
+	ImGui::BeginDisabled(!basicValid || objectIndex == ~0u);
+	if (ImGui::Button("Apply Force Bridge settings") && commitSettings()) return;
+	ImGui::EndDisabled();
+	ImGui::Separator();
+	if (ImGui::Button("Delete Force Bridge"))
+	{
+		try
+		{
+			auto undo = captureDocumentSnapshot(building);
+			if (removeClipboardSelection(building)) commitDocumentEdit(std::move(undo));
+		}
+		catch (core::Exception const& error)
+		{
+			reportEditorError("Force Bridge editor", error.getMessage());
+		}
+		catch (std::exception const& error)
+		{
+			reportEditorError("Force Bridge editor", error.what());
+		}
+	}
+	ImGui::SameLine();
+	ImGui::TextDisabled("Delete key");
 }
 
 
@@ -4114,11 +4423,13 @@ void renderLadderPanel(shared_ptr<core::Building> const& building,
 				gSelectedSectorObject.reset(); gHoveredSectorObject.reset();
 				commitDocumentEdit(std::move(undo));
 			}
+			else reportEditorError("Room Ladder editor",
+				"The selected Room Ladder could not be deleted");
 		}
 		catch (core::Exception const& error)
-		{ core::addLogMessage("Room Ladder editor", 0, core::LogLevel::Error, error.getMessage()); }
+		{ reportEditorError("Room Ladder editor", error.getMessage()); }
 		catch (std::exception const& error)
-		{ core::addLogMessage("Room Ladder editor", 0, core::LogLevel::Error, error.what()); }
+		{ reportEditorError("Room Ladder editor", error.what()); }
 	}
 	ImGui::SameLine(); ImGui::TextDisabled("Delete key");
 }
@@ -4792,7 +5103,7 @@ void renderSelectedObjectPanel(shared_ptr<core::Building> const& building)
 			break;
 
 		case core::SectorObjectType::ForceBridge:
-			renderForceBridgePanel(gSelectedSectorObject);
+			renderForceBridgePanel(building, gSelectedSectorObject);
 			break;
 
 		case core::SectorObjectType::Ladder:
@@ -5405,7 +5716,8 @@ namespace
 		if (building->isLiftOwnedDoor(gSelectedSectorObject)
 			|| building->isLiftOwnedControl(gSelectedSectorObject)
 			|| building->isShuttleOwnedDoor(gSelectedSectorObject)
-			|| building->isShuttleOwnedControl(gSelectedSectorObject))
+			|| building->isShuttleOwnedControl(gSelectedSectorObject)
+			|| building->isForceBridgeOwnedControl(gSelectedSectorObject))
 		{
 			resetObjectMove();
 			return;
@@ -5949,6 +6261,8 @@ void renderWorldWindow(shared_ptr<core::Building> building, shared_ptr<const cor
 			if (!gHoveredSectorObject)
 				gHoveredSectorObject = ladderAtScreenPosition(building, ImGui::GetIO().MousePos);
 			if (!gHoveredSectorObject)
+				gHoveredSectorObject = forceBridgeAtScreenPosition(building, ImGui::GetIO().MousePos);
+			if (!gHoveredSectorObject)
 				gHoveredSectorObject = walkwayAtScreenPosition(building, ImGui::GetIO().MousePos);
 			if (!gHoveredSectorObject)
 			{
@@ -6016,9 +6330,10 @@ void renderWorldWindow(shared_ptr<core::Building> building, shared_ptr<const cor
 		auto bottomRight = worldToScreen({ (float)plan.x + width, (float)plan.y });
 		auto colour = plan.valid ? IM_COL32(255, 255, 0, 255) : IM_COL32(255, 64, 64, 255);
 		if (gSelectedSectorObject
-			&& gSelectedSectorObject->getObjectType() == core::SectorObjectType::Walkway)
+			&& (gSelectedSectorObject->getObjectType() == core::SectorObjectType::Walkway
+				|| gSelectedSectorObject->getObjectType() == core::SectorObjectType::ForceBridge))
 			drawList->AddLine(worldToScreen({ (float)plan.x, (float)plan.y }),
-				worldToScreen({ (float)plan.x + 1.0f, (float)plan.y }), colour, 3.0f);
+				worldToScreen({ (float)plan.x + width, (float)plan.y }), colour, 3.0f);
 		else
 		{
 			drawList->AddRectFilled(topLeft, bottomRight,

@@ -441,6 +441,125 @@ namespace
 		return building.getSector(otherRoom) != nullptr && building.isTraversalTopologyValid();
 	}
 
+	bool forceBridgeObjectEditingIsAtomic()
+	{
+		core::Building building("Force Bridge editing", 10, 4);
+		auto room = building.addRoom("Bridge room", CORE_LAYER_FORE, 0, 0, 8, 3);
+		building.addSectorWalkway(room, 1, 0);
+		building.addSectorWalkway(room, 1, 3);
+		building.addSectorWalkway(room, 1, 6);
+		core::Building::CreateForceBridgeOptions options{ 2, CORE_SIDE_LEFT, true, true, 1 };
+		std::string diagnostic;
+		if (!building.canAddSectorForceBridge(room, 1, 1, options, &diagnostic)
+			|| building.canAddSectorForceBridge(room, 1, 2, options, &diagnostic)) return false;
+		auto created = building.addSectorForceBridge(room, 1, 1, options);
+		building.finishBuild();
+		building.pauseSimulation();
+
+		core::Building::CreateForceBridgeOptions authored;
+		if (!building.getSectorForceBridgeOptions(room, created.forceBridge.index, authored)
+			|| authored.width != 2 || authored.controlCount != 1) return false;
+		auto move = building.planMoveSectorObject(room, created.forceBridge.index, 4, 1);
+		if (!move.valid || move.previewWidth != 2) return false;
+		auto moved = building.applyObjectMove(move);
+		if (!moved || moved->getCellX() != 4) return false;
+		uint32_t movedIndex = ~0u;
+		for (uint32_t i = 0; i < moved->getSector()->getNumObjects(); ++i)
+			if (moved->getSector()->getObject(i) == moved) { movedIndex = i; break; }
+		if (movedIndex == ~0u) return false;
+		options.fromSide = CORE_SIDE_RIGHT;
+		options.controlCount = 2;
+		auto edited = building.applySectorForceBridgeOptions(room, movedIndex, options);
+		if (!edited || edited->getCellX() != 4) return false;
+		uint32_t editedIndex = ~0u;
+		for (uint32_t i = 0; i < edited->getSector()->getNumObjects(); ++i)
+			if (edited->getSector()->getObject(i) == edited) { editedIndex = i; break; }
+		if (editedIndex == ~0u) return false;
+		auto occupant = building.createAgent("Bridge occupant", room, 1, 4.5f);
+		bool occupiedDeleteRejected = false;
+		try { building.removeSectorForceBridge(room, editedIndex); }
+		catch (std::exception const&) { occupiedDeleteRejected = true; }
+		if (!occupiedDeleteRejected || !building.removeAgent(occupant)
+			|| !building.removeSectorForceBridge(room, editedIndex)) return false;
+		for (uint32_t i = 0; i < building.getSector(room)->getNumObjects(); ++i)
+			if (auto object = building.getSector(room)->getObject(i))
+				if (object->getObjectType() == core::SectorObjectType::ForceBridge) return false;
+		return building.isTraversalTopologyValid();
+	}
+
+	bool forceBridgeWalkwayDeletionUpdatesItsDestination()
+	{
+		{
+			core::Building placement("Force Bridge inferred width", 8, 4);
+			auto placementRoom = placement.addRoom("Bridge room", CORE_LAYER_FORE, 0, 0, 6, 3);
+			placement.addSectorWalkway(placementRoom, 1, 0);
+			placement.addSectorWalkway(placementRoom, 1, 3);
+			uint32_t inferredWidth = 0;
+			std::string diagnostic;
+			core::Building::CreateForceBridgeOptions inferred;
+			if (!placement.calculateSectorForceBridgeWidthToRight(placementRoom, 1, 1,
+				inferredWidth, &diagnostic) || inferredWidth != 2) return false;
+			inferred.width = inferredWidth;
+			if (!placement.canAddSectorForceBridge(placementRoom, 1, 1, inferred, &diagnostic))
+				return false;
+		}
+
+		{
+			core::Building right("Right-origin Force Bridge dependencies", 9, 4);
+			auto rightRoom = right.addRoom("Bridge room", CORE_LAYER_FORE, 0, 0, 7, 3);
+			right.addSectorWalkway(rightRoom, 1, 2);
+			auto rightDestination = right.addSectorWalkway(rightRoom, 1, 3);
+			auto rightOrigin = right.addSectorWalkway(rightRoom, 1, 5);
+			core::Building::CreateForceBridgeOptions rightOptions{
+				1, CORE_SIDE_RIGHT, true, true, 1 };
+			right.addSectorForceBridge(rightRoom, 1, 4, rightOptions);
+			right.finishBuild();
+			right.pauseSimulation();
+			bool rightOriginRejected = false;
+			try { right.removeSectorWalkway(rightRoom, rightOrigin.index); }
+			catch (std::exception const&) { rightOriginRejected = true; }
+			if (!rightOriginRejected
+				|| !right.removeSectorWalkway(rightRoom, rightDestination.index)) return false;
+			bool resized = false;
+			auto sector = right.getSector(rightRoom);
+			for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
+			{
+				auto candidate = sector->getObject(i);
+				if (!candidate || candidate->getObjectType() != core::SectorObjectType::ForceBridge) continue;
+				core::Building::CreateForceBridgeOptions updated;
+				resized = right.getSectorForceBridgeOptions(rightRoom, i, updated)
+					&& candidate->getCellX() == 3 && updated.width == 2
+					&& updated.fromSide == CORE_SIDE_RIGHT;
+			}
+			if (!resized) return false;
+		}
+
+		core::Building building("Force Bridge walkway dependencies", 10, 4);
+		auto room = building.addRoom("Bridge room", CORE_LAYER_FORE, 0, 0, 7, 3);
+		auto origin = building.addSectorWalkway(room, 1, 0);
+		auto destination = building.addSectorWalkway(room, 1, 2);
+		building.addSectorWalkway(room, 1, 3);
+		core::Building::CreateForceBridgeOptions options{ 1, CORE_SIDE_LEFT, true, true, 1 };
+		building.addSectorForceBridge(room, 1, 1, options);
+		building.finishBuild();
+		building.pauseSimulation();
+
+		bool originRejected = false;
+		try { building.removeSectorWalkway(room, origin.index); }
+		catch (std::exception const&) { originRejected = true; }
+		if (!originRejected || !building.removeSectorWalkway(room, destination.index)) return false;
+		auto sector = building.getSector(room);
+		for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
+		{
+			auto object = sector->getObject(i);
+			if (!object || object->getObjectType() != core::SectorObjectType::ForceBridge) continue;
+			core::Building::CreateForceBridgeOptions updated;
+			return building.getSectorForceBridgeOptions(room, i, updated)
+				&& object->getCellX() == 1 && updated.width == 2;
+		}
+		return false;
+	}
+
 	bool roomLadderEditingCalculatesAndMaintainsWalkwayEndpoints()
 	{
 		core::Building building("Room Ladder editing", 8, 6);
@@ -3016,6 +3135,16 @@ int main()
 		if (!walkwayEditingEnforcesPlacementMovementAndOccupancyRules())
 		{
 			std::cerr << "FAIL: Walkway editing violated placement, movement, deletion, or occupancy rules\n";
+			return 1;
+		}
+		if (!forceBridgeObjectEditingIsAtomic())
+		{
+			std::cerr << "FAIL: Force Bridge object placement, movement, settings, or deletion was not atomic\n";
+			return 1;
+		}
+		if (!forceBridgeWalkwayDeletionUpdatesItsDestination())
+		{
+			std::cerr << "FAIL: Force Bridge supports were not protected or extended after Walkway deletion\n";
 			return 1;
 		}
 		if (!deletingWalkwayPreservesUnrelatedRoomDoor())

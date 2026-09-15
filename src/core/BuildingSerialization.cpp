@@ -11,6 +11,8 @@
 #include "core/DoorSectorObject.h"
 #include "core/MarkerSectorObject.h"
 #include "core/WalkwaySectorObject.h"
+#include "core/ForceBridgeSectorObject.h"
+#include "core/Button.h"
 #include "core/WindowSectorObject.h"
 
 #include <algorithm>
@@ -2013,6 +2015,35 @@ namespace core
 		return false;
 	}
 
+	bool Building::forceBridgeIsActive(shared_ptr<const ForceBridge> const& bridge) const
+	{
+		if (!bridge) return false;
+		for (auto const& sector : mSectors)
+		{
+			if (!sector) continue;
+			for (auto const* agent : sector->getAgents())
+			{
+				if (!agent) continue;
+				auto position = agent->getGlobalPosition();
+				if (position.x >= bridge->getPosition().x
+					&& position.x < bridge->getPosition().x + bridge->getSize().x
+					&& fabs(position.y - bridge->getPosition().y) <= 0.001f) return true;
+			}
+		}
+		for (auto const& [id, resource] : mTraversalResources.entries())
+		{
+			(void)id;
+			if (resource->mForceBridge.get() != bridge.get()) continue;
+			auto hasOwner = [](auto const& values)
+				{ return any_of(values.begin(), values.end(), [](auto value) { return (bool)value; }); };
+			return !resource->mAdmissionQueue.empty() || hasOwner(resource->mOccupants)
+				|| hasOwner(resource->mAdmissionReservations) || hasOwner(resource->mCrossingOwners)
+				|| !resource->mExtensionRequestLeases.empty()
+				|| !resource->mExtensionOccupantLeases.empty();
+		}
+		return false;
+	}
+
 	bool Building::prepareObjectMove(ObjectMovePlan const& plan,
 		vector<ConstructionRecord>& records, uint32_t& newSectorIndex,
 		uint32_t& newObjectIndex, string& diagnostic) const
@@ -2106,6 +2137,13 @@ namespace core
 			&& roomLadderIsActive(static_pointer_cast<LadderSectorObject>(object)->getLadder()))
 		{
 			diagnostic = "The Room Ladder cannot be moved while it is in use";
+			return false;
+		}
+		if (type == SectorObjectType::ForceBridge
+			&& (plan.x != sourceX || plan.y != sourceY)
+			&& forceBridgeIsActive(static_pointer_cast<ForceBridgeSectorObject>(object)->getForceBridge()))
+		{
+			diagnostic = "The Force Bridge cannot be moved while it is in use";
 			return false;
 		}
 		bool const pastePlaced = type == SectorObjectType::Door
@@ -2521,6 +2559,124 @@ namespace core
 		return true;
 	}
 
+	bool Building::getSectorForceBridgeOptions(uint32_t sectorIndex, uint32_t objectIndex,
+		CreateForceBridgeOptions& options) const
+	{
+		if (sectorIndex >= mSectors.size() || !mSectors[sectorIndex]
+			|| objectIndex >= mSectors[sectorIndex]->getNumObjects()) return false;
+		auto object = dynamic_pointer_cast<const ForceBridgeSectorObject>(
+			mSectors[sectorIndex]->getObject(objectIndex));
+		if (!object) return false;
+		auto sector = mSectors[sectorIndex];
+		auto found = find_if(mConstructionRecords.begin(), mConstructionRecords.end(),
+			[&](ConstructionRecord const& record)
+			{
+				return record.type == ConstructionType::ForceBridge && record.a == sectorIndex
+					&& sector->getCellX() + record.c == object->getCellX()
+					&& sector->getCellY() + record.b == object->getCellY();
+			});
+		if (found == mConstructionRecords.end()) return false;
+		options = { found->d, found->i, found->p, found->q, found->e };
+		return true;
+	}
+
+	shared_ptr<const SectorObject> Building::applySectorForceBridgeOptions(uint32_t sectorIndex,
+		uint32_t objectIndex, CreateForceBridgeOptions const& options)
+	{
+		if (!mSimulationPaused)
+			throw BuildingException(this, "Editing a Force Bridge requires the simulation to be paused");
+		if (sectorIndex >= mSectors.size() || !mSectors[sectorIndex]
+			|| objectIndex >= mSectors[sectorIndex]->getNumObjects())
+			throw BuildingException(this, "The selected Force Bridge no longer exists");
+		auto object = dynamic_pointer_cast<ForceBridgeSectorObject>(mSectors[sectorIndex]->getObject(objectIndex));
+		if (!object) throw BuildingException(this, "The selected object is not a Force Bridge");
+		if (forceBridgeIsActive(object->getForceBridge()))
+			throw BuildingException(this, "The Force Bridge cannot be edited while it is in use");
+		validateSectorForceBridgeOptions("Building::applySectorForceBridgeOptions", options);
+
+		auto records = mConstructionRecords;
+		auto sector = mSectors[sectorIndex];
+		auto found = find_if(records.begin(), records.end(), [&](ConstructionRecord const& record)
+		{
+			return record.type == ConstructionType::ForceBridge && record.a == sectorIndex
+				&& sector->getCellX() + record.c == object->getCellX()
+				&& sector->getCellY() + record.b == object->getCellY();
+		});
+		if (found == records.end()) throw BuildingException(this, "The Force Bridge has no authored definition");
+		found->d = options.width; found->i = options.fromSide; found->p = options.extensible;
+		found->q = options.startExtended; found->e = options.controlCount;
+		auto x = object->getCellX(), y = object->getCellY();
+		rebuildFromConstructionRecords(std::move(records));
+		auto rebuilt = _getSector(sectorIndex);
+		for (uint32_t i = 0; i < rebuilt->getNumObjects(); ++i)
+		{
+			auto candidate = rebuilt->getObject(i);
+			if (candidate && candidate->getObjectType() == SectorObjectType::ForceBridge
+				&& candidate->getCellX() == x && candidate->getCellY() == y) return candidate;
+		}
+		throw BuildingException(this, "Could not locate the edited Force Bridge");
+	}
+
+	bool Building::removeSectorForceBridge(uint32_t sectorIndex, uint32_t objectIndex)
+	{
+		if (!mSimulationPaused)
+			throw BuildingException(this, "Deleting a Force Bridge requires the simulation to be paused");
+		if (sectorIndex >= mSectors.size() || !mSectors[sectorIndex]
+			|| objectIndex >= mSectors[sectorIndex]->getNumObjects()) return false;
+		auto object = dynamic_pointer_cast<ForceBridgeSectorObject>(mSectors[sectorIndex]->getObject(objectIndex));
+		if (!object) return false;
+		if (forceBridgeIsActive(object->getForceBridge()))
+			throw BuildingException(this, "The Force Bridge cannot be deleted while it is in use");
+		CreateForceBridgeOptions options;
+		if (!getSectorForceBridgeOptions(sectorIndex, objectIndex, options)) return false;
+
+		vector<ConstructionRecord> records;
+		bool removed = false;
+		for (auto const& record : mConstructionRecords)
+		{
+			if (!removed && record.type == ConstructionType::ForceBridge && record.a == sectorIndex
+				&& mSectors[sectorIndex]->getCellX() + record.c == object->getCellX()
+				&& mSectors[sectorIndex]->getCellY() + record.b == object->getCellY())
+			{
+				for (uint32_t i = 0; i < 3; ++i)
+				{
+					ConstructionRecord tombstone{ ConstructionType::ObjectTombstone };
+					tombstone.a = sectorIndex;
+					records.push_back(std::move(tombstone));
+				}
+				removed = true;
+			}
+			else records.push_back(record);
+		}
+		if (!removed) return false;
+		rebuildFromConstructionRecords(std::move(records));
+		return true;
+	}
+
+	bool Building::isForceBridgeOwnedControl(shared_ptr<const SectorObject> const& object,
+		uint32_t* forceBridgeSectorIndex, uint32_t* forceBridgeObjectIndex) const
+	{
+		if (!object || object->getObjectType() != SectorObjectType::InteractionPoint) return false;
+		auto button = dynamic_pointer_cast<Button>(object->_getObject());
+		if (!button || !button->getInteractionPointId()) return false;
+		for (auto const& sector : mSectors)
+		{
+			if (!sector) continue;
+			for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
+			{
+				auto bridgeObject = dynamic_pointer_cast<ForceBridgeSectorObject>(sector->getObject(i));
+				if (!bridgeObject) continue;
+				auto resource = mTraversalResources.find(bridgeObject->getForceBridge()->getTraversalResourceId());
+				if (!resource || find(resource->mControls.begin(), resource->mControls.end(),
+					button->getInteractionPointId()) == resource->mControls.end()) continue;
+				if (forceBridgeSectorIndex) *forceBridgeSectorIndex = sector->getIndex();
+				if (forceBridgeObjectIndex) *forceBridgeObjectIndex = i;
+				return true;
+			}
+		}
+		return false;
+	}
+
 	bool Building::removeSectorWalkway(uint32_t sectorIndex, uint32_t objectIndex)
 	{
 		if (!mSimulationPaused)
@@ -2552,18 +2708,105 @@ namespace core
 			});
 		if (source == mConstructionRecords.end()) return false;
 
-		vector<ConstructionRecord> records;
-		records.reserve(mConstructionRecords.size());
-		for (auto const& record : mConstructionRecords)
+		auto room = mSectors[sectorIndex];
+		auto layer = mLayers[room->getLayerIndex()];
+		uint32_t supportX = object->getCellX(), supportY = object->getCellY();
+		map<size_t, ConstructionRecord> bridgeUpdates;
+		for (size_t recordIndex = 0; recordIndex < mConstructionRecords.size(); ++recordIndex)
 		{
-			if (&record != &*source) records.push_back(record);
+			auto const& record = mConstructionRecords[recordIndex];
+			if (record.type != ConstructionType::ForceBridge || record.a != sectorIndex
+				|| room->getCellY() + record.b != supportY) continue;
+			uint32_t bridgeX = room->getCellX() + record.c;
+			uint32_t bridgeRightSupport = bridgeX + record.d;
+			uint32_t originSupport = record.i == CORE_SIDE_LEFT ? bridgeX - 1 : bridgeRightSupport;
+			uint32_t destinationSupport = record.i == CORE_SIDE_LEFT ? bridgeRightSupport : bridgeX - 1;
+			if (supportX == originSupport)
+				throw BuildingException(this,
+					"Cannot delete the Walkway on the side from which a Force Bridge extends");
+			if (supportX != destinationSupport) continue;
+
+			shared_ptr<ForceBridgeSectorObject> bridgeObject;
+			for (uint32_t i = 0; i < room->getNumObjects(); ++i)
+			{
+				auto candidate = dynamic_pointer_cast<ForceBridgeSectorObject>(room->getObject(i));
+				if (candidate && candidate->getCellX() == bridgeX
+					&& candidate->getCellY() == supportY) { bridgeObject = candidate; break; }
+			}
+			if (bridgeObject && forceBridgeIsActive(bridgeObject->getForceBridge()))
+				throw BuildingException(this, "The Force Bridge cannot be resized while it is in use");
+
+			auto updated = record;
+			bool foundWalkway = false;
+			if (record.i == CORE_SIDE_LEFT)
+			{
+				uint32_t roomRight = room->getCellX() + room->getCellsWide();
+				for (uint32_t x = supportX + 1; x < roomRight; ++x)
+				{
+					auto floor = layer->getCellDefinition(x, supportY).floorType;
+					if (floor == CellFloorType::Walkway)
+					{
+						updated.d = x - bridgeX;
+						foundWalkway = true;
+						break;
+					}
+					if (floor != CellFloorType::None)
+						throw BuildingException(this,
+							"Another floor object blocks the Force Bridge before the next Walkway");
+				}
+			}
 			else
+			{
+				for (int64_t x = (int64_t)supportX - 1; x >= (int64_t)room->getCellX(); --x)
+				{
+					auto floor = layer->getCellDefinition((uint32_t)x, supportY).floorType;
+					if (floor == CellFloorType::Walkway)
+					{
+						uint32_t newBridgeX = (uint32_t)x + 1;
+						updated.c = newBridgeX - room->getCellX();
+						updated.d = bridgeRightSupport - newBridgeX;
+						foundWalkway = true;
+						break;
+					}
+					if (floor != CellFloorType::None)
+						throw BuildingException(this,
+							"Another floor object blocks the Force Bridge before the next Walkway");
+				}
+			}
+			if (!foundWalkway)
+				throw BuildingException(this,
+					"Cannot delete this Walkway because no replacement Walkway supports the Force Bridge");
+			if (updated.d == 0 || updated.d > CORE_FORCEBRIDGE_MAX_SIZE)
+				throw BuildingException(this, format(
+					"The next Walkway is farther than the maximum Force Bridge width of {}",
+					CORE_FORCEBRIDGE_MAX_SIZE));
+			bridgeUpdates.emplace(recordIndex, std::move(updated));
+		}
+
+		vector<ConstructionRecord> records;
+		vector<ConstructionRecord> movedBridges;
+		records.reserve(mConstructionRecords.size() + bridgeUpdates.size() * 3);
+		for (size_t i = 0; i < mConstructionRecords.size(); ++i)
+		{
+			if (&mConstructionRecords[i] == &*source)
 			{
 				ConstructionRecord tombstone{ ConstructionType::ObjectTombstone };
 				tombstone.a = sectorIndex;
 				records.push_back(std::move(tombstone));
 			}
+			else if (auto update = bridgeUpdates.find(i); update != bridgeUpdates.end())
+			{
+				for (uint32_t slot = 0; slot < 3; ++slot)
+				{
+					ConstructionRecord tombstone{ ConstructionType::ObjectTombstone };
+					tombstone.a = sectorIndex;
+					records.push_back(std::move(tombstone));
+				}
+				movedBridges.push_back(update->second);
+			}
+			else records.push_back(mConstructionRecords[i]);
 		}
+		records.insert(records.end(), movedBridges.begin(), movedBridges.end());
 		rebuildFromConstructionRecords(std::move(records));
 		return true;
 	}

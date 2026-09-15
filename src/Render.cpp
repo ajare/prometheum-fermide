@@ -699,17 +699,24 @@ void renderMarker(shared_ptr<const core::Marker> marker, int /* layer */, bool v
 }
 
 
-void renderForceBridge(shared_ptr<const core::ForceBridge> forceBridge, int /* layer */, bool /* visibleLayer */, bool /* selected */, ImDrawList* drawList)
+void renderForceBridge(shared_ptr<const core::ForceBridge> forceBridge, int /* layer */,
+	bool visibleLayer, bool selected, ImDrawList* drawList)
 {
+	if (!visibleLayer) return;
 	core::Vector2 bounds0, bounds1;
-
+	if (selected)
+	{
+		forceBridge->getFullShape(bounds0, bounds1);
+		transformPosition(bounds0);
+		transformPosition(bounds1);
+		drawList->AddLine({ bounds0.x, bounds0.y }, { bounds1.x, bounds0.y },
+			SelectedColour, 5.0f);
+	}
 	forceBridge->getCurrentShape(bounds0, bounds1);
-
 	transformPosition(bounds0);
 	transformPosition(bounds1);
-
-	auto colour = ImColor(0, 255, 0);
-	drawList->AddLine({ bounds0.x, bounds0.y }, { bounds1.x, bounds0.y }, colour, 2.0f);
+	drawList->AddLine({ bounds0.x, bounds0.y }, { bounds1.x, bounds0.y },
+		ImColor(0, 255, 0), selected ? 3.0f : 2.0f);
 }
 
 
