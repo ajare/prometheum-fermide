@@ -2599,49 +2599,58 @@ namespace core
 			configureDoorCrossingLanes(traversalResource, options.crossingLanes);
 		}
 
-		// Door approaches are explicit resource geometry. Prefer the longer clear
-		// horizontal run in each source sector and place the first waiter one safe
-		// spacing away from the threshold whenever the room permits it.
+		// Door approaches are explicit resource geometry. Seed each side at the
+		// threshold, which Door placement already proved has traversable floor.
+		// Queue positions are expanded below only across contiguous usable floor;
+		// an unrelated gap elsewhere in a multi-deck Room must not invalidate the Door.
 		auto const threshold = Vector2{ x + cellsWide * 0.5f, (float)y };
 		for (auto const& sector : sectors)
-		{
-			auto const leftExtent = threshold.x - (sector->getCellX0() + CORE_AGENT_MAX_WIDTH * 0.5f);
-			auto const rightExtent = (sector->getCellX1() + 1.0f - CORE_AGENT_MAX_WIDTH * 0.5f) - threshold.x;
-			auto const direction = rightExtent > leftExtent ? Vector2::UNIT_X : Vector2::NEGATIVE_UNIT_X;
-			auto const available = max(0.0f, max(leftExtent, rightExtent));
-			auto const firstDistance = min((float)CORE_DOOR_QUEUE_STOP_WIDTH, available);
-			auto const origin = threshold + direction * firstDistance;
 			configureDoorQueueLane(traversalResource,
-				SectorId{ (uint64_t)sector->getIndex() + 1 }, origin, direction,
-				max(0.0f, available - firstDistance));
-		}
+				SectorId{ (uint64_t)sector->getIndex() + 1 }, threshold,
+				Vector2::UNIT_X, 0.0f);
 
-		// Each side owns an independent centre-first queue. This allows a Door
-		// between differently sized sectors to expose all usable waiting space on
-		// either side instead of truncating both sides to their shared floor width.
+		// Each side owns an independent centre-first queue. Expand left and right
+		// until that direction reaches either the Sector boundary or a floor gap.
 		auto queueResource = mTraversalResources.find(traversalResource);
 		auto const halfWidth = CORE_AGENT_MAX_WIDTH * 0.5f;
 		for (auto& lane : queueResource->mQueueLanes)
 		{
 			auto sector = mSectors[(size_t)lane.sector.value - 1];
-			auto floorMin = sector->getCellX0() + halfWidth;
-			auto floorMax = sector->getCellX1() + 1.0f - halfWidth;
-			vector<Vector2> positions;
-			if (threshold.x >= floorMin && threshold.x <= floorMax) positions.push_back(threshold);
-			for (uint32_t step = 1;; ++step)
+			auto positionFits = [&](float positionX)
 			{
-				auto distance = step * (float)CORE_DOOR_QUEUE_STOP_WIDTH;
-				auto left = threshold.x - distance;
-				auto right = threshold.x + distance;
-				bool leftFits = left >= floorMin;
-				bool rightFits = right <= floorMax;
-				if (!leftFits && !rightFits) break;
-				if (leftFits) positions.push_back({ left, threshold.y });
-				if (rightFits) positions.push_back({ right, threshold.y });
+				if (positionX - halfWidth < sector->getCellX0() - 0.001f
+					|| positionX + halfWidth > sector->getCellX1() + 1.0f + 0.001f
+					|| threshold.y < sector->getCellY0() - 0.001f
+					|| threshold.y + CORE_AGENT_MAX_HEIGHT > sector->getCellY1() + 1.0f + 0.001f)
+					return false;
+				auto const cellX = min(sector->getCellX1(), (uint32_t)floor(positionX));
+				auto const cellY = min(sector->getCellY1(), (uint32_t)floor(threshold.y));
+				return mLayers[sector->getLayerIndex()]
+					->getCellDefinition(cellX, cellY).isTraversableOnFoot();
+			};
+
+			vector<Vector2> positions{ threshold };
+			bool scanLeft = true, scanRight = true;
+			for (uint32_t step = 1; scanLeft || scanRight; ++step)
+			{
+				auto const distance = step * (float)CORE_DOOR_QUEUE_STOP_WIDTH;
+				auto const left = threshold.x - distance;
+				auto const right = threshold.x + distance;
+				if (scanLeft)
+				{
+					scanLeft = positionFits(left);
+					if (scanLeft) positions.push_back({ left, threshold.y });
+				}
+				if (scanRight)
+				{
+					scanRight = positionFits(right);
+					if (scanRight) positions.push_back({ right, threshold.y });
+				}
 			}
 			lane.origin = threshold;
 			lane.direction = Vector2::UNIT_X;
-			lane.extent = max(threshold.x - floorMin, floorMax - threshold.x);
+			lane.extent = positions.empty() ? 0.0f : max(abs(positions.back().x - threshold.x),
+				abs(positions.front().x - threshold.x));
 			lane.positions = std::move(positions);
 			lane.positionOwners.assign(lane.positions.size(), {});
 		}
@@ -2970,33 +2979,60 @@ namespace core
 		return ctrl;
 	}
 
-	void Building::addSectorWalkway(uint32_t sectorIndex, uint32_t deckIndex, uint32_t xOffset)
+	bool Building::canAddSectorWalkway(uint32_t sectorIndex, uint32_t deckIndex,
+		uint32_t xOffset, string* diagnostic) const
 	{
-		beginStructuralEdit("addSectorWalkway");
-		string caller = format("Building::addSectorWalkway({}, {}, {})", sectorIndex, deckIndex, xOffset);
+		auto reject = [diagnostic](string reason)
+		{
+			if (diagnostic) *diagnostic = std::move(reason);
+			return false;
+		};
 
-		validateObjectAllowedInSector(caller, SectorObjectType::Walkway, sectorIndex);
+		if (sectorIndex >= mSectors.size()) return reject("Walkway Room does not exist");
+		auto location = dynamic_pointer_cast<const Location>(mSectors[sectorIndex]);
+		if (!location) return reject("Walkways require a Location");
+		if (deckIndex == 0) return reject("Walkways must be placed above the Location's ground floor");
+		if (deckIndex >= location->getDecksHigh() || xOffset >= location->getCellsWide())
+			return reject("Walkway position is outside the Location");
+
+		auto const& cellDef = mLayers[location->getLayerIndex()]->getCellDefinition(
+			location->getCellX() + xOffset, location->getCellY() + deckIndex);
+		if (cellDef.floorType == CellFloorType::Ground)
+			return reject("Walkways cannot replace a ground floor");
+		if (cellDef.floorType == CellFloorType::Walkway)
+			return reject("A Walkway already occupies this cell");
+		if (cellDef.floorType == CellFloorType::ForceBridge)
+			return reject("A Force Bridge already occupies this cell");
+		if (cellDef.floorType != CellFloorType::None)
+			return reject("The destination floor cell is occupied");
+
+		if (diagnostic) diagnostic->clear();
+		return true;
+	}
+
+	Building::CreateObjectResult Building::addSectorWalkway(uint32_t sectorIndex,
+		uint32_t deckIndex, uint32_t xOffset)
+	{
+		string caller = format("Building::addSectorWalkway({}, {}, {})", sectorIndex, deckIndex, xOffset);
+		string diagnostic;
+		if (!canAddSectorWalkway(sectorIndex, deckIndex, xOffset, &diagnostic))
+			throw BuildingException(this, format("{} - {}", caller, diagnostic));
+		beginStructuralEdit("addSectorWalkway");
 
 		auto sector = _getSector(sectorIndex);
 		auto layerIndex = sector->getLayerIndex();
 		auto layer = getLayer(layerIndex);
-		auto& cellDef = layer->getCellDefinition(sector->getCellX() + xOffset, sector->getCellY() + deckIndex);
-
-		if (cellDef.floorType == CellFloorType::Ground)
-		{
-			throw BuildingException(this, format("{} - floor is ground, so cannot be a walkway", caller));
-		}
-
+		auto& cellDef = layer->getCellDefinition(sector->getCellX() + xOffset,
+			sector->getCellY() + deckIndex);
 		auto createdWalkway = createWalkway(layerIndex,
 			sector->getCellX() + xOffset, sector->getCellY() + deckIndex);
-		auto walkwayIndex = createdWalkway.index;
 
-		// Set layers
-		cellDef.floorIndex = walkwayIndex;
+		cellDef.floorIndex = createdWalkway.index;
 		cellDef.floorType = CellFloorType::Walkway;
 		ConstructionRecord record{ ConstructionType::Walkway };
 		record.a = sectorIndex; record.b = deckIndex; record.c = xOffset;
 		recordConstruction(std::move(record));
+		return createdWalkway;
 	}
 
 	bool Building::canAddSectorMarker(uint32_t sectorIndex, uint32_t deckIndex, float xOffset,

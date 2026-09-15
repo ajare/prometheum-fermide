@@ -47,6 +47,7 @@
 #include "core/WindowSectorObject.h"
 #include "core/MarkerSectorObject.h"
 #include "core/WindowSectorObject.h"
+#include "core/WalkwaySectorObject.h"
 #include "core/Marker.h"
 #include "core/Log.h"
 #include "core/Exceptions.h"
@@ -167,7 +168,8 @@ namespace
 		Agent,
 		Marker,
 		Door,
-		Window
+		Window,
+		Walkway
 	};
 
 	struct PaletteDropState
@@ -536,6 +538,38 @@ namespace
 		return target;
 	}
 
+	PegmanTarget getWalkwayTarget(shared_ptr<const core::Building> const& building,
+		ImVec2 position, ImVec2 canvasPos, ImVec2 canvasSize)
+	{
+		PegmanTarget target;
+		if (!pointInRect(position, canvasPos, canvasPos + canvasSize))
+		{
+			target.diagnostic = "Drop inside the world";
+			return target;
+		}
+		auto world = screenToWorld(position);
+		if (world.x < 0.0f || world.y < 0.0f)
+		{
+			target.diagnostic = "Walkway position is outside the building";
+			return target;
+		}
+		target.cellX = (uint32_t)floor(world.x);
+		target.cellY = (uint32_t)floor(world.y);
+		target.sector = building->getSectorAtPosition(gUISettings.visibleLayer, world.x, world.y);
+		auto room = dynamic_pointer_cast<const core::Location>(target.sector);
+		if (!room || room->isCorridor())
+			target.diagnostic = "Walkways can only be placed in Rooms";
+		else
+		{
+			target.deckOffset = target.cellY >= target.sector->getCellY()
+				? target.cellY - target.sector->getCellY() : ~0u;
+			target.localX = (float)(target.cellX - target.sector->getCellX());
+			building->canAddSectorWalkway(target.sector->getIndex(), target.deckOffset,
+				(uint32_t)target.localX, &target.diagnostic);
+		}
+		return target;
+	}
+
 	float fittedPegmanFontSize(float maximumWidth, float maximumHeight, ImVec2& renderedSize)
 	{
 		ImFont* font = gAgentIconFont ? gAgentIconFont : ImGui::GetFont();
@@ -594,6 +628,11 @@ namespace
 		drawObjectIcon(drawList, boundsMin, boundsMax, colour, ICON_FA_WINDOW_MAXIMIZE);
 	}
 
+	void drawWalkwayIcon(ImDrawList* drawList, ImVec2 boundsMin, ImVec2 boundsMax, ImU32 colour)
+	{
+		drawObjectIcon(drawList, boundsMin, boundsMax, colour, ICON_FA_GRIP_LINES);
+	}
+
 	shared_ptr<const core::SectorObject> markerAtScreenPosition(
 		shared_ptr<const core::Building> const& building, ImVec2 position)
 	{
@@ -609,6 +648,26 @@ namespace
 				auto point = worldToScreen(world);
 				if (pointInRect(position, point - ImVec2(MarkerIconSize * 0.5f, MarkerIconSize),
 					point + ImVec2(MarkerIconSize * 0.5f, 2.0f))) return object;
+			}
+		}
+		return nullptr;
+	}
+
+	shared_ptr<const core::SectorObject> walkwayAtScreenPosition(
+		shared_ptr<const core::Building> const& building, ImVec2 position)
+	{
+		constexpr float tolerance = 8.0f;
+		for (auto const& sector : building->getSectors(gUISettings.visibleLayer))
+		{
+			for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
+			{
+				auto object = sector->getObject(i);
+				if (!object || object->getObjectType() != core::SectorObjectType::Walkway) continue;
+				auto walkway = static_pointer_cast<const core::WalkwaySectorObject>(object)->getWalkway();
+				auto left = worldToScreen({ (float)walkway->getCellX(), (float)walkway->getCellY() });
+				auto right = worldToScreen({ (float)walkway->getCellX() + 1.0f, (float)walkway->getCellY() });
+				if (position.x >= left.x && position.x <= right.x
+					&& abs(position.y - left.y) <= tolerance) return object;
 			}
 		}
 		return nullptr;
@@ -931,6 +990,30 @@ namespace
 		}
 	}
 
+	void placeWalkway(shared_ptr<core::Building> const& building, PegmanTarget const& target)
+	{
+		auto undo = captureDocumentSnapshot(building);
+		try
+		{
+			auto created = building->addSectorWalkway(target.sector->getIndex(),
+				target.deckOffset, (uint32_t)target.localX);
+			building->finishBuild();
+			setSelectionMode(UISettings::SelectionMode::Object);
+			gSelectedAgent = nullptr;
+			gSelectedSector.reset();
+			gSelectedSectorObject = created.sector->getObject(created.index);
+			commitDocumentEdit(std::move(undo));
+		}
+		catch (core::Exception const& error)
+		{
+			core::addLogMessage("Object palette", 0, core::LogLevel::Error, error.getMessage());
+		}
+		catch (std::exception const& error)
+		{
+			core::addLogMessage("Object palette", 0, core::LogLevel::Error, error.what());
+		}
+	}
+
 	void landPegman(shared_ptr<core::Building> const& building)
 	{
 		if (gUISettings.worldPaused && locationHasCapacity(gPegman.sector))
@@ -995,6 +1078,7 @@ namespace
 		auto markerMin = corridorMin + ImVec2(0.0f, PaletteSlotSize + PaletteGap);
 		auto doorMin = ladderMin + ImVec2(0.0f, PaletteSlotSize + PaletteGap);
 		auto windowMin = staircaseMin + ImVec2(0.0f, PaletteSlotSize + PaletteGap);
+		auto walkwayMin = liftMin + ImVec2(0.0f, PaletteSlotSize + PaletteGap);
 		auto roomMax = roomMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
 		auto corridorMax = corridorMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
 		auto ladderMax = ladderMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
@@ -1005,6 +1089,7 @@ namespace
 		auto doorMax = doorMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
 		auto agentMax = agentMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
 		auto markerMax = markerMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
+		auto walkwayMax = walkwayMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
 		drawList->AddRectFilled(trayTopLeft, trayBottomRight, trayColour, 5.0f);
 		drawList->AddRect(trayTopLeft, trayBottomRight, borderColour, 5.0f);
 
@@ -1078,6 +1163,7 @@ namespace
 		drawPaintButton(shuttleMin, shuttleMax, "Shuttle", PaintTool::Shuttle,
 			shuttleHovered, backOnlyDisabled);
 		drawWindowIcon(drawList, windowMin, windowMax, yellow);
+		drawWalkwayIcon(drawList, walkwayMin, walkwayMax, yellow);
 
 		bool paintWasActive = gPaint.tool != PaintTool::None;
 		if (paintWasActive && (ImGui::IsKeyPressed(ImGuiKey_Escape)
@@ -1190,9 +1276,12 @@ namespace
 			else if (pointInRect(io.MousePos, markerMin, markerMax)) hoveredItem = PaletteItem::Marker;
 			else if (pointInRect(io.MousePos, doorMin, doorMax)) hoveredItem = PaletteItem::Door;
 			else if (pointInRect(io.MousePos, windowMin, windowMax)) hoveredItem = PaletteItem::Window;
+			else if (pointInRect(io.MousePos, walkwayMin, walkwayMax)) hoveredItem = PaletteItem::Walkway;
 		}
 		drawList->AddRect(windowMin, windowMax,
 			hoveredItem == PaletteItem::Window ? yellow : borderColour, 3.0f);
+		drawList->AddRect(walkwayMin, walkwayMax,
+			hoveredItem == PaletteItem::Walkway ? yellow : borderColour, 3.0f);
 		drawList->AddRect(agentMin, agentMax,
 			hoveredItem == PaletteItem::Agent ? yellow : borderColour, 3.0f);
 		drawList->AddRect(markerMin, markerMax,
@@ -1209,7 +1298,8 @@ namespace
 			else
 				ImGui::SetTooltip(hoveredItem == PaletteItem::Agent ? "Drag to add Agent"
 					: hoveredItem == PaletteItem::Marker ? "Drag to add Marker"
-					: hoveredItem == PaletteItem::Window ? "Drag to add Window" : "Drag to add Door");
+					: hoveredItem == PaletteItem::Window ? "Drag to add Window"
+					: hoveredItem == PaletteItem::Walkway ? "Drag to add Walkway" : "Drag to add Door");
 			if (io.MouseClicked[0]
 				&& !(hoveredItem == PaletteItem::Door && gUISettings.visibleLayer == CORE_LAYER_BACK))
 			{
@@ -1242,6 +1332,8 @@ namespace
 				target = getDoorTarget(building, io.MousePos, canvasPos, canvasSize);
 			else if (gPegman.item == PaletteItem::Window)
 				target = getWindowTarget(building, io.MousePos, canvasPos, canvasSize);
+			else if (gPegman.item == PaletteItem::Walkway)
+				target = getWalkwayTarget(building, io.MousePos, canvasPos, canvasSize);
 			else
 				target = getPegmanTarget(building, io.MousePos, canvasPos, canvasSize);
 			if (!gUISettings.worldPaused) target.diagnostic = "Pause simulation to place objects";
@@ -1261,6 +1353,11 @@ namespace
 				else if (target && gPegman.item == PaletteItem::Window)
 				{
 					placeWindow(building, target);
+					resetPegman();
+				}
+				else if (target && gPegman.item == PaletteItem::Walkway)
+				{
+					placeWalkway(building, target);
 					resetPegman();
 				}
 				else if (target && gPegman.item == PaletteItem::Agent)
@@ -1294,6 +1391,17 @@ namespace
 					? worldToScreen({ target.sector->getPosition().x + target.localX, target.floorY })
 					: io.MousePos;
 				drawMarkerIcon(drawList, preview, MarkerIconSize, colour);
+			}
+			else if (gPegman.item == PaletteItem::Walkway)
+			{
+				if (target.sector)
+				{
+					auto topLeft = worldToScreen({ (float)target.cellX, (float)target.cellY + 1.0f });
+					auto bottomRight = worldToScreen({ (float)target.cellX + 1.0f, (float)target.cellY });
+					drawWalkwayIcon(drawList, topLeft, bottomRight, colour);
+				}
+				else drawWalkwayIcon(drawList, io.MousePos - ImVec2(24.0f, 18.0f),
+					io.MousePos + ImVec2(24.0f, 18.0f), colour);
 			}
 			else if (gPegman.item == PaletteItem::Door
 				|| gPegman.item == PaletteItem::Window)
@@ -2212,7 +2320,7 @@ namespace
 		}
 	}
 
-	enum class ClipboardObjectType { Agent, Door, Window, Marker };
+	enum class ClipboardObjectType { Agent, Door, Window, Marker, Walkway };
 	struct ClipboardDefinition
 	{
 		ClipboardObjectType type{};
@@ -2243,7 +2351,7 @@ namespace
 		if (!gSelectedSectorObject) return false;
 		auto type = gSelectedSectorObject->getObjectType();
 		return type == core::SectorObjectType::Door || type == core::SectorObjectType::Window
-			|| type == core::SectorObjectType::Marker;
+			|| type == core::SectorObjectType::Marker || type == core::SectorObjectType::Walkway;
 	}
 
 	char const* activationModeName(core::DoorActivationMode mode)
@@ -2353,6 +2461,11 @@ namespace
 				<< YAML::Key << "style" << YAML::Value << windowStyleName(options.style)
 				<< YAML::EndMap;
 		}
+		else if (gSelectedSectorObject->getObjectType() == core::SectorObjectType::Walkway)
+		{
+			output << YAML::Key << "type" << YAML::Value << "Walkway"
+				<< YAML::Key << "object" << YAML::Value << YAML::BeginMap << YAML::EndMap;
+		}
 		else
 		{
 			output << YAML::Key << "type" << YAML::Value << "Marker"
@@ -2434,6 +2547,7 @@ namespace
 			else throw runtime_error("Window style is invalid");
 		}
 		else if (type == "Marker") definition.type = ClipboardObjectType::Marker;
+		else if (type == "Walkway") definition.type = ClipboardObjectType::Walkway;
 		else throw runtime_error("Clipboard object type is not supported");
 		return definition;
 	}
@@ -2464,7 +2578,9 @@ namespace
 				? building->removeSectorMarker(sector->getIndex(), i)
 				: type == core::SectorObjectType::Door
 					? building->removeSectorDoor(sector->getIndex(), i)
-					: building->removeSectorWindow(sector->getIndex(), i);
+					: type == core::SectorObjectType::Window
+						? building->removeSectorWindow(sector->getIndex(), i)
+						: building->removeSectorWalkway(sector->getIndex(), i);
 			if (!removed) return false;
 			if (type == core::SectorObjectType::Marker) building->finishBuild();
 			if (gHoveredSectorObject == selected) gHoveredSectorObject.reset();
@@ -2628,6 +2744,16 @@ namespace
 				if (!building->canAddSectorWindow(gUISettings.visibleLayer, y, x,
 					definition.width, definition.height, &diagnostic)) throw runtime_error(diagnostic);
 			}
+			else if (definition.type == ClipboardObjectType::Walkway)
+			{
+				markerSector = building->getSectorAtPosition(gUISettings.visibleLayer, world.x, world.y);
+				auto room = dynamic_pointer_cast<const core::Location>(markerSector);
+				if (!room || room->isCorridor() || !markerSector->pointInBounds(world.x, world.y))
+					throw runtime_error("Walkways can only be placed in Rooms");
+				if (!building->canAddSectorWalkway(markerSector->getIndex(),
+					y - markerSector->getCellY(), x - markerSector->getCellX(), &diagnostic))
+					throw runtime_error(diagnostic);
+			}
 			else
 			{
 				markerSector = building->getSectorAtPosition(gUISettings.visibleLayer, world.x, world.y);
@@ -2656,6 +2782,12 @@ namespace
 					auto result = building->addSectorWindow(gUISettings.visibleLayer, y, x,
 						definition.width, definition.height, definition.window);
 					created = result.window.sector->getObject(result.window.index);
+				}
+				else if (definition.type == ClipboardObjectType::Walkway)
+				{
+					auto result = building->addSectorWalkway(markerSector->getIndex(),
+						y - markerSector->getCellY(), x - markerSector->getCellX());
+					created = result.sector->getObject(result.index);
 				}
 				else
 				{
@@ -2809,7 +2941,8 @@ void handleShortcuts(shared_ptr<core::Building>& building)
 			else if (gSelectedSectorObject
 				&& (gSelectedSectorObject->getObjectType() == core::SectorObjectType::Marker
 					|| gSelectedSectorObject->getObjectType() == core::SectorObjectType::Door
-					|| gSelectedSectorObject->getObjectType() == core::SectorObjectType::Window))
+					|| gSelectedSectorObject->getObjectType() == core::SectorObjectType::Window
+					|| gSelectedSectorObject->getObjectType() == core::SectorObjectType::Walkway))
 			{
 				uint32_t liftIndex, stopIndex;
 				if (building->isLiftOwnedDoor(gSelectedSectorObject, &liftIndex, &stopIndex))
@@ -2839,7 +2972,9 @@ void handleShortcuts(shared_ptr<core::Building>& building)
 							? building->removeSectorMarker(sector->getIndex(), i)
 							: type == core::SectorObjectType::Door
 								? building->removeSectorDoor(sector->getIndex(), i)
-								: building->removeSectorWindow(sector->getIndex(), i);
+								: type == core::SectorObjectType::Window
+									? building->removeSectorWindow(sector->getIndex(), i)
+									: building->removeSectorWalkway(sector->getIndex(), i);
 						if (removed)
 						{
 							if (gHoveredSectorObject == selected) gHoveredSectorObject.reset();
@@ -3464,6 +3599,39 @@ void renderMarkerPanel(shared_ptr<const core::SectorObject> object)
 	position.x += marker->getOffset();
 	ImGui::Text("Marker");
 	ImGui::Text("Position: %.2f, %.2f", position.x, position.y);
+}
+
+
+void renderWalkwayPanel(shared_ptr<core::Building> const& building,
+	shared_ptr<const core::SectorObject> object)
+{
+	auto walkway = static_pointer_cast<const core::WalkwaySectorObject>(object)->getWalkway();
+	auto room = object->getSector();
+	ImGui::TextUnformatted("Walkway");
+	ImGui::Text("Room: %s", room->getName().c_str());
+	ImGui::Text("Room index: %u", room->getIndex());
+	ImGui::Text("Layer: %s", room->getLayerIndex() == CORE_LAYER_FORE ? "Fore" : "Back");
+	ImGui::Text("Position: %u, %u", walkway->getCellX(), walkway->getCellY());
+	ImGui::Text("Deck offset: %u", walkway->getCellY() - room->getCellY());
+	ImGui::Separator();
+	if (ImGui::Button("Delete Walkway"))
+	{
+		try
+		{
+			auto undo = captureDocumentSnapshot(building);
+			if (removeClipboardSelection(building)) commitDocumentEdit(std::move(undo));
+		}
+		catch (core::Exception const& error)
+		{
+			core::addLogMessage("Walkway editor", 0, core::LogLevel::Error, error.getMessage());
+		}
+		catch (std::exception const& error)
+		{
+			core::addLogMessage("Walkway editor", 0, core::LogLevel::Error, error.what());
+		}
+	}
+	ImGui::SameLine();
+	ImGui::TextDisabled("Delete key");
 }
 
 
@@ -4405,6 +4573,10 @@ void renderSelectedObjectPanel(shared_ptr<core::Building> const& building)
 
 		case core::SectorObjectType::Window:
 			renderWindowPanel(gSelectedSectorObject);
+			break;
+
+		case core::SectorObjectType::Walkway:
+			renderWalkwayPanel(building, gSelectedSectorObject);
 			break;
 
 		default:
@@ -5538,6 +5710,8 @@ void renderWorldWindow(shared_ptr<core::Building> building, shared_ptr<const cor
 		{
 			gHoveredSectorObject = markerAtScreenPosition(building, ImGui::GetIO().MousePos);
 			if (!gHoveredSectorObject)
+				gHoveredSectorObject = walkwayAtScreenPosition(building, ImGui::GetIO().MousePos);
+			if (!gHoveredSectorObject)
 			{
 				shared_ptr<const core::SectorObject> sectorObject;
 				auto object = building->getObjectAtPosition(gUISettings.visibleLayer,
@@ -5600,9 +5774,16 @@ void renderWorldWindow(shared_ptr<core::Building> building, shared_ptr<const cor
 		auto topLeft = worldToScreen({ (float)plan.x, (float)plan.y + height });
 		auto bottomRight = worldToScreen({ (float)plan.x + width, (float)plan.y });
 		auto colour = plan.valid ? IM_COL32(255, 255, 0, 255) : IM_COL32(255, 64, 64, 255);
-		drawList->AddRectFilled(topLeft, bottomRight,
-			plan.valid ? IM_COL32(255, 255, 0, 45) : IM_COL32(255, 64, 64, 45));
-		drawList->AddRect(topLeft, bottomRight, colour, 0.0f, 0, 2.0f);
+		if (gSelectedSectorObject
+			&& gSelectedSectorObject->getObjectType() == core::SectorObjectType::Walkway)
+			drawList->AddLine(worldToScreen({ (float)plan.x, (float)plan.y }),
+				worldToScreen({ (float)plan.x + 1.0f, (float)plan.y }), colour, 3.0f);
+		else
+		{
+			drawList->AddRectFilled(topLeft, bottomRight,
+				plan.valid ? IM_COL32(255, 255, 0, 45) : IM_COL32(255, 64, 64, 45));
+			drawList->AddRect(topLeft, bottomRight, colour, 0.0f, 0, 2.0f);
+		}
 		if (!plan.valid && !plan.diagnostic.empty()) ImGui::SetTooltip("%s", plan.diagnostic.c_str());
 	}
 	drawList->PopClipRect();

@@ -9,6 +9,7 @@
 #include "core/Location.h"
 #include "core/DoorSectorObject.h"
 #include "core/MarkerSectorObject.h"
+#include "core/WalkwaySectorObject.h"
 #include "core/WindowSectorObject.h"
 
 #include <algorithm>
@@ -21,6 +22,20 @@
 namespace core
 {
 	using namespace std;
+
+	static bool walkwayHasOccupant(shared_ptr<const Sector> const& sector, uint32_t cellX,
+		uint32_t cellY)
+	{
+		if (!sector) return false;
+		for (auto const* agent : sector->getAgents())
+		{
+			if (!agent) continue;
+			auto const position = agent->getGlobalPosition();
+			if (position.x >= cellX && position.x < (float)cellX + 1.0f
+				&& fabs(position.y - (float)cellY) <= 0.001f) return true;
+		}
+		return false;
+	}
 
 	bool Building::childrenModified() const
 	{
@@ -1829,10 +1844,11 @@ namespace core
 							diagnostic += " Move or delete the Ladder first.";
 						return false;
 					}
-					if (source.type == ConstructionType::Marker)
+					if (source.type == ConstructionType::Marker
+						|| source.type == ConstructionType::Walkway)
 					{
-						// Preserve authored object indices so a later RemoveMarker command
-						// cannot accidentally remove a different Marker after this one is cropped.
+						// Preserve authored object indices so a later removal cannot
+						// accidentally target a different object after this one is cropped.
 						ConstructionRecord tombstone{ ConstructionType::ObjectTombstone };
 						tombstone.a = source.a;
 						candidate.applyConstructionRecord(tombstone);
@@ -1932,6 +1948,12 @@ namespace core
 		}
 
 		auto const type = object->getObjectType();
+		if (type == SectorObjectType::Walkway && (plan.x != sourceX || plan.y != sourceY)
+			&& walkwayHasOccupant(owner, sourceX, sourceY))
+		{
+			diagnostic = "Move the Agent standing on this Walkway before moving it";
+			return false;
+		}
 		bool const pastePlaced = type == SectorObjectType::Door
 			|| type == SectorObjectType::Window || type == SectorObjectType::Marker;
 		auto targetOwner = getSectorAtPosition(owner->getLayerIndex(),
@@ -2194,6 +2216,43 @@ namespace core
 		return true;
 	}
 
+	bool Building::removeSectorWalkway(uint32_t sectorIndex, uint32_t objectIndex)
+	{
+		if (!mSimulationPaused)
+			throw BuildingException(this, "Deleting a Walkway requires the simulation to be paused");
+		if (sectorIndex >= mSectors.size() || !mSectors[sectorIndex]
+			|| objectIndex >= mSectors[sectorIndex]->getNumObjects()) return false;
+		auto object = dynamic_pointer_cast<WalkwaySectorObject>(
+			mSectors[sectorIndex]->getObject(objectIndex));
+		if (!object) return false;
+		if (walkwayHasOccupant(object->getSector(), object->getCellX(), object->getCellY()))
+			throw BuildingException(this, "Move the Agent standing on this Walkway before deleting it");
+
+		auto source = find_if(mConstructionRecords.begin(), mConstructionRecords.end(),
+			[&](ConstructionRecord const& record)
+			{
+				return record.type == ConstructionType::Walkway && record.a == sectorIndex
+					&& mSectors[sectorIndex]->getCellX() + record.c == object->getCellX()
+					&& mSectors[sectorIndex]->getCellY() + record.b == object->getCellY();
+			});
+		if (source == mConstructionRecords.end()) return false;
+
+		vector<ConstructionRecord> records;
+		records.reserve(mConstructionRecords.size());
+		for (auto const& record : mConstructionRecords)
+		{
+			if (&record != &*source) records.push_back(record);
+			else
+			{
+				ConstructionRecord tombstone{ ConstructionType::ObjectTombstone };
+				tombstone.a = sectorIndex;
+				records.push_back(std::move(tombstone));
+			}
+		}
+		rebuildFromConstructionRecords(std::move(records));
+		return true;
+	}
+
 	bool Building::removeSectorWindow(uint32_t sectorIndex, uint32_t objectIndex)
 	{
 		if (!mSimulationPaused)
@@ -2436,7 +2495,20 @@ namespace core
 			bool inside = min.x >= x && max.x <= x + cellsWide
 				&& min.y >= y && max.y <= y + decksHigh;
 			bool losesFloor = y != sector->getCellY() && object->getCellY() == sector->getCellY();
-			if (!inside || losesFloor) plan.consequences.push_back("Delete " + object->getDescription());
+			bool const walkway = object->getObjectType() == SectorObjectType::Walkway;
+			auto const relativeX = object->getCellX() - sector->getCellX();
+			auto const relativeY = object->getCellY() - sector->getCellY();
+			bool walkwayCropped = walkway && (relativeX >= cellsWide || relativeY >= decksHigh);
+			bool walkwayMoved = walkway && !walkwayCropped
+				&& (x + relativeX != object->getCellX() || y + relativeY != object->getCellY());
+			if ((walkwayCropped || walkwayMoved)
+				&& walkwayHasOccupant(sector, object->getCellX(), object->getCellY()))
+			{
+				plan.diagnostic = "Move the Agent standing on the affected Walkway before resizing the Room";
+				return plan;
+			}
+			if (!inside || losesFloor || walkwayCropped)
+				plan.consequences.push_back("Delete " + object->getDescription());
 		}
 		for (auto const& [id, agent] : mAgents.entries())
 		{

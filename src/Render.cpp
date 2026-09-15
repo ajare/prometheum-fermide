@@ -658,8 +658,10 @@ void renderPhysicalControl(shared_ptr<const core::Button> button, int layer, boo
 }
 
 
-void renderWalkway(shared_ptr<const core::Walkway> walkway, int /* layer */, bool /* visibleLayer */, bool /* selected */, ImDrawList* drawList)
+void renderWalkway(shared_ptr<const core::Walkway> walkway, int /* layer*/, bool visibleLayer,
+	bool selected, ImDrawList* drawList)
 {
+	if (!visibleLayer) return;
 	core::Vector2 bounds0, bounds1;
 
 	walkway->getFullShape(bounds0, bounds1);
@@ -667,8 +669,9 @@ void renderWalkway(shared_ptr<const core::Walkway> walkway, int /* layer */, boo
 	transformPosition(bounds0);
 	transformPosition(bounds1);
 
-	auto colour = ImColor(64, 64, 64);
-	drawList->AddLine({ bounds0.x, bounds0.y }, { bounds1.x, bounds0.y }, colour, 2.0f);
+	auto colour = selected ? SelectedColour : ImColor(64, 64, 64);
+	drawList->AddLine({ bounds0.x, bounds0.y }, { bounds1.x, bounds0.y }, colour,
+		selected ? 3.0f : 2.0f);
 }
 
 

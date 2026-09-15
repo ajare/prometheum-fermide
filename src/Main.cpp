@@ -365,6 +365,7 @@ void setup()
 		0xf2d0, 0xf2d0, // Window Maximize
 		0xf3c5, 0xf3c5, // Map Marker Alt
 		0xf52a, 0xf52a, // Door Closed
+		0xf7a4, 0xf7a4, // Grip Lines (Walkway)
 		0
 	};
 	gAgentIconFont = io.Fonts->AddFontFromFileTTF(iconFontPath.c_str(),
@@ -375,6 +376,10 @@ void setup()
 	}
 
 	io.Fonts->Build();
+	if (!gAgentIconFont->FindGlyphNoFallback(0xf7a4))
+	{
+		throw ExitApplicationException(1, "Could not load the Walkway palette icon.");
+	}
 }
 
 void shutdown()

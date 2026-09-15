@@ -839,7 +839,13 @@ namespace core
 
 		CreatePlatformLiftResult addSectorPlatformLift(uint32_t sectorIndex, uint32_t deckIndex, uint32_t xOffset, CreateLiftOptions const& options);
 
-		void addSectorWalkway(uint32_t sectorIndex, uint32_t deckIndex, uint32_t xOffset);
+		bool canAddSectorWalkway(uint32_t sectorIndex, uint32_t deckIndex, uint32_t xOffset,
+			std::string* diagnostic = nullptr) const;
+
+		CreateObjectResult addSectorWalkway(uint32_t sectorIndex, uint32_t deckIndex,
+			uint32_t xOffset);
+
+		bool removeSectorWalkway(uint32_t sectorIndex, uint32_t objectIndex);
 
 		bool canAddSectorMarker(uint32_t sectorIndex, uint32_t deckIndex, float xOffset,
 			std::string* diagnostic = nullptr) const;

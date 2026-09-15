@@ -390,6 +390,94 @@ namespace
 			&& movedMarker->getCellX() == 8;
 	}
 
+	bool walkwayEditingEnforcesPlacementMovementAndOccupancyRules()
+	{
+		core::Building building("Walkway editing", 10, 4);
+		auto room = building.addRoom("Walkway room", CORE_LAYER_FORE, 0, 0, 4, 3);
+		auto otherRoom = building.addRoom("Other room", CORE_LAYER_FORE, 0, 6, 3, 3);
+		std::string diagnostic;
+		if (building.canAddSectorWalkway(room, 0, 1, &diagnostic)
+			|| !building.canAddSectorWalkway(room, 1, 1, &diagnostic)) return false;
+		auto created = building.addSectorWalkway(room, 1, 1);
+		building.finishBuild();
+		building.pauseSimulation();
+
+		auto acrossRooms = building.planMoveSectorObject(room, created.index, 6, 1);
+		auto withinRoom = building.planMoveSectorObject(room, created.index, 2, 1);
+		if (acrossRooms.valid || !withinRoom.valid) return false;
+
+		auto agentId = building.createAgent("Walkway occupant", room, 1, 1.5f);
+		if (building.planMoveSectorObject(room, created.index, 2, 1).valid) return false;
+		bool occupiedDeleteRejected = false;
+		try { building.removeSectorWalkway(room, created.index); }
+		catch (std::exception const&) { occupiedDeleteRejected = true; }
+		if (!occupiedDeleteRejected) return false;
+		auto cropped = building.planResizeLocation(room, 0, 0, 1, 3);
+		if (cropped.valid) return false;
+
+		if (!building.removeAgent(agentId)) return false;
+		withinRoom = building.planMoveSectorObject(room, created.index, 2, 1);
+		if (!withinRoom.valid) return false;
+		auto moved = building.applyObjectMove(withinRoom);
+		if (!moved || moved->getCellX() != 2 || moved->getCellY() != 1
+			|| moved->getSector()->getIndex() != room) return false;
+		uint32_t movedIndex = ~0u;
+		for (uint32_t i = 0; i < moved->getSector()->getNumObjects(); ++i)
+			if (moved->getSector()->getObject(i) == moved) { movedIndex = i; break; }
+		if (movedIndex == ~0u || !building.removeSectorWalkway(room, movedIndex)) return false;
+		for (uint32_t i = 0; i < building.getSector(room)->getNumObjects(); ++i)
+			if (auto object = building.getSector(room)->getObject(i))
+				if (object->getObjectType() == core::SectorObjectType::Walkway) return false;
+
+		building.addSectorWalkway(room, 1, 3);
+		building.finishBuild();
+		auto cropUnoccupied = building.planResizeLocation(room, 0, 0, 3, 3);
+		if (!cropUnoccupied.valid) return false;
+		auto resizedRoom = building.applyLocationEdit(cropUnoccupied);
+		for (uint32_t i = 0; i < building.getSector(resizedRoom)->getNumObjects(); ++i)
+			if (auto object = building.getSector(resizedRoom)->getObject(i))
+				if (object->getObjectType() == core::SectorObjectType::Walkway) return false;
+		return building.getSector(otherRoom) != nullptr && building.isTraversalTopologyValid();
+	}
+
+	bool deletingWalkwayPreservesUnrelatedRoomDoor()
+	{
+		core::Building building("Walkway deletion isolation", 16, 6);
+		building.addCorridor(4, 9, 4);
+		auto room = building.addRoom("Walkway room", CORE_LAYER_BACK, 3, 9, 4, 2);
+		core::Building::CreateObjectResult walkways[4];
+		for (uint32_t x = 0; x < 4; ++x)
+			walkways[x] = building.addSectorWalkway(room, 1, x);
+		building.addSectorDoor(4, 12);
+		building.finishBuild();
+		building.pauseSimulation();
+
+		try
+		{
+			// The Walkway at 11,4 is not beneath the Door at 12,4. Removing it
+			// must shrink the physical queue rather than invalidate the Door.
+			if (!building.removeSectorWalkway(room, walkways[2].index)) return false;
+		}
+		catch (std::exception const&)
+		{
+			return false;
+		}
+		uint32_t doorsInRoom = 0, remainingWalkways = 0;
+		bool walkwayAt11 = false, walkwayAt12 = false;
+		for (uint32_t i = 0; i < building.getSector(room)->getNumObjects(); ++i)
+			if (auto object = building.getSector(room)->getObject(i))
+			{
+				doorsInRoom += object->getObjectType() == core::SectorObjectType::Door;
+				if (object->getObjectType() != core::SectorObjectType::Walkway) continue;
+				++remainingWalkways;
+				walkwayAt11 = walkwayAt11 || object->getCellX() == 11;
+				walkwayAt12 = walkwayAt12 || object->getCellX() == 12;
+			}
+		return doorsInRoom == 1 && remainingWalkways == 3
+			&& !walkwayAt11 && walkwayAt12 && building.isTraversalTopologyValid()
+			&& building.getSimulationSnapshot().traversalResources.size() == 1;
+	}
+
 	bool ordinaryTraversalCommitsOnlyAtDestination()
 	{
 		core::Building building("Ordinary transition", 10, 2);
@@ -2833,6 +2921,16 @@ int main()
 		if (!objectMoveValidatesAndRebuildsOnceCommitted())
 		{
 			std::cerr << "FAIL: Object movement did not validate and rebuild atomically\n";
+			return 1;
+		}
+		if (!walkwayEditingEnforcesPlacementMovementAndOccupancyRules())
+		{
+			std::cerr << "FAIL: Walkway editing violated placement, movement, deletion, or occupancy rules\n";
+			return 1;
+		}
+		if (!deletingWalkwayPreservesUnrelatedRoomDoor())
+		{
+			std::cerr << "FAIL: deleting a Walkway removed an unrelated Room Door\n";
 			return 1;
 		}
 		if (!ordinaryTraversalCommitsOnlyAtDestination())
