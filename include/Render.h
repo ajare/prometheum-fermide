@@ -33,8 +33,9 @@ inline bool shouldRenderLadderGeometryAfterSectorContents()
 
 inline bool shouldRenderSectorAgents(core::SectorType sectorType, int layer, bool visibleLayer)
 {
-	if (sectorType == core::SectorType::Ladder)
-		return shouldRenderLadderGeometry(layer, visibleLayer);
+	if (sectorType == core::SectorType::Ladder
+		|| sectorType == core::SectorType::Staircase)
+		return visibleLayer || layer != CORE_LAYER_BACK;
 	if (sectorType == core::SectorType::Shuttle)
 		return visibleLayer || layer != CORE_LAYER_BACK;
 	return true;

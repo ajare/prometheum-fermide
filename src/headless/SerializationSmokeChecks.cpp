@@ -527,6 +527,10 @@ agents: []
 		require(shouldRenderStaircaseGeometry(CORE_LAYER_BACK, true)
 			&& shouldRenderStaircaseGeometry(CORE_LAYER_FORE, true),
 			"Staircase geometry was suppressed from a visible or clipped Fore-layer pass");
+		require(!shouldRenderSectorAgents(core::SectorType::Staircase, CORE_LAYER_BACK, false)
+			&& shouldRenderSectorAgents(core::SectorType::Staircase, CORE_LAYER_FORE, true)
+			&& shouldRenderSectorAgents(core::SectorType::Staircase, CORE_LAYER_BACK, true),
+			"Staircase Agents do not obey the Staircase's foreground aperture clipping");
 		core::Staircase leftStaircase(0, 0, 3, CORE_SIDE_LEFT);
 		core::Staircase rightStaircase(0, 0, 3, CORE_SIDE_RIGHT);
 		auto left = leftStaircase.getDeckPath(0);

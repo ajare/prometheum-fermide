@@ -1379,7 +1379,7 @@ void renderShuttleTransit(shared_ptr<const core::ShuttleTransit> shuttleTransit,
 }
 
 
-void renderStaircaseTransit(shared_ptr<const core::StaircaseTransit> staircaseTransit, int layer, bool visibleLayer, bool wireframe, ImColor colour, bool selected, ImDrawList* drawList)
+void renderStaircaseTransit(shared_ptr<const core::StaircaseTransit> staircaseTransit, int layer, bool visibleLayer, bool wireframe, ImColor colour, ImDrawList* drawList)
 {
 	// Transit Staircases go behind the Location.  We need to render it clipped, for each Deck.
 	if (layer == CORE_LAYER_FORE && visibleLayer)
@@ -1408,8 +1408,10 @@ void renderStaircaseTransit(shared_ptr<const core::StaircaseTransit> staircaseTr
 	}
 	else
 	{
+		// renderSector applies the visible-layer policy to both the Staircase and
+		// its occupants. Do not redraw either over the Fore layer from the hidden
+		// Back-layer wireframe pass.
 		renderSector(staircaseTransit, layer, visibleLayer, wireframe, true, colour, drawList);
-		renderStaircase(staircaseTransit->getStaircase(), layer, visibleLayer, selected, drawList);
 	}
 }
 
@@ -1438,8 +1440,6 @@ void renderSectors(shared_ptr<const core::Building> building, int layer, bool vi
 
 		for (auto sector : sectors)
 		{
-			auto selected = sector == gSelectedSector;
-
 			switch (sector->getType())
 			{
 			case core::SectorType::Ladder:
@@ -1448,7 +1448,8 @@ void renderSectors(shared_ptr<const core::Building> building, int layer, bool vi
 				break;
 
 			case core::SectorType::Staircase:
-				renderStaircaseTransit(static_pointer_cast<const core::StaircaseTransit>(sector), layer, visibleLayer, wireframe, BackLocationColour, selected, drawList);
+				renderStaircaseTransit(static_pointer_cast<const core::StaircaseTransit>(sector),
+					layer, visibleLayer, wireframe, BackLocationColour, drawList);
 				break;
 
 			default:
