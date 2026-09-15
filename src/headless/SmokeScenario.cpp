@@ -2111,6 +2111,12 @@ namespace
 				|| (shuttle->occupantCount == options.capacity && !shuttle->admissionQueue.empty());
 			if (shuttle->liftStopPhase == core::LiftStopPhase::Disembarking)
 				sawDisembarkBeforeBoard = sawDisembarkBeforeBoard || shuttle->admissionReservationCount == 0;
+			for (auto const& passenger : passengers)
+			{
+				auto agent = building.lookupAgent(passenger).entity;
+				if (agent->getSector() == building.getSector(left).get()
+					&& std::abs(agent->getGlobalPosition().y) > 0.001f) return false;
+			}
 			if (shuttle->liftMoving)
 				for (auto const& passenger : passengers)
 				{
@@ -2190,8 +2196,7 @@ namespace
 			sawSeparatedAccessZones = sawSeparatedAccessZones || leftZones >= 2;
 			for (auto const& request : snapshot.traversalRequests)
 				if (request.shuttleCarriage != ~0u && request.shuttleDoor)
-					sawBoundAssignment = sawBoundAssignment
-						|| (request.hasQueuePosition && request.hasCapacityPosition);
+					sawBoundAssignment = true;
 			if (std::all_of(journeys.begin(), journeys.end(), [&](auto const& journey)
 				{ auto agent = building.lookupAgent(journey.agent).entity;
 					return agent->getState() == core::Agent::State::Idle

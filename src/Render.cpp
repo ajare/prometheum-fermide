@@ -1103,8 +1103,11 @@ void renderSector(shared_ptr<const core::Sector> sector, int layer, bool visible
 		renderSectorObjects(sector, layer, visibleLayer, wireframe, flags, drawList);
 	}
 
-	// Agents
-	renderSectorAgents(sector, layer, visibleLayer, drawList);
+	// Passengers must obey the same Fore-layer aperture rule as their Shuttle
+	// carriage. Door and Window rendering call this with layer == Fore while a
+	// clip rectangle is active; the hidden Back-layer wireframe pass does not.
+	if (sector->getType() != core::SectorType::Shuttle || visibleLayer || layer != CORE_LAYER_BACK)
+		renderSectorAgents(sector, layer, visibleLayer, drawList);
 
 	// Render ceiling
 	if (renderEdges)

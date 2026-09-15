@@ -1825,6 +1825,9 @@ namespace core
 				auto& control = doorResult.controls[CORE_LAYER_FORE];
 				auto controlObject = control.sector->_getObject(control.index);
 				auto controlPosition = controlObject->getPosition() + controlObject->getSize() * 0.5f;
+				// The button is rendered above the floor, but agents interact from the
+				// platform rather than climbing vertically toward the wall-mounted control.
+				controlPosition.y = (float)y;
 				DeviceCommand call;
 				call.type = DeviceCommandType::CallShuttle;
 				call.traversalResource = coordinator;
