@@ -228,6 +228,37 @@ namespace core
 
 		auto numVertices = (uint32_t)vertices.size();
 
+		// A Force Bridge owns the only edge which may cross the centre of its
+		// span. Interaction-point vertices can lie between its endpoints; ordinary
+		// row adjacency must not connect through those vertices and bypass the
+		// bridge's traversal resource.
+		map<shared_ptr<SectorObject>, pair<float, float>> forceBridgeSpans;
+		for (auto const& vertex : vertices)
+		{
+			if (vertex->getSubType() != VertexSubType::ForceBridge) continue;
+			auto objectVertex = dynamic_pointer_cast<SectorObjectVertex>(vertex);
+			if (!objectVertex) continue;
+			auto [found, inserted] = forceBridgeSpans.try_emplace(objectVertex->getObject(),
+				vertex->getPosition().x, vertex->getPosition().x);
+			if (!inserted)
+			{
+				found->second.first = min(found->second.first, vertex->getPosition().x);
+				found->second.second = max(found->second.second, vertex->getPosition().x);
+			}
+		}
+		auto crossesForceBridge = [&](shared_ptr<Vertex> const& left, shared_ptr<Vertex> const& right)
+		{
+			for (auto const& [object, span] : forceBridgeSpans)
+			{
+				(void)object;
+				if (span.second <= span.first) continue;
+				auto midpoint = (span.first + span.second) * 0.5f;
+				if (left->getPosition().x < midpoint && right->getPosition().x >= midpoint)
+					return true;
+			}
+			return false;
+		};
+
 		// If just one Vertex, then that is fine, but might be unexpected.
 		if (numVertices == 1)
 		{
@@ -286,7 +317,7 @@ namespace core
 				{
 					addEdge(make_shared<GapEdge>(), vertices[i], vertices[j], connectZ);
 				}
-				else
+				else if (!crossesForceBridge(vertices[i], vertices[j]))
 				{
 					addEdge(make_shared<SectorEdge>(), vertices[i], vertices[j], connectZ);
 				}

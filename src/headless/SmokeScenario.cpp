@@ -26,6 +26,7 @@
 #include "core/Button.h"
 #include "core/GapEdge.h"
 #include "core/Graph.h"
+#include "core/ForceBridgeSectorObject.h"
 #include "core/LiftTransit.h"
 #include "core/LiftSectorObject.h"
 #include "core/DoorSectorObject.h"
@@ -1871,6 +1872,10 @@ namespace
 		options.startExtended = false;
 		options.controlCount = 1;
 		auto bridge = building.addSectorForceBridge(room, 1, 1, options);
+		auto bridgeObject = std::dynamic_pointer_cast<core::ForceBridgeSectorObject>(
+			bridge.forceBridge.sector->getObject(bridge.forceBridge.index));
+		if (!bridgeObject) return false;
+		auto forceBridge = bridgeObject->getForceBridge();
 		building.finishBuild();
 
 		auto edgeIt = std::find_if(building.getGraph()->getEdges().begin(), building.getGraph()->getEdges().end(),
@@ -1880,15 +1885,23 @@ namespace
 		auto source = edge->getVertex(0)->getPosition().x < edge->getVertex(1)->getPosition().x
 			? edge->getVertex(0) : edge->getVertex(1);
 		auto destination = edge->getOtherVertex(source);
-		auto agentId = building.createAgent("Bridge traveller", room, 1, 0.5f);
-		auto agent = building.lookupAgent(agentId).entity;
-		agent->setPath(twoNodePath(source, destination, edge), true);
+		auto operatorId = building.createAgent("Bridge operator", room, 1, 0.5f);
+		auto followerId = building.createAgent("Bridge follower", room, 1, 0.1f);
+		auto bridgeOperator = building.lookupAgent(operatorId).entity;
+		auto follower = building.lookupAgent(followerId).entity;
+		auto operatorPath = building.getGraph()->calculatePath(bridgeOperator, source, destination);
+		auto followerPath = building.getGraph()->calculatePath(follower, source, destination);
+		if (!operatorPath || !followerPath) return false;
+		bridgeOperator->setPath(std::move(operatorPath), true);
+		follower->setPath(std::move(followerPath), true);
 
 		bool sawPreparation = false;
 		bool sawExtensionLease = false;
 		bool sawQueueStops = false;
-		bool sawQueuedTraveller = false;
-		while (agent->getState() != core::Agent::State::Idle
+		bool sawFollowerQueueWhileExtending = false;
+		bool sawFullyExtendedBeforeCrossing = false;
+		while ((bridgeOperator->getState() != core::Agent::State::Idle
+				|| follower->getState() != core::Agent::State::Idle)
 			&& building.getSimulationTick() < MaximumSimulationTicks)
 		{
 			building.advanceTick();
@@ -1897,21 +1910,38 @@ namespace
 				[&](auto const& value) { return value.id == bridge.traversalResource; });
 			if (resource == snapshot.traversalResources.end() || !resource->isForceBridge
 				|| !resource->isExtensible) return false;
+			// Operating the wall-mounted control must not pull an Agent off the floor.
+			if (std::abs(bridgeOperator->getGlobalPosition().y - source->getPosition().y) > 0.001f
+				|| std::abs(follower->getGlobalPosition().y - source->getPosition().y) > 0.001f)
+				return false;
+			if (resource->preparationOperator
+				&& bridgeOperator->getGlobalPosition().distanceTo(source->getPosition()) > 0.001f)
+				return false;
 			sawPreparation = sawPreparation || !snapshot.deviceOperations.empty();
 			sawExtensionLease = sawExtensionLease || resource->extensionRequestLeaseCount > 0;
 			sawQueueStops = sawQueueStops || (resource->queueLanes.size() == 2
 				&& !resource->queueLanes[0].positions.empty()
 				&& !resource->queueLanes[1].positions.empty());
 			for (auto const& request : snapshot.traversalRequests)
-				if (request.owner == agentId && request.queueTicket)
-					sawQueuedTraveller = true;
+				if (request.owner == followerId && request.queueTicket && request.hasQueuePosition
+					&& !forceBridge->isExtended())
+					sawFollowerQueueWhileExtending = true;
+
+			auto crossing = bridgeOperator->getState() == core::Agent::State::TraversingEdge
+				|| follower->getState() == core::Agent::State::TraversingEdge;
+			if (crossing && !forceBridge->isExtended()) return false;
+			sawFullyExtendedBeforeCrossing = sawFullyExtendedBeforeCrossing
+				|| (crossing && forceBridge->isExtended());
 		}
 		auto final = building.getSimulationSnapshot();
 		auto resource = std::find_if(final.traversalResources.begin(), final.traversalResources.end(),
 			[&](auto const& value) { return value.id == bridge.traversalResource; });
-		return sawPreparation && sawExtensionLease && sawQueueStops && sawQueuedTraveller
-			&& agent->getState() == core::Agent::State::Idle
-			&& agent->getGlobalPosition().distanceTo(destination->getPosition()) < 0.001f
+		return sawPreparation && sawExtensionLease && sawQueueStops && sawFollowerQueueWhileExtending
+			&& sawFullyExtendedBeforeCrossing
+			&& bridgeOperator->getState() == core::Agent::State::Idle
+			&& follower->getState() == core::Agent::State::Idle
+			&& bridgeOperator->getGlobalPosition().distanceTo(destination->getPosition()) < 0.001f
+			&& follower->getGlobalPosition().distanceTo(destination->getPosition()) < 0.001f
 			&& resource != final.traversalResources.end() && resource->extended
 			&& resource->extensionRequestLeaseCount == 0
 			&& resource->extensionOccupantLeaseCount == 0

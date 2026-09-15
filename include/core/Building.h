@@ -584,6 +584,9 @@ namespace core
 
 		void reflowPhysicalControls(uint32_t layerIndex, uint32_t sectorIndex, uint32_t y);
 		void bindPhysicalControl(CreateObjectResult& control, InteractionPointId point);
+		InteractionPointId createPhysicalControlInteractionPoint(std::string const& name,
+			CreateObjectResult& control, float standingY, float reach,
+			float durationSeconds, std::vector<InteractionBinding> bindings);
 
 		CreateObjectResult createWalkway(uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t* vertexIdentifier = nullptr);
 

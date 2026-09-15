@@ -1007,6 +1007,23 @@ namespace core
 		}
 	}
 
+	InteractionPointId Building::createPhysicalControlInteractionPoint(string const& name,
+		CreateObjectResult& control, float standingY, float reach,
+		float durationSeconds, vector<InteractionBinding> bindings)
+	{
+		if (!control.sector) throw invalid_argument("A physical control requires an owning sector");
+		auto sectorObject = control.sector->_getObject(control.index);
+		auto button = sectorObject ? dynamic_pointer_cast<Button>(sectorObject->_getObject()) : nullptr;
+		if (!button) throw logic_error("Physical control is not backed by a Button");
+		auto position = button->getPosition() + button->getSize() * 0.5f;
+		position.y = standingY;
+		auto point = createInteractionPoint(name,
+			SectorId{ (uint64_t)control.sector->getIndex() + 1 }, position,
+			reach, durationSeconds, std::move(bindings));
+		bindPhysicalControl(control, point);
+		return point;
+	}
+
 	Building::CreateObjectResult Building::createWalkway(uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t* vertexIdentifier)
 	{
 		string caller = format("Building::createWalkway({}, {}, {})", layerIndex, x, y);
@@ -1333,11 +1350,9 @@ namespace core
 			command.type = DeviceCommandType::SetExtendedState;
 			command.desiredState = true;
 			command.traversalResource = traversalResource;
-			auto point = createInteractionPoint("Ladder extension control",
-				SectorId{ (uint64_t)control.sector->getIndex() + 1 },
-				object->getPosition() + object->getSize() * 0.5f, 0.15f,
-				getFixedTimestep(), { { command, InteractionBindingRequirement::Required } });
-			bindPhysicalControl(control, point);
+			auto point = createPhysicalControlInteractionPoint("Ladder extension control",
+				control, (float)object->getCellY(), 0.15f, getFixedTimestep(),
+				{ { command, InteractionBindingRequirement::Required } });
 			addTraversalControl(traversalResource, point);
 		};
 
@@ -1685,19 +1700,13 @@ namespace core
 			}
 
 			auto& control = liftRes.doors[i].controls[CORE_LAYER_FORE];
-			auto controlObject = control.sector->_getObject(control.index);
-			auto controlPosition = controlObject->getPosition() + controlObject->getSize() * 0.5f;
-			// The button is rendered above the floor, but agents interact from the
-			// landing rather than climbing vertically toward the wall-mounted control.
-			controlPosition.y = (float)(y + options.stopOffsets[i]);
 			DeviceCommand call;
 			call.type = DeviceCommandType::CallLift;
 			call.traversalResource = coordinator;
 			call.stopIndex = i;
-			auto point = createInteractionPoint("Lift landing call",
-				liftStops[i].locationSector, controlPosition, 0.15f, getFixedTimestep(),
+			auto point = createPhysicalControlInteractionPoint("Lift landing call", control,
+				(float)(y + options.stopOffsets[i]), 0.15f, getFixedTimestep(),
 				{ { call, InteractionBindingRequirement::Required } });
-			bindPhysicalControl(control, point);
 			landing->mControls.push_back(point);
 			liftResource->mLiftStops[i].callControl = point;
 
@@ -1901,19 +1910,13 @@ namespace core
 				}
 
 				auto& control = doorResult.controls[CORE_LAYER_FORE];
-				auto controlObject = control.sector->_getObject(control.index);
-				auto controlPosition = controlObject->getPosition() + controlObject->getSize() * 0.5f;
-				// The button is rendered above the floor, but agents interact from the
-				// platform rather than climbing vertically toward the wall-mounted control.
-				controlPosition.y = (float)y;
 				DeviceCommand call;
 				call.type = DeviceCommandType::CallShuttle;
 				call.traversalResource = coordinator;
 				call.stopIndex = stop;
-				auto point = createInteractionPoint("Shuttle landing call", locationId,
-					controlPosition, 0.15f, getFixedTimestep(),
+				auto point = createPhysicalControlInteractionPoint("Shuttle landing call", control,
+					(float)y, 0.15f, getFixedTimestep(),
 					{ { call, InteractionBindingRequirement::Required } });
-				bindPhysicalControl(control, point);
 				landing->mControls.push_back(point);
 				if (!shuttleResource->mLiftStops[stop].callControl)
 					shuttleResource->mLiftStops[stop].callControl = point;
@@ -2505,20 +2508,13 @@ namespace core
 
 		auto control = _createDoorButton(sector, doorObject->getCellX(),
 			doorObject->getCellY(), door->getCellsWide(), CORE_BUTTON_F_AUTO_REENABLE);
-		auto controlObject = sector->_getObject(control.index)->_getObject();
-		auto controlPosition = controlObject->getPosition() + controlObject->getSize() * 0.5f;
-		// The Button is drawn above the floor, but its interaction target is the
-		// standing position below it. Agents must not climb to the rendered control.
-		controlPosition.y = (float)doorObject->getCellY();
 		DeviceCommand command;
 		command.type = DeviceCommandType::OpenDoor;
 		command.desiredState = true;
 		command.traversalResource = door->getTraversalResourceId();
-		auto point = createInteractionPoint("Door button",
-			SectorId{ (uint64_t)sector->getIndex() + 1 }, controlPosition,
-			CORE_AGENT_MAX_HEIGHT * 0.4f, getFixedTimestep(),
-			{ { command, InteractionBindingRequirement::Required } });
-		bindPhysicalControl(control, point);
+		auto point = createPhysicalControlInteractionPoint("Door button", control,
+			(float)doorObject->getCellY(), CORE_AGENT_MAX_HEIGHT * 0.4f,
+			getFixedTimestep(), { { command, InteractionBindingRequirement::Required } });
 		if (!addTraversalControl(door->getTraversalResourceId(), point))
 		{
 			throw BuildingException(this, "Could not bind the Door Button to its Door");
@@ -2699,19 +2695,13 @@ namespace core
 
 				if (!controlsAreExternallyBound)
 				{
-					auto controlObject = sectors[i]->_getObject(createdControls[i].index)->_getObject();
-					auto controlPosition = controlObject->getPosition() + controlObject->getSize() * 0.5f;
-					// The rendered Button is wall-mounted; agents interact from the floor.
-					controlPosition.y = (float)y;
 					DeviceCommand command;
 					command.type = DeviceCommandType::OpenDoor;
 					command.desiredState = true;
 					command.traversalResource = traversalResource;
-					auto point = createInteractionPoint("Door button",
-						SectorId{ (uint64_t)sectors[i]->getIndex() + 1 }, controlPosition,
-						CORE_AGENT_MAX_HEIGHT * 0.4f, getFixedTimestep(),
-						{ { command, InteractionBindingRequirement::Required } });
-					bindPhysicalControl(createdControls[i], point);
+					auto point = createPhysicalControlInteractionPoint("Door button",
+						createdControls[i], (float)y, CORE_AGENT_MAX_HEIGHT * 0.4f,
+						getFixedTimestep(), { { command, InteractionBindingRequirement::Required } });
 					addTraversalControl(traversalResource, point);
 				}
 			}
@@ -3002,16 +2992,13 @@ namespace core
 			createdControls[i] = _createBulkheadDoorButton(sector, y, i);
 			if (options.activationMode == DoorActivationMode::RemoteControlled)
 			{
-				auto controlObject = sector->_getObject(createdControls[i].index);
 				DeviceCommand command;
 				command.type = DeviceCommandType::OpenDoor;
 				command.desiredState = true;
 				command.traversalResource = traversalResource;
-				auto point = createInteractionPoint("Bulkhead door button",
-					SectorId{ (uint64_t)sector->getIndex() + 1 },
-					controlObject->getPosition() + controlObject->getSize() * 0.5f,
-					0.15f, getFixedTimestep(), { { command, InteractionBindingRequirement::Required } });
-				bindPhysicalControl(createdControls[i], point);
+				auto point = createPhysicalControlInteractionPoint("Bulkhead door button",
+					createdControls[i], (float)y, 0.15f, getFixedTimestep(),
+					{ { command, InteractionBindingRequirement::Required } });
 				addTraversalControl(traversalResource, point);
 			}
 		}
@@ -3035,10 +3022,9 @@ namespace core
 		command.type = DeviceCommandType::SetSectorLights;
 		command.target = SectorId{ (uint64_t)sectorIndex + 1 };
 		command.desiredState = !sector->areLightsOn();
-		auto point = createInteractionPoint("Light switch", command.target,
-			object->getPosition() + object->getSize() * 0.5f, 0.15f,
-			getFixedTimestep(), { { command, InteractionBindingRequirement::Required } });
-		bindPhysicalControl(ctrl, point);
+		createPhysicalControlInteractionPoint("Light switch", ctrl,
+			(float)object->getCellY(), 0.15f, getFixedTimestep(),
+			{ { command, InteractionBindingRequirement::Required } });
 		ConstructionRecord record{ ConstructionType::LightSwitch };
 		record.a = sectorIndex; record.b = xOffset;
 		recordConstruction(std::move(record));
@@ -3354,25 +3340,19 @@ namespace core
 			if (options.controlCount > 0)
 			{
 				createdControls[0] = _createForceBridgeButton(fbObject.sector, x, y, options.width, options.fromSide, 0);
-				auto object = createdControls[0].sector->_getObject(createdControls[0].index);
 				DeviceCommand command{ DeviceCommandType::SetExtendedState, {}, true, traversalResource };
-				auto point = createInteractionPoint("Force bridge extension control",
-					SectorId{ (uint64_t)createdControls[0].sector->getIndex() + 1 },
-					object->getPosition() + object->getSize() * 0.5f, 0.15f,
+				auto point = createPhysicalControlInteractionPoint("Force bridge extension control",
+					createdControls[0], (float)y, CORE_AGENT_MAX_WIDTH * 0.5f + 0.001f,
 					getFixedTimestep(), { { command, InteractionBindingRequirement::Required } });
-				bindPhysicalControl(createdControls[0], point);
 				addTraversalControl(traversalResource, point);
 			}
 			if (options.controlCount > 1)
 			{
 				createdControls[1] = _createForceBridgeButton(fbObject.sector, x, y, options.width, 1 - options.fromSide, 0);
-				auto object = createdControls[1].sector->_getObject(createdControls[1].index);
 				DeviceCommand command{ DeviceCommandType::SetExtendedState, {}, true, traversalResource };
-				auto point = createInteractionPoint("Force bridge extension control",
-					SectorId{ (uint64_t)createdControls[1].sector->getIndex() + 1 },
-					object->getPosition() + object->getSize() * 0.5f, 0.15f,
+				auto point = createPhysicalControlInteractionPoint("Force bridge extension control",
+					createdControls[1], (float)y, CORE_AGENT_MAX_WIDTH * 0.5f + 0.001f,
 					getFixedTimestep(), { { command, InteractionBindingRequirement::Required } });
-				bindPhysicalControl(createdControls[1], point);
 				addTraversalControl(traversalResource, point);
 			}
 		}
@@ -3526,11 +3506,9 @@ namespace core
 			command.type = DeviceCommandType::SetExtendedState;
 			command.desiredState = true;
 			command.traversalResource = traversalResource;
-			auto point = createInteractionPoint("Ladder extension control",
-				SectorId{ (uint64_t)control.sector->getIndex() + 1 },
-				object->getPosition() + object->getSize() * 0.5f, 0.15f,
-				getFixedTimestep(), { { command, InteractionBindingRequirement::Required } });
-			bindPhysicalControl(control, point);
+			auto point = createPhysicalControlInteractionPoint("Ladder extension control",
+				control, (float)object->getCellY(), 0.15f, getFixedTimestep(),
+				{ { command, InteractionBindingRequirement::Required } });
 			addTraversalControl(traversalResource, point);
 		};
 
@@ -3790,16 +3768,13 @@ namespace core
 		for (uint32_t i = 0; i < liftRes.buttons.size(); ++i)
 		{
 			auto& buttonResult = liftRes.buttons[i];
-			auto buttonObject = buttonResult.sector->_getObject(buttonResult.index);
-			auto buttonPosition = buttonObject->getPosition() + buttonObject->getSize() * 0.5f;
 			DeviceCommand call;
 			call.type = DeviceCommandType::CallLift;
 			call.traversalResource = coordinator;
 			call.stopIndex = i;
-			auto callPoint = createInteractionPoint("Platform lift landing call",
-				stops[i].locationSector, buttonPosition, 0.15f, getFixedTimestep(),
+			auto callPoint = createPhysicalControlInteractionPoint("Platform lift landing call",
+				buttonResult, stops[i].globalPosition, 0.15f, getFixedTimestep(),
 				{ { call, InteractionBindingRequirement::Required } });
-			bindPhysicalControl(buttonResult, callPoint);
 			resource->mLiftStops[i].callControl = callPoint;
 
 			DeviceCommand select;
