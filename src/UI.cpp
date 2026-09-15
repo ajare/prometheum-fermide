@@ -1104,8 +1104,7 @@ namespace
 		}
 
 		PaletteItem hoveredItem = PaletteItem::None;
-		if (gWorldHovered && gPegman.phase == PalettePhase::Home
-			&& gPaint.tool == PaintTool::None)
+		if (gWorldHovered && gPegman.phase == PalettePhase::Home)
 		{
 			if (pointInRect(io.MousePos, agentMin, agentMax)) hoveredItem = PaletteItem::Agent;
 			else if (pointInRect(io.MousePos, markerMin, markerMax)) hoveredItem = PaletteItem::Marker;
@@ -1146,7 +1145,10 @@ namespace
 			ImVec2 movement = io.MousePos - gPegman.pressPosition;
 			if (io.MouseDown[0] && movement.x * movement.x + movement.y * movement.y
 				>= io.MouseDragThreshold * io.MouseDragThreshold)
+			{
+				resetPaint();
 				gPegman.phase = PalettePhase::Dragging;
+			}
 			else if (io.MouseReleased[0]) resetPegman();
 		}
 
