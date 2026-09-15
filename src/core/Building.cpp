@@ -962,6 +962,8 @@ namespace core
 				auto const& candidate = placement.candidates[placement.currentCandidate];
 				float centerX = candidate.cellX + (candidate.side == CORE_SIDE_RIGHT ? 1.0f
 					: candidate.side == CORE_SIDE_MIDDLE ? 0.5f : 0.0f);
+				if (candidate.side == CORE_SIDE_LEFT) centerX += placement.edgeInset;
+				else if (candidate.side == CORE_SIDE_RIGHT) centerX -= placement.edgeInset;
 				float adjustment = 0.0f;
 				if (controls.size() > 1)
 				{
@@ -1210,6 +1212,44 @@ namespace core
 		return result;
 	}
 
+	bool Building::canAddLadder(uint32_t y, uint32_t x, uint32_t decksHigh,
+		string* diagnostic) const
+	{
+		auto reject = [&](string message)
+		{
+			if (diagnostic) *diagnostic = std::move(message);
+			return false;
+		};
+		if (diagnostic) diagnostic->clear();
+		if (decksHigh < 2) return reject("A Ladder must span at least two decks");
+		if (x >= mCellsWide || y >= mDecksHigh || y + decksHigh > mDecksHigh)
+			return reject("The Ladder is outside the Building bounds");
+		for (uint32_t iy = y; iy < y + decksHigh; ++iy)
+			if (mLayers[CORE_LAYER_BACK]->getCellDefinition(x, iy).occupied())
+				return reject(format("A Back-layer Sector at {},{} blocks the Ladder", x, iy));
+
+		auto upperY = y + decksHigh - 1;
+		auto const& lower = mLayers[CORE_LAYER_FORE]->getCellDefinition(x, y);
+		auto const& upper = mLayers[CORE_LAYER_FORE]->getCellDefinition(x, upperY);
+		if (lower.sectorIndex == ~0u)
+			return reject(format("A Fore-layer Location is required at {},{}", x, y));
+		if (upper.sectorIndex == ~0u)
+			return reject(format("A Fore-layer Location is required at {},{}", x, upperY));
+		if (lower.sectorIndex == upper.sectorIndex)
+			return reject("A Ladder must connect two different Fore-layer Locations");
+		auto lowerSector = mSectors[lower.sectorIndex];
+		auto upperSector = mSectors[upper.sectorIndex];
+		if (!lowerSector || lowerSector->getType() != SectorType::Location)
+			return reject(format("A Fore-layer Location is required at {},{}", x, y));
+		if (!upperSector || upperSector->getType() != SectorType::Location)
+			return reject(format("A Fore-layer Location is required at {},{}", x, upperY));
+		if (!lower.isTraversableOnFoot())
+			return reject(format("The Fore-layer floor at {},{} is not traversable", x, y));
+		if (!upper.isTraversableOnFoot())
+			return reject(format("The Fore-layer floor at {},{} is not traversable", x, upperY));
+		return true;
+	}
+
 	Building::CreateLadderResult Building::addLadder(uint32_t y, uint32_t x, CreateLadderOptions const& options)
 	{
 		beginStructuralEdit("addLadder");
@@ -1304,14 +1344,16 @@ namespace core
 		CreateObjectResult createdControls[2];
 		if (options.extensible)
 		{
-			auto locX1 = foreSector0->getCellX() + foreSector0->getCellsWide();
-			int side = x == locX1 ? CORE_SIDE_LEFT : CORE_SIDE_RIGHT;
-			createdControls[CORE_LEVEL_LOW] = _createLadderButton(foreSector0, x, y0, side, 0);
+			auto inwardSide = [x](shared_ptr<const Sector> const& sector)
+			{
+				return x == sector->getCellX1() ? CORE_SIDE_LEFT : CORE_SIDE_RIGHT;
+			};
+			createdControls[CORE_LEVEL_LOW] = _createLadderButton(
+				foreSector0, x, y0, inwardSide(foreSector0), 0, nullptr, true);
 			registerExtensionControl(createdControls[CORE_LEVEL_LOW]);
 
-			locX1 = foreSector1->getCellX() + foreSector1->getCellsWide();
-			side = x == locX1 ? CORE_SIDE_LEFT : CORE_SIDE_RIGHT;
-			createdControls[CORE_LEVEL_HIGH] = _createLadderButton(foreSector1, x, y1, side, 0);
+			createdControls[CORE_LEVEL_HIGH] = _createLadderButton(
+				foreSector1, x, y1, inwardSide(foreSector1), 0, nullptr, true);
 			registerExtensionControl(createdControls[CORE_LEVEL_HIGH]);
 		}
 
@@ -2020,7 +2062,9 @@ namespace core
 		return obj;
 	}
 
-	Building::CreateObjectResult Building::_createLadderButton(shared_ptr<const Sector> sector, uint32_t x, uint32_t y, int side, uint32_t flags, uint32_t* index)
+	Building::CreateObjectResult Building::_createLadderButton(shared_ptr<const Sector> sector,
+		uint32_t x, uint32_t y, int side, uint32_t flags, uint32_t* index,
+		bool insetWithinCell)
 	{
 		string caller = format("_createLadderButton(<sector>, {}, {}, {}, {}, <index>)", x, y, side, flags);
 		uint32_t buttonX = x;
@@ -2029,6 +2073,17 @@ namespace core
 		validateCellIsInSector(caller, buttonX, y, sector);
 
 		auto obj = createPhysicalControl("Ladder button", sector->getLayerIndex(), buttonX, y, side, flags);
+		if (insetWithinCell)
+		{
+			for (auto& placement : mPhysicalControlPlacements)
+			{
+				if (placement.sectorIndex != obj.sector->getIndex()
+					|| placement.objectIndex != obj.index) continue;
+				placement.edgeInset = 0.2f;
+				break;
+			}
+			reflowPhysicalControls(sector->getLayerIndex(), sector->getIndex(), y);
+		}
 
 		if (index)
 		{

@@ -13,6 +13,7 @@
 #include "core/Defines.h"
 #include "core/Serializable.h"
 #include "core/SerializationException.h"
+#include "core/LadderTransit.h"
 #include "core/ShuttleTransit.h"
 #include "core/Staircase.h"
 #include "core/StaircaseTransit.h"
@@ -520,6 +521,88 @@ agents: []
 			"Adjacent Staircase diagonal paths do not share a deck endpoint");
 	}
 
+	void laddersCanBeValidatedEditedAndDeleted()
+	{
+		require(isCanvasSelectableSectorType(core::SectorType::Ladder),
+			"Placed Ladders cannot be selected by the canvas hit-test");
+		require(!shouldRenderLadderGeometry(CORE_LAYER_BACK, false),
+			"Hidden Back-layer Ladder geometry bypasses Fore-layer corridor clipping");
+		require(shouldRenderLadderGeometry(CORE_LAYER_BACK, true)
+			&& shouldRenderLadderGeometry(CORE_LAYER_FORE, true),
+			"Ladder geometry was suppressed from a visible or clipped Fore-layer pass");
+		core::Building edgeBuilding("Edge Ladder controls", 5, 3);
+		edgeBuilding.addCorridor(0, 0, 5);
+		edgeBuilding.addCorridor(2, 0, 5);
+		auto edgeLadder = edgeBuilding.addLadder(0, 4, { 3, true, true });
+		auto interiorLadder = edgeBuilding.addLadder(0, 0, { 3, true, true });
+		require(std::abs(controlCenterX(edgeLadder.controls[CORE_LEVEL_LOW]) - 4.2f) < 0.0001f
+			&& std::abs(controlCenterX(edgeLadder.controls[CORE_LEVEL_HIGH]) - 4.2f) < 0.0001f,
+			"Left-side Ladder controls were not placed at the cell's 0.2 offset");
+		require(std::abs(controlCenterX(interiorLadder.controls[CORE_LEVEL_LOW]) - 0.8f) < 0.0001f
+			&& std::abs(controlCenterX(interiorLadder.controls[CORE_LEVEL_HIGH]) - 0.8f) < 0.0001f,
+			"Right-side Ladder controls were not placed at the cell's 0.8 offset");
+
+		core::Building building("Ladder editing", 10, 5);
+		std::vector<uint32_t> corridors;
+		for (uint32_t y = 0; y < 5; ++y) corridors.push_back(building.addCorridor(y, 0, 10));
+		std::string diagnostic;
+		require(!building.canAddLadder(0, 1, 1, &diagnostic)
+			&& diagnostic.find("at least two") != std::string::npos,
+			"Ladder placement accepted a one-deck footprint");
+		require(building.canAddLadder(0, 1, 3, &diagnostic),
+			"Valid Ladder placement was rejected");
+		auto created = building.addLadder(0, 1, { 3, false, true });
+		building.finishBuild();
+		building.pauseSimulation();
+		auto agentId = building.createAgent("Ladder user", created.ladder.sector->getIndex(), 1, 0.5f);
+		auto originalAgentPosition = building.lookupAgent(agentId).entity->getGlobalPosition();
+
+		core::Building::CreateLadderOptions edited{ 3, true, false, 0.5f, 3 };
+		auto move = building.planResizeLadder(created.ladder.sector->getIndex(), 4, 1, edited);
+		require(move.valid && move.move, "Valid Ladder move was not planned");
+		auto movedIndex = building.applyLadderEdit(move);
+		auto ladder = std::dynamic_pointer_cast<const core::LadderTransit>(building.getSector(movedIndex));
+		require(ladder && ladder->getCellX() == 4 && ladder->getCellY() == 1
+			&& ladder->getDecksHigh() == 3,
+			"Ladder geometry was not edited");
+		auto movedAgent = building.lookupAgent(agentId).entity;
+		require(movedAgent
+			&& std::abs(movedAgent->getGlobalPosition().x - originalAgentPosition.x - 3.0f) < 0.001f
+			&& std::abs(movedAgent->getGlobalPosition().y - originalAgentPosition.y - 1.0f) < 0.001f,
+			"An occupying Agent did not move with the Ladder");
+		core::Building::CreateLadderOptions loaded{};
+		require(building.getLadderOptions(movedIndex, loaded) && loaded.extensible
+			&& !loaded.startExtended && std::abs(loaded.agentSpacing - 0.5f) < 0.001f
+			&& loaded.directionalBatchLimit == 3,
+			"Ladder configuration was not retained");
+		auto countControls = [&](uint32_t sectorIndex)
+		{
+			uint32_t count = 0;
+			auto sector = building.getSector(sectorIndex);
+			for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
+				if (sector->getObject(i)->getObjectType() == core::SectorObjectType::InteractionPoint)
+					++count;
+			return count;
+		};
+		require(countControls(corridors[1]) == 1 && countControls(corridors[3]) == 1,
+			"Enabling Ladder extensibility did not create both endpoint controls");
+
+		auto unsupportedLocation = building.planResizeLocation(corridors[1], 0, 1, 3, 1);
+		require(!unsupportedLocation.valid
+			&& unsupportedLocation.diagnostic.find("Ladder") != std::string::npos,
+			"A Location edit was allowed to invalidate a Ladder endpoint");
+		auto blocked = building.planResizeLadder(movedIndex, 10, 1, edited);
+		require(!blocked.valid, "Out-of-bounds Ladder edit was accepted");
+		auto removal = building.planRemoveLadder(movedIndex);
+		require(removal.valid && removal.requiresConfirmation(),
+			"Ladder deletion was not planned as a confirmed edit");
+		require(building.applyLadderEdit(removal) == ~0u,
+			"Ladder deletion did not return the removed-sector sentinel");
+		require(!static_cast<core::Building const&>(building).getLayer(CORE_LAYER_BACK)
+			->getCellDefinition(4, 1).occupied(),
+			"Deleted Ladder still occupies the Back layer");
+	}
+
 	void staircasesCanBeValidatedEditedAndDeleted()
 	{
 		core::Building building("Staircase editing", 10, 5);
@@ -652,6 +735,7 @@ void runSerializationSmokeChecks()
 	locationEditsArePlannedAndAppliedAtomically();
 	editedShuttleRoundTripsWithoutSchemaChanges();
 	staircaseSectorsAreCanvasSelectable();
+	laddersCanBeValidatedEditedAndDeleted();
 	staircasesCanBeValidatedEditedAndDeleted();
 	physicalControlsPreferDistinctWallPositions();
 	recentFilesPersistAcrossStartup();

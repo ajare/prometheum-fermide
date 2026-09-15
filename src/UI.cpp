@@ -40,6 +40,7 @@
 #include "core/Location.h"
 #include "core/ForceBridgeSectorObject.h"
 #include "core/LadderSectorObject.h"
+#include "core/LadderTransit.h"
 #include "core/LiftSectorObject.h"
 #include "core/StaircaseTransit.h"
 #include "core/DoorSectorObject.h"
@@ -231,6 +232,7 @@ namespace
 		None,
 		Room,
 		Corridor,
+		Ladder,
 		Staircase,
 		Lift,
 		Shuttle
@@ -293,6 +295,7 @@ namespace
 		bool dragging{ false };
 		bool lift{ false };
 		bool shuttle{ false };
+		bool ladder{ false };
 		bool staircase{ false };
 		ResizeEdge edge{ ResizeEdge::None };
 		ImVec2 pressPosition{};
@@ -300,6 +303,7 @@ namespace
 		core::Building::LocationEditPlan preview;
 		core::Building::LiftEditPlan liftPreview;
 		core::Building::ShuttleEditPlan shuttlePreview;
+		core::Building::LadderEditPlan ladderPreview;
 		core::Building::StaircaseEditPlan staircasePreview;
 	};
 
@@ -307,6 +311,7 @@ namespace
 	optional<core::Building::LocationEditPlan> gPendingLocationEdit;
 	optional<core::Building::LiftEditPlan> gPendingLiftEdit;
 	optional<core::Building::ShuttleEditPlan> gPendingShuttleEdit;
+	optional<core::Building::LadderEditPlan> gPendingLadderEdit;
 	optional<core::Building::StaircaseEditPlan> gPendingStaircaseEdit;
 
 	struct ObjectMoveState
@@ -721,6 +726,16 @@ namespace
 					&result.diagnostic);
 			return result;
 		}
+		if (gPaint.tool == PaintTool::Ladder)
+		{
+			int endY = clamp((int)floor(world.y), 0, (int)building->getDecksHigh() - 1);
+			int y = min(gPaint.anchorY, endY);
+			uint32_t height = (uint32_t)(abs(endY - gPaint.anchorY) + 1);
+			PaintRectangle result{ false, (uint32_t)gPaint.anchorX, (uint32_t)y, 1, height, {} };
+			result.valid = building->canAddLadder(result.y, result.x, result.height,
+				&result.diagnostic);
+			return result;
+		}
 		if (layer->getCellDefinition(gPaint.anchorX, gPaint.anchorY).occupied()) return {};
 
 		int endX = clamp((int)floor(world.x), 0, (int)building->getCellsWide() - 1);
@@ -951,8 +966,9 @@ namespace
 		if (gPaint.dragging && gPaint.layer != (uint32_t)gUISettings.visibleLayer)
 			resetPaint(false);
 		if ((gPaint.tool == PaintTool::Corridor && gUISettings.visibleLayer == CORE_LAYER_BACK)
-			|| ((gPaint.tool == PaintTool::Staircase || gPaint.tool == PaintTool::Lift
-				|| gPaint.tool == PaintTool::Shuttle) && gUISettings.visibleLayer == CORE_LAYER_FORE))
+			|| ((gPaint.tool == PaintTool::Ladder || gPaint.tool == PaintTool::Staircase
+				|| gPaint.tool == PaintTool::Lift || gPaint.tool == PaintTool::Shuttle)
+				&& gUISettings.visibleLayer == CORE_LAYER_FORE))
 			resetPaint();
 
 		if (gPegman.phase == PalettePhase::Falling)
@@ -966,20 +982,22 @@ namespace
 		}
 
 		auto trayBottomRight = canvasPos + canvasSize - ImVec2(PaletteInset, PaletteInset);
-		auto traySize = ImVec2(PalettePadding * 2.0f + PaletteSlotWidth * 5.0f + PaletteGap * 4.0f,
+		auto traySize = ImVec2(PalettePadding * 2.0f + PaletteSlotWidth * 6.0f + PaletteGap * 5.0f,
 			PalettePadding * 2.0f + PaletteSlotSize * 2.0f + PaletteGap);
 		auto trayTopLeft = trayBottomRight - traySize;
 		auto roomMin = trayTopLeft + ImVec2(PalettePadding, PalettePadding);
 		auto corridorMin = roomMin + ImVec2(PaletteSlotWidth + PaletteGap, 0.0f);
-		auto staircaseMin = corridorMin + ImVec2(PaletteSlotWidth + PaletteGap, 0.0f);
+		auto ladderMin = corridorMin + ImVec2(PaletteSlotWidth + PaletteGap, 0.0f);
+		auto staircaseMin = ladderMin + ImVec2(PaletteSlotWidth + PaletteGap, 0.0f);
 		auto liftMin = staircaseMin + ImVec2(PaletteSlotWidth + PaletteGap, 0.0f);
 		auto shuttleMin = liftMin + ImVec2(PaletteSlotWidth + PaletteGap, 0.0f);
 		auto agentMin = roomMin + ImVec2(0.0f, PaletteSlotSize + PaletteGap);
 		auto markerMin = corridorMin + ImVec2(0.0f, PaletteSlotSize + PaletteGap);
-		auto doorMin = staircaseMin + ImVec2(0.0f, PaletteSlotSize + PaletteGap);
-		auto windowMin = liftMin + ImVec2(0.0f, PaletteSlotSize + PaletteGap);
+		auto doorMin = ladderMin + ImVec2(0.0f, PaletteSlotSize + PaletteGap);
+		auto windowMin = staircaseMin + ImVec2(0.0f, PaletteSlotSize + PaletteGap);
 		auto roomMax = roomMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
 		auto corridorMax = corridorMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
+		auto ladderMax = ladderMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
 		auto staircaseMax = staircaseMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
 		auto liftMax = liftMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
 		auto shuttleMax = shuttleMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
@@ -993,6 +1011,7 @@ namespace
 		bool overTray = gWorldHovered && pointInRect(io.MousePos, trayTopLeft, trayBottomRight);
 		bool roomHovered = gWorldHovered && pointInRect(io.MousePos, roomMin, roomMax);
 		bool corridorHovered = gWorldHovered && pointInRect(io.MousePos, corridorMin, corridorMax);
+		bool ladderHovered = gWorldHovered && pointInRect(io.MousePos, ladderMin, ladderMax);
 		bool staircaseHovered = gWorldHovered && pointInRect(io.MousePos, staircaseMin, staircaseMax);
 		bool liftHovered = gWorldHovered && pointInRect(io.MousePos, liftMin, liftMax);
 		bool shuttleHovered = gWorldHovered && pointInRect(io.MousePos, shuttleMin, shuttleMax);
@@ -1012,23 +1031,29 @@ namespace
 		};
 
 		if (gPegman.phase == PalettePhase::Home
-			&& (roomHovered || corridorHovered || staircaseHovered || liftHovered || shuttleHovered))
+			&& (roomHovered || corridorHovered || ladderHovered || staircaseHovered
+				|| liftHovered || shuttleHovered))
 		{
 			paletteConsumedMouse = true;
 			ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
 			if (corridorHovered && corridorDisabled)
 				ImGui::SetTooltip("Corridors can only be painted on the Fore Layer");
+			else if (ladderHovered && backOnlyDisabled)
+				ImGui::SetTooltip("Ladders can only be painted on the Back Layer");
 			else if ((staircaseHovered || liftHovered || shuttleHovered) && backOnlyDisabled)
 				ImGui::SetTooltip("Staircases, Lifts, and Shuttles can only be painted on the Back Layer");
 			else
 				ImGui::SetTooltip(roomHovered ? "Paint Room" : corridorHovered ? "Paint Corridor"
-					: staircaseHovered ? "Paint Staircase" : liftHovered ? "Paint Lift" : "Paint Shuttle");
+					: ladderHovered ? "Paint Ladder" : staircaseHovered ? "Paint Staircase"
+					: liftHovered ? "Paint Lift" : "Paint Shuttle");
 
 			if (io.MouseClicked[0] && !(corridorHovered && corridorDisabled)
-				&& !((staircaseHovered || liftHovered || shuttleHovered) && backOnlyDisabled))
+				&& !((ladderHovered || staircaseHovered || liftHovered || shuttleHovered)
+					&& backOnlyDisabled))
 			{
 				auto clickedTool = roomHovered ? PaintTool::Room
 					: corridorHovered ? PaintTool::Corridor
+					: ladderHovered ? PaintTool::Ladder
 					: staircaseHovered ? PaintTool::Staircase
 					: liftHovered ? PaintTool::Lift : PaintTool::Shuttle;
 				gPaint.tool = gPaint.tool == clickedTool ? PaintTool::None : clickedTool;
@@ -1045,6 +1070,8 @@ namespace
 		drawPaintButton(roomMin, roomMax, "Room", PaintTool::Room, roomHovered, false);
 		drawPaintButton(corridorMin, corridorMax, "Corridor", PaintTool::Corridor,
 			corridorHovered, corridorDisabled);
+		drawPaintButton(ladderMin, ladderMax, "Ladder", PaintTool::Ladder,
+			ladderHovered, backOnlyDisabled);
 		drawPaintButton(staircaseMin, staircaseMax, "Staircase", PaintTool::Staircase,
 			staircaseHovered, backOnlyDisabled);
 		drawPaintButton(liftMin, liftMax, "Lift", PaintTool::Lift, liftHovered, backOnlyDisabled);
@@ -1127,6 +1154,9 @@ namespace
 						else if (tool == PaintTool::Corridor)
 							building->addCorridor(paintRectangle.y, paintRectangle.x,
 								paintRectangle.width, 1);
+						else if (tool == PaintTool::Ladder)
+							building->addLadder(paintRectangle.y, paintRectangle.x,
+								{ paintRectangle.height, false, true });
 						else if (tool == PaintTool::Staircase)
 						{
 							int mountSide = paintRectangle.x < (uint32_t)gPaint.anchorX
@@ -1468,6 +1498,7 @@ namespace
 		gPendingLocationEdit.reset();
 		gPendingLiftEdit.reset();
 		gPendingShuttleEdit.reset();
+		gPendingLadderEdit.reset();
 		gPendingStaircaseEdit.reset();
 		gShuttleDraft.reset();
 		gShuttleDoorCandidates.clear();
@@ -1795,6 +1826,39 @@ namespace
 		else commitShuttleEdit(building, plan);
 	}
 
+	void commitLadderEdit(shared_ptr<core::Building> const& building,
+		core::Building::LadderEditPlan const& plan)
+	{
+		auto undo = captureDocumentSnapshot(building);
+		try
+		{
+			auto newIndex = building->applyLadderEdit(plan);
+			gUISettings.worldPaused = true;
+			gHoveredAgent = nullptr; gHoveredSector.reset(); gHoveredSectorObject.reset();
+			gSelectedAgent = nullptr; gSelectedSectorObject.reset();
+			gSelectedSector = plan.remove ? nullptr : building->getSector(newIndex);
+			commitDocumentEdit(std::move(undo));
+		}
+		catch (core::Exception const& error)
+		{ core::addLogMessage("Ladder editor", 0, core::LogLevel::Error, error.getMessage()); }
+		catch (std::exception const& error)
+		{ core::addLogMessage("Ladder editor", 0, core::LogLevel::Error, error.what()); }
+		resetSectorResize();
+	}
+
+	void queueLadderEdit(shared_ptr<core::Building> const& building,
+		core::Building::LadderEditPlan const& plan)
+	{
+		if (!building->isSimulationPaused()) building->pauseSimulation();
+		gUISettings.worldPaused = true;
+		if (plan.requiresConfirmation())
+		{
+			gPendingLadderEdit = plan;
+			gOpenLocationEditPopup = true;
+		}
+		else commitLadderEdit(building, plan);
+	}
+
 	void commitStaircaseEdit(shared_ptr<core::Building> const& building,
 		core::Building::StaircaseEditPlan const& plan)
 	{
@@ -2108,24 +2172,29 @@ namespace
 			if (gPendingShuttleEdit)
 				for (auto const& consequence : gPendingShuttleEdit->consequences)
 					ImGui::BulletText("%s", consequence.c_str());
+			if (gPendingLadderEdit)
+				for (auto const& consequence : gPendingLadderEdit->consequences)
+					ImGui::BulletText("%s", consequence.c_str());
 			if (gPendingStaircaseEdit)
 				for (auto const& consequence : gPendingStaircaseEdit->consequences)
 					ImGui::BulletText("%s", consequence.c_str());
 			ImGui::Separator();
 			if (ImGui::Button("OK") && building
 				&& (gPendingLocationEdit || gPendingLiftEdit || gPendingShuttleEdit
-					|| gPendingStaircaseEdit))
+					|| gPendingLadderEdit || gPendingStaircaseEdit))
 			{
 				auto locationPlan = gPendingLocationEdit;
 				auto liftPlan = gPendingLiftEdit;
 				auto shuttlePlan = gPendingShuttleEdit;
+				auto ladderPlan = gPendingLadderEdit;
 				auto staircasePlan = gPendingStaircaseEdit;
 				gPendingLocationEdit.reset(); gPendingLiftEdit.reset(); gPendingShuttleEdit.reset();
-				gPendingStaircaseEdit.reset();
+				gPendingLadderEdit.reset(); gPendingStaircaseEdit.reset();
 				ImGui::CloseCurrentPopup();
 				if (locationPlan) commitLocationEdit(building, *locationPlan);
 				else if (liftPlan) commitLiftEdit(building, *liftPlan);
 				else if (shuttlePlan) commitShuttleEdit(building, *shuttlePlan);
+				else if (ladderPlan) commitLadderEdit(building, *ladderPlan);
 				else commitStaircaseEdit(building, *staircasePlan);
 			}
 			ImGui::SameLine();
@@ -2134,6 +2203,7 @@ namespace
 				gPendingLocationEdit.reset();
 				gPendingLiftEdit.reset();
 				gPendingShuttleEdit.reset();
+				gPendingLadderEdit.reset();
 				gPendingStaircaseEdit.reset();
 				resetSectorResize();
 				ImGui::CloseCurrentPopup();
@@ -2467,7 +2537,8 @@ namespace
 		if (gPegman.phase != PalettePhase::Home || gPaint.tool != PaintTool::None
 			|| gAgentMove.dragging || gObjectMove.dragging || gSectorResize.dragging
 			|| gPendingLocationEdit || gPendingLiftEdit || gPendingShuttleEdit
-			|| gPendingStaircaseEdit || gShuttleDraft || !gShuttleDoorCandidates.empty())
+			|| gPendingLadderEdit || gPendingStaircaseEdit || gShuttleDraft
+			|| !gShuttleDoorCandidates.empty())
 		{
 			reportClipboardError("Finish the current placement first");
 			return;
@@ -2698,6 +2769,12 @@ void handleShortcuts(shared_ptr<core::Building>& building)
 					auto plan = building->planRemoveShuttle(gSelectedSector->getIndex());
 					if (!plan.valid) core::addLogMessage("Shuttle editor", 0, core::LogLevel::Error, plan.diagnostic);
 					else queueShuttleEdit(building, plan);
+				}
+				else if (gSelectedSector->getType() == core::SectorType::Ladder)
+				{
+					auto plan = building->planRemoveLadder(gSelectedSector->getIndex());
+					if (!plan.valid) core::addLogMessage("Ladder editor", 0, core::LogLevel::Error, plan.diagnostic);
+					else queueLadderEdit(building, plan);
 				}
 				else if (gSelectedSector->getType() == core::SectorType::Staircase)
 				{
@@ -4029,7 +4106,9 @@ void renderObjectView(shared_ptr<const core::Building> building)
 					selectedNode = (void*)sector.get();
 					auto sectorSelection = sector->getType() == core::SectorType::Location
 						|| sector->getType() == core::SectorType::Lift
-						|| sector->getType() == core::SectorType::Shuttle;
+						|| sector->getType() == core::SectorType::Shuttle
+						|| sector->getType() == core::SectorType::Ladder
+						|| sector->getType() == core::SectorType::Staircase;
 					setSelectionMode(sectorSelection
 						? UISettings::SelectionMode::Sector : UISettings::SelectionMode::Object);
 					gSelectedAgent = nullptr;
@@ -4127,6 +4206,89 @@ void renderSelectedObjectPanel(shared_ptr<core::Building> const& building)
 			ImGui::SameLine();
 			ImGui::TextDisabled("Delete key");
 			break;
+
+		case core::SectorType::Ladder:
+		{
+			static core::Building const* editedBuilding = nullptr;
+			static uint32_t editedSector = ~0u;
+			static bool extensible = false;
+			static bool initiallyExtended = true;
+			static float agentSpacing = CORE_AGENT_MAX_HEIGHT;
+			static int directionalBatchLimit = 4;
+			core::Building::CreateLadderOptions current{ 0, false, true };
+			if ((editedBuilding != building.get() || editedSector != gSelectedSector->getIndex())
+				&& building->getLadderOptions(gSelectedSector->getIndex(), current))
+			{
+				editedBuilding = building.get();
+				editedSector = gSelectedSector->getIndex();
+				extensible = current.extensible;
+				initiallyExtended = current.extensible ? current.startExtended : true;
+				agentSpacing = current.agentSpacing;
+				directionalBatchLimit = (int)current.directionalBatchLimit;
+			}
+			if (ImGui::Checkbox("Extensible", &extensible))
+			{
+				core::Building::CreateLadderOptions options{};
+				if (!building->getLadderOptions(gSelectedSector->getIndex(), options))
+				{
+					core::addLogMessage("Ladder editor", 0, core::LogLevel::Error,
+						"The selected Ladder no longer has an authored definition");
+					extensible = !extensible;
+				}
+				else
+				{
+					auto authored = options;
+					options.extensible = extensible;
+					options.startExtended = extensible ? initiallyExtended : true;
+					auto plan = building->planResizeLadder(gSelectedSector->getIndex(),
+						gSelectedSector->getCellX(), gSelectedSector->getCellY(), options);
+					if (!plan.valid)
+					{
+						core::addLogMessage("Ladder editor", 0, core::LogLevel::Error,
+							plan.diagnostic);
+						extensible = authored.extensible;
+						initiallyExtended = authored.extensible ? authored.startExtended : true;
+					}
+					else
+					{
+						if (!extensible) initiallyExtended = true;
+						queueLadderEdit(building, plan);
+						return;
+					}
+				}
+			}
+			ImGui::BeginDisabled(!extensible);
+			ImGui::Checkbox("Initially extended", &initiallyExtended);
+			ImGui::EndDisabled();
+			ImGui::InputFloat("Agent spacing", &agentSpacing, 0.05f, 0.25f, "%.2f");
+			ImGui::InputInt("Directional batch limit", &directionalBatchLimit);
+			bool valuesValid = agentSpacing > 0.0f && directionalBatchLimit > 0;
+			ImGui::BeginDisabled(!valuesValid);
+			if (ImGui::Button("Apply Ladder settings"))
+			{
+				core::Building::CreateLadderOptions options{
+					gSelectedSector->getDecksHigh(), extensible,
+					extensible ? initiallyExtended : true, agentSpacing,
+					(uint32_t)directionalBatchLimit };
+				auto plan = building->planResizeLadder(gSelectedSector->getIndex(),
+					gSelectedSector->getCellX(), gSelectedSector->getCellY(), options);
+				if (!plan.valid)
+					core::addLogMessage("Ladder editor", 0, core::LogLevel::Error, plan.diagnostic);
+				else queueLadderEdit(building, plan);
+			}
+			ImGui::EndDisabled();
+			ImGui::Separator();
+			if (ImGui::Button("Delete Ladder"))
+			{
+				auto plan = building->planRemoveLadder(gSelectedSector->getIndex());
+				if (!plan.valid)
+					core::addLogMessage("Ladder editor", 0, core::LogLevel::Error, plan.diagnostic);
+				else queueLadderEdit(building, plan);
+			}
+			ImGui::SameLine();
+			ImGui::TextDisabled("Delete key");
+			break;
+		}
 
 		case core::SectorType::Staircase:
 		{
@@ -4687,6 +4849,7 @@ namespace
 		if (!sector || (sector->getType() != core::SectorType::Location
 			&& sector->getType() != core::SectorType::Lift
 			&& sector->getType() != core::SectorType::Shuttle
+			&& sector->getType() != core::SectorType::Ladder
 			&& sector->getType() != core::SectorType::Staircase)) return ResizeEdge::None;
 		auto topLeft = worldToScreen({ (float)sector->getCellX(),
 			(float)(sector->getCellY() + sector->getDecksHigh()) });
@@ -4695,7 +4858,8 @@ namespace
 		constexpr float tolerance = 6.0f;
 		struct Candidate { ResizeEdge edge; float distance; };
 		vector<Candidate> candidates;
-		if (sector->getType() != core::SectorType::Staircase
+		if (sector->getType() != core::SectorType::Ladder
+			&& sector->getType() != core::SectorType::Staircase
 			&& mouse.y >= topLeft.y - tolerance && mouse.y <= bottomRight.y + tolerance)
 		{
 			candidates.push_back({ ResizeEdge::Left, abs(mouse.x - topLeft.x) });
@@ -4940,6 +5104,7 @@ namespace
 		{
 			bool const selectedLift = gSelectedSector->getType() == core::SectorType::Lift;
 			bool const selectedShuttle = gSelectedSector->getType() == core::SectorType::Shuttle;
+			bool const selectedLadder = gSelectedSector->getType() == core::SectorType::Ladder;
 			bool const selectedStaircase = gSelectedSector->getType() == core::SectorType::Staircase;
 			if (hoverEdge != ResizeEdge::Move && !selectedLift && !selectedShuttle)
 			{
@@ -4949,6 +5114,7 @@ namespace
 			gSectorResize.dragging = true;
 			gSectorResize.lift = selectedLift;
 			gSectorResize.shuttle = selectedShuttle;
+			gSectorResize.ladder = selectedLadder;
 			gSectorResize.staircase = selectedStaircase;
 			gSectorResize.edge = hoverEdge;
 			gSectorResize.pressPosition = io.MousePos;
@@ -4963,6 +5129,15 @@ namespace
 			else if (gSectorResize.shuttle)
 				gSectorResize.shuttlePreview = building->planResizeShuttle(gSelectedSector->getIndex(),
 					gSectorResize.originalX, gSectorResize.originalY, gSectorResize.originalWidth);
+			else if (gSectorResize.ladder)
+			{
+				core::Building::CreateLadderOptions options{
+					gSectorResize.originalHeight, false, true };
+				building->getLadderOptions(gSelectedSector->getIndex(), options);
+				gSectorResize.ladderPreview = building->planResizeLadder(
+					gSelectedSector->getIndex(), gSectorResize.originalX,
+					gSectorResize.originalY, options);
+			}
 			else if (gSectorResize.staircase)
 			{
 				core::Building::CreateStaircaseOptions options{
@@ -5004,9 +5179,10 @@ namespace
 				gSectorResize.lift ? min(left + 2, (int)building->getCellsWide())
 					: (int)building->getCellsWide()); break;
 		case ResizeEdge::Bottom: moving = &bottom; desired = clamp(bottom + deltaY, 0,
-			 top - (gSectorResize.staircase ? 2 : 1)); break;
+			 top - ((gSectorResize.ladder || gSectorResize.staircase) ? 2 : 1)); break;
 		case ResizeEdge::Top: moving = &top; desired = clamp(top + deltaY,
-			bottom + (gSectorResize.staircase ? 2 : 1), (int)building->getDecksHigh()); break;
+			bottom + ((gSectorResize.ladder || gSectorResize.staircase) ? 2 : 1),
+			(int)building->getDecksHigh()); break;
 		case ResizeEdge::Move:
 		{
 			int width = right - left;
@@ -5056,6 +5232,18 @@ namespace
 				gSectorResize.shuttlePreview = building->planResizeShuttle(gSelectedSector->getIndex(),
 					(uint32_t)left, (uint32_t)bottom, (uint32_t)(right - left));
 		}
+		else if (gSectorResize.ladder)
+		{
+			if (gSectorResize.ladderPreview.x != (uint32_t)left
+				|| gSectorResize.ladderPreview.y != (uint32_t)bottom
+				|| gSectorResize.ladderPreview.options.decksHigh != (uint32_t)(top - bottom))
+			{
+				auto options = gSectorResize.ladderPreview.options;
+				options.decksHigh = (uint32_t)(top - bottom);
+				gSectorResize.ladderPreview = building->planResizeLadder(
+					gSelectedSector->getIndex(), (uint32_t)left, (uint32_t)bottom, options);
+			}
+		}
 		else if (gSectorResize.staircase)
 		{
 			if (gSectorResize.staircasePreview.x != (uint32_t)left
@@ -5097,14 +5285,20 @@ namespace
 					gSectorResize.shuttlePreview.diagnostic);
 				resetSectorResize();
 			}
+			else if (gSectorResize.ladder && !gSectorResize.ladderPreview.valid)
+			{
+				core::addLogMessage("Ladder editor", 0, core::LogLevel::Error,
+					gSectorResize.ladderPreview.diagnostic);
+				resetSectorResize();
+			}
 			else if (gSectorResize.staircase && !gSectorResize.staircasePreview.valid)
 			{
 				core::addLogMessage("Staircase editor", 0, core::LogLevel::Error,
 					gSectorResize.staircasePreview.diagnostic);
 				resetSectorResize();
 			}
-			else if (!gSectorResize.lift && !gSectorResize.shuttle && !gSectorResize.staircase
-				&& !gSectorResize.preview.valid)
+			else if (!gSectorResize.lift && !gSectorResize.shuttle && !gSectorResize.ladder
+				&& !gSectorResize.staircase && !gSectorResize.preview.valid)
 			{
 				core::addLogMessage("Sector editor", 0, core::LogLevel::Error,
 					gSectorResize.preview.diagnostic);
@@ -5112,6 +5306,7 @@ namespace
 			}
 			else if (gSectorResize.lift) queueLiftEdit(building, gSectorResize.liftPreview);
 			else if (gSectorResize.shuttle) queueShuttleEdit(building, gSectorResize.shuttlePreview);
+			else if (gSectorResize.ladder) queueLadderEdit(building, gSectorResize.ladderPreview);
 			else if (gSectorResize.staircase) queueStaircaseEdit(building, gSectorResize.staircasePreview);
 			else queueLocationEdit(building, gSectorResize.preview);
 		}
@@ -5123,7 +5318,8 @@ namespace
 			&& gSelectedSector && shouldDrawCanvasSectorEditOverlay(
 				gSelectedSector->getLayerIndex(), (uint32_t)gUISettings.visibleLayer)
 			&& !gSectorResize.dragging && !gPendingLocationEdit
-			&& !gPendingLiftEdit && !gPendingShuttleEdit && !gPendingStaircaseEdit)
+			&& !gPendingLiftEdit && !gPendingShuttleEdit && !gPendingLadderEdit
+			&& !gPendingStaircaseEdit)
 		{
 			auto edge = hoveredResizeEdge(gSelectedSector, ImGui::GetIO().MousePos);
 			auto topLeft = worldToScreen({ (float)gSelectedSector->getCellX(),
@@ -5159,6 +5355,13 @@ namespace
 			hasPlan = true; valid = plan.valid; remove = plan.remove; x = plan.x; y = plan.y;
 			width = plan.cellsWide; height = 1; diagnostic = plan.diagnostic;
 		}
+		else if (gSectorResize.ladder && (gSectorResize.dragging
+			|| gSectorResize.ladderPreview.decksHigh))
+		{
+			auto const& plan = gSectorResize.ladderPreview;
+			hasPlan = true; valid = plan.valid; remove = plan.remove; x = plan.x; y = plan.y;
+			width = 1; height = plan.options.decksHigh; diagnostic = plan.diagnostic;
+		}
 		else if (gSectorResize.staircase && (gSectorResize.dragging
 			|| gSectorResize.staircasePreview.decksHigh))
 		{
@@ -5189,6 +5392,12 @@ namespace
 			auto const& plan = *gPendingLocationEdit;
 			hasPlan = true; valid = plan.valid; remove = plan.remove; x = plan.x; y = plan.y;
 			width = plan.cellsWide; height = plan.decksHigh; diagnostic = plan.diagnostic;
+		}
+		else if (gPendingLadderEdit)
+		{
+			auto const& plan = *gPendingLadderEdit;
+			hasPlan = true; valid = plan.valid; remove = plan.remove; x = plan.x; y = plan.y;
+			width = 1; height = plan.options.decksHigh; diagnostic = plan.diagnostic;
 		}
 		else if (gPendingStaircaseEdit)
 		{

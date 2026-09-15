@@ -954,6 +954,24 @@ void renderSectorObjects(shared_ptr<const core::Sector> sector, int layer, bool 
 }
 
 
+void renderForePhysicalControls(vector<shared_ptr<const core::Sector>> const& sectors,
+	ImDrawList* drawList)
+{
+	for (auto const& sector : sectors)
+	{
+		for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
+		{
+			auto object = sector->getObject(i);
+			if (!object || object->getObjectType() != core::SectorObjectType::InteractionPoint)
+				continue;
+			auto button = static_pointer_cast<const core::Button>(object->_getObject());
+			renderPhysicalControl(button, CORE_LAYER_FORE, true,
+				object == gSelectedSectorObject, drawList);
+		}
+	}
+}
+
+
 void renderAgent(core::Agent const* agent, ImDrawList* drawList)
 {
 	auto bounds = agent->getBounds();
@@ -1074,7 +1092,9 @@ void renderSector(shared_ptr<const core::Sector> sector, int layer, bool visible
 	switch (sector->getType())
 	{
 	case core::SectorType::Ladder:
-		renderLadder(static_pointer_cast<const core::LadderTransit>(sector)->getLadder(), layer, visibleLayer, selected, drawList);
+		if (shouldRenderLadderGeometry(layer, visibleLayer))
+			renderLadder(static_pointer_cast<const core::LadderTransit>(sector)->getLadder(),
+				layer, visibleLayer, selected, drawList);
 		break;
 
 	case core::SectorType::Lift:
@@ -1353,6 +1373,7 @@ void renderSectors(shared_ptr<const core::Building> building, int layer, bool vi
 {
 	auto sectors = building->getSectorsInBounds(layer, -gUISettings.xOffset, 0,
 		gUISettings.worldViewportWidth, gUISettings.worldViewportHeight);
+	auto visibleSectors = sectors;
 
 	ImColor colour;
 
@@ -1388,6 +1409,10 @@ void renderSectors(shared_ptr<const core::Building> building, int layer, bool vi
 				break;
 			}
 		}
+
+		// Clipped Back-layer transits intentionally draw over Fore Locations, but
+		// physical controls mounted in those Locations must remain in front.
+		renderForePhysicalControls(visibleSectors, drawList);
 	}
 }
 

@@ -238,6 +238,20 @@ namespace core
 			[[nodiscard]] bool requiresConfirmation() const { return !consequences.empty(); }
 		};
 
+		struct LadderEditPlan
+		{
+			bool valid{ false };
+			bool remove{ false };
+			bool move{ false };
+			uint32_t sectorIndex{ ~0u };
+			uint32_t x{ 0 }, y{ 0 }, decksHigh{ 0 };
+			CreateLadderOptions options{ 0, false, true };
+			std::string diagnostic;
+			std::vector<std::string> consequences;
+
+			[[nodiscard]] bool requiresConfirmation() const { return !consequences.empty(); }
+		};
+
 		struct StaircaseEditPlan
 		{
 			bool valid{ false };
@@ -387,6 +401,7 @@ namespace core
 			std::vector<PhysicalControlCandidate> candidates;
 			uint32_t defaultCandidate{ 0 };
 			uint32_t currentCandidate{ 0 };
+			float edgeInset{ 0.0f };
 			Vector2 interactionOffset{};
 			bool hasInteractionOffset{ false };
 		};
@@ -425,6 +440,9 @@ namespace core
 			std::vector<ConstructionRecord>& records, std::string& diagnostic) const;
 
 		bool prepareShuttleEdit(ShuttleEditPlan const& plan,
+			std::vector<ConstructionRecord>& records, std::string& diagnostic) const;
+
+		bool prepareLadderEdit(LadderEditPlan const& plan,
 			std::vector<ConstructionRecord>& records, std::string& diagnostic) const;
 
 		bool prepareStaircaseEdit(StaircaseEditPlan const& plan,
@@ -540,7 +558,9 @@ namespace core
 
 		CreateObjectResult _createForceBridgeButton(std::shared_ptr<const Sector> sector, uint32_t x, uint32_t y, uint32_t cellsWide, int side, uint32_t flags, uint32_t* index = nullptr);
 
-		CreateObjectResult _createLadderButton(std::shared_ptr<const Sector> sector, uint32_t x, uint32_t y, int side, uint32_t flags, uint32_t* index = nullptr);
+		CreateObjectResult _createLadderButton(std::shared_ptr<const Sector> sector,
+			uint32_t x, uint32_t y, int side, uint32_t flags,
+			uint32_t* index = nullptr, bool insetWithinCell = false);
 
 		CreateObjectResult _createPlatformLiftButton(std::shared_ptr<const Sector> sector, uint32_t x, uint32_t y, uint32_t cellsWide, int side, uint32_t flags, uint32_t* index = nullptr);
 
@@ -718,6 +738,11 @@ namespace core
 	
 		CreateLadderResult addLadder(uint32_t y, uint32_t x, CreateLadderOptions const& options);
 
+		bool canAddLadder(uint32_t y, uint32_t x, uint32_t decksHigh,
+			std::string* diagnostic = nullptr) const;
+
+		bool getLadderOptions(uint32_t sectorIndex, CreateLadderOptions& options) const;
+
 		uint32_t addStaircase(uint32_t y, uint32_t x, uint32_t decksHigh, int mountSide);
 
 		CreateStaircaseResult addStaircase(uint32_t y, uint32_t x,
@@ -852,6 +877,13 @@ namespace core
 		ShuttleEditPlan planAddShuttleStop(uint32_t sectorIndex, uint32_t stopOffset) const;
 
 		uint32_t applyShuttleEdit(ShuttleEditPlan const& plan);
+
+		LadderEditPlan planResizeLadder(uint32_t sectorIndex, uint32_t x,
+			uint32_t y, CreateLadderOptions const& options) const;
+
+		LadderEditPlan planRemoveLadder(uint32_t sectorIndex) const;
+
+		uint32_t applyLadderEdit(LadderEditPlan const& plan);
 
 		StaircaseEditPlan planResizeStaircase(uint32_t sectorIndex, uint32_t x,
 			uint32_t y, CreateStaircaseOptions const& options) const;

@@ -4,6 +4,7 @@
 #include "core/Transit.h"
 #include "core/LiftTransit.h"
 #include "core/ShuttleTransit.h"
+#include "core/LadderTransit.h"
 #include "core/StaircaseTransit.h"
 #include "core/Location.h"
 #include "core/DoorSectorObject.h"
@@ -1228,6 +1229,210 @@ namespace core
 		return mLayers[CORE_LAYER_BACK]->getCellDefinition(plan.x, plan.y).sectorIndex;
 	}
 
+	bool Building::getLadderOptions(uint32_t sectorIndex, CreateLadderOptions& options) const
+	{
+		uint32_t producerIndex = 0;
+		for (auto const& record : mConstructionRecords)
+		{
+			bool producer = record.type == ConstructionType::Corridor || record.type == ConstructionType::Room
+				|| record.type == ConstructionType::Ladder || record.type == ConstructionType::Staircase
+				|| record.type == ConstructionType::Lift || record.type == ConstructionType::Shuttle;
+			if (!producer) continue;
+			if (producerIndex++ != sectorIndex) continue;
+			if (record.type != ConstructionType::Ladder) return false;
+			options = { record.c, record.p, record.q, record.x, record.d };
+			return true;
+		}
+		return false;
+	}
+
+	bool Building::prepareLadderEdit(LadderEditPlan const& plan,
+		vector<ConstructionRecord>& records, string& diagnostic) const
+	{
+		auto createsSector = [](ConstructionType type)
+		{
+			return type == ConstructionType::Corridor || type == ConstructionType::Room
+				|| type == ConstructionType::Ladder || type == ConstructionType::Staircase
+				|| type == ConstructionType::Lift || type == ConstructionType::Shuttle;
+		};
+		auto referencesSector = [](ConstructionType type)
+		{
+			return type == ConstructionType::LightSwitch || type == ConstructionType::ForceBridge
+				|| type == ConstructionType::SectorLadder || type == ConstructionType::PlatformLift
+				|| type == ConstructionType::Walkway || type == ConstructionType::Marker
+				|| type == ConstructionType::RemoveWall || type == ConstructionType::RemoveMarker
+				|| type == ConstructionType::ObjectTombstone;
+		};
+
+		records = mConstructionRecords;
+		uint32_t producerIndex = 0;
+		auto found = records.end();
+		for (auto it = records.begin(); it != records.end(); ++it)
+		{
+			if (!createsSector(it->type)) continue;
+			if (producerIndex++ == plan.sectorIndex) { found = it; break; }
+		}
+		if (found == records.end() || found->type != ConstructionType::Ladder)
+		{
+			diagnostic = "The selected Ladder no longer has an authored definition";
+			return false;
+		}
+		if (plan.remove)
+		{
+			records.erase(found);
+			records.erase(remove_if(records.begin(), records.end(), [&](auto& record)
+			{
+				if (!referencesSector(record.type)) return false;
+				if (record.a == plan.sectorIndex) return true;
+				if (record.a > plan.sectorIndex) --record.a;
+				return false;
+			}), records.end());
+		}
+		else
+		{
+			found->a = plan.y; found->b = plan.x; found->c = plan.options.decksHigh;
+			found->p = plan.options.extensible; found->q = plan.options.startExtended;
+			found->x = plan.options.agentSpacing;
+			found->d = plan.options.directionalBatchLimit;
+		}
+
+		try
+		{
+			Building candidate(mName, mCellsWide, mDecksHigh);
+			candidate.mDeserializingConstruction = true;
+			vector<ConstructionRecord> viable;
+			viable.reserve(records.size());
+			for (auto const& record : records)
+			{
+				try
+				{
+					candidate.applyConstructionRecord(record);
+					viable.push_back(record);
+				}
+				catch (Exception const& error)
+				{
+					if (createsSector(record.type))
+					{
+						diagnostic = error.getMessage();
+						return false;
+					}
+				}
+			}
+			candidate.finishBuild();
+			records = std::move(viable);
+		}
+		catch (Exception const& error) { diagnostic = error.getMessage(); return false; }
+		catch (exception const& error) { diagnostic = error.what(); return false; }
+		return true;
+	}
+
+	Building::LadderEditPlan Building::planResizeLadder(uint32_t sectorIndex,
+		uint32_t x, uint32_t y, CreateLadderOptions const& options) const
+	{
+		LadderEditPlan plan;
+		plan.sectorIndex = sectorIndex; plan.x = x; plan.y = y;
+		plan.decksHigh = options.decksHigh; plan.options = options;
+		if (sectorIndex >= mSectors.size() || !dynamic_pointer_cast<const LadderTransit>(mSectors[sectorIndex]))
+		{ plan.diagnostic = "Only Ladders can be edited"; return plan; }
+		auto ladder = dynamic_pointer_cast<const LadderTransit>(mSectors[sectorIndex]);
+		plan.move = options.decksHigh == ladder->getDecksHigh()
+			&& (x != ladder->getCellX() || y != ladder->getCellY());
+		if (options.decksHigh < 2)
+		{ plan.diagnostic = "A Ladder must span at least two decks"; return plan; }
+		if (options.agentSpacing <= 0.0f)
+		{ plan.diagnostic = "Ladder agent spacing must be positive"; return plan; }
+		if (options.directionalBatchLimit == 0)
+		{ plan.diagnostic = "Ladder directional batch limit must be positive"; return plan; }
+		if (x >= mCellsWide || y >= mDecksHigh || y + options.decksHigh > mDecksHigh)
+		{ plan.diagnostic = "The Ladder is outside the Building bounds"; return plan; }
+		for (uint32_t iy = y; iy < y + options.decksHigh; ++iy)
+		{
+			auto occupant = mLayers[CORE_LAYER_BACK]->getCellDefinition(x, iy).sectorIndex;
+			if (occupant != ~0u && occupant != sectorIndex)
+			{ plan.diagnostic = format("A Back-layer Sector at {},{} blocks the Ladder", x, iy); return plan; }
+		}
+		auto upperY = y + options.decksHigh - 1;
+		auto const& lower = mLayers[CORE_LAYER_FORE]->getCellDefinition(x, y);
+		auto const& upper = mLayers[CORE_LAYER_FORE]->getCellDefinition(x, upperY);
+		if (lower.sectorIndex == ~0u || !mSectors[lower.sectorIndex]
+			|| mSectors[lower.sectorIndex]->getType() != SectorType::Location)
+		{ plan.diagnostic = format("A Fore-layer Location is required at {},{}", x, y); return plan; }
+		if (upper.sectorIndex == ~0u || !mSectors[upper.sectorIndex]
+			|| mSectors[upper.sectorIndex]->getType() != SectorType::Location)
+		{ plan.diagnostic = format("A Fore-layer Location is required at {},{}", x, upperY); return plan; }
+		if (lower.sectorIndex == upper.sectorIndex)
+		{ plan.diagnostic = "A Ladder must connect two different Fore-layer Locations"; return plan; }
+		if (!lower.isTraversableOnFoot())
+		{ plan.diagnostic = format("The Fore-layer floor at {},{} is not traversable", x, y); return plan; }
+		if (!upper.isTraversableOnFoot())
+		{ plan.diagnostic = format("The Fore-layer floor at {},{} is not traversable", x, upperY); return plan; }
+		auto usableLength = (float)(options.decksHigh - 1) + CORE_LADDER_HEIGHT_AT_TOP
+			- CORE_LADDER_HEIGHT_OFF_GROUND;
+		auto capacity = max(1u, (uint32_t)floor(usableLength / options.agentSpacing));
+		if (ladder->getAgents().size() > capacity)
+		{ plan.diagnostic = "Ladder capacity is below its current occupancy"; return plan; }
+
+		for (auto const& [id, agent] : mAgents.entries())
+		{
+			(void)id;
+			if (agent->getSector() != ladder.get() || plan.move) continue;
+			auto position = agent->getGlobalPosition();
+			if (position.y < y || position.y >= y + options.decksHigh)
+				plan.consequences.push_back("Delete Agent " + agent->getName());
+		}
+		vector<ConstructionRecord> records;
+		plan.valid = prepareLadderEdit(plan, records, plan.diagnostic);
+		if (plan.valid && records.size() < mConstructionRecords.size())
+			plan.consequences.push_back(format("Delete {} dependent authored object(s)",
+				mConstructionRecords.size() - records.size()));
+		return plan;
+	}
+
+	Building::LadderEditPlan Building::planRemoveLadder(uint32_t sectorIndex) const
+	{
+		LadderEditPlan plan;
+		plan.remove = true; plan.sectorIndex = sectorIndex;
+		if (sectorIndex >= mSectors.size() || !dynamic_pointer_cast<const LadderTransit>(mSectors[sectorIndex]))
+		{ plan.diagnostic = "Only a Ladder can be deleted"; return plan; }
+		auto ladder = dynamic_pointer_cast<const LadderTransit>(mSectors[sectorIndex]);
+		plan.x = ladder->getCellX(); plan.y = ladder->getCellY();
+		if (!getLadderOptions(sectorIndex, plan.options))
+		{ plan.diagnostic = "The selected Ladder no longer has an authored definition"; return plan; }
+		plan.decksHigh = plan.options.decksHigh;
+		plan.consequences.push_back("Delete Ladder");
+		for (auto const& [id, agent] : mAgents.entries())
+		{
+			(void)id;
+			if (agent->getSector() == ladder.get())
+				plan.consequences.push_back("Delete Agent " + agent->getName());
+		}
+		vector<ConstructionRecord> records;
+		plan.valid = prepareLadderEdit(plan, records, plan.diagnostic);
+		if (plan.valid && records.size() + 1 < mConstructionRecords.size())
+			plan.consequences.push_back(format("Delete {} dependent authored object(s)",
+				mConstructionRecords.size() - records.size() - 1));
+		return plan;
+	}
+
+	uint32_t Building::applyLadderEdit(LadderEditPlan const& requested)
+	{
+		if (!mSimulationPaused)
+			throw BuildingException(this, "Editing a Ladder requires the simulation to be paused");
+		auto plan = requested.remove ? planRemoveLadder(requested.sectorIndex)
+			: planResizeLadder(requested.sectorIndex, requested.x, requested.y, requested.options);
+		if (!plan.valid) throw BuildingException(this, plan.diagnostic);
+		vector<ConstructionRecord> records;
+		string diagnostic;
+		if (!prepareLadderEdit(plan, records, diagnostic)) throw BuildingException(this, diagnostic);
+		auto old = mSectors[plan.sectorIndex];
+		int deltaX = plan.move ? (int)plan.x - (int)old->getCellX() : 0;
+		int deltaY = plan.move ? (int)plan.y - (int)old->getCellY() : 0;
+		rebuildFromConstructionRecords(std::move(records),
+			plan.remove ? ~0u : plan.sectorIndex, deltaX, deltaY);
+		if (plan.remove) return ~0u;
+		return mLayers[CORE_LAYER_BACK]->getCellDefinition(plan.x, plan.y).sectorIndex;
+	}
+
 	bool Building::getStaircaseOptions(uint32_t sectorIndex, CreateStaircaseOptions& options) const
 	{
 		uint32_t producerIndex = 0;
@@ -1621,7 +1826,7 @@ namespace core
 					{
 						diagnostic = error.getMessage();
 						if (source.type == ConstructionType::Ladder)
-							diagnostic += " Delete the Ladder first (transit deletion is not yet supported by the editor).";
+							diagnostic += " Move or delete the Ladder first.";
 						return false;
 					}
 					if (source.type == ConstructionType::Marker)
