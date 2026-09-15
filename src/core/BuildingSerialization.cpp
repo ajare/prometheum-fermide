@@ -198,7 +198,7 @@ namespace core
 	void Building::serializeImpl(Serializer& serializer, SerializationWorkData& workData) const
 	{
 		serializer.beginMap("building");
-		serializer.writeUint32("version", 2);
+		serializer.writeUint32("version", 3);
 		serializer.writeString("name", mName);
 		serializer.writeUint32("cellsWide", mCellsWide);
 		serializer.writeUint32("decksHigh", mDecksHigh);
@@ -226,6 +226,20 @@ namespace core
 			serializer.writeUint32("sector", sector->getIndex());
 			serializer.writeFloat("localX", agent->getLocalPosition().x);
 			serializer.writeFloat("localY", agent->getLocalPosition().y);
+			if (agent->mPath.path && !agent->mPath.path->nodes.empty())
+			{
+				auto const& destination = agent->mPath.path->nodes.back().targetVertex;
+				if (!destination || !destination->getSector())
+				{
+					throw SerializationException("Cannot serialize an Agent path without a destination Sector");
+				}
+				serializer.beginMap("path");
+				serializer.writeUint32("destinationSector", destination->getSector()->getIndex());
+				serializer.writeFloat("destinationLocalX", destination->getSectorOffset().x);
+				serializer.writeFloat("destinationLocalY", destination->getSectorOffset().y);
+				serializer.writeBool("active", agent->mState != Agent::State::Idle);
+				serializer.endMap();
+			}
 			serializer.endMap();
 		}
 		serializer.endArray();
@@ -386,7 +400,7 @@ namespace core
 	{
 		serializer.beginMap("building");
 		auto const version = serializer.readUint32("version");
-		if (version != 1 && version != 2)
+		if (version < 1 || version > 3)
 		{
 			throw SerializationException("Unsupported Building serialization version");
 		}
@@ -441,6 +455,19 @@ namespace core
 			auto const sectorIndex = serializer.readUint32("sector");
 			auto const localX = serializer.readFloat("localX");
 			auto const localY = serializer.readFloat("localY");
+			optional<uint32_t> destinationSectorIndex;
+			float destinationLocalX{ 0.0f };
+			float destinationLocalY{ 0.0f };
+			bool pathActive{ false };
+			if (serializer.hasField("path"))
+			{
+				serializer.beginMap("path");
+				destinationSectorIndex = serializer.readUint32("destinationSector");
+				destinationLocalX = serializer.readFloat("destinationLocalX");
+				destinationLocalY = serializer.readFloat("destinationLocalY");
+				pathActive = serializer.readBool("active");
+				serializer.endMap();
+			}
 			serializer.endMap();
 
 			if (mAgents.find(id))
@@ -454,6 +481,26 @@ namespace core
 			sector->mAgents.insert(rawAgent);
 			mAgents.restore(id, std::move(agent));
 			mAgentIds.emplace(rawAgent, id);
+
+			if (destinationSectorIndex)
+			{
+				if (*destinationSectorIndex >= mSectors.size()
+					|| !isfinite(destinationLocalX) || !isfinite(destinationLocalY))
+				{
+					throw SerializationException("Serialized Agent path has an invalid destination");
+				}
+				auto const& destinationSector = mSectors[*destinationSectorIndex];
+				auto destinationPosition = destinationSector->getPosition()
+					+ Vector2{ destinationLocalX, destinationLocalY };
+				auto destination = mGraph->getClosestVertexInSector(
+					destinationSector.get(), destinationPosition);
+				auto path = mGraph->calculatePath(rawAgent, destination);
+				if (!path || path->nodes.empty())
+				{
+					throw SerializationException("Serialized Agent path destination is unreachable");
+				}
+				rawAgent->assignPath(std::move(path), pathActive, false);
+			}
 		}
 		serializer.endArray();
 		serializer.endMap();

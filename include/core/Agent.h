@@ -97,6 +97,8 @@ namespace core
 
 		void attachToBuilding(Building* building);
 
+		void assignPath(std::shared_ptr<Path> path, bool startPathing, bool markModified);
+
 		bool moveToPosition(Vector2 const& pos, float frameTime, float speed);
 
 		bool moveToPosition(Vector2 const& pos, float frameTime)

@@ -210,6 +210,11 @@ namespace core
 
 	void Agent::setPath(shared_ptr<Path> path, bool startPathing)
 	{
+		assignPath(std::move(path), startPathing, true);
+	}
+
+	void Agent::assignPath(shared_ptr<Path> path, bool startPathing, bool markModified)
+	{
 		// An onboard replacement remains the same transport journey. Retarget the
 		// live ride request and stop-request ownership instead of cancelling into a
 		// needless exit/reboard cycle.
@@ -224,6 +229,7 @@ namespace core
 			mTraversalTask->destinationVertex = mPath.path->nodes[replacementSource + 1].targetVertex;
 			mTraversalTask->permit = {};
 			mState = State::WaitingForTraversal;
+			if (markModified) modify();
 			return;
 		}
 
@@ -260,6 +266,7 @@ namespace core
 						mTraversalTask->sourceVertex = source;
 						mTraversalTask->destinationVertex = destination;
 						mState = State::WaitingForTraversal;
+						if (markModified) modify();
 						return;
 					}
 				}
@@ -269,6 +276,7 @@ namespace core
 		clearPath();
 		mPath.path = std::move(path);
 		mPath.targetNode = 0;
+		if (markModified) modify();
 
 		if (startPathing)
 		{

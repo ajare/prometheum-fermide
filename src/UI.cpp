@@ -97,7 +97,7 @@ namespace
 	optional<uint64_t> gSavedStateId;
 
 	optional<DocumentSnapshot> captureDocumentSnapshot(
-		shared_ptr<core::Building> const& building)
+		shared_ptr<const core::Building> const& building)
 	{
 		if (!building) return nullopt;
 		try
@@ -124,6 +124,22 @@ namespace
 		if (gUndoHistory.size() > MaximumUndoHistory) gUndoHistory.pop_front();
 		gRedoHistory.clear();
 		gCurrentStateId = gNextStateId++;
+	}
+
+	bool applyAgentPathEdit(shared_ptr<const core::Building> const& building, core::Agent* agent,
+		shared_ptr<core::Path> path, bool startPathing, bool replaceCurrentPath)
+	{
+		if (!building || !agent || !path) return false;
+		auto undo = captureDocumentSnapshot(building);
+		if (!undo) return false;
+
+		auto const* requestedPath = path.get();
+		if (replaceCurrentPath) agent->clearPath();
+		agent->setPath(std::move(path), startPathing);
+		if (agent->getPath().get() != requestedPath) return false;
+
+		commitDocumentEdit(std::move(undo));
+		return true;
 	}
 
 	constexpr float PaletteSlotSize{ 36.0f };
@@ -2742,9 +2758,8 @@ void handleWorldInteraction(shared_ptr<core::Building> building,
 				auto path = graph->calculatePath(gSelectedAgent, nullptr, gHoveredVertex);
 				if (path)
 				{
-					gSelectedAgent->clearPath();
-					gSelectedAgent->setPath(path, true);
-					endAgentPathSelection();
+					if (applyAgentPathEdit(building, gSelectedAgent, std::move(path), true, true))
+						endAgentPathSelection();
 				}
 				else
 				{
@@ -2757,7 +2772,7 @@ void handleWorldInteraction(shared_ptr<core::Building> building,
 				if (gSelectedAgent)
 				{
 					auto path = graph->calculatePath(gSelectedAgent, nullptr, gHoveredVertex);
-					gSelectedAgent->setPath(path, false);
+					applyAgentPathEdit(building, gSelectedAgent, std::move(path), false, false);
 				}
 			}
 			else
@@ -4138,8 +4153,7 @@ void renderSelectedAgentPanel(shared_ptr<const core::Building> building)
 			{
 				// Explicitly cancel the old route first. Agent::setPath may retain an
 				// active traversal permit, but this command promises replacement.
-				gSelectedAgent->clearPath();
-				gSelectedAgent->setPath(newPath, true);
+				applyAgentPathEdit(building, gSelectedAgent, std::move(newPath), true, true);
 			}
 		}
 	}

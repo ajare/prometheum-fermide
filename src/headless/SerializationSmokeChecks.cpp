@@ -164,29 +164,38 @@ namespace
 		doorOptions.crossingLanes = 2;
 		original.addSectorDoor(0, 3, doorOptions);
 		auto const removedMarker = original.addSectorMarker(fore, 0, 1.5f);
-		original.addSectorMarker(fore, 0, 2.5f);
+		uint32_t destinationIdentifier{ 0x53455231u };
+		original.addSectorMarker(fore, 0, 2.5f, &destinationIdentifier);
 		require(original.removeSectorMarker(fore, removedMarker.index),
 			"Marker could not be removed through Building");
 		require(!original.removeSectorMarker(fore, removedMarker.index),
 			"Marker deletion accepted an empty object slot");
 		original.finishBuild();
 		auto const agentId = original.createAgent("Serialized agent", fore, 0, 0.75f);
-		original.lookupAgent(agentId).entity->setFlags(0x12u);
+		auto* originalAgent = original.lookupAgent(agentId).entity;
+		originalAgent->setFlags(0x12u);
+		auto destination = original.getGraph()->getVertexByIdentifier(destinationIdentifier);
+		auto path = original.getGraph()->calculatePath(originalAgent, destination);
+		require(path && !path->nodes.empty(), "Agent path could not be created for serialization");
+		originalAgent->setPath(std::move(path), true);
 
 		core::SerializationWorkData workData;
 		auto writer = core::YamlSerializer::toString();
 		original.serialize(*writer, workData);
 		writer->serialize();
 		auto const yaml = writer->getSerializedString();
-		require(yaml.find("version: 2") != std::string::npos
+		require(yaml.find("version: 3") != std::string::npos
 			&& yaml.find("type: room") != std::string::npos
 			&& yaml.find("cellsWide:") != std::string::npos
 			&& yaml.find("foreControl: true") != std::string::npos
 			&& yaml.find("\n    a:") == std::string::npos,
 			"Building YAML did not use the explicit construction schema");
 		require(yaml.find("construction") != std::string::npos
-			&& yaml.find("agents") != std::string::npos,
-			"Building YAML omitted authored structure or agents");
+			&& yaml.find("agents") != std::string::npos
+			&& yaml.find("path:") != std::string::npos
+			&& yaml.find("destinationSector:") != std::string::npos
+			&& yaml.find("active: true") != std::string::npos,
+			"Building YAML omitted authored structure, agents, or Agent paths");
 
 		core::Building loaded("placeholder", 2, 2);
 		auto reader = core::YamlSerializer::fromString(yaml);
@@ -212,10 +221,20 @@ namespace
 			&& loadedAgent.entity->getFlags() == 0x12u
 			&& loadedAgent.entity->getSector()->getIndex() == fore
 			&& std::abs(loadedAgent.entity->getLocalPosition().x - 0.75f) < 0.0001f
-			&& loadedAgent.entity->getState() == core::Agent::State::Idle
-			&& !loadedAgent.entity->getPath(),
-			"Building-owned Agent did not round-trip as an idle, pathless Agent");
+			&& loadedAgent.entity->getState() == core::Agent::State::MovingToVertex
+			&& loadedAgent.entity->getPath()
+			&& loadedAgent.entity->getPath()->nodes.back().targetVertex->getSector()->getIndex() == fore
+			&& std::abs(loadedAgent.entity->getPath()->nodes.back().targetVertex->getSectorOffset().x
+				- destination->getSectorOffset().x) < 0.0001f,
+			"Building-owned Agent or its active path did not round-trip");
 		require(!loaded.isModified(), "deserialized Building was unexpectedly modified");
+		auto replacementPath = loaded.getGraph()->calculatePath(loadedAgent.entity,
+			loadedAgent.entity->getPath()->nodes.back().targetVertex);
+		require(replacementPath && !replacementPath->nodes.empty(),
+			"Replacement Agent path could not be created");
+		loadedAgent.entity->setPath(std::move(replacementPath), false);
+		require(loaded.isModified(), "Setting an Agent path did not mark its Building modified");
+		loadedAgent.entity->clearPath();
 		require(loaded.removeAgent(agentId).removed, "deserialized Agent could not be removed");
 		require(loaded.isModified(), "removing an Agent did not modify its Building");
 	}

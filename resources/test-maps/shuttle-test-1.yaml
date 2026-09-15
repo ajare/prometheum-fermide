@@ -1,4 +1,4 @@
-version: 2
+version: 3
 name: Untitled
 cellsWide: 48
 decksHigh: 6
@@ -76,3 +76,8 @@ agents:
     sector: 0
     localX: 0.40625
     localY: 0
+    path:
+      destinationSector: 1
+      destinationLocalX: 5.515625
+      destinationLocalY: 0
+      active: true
