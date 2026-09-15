@@ -1,0 +1,162 @@
+version: 3
+name: Shuttle Test 3
+cellsWide: 70
+decksHigh: 3
+construction:
+  # Four separated platforms connected by one Shuttle.
+  - type: corridor
+    y: 1
+    x: 0
+    cellsWide: 12
+    decksHigh: 1
+  - type: corridor
+    y: 1
+    x: 19
+    cellsWide: 12
+    decksHigh: 1
+  - type: corridor
+    y: 1
+    x: 38
+    cellsWide: 12
+    decksHigh: 1
+  - type: corridor
+    y: 1
+    x: 57
+    cellsWide: 12
+    decksHigh: 1
+
+  # One five-cell carriage. doorMask 10 selects cells at offsets 1 and 3.
+  # Shuttle construction creates the two matching landing Doors at every stop.
+  - type: shuttle
+    y: 1
+    x: 7
+    cellsWide: 62
+    numCars: 1
+    carWidth: 5
+    stopOffsets: [0, 19, 38, 57]
+    initialStop: 0
+    capacityPerCarriage: 5
+    doorMask: 10
+    minimumDwellSeconds: 3
+    maximumBoardingSeconds: 5
+    allowPartialLandings: false
+
+  # One destination marker on each platform.
+  - type: marker
+    sectorIndex: 0
+    deckIndex: 0
+    xOffset: 1.5
+  - type: marker
+    sectorIndex: 1
+    deckIndex: 0
+    xOffset: 1.5
+  - type: marker
+    sectorIndex: 2
+    deckIndex: 0
+    xOffset: 1.5
+  - type: marker
+    sectorIndex: 3
+    deckIndex: 0
+    xOffset: 1.5
+
+agents:
+  # Destination markers were selected randomly from the other three stops.
+  - id: 1
+    agent: { name: Stop 1 Agent 1, flags: 0 }
+    sector: 0
+    localX: 3.5
+    localY: 0
+    path: { destinationSector: 1, destinationLocalX: 1.5, destinationLocalY: 0, active: true }
+  - id: 2
+    agent: { name: Stop 1 Agent 2, flags: 0 }
+    sector: 0
+    localX: 4.5
+    localY: 0
+    path: { destinationSector: 2, destinationLocalX: 1.5, destinationLocalY: 0, active: true }
+  - id: 3
+    agent: { name: Stop 1 Agent 3, flags: 0 }
+    sector: 0
+    localX: 5.5
+    localY: 0
+    path: { destinationSector: 1, destinationLocalX: 1.5, destinationLocalY: 0, active: true }
+  - id: 4
+    agent: { name: Stop 1 Agent 4, flags: 0 }
+    sector: 0
+    localX: 6.5
+    localY: 0
+    path: { destinationSector: 3, destinationLocalX: 1.5, destinationLocalY: 0, active: true }
+
+  - id: 5
+    agent: { name: Stop 2 Agent 1, flags: 0 }
+    sector: 1
+    localX: 3.5
+    localY: 0
+    path: { destinationSector: 2, destinationLocalX: 1.5, destinationLocalY: 0, active: true }
+  - id: 6
+    agent: { name: Stop 2 Agent 2, flags: 0 }
+    sector: 1
+    localX: 4.5
+    localY: 0
+    path: { destinationSector: 0, destinationLocalX: 1.5, destinationLocalY: 0, active: true }
+  - id: 7
+    agent: { name: Stop 2 Agent 3, flags: 0 }
+    sector: 1
+    localX: 5.5
+    localY: 0
+    path: { destinationSector: 2, destinationLocalX: 1.5, destinationLocalY: 0, active: true }
+  - id: 8
+    agent: { name: Stop 2 Agent 4, flags: 0 }
+    sector: 1
+    localX: 6.5
+    localY: 0
+    path: { destinationSector: 2, destinationLocalX: 1.5, destinationLocalY: 0, active: true }
+
+  - id: 9
+    agent: { name: Stop 3 Agent 1, flags: 0 }
+    sector: 2
+    localX: 3.5
+    localY: 0
+    path: { destinationSector: 0, destinationLocalX: 1.5, destinationLocalY: 0, active: true }
+  - id: 10
+    agent: { name: Stop 3 Agent 2, flags: 0 }
+    sector: 2
+    localX: 4.5
+    localY: 0
+    path: { destinationSector: 3, destinationLocalX: 1.5, destinationLocalY: 0, active: true }
+  - id: 11
+    agent: { name: Stop 3 Agent 3, flags: 0 }
+    sector: 2
+    localX: 5.5
+    localY: 0
+    path: { destinationSector: 1, destinationLocalX: 1.5, destinationLocalY: 0, active: true }
+  - id: 12
+    agent: { name: Stop 3 Agent 4, flags: 0 }
+    sector: 2
+    localX: 6.5
+    localY: 0
+    path: { destinationSector: 3, destinationLocalX: 1.5, destinationLocalY: 0, active: true }
+
+  - id: 13
+    agent: { name: Stop 4 Agent 1, flags: 0 }
+    sector: 3
+    localX: 3.5
+    localY: 0
+    path: { destinationSector: 1, destinationLocalX: 1.5, destinationLocalY: 0, active: true }
+  - id: 14
+    agent: { name: Stop 4 Agent 2, flags: 0 }
+    sector: 3
+    localX: 4.5
+    localY: 0
+    path: { destinationSector: 1, destinationLocalX: 1.5, destinationLocalY: 0, active: true }
+  - id: 15
+    agent: { name: Stop 4 Agent 3, flags: 0 }
+    sector: 3
+    localX: 5.5
+    localY: 0
+    path: { destinationSector: 0, destinationLocalX: 1.5, destinationLocalY: 0, active: true }
+  - id: 16
+    agent: { name: Stop 4 Agent 4, flags: 0 }
+    sector: 3
+    localX: 6.5
+    localY: 0
+    path: { destinationSector: 2, destinationLocalX: 1.5, destinationLocalY: 0, active: true }

@@ -981,7 +981,7 @@ namespace
 	vector<uint32_t> shuttleCandidates(shared_ptr<const core::Building> const& building,
 		ShuttleDraft const& draft)
 	{
-		if (draft.numCars <= 0 || (draft.carWidth != 3 && draft.carWidth != 4)) return {};
+		if (draft.numCars <= 0 || draft.carWidth < 3 || draft.carWidth > 5) return {};
 		return building->getValidShuttleStopOffsets(draft.y, draft.x, draft.cellsWide,
 			(uint32_t)draft.numCars, (uint32_t)draft.carWidth, draft.allowPartialLandings,
 			draft.doorMask);
@@ -992,7 +992,7 @@ namespace
 	{
 		draft.diagnostic.clear();
 		if (draft.numCars <= 0) draft.diagnostic = "A Shuttle requires at least one carriage";
-		else if (draft.carWidth != 3 && draft.carWidth != 4) draft.diagnostic = "Carriage width must be 3 or 4 cells";
+		else if (draft.carWidth < 3 || draft.carWidth > 5) draft.diagnostic = "Carriage width must be between 3 and 5 cells";
 		else if (draft.doorMask == 0 || (draft.doorMask >> draft.carWidth) != 0)
 			draft.diagnostic = "Select at least one door cell within the carriage";
 		else if (draft.capacity <= 0 || draft.capacity > (int)floor((float)draft.carWidth / CORE_AGENT_MAX_WIDTH))
@@ -2653,7 +2653,7 @@ namespace
 				if (draft.carWidth > 0 && draft.carWidth < 32)
 					draft.doorMask &= (1u << draft.carWidth) - 1;
 				ImGui::TextUnformatted("Carriage door layout (click cells to toggle)");
-				if (draft.carWidth == 3 || draft.carWidth == 4)
+				if (draft.carWidth >= 3 && draft.carWidth <= 5)
 				{
 					for (int cell = 0; cell < draft.carWidth; ++cell)
 					{

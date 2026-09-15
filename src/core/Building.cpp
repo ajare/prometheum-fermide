@@ -425,9 +425,9 @@ namespace core
 	{
 		if (options.numCars == 0)
 			throw BuildingException(this, format("{} - Shuttle must have at least one carriage.", caller));
-		if (options.carWidth != 3 && options.carWidth != 4)
+		if (options.carWidth < 3 || options.carWidth > 5)
 		{
-			throw BuildingException(this, format("{} - Shuttle car width must be 3 or 4.", caller));
+			throw BuildingException(this, format("{} - Shuttle car width must be between 3 and 5.", caller));
 		}
 		if (options.doorMask == 0 || (options.doorMask >> options.carWidth) != 0)
 		{
@@ -2203,7 +2203,7 @@ namespace core
 	{
 		vector<uint32_t> result;
 		if (y >= mDecksHigh || x >= mCellsWide || cellsWide > mCellsWide - x
-			|| numCars == 0 || (carWidth != 3 && carWidth != 4)
+			|| numCars == 0 || carWidth < 3 || carWidth > 5
 			|| doorMask == 0 || (doorMask >> carWidth) != 0
 			|| numCars > (cellsWide + 1) / (carWidth + 1)) return result;
 		auto shuttleWidth = numCars * carWidth + numCars - 1;
