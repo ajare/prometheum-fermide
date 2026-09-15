@@ -2127,7 +2127,10 @@ namespace
 			sawFullWithWaiter = sawFullWithWaiter
 				|| (shuttle->occupantCount == options.capacity && !shuttle->admissionQueue.empty());
 			if (shuttle->liftStopPhase == core::LiftStopPhase::Disembarking)
-				sawDisembarkBeforeBoard = sawDisembarkBeforeBoard || shuttle->admissionReservationCount == 0;
+			{
+				if (shuttle->admissionReservationCount != 0) return false;
+				sawDisembarkBeforeBoard = true;
+			}
 			for (auto const& passenger : passengers)
 			{
 				auto agent = building.lookupAgent(passenger).entity;
@@ -2186,7 +2189,10 @@ namespace
 		passenger->setPath(std::move(path), true);
 
 		std::optional<float> previousStoppedX;
+		std::optional<uint64_t> lastOccupiedAtDestination;
 		bool sawForwardAlignment = false;
+		bool sawAllDestinationDoorsOpen = false;
+		bool sawBoardingWindowAfterDisembark = false;
 		for (uint32_t tick = 0; tick < MaximumSimulationTicks * 14; ++tick)
 		{
 			building.advanceTick();
@@ -2196,6 +2202,37 @@ namespace
 				{ return resource.id == created.traversalResource; });
 			if (shuttle == snapshot.traversalResources.end()) return false;
 			passenger = building.lookupAgent(passengerId).entity;
+			if (!shuttle->liftMoving && shuttle->liftCurrentStop == 1)
+			{
+				if (passenger->getSector()
+					== building.getSector(created.shuttle.sector->getIndex()).get())
+					lastOccupiedAtDestination = snapshot.tick;
+				if (shuttle->liftStopPhase == core::LiftStopPhase::Disembarking)
+				{
+					bool allOpen = true;
+					for (uint32_t doorIndex = 2; doorIndex < 4; ++doorIndex)
+					{
+						auto door = std::find_if(snapshot.traversalResources.begin(),
+							snapshot.traversalResources.end(), [&](auto const& resource)
+							{ return resource.id == created.doors[doorIndex].traversalResource; });
+						allOpen = allOpen && door != snapshot.traversalResources.end()
+							&& (door->doorState == core::DoorSnapshotState::Opening
+								|| door->doorState == core::DoorSnapshotState::Open);
+					}
+					if (!allOpen) return false;
+					sawAllDestinationDoorsOpen = true;
+				}
+				if (shuttle->liftStopPhase == core::LiftStopPhase::Boarding
+					&& lastOccupiedAtDestination)
+				{
+					auto boardingTicks = (uint64_t)std::ceil(options.maximumBoardingSeconds
+						/ building.getFixedTimestep());
+					if (shuttle->liftServiceStartedTick <= *lastOccupiedAtDestination
+						|| shuttle->liftBoardingCutoffTick
+							!= shuttle->liftServiceStartedTick + boardingTicks) return false;
+					sawBoardingWindowAfterDisembark = true;
+				}
+			}
 			if (passenger->getSector() == building.getSector(created.shuttle.sector->getIndex()).get()
 				&& !shuttle->liftMoving && shuttle->liftCurrentStop == 1)
 			{
@@ -2207,10 +2244,11 @@ namespace
 				}
 				previousStoppedX = x;
 			}
-			if (passenger->getState() == core::Agent::State::Idle
+			if (sawBoardingWindowAfterDisembark && passenger->getState() == core::Agent::State::Idle
 				&& passenger->getSector() == building.getSector(right).get()) break;
 		}
-		return sawForwardAlignment && passenger->getState() == core::Agent::State::Idle
+		return sawForwardAlignment && sawAllDestinationDoorsOpen && sawBoardingWindowAfterDisembark
+			&& passenger->getState() == core::Agent::State::Idle
 			&& passenger->getSector() == building.getSector(right).get();
 	}
 

@@ -5818,6 +5818,11 @@ namespace core
 
 		if (boarding)
 		{
+			// Shuttle boarding cannot overlap disembarkation at the aligned stop,
+			// even if a request reaches allocation during a phase transition.
+			if (coordinator->mShuttle
+				&& (liftHasDisembarkDemand(*coordinator, stop)
+					|| !coordinator->mLiftExitAtSafeStop.empty())) return;
 			auto boardingLanding = &edgeResource;
 			auto usesCarriageQueue = coordinator->mShuttle && coordinator->mShuttleCarriages.size() > 1;
 			auto actor = mAgents.find(request->mOwner);
@@ -6033,6 +6038,16 @@ namespace core
 			{
 				addLiftStopRequest(*coordinator, journeyStop, request->mOwner);
 				coordinator->mLiftPassengerDestinations[request->mOwner] = journeyStop;
+				// This passenger may have queued for serialized destination
+				// confirmation before another passenger activated the same stop.
+				// Sharing that destination makes the queued confirmation obsolete.
+				coordinator->mLiftConfirmationQueue.erase(remove(
+					coordinator->mLiftConfirmationQueue.begin(),
+					coordinator->mLiftConfirmationQueue.end(), requestId),
+					coordinator->mLiftConfirmationQueue.end());
+				if (coordinator->mLiftActiveConfirmation == requestId)
+					coordinator->mLiftActiveConfirmation = coordinator->mLiftConfirmationQueue.empty()
+						? TraversalRequestId{} : coordinator->mLiftConfirmationQueue.front();
 				return;
 			}
 			if (find(coordinator->mLiftConfirmationQueue.begin(), coordinator->mLiftConfirmationQueue.end(), requestId)
@@ -7887,6 +7902,15 @@ namespace core
 				else for (uint32_t stop = 0; stop < resource.mLiftStops.size(); ++stop)
 					callback(stop, mTraversalResources.find(resource.mLiftStops[stop].landingResource));
 			};
+			auto beginBoardingWindow = [&]
+			{
+				resource.mLiftStopPhase = LiftStopPhase::Boarding;
+				// A nonzero cutoff belongs to an existing boarding window, such as
+				// one temporarily reopened by an obstruction during closure.
+				if (resource.mLiftBoardingCutoffTick) return;
+				resource.mLiftServiceStartedTick = mSimulationTick;
+				resource.mLiftBoardingCutoffTick = mSimulationTick + resource.mLiftMaximumBoardingTicks;
+			};
 
 			// A safety hold or obstruction at the aligned landing overrides closure.
 			// The original cutoff is retained, so this cannot admit a late caller.
@@ -7947,7 +7971,8 @@ namespace core
 						resource.mLiftMoving = false;
 						resource.mLiftStopPhase = LiftStopPhase::Opening;
 						resource.mLiftServiceStartedTick = mSimulationTick;
-						resource.mLiftBoardingCutoffTick = mSimulationTick + resource.mLiftMaximumBoardingTicks;
+						resource.mLiftBoardingCutoffTick = resource.mShuttle ? 0
+							: mSimulationTick + resource.mLiftMaximumBoardingTicks;
 					}
 				}
 			}
@@ -7958,7 +7983,8 @@ namespace core
 				resource.mLiftMoving = false;
 				resource.mLiftStopPhase = LiftStopPhase::Opening;
 				resource.mLiftServiceStartedTick = mSimulationTick;
-				resource.mLiftBoardingCutoffTick = mSimulationTick + resource.mLiftMaximumBoardingTicks;
+				resource.mLiftBoardingCutoffTick = resource.mShuttle ? 0
+					: mSimulationTick + resource.mLiftMaximumBoardingTicks;
 			}
 			else if (resource.mLiftTargetStop == resource.mLiftCurrentStop
 				&& resource.mLiftStopPhase == LiftStopPhase::Closing)
@@ -7973,14 +7999,31 @@ namespace core
 				if (allClosed) resource.mLiftStopPhase = LiftStopPhase::Idle;
 			}
 
+			// Every Shuttle Door authored at the aligned stop opens together. Door
+			// leases still protect active crossings; the stop phase controls closure.
+			if (resource.mShuttle && !resource.mLiftMoving
+				&& resource.mLiftCurrentStop < resource.mLiftStops.size()
+				&& (resource.mLiftStopPhase == LiftStopPhase::Opening
+					|| resource.mLiftStopPhase == LiftStopPhase::Disembarking
+					|| resource.mLiftStopPhase == LiftStopPhase::Boarding))
+				forEachLanding([&](uint32_t stop, TraversalResource* landing)
+				{
+					if (stop == resource.mLiftCurrentStop && landing && landing->mDoor
+						&& !landing->mDoor->isOpen() && !landing->mDoor->isOpening())
+						landing->mDoor->requestOpen();
+				});
+
 			if (!resource.mLiftMoving && resource.mLiftStopPhase == LiftStopPhase::Opening
 				&& mSimulationTick > resource.mLiftServiceStartedTick)
-				resource.mLiftStopPhase = liftHasDisembarkDemand(resource, resource.mLiftCurrentStop)
-					? LiftStopPhase::Disembarking : LiftStopPhase::Boarding;
+			{
+				if (liftHasDisembarkDemand(resource, resource.mLiftCurrentStop))
+					resource.mLiftStopPhase = LiftStopPhase::Disembarking;
+				else beginBoardingWindow();
+			}
 			if (resource.mLiftStopPhase == LiftStopPhase::Disembarking
 				&& !liftHasDisembarkDemand(resource, resource.mLiftCurrentStop)
 				&& resource.mLiftExitAtSafeStop.empty())
-				resource.mLiftStopPhase = LiftStopPhase::Boarding;
+				beginBoardingWindow();
 
 			assignLiftSafeExitPaths(resource);
 
