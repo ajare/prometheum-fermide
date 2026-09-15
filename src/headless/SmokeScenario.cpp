@@ -2095,6 +2095,7 @@ namespace
 		bool sawFullWithWaiter = false;
 		bool sawAttachedMotion = false;
 		bool sawDisembarkBeforeBoard = false;
+		std::map<core::AgentId, float> previousShuttleX;
 		for (uint32_t tick = 0; tick < MaximumSimulationTicks * 14; ++tick)
 		{
 			building.advanceTick();
@@ -2107,6 +2108,22 @@ namespace
 			for (auto const& operation : snapshot.deviceOperations)
 				if (operation.command.type == core::DeviceCommandType::CallShuttle
 					&& operation.state == core::DeviceOperationState::Succeeded) sawPhysicalCall = true;
+			for (auto passengerId : passengers)
+			{
+				auto passenger = building.lookupAgent(passengerId).entity;
+				if (passenger->getSector() != building.getSector(created.shuttle.sector->getIndex()).get())
+				{
+					previousShuttleX.erase(passengerId);
+					continue;
+				}
+				auto x = passenger->getGlobalPosition().x;
+				if (auto previous = previousShuttleX.find(passengerId); previous != previousShuttleX.end())
+				{
+					if (std::abs(x - previous->second) > passenger->getWalkSpeed()
+						* building.getFixedTimestep() + 0.001f) return false;
+				}
+				previousShuttleX[passengerId] = x;
+			}
 			sawFullWithWaiter = sawFullWithWaiter
 				|| (shuttle->occupantCount == options.capacity && !shuttle->admissionQueue.empty());
 			if (shuttle->liftStopPhase == core::LiftStopPhase::Disembarking)
@@ -2135,6 +2152,66 @@ namespace
 		return sawPhysicalCall && sawFullWithWaiter && sawAttachedMotion && sawDisembarkBeforeBoard
 			&& shuttle != final.traversalResources.end() && shuttle->occupantCount == 0
 			&& shuttle->admissionReservationCount == 0;
+	}
+
+	bool shuttleArrivalFollowsFinalPathNodeWithoutBacktracking()
+	{
+		core::Building building("Multi-door Shuttle arrival", 48, 6);
+		auto left = building.addCorridor(1, 1, 6);
+		auto right = building.addCorridor(1, 15, 6);
+		core::Building::CreateShuttleOptions options{ 1, 3, { 0, 13 }, 0 };
+		options.capacity = 5;
+		options.doorMask = 0b101;
+		options.minimumDwellSeconds = 0.75f;
+		options.maximumBoardingSeconds = 5.0f;
+		auto created = building.addShuttle(1, 3, 16, options);
+		building.finishBuild();
+
+		auto target = building.getGraph()->getClosestVertexInSector(
+			building.getSector(right).get(), { 20.5f, 1.0f });
+		if (!target) return false;
+		auto passengerId = building.createAgent("Multi-door passenger", left, 0, 0.4f);
+		auto passenger = building.lookupAgent(passengerId).entity;
+		auto path = building.getGraph()->calculatePath(passenger, target);
+		if (!path) return false;
+		uint32_t shuttleEdges = 0;
+		float finalShuttleX = 0.0f;
+		for (auto const& node : path->nodes)
+			if (node.edge && node.edge->getType() == core::EdgeType::Shuttle && node.targetVertex)
+			{
+				++shuttleEdges;
+				finalShuttleX = node.targetVertex->getPosition().x;
+			}
+		if (shuttleEdges < 2 || std::abs(finalShuttleX - 18.5f) > 0.001f) return false;
+		passenger->setPath(std::move(path), true);
+
+		std::optional<float> previousStoppedX;
+		bool sawForwardAlignment = false;
+		for (uint32_t tick = 0; tick < MaximumSimulationTicks * 14; ++tick)
+		{
+			building.advanceTick();
+			auto snapshot = building.getSimulationSnapshot();
+			auto shuttle = std::find_if(snapshot.traversalResources.begin(),
+				snapshot.traversalResources.end(), [&](auto const& resource)
+				{ return resource.id == created.traversalResource; });
+			if (shuttle == snapshot.traversalResources.end()) return false;
+			passenger = building.lookupAgent(passengerId).entity;
+			if (passenger->getSector() == building.getSector(created.shuttle.sector->getIndex()).get()
+				&& !shuttle->liftMoving && shuttle->liftCurrentStop == 1)
+			{
+				auto x = passenger->getGlobalPosition().x;
+				if (previousStoppedX)
+				{
+					if (x < *previousStoppedX - 0.001f) return false;
+					sawForwardAlignment = sawForwardAlignment || x > *previousStoppedX + 0.001f;
+				}
+				previousStoppedX = x;
+			}
+			if (passenger->getState() == core::Agent::State::Idle
+				&& passenger->getSector() == building.getSector(right).get()) break;
+		}
+		return sawForwardAlignment && passenger->getState() == core::Agent::State::Idle
+			&& passenger->getSector() == building.getSector(right).get();
 	}
 
 	bool multiCarriageShuttleCoordinatesIndependentCarriagesAndAccessZones()
@@ -2842,6 +2919,11 @@ int main()
 		if (!singleCarriageShuttleUsesTransportJourneyProtocol())
 		{
 			std::cerr << "FAIL: single-carriage shuttle journey coordination failed\n";
+			return 1;
+		}
+		if (!shuttleArrivalFollowsFinalPathNodeWithoutBacktracking())
+		{
+			std::cerr << "FAIL: multi-door Shuttle arrival backtracked through an intermediate path node\n";
 			return 1;
 		}
 		if (!multiCarriageShuttleCoordinatesIndependentCarriagesAndAccessZones())

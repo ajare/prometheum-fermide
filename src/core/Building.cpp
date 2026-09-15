@@ -5460,6 +5460,19 @@ namespace core
 		if (carriage == ~0u) return false;
 		if (request->mShuttleDoor && request->mShuttleCarriage == carriage) return true;
 
+		// Preserve the Door selected by the remaining path whenever it serves the
+		// passenger's assigned carriage. Falling back to another Door is only needed
+		// when boarding assigned a carriage incompatible with the planned exit.
+		auto pathDoor = find_if(coordinator.mShuttleDoors.begin(), coordinator.mShuttleDoors.end(),
+			[&](auto const& door)
+			{
+				return door.stopIndex == stop && door.carriageIndex == carriage
+					&& door.locationSector == request->mDestinationSector
+					&& door.landingResource == request->mResource;
+			});
+		if (pathDoor != coordinator.mShuttleDoors.end())
+			return retargetShuttleDoorTraversal(requestId, coordinator, *pathDoor);
+
 		ShuttleDoor const* selected = nullptr;
 		float selectedDistance = 0.0f;
 		uint32_t selectedLoad = 0;
@@ -5957,8 +5970,57 @@ namespace core
 				{
 					if (auto actor = mAgents.find(request->mOwner))
 					{
-						auto transit = mSectors[(size_t)coordinator->mLiftSector.value - 1].get();
-						actor->setPosition({ transit, request->mDestinationEndpoint - transit->getPosition() });
+						if (coordinator->mShuttle)
+						{
+							// Multiple Door cells create a contiguous chain of Shuttle
+							// edges. Intermediate nodes may still belong to the origin
+							// stop, so align with the final node in this journey rather
+							// than the current edge's endpoint.
+							auto destinationVertex = actor->mTraversalTask
+								? actor->mTraversalTask->destinationVertex : shared_ptr<const Vertex>{};
+							auto destinationNode = actor->mPath.targetNode + 1;
+							if (actor->mPath.path)
+								for (uint32_t i = actor->mPath.targetNode + 1;
+									i < actor->mPath.path->nodes.size(); ++i)
+								{
+									auto const& node = actor->mPath.path->nodes[i];
+									if (!node.edge || node.edge->getType() != EdgeType::Shuttle
+										|| node.edge->getTraversalResourceId()
+											!= coordinator->mShuttle->getTraversalResourceId()) break;
+									if (node.targetVertex)
+									{
+										destinationVertex = node.targetVertex;
+										destinationNode = i;
+									}
+								}
+							if (!destinationVertex) return;
+
+							auto destinationEndpoint = destinationVertex->getPosition();
+							auto alignmentTarget = actor->getGlobalPosition();
+							alignmentTarget.x = destinationEndpoint.x;
+							if (abs(actor->getGlobalPosition().x - alignmentTarget.x) > 0.001f)
+							{
+								actor->mTraversalLocalGoal = alignmentTarget;
+								return;
+							}
+							actor->mTraversalLocalGoal.reset();
+
+							// Commit the contiguous ride as one journey so Agent does not
+							// subsequently traverse stale intermediate Shuttle nodes.
+							request->mDestinationEndpoint = destinationEndpoint;
+							request->mDestinationSector = SectorId{
+								(uint64_t)destinationVertex->getSector()->getIndex() + 1 };
+							if (actor->mTraversalTask)
+								actor->mTraversalTask->destinationVertex = destinationVertex;
+							if (destinationNode > actor->mPath.targetNode)
+								actor->mPath.targetNode = destinationNode - 1;
+						}
+						else
+						{
+							auto transit = mSectors[(size_t)coordinator->mLiftSector.value - 1].get();
+							actor->setPosition({ transit,
+								request->mDestinationEndpoint - transit->getPosition() });
+						}
 					}
 					grantTraversalRequest(requestId);
 				}
@@ -6037,6 +6099,20 @@ namespace core
 				if (!assignShuttleDisembarkDoor(requestId, *coordinator, stop)) return;
 				disembarkLanding = mTraversalResources.find(request->mResource);
 				if (!disembarkLanding) return;
+
+				// Once the Shuttle has stopped, walk within the carriage to the
+				// shuttle-side node selected by the remaining path before granting the
+				// Door crossing. Preserve the passenger's standing Y coordinate.
+				auto actor = mAgents.find(request->mOwner);
+				if (!actor) return;
+				auto alignmentTarget = actor->getGlobalPosition();
+				alignmentTarget.x = request->mSourceEndpoint.x;
+				if (abs(actor->getGlobalPosition().x - alignmentTarget.x) > 0.001f)
+				{
+					actor->mTraversalLocalGoal = alignmentTarget;
+					return;
+				}
+				actor->mTraversalLocalGoal.reset();
 			}
 			coordinator->mLiftStopPhase = LiftStopPhase::Disembarking;
 			if (!request->mPreparationLease)
