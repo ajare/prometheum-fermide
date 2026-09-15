@@ -3168,14 +3168,6 @@ void renderDocumentToolbar(shared_ptr<core::Building>& building)
 	ImGui::SameLine();
 	imgui::ToggleButton("Agent Debug", "Agent debug", &gUISettings.renderAgentDebug);
 
-	if (!gClipboardError.empty() && ImGui::GetTime() < gClipboardErrorUntil)
-	{
-		auto width = ImGui::CalcTextSize(gClipboardError.c_str()).x;
-		ImGui::SameLine(max(ImGui::GetCursorPosX() + style.ItemSpacing.x,
-			ImGui::GetWindowWidth() - width - style.WindowPadding.x));
-		ImGui::TextColored(ImVec4(1.0f, 0.25f, 0.25f, 1.0f), "%s", gClipboardError.c_str());
-	}
-
 	ImGui::End();
 }
 
@@ -3286,6 +3278,16 @@ void renderStatusBar()
 				string objectData = format("{}", gHoveredVertex->getDescription());
 
 				ImGui::TextUnformatted(objectData.c_str());
+			}
+
+			if (!gClipboardError.empty() && ImGui::GetTime() < gClipboardErrorUntil)
+			{
+				auto const& style = ImGui::GetStyle();
+				auto width = ImGui::CalcTextSize(gClipboardError.c_str()).x;
+				ImGui::SameLine(max(ImGui::GetCursorPosX() + style.ItemSpacing.x,
+					ImGui::GetWindowWidth() - width - style.WindowPadding.x));
+				ImGui::TextColored(ImVec4(1.0f, 0.25f, 0.25f, 1.0f), "%s",
+					gClipboardError.c_str());
 			}
 
 			ImGui::EndMenuBar();
