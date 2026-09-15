@@ -2993,6 +2993,7 @@ namespace
 
 		bool sawPhysicalCall = false;
 		bool sawFullWithWaiter = false;
+		bool sawPlatformQueuePosition = false;
 		bool sawAttachedMotion = false;
 		bool sawDisembarkBeforeBoard = false;
 		std::map<core::AgentId, float> previousCarriageX;
@@ -3008,6 +3009,12 @@ namespace
 			for (auto const& operation : snapshot.deviceOperations)
 				if (operation.command.type == core::DeviceCommandType::CallShuttle
 					&& operation.state == core::DeviceOperationState::Succeeded) sawPhysicalCall = true;
+			std::vector<core::Vector2> platformQueueTargets;
+			for (auto const& request : snapshot.traversalRequests)
+				if (request.state == core::TraversalRequestState::Pending
+					&& request.sourceSector.value == left + 1 && request.hasQueuePosition)
+					platformQueueTargets.push_back(request.queuePositionTarget);
+			sawPlatformQueuePosition = sawPlatformQueuePosition || !platformQueueTargets.empty();
 			for (auto passengerId : passengers)
 			{
 				auto passenger = building.lookupAgent(passengerId).entity;
@@ -3052,7 +3059,8 @@ namespace
 		auto final = building.getSimulationSnapshot();
 		auto shuttle = std::find_if(final.traversalResources.begin(), final.traversalResources.end(),
 			[&](auto const& resource) { return resource.id == created.traversalResource; });
-		return sawPhysicalCall && sawFullWithWaiter && sawAttachedMotion && sawDisembarkBeforeBoard
+		return sawPhysicalCall && sawFullWithWaiter && sawPlatformQueuePosition
+			&& sawAttachedMotion && sawDisembarkBeforeBoard
 			&& shuttle != final.traversalResources.end() && shuttle->occupantCount == 0
 			&& shuttle->admissionReservationCount == 0;
 	}

@@ -1,0 +1,83 @@
+version: 3
+name: Untitled
+cellsWide: 16
+decksHigh: 6
+construction:
+  - type: room
+    name: Room 1
+    layer: fore
+    y: 2
+    x: 2
+    cellsWide: 12
+    decksHigh: 3
+    topDeckHeight: 0.9
+  - type: walkway
+    sectorIndex: 0
+    deckIndex: 1
+    xOffset: 11
+  - type: walkway
+    sectorIndex: 0
+    deckIndex: 1
+    xOffset: 10
+  - type: walkway
+    sectorIndex: 0
+    deckIndex: 1
+    xOffset: 9
+  - type: walkway
+    sectorIndex: 0
+    deckIndex: 1
+    xOffset: 8
+  - type: walkway
+    sectorIndex: 0
+    deckIndex: 1
+    xOffset: 6
+  - type: walkway
+    sectorIndex: 0
+    deckIndex: 1
+    xOffset: 5
+  - type: walkway
+    sectorIndex: 0
+    deckIndex: 1
+    xOffset: 4
+  - type: walkway
+    sectorIndex: 0
+    deckIndex: 1
+    xOffset: 3
+  - type: forceBridge
+    sectorIndex: 0
+    deckIndex: 1
+    xOffset: 7
+    width: 1
+    fromSide: left
+    extensible: true
+    startExtended: false
+    controlCount: 1
+  - type: marker
+    sectorIndex: 0
+    deckIndex: 1
+    xOffset: 11.375
+agents:
+  - id: 1
+    agent:
+      name: Agent 1
+      flags: 0
+    sector: 0
+    localX: 3.59375
+    localY: 1
+    path:
+      destinationSector: 0
+      destinationLocalX: 11.375
+      destinationLocalY: 1
+      active: true
+  - id: 2
+    agent:
+      name: Agent 2
+      flags: 0
+    sector: 0
+    localX: 4.6875
+    localY: 1
+    path:
+      destinationSector: 0
+      destinationLocalX: 11.375
+      destinationLocalY: 1
+      active: true

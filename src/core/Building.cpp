@@ -6518,7 +6518,6 @@ namespace core
 				&& (liftHasDisembarkDemand(*coordinator, stop)
 					|| !coordinator->mLiftExitAtSafeStop.empty())) return;
 			auto boardingLanding = &edgeResource;
-			auto usesCarriageQueue = coordinator->mShuttle && coordinator->mShuttleCarriages.size() > 1;
 			auto actor = mAgents.find(request->mOwner);
 			auto desiredStop = actor ? findAgentLiftDestination(*actor, *coordinator) : ~0u;
 			if (desiredStop >= coordinator->mLiftStops.size() || desiredStop == stop)
@@ -6528,12 +6527,10 @@ namespace core
 			}
 			if (!request->mQueueTicket)
 			{
-				if (coordinator->mLift) attachQueueTicket(requestId, edgeResource);
-				else
-				{
-					request->mQueueTicket = QueueTicketId{ mNextQueueTicketValue++ };
-					request->mQueuedAtTick = mSimulationTick;
-				}
+				// Lift and shuttle passengers use the same landing-door queue. Shuttle
+				// assignments may later move the ticket to another Door in the same
+				// access zone without changing its logical priority.
+				attachQueueTicket(requestId, edgeResource);
 				if (!request->mQueueTicket) return;
 				coordinator->mAdmissionQueue.push_back(requestId);
 				coordinator->mLiftTripIntents[request->mOwner] = { stop, desiredStop, mSimulationTick };
@@ -6604,8 +6601,7 @@ namespace core
 				if (selected == coordinator->mAdmissionQueue.end() || *selected != requestId) return;
 				if (coordinator->mShuttle && !assignShuttleBoardingDoor(requestId, *coordinator, stop)) return;
 				boardingLanding = mTraversalResources.find(request->mResource);
-				if (!boardingLanding
-					|| ((coordinator->mLift || usesCarriageQueue) && request->mQueuePosition == ~0u)) return;
+				if (!boardingLanding || request->mQueuePosition == ~0u) return;
 
 				uint32_t first = 0, count = coordinator->mCapacity;
 				if (coordinator->mShuttle)
@@ -6660,9 +6656,9 @@ namespace core
 				boardingLanding = mTraversalResources.find(request->mResource);
 				if (!boardingLanding || request->mQueueApproach >= boardingLanding->mQueueLanes.size()) return;
 				auto const& queueLane = boardingLanding->mQueueLanes[request->mQueueApproach];
-				if (usesCarriageQueue && (request->mQueuePosition >= queueLane.positions.size()
+				if (request->mQueuePosition >= queueLane.positions.size()
 					|| !actor || actor->getGlobalPosition().distanceTo(
-						queueLane.positions[request->mQueuePosition]) > 0.001f)) return;
+						queueLane.positions[request->mQueuePosition]) > 0.001f) return;
 				auto& laneQueue = boardingLanding->mQueueLanes[request->mQueueApproach].queue;
 				laneQueue.erase(remove(laneQueue.begin(), laneQueue.end(), requestId), laneQueue.end());
 				request->mQueuePosition = ~0u;
