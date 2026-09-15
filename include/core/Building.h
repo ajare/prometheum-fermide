@@ -665,6 +665,9 @@ namespace core
 			std::array<SectorId, 2> const& sectors,
 			std::array<Vector2, 2> const& endpoints);
 
+		void configureForceBridgeQueueLanes(TraversalResourceId resource,
+			SectorId sector, std::array<Vector2, 2> const& endpoints);
+
 		void updateTraversalProgressAndTimeouts();
 
 		void expireTraversalPermit(TraversalPermitId permitId);

@@ -1886,6 +1886,8 @@ namespace
 
 		bool sawPreparation = false;
 		bool sawExtensionLease = false;
+		bool sawQueueStops = false;
+		bool sawQueuedTraveller = false;
 		while (agent->getState() != core::Agent::State::Idle
 			&& building.getSimulationTick() < MaximumSimulationTicks)
 		{
@@ -1897,11 +1899,17 @@ namespace
 				|| !resource->isExtensible) return false;
 			sawPreparation = sawPreparation || !snapshot.deviceOperations.empty();
 			sawExtensionLease = sawExtensionLease || resource->extensionRequestLeaseCount > 0;
+			sawQueueStops = sawQueueStops || (resource->queueLanes.size() == 2
+				&& !resource->queueLanes[0].positions.empty()
+				&& !resource->queueLanes[1].positions.empty());
+			for (auto const& request : snapshot.traversalRequests)
+				if (request.owner == agentId && request.queueTicket)
+					sawQueuedTraveller = true;
 		}
 		auto final = building.getSimulationSnapshot();
 		auto resource = std::find_if(final.traversalResources.begin(), final.traversalResources.end(),
 			[&](auto const& value) { return value.id == bridge.traversalResource; });
-		return sawPreparation && sawExtensionLease
+		return sawPreparation && sawExtensionLease && sawQueueStops && sawQueuedTraveller
 			&& agent->getState() == core::Agent::State::Idle
 			&& agent->getGlobalPosition().distanceTo(destination->getPosition()) < 0.001f
 			&& resource != final.traversalResources.end() && resource->extended

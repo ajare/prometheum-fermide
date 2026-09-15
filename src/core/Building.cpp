@@ -3335,6 +3335,11 @@ namespace core
 			fbObject.sector->_getObject(fbObject.index))->getForceBridge();
 		auto traversalResource = createForceBridgeTraversalResource("Force bridge", forceBridge);
 		forceBridge->configureTraversal(traversalResource);
+		auto const halfAgentWidth = CORE_AGENT_MAX_WIDTH * 0.5f;
+		configureForceBridgeQueueLanes(traversalResource,
+			SectorId{ (uint64_t)sector->getIndex() + 1 },
+			{ Vector2{ (float)x - halfAgentWidth, (float)y },
+				Vector2{ (float)(x + options.width) + halfAgentWidth, (float)y } });
 
 		// See if a physical control is needed
 		CreateObjectResult createdControls[2];
@@ -3958,21 +3963,24 @@ namespace core
 		for (auto const& [id, resourcePtr] : mTraversalResources.entries())
 		{
 			auto const& resource = *resourcePtr;
-			if (resource.mDoor)
+			if (resource.mDoor || resource.mForceBridge)
 			{
-				require(resource.mDoor->getTraversalResourceId() == id,
+				if (resource.mDoor) require(resource.mDoor->getTraversalResourceId() == id,
 					format("Door resource {} is not the door's sole configured authority", id.value));
+				auto const maximumCrossingLanes = resource.mDoor
+					? resource.mDoor->getCellsWide() : 1u;
 				require(!resource.mCrossingOwners.empty()
-					&& resource.mCrossingOwners.size() <= resource.mDoor->getCellsWide(),
-					format("Door resource {} has invalid crossing-lane geometry", id.value));
+					&& resource.mCrossingOwners.size() <= maximumCrossingLanes,
+					format("Queued crossing resource {} has invalid crossing-lane geometry", id.value));
 				set<SectorId> approachSectors;
 				for (auto const& lane : resource.mQueueLanes)
 				{
 					if (!lane.sector) continue;
-					require(validSector(lane.sector) && approachSectors.insert(lane.sector).second,
-						format("Door resource {} has invalid or duplicate approach sectors", id.value));
+					require(validSector(lane.sector)
+						&& (!resource.mDoor || approachSectors.insert(lane.sector).second),
+						format("Queued crossing resource {} has invalid approach sectors", id.value));
 					require(lane.positions.size() == lane.positionOwners.size() && !lane.positions.empty(),
-						format("Door resource {} has invalid queue-position storage", id.value));
+						format("Queued crossing resource {} has invalid queue-position storage", id.value));
 					auto sector = mSectors[(size_t)lane.sector.value - 1];
 					for (auto const& position : lane.positions)
 						require(isfinite(position.x) && isfinite(position.y)
@@ -3980,7 +3988,7 @@ namespace core
 							&& position.x + CORE_AGENT_MAX_WIDTH * 0.5f <= sector->getCellX1() + 1.001f
 							&& position.y >= sector->getCellY0() - 0.001f
 							&& position.y + CORE_AGENT_MAX_HEIGHT <= sector->getCellY1() + 1.001f,
-							format("Door resource {} has a queue position outside its approach sector", id.value));
+							format("Queued crossing resource {} has a queue position outside its approach sector", id.value));
 				}
 			}
 			if (resource.mWindow)
@@ -4848,7 +4856,8 @@ namespace core
 		{
 			if (resource->mExtensible && resource->mExtensionRequestLeases.insert(id).second)
 				resource->mExtensible->acquireExtensionLease();
-			if (resource->mDoor && !resource->mLiftCoordinator) attachQueueTicket(id, *resource);
+			if ((resource->mDoor && !resource->mLiftCoordinator) || resource->mForceBridge)
+				attachQueueTicket(id, *resource);
 			else if ((resource->mLadder || resource->mStaircase)
 				&& isLadderAdmission(*request, *resource))
 				attachLadderAdmissionRequest(id, *resource);
@@ -4898,7 +4907,7 @@ namespace core
 	{
 		if (!edge || movementDistance < 0.0f || !agent.getSector()) return false;
 		auto resource = mTraversalResources.find(edge->getTraversalResourceId());
-		if (!resource || (!resource->mDoor && !resource->mLadder)) return false;
+		if (!resource || (!resource->mDoor && !resource->mLadder && !resource->mForceBridge)) return false;
 
 		auto const sourceSector = SectorId{ (uint64_t)agent.getSector()->getIndex() + 1 };
 		DoorQueueLane const* lane = nullptr;
@@ -5192,17 +5201,19 @@ namespace core
 				}
 			}
 		}
-		else if (auto resource = mTraversalResources.find(request->mResource); resource && resource->mDoor)
+		else if (auto resource = mTraversalResources.find(request->mResource);
+			resource && (resource->mDoor || resource->mForceBridge))
 		{
 			for (auto& owner : resource->mCrossingOwners) if (owner == requestId) owner = {};
-			// Downgrade crossing authority to preparation before releasing its safety
-			// lease, so even a zero-hold door cannot close around a stalled agent.
-			if (!request->mPreparationLease && resource->mEnabled)
+			// Downgrade Door crossing authority to preparation before releasing its
+			// safety lease. Force Bridges remain extended through their request lease.
+			if (resource->mDoor && !request->mPreparationLease && resource->mEnabled)
 			{
 				request->mPreparationLease = acquireDoorOpenLease(*resource,
 					DoorOpenLeaseKind::Preparation, requestId);
 			}
-			if (request->mCrossingLease) releaseDoorOpenLease(*resource, request->mCrossingLease);
+			if (resource->mDoor && request->mCrossingLease)
+				releaseDoorOpenLease(*resource, request->mCrossingLease);
 			request->mCrossingLease = {};
 			request->mCrossingLane = ~0u;
 			auto& queue = resource->mQueueLanes[request->mQueueApproach].queue;
@@ -5240,7 +5251,9 @@ namespace core
 
 	void Building::tryGrantDoorQueue(TraversalResource& resource)
 	{
-		if (!resource.mEnabled || !resource.mDoor || !resource.mDoor->isOpen())
+		if (!resource.mEnabled || (!resource.mDoor && !resource.mForceBridge)
+			|| (resource.mDoor && !resource.mDoor->isOpen())
+			|| (resource.mForceBridge && !resource.mForceBridge->isExtended()))
 		{
 			return;
 		}
@@ -5663,7 +5676,14 @@ namespace core
 					denyTraversalRequest(requestId, TraversalFailureReason::ResourceDisabled);
 					return;
 				}
-				grantTraversalRequest(requestId);
+				if (resource->mPreparationOperator)
+				{
+					resource->mActivePreparation = {};
+					resource->mPreparationOperator = {};
+					resource->mSharedPreparationOperation = {};
+					refreshQueuePositions(*resource);
+				}
+				tryGrantDoorQueue(*resource);
 				return;
 			}
 			if (resource->mLadder || resource->mStaircase)
@@ -7079,6 +7099,14 @@ namespace core
 				attachLadderAdmissionRequest(requestId, resource);
 				tryGrantLadderAdmissions(resource);
 			}
+			else if (resource.mForceBridge)
+			{
+				resource.mActivePreparation = {};
+				resource.mPreparationOperator = {};
+				resource.mSharedPreparationOperation = {};
+				refreshQueuePositions(resource);
+				tryGrantDoorQueue(resource);
+			}
 			else grantTraversalRequest(requestId);
 			return;
 		}
@@ -7120,11 +7148,12 @@ namespace core
 			resource.mActivePreparation = {};
 			resource.mPreparationOperator = {};
 			resource.mSharedPreparationOperation = {};
-			if (resource.mLadder) refreshQueuePositions(resource);
+			if (resource.mLadder || resource.mForceBridge) refreshQueuePositions(resource);
 			if (request->mState != TraversalRequestState::Pending) return;
 			if (resource.mExtensible->isExtended())
 			{
 				if (resource.mLadder) { attachLadderAdmissionRequest(requestId, resource); tryGrantLadderAdmissions(resource); }
+				else if (resource.mForceBridge) tryGrantDoorQueue(resource);
 				else grantTraversalRequest(requestId);
 				return;
 			}
@@ -7147,7 +7176,7 @@ namespace core
 		resource.mActivePreparation = interactionId;
 		resource.mPreparationOperator = requestId;
 		resource.mSharedPreparationOperation = interaction->mOperations.front().first;
-		if (resource.mLadder) refreshQueuePositions(resource);
+		if (resource.mLadder || resource.mForceBridge) refreshQueuePositions(resource);
 		request->mPreparationRequested = true;
 		request->mPreparationOperation = resource.mSharedPreparationOperation;
 	}
@@ -7165,9 +7194,10 @@ namespace core
 		{
 			if (resource->mExtensible && resource->mExtensionRequestLeases.erase(requestId))
 				resource->mExtensible->releaseExtensionLease();
-			if (resource->mDoor)
+			if (resource->mDoor || resource->mForceBridge)
 			{
-				if (request->mPreparationLease) releaseDoorOpenLease(*resource, request->mPreparationLease);
+				if (resource->mDoor && request->mPreparationLease)
+					releaseDoorOpenLease(*resource, request->mPreparationLease);
 				request->mPreparationLease = {};
 				releaseDoorQueueOwnership(requestId, *resource);
 				if (auto lift = mTraversalResources.find(resource->mLiftCoordinator))
@@ -7414,7 +7444,8 @@ namespace core
 			}
 			if (auto resource = mTraversalResources.find(request->mResource); resource)
 			{
-				if (resource->mDoor) releaseDoorQueueOwnership(requestId, *resource);
+				if (resource->mDoor || resource->mForceBridge)
+					releaseDoorQueueOwnership(requestId, *resource);
 				if (auto lift = mTraversalResources.find(resource->mLiftCoordinator))
 					releaseLiftAdmission(requestId, *lift);
 				else if (resource->mOpenPlatformLift)
@@ -7476,10 +7507,12 @@ namespace core
 			{
 				if (resource->mExtensible && resource->mExtensionRequestLeases.erase(requestId))
 					resource->mExtensible->releaseExtensionLease();
-				if (resource->mDoor)
+				if (resource->mDoor || resource->mForceBridge)
 				{
-					if (request->mPreparationLease) releaseDoorOpenLease(*resource, request->mPreparationLease);
-					if (request->mCrossingLease) releaseDoorOpenLease(*resource, request->mCrossingLease);
+					if (resource->mDoor && request->mPreparationLease)
+						releaseDoorOpenLease(*resource, request->mPreparationLease);
+					if (resource->mDoor && request->mCrossingLease)
+						releaseDoorOpenLease(*resource, request->mCrossingLease);
 					request->mPreparationLease = {};
 					request->mCrossingLease = {};
 					releaseDoorQueueOwnership(requestId, *resource);
@@ -8256,6 +8289,45 @@ namespace core
 		event.traversalResource = makeTraversalResourceSnapshot(id, *mTraversalResources.find(id));
 		mEvents.push_back(std::move(event));
 		return id;
+	}
+
+	void Building::configureForceBridgeQueueLanes(TraversalResourceId resourceId,
+		SectorId sectorId, array<Vector2, 2> const& endpoints)
+	{
+		auto resource = mTraversalResources.find(resourceId);
+		if (!resource || !resource->mForceBridge || !sectorId || sectorId.value > mSectors.size())
+			throw invalid_argument("Force Bridge queue lanes require a Force Bridge and source sector");
+		auto sector = mSectors[(size_t)sectorId.value - 1];
+		auto const halfWidth = CORE_AGENT_MAX_WIDTH * 0.5f;
+		auto const spacing = (float)CORE_DOOR_QUEUE_STOP_WIDTH;
+		for (uint32_t approach = 0; approach < resource->mQueueLanes.size(); ++approach)
+		{
+			auto const direction = approach == 0 ? Vector2::NEGATIVE_UNIT_X : Vector2::UNIT_X;
+			auto const endpoint = endpoints[approach];
+			auto const boundary = approach == 0
+				? sector->getCellX0() + halfWidth : sector->getCellX1() + 1.0f - halfWidth;
+			auto const extent = max(0.0f, approach == 0
+				? endpoint.x - boundary : boundary - endpoint.x);
+			auto& lane = resource->mQueueLanes[approach];
+			lane.sector = sectorId;
+			lane.origin = endpoint;
+			lane.direction = direction;
+			lane.extent = 0.0f;
+			for (float distance = 0.0f; distance <= extent + 0.001f; distance += spacing)
+			{
+				auto position = endpoint + direction * distance;
+				auto const cellX = min(sector->getCellX1(), (uint32_t)floor(position.x));
+				auto const cellY = min(sector->getCellY1(), (uint32_t)floor(position.y));
+				if (!mLayers[sector->getLayerIndex()]
+					->getCellDefinition(cellX, cellY).isTraversableOnFoot()) break;
+				lane.positions.push_back(position);
+				lane.extent = distance;
+			}
+			lane.positionOwners.assign(lane.positions.size(), {});
+			if (lane.positions.empty())
+				throw invalid_argument("A Force Bridge approach has no usable queue positions");
+		}
+		resource->mCrossingOwners.assign(1, {});
 	}
 
 	void Building::configureLadderQueueLanes(TraversalResourceId resourceId,
