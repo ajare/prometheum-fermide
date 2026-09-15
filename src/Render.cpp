@@ -66,6 +66,7 @@ ImColor SelectedColour = ImColor(255, 255, 0);
 #define RENDER_SECTOR_OBJECTS_INFRONT 2
 
 void renderSector(shared_ptr<const core::Sector> sector, int layer, bool visibleLayer, bool wireframe, bool renderEdges, ImColor colour, ImDrawList* drawList);
+void renderSectorAgents(shared_ptr<const core::Sector> sector, int layer, bool visibleLayer, ImDrawList* drawList);
 
 void renderLadderTransit(shared_ptr<const core::LadderTransit> ladderTransit, int layer,
 	bool visibleLayer, bool wireframe, ImColor colour, ImDrawList* drawList);
@@ -979,7 +980,7 @@ void renderSectorObjects(shared_ptr<const core::Sector> sector, int layer, bool 
 }
 
 
-void renderForePhysicalControls(vector<shared_ptr<const core::Sector>> const& sectors,
+void renderForePhysicalControlsAndAgents(vector<shared_ptr<const core::Sector>> const& sectors,
 	ImDrawList* drawList)
 {
 	for (auto const& sector : sectors)
@@ -993,6 +994,13 @@ void renderForePhysicalControls(vector<shared_ptr<const core::Sector>> const& se
 			renderPhysicalControl(button, CORE_LAYER_FORE, true,
 				object == gSelectedSectorObject, drawList);
 		}
+	}
+
+	// Controls are redrawn above clipped Back-layer transits. Restore the sector's
+	// Agents afterwards so no physical control can be painted in front of them.
+	for (auto const& sector : sectors)
+	{
+		renderSectorAgents(sector, CORE_LAYER_FORE, true, drawList);
 	}
 }
 
@@ -1448,9 +1456,9 @@ void renderSectors(shared_ptr<const core::Building> building, int layer, bool vi
 			}
 		}
 
-		// Clipped Back-layer transits intentionally draw over Fore Locations, but
-		// physical controls mounted in those Locations must remain in front.
-		renderForePhysicalControls(visibleSectors, drawList);
+		// Clipped Back-layer transits intentionally draw over Fore Locations. Redraw
+		// controls above those transits, then Agents above the controls.
+		renderForePhysicalControlsAndAgents(visibleSectors, drawList);
 	}
 }
 
