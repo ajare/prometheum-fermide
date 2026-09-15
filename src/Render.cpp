@@ -67,7 +67,8 @@ ImColor SelectedColour = ImColor(255, 255, 0);
 
 void renderSector(shared_ptr<const core::Sector> sector, int layer, bool visibleLayer, bool wireframe, bool renderEdges, ImColor colour, ImDrawList* drawList);
 
-void renderLadderTransit(shared_ptr<const core::LadderTransit> ladderTransit, int layer, bool visibleLayer, bool wireframe, ImColor colour, ImDrawList* drawList);
+void renderLadderTransit(shared_ptr<const core::LadderTransit> ladderTransit, int layer,
+	bool visibleLayer, bool wireframe, ImColor colour, ImDrawList* drawList);
 
 void renderLiftTransit(shared_ptr<const core::LiftTransit> liftTransit, int layer, bool visibleLayer, bool wireframe, ImColor colour, ImDrawList* drawList);
 
@@ -153,9 +154,10 @@ void renderSelectedQueues(shared_ptr<const core::Building> const& building, int 
 	const ImColor occupiedColour(255, 170, 0, 230);
 	const float slotRadius = max(5.0f, CORE_AGENT_MAX_WIDTH * CORE_CELL_WIDTH_PIXELS * 0.35f);
 
-	// Queue geometry belongs to one approach sector. Only render the selected
-	// layer's side; the opposite side may legitimately contain a different count
-	// and arrangement of spots.
+	// Door queue geometry belongs to one approach layer, so only show the visible
+	// side. A selected Ladder is different: its two approach lanes are its lower
+	// and upper ends, and both must remain visible even when the Ladder itself is
+	// represented by a Back-layer transit.
 	vector<core::QueuePositionSnapshot> visiblePositions;
 	set<uint32_t> occupiedCapacityPositions;
 	bool capacityPositionsVisible = false;
@@ -163,7 +165,8 @@ void renderSelectedQueues(shared_ptr<const core::Building> const& building, int 
 	{
 		if (!lane.sector) continue;
 		auto sector = building->getSector((uint32_t)lane.sector.value - 1);
-		if (!sector || sector->getLayerIndex() != (uint32_t)layer) continue;
+		if (!sector || (!resource->isLadder
+			&& sector->getLayerIndex() != (uint32_t)layer)) continue;
 		if (sector->getType() == core::SectorType::Lift
 			&& coordinator != snapshot.traversalResources.end())
 		{
@@ -1155,10 +1158,10 @@ void renderSector(shared_ptr<const core::Sector> sector, int layer, bool visible
 		renderSectorObjects(sector, layer, visibleLayer, wireframe, flags, drawList);
 	}
 
-	// Passengers must obey the same Fore-layer aperture rule as their Shuttle
-	// carriage. Door and Window rendering call this with layer == Fore while a
-	// clip rectangle is active; the hidden Back-layer wireframe pass does not.
-	if (sector->getType() != core::SectorType::Shuttle || visibleLayer || layer != CORE_LAYER_BACK)
+	// Transit occupants obey the same Fore-layer aperture rule as their transit.
+	// Door and Window rendering call this with layer == Fore while a clip rectangle
+	// is active; the hidden Back-layer wireframe pass must not expose them.
+	if (shouldRenderSectorAgents(sector->getType(), layer, visibleLayer))
 		renderSectorAgents(sector, layer, visibleLayer, drawList);
 
 	// Render ceiling
@@ -1213,7 +1216,18 @@ void renderSector(shared_ptr<const core::Sector> sector, int layer, bool visible
 }
 
 
-void renderLadderTransit(shared_ptr<const core::LadderTransit> ladderTransit, int layer, bool visibleLayer, bool wireframe, ImColor colour, bool selected, ImDrawList* drawList)
+void renderLocationContentAboveTransit(shared_ptr<const core::Sector> const& location,
+	int layer, bool visibleLayer, bool wireframe, ImDrawList* drawList)
+{
+	if (!wireframe)
+	{
+		renderSectorObjects(location, layer, visibleLayer, false,
+			RENDER_SECTOR_OBJECTS_BEHIND | RENDER_SECTOR_OBJECTS_INFRONT, drawList);
+	}
+	renderSectorAgents(location, layer, visibleLayer, drawList);
+}
+
+void renderLadderTransit(shared_ptr<const core::LadderTransit> ladderTransit, int layer, bool visibleLayer, bool wireframe, ImColor colour, ImDrawList* drawList)
 {
 	// Transit Ladders go behind the Location, so we need to render in two goes.  First, clipping against
 	// the upper Location, then against the lower.  And, despite being on the Back Layer, these need to be
@@ -1240,7 +1254,8 @@ void renderLadderTransit(shared_ptr<const core::LadderTransit> ladderTransit, in
 		drawList->PushClipRect({ locBounds0.x, locBounds1.y }, { locBounds1.x, locBounds0.y }, true);
 
 		renderSector(ladderTransit, layer, visibleLayer, wireframe, false, colour, drawList);
-		renderLadder(ladderTransit->getLadder(), layer, visibleLayer, selected, drawList);
+		if (shouldRenderForeContentAfterTransit(ladderTransit->getType()))
+			renderLocationContentAboveTransit(upperSector, layer, visibleLayer, wireframe, drawList);
 
 		drawList->PopClipRect();
 		drawList->AddDrawCmd();
@@ -1259,7 +1274,8 @@ void renderLadderTransit(shared_ptr<const core::LadderTransit> ladderTransit, in
 		drawList->PushClipRect({ locBounds0.x, locBounds1.y }, { locBounds1.x, locBounds0.y }, true);
 
 		renderSector(ladderTransit, layer, visibleLayer, wireframe, false, colour, drawList);
-		renderLadder(ladderTransit->getLadder(), layer, visibleLayer, selected, drawList);
+		if (shouldRenderForeContentAfterTransit(ladderTransit->getType()))
+			renderLocationContentAboveTransit(lowerSector, layer, visibleLayer, wireframe, drawList);
 
 		drawList->PopClipRect();
 		drawList->AddDrawCmd();
@@ -1267,7 +1283,6 @@ void renderLadderTransit(shared_ptr<const core::LadderTransit> ladderTransit, in
 	else
 	{
 		renderSector(ladderTransit, layer, visibleLayer, wireframe, true, colour, drawList);
-		renderLadder(ladderTransit->getLadder(), layer, visibleLayer, selected, drawList);
 	}
 }
 
@@ -1420,7 +1435,8 @@ void renderSectors(shared_ptr<const core::Building> building, int layer, bool vi
 			switch (sector->getType())
 			{
 			case core::SectorType::Ladder:
-				renderLadderTransit(static_pointer_cast<const core::LadderTransit>(sector), layer, visibleLayer, wireframe, ForeLocationColour, selected, drawList);
+				renderLadderTransit(static_pointer_cast<const core::LadderTransit>(sector), layer,
+					visibleLayer, wireframe, ForeLocationColour, drawList);
 				break;
 
 			case core::SectorType::Staircase:

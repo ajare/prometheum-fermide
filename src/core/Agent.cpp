@@ -42,7 +42,12 @@ namespace core
 
 		mState = State::Idle;
 		mPath = {};
+		mPathStartPosition = {};
+		mResetPosition = {};
+		mResetPath.reset();
+		mResetPathActive = false;
 		mTraversalTask.reset();
+		mQueuedTraversalTask.reset();
 		mTraversalLocalGoal.reset();
 		return true;
 	}
@@ -149,10 +154,14 @@ namespace core
 		}
 	}
 
-	void Agent::setPosition(SectorPosition pos)
+	void Agent::setPosition(SectorPosition pos, bool authored)
 	{
 		mPosition = pos;
-		modify();
+		if (authored)
+		{
+			mResetPosition = pos;
+			modify();
+		}
 	}
 
 	void Agent::attachToBuilding(Building* building)
@@ -210,6 +219,9 @@ namespace core
 
 	void Agent::setPath(shared_ptr<Path> path, bool startPathing)
 	{
+		mResetPosition = mPosition;
+		mResetPath = path;
+		mResetPathActive = startPathing;
 		assignPath(std::move(path), startPathing, true);
 	}
 
@@ -273,7 +285,8 @@ namespace core
 			}
 		}
 
-		clearPath();
+		mPathStartPosition = mPosition.sector() ? getGlobalPosition() : Vector2::ZERO;
+		clearRuntimePath();
 		mPath.path = std::move(path);
 		mPath.targetNode = 0;
 		if (markModified) modify();
@@ -284,14 +297,24 @@ namespace core
 		}
 	}
 
-	void Agent::clearPath()
+	void Agent::clearRuntimePath()
 	{
 		cancelTraversal();
 		mEarlyDoorPressResource = {};
 		mEarlyDoorPressAttempted = false;
+		mEarlyQueueApproachDirectionX = 0;
 		mPath.path = nullptr;
 		mPath.targetNode = 0;
 		mState = State::Idle;
+	}
+
+	void Agent::clearPath()
+	{
+		clearRuntimePath();
+		mResetPosition = mPosition;
+		mResetPath.reset();
+		mResetPathActive = false;
+		modify();
 	}
 
 	void Agent::startPathing()
@@ -303,6 +326,7 @@ namespace core
 		}
 
 		cancelTraversal();
+		mEarlyQueueApproachDirectionX = 0;
 		mState = State::MovingToVertex;
 
 		addLogMessage(getDescription(), 0, LogLevel::Debug, format("Started pathing"));
@@ -338,6 +362,7 @@ namespace core
 		cancelTraversal();
 		mEarlyDoorPressResource = {};
 		mEarlyDoorPressAttempted = false;
+		mEarlyQueueApproachDirectionX = 0;
 		mState = State::Idle;
 		mPath.path = nullptr;
 		mPath.targetNode = 0;
@@ -354,7 +379,7 @@ namespace core
 		auto reachedPos = moveDist >= posDist;
 		auto moveAmt = reachedPos ? moveDelta : moveDelta.normalisedCopy() * moveDist;
 
-		setPosition({ mPosition.sector(), mPosition.local() + moveAmt });
+		setPosition({ mPosition.sector(), mPosition.local() + moveAmt }, false);
 
 		return reachedPos;
 	}
@@ -381,6 +406,14 @@ namespace core
 		}
 
 		auto const& targetPos = mPath.path->nodes[mPath.targetNode].targetVertex->getPosition();
+		if (mBuilding && mPath.targetNode + 1 < mPath.path->nodes.size()
+			&& mBuilding->stopForAvailableQueuePosition(*this,
+				mPath.path->nodes[mPath.targetNode + 1].edge, targetPos,
+				getWalkSpeed() * frameTime))
+		{
+			mState = State::WaitingForTraversal;
+			return;
+		}
 		if (!moveToPosition(targetPos, frameTime, getWalkSpeed()))
 		{
 			return;
@@ -418,6 +451,7 @@ namespace core
 		task.destinationVertex = destinationNode.targetVertex;
 		task.request = mBuilding->createTraversalRequest(*this, task.edge,
 			task.sourceVertex, task.destinationVertex);
+		mEarlyQueueApproachDirectionX = 0;
 		mTraversalTask = std::move(task);
 	}
 
@@ -498,7 +532,7 @@ namespace core
 		auto alternativeEta = estimateRemainingPathSeconds(alternative, 0);
 		if (alternativeEta + policy.replanEtaMarginSeconds < currentEta)
 		{
-			setPath(std::move(alternative), true);
+			assignPath(std::move(alternative), true, false);
 		}
 	}
 
@@ -516,6 +550,12 @@ namespace core
 			mBuilding->releaseTraversal(mTraversalTask->request, mTraversalTask->permit);
 			mTraversalTask.reset();
 			mTraversalLocalGoal.reset();
+			if (mQueuedTraversalTask)
+			{
+				mTraversalTask = std::move(mQueuedTraversalTask);
+				mQueuedTraversalTask.reset();
+				mState = State::WaitingForTraversal;
+			}
 			return;
 		}
 		considerTraversalReplan();
@@ -523,17 +563,23 @@ namespace core
 
 	void Agent::cancelTraversal()
 	{
-		if (!mTraversalTask)
-		{
-			return;
-		}
+		if (!mTraversalTask && !mQueuedTraversalTask) return;
 
 		if (mBuilding)
 		{
-			mBuilding->cancelTraversal(mTraversalTask->request, mTraversalTask->permit);
-			mBuilding->releaseTraversal(mTraversalTask->request, mTraversalTask->permit);
+			if (mTraversalTask)
+			{
+				mBuilding->cancelTraversal(mTraversalTask->request, mTraversalTask->permit);
+				mBuilding->releaseTraversal(mTraversalTask->request, mTraversalTask->permit);
+			}
+			if (mQueuedTraversalTask)
+			{
+				mBuilding->cancelTraversal(mQueuedTraversalTask->request, mQueuedTraversalTask->permit);
+				mBuilding->releaseTraversal(mQueuedTraversalTask->request, mQueuedTraversalTask->permit);
+			}
 		}
 		mTraversalTask.reset();
+		mQueuedTraversalTask.reset();
 		mTraversalLocalGoal.reset();
 	}
 
@@ -580,6 +626,31 @@ namespace core
 			break;
 
 		case State::TraversingEdge:
+			// A same-sector Location edge may lead directly to a queued threshold.
+			// Stop and commit that unconstrained edge at the queue boundary so the
+			// following Door/Ladder request is created before reaching its centre.
+			if (mTraversalTask && mBuilding && mPath.path
+				&& mTraversalTask->edge->getType() == EdgeType::Location
+				&& mTraversalTask->destinationVertex->getSector().get() == getSector()
+				&& mPath.targetNode + 2 < mPath.path->nodes.size()
+				&& mBuilding->stopForAvailableQueuePosition(*this,
+					mPath.path->nodes[mPath.targetNode + 2].edge,
+					mTraversalTask->destinationVertex->getPosition(),
+					getWalkSpeed() * frameTime))
+			{
+				auto const& sourceNode = mPath.path->nodes[mPath.targetNode + 1];
+				auto const& destinationNode = mPath.path->nodes[mPath.targetNode + 2];
+				TraversalTask queued;
+				queued.edge = destinationNode.edge;
+				queued.sourceVertex = sourceNode.targetVertex;
+				queued.destinationVertex = destinationNode.targetVertex;
+				queued.request = mBuilding->createTraversalRequest(*this, queued.edge,
+					queued.sourceVertex, queued.destinationVertex);
+				mEarlyQueueApproachDirectionX = 0;
+				mQueuedTraversalTask = std::move(queued);
+				mState = State::AwaitingTraversalCommit;
+				break;
+			}
 			if (mTraversalTask && mTraversalTask->traversalTicksRemaining > 0)
 			{
 				--mTraversalTask->traversalTicksRemaining;

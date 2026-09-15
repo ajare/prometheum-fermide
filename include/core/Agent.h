@@ -68,13 +68,26 @@ namespace core
 
 		SectorPosition mPosition;
 
+		// Authored position and route are kept separate from transient locomotion.
+		// Simulation advances mPosition/mPath, while serialization and Reset use
+		// this immutable baseline.
+		SectorPosition mResetPosition;
+		std::shared_ptr<Path> mResetPath;
+		bool mResetPathActive{ false };
+
 		uint32_t mFlags;
 
 		State mState;
 
 		PathIterator mPath;
+		// Position before the current route began. Traversal requests use this (or
+		// the preceding path node) to retain the side from which the Agent approached.
+		Vector2 mPathStartPosition;
 
 		std::optional<TraversalTask> mTraversalTask;
+		// A queue request may be made while the preceding same-sector Location
+		// edge is still active, allowing the Agent to stop before the queue tail.
+		std::optional<TraversalTask> mQueuedTraversalTask;
 
 		// Traversal resources assign local goals; the Agent remains the sole owner
 		// of walking and advances itself during the movement phase.
@@ -85,6 +98,10 @@ namespace core
 		TraversalResourceId mEarlyDoorPressResource;
 		bool mEarlyDoorPressAttempted{ false };
 
+		// Set when locomotion stops at the outer edge of an available queue lane.
+		// +1 approaches from the left, -1 from the right, and 0 requests at the endpoint.
+		int mEarlyQueueApproachDirectionX{ 0 };
+
 	private:
 
 		bool childrenModified() const override;
@@ -93,11 +110,13 @@ namespace core
 
 		bool deserializeImpl(Serializer& serializer, SerializationWorkData& workData) override;
 
-		void setPosition(SectorPosition pos);
+		void setPosition(SectorPosition pos, bool authored = true);
 
 		void attachToBuilding(Building* building);
 
 		void assignPath(std::shared_ptr<Path> path, bool startPathing, bool markModified);
+
+		void clearRuntimePath();
 
 		bool moveToPosition(Vector2 const& pos, float frameTime, float speed);
 

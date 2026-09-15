@@ -16,6 +16,7 @@
 #include "core/ForceBridgeSectorObject.h"
 #include "core/Button.h"
 #include "core/WindowSectorObject.h"
+#include "core/YamlSerializer.h"
 
 #include <algorithm>
 #include <cmath>
@@ -237,7 +238,9 @@ namespace core
 		serializer.beginArray("agents");
 		for (auto const& [id, agent] : mAgents.entries())
 		{
-			auto const* sector = agent->getSector();
+			auto const& resetPosition = agent->mResetPosition.sector()
+				? agent->mResetPosition : agent->mPosition;
+			auto const* sector = resetPosition.sector();
 			if (!sector)
 			{
 				throw SerializationException("Cannot serialize a Building-owned Agent without a Sector");
@@ -246,11 +249,11 @@ namespace core
 			serializer.writeUint64("id", id.value);
 			agent->serialize(serializer, workData);
 			serializer.writeUint32("sector", sector->getIndex());
-			serializer.writeFloat("localX", agent->getLocalPosition().x);
-			serializer.writeFloat("localY", agent->getLocalPosition().y);
-			if (agent->mPath.path && !agent->mPath.path->nodes.empty())
+			serializer.writeFloat("localX", resetPosition.local().x);
+			serializer.writeFloat("localY", resetPosition.local().y);
+			if (agent->mResetPath && !agent->mResetPath->nodes.empty())
 			{
-				auto const& destination = agent->mPath.path->nodes.back().targetVertex;
+				auto const& destination = agent->mResetPath->nodes.back().targetVertex;
 				if (!destination || !destination->getSector())
 				{
 					throw SerializationException("Cannot serialize an Agent path without a destination Sector");
@@ -259,7 +262,7 @@ namespace core
 				serializer.writeUint32("destinationSector", destination->getSector()->getIndex());
 				serializer.writeFloat("destinationLocalX", destination->getSectorOffset().x);
 				serializer.writeFloat("destinationLocalY", destination->getSectorOffset().y);
-				serializer.writeBool("active", agent->mState != Agent::State::Idle);
+				serializer.writeBool("active", agent->mResetPathActive);
 				serializer.endMap();
 			}
 			serializer.endMap();
@@ -503,6 +506,7 @@ namespace core
 			auto* rawAgent = agent.get();
 			rawAgent->attachToBuilding(this);
 			rawAgent->mPosition = SectorPosition(sector.get(), localX, localY);
+			rawAgent->mResetPosition = rawAgent->mPosition;
 			sector->mAgents.insert(rawAgent);
 			mAgents.restore(id, std::move(agent));
 			mAgentIds.emplace(rawAgent, id);
@@ -525,11 +529,32 @@ namespace core
 					throw SerializationException("Serialized Agent path destination is unreachable");
 				}
 				rawAgent->assignPath(std::move(path), pathActive, false);
+				rawAgent->mResetPath = rawAgent->mPath.path;
+				rawAgent->mResetPathActive = pathActive;
 			}
 		}
 		serializer.endArray();
 		serializer.endMap();
 		return true;
+	}
+
+	void Building::resetSimulation()
+	{
+		auto const wasModified = isModified();
+		auto const wasPaused = mSimulationPaused;
+
+		auto output = YamlSerializer::toString();
+		SerializationWorkData writeData;
+		writeData.markSerializedUnmodified = false;
+		serialize(*output, writeData);
+		output->serialize();
+
+		auto input = YamlSerializer::fromString(output->getSerializedString());
+		input->deserialize();
+		SerializationWorkData readData;
+		deserialize(*input, readData);
+		if (wasModified) markModified();
+		if (wasPaused) pauseSimulation();
 	}
 
 	void Building::resetForDeserialization(std::string name, uint32_t cellsWide, uint32_t decksHigh)

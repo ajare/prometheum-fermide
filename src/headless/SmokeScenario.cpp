@@ -573,6 +573,10 @@ namespace
 		if (!building.canAddRoomLadder(room, 0, 1, &height, &diagnostic) || height != 3) return false;
 		auto lower = building.addRoomLadder(room, 0, 1);
 		auto upper = building.addRoomLadder(room, 2, 1);
+		core::Building::CreateLadderOptions defaultOptions{};
+		if (!building.getRoomLadderOptions(room, lower.ladder.index, defaultOptions)
+			|| std::abs(defaultOptions.agentSpacing - CORE_LADDER_AGENT_SPACING) > 0.001f)
+			return false;
 		if (std::static_pointer_cast<const core::LadderSectorObject>(
 			lower.ladder.sector->getObject(lower.ladder.index))->getLadder()->getDecksHigh() != 3) return false;
 		if (std::static_pointer_cast<const core::LadderSectorObject>(
@@ -1670,6 +1674,7 @@ namespace
 		}
 
 		bool observedFull = false;
+		bool observedQueuePosition = false;
 		bool cancelledWaiter = false;
 		uint64_t climbStarted = 0;
 		uint64_t climbFinished = 0;
@@ -1680,10 +1685,17 @@ namespace
 			auto resource = std::find_if(snapshot.traversalResources.begin(), snapshot.traversalResources.end(),
 				[&](auto const& value) { return value.id == created.traversalResource; });
 			if (resource == snapshot.traversalResources.end() || !resource->isLadder
-				|| resource->capacity != 1
+				|| resource->capacity != 1 || resource->queueLanes.size() != 2
 				|| resource->occupantCount + resource->admissionReservationCount > resource->capacity
 				|| resource->capacityPositions.size() != resource->capacity)
 				return false;
+			for (auto const& lane : resource->queueLanes)
+				if (any_of(lane.positions.begin(), lane.positions.end(), [&](auto const& position)
+					{ return position.position.distanceTo(lane.origin) <= 0.001f; })) return false;
+			observedQueuePosition = observedQueuePosition
+				|| any_of(snapshot.traversalRequests.begin(), snapshot.traversalRequests.end(),
+					[&](auto const& request) { return request.resource == created.traversalResource
+						&& request.hasQueuePosition && !request.hasCapacityPosition; });
 			if (resource->occupantCount == 1)
 			{
 				observedFull = true;
@@ -1709,7 +1721,7 @@ namespace
 			[&](auto const& value) { return value.id == created.traversalResource; });
 		// Two vertical units at 0.25 units/second require about 480 fixed ticks;
 		// this also detects accidentally using walking speed.
-		return observedFull && cancelledWaiter && climbStarted && climbFinished
+		return observedFull && observedQueuePosition && cancelledWaiter && climbStarted && climbFinished
 			&& climbFinished - climbStarted >= 470
 			&& building.lookupAgent(ids[0]).entity->getSector() == building.getSector(upper).get()
 			&& building.lookupAgent(ids[1]).entity->getSector() == building.getSector(upper).get()
@@ -1717,6 +1729,85 @@ namespace
 			&& resource != snapshot.traversalResources.end()
 			&& resource->occupantCount == 0 && resource->admissionReservationCount == 0
 			&& resource->admissionQueue.empty();
+	}
+
+	bool ladderQueuePositionsPreferAgentApproachSide()
+	{
+		core::Building building("Ladder queue approach", 8, 4);
+		auto lower = building.addCorridor(0, 0, 7);
+		auto upper = building.addCorridor(2, 0, 7);
+		core::Building::CreateLadderOptions options{ 3, false, true };
+		options.agentSpacing = 10.0f;
+		auto created = building.addLadder(0, 3, options);
+		uint32_t lowerApproachId, upperApproachId;
+		building.addSectorMarker(lower, 0, 1.0f, &lowerApproachId);
+		building.addSectorMarker(upper, 0, 6.0f, &upperApproachId);
+		building.finishBuild();
+
+		auto lowerApproach = building.getGraph()->getVertexByIdentifier(lowerApproachId);
+		auto upperApproach = building.getGraph()->getVertexByIdentifier(upperApproachId);
+		auto upperTarget = building.getGraph()->getClosestVertexInSector(
+			building.getSector(upper).get(), { 3.5f, 2.0f });
+		auto lowerTarget = building.getGraph()->getClosestVertexInSector(
+			building.getSector(lower).get(), { 3.5f, 0.0f });
+		if (!upperTarget || !lowerTarget) return false;
+
+		// Occupy the sole Ladder position so later Agents must claim queue spots
+		// before entering the queue footprint.
+		auto blocker = building.createAgent("Current climber", lower, 0, 3.5f);
+		auto blockerEntity = building.lookupAgent(blocker).entity;
+		auto blockerPath = building.getGraph()->calculatePath(blockerEntity, upperTarget);
+		if (!blockerPath) return false;
+		blockerEntity->setPath(std::move(blockerPath), true);
+		for (uint32_t tick = 0; tick < MaximumSimulationTicks
+			&& blockerEntity->getSector() != created.ladder.sector.get(); ++tick)
+			building.advanceTick();
+		if (blockerEntity->getSector() != created.ladder.sector.get()) return false;
+
+		auto lowerAgent = building.createAgent("Lower left approach", lower, 0, 1.0f);
+		auto upperAgent = building.createAgent("Upper right approach", upper, 0, 6.0f);
+		auto assignPath = [&](core::AgentId id, auto const& source, auto const& target)
+		{
+			auto agent = building.lookupAgent(id).entity;
+			auto path = building.getGraph()->calculatePath(agent, source, target);
+			if (!path) return false;
+			agent->setPath(std::move(path), true);
+			return true;
+		};
+		if (!assignPath(lowerAgent, lowerApproach, upperTarget)
+			|| !assignPath(upperAgent, upperApproach, lowerTarget)) return false;
+
+		for (uint32_t tick = 0; tick < MaximumSimulationTicks; ++tick)
+		{
+			building.advanceTick();
+			auto snapshot = building.getSimulationSnapshot();
+			if (snapshot.traversalRequests.size() < 2) continue;
+			auto resource = find_if(snapshot.traversalResources.begin(), snapshot.traversalResources.end(),
+				[&](auto const& value) { return value.id == created.traversalResource; });
+			if (resource == snapshot.traversalResources.end()) return false;
+			auto lowerRequest = find_if(snapshot.traversalRequests.begin(), snapshot.traversalRequests.end(),
+				[&](auto const& request) { return request.owner == lowerAgent; });
+			auto upperRequest = find_if(snapshot.traversalRequests.begin(), snapshot.traversalRequests.end(),
+				[&](auto const& request) { return request.owner == upperAgent; });
+			if (lowerRequest == snapshot.traversalRequests.end()
+				|| upperRequest == snapshot.traversalRequests.end()
+				|| !lowerRequest->hasQueuePosition || !upperRequest->hasQueuePosition) continue;
+			auto const& lowerLane = resource->queueLanes[lowerRequest->queueApproach];
+			auto const& upperLane = resource->queueLanes[upperRequest->queueApproach];
+			auto const lowerSpot = lowerLane.positions[lowerRequest->queuePosition].position;
+			auto const upperSpot = upperLane.positions[upperRequest->queuePosition].position;
+			auto lowerSnapshot = find_if(snapshot.agents.begin(), snapshot.agents.end(),
+				[&](auto const& agent) { return agent.id == lowerAgent; });
+			auto upperSnapshot = find_if(snapshot.agents.begin(), snapshot.agents.end(),
+				[&](auto const& agent) { return agent.id == upperAgent; });
+			return lowerSnapshot != snapshot.agents.end() && upperSnapshot != snapshot.agents.end()
+				&& lowerSnapshot->globalPosition.x < lowerLane.origin.x
+				&& upperSnapshot->globalPosition.x > upperLane.origin.x
+				&& lowerSpot.x >= lowerSnapshot->globalPosition.x - 0.001f
+				&& upperSpot.x <= upperSnapshot->globalPosition.x + 0.001f
+				&& lowerSpot.x < lowerLane.origin.x && upperSpot.x > upperLane.origin.x;
+		}
+		return false;
 	}
 
 	bool extensibleForceBridgeCompletesThroughPhysicalControl()
@@ -3432,6 +3523,11 @@ int main()
 		if (!finiteCapacityLadderSerializesAdmissionAndClimbsAtConfiguredSpeed())
 		{
 			std::cerr << "FAIL: finite ladder capacity, reservations, cancellation, or climb speed failed\n";
+			return 1;
+		}
+		if (!ladderQueuePositionsPreferAgentApproachSide())
+		{
+			std::cerr << "FAIL: Ladder queue spots ignored the Agents' approach sides\n";
 			return 1;
 		}
 		if (!directionalLadderBoundsBatchesAndPreventsOpposingAdmission())

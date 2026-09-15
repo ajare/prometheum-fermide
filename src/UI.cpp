@@ -4312,6 +4312,22 @@ void renderToolbar(shared_ptr<core::Building> building)
 			building->wakeAllAgents();
 		}
 
+		ImGui::SameLine();
+		if (ImGui::Button("Reset"))
+		{
+			try
+			{
+				building->resetSimulation();
+				clearDocumentState(false);
+				gUISettings.worldPaused = building->isSimulationPaused();
+			}
+			catch (std::exception const& error)
+			{
+				core::addLogMessage("Simulation", 0, core::LogLevel::Error,
+					"Could not reset simulation: " + string(error.what()));
+			}
+		}
+
 
 		// Select visible Layer
 		vector<string> layers = {
@@ -4955,7 +4971,7 @@ void renderLadderPanel(shared_ptr<core::Building> const& building,
 	static core::Building const* editedBuilding = nullptr;
 	static core::SectorObject const* editedObject = nullptr;
 	static bool extensible = false, initiallyExtended = true;
-	static float agentSpacing = CORE_AGENT_MAX_HEIGHT;
+	static float agentSpacing = CORE_LADDER_AGENT_SPACING;
 	static int directionalBatchLimit = 4;
 	core::Building::CreateLadderOptions current{};
 	if ((editedBuilding != building.get() || editedObject != object.get())
@@ -5611,7 +5627,7 @@ void renderSelectedObjectPanel(shared_ptr<core::Building> const& building)
 			static uint32_t editedSector = ~0u;
 			static bool extensible = false;
 			static bool initiallyExtended = true;
-			static float agentSpacing = CORE_AGENT_MAX_HEIGHT;
+			static float agentSpacing = CORE_LADDER_AGENT_SPACING;
 			static int directionalBatchLimit = 4;
 			core::Building::CreateLadderOptions current{ 0, false, true };
 			if ((editedBuilding != building.get() || editedSector != gSelectedSector->getIndex())

@@ -1325,6 +1325,11 @@ namespace core
 		auto traversalResource = createLadderTraversalResource("Ladder capacity", ladder,
 			SectorId{ (uint64_t)sectorIndex + 1 }, options.agentSpacing,
 			options.directionalBatchLimit);
+		configureLadderQueueLanes(traversalResource,
+			{ SectorId{ (uint64_t)foreSector0->getIndex() + 1 },
+				SectorId{ (uint64_t)foreSector1->getIndex() + 1 } },
+			{ Vector2{ (float)x + 0.5f, (float)y0 },
+				Vector2{ (float)x + 0.5f, (float)y1 } });
 		ladder->configureTraversal(traversalResource);
 		auto registerExtensionControl = [&](CreateObjectResult& control)
 		{
@@ -3496,6 +3501,10 @@ namespace core
 		auto traversalResource = createLadderTraversalResource("Ladder capacity", ladder,
 			SectorId{ (uint64_t)sectorIndex + 1 }, options.agentSpacing,
 			options.directionalBatchLimit);
+		auto const location = SectorId{ (uint64_t)sectorIndex + 1 };
+		configureLadderQueueLanes(traversalResource, { location, location },
+			{ Vector2{ (float)x + 0.5f, (float)y0 },
+				Vector2{ (float)x + 0.5f, (float)y1 } });
 		ladder->configureTraversal(traversalResource);
 		auto registerExtensionControl = [&](CreateObjectResult& control)
 		{
@@ -3837,12 +3846,20 @@ namespace core
 			{
 				auto source = agent.mTraversalTask->sourceVertex->getPosition();
 				agent.setPosition({ const_cast<Sector*>(agent.getSector()),
-					source - agent.getSector()->getPosition() });
+					source - agent.getSector()->getPosition() }, false);
 			}
 			cancelTraversal(agent.mTraversalTask->request, agent.mTraversalTask->permit, false);
 			releaseTraversal(agent.mTraversalTask->request, agent.mTraversalTask->permit);
 			agent.mTraversalTask.reset();
 			agent.mTraversalLocalGoal.reset();
+		}
+		if (agent.mQueuedTraversalTask)
+		{
+			cancelTraversal(agent.mQueuedTraversalTask->request,
+				agent.mQueuedTraversalTask->permit, false);
+			releaseTraversal(agent.mQueuedTraversalTask->request,
+				agent.mQueuedTraversalTask->permit);
+			agent.mQueuedTraversalTask.reset();
 		}
 		agent.mPath.path.reset();
 		agent.mPath.targetNode = 0;
@@ -4093,7 +4110,8 @@ namespace core
 				auto destination = mGraph->getClosestVertexInSector(
 					destinationSector.get(), intent.destinationPosition);
 				auto path = mGraph->calculatePath(agent, source, destination);
-				if (path && !path->nodes.empty()) agent->setPath(std::move(path), intent.wasPathing);
+				if (path && !path->nodes.empty())
+					agent->assignPath(std::move(path), intent.wasPathing, false);
 			}
 			catch (Exception const&)
 			{
@@ -4809,11 +4827,20 @@ namespace core
 			edge->getType(), sourceSector, destinationSector, source->getPosition(), destination->getPosition())));
 		auto request = mTraversalRequests.find(id);
 		request->mResource = edge->getTraversalResourceId();
+		request->mPreferredQueueSide = agent.mEarlyQueueApproachDirectionX;
+		request->mQueueSelectionPosition = request->mPreferredQueueSide
+			? agent.getGlobalPosition() : agent.mPathStartPosition;
+		if (!request->mPreferredQueueSide && agent.mPath.path && agent.mPath.targetNode > 0
+			&& agent.mPath.targetNode - 1 < agent.mPath.path->nodes.size())
+		{
+			auto const& previous = agent.mPath.path->nodes[agent.mPath.targetNode - 1].targetVertex;
+			if (previous) request->mQueueSelectionPosition = previous->getPosition();
+		}
 		if (auto resource = mTraversalResources.find(request->mResource); resource)
 		{
 			if (resource->mExtensible && resource->mExtensionRequestLeases.insert(id).second)
 				resource->mExtensible->acquireExtensionLease();
-			if (resource->mDoor && !resource->mLiftCoordinator) attachDoorQueueTicket(id, *resource);
+			if (resource->mDoor && !resource->mLiftCoordinator) attachQueueTicket(id, *resource);
 			else if ((resource->mLadder || resource->mStaircase)
 				&& isLadderAdmission(*request, *resource))
 				attachLadderAdmissionRequest(id, *resource);
@@ -4829,30 +4856,123 @@ namespace core
 		return id;
 	}
 
-	void Building::attachDoorQueueTicket(TraversalRequestId requestId, TraversalResource& resource)
+	void Building::attachQueueTicket(TraversalRequestId requestId, TraversalResource& resource)
 	{
 		auto request = mTraversalRequests.find(requestId);
 		if (!request || request->mQueueTicket)
 		{
 			return;
 		}
+		uint32_t approach = ~0u;
+		float closestEndpoint = numeric_limits<float>::max();
 		for (uint32_t i = 0; i < resource.mQueueLanes.size(); ++i)
 		{
-			if (resource.mQueueLanes[i].sector != request->mSourceSector)
+			auto const& lane = resource.mQueueLanes[i];
+			if (lane.sector != request->mSourceSector) continue;
+			auto const distance = lane.origin.distanceTo(request->mSourceEndpoint);
+			if (distance < closestEndpoint)
 			{
-				continue;
+				approach = i;
+				closestEndpoint = distance;
 			}
-			request->mQueueTicket = QueueTicketId{ mNextQueueTicketValue++ };
-			request->mQueuedAtTick = mSimulationTick;
-			request->mQueueApproach = i;
-			resource.mQueueLanes[i].queue.push_back(requestId);
-			refreshDoorQueuePositions(resource);
-			return;
 		}
+		if (approach == ~0u) return;
+		request->mQueueTicket = QueueTicketId{ mNextQueueTicketValue++ };
+		request->mQueuedAtTick = mSimulationTick;
+		request->mQueueApproach = approach;
+		resource.mQueueLanes[approach].queue.push_back(requestId);
+		refreshQueuePositions(resource);
 	}
 
-	void Building::refreshDoorQueuePositions(TraversalResource& resource)
+	bool Building::stopForAvailableQueuePosition(Agent& agent,
+		shared_ptr<const Edge> const& edge, Vector2 const& endpoint,
+		float movementDistance)
 	{
+		if (!edge || movementDistance < 0.0f || !agent.getSector()) return false;
+		auto resource = mTraversalResources.find(edge->getTraversalResourceId());
+		// Validate early queue interception against Ladders first. Door and Lift
+		// queues retain their established behavior until this policy is proven.
+		if (!resource || !resource->mLadder) return false;
+
+		auto const sourceSector = SectorId{ (uint64_t)agent.getSector()->getIndex() + 1 };
+		DoorQueueLane const* lane = nullptr;
+		float closestEndpoint = numeric_limits<float>::max();
+		for (auto const& candidate : resource->mQueueLanes)
+		{
+			if (candidate.sector != sourceSector) continue;
+			auto const distance = candidate.origin.distanceTo(endpoint);
+			if (distance < closestEndpoint)
+			{
+				lane = &candidate;
+				closestEndpoint = distance;
+			}
+		}
+		if (!lane || lane->positions.empty()) return false;
+
+		auto const position = agent.getGlobalPosition();
+		int const direction = position.x < lane->origin.x - 0.001f ? 1
+			: position.x > lane->origin.x + 0.001f ? -1 : 0;
+		if (direction == 0) return false;
+
+		bool hasOccupiedPosition = false;
+		bool hasAvailablePosition = false;
+		float availablePosition = direction > 0
+			? numeric_limits<float>::lowest() : numeric_limits<float>::max();
+		for (uint32_t i = 0; i < lane->positions.size(); ++i)
+		{
+			auto const& queuePosition = lane->positions[i];
+			auto const onApproachSide = direction > 0
+				? queuePosition.x <= lane->origin.x + 0.001f
+				: queuePosition.x >= lane->origin.x - 0.001f;
+			auto const notBehindAgent = direction > 0
+				? queuePosition.x >= position.x - 0.001f
+				: queuePosition.x <= position.x + 0.001f;
+			if (!onApproachSide || !notBehindAgent) continue;
+			if (i < lane->positionOwners.size() && lane->positionOwners[i])
+			{
+				hasOccupiedPosition = true;
+				continue;
+			}
+			// Choose the available spot nearest the endpoint: with compact queue
+			// assignment this is immediately outside the occupied tail.
+			hasAvailablePosition = true;
+			if (direction > 0) availablePosition = max(availablePosition, queuePosition.x);
+			else availablePosition = min(availablePosition, queuePosition.x);
+		}
+
+		bool ladderCannotAdmitImmediately = false;
+		if (resource->mLadder)
+		{
+			bool noCapacity = true;
+			for (uint32_t i = 0; i < resource->mCapacity; ++i)
+				noCapacity = noCapacity
+					&& (resource->mOccupants[i] || resource->mAdmissionReservations[i]);
+			auto const approachingDirection = endpoint.y
+				< resource->mLadder->getPosition().y + resource->mLadder->getSize().y * 0.5f
+				? TraversalDirection::Ascending : TraversalDirection::Descending;
+			ladderCannotAdmitImmediately = noCapacity
+				|| (resource->mActiveDirection != TraversalDirection::None
+					&& resource->mActiveDirection != approachingDirection);
+		}
+
+		// With no established queue and immediately available Ladder capacity, the
+		// first Agent proceeds to the endpoint. A queued tail or unavailable Ladder
+		// admission claims the nearest forward spot before the Agent reaches it.
+		if (!hasAvailablePosition
+			|| (!hasOccupiedPosition && !ladderCannotAdmitImmediately)) return false;
+		auto const reachesQueue = direction > 0
+			? position.x + movementDistance >= availablePosition - 0.001f
+			: position.x - movementDistance <= availablePosition + 0.001f;
+		if (!reachesQueue) return false;
+
+		agent.mEarlyQueueApproachDirectionX = direction;
+		return true;
+	}
+
+	void Building::refreshQueuePositions(TraversalResource& resource)
+	{
+		// Doors and Ladders intentionally share this allocator: prefer proximity
+		// to the resource endpoint, then proximity to the waiting Agent.
 		for (auto& lane : resource.mQueueLanes)
 		{
 			map<TraversalRequestId, uint32_t> previousPositions;
@@ -4879,15 +4999,25 @@ namespace core
 					continue;
 				}
 				auto agent = mAgents.find(request->mOwner);
+				auto const selectionPosition = request->mHasHeldQueuePosition && agent
+					? agent->getGlobalPosition() : request->mQueueSelectionPosition;
 				uint32_t position = ~0u;
 				float bestObjectDistance = numeric_limits<float>::max();
 				float bestAgentDistance = numeric_limits<float>::max();
 				for (uint32_t candidate = 0; candidate < lane.positionOwners.size(); ++candidate)
 				{
 					if (lane.positionOwners[candidate]) continue;
+					if ((request->mPreferredQueueSide > 0
+							&& (lane.positions[candidate].x > lane.origin.x + 0.001f
+								|| lane.positions[candidate].x
+									< request->mQueueSelectionPosition.x - 0.001f))
+						|| (request->mPreferredQueueSide < 0
+							&& (lane.positions[candidate].x < lane.origin.x - 0.001f
+								|| lane.positions[candidate].x
+									> request->mQueueSelectionPosition.x + 0.001f)))
+						continue;
 					auto objectDistance = lane.positions[candidate].distanceTo(request->mSourceEndpoint);
-					auto agentDistance = agent
-						? lane.positions[candidate].distanceTo(agent->getGlobalPosition()) : 0.0f;
+					auto agentDistance = lane.positions[candidate].distanceTo(selectionPosition);
 					if (objectDistance < bestObjectDistance - 0.001f
 						|| (abs(objectDistance - bestObjectDistance) <= 0.001f
 							&& agentDistance < bestAgentDistance - 0.001f))
@@ -4901,6 +5031,7 @@ namespace core
 				{
 					lane.positionOwners[position] = requestId;
 					request->mQueuePosition = position;
+					request->mHasHeldQueuePosition = true;
 					if (agent)
 					{
 						agent->mTraversalLocalGoal = lane.positions[position];
@@ -4944,7 +5075,8 @@ namespace core
 		for (auto const& [resourceId, resource] : mTraversalResources.entries())
 		{
 			(void)resourceId;
-			if (!resource->mDoor) continue;
+			if (none_of(resource->mQueueLanes.begin(), resource->mQueueLanes.end(),
+				[](auto const& lane) { return (bool)lane.sector; })) continue;
 			bool refresh = false;
 			for (auto& lane : resource->mQueueLanes)
 			{
@@ -4986,7 +5118,7 @@ namespace core
 					}
 				}
 			}
-			if (refresh) refreshDoorQueuePositions(*resource);
+			if (refresh) refreshQueuePositions(*resource);
 		}
 		for (auto requestId : unreachableRequests)
 		{
@@ -5049,7 +5181,7 @@ namespace core
 						auto rhs = mTraversalRequests.find(right);
 						return lhs && rhs ? lhs->mQueueTicket < rhs->mQueueTicket : left < right;
 					});
-					refreshDoorQueuePositions(*resource);
+					refreshQueuePositions(*resource);
 					break;
 				}
 			}
@@ -5073,7 +5205,7 @@ namespace core
 			{
 				return mTraversalRequests.find(lhs)->mQueueTicket < mTraversalRequests.find(rhs)->mQueueTicket;
 			});
-			refreshDoorQueuePositions(*resource);
+			refreshQueuePositions(*resource);
 		}
 		if (auto agent = mAgents.find(request->mOwner); agent && agent->mTraversalTask)
 		{
@@ -5155,7 +5287,7 @@ namespace core
 			queueChanged = true;
 			grantTraversalRequest(selected);
 		}
-		if (queueChanged) refreshDoorQueuePositions(resource);
+		if (queueChanged) refreshQueuePositions(resource);
 	}
 
 	void Building::releaseDoorQueueOwnership(TraversalRequestId requestId, TraversalResource& resource)
@@ -5177,7 +5309,7 @@ namespace core
 				agent->mTraversalLocalGoal.reset();
 			}
 		}
-		refreshDoorQueuePositions(resource);
+		refreshQueuePositions(resource);
 	}
 
 	bool Building::isLadderAdmission(TraversalRequest const& request,
@@ -5230,6 +5362,7 @@ namespace core
 					? TraversalDirection::Ascending : TraversalDirection::Descending;
 			}
 		}
+		if (resource.mLadder) attachQueueTicket(requestId, resource);
 		if (find(resource.mAdmissionQueue.begin(), resource.mAdmissionQueue.end(), requestId)
 			== resource.mAdmissionQueue.end())
 		{
@@ -5313,13 +5446,32 @@ namespace core
 				[&](auto id)
 				{
 					auto request = mTraversalRequests.find(id);
-					return request && request->mState == TraversalRequestState::Pending
-						&& request->mDirection == resource.mActiveDirection;
+					if (!request || request->mState != TraversalRequestState::Pending
+						|| request->mDirection != resource.mActiveDirection) return false;
+					if (!resource.mLadder) return true;
+					auto agent = mAgents.find(request->mOwner);
+					if (agent && request->mPreferredQueueSide == 0
+						&& agent->getGlobalPosition().distanceTo(request->mSourceEndpoint) <= 0.001f)
+						return true;
+					if (request->mQueueApproach >= resource.mQueueLanes.size()
+						|| request->mQueuePosition == ~0u) return false;
+					auto const& lane = resource.mQueueLanes[request->mQueueApproach];
+					return agent && request->mQueuePosition < lane.positions.size()
+						&& agent->getGlobalPosition().distanceTo(
+							lane.positions[request->mQueuePosition]) <= 0.001f;
 				});
 			if (selected == resource.mAdmissionQueue.end()) break;
 			auto requestId = *selected;
 			resource.mAdmissionQueue.erase(selected);
 			auto request = mTraversalRequests.find(requestId);
+			if (resource.mLadder)
+			{
+				auto& lane = resource.mQueueLanes[request->mQueueApproach];
+				lane.queue.erase(remove(lane.queue.begin(), lane.queue.end(), requestId), lane.queue.end());
+				request->mQueuePosition = ~0u;
+				if (auto agent = mAgents.find(request->mOwner)) agent->mTraversalLocalGoal.reset();
+				refreshQueuePositions(resource);
+			}
 			resource.mAdmissionReservations[position] = requestId;
 			request->mCapacityPosition = position;
 			++resource.mDirectionalBatchCount;
@@ -5334,11 +5486,19 @@ namespace core
 	{
 		resource.mAdmissionQueue.erase(remove(resource.mAdmissionQueue.begin(),
 			resource.mAdmissionQueue.end(), requestId), resource.mAdmissionQueue.end());
+		for (auto& lane : resource.mQueueLanes)
+			lane.queue.erase(remove(lane.queue.begin(), lane.queue.end(), requestId), lane.queue.end());
 		for (auto& reservation : resource.mAdmissionReservations)
 		{
 			if (reservation == requestId) reservation = {};
 		}
-		if (auto request = mTraversalRequests.find(requestId)) request->mCapacityPosition = ~0u;
+		if (auto request = mTraversalRequests.find(requestId))
+		{
+			request->mCapacityPosition = ~0u;
+			request->mQueuePosition = ~0u;
+			if (auto agent = mAgents.find(request->mOwner)) agent->mTraversalLocalGoal.reset();
+		}
+		refreshQueuePositions(resource);
 	}
 
 	void Building::releaseLadderOccupancy(AgentId agentId, TraversalResource& resource)
@@ -5435,6 +5595,14 @@ namespace core
 			}
 			if (resource->mLadder || resource->mStaircase)
 			{
+				if (resource->mLadder && resource->mExtensible
+					&& resource->mExtensible->isExtended() && resource->mPreparationOperator)
+				{
+					resource->mActivePreparation = {};
+					resource->mPreparationOperator = {};
+					resource->mSharedPreparationOperation = {};
+					refreshQueuePositions(*resource);
+				}
 				if (isLadderAdmission(*request, *resource))
 				{
 					if (!resource->mEnabled)
@@ -5903,7 +6071,7 @@ namespace core
 				auto rhs = mTraversalRequests.find(right);
 				return lhs && rhs ? lhs->mQueueTicket < rhs->mQueueTicket : left < right;
 			});
-			refreshDoorQueuePositions(*landing);
+			refreshQueuePositions(*landing);
 			break;
 		}
 		return true;
@@ -6010,8 +6178,8 @@ namespace core
 					auto location = mSectors[(size_t)resource.mLiftSector.value - 1].get();
 					auto global = agent->getGlobalPosition();
 					global.y = resource.mLiftPosition;
-					agent->setPosition({ location, global - location->getPosition() });
-					if (agent->getState() != Agent::State::Idle) agent->clearPath();
+					agent->setPosition({ location, global - location->getPosition() }, false);
+					if (agent->getState() != Agent::State::Idle) agent->clearRuntimePath();
 				}
 				assigned.push_back(passenger);
 				continue;
@@ -6046,7 +6214,7 @@ namespace core
 			auto path = make_shared<Path>();
 			path->nodes.push_back({ nullptr, source, 0.0f });
 			path->nodes.push_back({ landingEdge, destination, landingEdge->getWeight(destination, agent, true) });
-			agent->setPath(std::move(path), true);
+			agent->assignPath(std::move(path), true, false);
 			assigned.push_back(passenger);
 		}
 		for (auto passenger : assigned) resource.mLiftExitAtSafeStop.erase(passenger);
@@ -6190,7 +6358,7 @@ namespace core
 				auto location = mSectors[(size_t)resource.mLiftSector.value - 1].get();
 				auto local = resource.mCapacityPositions[position];
 				local.y += resource.mLiftPosition - location->getPosition().y;
-				actor->setPosition({ location, local });
+				actor->setPosition({ location, local }, false);
 			}
 			return;
 		}
@@ -6292,7 +6460,7 @@ namespace core
 			}
 			if (!request->mQueueTicket)
 			{
-				if (coordinator->mLift) attachDoorQueueTicket(requestId, edgeResource);
+				if (coordinator->mLift) attachQueueTicket(requestId, edgeResource);
 				else
 				{
 					request->mQueueTicket = QueueTicketId{ mNextQueueTicketValue++ };
@@ -6394,7 +6562,7 @@ namespace core
 				laneQueue.erase(remove(laneQueue.begin(), laneQueue.end(), requestId), laneQueue.end());
 				request->mQueuePosition = ~0u;
 				if (actor) actor->mTraversalLocalGoal.reset();
-				refreshDoorQueuePositions(*boardingLanding);
+				refreshQueuePositions(*boardingLanding);
 			}
 			if (!request->mPreparationLease)
 				request->mPreparationLease = acquireDoorOpenLease(*boardingLanding,
@@ -6412,7 +6580,7 @@ namespace core
 				laneQueue.erase(remove(laneQueue.begin(), laneQueue.end(), requestId), laneQueue.end());
 				request->mQueuePosition = ~0u;
 				actor->mTraversalLocalGoal.reset();
-				refreshDoorQueuePositions(*boardingLanding);
+				refreshQueuePositions(*boardingLanding);
 			}
 			request->mCrossingLane = (uint32_t)distance(boardingLanding->mCrossingOwners.begin(), lane);
 			*lane = requestId;
@@ -6482,7 +6650,7 @@ namespace core
 						{
 							auto transit = mSectors[(size_t)coordinator->mLiftSector.value - 1].get();
 							actor->setPosition({ transit,
-								request->mDestinationEndpoint - transit->getPosition() });
+								request->mDestinationEndpoint - transit->getPosition() }, false);
 						}
 					}
 					grantTraversalRequest(requestId);
@@ -6671,7 +6839,7 @@ namespace core
 					resource.mActivePreparation = {};
 					resource.mPreparationOperator = {};
 					resource.mSharedPreparationOperation = {};
-					refreshDoorQueuePositions(resource);
+					refreshQueuePositions(resource);
 					tryGrantDoorQueue(resource);
 				}
 				return;
@@ -6700,7 +6868,7 @@ namespace core
 			resource.mActivePreparation = {};
 			resource.mPreparationOperator = {};
 			resource.mSharedPreparationOperation = {};
-			refreshDoorQueuePositions(resource);
+			refreshQueuePositions(resource);
 		}
 
 		if (resource.mDoor->isOpen() && !failedPreparation
@@ -6758,7 +6926,7 @@ namespace core
 
 		resource.mActivePreparation = interactionId;
 		resource.mPreparationOperator = requestId;
-		refreshDoorQueuePositions(resource);
+		refreshQueuePositions(resource);
 		resource.mSharedPreparationOperation = interaction->mOperations.front().first;
 		for (auto const& [candidateId, candidate] : mTraversalRequests.entries())
 		{
@@ -6794,6 +6962,10 @@ namespace core
 		{
 			if (resource.mLadder)
 			{
+				resource.mActivePreparation = {};
+				resource.mPreparationOperator = {};
+				resource.mSharedPreparationOperation = {};
+				refreshQueuePositions(resource);
 				attachLadderAdmissionRequest(requestId, resource);
 				tryGrantLadderAdmissions(resource);
 			}
@@ -6838,6 +7010,7 @@ namespace core
 			resource.mActivePreparation = {};
 			resource.mPreparationOperator = {};
 			resource.mSharedPreparationOperation = {};
+			if (resource.mLadder) refreshQueuePositions(resource);
 			if (request->mState != TraversalRequestState::Pending) return;
 			if (resource.mExtensible->isExtended())
 			{
@@ -6864,6 +7037,7 @@ namespace core
 		resource.mActivePreparation = interactionId;
 		resource.mPreparationOperator = requestId;
 		resource.mSharedPreparationOperation = interaction->mOperations.front().first;
+		if (resource.mLadder) refreshQueuePositions(resource);
 		request->mPreparationRequested = true;
 		request->mPreparationOperation = resource.mSharedPreparationOperation;
 	}
@@ -6915,11 +7089,15 @@ namespace core
 		auto request = mTraversalRequests.find(requestId);
 		auto permit = mTraversalPermits.find(permitId);
 		auto owner = getAgentId(&agent);
+		auto const commitsAtQueueBoundary = request && agent.mQueuedTraversalTask
+			&& request->mEdgeType == EdgeType::Location
+			&& request->mSourceSector == request->mDestinationSector;
 		if (!request || !permit || !destination || request->mOwner != owner || permit->mOwner != owner
 			|| permit->mRequest != requestId || request->mPermit != permitId
 			|| request->mState != TraversalRequestState::Granted
 			|| permit->mState != TraversalPermitState::Active
-			|| agent.getGlobalPosition().distanceTo(request->mDestinationEndpoint) > 0.001f)
+			|| (!commitsAtQueueBoundary
+				&& agent.getGlobalPosition().distanceTo(request->mDestinationEndpoint) > 0.001f))
 		{
 			return false;
 		}
@@ -6963,7 +7141,8 @@ namespace core
 		if (sourceSector != destinationSector.get())
 		{
 			sourceSector->exitAgent(&agent);
-			destinationSector->enterAgent(&agent, destination);
+			destinationSector->enterAgent(&agent,
+				SectorPosition(destinationSector.get(), destination->getSectorOffset()), false);
 		}
 
 		if (auto landing = mTraversalResources.find(request->mResource);
@@ -6987,7 +7166,7 @@ namespace core
 					local.x += lift->mLiftPosition - destinationSector->getPosition().x;
 				else
 					local.y += lift->mLiftPosition - destinationSector->getPosition().y;
-				agent.setPosition({ destinationSector.get(), local });
+				agent.setPosition({ destinationSector.get(), local }, false);
 			}
 			else if (request->mSourceSector == lift->mLiftSector
 				&& request->mDestinationSector != lift->mLiftSector)
@@ -7954,6 +8133,67 @@ namespace core
 		return id;
 	}
 
+	void Building::configureLadderQueueLanes(TraversalResourceId resourceId,
+		array<SectorId, 2> const& sectors, array<Vector2, 2> const& endpoints)
+	{
+		auto resource = mTraversalResources.find(resourceId);
+		if (!resource || !resource->mLadder)
+			throw invalid_argument("Ladder queue lanes require a Ladder traversal resource");
+
+		auto const halfWidth = CORE_AGENT_MAX_WIDTH * 0.5f;
+		auto const spacing = (float)CORE_DOOR_QUEUE_STOP_WIDTH;
+		for (uint32_t approach = 0; approach < resource->mQueueLanes.size(); ++approach)
+		{
+			if (!sectors[approach] || sectors[approach].value > mSectors.size())
+				throw invalid_argument("Ladder queue lane has an invalid approach sector");
+			auto sector = mSectors[(size_t)sectors[approach].value - 1];
+			auto const endpoint = endpoints[approach];
+			auto positionFits = [&](float positionX)
+			{
+				if (positionX - halfWidth < sector->getCellX0() - 0.001f
+					|| positionX + halfWidth > sector->getCellX1() + 1.0f + 0.001f
+					|| endpoint.y < sector->getCellY0() - 0.001f
+					|| endpoint.y + CORE_AGENT_MAX_HEIGHT > sector->getCellY1() + 1.0f + 0.001f)
+					return false;
+				auto const cellX = min(sector->getCellX1(), (uint32_t)floor(positionX));
+				auto const cellY = min(sector->getCellY1(), (uint32_t)floor(endpoint.y));
+				return mLayers[sector->getLayerIndex()]
+					->getCellDefinition(cellX, cellY).isTraversableOnFoot();
+			};
+
+			// Unlike a Door, the Ladder endpoint itself must remain clear for
+			// mounting and dismounting. Queue positions therefore begin at step 1.
+			vector<Vector2> positions;
+			bool scanLeft = true, scanRight = true;
+			for (uint32_t step = 1; scanLeft || scanRight; ++step)
+			{
+				auto const distance = step * spacing;
+				auto const left = endpoint.x - distance;
+				auto const right = endpoint.x + distance;
+				if (scanLeft)
+				{
+					scanLeft = positionFits(left);
+					if (scanLeft) positions.push_back({ left, endpoint.y });
+				}
+				if (scanRight)
+				{
+					scanRight = positionFits(right);
+					if (scanRight) positions.push_back({ right, endpoint.y });
+				}
+			}
+
+			auto& lane = resource->mQueueLanes[approach];
+			lane.sector = sectors[approach];
+			lane.origin = endpoint;
+			lane.direction = Vector2::UNIT_X;
+			lane.extent = positions.empty() ? 0.0f : spacing;
+			for (auto const& position : positions)
+				lane.extent = max(lane.extent, abs(position.x - endpoint.x));
+			lane.positions = std::move(positions);
+			lane.positionOwners.assign(lane.positions.size(), {});
+		}
+	}
+
 	bool Building::configureDoorQueueLane(TraversalResourceId resourceId, SectorId sectorId,
 		Vector2 origin, Vector2 direction, float extent)
 	{
@@ -8547,7 +8787,7 @@ namespace core
 					auto local = resource.mCapacityPositions[i];
 					if (resource.mShuttle) local.x += resource.mLiftPosition - transit->getPosition().x;
 					else local.y += resource.mLiftPosition - transit->getPosition().y;
-					passenger->setPosition({ transit, local });
+					passenger->setPosition({ transit, local }, false);
 				}
 		}
 	}

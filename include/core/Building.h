@@ -107,7 +107,7 @@ namespace core
 			uint32_t decksHigh;
 			bool extensible;  // implies controlled
 			bool startExtended;
-			float agentSpacing{ CORE_AGENT_MAX_HEIGHT };
+			float agentSpacing{ CORE_LADDER_AGENT_SPACING };
 			uint32_t directionalBatchLimit{ 4 };
 		};
 
@@ -654,9 +654,17 @@ namespace core
 
 		void allocateExtensiblePreparation(TraversalRequestId requestId, TraversalResource& resource);
 
-		void attachDoorQueueTicket(TraversalRequestId requestId, TraversalResource& resource);
+		void attachQueueTicket(TraversalRequestId requestId, TraversalResource& resource);
 
-		void refreshDoorQueuePositions(TraversalResource& resource);
+		void refreshQueuePositions(TraversalResource& resource);
+
+		bool stopForAvailableQueuePosition(Agent& agent,
+			std::shared_ptr<const Edge> const& edge, Vector2 const& endpoint,
+			float movementDistance);
+
+		void configureLadderQueueLanes(TraversalResourceId resource,
+			std::array<SectorId, 2> const& sectors,
+			std::array<Vector2, 2> const& endpoints);
 
 		void updateTraversalProgressAndTimeouts();
 
@@ -1180,6 +1188,10 @@ namespace core
 		float estimateTraversalDelay(TraversalResourceId resource, SectorId sourceSector) const;
 
 		void wakeAllAgents();
+
+		// Restore authored Agent routes/positions and reconstruct all simulated
+		// objects in their configured initial state.
+		void resetSimulation();
 
 		// Rendering supplies elapsed wall time here.  It is accumulated and only
 		// whole fixed simulation ticks are executed.

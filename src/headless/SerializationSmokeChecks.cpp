@@ -531,6 +531,14 @@ agents: []
 		require(shouldRenderLadderGeometry(CORE_LAYER_BACK, true)
 			&& shouldRenderLadderGeometry(CORE_LAYER_FORE, true),
 			"Ladder geometry was suppressed from a visible or clipped Fore-layer pass");
+		require(shouldRenderForeContentAfterTransit(core::SectorType::Ladder),
+			"Clipped sector Ladder geometry is rendered in front of its Location contents");
+		require(!shouldRenderLadderGeometryAfterSectorContents(),
+			"Sector Ladder geometry is redrawn in front of its occupying Agents");
+		require(!shouldRenderSectorAgents(core::SectorType::Ladder, CORE_LAYER_BACK, false)
+			&& shouldRenderSectorAgents(core::SectorType::Ladder, CORE_LAYER_FORE, false)
+			&& shouldRenderSectorAgents(core::SectorType::Ladder, CORE_LAYER_BACK, true),
+			"Sector Ladder Agents do not obey the Ladder's foreground aperture clipping");
 		core::Building edgeBuilding("Edge Ladder controls", 5, 3);
 		edgeBuilding.addCorridor(0, 0, 5);
 		edgeBuilding.addCorridor(2, 0, 5);

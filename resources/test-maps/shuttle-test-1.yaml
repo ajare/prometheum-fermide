@@ -76,10 +76,10 @@ construction:
   - type: room
     name: Room 1
     layer: back
-    y: 3
-    x: 9
-    cellsWide: 4
-    decksHigh: 2
+    y: 2
+    x: 7
+    cellsWide: 8
+    decksHigh: 4
     topDeckHeight: 0.9
   - type: corridor
     y: 4
@@ -94,6 +94,39 @@ construction:
     sectorIndex: 8
     deckIndex: 1
     xOffset: 2
+  - type: walkway
+    sectorIndex: 8
+    deckIndex: 1
+    xOffset: 0
+  - type: walkway
+    sectorIndex: 8
+    deckIndex: 1
+    xOffset: 6
+  - type: walkway
+    sectorIndex: 8
+    deckIndex: 1
+    xOffset: 7
+  - type: walkway
+    sectorIndex: 8
+    deckIndex: 2
+    xOffset: 2
+  - type: walkway
+    sectorIndex: 8
+    deckIndex: 2
+    xOffset: 3
+  - type: walkway
+    sectorIndex: 8
+    deckIndex: 3
+    xOffset: 2
+  - type: platformLift
+    sectorIndex: 8
+    deckIndex: 0
+    xOffset: 2
+    cellsWide: 1
+    stopOffsets: [0, 1, 2]
+    capacity: 2
+    minimumDwellSeconds: 0.75
+    maximumBoardingSeconds: 5
 agents:
   - id: 1
     agent:

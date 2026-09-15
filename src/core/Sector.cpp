@@ -357,9 +357,9 @@ namespace core
 		return mAgents;
 	}
 
-	void Sector::enterAgent(Agent* agent, SectorPosition const& pos)
+	void Sector::enterAgent(Agent* agent, SectorPosition const& pos, bool authored)
 	{
-		agent->setPosition(pos);
+		agent->setPosition(pos, authored);
 
 		[[maybe_unused]] auto inserted = mAgents.insert(agent);
 		assert(inserted.second && "Agent already in Sector!");

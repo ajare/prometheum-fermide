@@ -475,6 +475,11 @@ namespace core
 		uint64_t mQueuedAtTick{ 0 };
 		uint32_t mQueueApproach{ ~0u };
 		uint32_t mQueuePosition{ ~0u };
+		// Initial assignment uses the position from which the Agent approached the
+		// endpoint. Later reshuffles use its live position to preserve stable spots.
+		Vector2 mQueueSelectionPosition;
+		int mPreferredQueueSide{ 0 };
+		bool mHasHeldQueuePosition{ false };
 		uint64_t mPositionAssignedAtTick{ 0 };
 		uint64_t mLastPositionProgressTick{ 0 };
 		float mBestPositionDistance{ 0.0f };

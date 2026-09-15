@@ -92,7 +92,7 @@ namespace core
 
 		void removeEndWall(uint32_t deckIndex, int side);
 
-		void enterAgent(Agent* agent, SectorPosition const& pos);
+		void enterAgent(Agent* agent, SectorPosition const& pos, bool authored = true);
 
 		// Advance device and object state without moving agents. Building uses
 		// this to keep resource work in the first deterministic tick phase.
