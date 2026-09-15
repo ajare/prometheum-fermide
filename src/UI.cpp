@@ -35,6 +35,7 @@
 #include "core/Button.h"
 #include "core/Door.h"
 #include "core/BulkheadDoor.h"
+#include "core/BulkheadDoorSectorObject.h"
 #include "core/ForceBridge.h"
 #include "core/Ladder.h"
 #include "core/Location.h"
@@ -168,6 +169,7 @@ namespace
 		Agent,
 		Marker,
 		Door,
+		BulkheadDoor,
 		Window,
 		Walkway,
 		ForceBridge,
@@ -376,6 +378,12 @@ namespace
 			gObjectMove.originalX = marker->getCellX() + (uint32_t)floor(marker->getOffset());
 			gObjectMove.originalY = marker->getCellY();
 		}
+		else if (object->getObjectType() == core::SectorObjectType::BulkheadDoor)
+		{
+			// BulkheadDoor SectorObjects are anchored in the cell left of their threshold.
+			// Editor placement coordinates identify the cell to the right (offset 0.0).
+			++gObjectMove.originalX;
+		}
 		gObjectMove.preview = building->planMoveSectorObject(owner->getIndex(), objectIndex,
 			gObjectMove.originalX, gObjectMove.originalY);
 	}
@@ -516,6 +524,30 @@ namespace
 		auto shuttleStops = building->getShuttleStopCandidatesForDoor(target.cellY, target.cellX);
 		if (!shuttleStops.empty()) target.diagnostic.clear();
 		else building->canAddCorridorDoor(target.cellY, target.cellX, &target.diagnostic);
+		return target;
+	}
+
+	PegmanTarget getBulkheadDoorTarget(shared_ptr<const core::Building> const& building,
+		ImVec2 position, ImVec2 canvasPos, ImVec2 canvasSize)
+	{
+		PegmanTarget target;
+		if (!pointInRect(position, canvasPos, canvasPos + canvasSize))
+		{
+			target.diagnostic = "Drop inside the world";
+			return target;
+		}
+		auto world = screenToWorld(position);
+		if (world.x < 0.0f || world.y < 0.0f)
+		{
+			target.diagnostic = "Bulkhead Door position is outside the building";
+			return target;
+		}
+		target.cellX = (uint32_t)floor(world.x);
+		target.cellY = (uint32_t)floor(world.y);
+		target.sector = building->getSectorAtPosition(gUISettings.visibleLayer,
+			(float)target.cellX + 0.5f, (float)target.cellY + 0.5f);
+		building->canAddSectorBulkheadDoor(gUISettings.visibleLayer, target.cellY,
+			target.cellX, CORE_SIDE_LEFT, {}, &target.diagnostic);
 		return target;
 	}
 
@@ -731,6 +763,15 @@ namespace
 		drawObjectIcon(drawList, boundsMin, boundsMax, colour, ICON_FA_DOOR_OPED);
 	}
 
+	void drawBulkheadDoorIcon(ImDrawList* drawList, ImVec2 boundsMin, ImVec2 boundsMax, ImU32 colour)
+	{
+		auto centre = (boundsMin + boundsMax) * 0.5f;
+		drawList->AddLine({ centre.x, boundsMin.y + 6.0f },
+			{ centre.x, boundsMax.y - 6.0f }, colour, 5.0f);
+		drawList->AddLine({ centre.x - 11.0f, boundsMin.y + 8.0f },
+			{ centre.x + 11.0f, boundsMin.y + 8.0f }, colour, 2.0f);
+	}
+
 	void drawWindowIcon(ImDrawList* drawList, ImVec2 boundsMin, ImVec2 boundsMax, ImU32 colour)
 	{
 		drawObjectIcon(drawList, boundsMin, boundsMax, colour, ICON_FA_WINDOW_MAXIMIZE);
@@ -793,6 +834,29 @@ namespace
 				auto point = worldToScreen(world);
 				if (pointInRect(position, point - ImVec2(MarkerIconSize * 0.5f, MarkerIconSize),
 					point + ImVec2(MarkerIconSize * 0.5f, 2.0f))) return object;
+			}
+		}
+		return nullptr;
+	}
+
+	shared_ptr<const core::SectorObject> bulkheadDoorAtScreenPosition(
+		shared_ptr<const core::Building> const& building, ImVec2 position)
+	{
+		constexpr float tolerance = 7.0f;
+		set<void const*> visited;
+		for (auto const& sector : building->getSectors(gUISettings.visibleLayer))
+		{
+			for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
+			{
+				auto object = dynamic_pointer_cast<const core::BulkheadDoorSectorObject>(sector->getObject(i));
+				if (!object || !visited.insert(object.get()).second) continue;
+				core::Vector2 first, second;
+				object->getDoor()->getFullShape(first, second);
+				auto topLeft = worldToScreen({ min(first.x, second.x), max(first.y, second.y) });
+				auto bottomRight = worldToScreen({ max(first.x, second.x), min(first.y, second.y) });
+				topLeft -= ImVec2(tolerance, tolerance);
+				bottomRight += ImVec2(tolerance, tolerance);
+				if (pointInRect(position, topLeft, bottomRight)) return object;
 			}
 		}
 		return nullptr;
@@ -1178,6 +1242,30 @@ namespace
 		}
 	}
 
+	void placeBulkheadDoor(shared_ptr<core::Building> const& building, PegmanTarget const& target)
+	{
+		auto undo = captureDocumentSnapshot(building);
+		try
+		{
+			auto created = building->addSectorBulkheadDoor(gUISettings.visibleLayer,
+				target.cellY, target.cellX, CORE_SIDE_LEFT);
+			building->finishBuild();
+			setSelectionMode(UISettings::SelectionMode::Object);
+			gSelectedAgent = nullptr;
+			gSelectedSector.reset();
+			gSelectedSectorObject = created.door.sector->getObject(created.door.index);
+			commitDocumentEdit(std::move(undo));
+		}
+		catch (core::Exception const& error)
+		{
+			core::addLogMessage("Object palette", 0, core::LogLevel::Error, error.getMessage());
+		}
+		catch (std::exception const& error)
+		{
+			core::addLogMessage("Object palette", 0, core::LogLevel::Error, error.what());
+		}
+	}
+
 	void placeWindow(shared_ptr<core::Building> const& building, PegmanTarget const& target)
 	{
 		auto undo = captureDocumentSnapshot(building);
@@ -1358,7 +1446,7 @@ namespace
 		}
 
 		auto trayBottomRight = canvasPos + canvasSize - ImVec2(PaletteInset, PaletteInset);
-		auto traySize = ImVec2(PalettePadding * 2.0f + PaletteSlotWidth * 8.0f + PaletteGap * 7.0f,
+		auto traySize = ImVec2(PalettePadding * 2.0f + PaletteSlotWidth * 9.0f + PaletteGap * 8.0f,
 			PalettePadding * 2.0f + PaletteSlotSize * 2.0f + PaletteGap);
 		auto trayTopLeft = trayBottomRight - traySize;
 		auto roomMin = trayTopLeft + ImVec2(PalettePadding, PalettePadding);
@@ -1370,9 +1458,10 @@ namespace
 		auto agentMin = roomMin + ImVec2(0.0f, PaletteSlotSize + PaletteGap);
 		auto markerMin = corridorMin + ImVec2(0.0f, PaletteSlotSize + PaletteGap);
 		auto doorMin = ladderMin + ImVec2(0.0f, PaletteSlotSize + PaletteGap);
-		auto windowMin = staircaseMin + ImVec2(0.0f, PaletteSlotSize + PaletteGap);
-		auto walkwayMin = liftMin + ImVec2(0.0f, PaletteSlotSize + PaletteGap);
-		auto forceBridgeMin = shuttleMin + ImVec2(0.0f, PaletteSlotSize + PaletteGap);
+		auto bulkheadDoorMin = doorMin + ImVec2(PaletteSlotWidth + PaletteGap, 0.0f);
+		auto windowMin = bulkheadDoorMin + ImVec2(PaletteSlotWidth + PaletteGap, 0.0f);
+		auto walkwayMin = windowMin + ImVec2(PaletteSlotWidth + PaletteGap, 0.0f);
+		auto forceBridgeMin = walkwayMin + ImVec2(PaletteSlotWidth + PaletteGap, 0.0f);
 		auto roomLadderMin = forceBridgeMin + ImVec2(PaletteSlotWidth + PaletteGap, 0.0f);
 		auto platformLiftMin = roomLadderMin + ImVec2(PaletteSlotWidth + PaletteGap, 0.0f);
 		auto roomMax = roomMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
@@ -1383,6 +1472,7 @@ namespace
 		auto shuttleMax = shuttleMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
 		auto windowMax = windowMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
 		auto doorMax = doorMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
+		auto bulkheadDoorMax = bulkheadDoorMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
 		auto agentMax = agentMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
 		auto markerMax = markerMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
 		auto walkwayMax = walkwayMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
@@ -1461,6 +1551,7 @@ namespace
 		drawPaintButton(liftMin, liftMax, "Lift", PaintTool::Lift, liftHovered, backOnlyDisabled);
 		drawPaintButton(shuttleMin, shuttleMax, "Shuttle", PaintTool::Shuttle,
 			shuttleHovered, backOnlyDisabled);
+		drawBulkheadDoorIcon(drawList, bulkheadDoorMin, bulkheadDoorMax, yellow);
 		drawWindowIcon(drawList, windowMin, windowMax, yellow);
 		drawWalkwayIcon(drawList, walkwayMin, walkwayMax, yellow);
 		drawForceBridgeIcon(drawList, forceBridgeMin, forceBridgeMax, IM_COL32(0, 255, 0, 255));
@@ -1577,12 +1668,15 @@ namespace
 			if (pointInRect(io.MousePos, agentMin, agentMax)) hoveredItem = PaletteItem::Agent;
 			else if (pointInRect(io.MousePos, markerMin, markerMax)) hoveredItem = PaletteItem::Marker;
 			else if (pointInRect(io.MousePos, doorMin, doorMax)) hoveredItem = PaletteItem::Door;
+			else if (pointInRect(io.MousePos, bulkheadDoorMin, bulkheadDoorMax)) hoveredItem = PaletteItem::BulkheadDoor;
 			else if (pointInRect(io.MousePos, windowMin, windowMax)) hoveredItem = PaletteItem::Window;
 			else if (pointInRect(io.MousePos, walkwayMin, walkwayMax)) hoveredItem = PaletteItem::Walkway;
 			else if (pointInRect(io.MousePos, forceBridgeMin, forceBridgeMax)) hoveredItem = PaletteItem::ForceBridge;
 			else if (pointInRect(io.MousePos, roomLadderMin, roomLadderMax)) hoveredItem = PaletteItem::RoomLadder;
 			else if (pointInRect(io.MousePos, platformLiftMin, platformLiftMax)) hoveredItem = PaletteItem::PlatformLift;
 		}
+		drawList->AddRect(bulkheadDoorMin, bulkheadDoorMax,
+			hoveredItem == PaletteItem::BulkheadDoor ? yellow : borderColour, 3.0f);
 		drawList->AddRect(windowMin, windowMax,
 			hoveredItem == PaletteItem::Window ? yellow : borderColour, 3.0f);
 		drawList->AddRect(walkwayMin, walkwayMax,
@@ -1605,6 +1699,7 @@ namespace
 			ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
 			ImGui::SetTooltip(hoveredItem == PaletteItem::Agent ? "Drag to add Agent"
 				: hoveredItem == PaletteItem::Marker ? "Drag to add Marker"
+				: hoveredItem == PaletteItem::BulkheadDoor ? "Drag to add Bulkhead Door"
 				: hoveredItem == PaletteItem::Window ? "Drag to add Window"
 				: hoveredItem == PaletteItem::Walkway ? "Drag to add Walkway"
 				: hoveredItem == PaletteItem::ForceBridge ? "Drag to add Force Bridge"
@@ -1639,6 +1734,8 @@ namespace
 				target = getMarkerTarget(building, io.MousePos, canvasPos, canvasSize);
 			else if (gPegman.item == PaletteItem::Door)
 				target = getDoorTarget(building, io.MousePos, canvasPos, canvasSize);
+			else if (gPegman.item == PaletteItem::BulkheadDoor)
+				target = getBulkheadDoorTarget(building, io.MousePos, canvasPos, canvasSize);
 			else if (gPegman.item == PaletteItem::Window)
 				target = getWindowTarget(building, io.MousePos, canvasPos, canvasSize);
 			else if (gPegman.item == PaletteItem::Walkway)
@@ -1663,6 +1760,11 @@ namespace
 				else if (target && gPegman.item == PaletteItem::Door)
 				{
 					placeDoor(building, target);
+					resetPegman();
+				}
+				else if (target && gPegman.item == PaletteItem::BulkheadDoor)
+				{
+					placeBulkheadDoor(building, target);
 					resetPegman();
 				}
 				else if (target && gPegman.item == PaletteItem::Window)
@@ -1759,6 +1861,16 @@ namespace
 						worldToScreen({ (float)target.cellX + 1.0f, (float)target.cellY }), colour);
 				else drawPlatformLiftIcon(drawList, io.MousePos - ImVec2(24.0f, 18.0f),
 					io.MousePos + ImVec2(24.0f, 18.0f), colour);
+			}
+			else if (gPegman.item == PaletteItem::BulkheadDoor)
+			{
+				auto x = target.sector ? worldToScreen({ (float)target.cellX, 0.0f }).x : io.MousePos.x;
+				auto top = target.sector
+					? worldToScreen({ (float)target.cellX, (float)target.cellY + CORE_CORRIDOR_HEIGHT }).y
+					: io.MousePos.y - CORE_DECK_HEIGHT_PIXELS * CORE_CORRIDOR_HEIGHT * 0.5f;
+				auto bottom = target.sector ? worldToScreen({ (float)target.cellX, (float)target.cellY }).y
+					: io.MousePos.y + CORE_DECK_HEIGHT_PIXELS * CORE_CORRIDOR_HEIGHT * 0.5f;
+				drawList->AddLine({ x, top }, { x, bottom }, colour, 5.0f);
 			}
 			else if (gPegman.item == PaletteItem::Door
 				|| gPegman.item == PaletteItem::Window)
@@ -2780,7 +2892,7 @@ namespace
 		}
 	}
 
-	enum class ClipboardObjectType { Agent, Door, Window, Marker, Walkway, ForceBridge, RoomLadder, PlatformLift };
+	enum class ClipboardObjectType { Agent, Door, BulkheadDoor, Window, Marker, Walkway, ForceBridge, RoomLadder, PlatformLift };
 	struct ClipboardDefinition
 	{
 		ClipboardObjectType type{};
@@ -2788,6 +2900,7 @@ namespace
 		string name;
 		uint32_t flags{ 0 };
 		core::Building::CreateDoorOptions door;
+		core::Building::CreateBulkheadDoorOptions bulkheadDoor;
 		core::Building::CreateWindowOptions window;
 		core::Building::CreateForceBridgeOptions forceBridge{ 1, CORE_SIDE_LEFT, true, true, 1 };
 		core::Building::CreateLadderOptions ladder{ 0, false, true };
@@ -2818,7 +2931,8 @@ namespace
 		if (gSelectedAgent) return true;
 		if (!gSelectedSectorObject) return false;
 		auto type = gSelectedSectorObject->getObjectType();
-		return type == core::SectorObjectType::Door || type == core::SectorObjectType::Window
+		return type == core::SectorObjectType::Door || type == core::SectorObjectType::BulkheadDoor
+			|| type == core::SectorObjectType::Window
 			|| type == core::SectorObjectType::Marker || type == core::SectorObjectType::Walkway
 			|| type == core::SectorObjectType::ForceBridge || type == core::SectorObjectType::Ladder
 			|| type == core::SectorObjectType::Lift;
@@ -2906,6 +3020,24 @@ namespace
 			output << YAML::Key << "type" << YAML::Value << "Door"
 				<< YAML::Key << "object" << YAML::Value << YAML::BeginMap
 				<< YAML::Key << "width" << YAML::Value << options.width
+				<< YAML::Key << "controls" << YAML::Value << YAML::Flow << YAML::BeginSeq
+				<< options.controls[0] << options.controls[1] << YAML::EndSeq
+				<< YAML::Key << "activationMode" << YAML::Value << activationModeName(options.activationMode)
+				<< YAML::Key << "holdOpenSeconds" << YAML::Value << options.holdOpenSeconds
+				<< YAML::Key << "crossingLanes" << YAML::Value << options.crossingLanes
+				<< YAML::EndMap;
+		}
+		else if (gSelectedSectorObject->getObjectType() == core::SectorObjectType::BulkheadDoor)
+		{
+			auto owner = gSelectedSectorObject->getSector();
+			uint32_t index = ~0u;
+			for (uint32_t i = 0; i < owner->getNumObjects(); ++i)
+				if (owner->getObject(i) == gSelectedSectorObject) { index = i; break; }
+			core::Building::CreateBulkheadDoorOptions options;
+			if (index == ~0u || !building->getSectorBulkheadDoorOptions(owner->getIndex(), index, options))
+				throw runtime_error("The selected Bulkhead Door has no authored definition");
+			output << YAML::Key << "type" << YAML::Value << "BulkheadDoor"
+				<< YAML::Key << "object" << YAML::Value << YAML::BeginMap
 				<< YAML::Key << "controls" << YAML::Value << YAML::Flow << YAML::BeginSeq
 				<< options.controls[0] << options.controls[1] << YAML::EndSeq
 				<< YAML::Key << "activationMode" << YAML::Value << activationModeName(options.activationMode)
@@ -3045,6 +3177,30 @@ namespace
 			definition.door.holdOpenSeconds = requiredYaml<float>(object, "holdOpenSeconds");
 			definition.door.crossingLanes = requiredYaml<uint32_t>(object, "crossingLanes");
 		}
+		else if (type == "BulkheadDoor")
+		{
+			definition.type = ClipboardObjectType::BulkheadDoor;
+			auto controls = object["controls"];
+			if (!controls || !controls.IsSequence() || controls.size() != 2)
+				throw runtime_error("Bulkhead Door controls must contain two values");
+			definition.bulkheadDoor.controls[0] = controls[0].as<bool>();
+			definition.bulkheadDoor.controls[1] = controls[1].as<bool>();
+			auto mode = requiredYaml<string>(object, "activationMode");
+			if (mode == "Automatic") definition.bulkheadDoor.activationMode = core::DoorActivationMode::Automatic;
+			else if (mode == "Manual") definition.bulkheadDoor.activationMode = core::DoorActivationMode::Manual;
+			else if (mode == "RemoteControlled") definition.bulkheadDoor.activationMode = core::DoorActivationMode::RemoteControlled;
+			else if (mode == "Unavailable") definition.bulkheadDoor.activationMode = core::DoorActivationMode::Unavailable;
+			else throw runtime_error("Bulkhead Door activationMode is invalid");
+			definition.bulkheadDoor.holdOpenSeconds = requiredYaml<float>(object, "holdOpenSeconds");
+			definition.bulkheadDoor.crossingLanes = requiredYaml<uint32_t>(object, "crossingLanes");
+			if (definition.bulkheadDoor.holdOpenSeconds < 0.0f)
+				throw runtime_error("Bulkhead Door holdOpenSeconds cannot be negative");
+			if (definition.bulkheadDoor.crossingLanes != 1)
+				throw runtime_error("Bulkhead Door crossingLanes must be one");
+			if (definition.bulkheadDoor.activationMode != core::DoorActivationMode::RemoteControlled
+				&& (definition.bulkheadDoor.controls[0] || definition.bulkheadDoor.controls[1]))
+				throw runtime_error("Bulkhead Door controls require RemoteControlled activation");
+		}
 		else if (type == "Window")
 		{
 			definition.type = ClipboardObjectType::Window;
@@ -3143,7 +3299,9 @@ namespace
 				? building->removeSectorMarker(sector->getIndex(), i)
 				: type == core::SectorObjectType::Door
 					? building->removeSectorDoor(sector->getIndex(), i)
-					: type == core::SectorObjectType::Window
+					: type == core::SectorObjectType::BulkheadDoor
+						? building->removeSectorBulkheadDoor(sector->getIndex(), i)
+						: type == core::SectorObjectType::Window
 						? building->removeSectorWindow(sector->getIndex(), i)
 						: type == core::SectorObjectType::Ladder
 							? building->removeRoomLadder(sector->getIndex(), i)
@@ -3312,6 +3470,12 @@ namespace
 				if (!building->canAddCorridorDoor(y, x, definition.door, &diagnostic))
 					throw runtime_error(diagnostic);
 			}
+			else if (definition.type == ClipboardObjectType::BulkheadDoor)
+			{
+				if (!building->canAddSectorBulkheadDoor(gUISettings.visibleLayer, y, x,
+					CORE_SIDE_LEFT, definition.bulkheadDoor, &diagnostic))
+					throw runtime_error(diagnostic);
+			}
 			else if (definition.type == ClipboardObjectType::Window)
 			{
 				if (!building->canAddSectorWindow(gUISettings.visibleLayer, y, x,
@@ -3385,6 +3549,12 @@ namespace
 				if (definition.type == ClipboardObjectType::Door)
 				{
 					auto result = building->addSectorDoor(y, x, definition.door);
+					created = result.door.sector->getObject(result.door.index);
+				}
+				else if (definition.type == ClipboardObjectType::BulkheadDoor)
+				{
+					auto result = building->addSectorBulkheadDoor(gUISettings.visibleLayer,
+						y, x, CORE_SIDE_LEFT, definition.bulkheadDoor);
 					created = result.door.sector->getObject(result.door.index);
 				}
 				else if (definition.type == ClipboardObjectType::Window)
@@ -3570,6 +3740,7 @@ void handleShortcuts(shared_ptr<core::Building>& building)
 			else if (gSelectedSectorObject
 				&& (gSelectedSectorObject->getObjectType() == core::SectorObjectType::Marker
 					|| gSelectedSectorObject->getObjectType() == core::SectorObjectType::Door
+					|| gSelectedSectorObject->getObjectType() == core::SectorObjectType::BulkheadDoor
 					|| gSelectedSectorObject->getObjectType() == core::SectorObjectType::Window
 					|| gSelectedSectorObject->getObjectType() == core::SectorObjectType::Walkway
 					|| gSelectedSectorObject->getObjectType() == core::SectorObjectType::ForceBridge
@@ -3624,7 +3795,9 @@ void handleShortcuts(shared_ptr<core::Building>& building)
 							? building->removeSectorMarker(sector->getIndex(), i)
 							: type == core::SectorObjectType::Door
 								? building->removeSectorDoor(sector->getIndex(), i)
-								: type == core::SectorObjectType::Window
+								: type == core::SectorObjectType::BulkheadDoor
+									? building->removeSectorBulkheadDoor(sector->getIndex(), i)
+									: type == core::SectorObjectType::Window
 									? building->removeSectorWindow(sector->getIndex(), i)
 									: type == core::SectorObjectType::Ladder
 										? building->removeRoomLadder(sector->getIndex(), i)
@@ -4330,39 +4503,153 @@ void renderWindowPanel(shared_ptr<const core::SectorObject> object)
 }
 
 
-void renderBulkheadDoorPanel(shared_ptr<const core::SectorObject> object)
+void renderBulkheadDoorPanel(shared_ptr<core::Building> const& building,
+	shared_ptr<const core::SectorObject> object)
 {
 	auto doorObject = static_pointer_cast<const core::BulkheadDoorSectorObject>(object);
 	auto door = doorObject->getDoor();
+	auto owner = object->getSector();
+	uint32_t objectIndex = ~0u;
+	for (uint32_t i = 0; i < owner->getNumObjects(); ++i)
+		if (owner->getObject(i) == object) { objectIndex = i; break; }
 
-	float pct = door->getOpenPercentage() * 100;
-
-	// State
+	ImGui::TextUnformatted("Bulkhead Door");
+	ImGui::Text("Threshold position: %.1f, %u", (float)object->getCellX() + 1.0f,
+		object->getCellY());
+	ImGui::Text("Layer: %s", owner->getLayerIndex() == CORE_LAYER_FORE ? "Fore" : "Back");
+	float pct = door->getOpenPercentage() * 100.0f;
+	char const* state = "Unknown";
 	switch (door->getState())
 	{
-	case core::OpenableObject::State::Open:
-		ImGui::Text("Open (%3.2f %% open)", pct);
-		break;
+	case core::OpenableObject::State::Open: state = "Open"; break;
+	case core::OpenableObject::State::Opening: state = "Opening"; break;
+	case core::OpenableObject::State::Closed: state = "Closed"; break;
+	case core::OpenableObject::State::Closing: state = "Closing"; break;
+	}
+	ImGui::Text("Runtime state: %s (%.2f%% open)", state, pct);
+	ImGui::Text("Open/close time: %.2fs", door->getOpenCloseTime());
+	ImGui::Text("Left: %s", door->getSideSector(CORE_SIDE_LEFT)->getDescription().c_str());
+	ImGui::Text("Right: %s", door->getSideSector(CORE_SIDE_RIGHT)->getDescription().c_str());
 
-	case core::OpenableObject::State::Opening:
-		ImGui::Text("Opening (%3.2f %% open)", pct);
-		break;
-
-	case core::OpenableObject::State::Closed:
-		ImGui::Text("Closed (%3.2f %% open)", pct);
-		break;
-
-	case core::OpenableObject::State::Closing:
-		ImGui::Text("Closing (%3.2f %% open)", pct);
-		break;
+	static core::Building const* editedBuilding = nullptr;
+	static core::SectorObject const* editedObject = nullptr;
+	static int activationMode = (int)core::DoorActivationMode::RemoteControlled;
+	static bool leftControl = true, rightControl = true;
+	static float holdOpenSeconds = CORE_BULKHEAD_DOOR_STAY_OPEN_TIME;
+	static int crossingLanes = 1;
+	core::Building::CreateBulkheadDoorOptions current;
+	if ((editedBuilding != building.get() || editedObject != object.get())
+		&& objectIndex != ~0u
+		&& building->getSectorBulkheadDoorOptions(owner->getIndex(), objectIndex, current))
+	{
+		editedBuilding = building.get(); editedObject = object.get();
+		activationMode = (int)current.activationMode;
+		leftControl = current.controls[0]; rightControl = current.controls[1];
+		holdOpenSeconds = current.holdOpenSeconds;
+		crossingLanes = (int)current.crossingLanes;
 	}
 
-	// Open/close time
-	ImGui::Text("Open/close time: %3.2f s", door->getOpenCloseTime());
+	auto commitActivationAndControls = [&]()
+	{
+		try
+		{
+			core::Building::CreateBulkheadDoorOptions options;
+			if (!building->getSectorBulkheadDoorOptions(owner->getIndex(), objectIndex, options))
+				throw runtime_error("The selected Bulkhead Door has no authored definition");
+			options.activationMode = static_cast<core::DoorActivationMode>(activationMode);
+			options.controls[0] = leftControl;
+			options.controls[1] = rightControl;
+			auto undo = captureDocumentSnapshot(building);
+			gSelectedSectorObject = building->applySectorBulkheadDoorOptions(
+				owner->getIndex(), objectIndex, options);
+			gHoveredSectorObject.reset(); editedObject = nullptr;
+			commitDocumentEdit(std::move(undo));
+			return true;
+		}
+		catch (core::Exception const& error)
+		{
+			reportEditorError("Bulkhead Door editor", error.getMessage());
+		}
+		catch (std::exception const& error)
+		{
+			reportEditorError("Bulkhead Door editor", error.what());
+		}
+		editedObject = nullptr;
+		return false;
+	};
 
-	// Sectors
-	ImGui::Text("From: %s", door->getSideSector(CORE_SIDE_LEFT)->getDescription().c_str());
-	ImGui::Text("To: %s", door->getSideSector(CORE_SIDE_RIGHT)->getDescription().c_str());
+	ImGui::Separator();
+	bool activationOrControlsChanged = false;
+	ImGui::BeginDisabled(!building->isSimulationPaused() || objectIndex == ~0u);
+	if (ImGui::Combo("Activation", &activationMode,
+		"Automatic\0Manual\0Remote Controlled\0Unavailable\0"))
+	{
+		activationOrControlsChanged = true;
+		if (activationMode != (int)core::DoorActivationMode::RemoteControlled)
+			leftControl = rightControl = false;
+	}
+	bool remote = activationMode == (int)core::DoorActivationMode::RemoteControlled;
+	ImGui::BeginDisabled(!remote);
+	activationOrControlsChanged |= ImGui::Checkbox("Left control", &leftControl);
+	activationOrControlsChanged |= ImGui::Checkbox("Right control", &rightControl);
+	ImGui::EndDisabled();
+	ImGui::EndDisabled();
+	if (activationOrControlsChanged)
+	{
+		commitActivationAndControls();
+		return;
+	}
+	ImGui::InputFloat("Hold open seconds", &holdOpenSeconds, 0.25f, 1.0f, "%.2f");
+	ImGui::InputInt("Crossing lanes", &crossingLanes);
+	bool valid = holdOpenSeconds >= 0.0f && crossingLanes == 1
+		&& (remote || (!leftControl && !rightControl));
+	ImGui::BeginDisabled(!building->isSimulationPaused() || !valid || objectIndex == ~0u);
+	if (ImGui::Button("Apply Bulkhead Door settings"))
+	{
+		try
+		{
+			auto undo = captureDocumentSnapshot(building);
+			core::Building::CreateBulkheadDoorOptions options{
+				{ leftControl, rightControl },
+				static_cast<core::DoorActivationMode>(activationMode),
+				holdOpenSeconds, (uint32_t)crossingLanes };
+			gSelectedSectorObject = building->applySectorBulkheadDoorOptions(
+				owner->getIndex(), objectIndex, options);
+			gHoveredSectorObject.reset(); editedObject = nullptr;
+			commitDocumentEdit(std::move(undo));
+			ImGui::EndDisabled();
+			return;
+		}
+		catch (core::Exception const& error)
+		{
+			reportEditorError("Bulkhead Door editor", error.getMessage());
+		}
+		catch (std::exception const& error)
+		{
+			reportEditorError("Bulkhead Door editor", error.what());
+		}
+	}
+	ImGui::EndDisabled();
+	if (!building->isSimulationPaused())
+		ImGui::TextDisabled("Pause simulation to edit settings.");
+	ImGui::Separator();
+	if (ImGui::Button("Delete Bulkhead Door"))
+	{
+		try
+		{
+			auto undo = captureDocumentSnapshot(building);
+			if (removeClipboardSelection(building)) commitDocumentEdit(std::move(undo));
+		}
+		catch (core::Exception const& error)
+		{
+			reportEditorError("Bulkhead Door editor", error.getMessage());
+		}
+		catch (std::exception const& error)
+		{
+			reportEditorError("Bulkhead Door editor", error.what());
+		}
+	}
+	ImGui::SameLine(); ImGui::TextDisabled("Delete key");
 }
 
 
@@ -4461,6 +4748,21 @@ void renderLiftOwnedControlPanel(shared_ptr<core::Building> const& building,
 	shared_ptr<const core::SectorObject> object)
 {
 	uint32_t bridgeSector, bridgeObject;
+	if (building->isBulkheadDoorOwnedControl(object, &bridgeSector, &bridgeObject))
+	{
+		ImGui::TextUnformatted("Bulkhead Door control");
+		ImGui::Text("Position: %u, %u", object->getCellX(), object->getCellY());
+		ImGui::Separator();
+		ImGui::Text("Owned by Bulkhead Door in Location %u", bridgeSector);
+		ImGui::TextDisabled("This control is managed by its Bulkhead Door and is read-only.");
+		if (ImGui::Button("Select Bulkhead Door"))
+		{
+			auto sector = building->getSector(bridgeSector);
+			if (sector && bridgeObject < sector->getNumObjects())
+				gSelectedSectorObject = sector->getObject(bridgeObject);
+		}
+		return;
+	}
 	if (building->isForceBridgeOwnedControl(object, &bridgeSector, &bridgeObject))
 	{
 		ImGui::TextUnformatted("Force Bridge control");
@@ -5476,7 +5778,7 @@ void renderSelectedObjectPanel(shared_ptr<core::Building> const& building)
 		switch (gSelectedSectorObject->getObjectType())
 		{
 		case core::SectorObjectType::BulkheadDoor:
-			renderBulkheadDoorPanel(gSelectedSectorObject);
+			renderBulkheadDoorPanel(building, gSelectedSectorObject);
 			break;
 
 		case core::SectorObjectType::Door:
@@ -6098,6 +6400,7 @@ namespace
 		}
 
 		if (building->isLiftOwnedDoor(gSelectedSectorObject)
+			|| building->isBulkheadDoorOwnedControl(gSelectedSectorObject)
 			|| building->isLiftOwnedControl(gSelectedSectorObject)
 			|| building->isShuttleOwnedDoor(gSelectedSectorObject)
 			|| building->isShuttleOwnedControl(gSelectedSectorObject)
@@ -6628,6 +6931,8 @@ void renderWorldWindow(shared_ptr<core::Building> building, shared_ptr<const cor
 		{
 			gHoveredSectorObject = markerAtScreenPosition(building, ImGui::GetIO().MousePos);
 			if (!gHoveredSectorObject)
+				gHoveredSectorObject = bulkheadDoorAtScreenPosition(building, ImGui::GetIO().MousePos);
+			if (!gHoveredSectorObject)
 				gHoveredSectorObject = ladderAtScreenPosition(building, ImGui::GetIO().MousePos);
 			if (!gHoveredSectorObject)
 				gHoveredSectorObject = platformLiftAtScreenPosition(building, ImGui::GetIO().MousePos);
@@ -6701,6 +7006,11 @@ void renderWorldWindow(shared_ptr<core::Building> building, shared_ptr<const cor
 		auto bottomRight = worldToScreen({ (float)plan.x + width, (float)plan.y });
 		auto colour = plan.valid ? IM_COL32(255, 255, 0, 255) : IM_COL32(255, 64, 64, 255);
 		if (gSelectedSectorObject
+			&& gSelectedSectorObject->getObjectType() == core::SectorObjectType::BulkheadDoor)
+			drawList->AddLine(
+				worldToScreen({ (float)plan.x, (float)plan.y + CORE_CORRIDOR_HEIGHT }),
+				worldToScreen({ (float)plan.x, (float)plan.y }), colour, 5.0f);
+		else if (gSelectedSectorObject
 			&& (gSelectedSectorObject->getObjectType() == core::SectorObjectType::Walkway
 				|| gSelectedSectorObject->getObjectType() == core::SectorObjectType::ForceBridge))
 			drawList->AddLine(worldToScreen({ (float)plan.x, (float)plan.y }),

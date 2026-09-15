@@ -533,7 +533,7 @@ void renderDoor(shared_ptr<const core::Door> door, int layer, bool visibleLayer,
 }
 
 
-void renderBulkheadDoor(shared_ptr<const core::BulkheadDoor> door, int /* layer */, bool /* visibleLayer */, bool /* selected */, ImDrawList* drawList)
+void renderBulkheadDoor(shared_ptr<const core::BulkheadDoor> door, int /* layer*/, bool visibleLayer, bool selected, ImDrawList* drawList)
 {
 	core::Vector2 bounds0, bounds1;
 
@@ -542,8 +542,20 @@ void renderBulkheadDoor(shared_ptr<const core::BulkheadDoor> door, int /* layer 
 	transformPosition(bounds0);
 	transformPosition(bounds1);
 
+	auto topLeft = ImVec2{ min(bounds0.x, bounds1.x), min(bounds0.y, bounds1.y) };
+	auto bottomRight = ImVec2{ max(bounds0.x, bounds1.x), max(bounds0.y, bounds1.y) };
 	auto doorColour = ImColor(128, 192, 182);
-	drawList->AddRectFilled({ bounds0.x, bounds0.y }, { bounds1.x, bounds1.y }, doorColour);
+	drawList->AddRectFilled(topLeft, bottomRight, doorColour);
+	if (selected && visibleLayer)
+	{
+		core::Vector2 full0, full1;
+		door->getFullShape(full0, full1);
+		transformPosition(full0); transformPosition(full1);
+		topLeft = { min(full0.x, full1.x), min(full0.y, full1.y) };
+		bottomRight = { max(full0.x, full1.x), max(full0.y, full1.y) };
+		drawList->AddRectFilled(topLeft, bottomRight, ImColor(255, 255, 0, 48));
+		drawList->AddRect(topLeft, bottomRight, SelectedColour, 0.0f, 0, 2.0f);
+	}
 }
 
 

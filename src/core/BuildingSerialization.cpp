@@ -10,6 +10,7 @@
 #include "core/StaircaseTransit.h"
 #include "core/Location.h"
 #include "core/DoorSectorObject.h"
+#include "core/BulkheadDoorSectorObject.h"
 #include "core/MarkerSectorObject.h"
 #include "core/WalkwaySectorObject.h"
 #include "core/ForceBridgeSectorObject.h"
@@ -2115,6 +2116,7 @@ namespace core
 		auto owner = object->getSector();
 		auto sourceX = object->getCellX();
 		auto sourceY = object->getCellY();
+		if (object->getObjectType() == SectorObjectType::BulkheadDoor) ++sourceX;
 		auto matches = [&](ConstructionRecord const& record)
 		{
 			switch (object->getObjectType())
@@ -2122,6 +2124,10 @@ namespace core
 			case SectorObjectType::Door:
 				return record.type == ConstructionType::Door
 					&& record.b == sourceX && record.a == sourceY;
+			case SectorObjectType::BulkheadDoor:
+				return record.type == ConstructionType::BulkheadDoor
+					&& record.a == owner->getLayerIndex() && record.b == sourceY
+					&& record.c + (record.i == CORE_SIDE_RIGHT ? 1u : 0u) == sourceX;
 			case SectorObjectType::Window:
 				return record.type == ConstructionType::Window
 					&& record.c == sourceX && record.b == sourceY
@@ -2203,9 +2209,11 @@ namespace core
 			return false;
 		}
 		bool const pastePlaced = type == SectorObjectType::Door
-			|| type == SectorObjectType::Window || type == SectorObjectType::Marker;
+			|| type == SectorObjectType::BulkheadDoor || type == SectorObjectType::Window
+			|| type == SectorObjectType::Marker;
 		auto targetOwner = getSectorAtPosition(owner->getLayerIndex(),
-			(float)plan.x + 0.5f, (float)plan.y + 0.5f);
+			type == SectorObjectType::BulkheadDoor ? (float)plan.x - 0.5f : (float)plan.x + 0.5f,
+			(float)plan.y + 0.5f);
 		if (pastePlaced && !targetOwner)
 		{
 			diagnostic = type == SectorObjectType::Marker
@@ -2213,8 +2221,15 @@ namespace core
 			return false;
 		}
 
-		auto targetRight = (uint64_t)plan.x + (uint32_t)ceil(object->getSize().x);
-		uint64_t targetTop = (uint64_t)plan.y + (uint32_t)ceil(object->getSize().y);
+		if (type == SectorObjectType::BulkheadDoor && plan.x == 0)
+		{
+			diagnostic = "Bulkhead Doors require a cell on each side";
+			return false;
+		}
+		auto targetRight = type == SectorObjectType::BulkheadDoor
+			? (uint64_t)plan.x + 1 : (uint64_t)plan.x + (uint32_t)ceil(object->getSize().x);
+		uint64_t targetTop = type == SectorObjectType::BulkheadDoor
+			? (uint64_t)plan.y + 1 : (uint64_t)plan.y + (uint32_t)ceil(object->getSize().y);
 		if (type == SectorObjectType::Lift)
 		{
 			auto room = dynamic_pointer_cast<const Location>(owner);
@@ -2332,6 +2347,9 @@ namespace core
 		switch (type)
 		{
 		case SectorObjectType::Door: found->a = plan.y; found->b = plan.x; break;
+		case SectorObjectType::BulkheadDoor:
+			found->a = owner->getLayerIndex(); found->b = plan.y; found->c = plan.x;
+			found->i = CORE_SIDE_LEFT; break;
 		case SectorObjectType::Window: found->b = plan.y; found->c = plan.x; break;
 		case SectorObjectType::ForceBridge:
 		case SectorObjectType::Ladder:
@@ -2369,6 +2387,19 @@ namespace core
 					tombstones.push_back(tombstone);
 					bool hasControl = layer == CORE_LAYER_FORE ? moved.p : moved.q;
 					if (hasControl) tombstones.push_back(tombstone);
+				}
+			}
+			else if (type == SectorObjectType::BulkheadDoor)
+			{
+				auto door = static_pointer_cast<BulkheadDoorSectorObject>(object)->getDoor();
+				for (int side = 0; side < CORE_NUM_SIDES; ++side)
+				{
+					auto sector = door->getSideSector(side);
+					if (!sector) continue;
+					owners.insert(sector->getIndex());
+					ConstructionRecord tombstone{ ConstructionType::ObjectTombstone };
+					tombstone.a = sector->getIndex(); tombstones.push_back(tombstone);
+					if (side == CORE_SIDE_LEFT ? moved.p : moved.q) tombstones.push_back(tombstone);
 				}
 			}
 			else if (type == SectorObjectType::Window)
@@ -2589,6 +2620,138 @@ namespace core
 			mAgentIds.emplace(raw, saved.id);
 		}
 		return true;
+	}
+
+	bool Building::getSectorBulkheadDoorOptions(uint32_t sectorIndex, uint32_t objectIndex,
+		CreateBulkheadDoorOptions& options) const
+	{
+		if (sectorIndex >= mSectors.size() || !mSectors[sectorIndex]
+			|| objectIndex >= mSectors[sectorIndex]->getNumObjects()) return false;
+		auto object = dynamic_pointer_cast<const BulkheadDoorSectorObject>(
+			mSectors[sectorIndex]->getObject(objectIndex));
+		if (!object) return false;
+		auto thresholdX = object->getCellX() + 1;
+		auto found = find_if(mConstructionRecords.rbegin(), mConstructionRecords.rend(),
+			[&](ConstructionRecord const& record)
+			{
+				return record.type == ConstructionType::BulkheadDoor
+					&& record.a == object->getSector()->getLayerIndex() && record.b == object->getCellY()
+					&& record.c + (record.i == CORE_SIDE_RIGHT ? 1u : 0u) == thresholdX;
+			});
+		if (found == mConstructionRecords.rend()) return false;
+		options = { { found->p, found->q }, static_cast<DoorActivationMode>(found->j),
+			found->x, found->d };
+		return true;
+	}
+
+	shared_ptr<const SectorObject> Building::applySectorBulkheadDoorOptions(uint32_t sectorIndex,
+		uint32_t objectIndex, CreateBulkheadDoorOptions const& options)
+	{
+		if (!mSimulationPaused)
+			throw BuildingException(this, "Editing a Bulkhead Door requires the simulation to be paused");
+		if (sectorIndex >= mSectors.size() || !mSectors[sectorIndex]
+			|| objectIndex >= mSectors[sectorIndex]->getNumObjects())
+			throw BuildingException(this, "The selected Bulkhead Door no longer exists");
+		auto object = dynamic_pointer_cast<BulkheadDoorSectorObject>(
+			mSectors[sectorIndex]->getObject(objectIndex));
+		if (!object) throw BuildingException(this, "The selected object is not a Bulkhead Door");
+		if (options.holdOpenSeconds < 0.0f)
+			throw BuildingException(this, "Bulkhead Door hold-open time cannot be negative");
+		if (options.crossingLanes != 1)
+			throw BuildingException(this, "Bulkhead Doors support exactly one crossing lane");
+		if (options.activationMode != DoorActivationMode::RemoteControlled
+			&& (options.controls[0] || options.controls[1]))
+			throw BuildingException(this, "Physical controls require a remote-controlled Bulkhead Door");
+
+		auto records = mConstructionRecords;
+		auto thresholdX = object->getCellX() + 1;
+		auto found = find_if(records.begin(), records.end(), [&](ConstructionRecord const& record)
+		{
+			return record.type == ConstructionType::BulkheadDoor
+				&& record.a == object->getSector()->getLayerIndex() && record.b == object->getCellY()
+				&& record.c + (record.i == CORE_SIDE_RIGHT ? 1u : 0u) == thresholdX;
+		});
+		if (found == records.end())
+			throw BuildingException(this, "The Bulkhead Door has no authored definition");
+		found->p = options.controls[0]; found->q = options.controls[1];
+		found->j = static_cast<int32_t>(options.activationMode);
+		found->x = options.holdOpenSeconds; found->d = options.crossingLanes;
+		auto layer = object->getSector()->getLayerIndex();
+		auto y = object->getCellY();
+		rebuildFromConstructionRecords(std::move(records));
+		auto left = getSectorAtPosition(layer, (float)thresholdX - 0.5f, (float)y + 0.5f);
+		if (left)
+			for (uint32_t i = 0; i < left->getNumObjects(); ++i)
+			{
+				auto candidate = left->getObject(i);
+				if (candidate && candidate->getObjectType() == SectorObjectType::BulkheadDoor
+					&& candidate->getCellX() + 1 == thresholdX && candidate->getCellY() == y)
+					return candidate;
+			}
+		throw BuildingException(this, "Could not locate the edited Bulkhead Door");
+	}
+
+	bool Building::removeSectorBulkheadDoor(uint32_t sectorIndex, uint32_t objectIndex)
+	{
+		if (!mSimulationPaused)
+			throw BuildingException(this, "Deleting a Bulkhead Door requires the simulation to be paused");
+		if (sectorIndex >= mSectors.size() || !mSectors[sectorIndex]
+			|| objectIndex >= mSectors[sectorIndex]->getNumObjects()) return false;
+		auto object = dynamic_pointer_cast<BulkheadDoorSectorObject>(
+			mSectors[sectorIndex]->getObject(objectIndex));
+		if (!object) return false;
+		CreateBulkheadDoorOptions options;
+		if (!getSectorBulkheadDoorOptions(sectorIndex, objectIndex, options)) return false;
+		auto thresholdX = object->getCellX() + 1;
+		auto layer = object->getSector()->getLayerIndex();
+		auto y = object->getCellY();
+		vector<ConstructionRecord> records;
+		bool removed = false;
+		for (auto const& record : mConstructionRecords)
+		{
+			bool const matches = !removed && record.type == ConstructionType::BulkheadDoor
+				&& record.a == layer && record.b == y
+				&& record.c + (record.i == CORE_SIDE_RIGHT ? 1u : 0u) == thresholdX;
+			if (!matches) { records.push_back(record); continue; }
+			auto door = object->getDoor();
+			for (int side = 0; side < CORE_NUM_SIDES; ++side)
+			{
+				auto sector = door->getSideSector(side);
+				if (!sector) continue;
+				ConstructionRecord tombstone{ ConstructionType::ObjectTombstone };
+				tombstone.a = sector->getIndex(); records.push_back(tombstone);
+				if (options.controls[side]) records.push_back(tombstone);
+			}
+			removed = true;
+		}
+		if (!removed) return false;
+		rebuildFromConstructionRecords(std::move(records));
+		return true;
+	}
+
+	bool Building::isBulkheadDoorOwnedControl(shared_ptr<const SectorObject> const& object,
+		uint32_t* doorSectorIndex, uint32_t* doorObjectIndex) const
+	{
+		if (!object || object->getObjectType() != SectorObjectType::InteractionPoint) return false;
+		auto button = dynamic_pointer_cast<Button>(object->_getObject());
+		if (!button || !button->getInteractionPointId()) return false;
+		set<void const*> visited;
+		for (auto const& sector : mSectors)
+		{
+			if (!sector) continue;
+			for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
+			{
+				auto doorObject = dynamic_pointer_cast<BulkheadDoorSectorObject>(sector->getObject(i));
+				if (!doorObject || !visited.insert(doorObject.get()).second) continue;
+				auto resource = mTraversalResources.find(doorObject->getDoor()->getTraversalResourceId());
+				if (!resource || find(resource->mControls.begin(), resource->mControls.end(),
+					button->getInteractionPointId()) == resource->mControls.end()) continue;
+				if (doorSectorIndex) *doorSectorIndex = sector->getIndex();
+				if (doorObjectIndex) *doorObjectIndex = i;
+				return true;
+			}
+		}
+		return false;
 	}
 
 	bool Building::getRoomLadderOptions(uint32_t sectorIndex, uint32_t objectIndex,

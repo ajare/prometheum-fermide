@@ -870,11 +870,26 @@ namespace core
 
 		bool removeSectorWindow(uint32_t sectorIndex, uint32_t objectIndex);
 
+		bool canAddSectorBulkheadDoor(uint32_t layerIndex, uint32_t y, uint32_t x, int side,
+			CreateBulkheadDoorOptions const& options,
+			std::string* diagnostic = nullptr) const;
+
 		CreateBulkheadDoorResult addSectorBulkheadDoor(uint32_t layerIndex, uint32_t y, uint32_t x,
 			int side);
 
 		CreateBulkheadDoorResult addSectorBulkheadDoor(uint32_t layerIndex, uint32_t y, uint32_t x,
 			int side, CreateBulkheadDoorOptions const& options);
+
+		bool getSectorBulkheadDoorOptions(uint32_t sectorIndex, uint32_t objectIndex,
+			CreateBulkheadDoorOptions& options) const;
+
+		std::shared_ptr<const SectorObject> applySectorBulkheadDoorOptions(uint32_t sectorIndex,
+			uint32_t objectIndex, CreateBulkheadDoorOptions const& options);
+
+		bool removeSectorBulkheadDoor(uint32_t sectorIndex, uint32_t objectIndex);
+
+		bool isBulkheadDoorOwnedControl(std::shared_ptr<const SectorObject> const& object,
+			uint32_t* doorSectorIndex = nullptr, uint32_t* doorObjectIndex = nullptr) const;
 
 		CreateObjectResult addSectorLightSwitch(uint32_t sectorIndex, uint32_t xOffset);
 

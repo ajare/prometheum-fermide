@@ -2838,6 +2838,67 @@ namespace core
 		return true;
 	}
 
+	bool Building::canAddSectorBulkheadDoor(uint32_t layerIndex, uint32_t y, uint32_t x,
+		int side, CreateBulkheadDoorOptions const& options, string* diagnostic) const
+	{
+		auto reject = [diagnostic](string reason)
+		{
+			if (diagnostic) *diagnostic = std::move(reason);
+			return false;
+		};
+		if (layerIndex >= CORE_NUM_LAYERS || y >= mDecksHigh
+			|| (side != CORE_SIDE_LEFT && side != CORE_SIDE_RIGHT))
+			return reject("Bulkhead Door position is outside the building");
+		uint32_t thresholdX;
+		if (side == CORE_SIDE_LEFT)
+		{
+			if (x == 0 || x >= mCellsWide) return reject("Bulkhead Doors require a cell on each side");
+			thresholdX = x;
+		}
+		else
+		{
+			if (x >= mCellsWide - 1) return reject("Bulkhead Doors require a cell on each side");
+			thresholdX = x + 1;
+		}
+		if (options.holdOpenSeconds < 0.0f)
+			return reject("Bulkhead Door hold-open time cannot be negative");
+		if (options.crossingLanes != 1)
+			return reject("Bulkhead Doors support exactly one crossing lane");
+		if (options.activationMode != DoorActivationMode::RemoteControlled
+			&& (options.controls[0] || options.controls[1]))
+			return reject("Physical controls require a remote-controlled Bulkhead Door");
+		try
+		{
+			auto const& left = mLayers[layerIndex]->getCellDefinition(thresholdX - 1, y);
+			auto const& right = mLayers[layerIndex]->getCellDefinition(thresholdX, y);
+			if (!left.occupied() || !right.occupied())
+				return reject("Bulkhead Doors require a Location on each side");
+			if (left.sectorIndex == right.sectorIndex)
+				return reject("Bulkhead Doors must connect two distinct Locations");
+			if (!dynamic_pointer_cast<const Location>(mSectors[left.sectorIndex])
+				|| !dynamic_pointer_cast<const Location>(mSectors[right.sectorIndex]))
+				return reject("Bulkhead Doors can only connect Locations");
+			if (!left.isTraversableOnFoot() || !right.isTraversableOnFoot())
+				return reject("Bulkhead Door placement requires a traversable floor on both sides");
+			if (left.bulkheadIndices[CORE_SIDE_RIGHT] != ~0u
+				|| right.bulkheadIndices[CORE_SIDE_LEFT] != ~0u)
+				return reject("A Bulkhead Door already occupies this boundary");
+			if (left.sectorObjectType == SectorObjectType::Door
+				|| left.sectorObjectType == SectorObjectType::Window
+				|| right.sectorObjectType == SectorObjectType::Door
+				|| right.sectorObjectType == SectorObjectType::Window)
+				return reject("Another object blocks Bulkhead Door placement");
+			validateObjectAllowedInSector("Building::canAddSectorBulkheadDoor",
+				SectorObjectType::BulkheadDoor, left.sectorIndex);
+			validateObjectAllowedInSector("Building::canAddSectorBulkheadDoor",
+				SectorObjectType::BulkheadDoor, right.sectorIndex);
+		}
+		catch (Exception const& error) { return reject(error.getMessage()); }
+		catch (exception const& error) { return reject(error.what()); }
+		if (diagnostic) diagnostic->clear();
+		return true;
+	}
+
 	Building::CreateBulkheadDoorResult Building::addSectorBulkheadDoor(uint32_t layerIndex, uint32_t y,
 		uint32_t x, int side)
 	{
@@ -2851,17 +2912,9 @@ namespace core
 		ASSERT_SIDE_OK(side);
 
 		string caller = format("Building::addSectorBulkheadDoor({}, {}, {}, {})", layerIndex, y, x, side);
-
-		if (side != CORE_SIDE_LEFT && side != CORE_SIDE_RIGHT)
-		{
-			throw BuildingException(this, format("{} - side={} is invalid and must be 0 or 1", caller, side));
-		}
-		if (options.activationMode != DoorActivationMode::RemoteControlled
-			&& (options.controls[0] || options.controls[1]))
-		{
-			throw BuildingException(this,
-				format("{} - physical controls require remote-controlled activation", caller));
-		}
+		string diagnostic;
+		if (!canAddSectorBulkheadDoor(layerIndex, y, x, side, options, &diagnostic))
+			throw BuildingException(this, format("{} - {}", caller, diagnostic));
 
 		// Get locations on either side.
 		auto layer = getLayer(layerIndex);

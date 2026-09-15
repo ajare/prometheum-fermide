@@ -10,6 +10,7 @@
 #include "Render.h"
 #include "UI.h"
 #include "core/Building.h"
+#include "core/BulkheadDoorSectorObject.h"
 #include "core/Defines.h"
 #include "core/Serializable.h"
 #include "core/SerializationException.h"
@@ -676,6 +677,89 @@ agents: []
 			"Deleted Staircase still occupies the Back layer");
 	}
 
+	void bulkheadDoorsSupportIndependentObjectEditing()
+	{
+		core::Building building("Bulkhead editor", 7, 2);
+		auto const left = building.addRoom("Left", CORE_LAYER_FORE, 0, 0, 2, 1);
+		building.addRoom("Middle", CORE_LAYER_FORE, 0, 2, 2, 1);
+		building.addRoom("Right", CORE_LAYER_FORE, 0, 4, 2, 1);
+		std::string diagnostic;
+		require(building.canAddSectorBulkheadDoor(CORE_LAYER_FORE, 0, 2,
+			CORE_SIDE_LEFT, {}, &diagnostic), "valid left-edge Bulkhead Door placement was rejected");
+		require(!building.canAddSectorBulkheadDoor(CORE_LAYER_FORE, 0, 0,
+			CORE_SIDE_LEFT, {}, &diagnostic), "Bulkhead Door was accepted at the world edge");
+		require(!building.canAddSectorBulkheadDoor(CORE_LAYER_FORE, 0, 1,
+			CORE_SIDE_LEFT, {}, &diagnostic), "Bulkhead Door was accepted inside one Location");
+
+		auto created = building.addSectorBulkheadDoor(CORE_LAYER_FORE, 0, 2, CORE_SIDE_LEFT);
+		std::shared_ptr<const core::SectorObject> object =
+			created.door.sector->getObject(created.door.index);
+		require(object && object->getObjectType() == core::SectorObjectType::BulkheadDoor
+			&& object->getCellX() + 1 == 2,
+			"Bulkhead Door was not created on the selected cell's left edge");
+		uint32_t ownedControls = 0;
+		for (auto const& sector : building.getSectors(CORE_LAYER_FORE))
+			for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
+				if (building.isBulkheadDoorOwnedControl(sector->getObject(i))) ++ownedControls;
+		require(ownedControls == 2, "Bulkhead Door controls were not recognized as managed objects");
+
+		core::Building::CreateBulkheadDoorOptions options;
+		require(building.getSectorBulkheadDoorOptions(left, created.door.index, options)
+			&& options.controls[0] && options.controls[1]
+			&& options.activationMode == core::DoorActivationMode::RemoteControlled,
+			"Bulkhead Door authored options could not be read");
+		building.finishBuild();
+		building.pauseSimulation();
+		options.controls[0] = options.controls[1] = false;
+		options.activationMode = core::DoorActivationMode::Manual;
+		options.holdOpenSeconds = 3.0f;
+		options.crossingLanes = 1;
+		object = building.applySectorBulkheadDoorOptions(left, created.door.index, options);
+		require(object && object->getCellX() + 1 == 2,
+			"Bulkhead Door settings edit lost the selected object");
+
+		auto owner = object->getSector();
+		uint32_t objectIndex = ~0u;
+		for (uint32_t i = 0; i < owner->getNumObjects(); ++i)
+			if (owner->getObject(i) == object) { objectIndex = i; break; }
+		auto plan = building.planMoveSectorObject(owner->getIndex(), objectIndex, 4, 0);
+		require(plan.valid, "Bulkhead Door move to another left-edge boundary was rejected");
+		object = building.applyObjectMove(plan);
+		require(object && object->getCellX() + 1 == 4,
+			"Bulkhead Door move did not use the target cell's left edge");
+		owner = object->getSector(); objectIndex = ~0u;
+		for (uint32_t i = 0; i < owner->getNumObjects(); ++i)
+			if (owner->getObject(i) == object) { objectIndex = i; break; }
+		require(building.getSectorBulkheadDoorOptions(owner->getIndex(), objectIndex, options)
+			&& options.activationMode == core::DoorActivationMode::Manual
+			&& !options.controls[0] && !options.controls[1]
+			&& std::abs(options.holdOpenSeconds - 3.0f) < 0.0001f
+			&& options.crossingLanes == 1,
+			"Bulkhead Door move did not preserve authored settings");
+
+		core::SerializationWorkData workData;
+		auto writer = core::YamlSerializer::toString();
+		building.serialize(*writer, workData); writer->serialize();
+		core::Building loaded("placeholder", 1, 1);
+		auto reader = core::YamlSerializer::fromString(writer->getSerializedString());
+		reader->deserialize();
+		require(loaded.deserialize(*reader, workData), "Bulkhead Door building did not round-trip");
+		auto loadedLeft = loaded.getSectorAtPosition(CORE_LAYER_FORE, 3.5f, 0.5f);
+		objectIndex = ~0u;
+		for (uint32_t i = 0; loadedLeft && i < loadedLeft->getNumObjects(); ++i)
+		{
+			auto candidate = loadedLeft->getObject(i);
+			if (candidate && candidate->getObjectType() == core::SectorObjectType::BulkheadDoor)
+				{ objectIndex = i; break; }
+		}
+		require(loadedLeft && objectIndex != ~0u
+			&& loaded.getSectorBulkheadDoorOptions(loadedLeft->getIndex(), objectIndex, options),
+			"Bulkhead Door authored settings did not round-trip");
+		loaded.pauseSimulation();
+		require(loaded.removeSectorBulkheadDoor(loadedLeft->getIndex(), objectIndex),
+			"Bulkhead Door could not be deleted independently");
+	}
+
 	void recentFilesPersistAcrossStartup()
 	{
 		auto directory = std::filesystem::temp_directory_path() / "prometheum-fermide-recent-files-smoke";
@@ -744,6 +828,7 @@ void runSerializationSmokeChecks()
 	laddersCanBeValidatedEditedAndDeleted();
 	staircasesCanBeValidatedEditedAndDeleted();
 	physicalControlsPreferDistinctWallPositions();
+	bulkheadDoorsSupportIndependentObjectEditing();
 	recentFilesPersistAcrossStartup();
 	serializableTracksModificationState();
 }
