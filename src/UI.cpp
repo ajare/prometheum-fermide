@@ -485,11 +485,6 @@ namespace
 		ImVec2 position, ImVec2 canvasPos, ImVec2 canvasSize)
 	{
 		PegmanTarget target;
-		if (gUISettings.visibleLayer != CORE_LAYER_FORE)
-		{
-			target.diagnostic = "Doors can only be placed on the Fore Layer";
-			return target;
-		}
 		if (!pointInRect(position, canvasPos, canvasPos + canvasSize))
 		{
 			target.diagnostic = "Drop inside the world";
@@ -507,7 +502,7 @@ namespace
 		uint32_t landingX, landingWidth;
 		if (building->getLiftLandingGeometry(target.cellY, target.cellX, landingX, landingWidth))
 			target.cellX = landingX;
-		target.sector = building->getSectorAtPosition(CORE_LAYER_FORE,
+		target.sector = building->getSectorAtPosition(gUISettings.visibleLayer,
 			(float)target.cellX, world.y);
 		auto shuttleStops = building->getShuttleStopCandidatesForDoor(target.cellY, target.cellX);
 		if (!shuttleStops.empty()) target.diagnostic.clear();
@@ -1287,21 +1282,16 @@ namespace
 		drawList->AddRect(markerMin, markerMax,
 			hoveredItem == PaletteItem::Marker ? yellow : borderColour, 3.0f);
 		drawList->AddRect(doorMin, doorMax,
-			gUISettings.visibleLayer == CORE_LAYER_BACK ? disabledColour
-			: (hoveredItem == PaletteItem::Door ? yellow : borderColour), 3.0f);
+			hoveredItem == PaletteItem::Door ? yellow : borderColour, 3.0f);
 		if (hoveredItem != PaletteItem::None)
 		{
 			paletteConsumedMouse = true;
 			ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-			if (hoveredItem == PaletteItem::Door && gUISettings.visibleLayer == CORE_LAYER_BACK)
-				ImGui::SetTooltip("Doors can only be placed on the Fore Layer");
-			else
-				ImGui::SetTooltip(hoveredItem == PaletteItem::Agent ? "Drag to add Agent"
-					: hoveredItem == PaletteItem::Marker ? "Drag to add Marker"
-					: hoveredItem == PaletteItem::Window ? "Drag to add Window"
-					: hoveredItem == PaletteItem::Walkway ? "Drag to add Walkway" : "Drag to add Door");
-			if (io.MouseClicked[0]
-				&& !(hoveredItem == PaletteItem::Door && gUISettings.visibleLayer == CORE_LAYER_BACK))
+			ImGui::SetTooltip(hoveredItem == PaletteItem::Agent ? "Drag to add Agent"
+				: hoveredItem == PaletteItem::Marker ? "Drag to add Marker"
+				: hoveredItem == PaletteItem::Window ? "Drag to add Window"
+				: hoveredItem == PaletteItem::Walkway ? "Drag to add Walkway" : "Drag to add Door");
+			if (io.MouseClicked[0])
 			{
 				gPegman.phase = PalettePhase::Armed;
 				gPegman.item = hoveredItem;
@@ -1379,8 +1369,7 @@ namespace
 			PaletteSlotSize - 8.0f, PaletteSlotSize - 8.0f, yellow);
 		drawMarkerIcon(drawList, { (markerMin.x + markerMax.x) * 0.5f, markerMax.y - 5.0f },
 			PaletteSlotSize - 10.0f, yellow);
-		drawDoorIcon(drawList, doorMin, doorMax,
-			gUISettings.visibleLayer == CORE_LAYER_BACK ? disabledColour : yellow);
+		drawDoorIcon(drawList, doorMin, doorMax, yellow);
 
 		if (gPegman.phase == PalettePhase::Dragging)
 		{
@@ -2727,8 +2716,6 @@ namespace
 			float markerOffset = 0.0f;
 			if (definition.type == ClipboardObjectType::Door)
 			{
-				if (gUISettings.visibleLayer != CORE_LAYER_FORE)
-					throw runtime_error("Doors can only be placed on the Fore Layer");
 				uint32_t landingX, landingWidth;
 				if (building->getLiftLandingGeometry(y, x, landingX, landingWidth))
 				{
