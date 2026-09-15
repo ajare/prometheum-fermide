@@ -27,6 +27,7 @@
 #include "core/GapEdge.h"
 #include "core/Graph.h"
 #include "core/LiftTransit.h"
+#include "core/LiftSectorObject.h"
 #include "core/DoorSectorObject.h"
 #include "core/LadderSectorObject.h"
 #include "core/Path.h"
@@ -1923,10 +1924,126 @@ namespace
 			});
 	}
 
+	bool platformLiftAuthoringReconcilesWalkwayStops()
+	{
+		{
+			core::Building offset("PlatformLift initial floor", 8, 6);
+			auto offsetRoom = offset.addRoom("Offset room", CORE_LAYER_FORE, 1, 0, 7, 4);
+			offset.addSectorWalkway(offsetRoom, 2, 2);
+			offset.addSectorWalkway(offsetRoom, 2, 3);
+			core::Building::CreateLiftOptions offsetOptions;
+			offsetOptions.stopOffsets = { 0, 2 };
+			auto placed = offset.addSectorPlatformLift(offsetRoom, 0, 2, offsetOptions);
+			auto object = std::dynamic_pointer_cast<const core::LiftSectorObject>(
+				placed.lift.sector->getObject(placed.lift.index));
+			offset.finishBuild();
+			auto snapshot = offset.getSimulationSnapshot();
+			auto resource = std::find_if(snapshot.traversalResources.begin(), snapshot.traversalResources.end(),
+				[&](auto const& value) { return value.id == placed.traversalResource; });
+			std::shared_ptr<const core::SectorObject> hitObject;
+			auto hit = offset.getObjectAtPosition(CORE_LAYER_FORE, 2.5f, 0.975f, &hitObject);
+			if (!object || std::abs(object->getLift()->getPosition().y - 1.0f) > 0.001f
+				|| resource == snapshot.traversalResources.end()
+				|| std::abs(resource->liftPosition - 1.0f) > 0.001f
+				|| hit.get() != object->getLift().get() || hitObject != object) return false;
+		}
+		core::Building building("PlatformLift authoring", 8, 5);
+		auto room = building.addRoom("Lift room", CORE_LAYER_FORE, 0, 0, 7, 4);
+		building.addSectorWalkway(room, 1, 2);
+		building.addSectorWalkway(room, 1, 3);
+		building.addSectorWalkway(room, 3, 2);
+		building.addSectorWalkway(room, 3, 3);
+		core::Building::CreateLiftOptions options;
+		options.cellsWide = 1; options.stopOffsets = { 0, 1 };
+		auto created = building.addSectorPlatformLift(room, 0, 2, options);
+		building.finishBuild(); building.pauseSimulation();
+		options.stopOffsets = { 0, 1, 3 };
+		auto edit = building.planPlatformLiftEdit(room, created.lift.index, options);
+		if (!edit.valid) return false;
+		auto liftObject = building.applyPlatformLiftEdit(edit);
+		if (!liftObject) return false;
+
+		auto findObject = [&](core::SectorObjectType type, uint32_t x, uint32_t y)
+		{
+			auto sector = building.getSector(room);
+			for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
+			{
+				auto object = sector->getObject(i);
+				if (object && object->getObjectType() == type
+					&& object->getCellX() == x && object->getCellY() == y) return i;
+			}
+			return ~0u;
+		};
+		auto lower = findObject(core::SectorObjectType::Walkway, 2, 1);
+		auto removal = building.planRemoveSectorWalkway(room, lower);
+		if (!removal.valid || !removal.consequences.empty() || !building.applyWalkwayEdit(removal)) return false;
+		auto liftIndex = findObject(core::SectorObjectType::Lift, 2, 0);
+		core::Building::CreateLiftOptions retained;
+		if (liftIndex == ~0u || !building.getPlatformLiftOptions(room, liftIndex, retained)
+			|| retained.stopOffsets != std::vector<uint32_t>({ 0, 3 })) return false;
+		auto upper = findObject(core::SectorObjectType::Walkway, 2, 3);
+		removal = building.planRemoveSectorWalkway(room, upper);
+		if (!removal.valid || removal.consequences.empty() || !building.applyWalkwayEdit(removal)) return false;
+		if (findObject(core::SectorObjectType::Lift, 2, 0) != ~0u) return false;
+
+		core::Building resized("PlatformLift resize", 8, 5);
+		auto resizedRoom = resized.addRoom("Lift room", CORE_LAYER_FORE, 0, 0, 7, 4);
+		resized.addSectorWalkway(resizedRoom, 1, 2); resized.addSectorWalkway(resizedRoom, 1, 3);
+		resized.addSectorWalkway(resizedRoom, 3, 2); resized.addSectorWalkway(resizedRoom, 3, 3);
+		options.stopOffsets = { 0, 1, 3 };
+		resized.addSectorPlatformLift(resizedRoom, 0, 2, options);
+		resized.finishBuild(); resized.pauseSimulation();
+		auto resize = resized.planResizeLocation(resizedRoom, 0, 0, 7, 2);
+		if (!resize.valid || resize.consequences.empty()) return false;
+		resizedRoom = resized.applyLocationEdit(resize);
+		uint32_t resizedLift = ~0u;
+		for (uint32_t i = 0; i < resized.getSector(resizedRoom)->getNumObjects(); ++i)
+			if (auto object = resized.getSector(resizedRoom)->getObject(i);
+				object && object->getObjectType() == core::SectorObjectType::Lift) resizedLift = i;
+		if (resizedLift == ~0u || !resized.getPlatformLiftOptions(resizedRoom, resizedLift, retained)
+			|| retained.stopOffsets != std::vector<uint32_t>({ 0, 1 })) return false;
+		resize = resized.planResizeLocation(resizedRoom, 0, 0, 7, 1);
+		if (!resize.valid || std::none_of(resize.consequences.begin(), resize.consequences.end(),
+			[](auto const& value) { return value.find("Platform Lift") != std::string::npos; })) return false;
+		resizedRoom = resized.applyLocationEdit(resize);
+		for (uint32_t i = 0; i < resized.getSector(resizedRoom)->getNumObjects(); ++i)
+			if (auto object = resized.getSector(resizedRoom)->getObject(i);
+				object && object->getObjectType() == core::SectorObjectType::Lift) return false;
+
+		core::Building moving("PlatformLift movement", 9, 5);
+		auto movingRoom = moving.addRoom("Lift room", CORE_LAYER_FORE, 0, 0, 8, 4);
+		moving.addSectorWalkway(movingRoom, 1, 1); moving.addSectorWalkway(movingRoom, 1, 2);
+		moving.addSectorWalkway(movingRoom, 2, 3); moving.addSectorWalkway(movingRoom, 2, 4);
+		options.stopOffsets = { 0, 1 };
+		auto movingLift = moving.addSectorPlatformLift(movingRoom, 0, 1, options);
+		moving.finishBuild(); moving.pauseSimulation();
+		auto move = moving.planMoveSectorObject(movingRoom, movingLift.lift.index, 3, 0);
+		if (!move.valid || !move.requiresConfirmation()) return false;
+		auto movedLift = moving.applyObjectMove(move);
+		uint32_t movedLiftIndex = ~0u;
+		for (uint32_t i = 0; i < moving.getSector(movingRoom)->getNumObjects(); ++i)
+			if (moving.getSector(movingRoom)->getObject(i) == movedLift) movedLiftIndex = i;
+		if (movedLiftIndex == ~0u || !moving.getPlatformLiftOptions(movingRoom, movedLiftIndex, retained)
+			|| retained.stopOffsets != std::vector<uint32_t>({ 0, 2 })) return false;
+		uint32_t connectedWalkway = ~0u;
+		for (uint32_t i = 0; i < moving.getSector(movingRoom)->getNumObjects(); ++i)
+		{
+			auto object = moving.getSector(movingRoom)->getObject(i);
+			if (object && object->getObjectType() == core::SectorObjectType::Walkway
+				&& object->getCellX() == 3 && object->getCellY() == 2) connectedWalkway = i;
+		}
+		move = moving.planMoveSectorObject(movingRoom, connectedWalkway, 6, 2);
+		if (!move.valid || !move.requiresConfirmation() || !moving.applyObjectMove(move)) return false;
+		for (uint32_t i = 0; i < moving.getSector(movingRoom)->getNumObjects(); ++i)
+			if (auto object = moving.getSector(movingRoom)->getObject(i);
+				object && object->getObjectType() == core::SectorObjectType::Lift) return false;
+		return true;
+	}
+
 	bool openPlatformLiftUsesVirtualBoundaryAndTransportPolicy()
 	{
 		core::Building building("Open platform lift", 7, 5);
-		auto room = building.addCorridor(0, 0, 6, 4);
+		auto room = building.addRoom("Platform room", CORE_LAYER_FORE, 0, 0, 6, 4);
 		core::Building::CreateLiftOptions options;
 		options.cellsWide = 1;
 		options.stopOffsets = { 0, 2 };
@@ -3250,6 +3367,11 @@ int main()
 		if (!singlePassengerCompletesTwoStopLiftJourney())
 		{
 			std::cerr << "FAIL: single passenger did not complete an interlocked two-stop lift journey\n";
+			return 1;
+		}
+		if (!platformLiftAuthoringReconcilesWalkwayStops())
+		{
+			std::cerr << "FAIL: PlatformLift authoring did not reconcile Walkway stops\n";
 			return 1;
 		}
 		if (!openPlatformLiftUsesVirtualBoundaryAndTransportPolicy())

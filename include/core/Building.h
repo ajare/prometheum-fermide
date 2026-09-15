@@ -192,9 +192,43 @@ namespace core
 			uint32_t objectIndex{ ~0u };
 			uint32_t x{ 0 }, y{ 0 };
 			// Preview dimensions may differ from the source object (Room Ladders
-			// recalculate their height at the destination).
+			// and PlatformLifts recalculate their height at the destination).
 			uint32_t previewWidth{ 0 }, previewHeight{ 0 };
 			std::string diagnostic;
+			std::vector<std::string> consequences;
+
+			[[nodiscard]] bool requiresConfirmation() const { return !consequences.empty(); }
+		};
+
+		struct PlatformLiftStopCandidate
+		{
+			uint32_t deckOffset{ 0 };
+			bool leftButton{ false };
+			bool rightButton{ false };
+		};
+
+		struct PlatformLiftEditPlan
+		{
+			bool valid{ false };
+			bool remove{ false };
+			uint32_t sectorIndex{ ~0u };
+			uint32_t objectIndex{ ~0u };
+			CreateLiftOptions options;
+			std::string diagnostic;
+			std::vector<std::string> consequences;
+
+			[[nodiscard]] bool requiresConfirmation() const { return !consequences.empty(); }
+		};
+
+		struct WalkwayEditPlan
+		{
+			bool valid{ false };
+			uint32_t sectorIndex{ ~0u };
+			uint32_t objectIndex{ ~0u };
+			std::string diagnostic;
+			std::vector<std::string> consequences;
+
+			[[nodiscard]] bool requiresConfirmation() const { return !consequences.empty(); }
 		};
 
 		struct LocationEditPlan
@@ -445,6 +479,11 @@ namespace core
 		bool roomLadderIsActive(std::shared_ptr<const Ladder> const& ladder) const;
 
 		bool forceBridgeIsActive(std::shared_ptr<const ForceBridge> const& forceBridge) const;
+
+		bool platformLiftIsActive(std::shared_ptr<const Lift> const& lift) const;
+
+		bool preparePlatformLiftEdit(PlatformLiftEditPlan const& plan,
+			std::vector<ConstructionRecord>& records, std::string& diagnostic) const;
 
 		bool prepareLiftEdit(LiftEditPlan const& plan,
 			std::vector<ConstructionRecord>& records, std::string& diagnostic) const;
@@ -887,6 +926,29 @@ namespace core
 		bool removeRoomLadder(uint32_t sectorIndex, uint32_t objectIndex);
 
 		CreatePlatformLiftResult addSectorPlatformLift(uint32_t sectorIndex, uint32_t deckIndex, uint32_t xOffset, CreateLiftOptions const& options);
+
+		std::vector<PlatformLiftStopCandidate> getPlatformLiftStopCandidates(
+			uint32_t sectorIndex, uint32_t xOffset) const;
+
+		bool canAddPlatformLift(uint32_t sectorIndex, uint32_t xOffset,
+			CreateLiftOptions const& options, std::string* diagnostic = nullptr) const;
+
+		bool getPlatformLiftOptions(uint32_t sectorIndex, uint32_t objectIndex,
+			CreateLiftOptions& options) const;
+
+		PlatformLiftEditPlan planPlatformLiftEdit(uint32_t sectorIndex, uint32_t objectIndex,
+			CreateLiftOptions const& options) const;
+
+		PlatformLiftEditPlan planRemovePlatformLift(uint32_t sectorIndex,
+			uint32_t objectIndex) const;
+
+		std::shared_ptr<const SectorObject> applyPlatformLiftEdit(
+			PlatformLiftEditPlan const& plan);
+
+		WalkwayEditPlan planRemoveSectorWalkway(uint32_t sectorIndex,
+			uint32_t objectIndex) const;
+
+		bool applyWalkwayEdit(WalkwayEditPlan const& plan);
 
 		bool canAddSectorWalkway(uint32_t sectorIndex, uint32_t deckIndex, uint32_t xOffset,
 			std::string* diagnostic = nullptr) const;

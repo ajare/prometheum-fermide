@@ -53,6 +53,13 @@ _Avoid_: Trip intent, queue ticket
 The controlled boundary between two sectors, such as a doorway or the entrance to a lift.
 _Avoid_: Vertex, when discussing physical movement rules
 
+**Walkway**:
+A traversable floor within a multi-deck room, above that room's ground floor.
+
+**Platform lift**:
+An open transport vehicle within one room. Its ground stop is mandatory, and selected walkway stops connect it to higher levels in the same column. Walkways in that column need not all be stops.
+_Avoid_: Lift, when distinguishing the open room object from an enclosed lift transit
+
 ## Actors and shared resources
 
 **Agent**:

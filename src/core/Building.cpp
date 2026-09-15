@@ -1096,15 +1096,12 @@ namespace core
 		auto const& cellDef = layer->getCellDefinition(x, y);
 		auto sector = _getSector(cellDef.sectorIndex);
 
-		vector<uint32_t> stops;
-
-		for (auto stopOffset : options.stopOffsets)
-		{
-			stops.push_back(y + stopOffset);
-		}
-
 		return {
-			sector->createPlatformLift(sector, x, y, options.cellsWide, stops, vertexIdentifier),
+			// LiftSectorObject and Lift both expect offsets relative to the global
+			// base y. Passing global stop positions here would apply y twice and make
+			// PlatformLifts in offset Rooms start above their ground floor.
+			sector->createPlatformLift(sector, x, y, options.cellsWide,
+				options.stopOffsets, vertexIdentifier),
 			SectorObjectType::Lift,
 			sector
 		};
@@ -3030,17 +3027,27 @@ namespace core
 			for (uint32_t i = 0; i < room->getNumObjects(); ++i)
 			{
 				auto ladderObject = dynamic_pointer_cast<LadderSectorObject>(room->getObject(i));
-				if (!ladderObject || ladderObject->getCellX() != room->getCellX() + xOffset) continue;
-				auto ladder = ladderObject->getLadder();
-				auto base = ladderObject->getCellY() - room->getCellY();
-				auto top = base + ladder->getDecksHigh() - 1;
-				if (deckIndex > base && deckIndex < top && roomLadderIsActive(ladder))
-					throw BuildingException(this, "A Room Ladder cannot be resized while it is in use");
+				if (ladderObject && ladderObject->getCellX() == room->getCellX() + xOffset)
+				{
+					auto ladder = ladderObject->getLadder();
+					auto base = ladderObject->getCellY() - room->getCellY();
+					auto top = base + ladder->getDecksHigh() - 1;
+					if (deckIndex > base && deckIndex < top && roomLadderIsActive(ladder))
+						throw BuildingException(this, "A Room Ladder cannot be resized while it is in use");
+				}
+				auto liftObject = dynamic_pointer_cast<LiftSectorObject>(room->getObject(i));
+				if (liftObject && liftObject->getCellX() == room->getCellX() + xOffset
+					&& platformLiftIsActive(liftObject->getLift()))
+					throw BuildingException(this, "The PlatformLift shaft cannot be changed while it is in use");
 			}
 			auto records = mConstructionRecords;
 			ConstructionRecord record{ ConstructionType::Walkway };
 			record.a = sectorIndex; record.b = deckIndex; record.c = xOffset;
-			records.push_back(record);
+			// A PlatformLift validates authored landing Walkways while replaying, so
+			// keep a newly added Walkway before PlatformLifts in the same Room.
+			auto beforeLift = find_if(records.begin(), records.end(), [&](auto const& candidate)
+				{ return candidate.type == ConstructionType::PlatformLift && candidate.a == sectorIndex; });
+			records.insert(beforeLift, record);
 			if (!normalizeRoomLadderRecords(records, diagnostic))
 				throw BuildingException(this, diagnostic);
 			rebuildFromConstructionRecords(std::move(records));
@@ -3506,8 +3513,96 @@ namespace core
 		return result;
 	}
 
+	vector<Building::PlatformLiftStopCandidate> Building::getPlatformLiftStopCandidates(
+		uint32_t sectorIndex, uint32_t xOffset) const
+	{
+		vector<PlatformLiftStopCandidate> result;
+		if (sectorIndex >= mSectors.size()) return result;
+		auto room = dynamic_pointer_cast<const Location>(mSectors[sectorIndex]);
+		if (!room || room->isCorridor() || xOffset >= room->getCellsWide()) return result;
+		auto layer = mLayers[room->getLayerIndex()];
+		auto x = room->getCellX() + xOffset;
+		auto sideAvailable = [&](uint32_t y, int side)
+		{
+			if (side == CORE_SIDE_LEFT)
+				return x > room->getCellX0() + 1 && layer->getCellDefinition(x - 1, y).isTraversableOnFoot();
+			return x + 1 < room->getCellX1() && layer->getCellDefinition(x + 1, y).isTraversableOnFoot();
+		};
+		for (uint32_t i = 0; i < room->getNumObjects(); ++i)
+		{
+			auto walkway = dynamic_pointer_cast<const WalkwaySectorObject>(room->getObject(i));
+			if (!walkway || walkway->getCellX() != x || walkway->getCellY() <= room->getCellY()) continue;
+			auto deck = walkway->getCellY() - room->getCellY();
+			if (deck >= room->getDecksHigh()) continue;
+			result.push_back({ deck, sideAvailable(walkway->getCellY(), CORE_SIDE_LEFT),
+				sideAvailable(walkway->getCellY(), CORE_SIDE_RIGHT) });
+		}
+		sort(result.begin(), result.end(), [](auto const& a, auto const& b)
+			{ return a.deckOffset < b.deckOffset; });
+		return result;
+	}
+
+	bool Building::canAddPlatformLift(uint32_t sectorIndex, uint32_t xOffset,
+		CreateLiftOptions const& requested, string* diagnostic) const
+	{
+		auto reject = [diagnostic](string reason)
+		{
+			if (diagnostic) *diagnostic = std::move(reason);
+			return false;
+		};
+		if (sectorIndex >= mSectors.size()) return reject("PlatformLift Room does not exist");
+		auto room = dynamic_pointer_cast<const Location>(mSectors[sectorIndex]);
+		if (!room || room->isCorridor()) return reject("PlatformLifts can only be placed in Rooms");
+		if (xOffset >= room->getCellsWide()) return reject("PlatformLift position is outside the Room");
+		if (requested.cellsWide != 1) return reject("Editor PlatformLifts are one cell wide");
+		auto stops = requested.stopOffsets;
+		sort(stops.begin(), stops.end());
+		stops.erase(unique(stops.begin(), stops.end()), stops.end());
+		if (stops.size() < 2 || stops.front() != 0)
+			return reject("A PlatformLift requires ground and at least one Walkway stop");
+		auto candidates = getPlatformLiftStopCandidates(sectorIndex, xOffset);
+		bool left = true, right = true;
+		auto x = room->getCellX() + xOffset;
+		auto layer = mLayers[room->getLayerIndex()];
+		left = x > room->getCellX0() + 1
+			&& layer->getCellDefinition(x - 1, room->getCellY()).isTraversableOnFoot();
+		right = x + 1 < room->getCellX1()
+			&& layer->getCellDefinition(x + 1, room->getCellY()).isTraversableOnFoot();
+		for (size_t i = 1; i < stops.size(); ++i)
+		{
+			auto found = find_if(candidates.begin(), candidates.end(), [&](auto const& candidate)
+				{ return candidate.deckOffset == stops[i]; });
+			if (found == candidates.end())
+				return reject(format("No Walkway exists at deck {} in the PlatformLift column", stops[i]));
+			left = left && found->leftButton;
+			right = right && found->rightButton;
+		}
+		if (!left && !right) return reject("The selected stops have no common side for PlatformLift buttons");
+		uint32_t top = stops.back();
+		for (uint32_t i = 0; i < room->getNumObjects(); ++i)
+		{
+			auto object = room->getObject(i);
+			if (!object || object->getObjectType() == SectorObjectType::Walkway) continue;
+			uint32_t objectRight = object->getCellX() + (uint32_t)ceil(object->getSize().x);
+			uint32_t objectTop = object->getCellY() + (uint32_t)ceil(object->getSize().y);
+			if (x >= object->getCellX() && x < objectRight
+				&& room->getCellY() < objectTop && room->getCellY() + top >= object->getCellY())
+				return reject("Another object blocks the PlatformLift shaft");
+		}
+		for (uint32_t deck = 0; deck <= top; ++deck)
+			if (!layer->getCellDefinition(x, room->getCellY() + deck).markers.empty())
+				return reject("A Marker blocks the PlatformLift shaft");
+		if (diagnostic) diagnostic->clear();
+		return true;
+	}
+
 	Building::CreatePlatformLiftResult Building::addSectorPlatformLift(uint32_t sectorIndex, uint32_t deckIndex, uint32_t xOffset, CreateLiftOptions const& options)
 	{
+		string placementDiagnostic;
+		if (deckIndex != 0)
+			throw BuildingException(this, "PlatformLifts must be placed on a Room's ground floor");
+		if (!canAddPlatformLift(sectorIndex, xOffset, options, &placementDiagnostic))
+			throw BuildingException(this, placementDiagnostic);
 		beginStructuralEdit("addSectorPlatformLift");
 		auto sector = _getSector(sectorIndex);
 		auto layerIndex = sector->getLayerIndex();
@@ -4116,6 +4211,22 @@ namespace core
 	shared_ptr<const Object> Building::getObjectAtPosition(uint32_t layerIndex, float x, float y,
 		shared_ptr<const SectorObject>* sectorObject) const
 	{
+		// An open platform is deliberately rendered a little below its nominal
+		// floor. Hit-test its current geometry before resolving the pointer through
+		// a grid cell, because that rendered strip may lie in the cell below its Room.
+		for (auto const& sector : getSectors(layerIndex))
+			for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
+			{
+				auto liftObject = dynamic_pointer_cast<const LiftSectorObject>(sector->getObject(i));
+				if (!liftObject) continue;
+				Vector2 first, second;
+				liftObject->getLift()->getCurrentShape(first, second);
+				auto minX = min(first.x, second.x), maxX = max(first.x, second.x);
+				auto minY = min(first.y, second.y), maxY = max(first.y, second.y);
+				if (x < minX || x > maxX || y < minY || y > maxY) continue;
+				if (sectorObject) *sectorObject = liftObject;
+				return liftObject->getLift();
+			}
 		try
 		{
 			auto const& cell = mLayers[layerIndex]->getCellDefinition((int)x, (int)y);

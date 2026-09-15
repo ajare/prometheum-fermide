@@ -171,7 +171,8 @@ namespace
 		Window,
 		Walkway,
 		ForceBridge,
-		RoomLadder
+		RoomLadder,
+		PlatformLift
 	};
 
 	struct PaletteDropState
@@ -318,6 +319,11 @@ namespace
 	optional<core::Building::ShuttleEditPlan> gPendingShuttleEdit;
 	optional<core::Building::LadderEditPlan> gPendingLadderEdit;
 	optional<core::Building::StaircaseEditPlan> gPendingStaircaseEdit;
+	optional<core::Building::PlatformLiftEditPlan> gPendingPlatformLiftEdit;
+	optional<core::Building::WalkwayEditPlan> gPendingWalkwayEdit;
+	optional<core::Building::ObjectMovePlan> gPendingObjectMove;
+
+	void reportEditorError(string const& source, string message);
 
 	struct ObjectMoveState
 	{
@@ -638,6 +644,40 @@ namespace
 		return target;
 	}
 
+	PegmanTarget getPlatformLiftTarget(shared_ptr<const core::Building> const& building,
+		ImVec2 position, ImVec2 canvasPos, ImVec2 canvasSize)
+	{
+		PegmanTarget target;
+		if (!pointInRect(position, canvasPos, canvasPos + canvasSize))
+		{ target.diagnostic = "Drop inside the world"; return target; }
+		auto world = screenToWorld(position);
+		if (world.x < 0.0f || world.y < 0.0f)
+		{ target.diagnostic = "PlatformLift position is outside the building"; return target; }
+		target.sector = building->getSectorAtPosition(gUISettings.visibleLayer, world.x, world.y);
+		auto room = dynamic_pointer_cast<const core::Location>(target.sector);
+		if (!room || room->isCorridor() || !room->pointInBounds(world.x, world.y))
+		{ target.diagnostic = "PlatformLifts can only be placed in Rooms"; return target; }
+		target.cellX = (uint32_t)floor(world.x);
+		target.cellY = room->getCellY();
+		target.deckOffset = 0;
+		target.localX = (float)(target.cellX - room->getCellX());
+		core::Building::CreateLiftOptions options;
+		options.cellsWide = 1;
+		for (auto const& candidate : building->getPlatformLiftStopCandidates(
+			room->getIndex(), (uint32_t)target.localX))
+		{
+			options.stopOffsets = { 0, candidate.deckOffset };
+			if (building->canAddPlatformLift(room->getIndex(), (uint32_t)target.localX,
+				options, &target.diagnostic))
+			{
+				target.floorY = (float)(room->getCellY() + candidate.deckOffset + 1);
+				return target;
+			}
+		}
+		target.diagnostic = "No eligible Walkway exists above this PlatformLift position";
+		return target;
+	}
+
 	float fittedPegmanFontSize(float maximumWidth, float maximumHeight, ImVec2& renderedSize)
 	{
 		ImFont* font = gAgentIconFont ? gAgentIconFont : ImGui::GetFont();
@@ -710,6 +750,20 @@ namespace
 			{ right - 7.0f, y + 4.0f }, colour);
 	}
 
+	void drawPlatformLiftIcon(ImDrawList* drawList, ImVec2 boundsMin, ImVec2 boundsMax, ImU32 colour)
+	{
+		auto centre = (boundsMin + boundsMax) * 0.5f;
+		auto left = centre.x - 11.0f, right = centre.x + 11.0f;
+		auto top = boundsMin.y + 6.0f, bottom = boundsMax.y - 6.0f;
+		drawList->AddLine({ left, top }, { left, bottom }, colour, 2.0f);
+		drawList->AddLine({ right, top }, { right, bottom }, colour, 2.0f);
+		drawList->AddLine({ left - 3.0f, centre.y + 5.0f }, { right + 3.0f, centre.y + 5.0f }, colour, 3.0f);
+		drawList->AddTriangleFilled({ centre.x, top }, { centre.x - 4.0f, top + 6.0f },
+			{ centre.x + 4.0f, top + 6.0f }, colour);
+		drawList->AddTriangleFilled({ centre.x, bottom }, { centre.x - 4.0f, bottom - 6.0f },
+			{ centre.x + 4.0f, bottom - 6.0f }, colour);
+	}
+
 	void drawLadderIcon(ImDrawList* drawList, ImVec2 boundsMin, ImVec2 boundsMax, ImU32 colour)
 	{
 		auto inset = ImVec2(18.0f, 6.0f);
@@ -766,6 +820,28 @@ namespace
 			}
 		}
 		return selected;
+	}
+
+	shared_ptr<const core::SectorObject> platformLiftAtScreenPosition(
+		shared_ptr<const core::Building> const& building, ImVec2 position)
+	{
+		constexpr float tolerance = 5.0f;
+		for (auto const& sector : building->getSectors(gUISettings.visibleLayer))
+		{
+			for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
+			{
+				auto object = dynamic_pointer_cast<const core::LiftSectorObject>(sector->getObject(i));
+				if (!object) continue;
+				core::Vector2 first, second;
+				object->getLift()->getCurrentShape(first, second);
+				auto topLeft = worldToScreen({ min(first.x, second.x), max(first.y, second.y) });
+				auto bottomRight = worldToScreen({ max(first.x, second.x), min(first.y, second.y) });
+				topLeft -= ImVec2(tolerance, tolerance);
+				bottomRight += ImVec2(tolerance, tolerance);
+				if (pointInRect(position, topLeft, bottomRight)) return object;
+			}
+		}
+		return nullptr;
 	}
 
 	shared_ptr<const core::SectorObject> forceBridgeAtScreenPosition(
@@ -1150,6 +1226,37 @@ namespace
 		}
 	}
 
+	void placePlatformLift(shared_ptr<core::Building> const& building, PegmanTarget const& target)
+	{
+		auto undo = captureDocumentSnapshot(building);
+		try
+		{
+			core::Building::CreateLiftOptions options;
+			options.cellsWide = 1;
+			for (auto const& candidate : building->getPlatformLiftStopCandidates(
+				target.sector->getIndex(), (uint32_t)target.localX))
+			{
+				options.stopOffsets = { 0, candidate.deckOffset };
+				string diagnostic;
+				if (!building->canAddPlatformLift(target.sector->getIndex(),
+					(uint32_t)target.localX, options, &diagnostic)) continue;
+				auto created = building->addSectorPlatformLift(target.sector->getIndex(), 0,
+					(uint32_t)target.localX, options);
+				building->finishBuild();
+				setSelectionMode(UISettings::SelectionMode::Object);
+				gSelectedAgent = nullptr; gSelectedSector.reset();
+				gSelectedSectorObject = created.lift.sector->getObject(created.lift.index);
+				commitDocumentEdit(std::move(undo));
+				return;
+			}
+			throw runtime_error("No eligible Walkway exists above this PlatformLift position");
+		}
+		catch (core::Exception const& error)
+		{ core::addLogMessage("PlatformLift editor", 0, core::LogLevel::Error, error.getMessage()); }
+		catch (std::exception const& error)
+		{ core::addLogMessage("PlatformLift editor", 0, core::LogLevel::Error, error.what()); }
+	}
+
 	void placeForceBridge(shared_ptr<core::Building> const& building, PegmanTarget const& target)
 	{
 		auto undo = captureDocumentSnapshot(building);
@@ -1251,7 +1358,7 @@ namespace
 		}
 
 		auto trayBottomRight = canvasPos + canvasSize - ImVec2(PaletteInset, PaletteInset);
-		auto traySize = ImVec2(PalettePadding * 2.0f + PaletteSlotWidth * 7.0f + PaletteGap * 6.0f,
+		auto traySize = ImVec2(PalettePadding * 2.0f + PaletteSlotWidth * 8.0f + PaletteGap * 7.0f,
 			PalettePadding * 2.0f + PaletteSlotSize * 2.0f + PaletteGap);
 		auto trayTopLeft = trayBottomRight - traySize;
 		auto roomMin = trayTopLeft + ImVec2(PalettePadding, PalettePadding);
@@ -1267,6 +1374,7 @@ namespace
 		auto walkwayMin = liftMin + ImVec2(0.0f, PaletteSlotSize + PaletteGap);
 		auto forceBridgeMin = shuttleMin + ImVec2(0.0f, PaletteSlotSize + PaletteGap);
 		auto roomLadderMin = forceBridgeMin + ImVec2(PaletteSlotWidth + PaletteGap, 0.0f);
+		auto platformLiftMin = roomLadderMin + ImVec2(PaletteSlotWidth + PaletteGap, 0.0f);
 		auto roomMax = roomMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
 		auto corridorMax = corridorMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
 		auto ladderMax = ladderMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
@@ -1280,6 +1388,7 @@ namespace
 		auto walkwayMax = walkwayMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
 		auto forceBridgeMax = forceBridgeMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
 		auto roomLadderMax = roomLadderMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
+		auto platformLiftMax = platformLiftMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
 		drawList->AddRectFilled(trayTopLeft, trayBottomRight, trayColour, 5.0f);
 		drawList->AddRect(trayTopLeft, trayBottomRight, borderColour, 5.0f);
 
@@ -1356,6 +1465,7 @@ namespace
 		drawWalkwayIcon(drawList, walkwayMin, walkwayMax, yellow);
 		drawForceBridgeIcon(drawList, forceBridgeMin, forceBridgeMax, IM_COL32(0, 255, 0, 255));
 		drawLadderIcon(drawList, roomLadderMin, roomLadderMax, yellow);
+		drawPlatformLiftIcon(drawList, platformLiftMin, platformLiftMax, yellow);
 
 		bool paintWasActive = gPaint.tool != PaintTool::None;
 		if (paintWasActive && (ImGui::IsKeyPressed(ImGuiKey_Escape)
@@ -1471,6 +1581,7 @@ namespace
 			else if (pointInRect(io.MousePos, walkwayMin, walkwayMax)) hoveredItem = PaletteItem::Walkway;
 			else if (pointInRect(io.MousePos, forceBridgeMin, forceBridgeMax)) hoveredItem = PaletteItem::ForceBridge;
 			else if (pointInRect(io.MousePos, roomLadderMin, roomLadderMax)) hoveredItem = PaletteItem::RoomLadder;
+			else if (pointInRect(io.MousePos, platformLiftMin, platformLiftMax)) hoveredItem = PaletteItem::PlatformLift;
 		}
 		drawList->AddRect(windowMin, windowMax,
 			hoveredItem == PaletteItem::Window ? yellow : borderColour, 3.0f);
@@ -1480,6 +1591,8 @@ namespace
 			hoveredItem == PaletteItem::ForceBridge ? yellow : borderColour, 3.0f);
 		drawList->AddRect(roomLadderMin, roomLadderMax,
 			hoveredItem == PaletteItem::RoomLadder ? yellow : borderColour, 3.0f);
+		drawList->AddRect(platformLiftMin, platformLiftMax,
+			hoveredItem == PaletteItem::PlatformLift ? yellow : borderColour, 3.0f);
 		drawList->AddRect(agentMin, agentMax,
 			hoveredItem == PaletteItem::Agent ? yellow : borderColour, 3.0f);
 		drawList->AddRect(markerMin, markerMax,
@@ -1495,7 +1608,8 @@ namespace
 				: hoveredItem == PaletteItem::Window ? "Drag to add Window"
 				: hoveredItem == PaletteItem::Walkway ? "Drag to add Walkway"
 				: hoveredItem == PaletteItem::ForceBridge ? "Drag to add Force Bridge"
-				: hoveredItem == PaletteItem::RoomLadder ? "Drag to add Room Ladder" : "Drag to add Door");
+				: hoveredItem == PaletteItem::RoomLadder ? "Drag to add Room Ladder"
+				: hoveredItem == PaletteItem::PlatformLift ? "Drag to add Platform Lift" : "Drag to add Door");
 			if (io.MouseClicked[0])
 			{
 				gPegman.phase = PalettePhase::Armed;
@@ -1533,6 +1647,8 @@ namespace
 				target = getForceBridgeTarget(building, io.MousePos, canvasPos, canvasSize);
 			else if (gPegman.item == PaletteItem::RoomLadder)
 				target = getRoomLadderTarget(building, io.MousePos, canvasPos, canvasSize);
+			else if (gPegman.item == PaletteItem::PlatformLift)
+				target = getPlatformLiftTarget(building, io.MousePos, canvasPos, canvasSize);
 			else
 				target = getPegmanTarget(building, io.MousePos, canvasPos, canvasSize);
 			if (!gUISettings.worldPaused) target.diagnostic = "Pause simulation to place objects";
@@ -1567,6 +1683,11 @@ namespace
 				else if (target && gPegman.item == PaletteItem::RoomLadder)
 				{
 					placeRoomLadder(building, target);
+					resetPegman();
+				}
+				else if (target && gPegman.item == PaletteItem::PlatformLift)
+				{
+					placePlatformLift(building, target);
 					resetPegman();
 				}
 				else if (target && gPegman.item == PaletteItem::Agent)
@@ -1628,6 +1749,15 @@ namespace
 						worldToScreen({ (float)target.cellX, target.floorY }),
 						worldToScreen({ (float)target.cellX + 1.0f, (float)target.cellY }), colour);
 				else drawLadderIcon(drawList, io.MousePos - ImVec2(24.0f, 18.0f),
+					io.MousePos + ImVec2(24.0f, 18.0f), colour);
+			}
+			else if (gPegman.item == PaletteItem::PlatformLift)
+			{
+				if (target.sector && target.floorY > (float)target.cellY)
+					drawPlatformLiftIcon(drawList,
+						worldToScreen({ (float)target.cellX, target.floorY }),
+						worldToScreen({ (float)target.cellX + 1.0f, (float)target.cellY }), colour);
+				else drawPlatformLiftIcon(drawList, io.MousePos - ImVec2(24.0f, 18.0f),
 					io.MousePos + ImVec2(24.0f, 18.0f), colour);
 			}
 			else if (gPegman.item == PaletteItem::Door
@@ -1835,6 +1965,9 @@ namespace
 		gPendingShuttleEdit.reset();
 		gPendingLadderEdit.reset();
 		gPendingStaircaseEdit.reset();
+		gPendingPlatformLiftEdit.reset();
+		gPendingWalkwayEdit.reset();
+		gPendingObjectMove.reset();
 		gShuttleDraft.reset();
 		gShuttleDoorCandidates.clear();
 		gUISettings.worldPaused = false;
@@ -2227,6 +2360,86 @@ namespace
 		else commitStaircaseEdit(building, plan);
 	}
 
+	void commitPlatformLiftEdit(shared_ptr<core::Building> const& building,
+		core::Building::PlatformLiftEditPlan const& plan)
+	{
+		auto undo = captureDocumentSnapshot(building);
+		try
+		{
+			if (!building->isSimulationPaused()) building->pauseSimulation();
+			gUISettings.worldPaused = true;
+			gSelectedSectorObject = building->applyPlatformLiftEdit(plan);
+			gHoveredSectorObject.reset();
+			commitDocumentEdit(std::move(undo));
+		}
+		catch (core::Exception const& error)
+		{ reportEditorError("PlatformLift editor", error.getMessage()); }
+		catch (std::exception const& error)
+		{ reportEditorError("PlatformLift editor", error.what()); }
+	}
+
+	void queuePlatformLiftEdit(shared_ptr<core::Building> const& building,
+		core::Building::PlatformLiftEditPlan const& plan)
+	{
+		if (!building->isSimulationPaused()) building->pauseSimulation();
+		gUISettings.worldPaused = true;
+		if (plan.requiresConfirmation()) { gPendingPlatformLiftEdit = plan; gOpenLocationEditPopup = true; }
+		else commitPlatformLiftEdit(building, plan);
+	}
+
+	void commitWalkwayEdit(shared_ptr<core::Building> const& building,
+		core::Building::WalkwayEditPlan const& plan)
+	{
+		auto undo = captureDocumentSnapshot(building);
+		try
+		{
+			if (!building->isSimulationPaused()) building->pauseSimulation();
+			gUISettings.worldPaused = true;
+			if (building->applyWalkwayEdit(plan))
+			{
+				gSelectedSectorObject.reset(); gHoveredSectorObject.reset();
+				commitDocumentEdit(std::move(undo));
+			}
+		}
+		catch (core::Exception const& error) { reportEditorError("Walkway editor", error.getMessage()); }
+		catch (std::exception const& error) { reportEditorError("Walkway editor", error.what()); }
+	}
+
+	void queueWalkwayEdit(shared_ptr<core::Building> const& building,
+		core::Building::WalkwayEditPlan const& plan)
+	{
+		if (!building->isSimulationPaused()) building->pauseSimulation();
+		gUISettings.worldPaused = true;
+		if (plan.requiresConfirmation()) { gPendingWalkwayEdit = plan; gOpenLocationEditPopup = true; }
+		else commitWalkwayEdit(building, plan);
+	}
+
+	void commitObjectMove(shared_ptr<core::Building> const& building,
+		core::Building::ObjectMovePlan const& plan)
+	{
+		auto undo = captureDocumentSnapshot(building);
+		try
+		{
+			if (!building->isSimulationPaused()) building->pauseSimulation();
+			gUISettings.worldPaused = true;
+			gSelectedSectorObject = building->applyObjectMove(plan);
+			gHoveredSectorObject.reset(); gSelectedSector.reset(); gSelectedAgent = nullptr;
+			commitDocumentEdit(std::move(undo));
+		}
+		catch (core::Exception const& error) { reportEditorError("Object editor", error.getMessage()); }
+		catch (std::exception const& error) { reportEditorError("Object editor", error.what()); }
+		resetObjectMove();
+	}
+
+	void queueObjectMove(shared_ptr<core::Building> const& building,
+		core::Building::ObjectMovePlan const& plan)
+	{
+		if (!building->isSimulationPaused()) building->pauseSimulation();
+		gUISettings.worldPaused = true;
+		if (plan.requiresConfirmation()) { gPendingObjectMove = plan; gOpenLocationEditPopup = true; resetObjectMove(); }
+		else commitObjectMove(building, plan);
+	}
+
 	void renderFilePopups(shared_ptr<core::Building>& building)
 	{
 		if (gOpenUnsavedChangesPopup)
@@ -2513,24 +2726,41 @@ namespace
 			if (gPendingStaircaseEdit)
 				for (auto const& consequence : gPendingStaircaseEdit->consequences)
 					ImGui::BulletText("%s", consequence.c_str());
+			if (gPendingPlatformLiftEdit)
+				for (auto const& consequence : gPendingPlatformLiftEdit->consequences)
+					ImGui::BulletText("%s", consequence.c_str());
+			if (gPendingWalkwayEdit)
+				for (auto const& consequence : gPendingWalkwayEdit->consequences)
+					ImGui::BulletText("%s", consequence.c_str());
+			if (gPendingObjectMove)
+				for (auto const& consequence : gPendingObjectMove->consequences)
+					ImGui::BulletText("%s", consequence.c_str());
 			ImGui::Separator();
 			if (ImGui::Button("OK") && building
 				&& (gPendingLocationEdit || gPendingLiftEdit || gPendingShuttleEdit
-					|| gPendingLadderEdit || gPendingStaircaseEdit))
+					|| gPendingLadderEdit || gPendingStaircaseEdit || gPendingPlatformLiftEdit
+					|| gPendingWalkwayEdit || gPendingObjectMove))
 			{
 				auto locationPlan = gPendingLocationEdit;
 				auto liftPlan = gPendingLiftEdit;
 				auto shuttlePlan = gPendingShuttleEdit;
 				auto ladderPlan = gPendingLadderEdit;
 				auto staircasePlan = gPendingStaircaseEdit;
+				auto platformLiftPlan = gPendingPlatformLiftEdit;
+				auto walkwayPlan = gPendingWalkwayEdit;
+				auto objectMove = gPendingObjectMove;
 				gPendingLocationEdit.reset(); gPendingLiftEdit.reset(); gPendingShuttleEdit.reset();
 				gPendingLadderEdit.reset(); gPendingStaircaseEdit.reset();
+				gPendingPlatformLiftEdit.reset(); gPendingWalkwayEdit.reset(); gPendingObjectMove.reset();
 				ImGui::CloseCurrentPopup();
 				if (locationPlan) commitLocationEdit(building, *locationPlan);
 				else if (liftPlan) commitLiftEdit(building, *liftPlan);
 				else if (shuttlePlan) commitShuttleEdit(building, *shuttlePlan);
 				else if (ladderPlan) commitLadderEdit(building, *ladderPlan);
-				else commitStaircaseEdit(building, *staircasePlan);
+				else if (staircasePlan) commitStaircaseEdit(building, *staircasePlan);
+				else if (platformLiftPlan) commitPlatformLiftEdit(building, *platformLiftPlan);
+				else if (walkwayPlan) commitWalkwayEdit(building, *walkwayPlan);
+				else commitObjectMove(building, *objectMove);
 			}
 			ImGui::SameLine();
 			if (ImGui::Button("Cancel"))
@@ -2540,6 +2770,9 @@ namespace
 				gPendingShuttleEdit.reset();
 				gPendingLadderEdit.reset();
 				gPendingStaircaseEdit.reset();
+				gPendingPlatformLiftEdit.reset();
+				gPendingWalkwayEdit.reset();
+				gPendingObjectMove.reset();
 				resetSectorResize();
 				ImGui::CloseCurrentPopup();
 			}
@@ -2547,7 +2780,7 @@ namespace
 		}
 	}
 
-	enum class ClipboardObjectType { Agent, Door, Window, Marker, Walkway, ForceBridge, RoomLadder };
+	enum class ClipboardObjectType { Agent, Door, Window, Marker, Walkway, ForceBridge, RoomLadder, PlatformLift };
 	struct ClipboardDefinition
 	{
 		ClipboardObjectType type{};
@@ -2558,6 +2791,7 @@ namespace
 		core::Building::CreateWindowOptions window;
 		core::Building::CreateForceBridgeOptions forceBridge{ 1, CORE_SIDE_LEFT, true, true, 1 };
 		core::Building::CreateLadderOptions ladder{ 0, false, true };
+		core::Building::CreateLiftOptions platformLift;
 		uint32_t width{ 1 }, height{ 1 };
 	};
 
@@ -2586,7 +2820,8 @@ namespace
 		auto type = gSelectedSectorObject->getObjectType();
 		return type == core::SectorObjectType::Door || type == core::SectorObjectType::Window
 			|| type == core::SectorObjectType::Marker || type == core::SectorObjectType::Walkway
-			|| type == core::SectorObjectType::ForceBridge || type == core::SectorObjectType::Ladder;
+			|| type == core::SectorObjectType::ForceBridge || type == core::SectorObjectType::Ladder
+			|| type == core::SectorObjectType::Lift;
 	}
 
 	char const* activationModeName(core::DoorActivationMode mode)
@@ -2720,6 +2955,22 @@ namespace
 				<< YAML::Key << "controlCount" << YAML::Value << options.controlCount
 				<< YAML::EndMap;
 		}
+		else if (gSelectedSectorObject->getObjectType() == core::SectorObjectType::Lift)
+		{
+			auto owner = gSelectedSectorObject->getSector();
+			uint32_t index = ~0u;
+			for (uint32_t i = 0; i < owner->getNumObjects(); ++i)
+				if (owner->getObject(i) == gSelectedSectorObject) { index = i; break; }
+			core::Building::CreateLiftOptions options;
+			if (index == ~0u || !building->getPlatformLiftOptions(owner->getIndex(), index, options))
+				throw runtime_error("The selected PlatformLift has no authored definition");
+			output << YAML::Key << "type" << YAML::Value << "PlatformLift"
+				<< YAML::Key << "object" << YAML::Value << YAML::BeginMap
+				<< YAML::Key << "capacity" << YAML::Value << options.capacity
+				<< YAML::Key << "minimumDwellSeconds" << YAML::Value << options.minimumDwellSeconds
+				<< YAML::Key << "maximumBoardingSeconds" << YAML::Value << options.maximumBoardingSeconds
+				<< YAML::EndMap;
+		}
 		else if (gSelectedSectorObject->getObjectType() == core::SectorObjectType::Ladder)
 		{
 			auto owner = gSelectedSectorObject->getSector();
@@ -2840,6 +3091,14 @@ namespace
 				&& (definition.forceBridge.controlCount != 0 || !definition.forceBridge.startExtended))
 				throw runtime_error("A non-extensible Force Bridge must be permanently extended and have no controls");
 		}
+		else if (type == "PlatformLift")
+		{
+			definition.type = ClipboardObjectType::PlatformLift;
+			definition.platformLift.cellsWide = 1;
+			definition.platformLift.capacity = requiredYaml<uint32_t>(object, "capacity");
+			definition.platformLift.minimumDwellSeconds = requiredYaml<float>(object, "minimumDwellSeconds");
+			definition.platformLift.maximumBoardingSeconds = requiredYaml<float>(object, "maximumBoardingSeconds");
+		}
 		else if (type == "RoomLadder")
 		{
 			definition.type = ClipboardObjectType::RoomLadder;
@@ -2874,7 +3133,13 @@ namespace
 			if (!building->isSimulationPaused()) building->pauseSimulation();
 			gUISettings.worldPaused = true;
 			auto type = selected->getObjectType();
-			bool removed = type == core::SectorObjectType::Marker
+			bool removed;
+			if (type == core::SectorObjectType::Lift)
+			{
+				building->applyPlatformLiftEdit(building->planRemovePlatformLift(sector->getIndex(), i));
+				removed = true;
+			}
+			else removed = type == core::SectorObjectType::Marker
 				? building->removeSectorMarker(sector->getIndex(), i)
 				: type == core::SectorObjectType::Door
 					? building->removeSectorDoor(sector->getIndex(), i)
@@ -2962,7 +3227,8 @@ namespace
 		if (gPegman.phase != PalettePhase::Home || gPaint.tool != PaintTool::None
 			|| gAgentMove.dragging || gObjectMove.dragging || gSectorResize.dragging
 			|| gPendingLocationEdit || gPendingLiftEdit || gPendingShuttleEdit
-			|| gPendingLadderEdit || gPendingStaircaseEdit || gShuttleDraft
+			|| gPendingLadderEdit || gPendingStaircaseEdit || gPendingPlatformLiftEdit
+			|| gPendingWalkwayEdit || gPendingObjectMove || gShuttleDraft
 			|| !gShuttleDoorCandidates.empty())
 		{
 			reportClipboardError("Finish the current placement first");
@@ -3081,6 +3347,23 @@ namespace
 					y - markerSector->getCellY(), x - markerSector->getCellX(), nullptr, &diagnostic))
 					throw runtime_error(diagnostic);
 			}
+			else if (definition.type == ClipboardObjectType::PlatformLift)
+			{
+				markerSector = building->getSectorAtPosition(gUISettings.visibleLayer, world.x, world.y);
+				auto room = dynamic_pointer_cast<const core::Location>(markerSector);
+				if (!room || room->isCorridor() || !markerSector->pointInBounds(world.x, world.y))
+					throw runtime_error("PlatformLifts can only be placed in Rooms");
+				auto xOffset = x - room->getCellX();
+				bool valid = false;
+				for (auto const& candidate : building->getPlatformLiftStopCandidates(room->getIndex(), xOffset))
+				{
+					definition.platformLift.stopOffsets = { 0, candidate.deckOffset };
+					if (building->canAddPlatformLift(room->getIndex(), xOffset,
+						definition.platformLift, &diagnostic)) { valid = true; break; }
+				}
+				if (!valid) throw runtime_error(diagnostic.empty()
+					? "No eligible Walkway exists above this PlatformLift position" : diagnostic);
+			}
 			else
 			{
 				markerSector = building->getSectorAtPosition(gUISettings.visibleLayer, world.x, world.y);
@@ -3128,6 +3411,12 @@ namespace
 					auto result = building->addRoomLadder(markerSector->getIndex(),
 						y - markerSector->getCellY(), x - markerSector->getCellX(), definition.ladder);
 					created = result.ladder.sector->getObject(result.ladder.index);
+				}
+				else if (definition.type == ClipboardObjectType::PlatformLift)
+				{
+					auto result = building->addSectorPlatformLift(markerSector->getIndex(), 0,
+						x - markerSector->getCellX(), definition.platformLift);
+					created = result.lift.sector->getObject(result.lift.index);
 				}
 				else
 				{
@@ -3284,7 +3573,8 @@ void handleShortcuts(shared_ptr<core::Building>& building)
 					|| gSelectedSectorObject->getObjectType() == core::SectorObjectType::Window
 					|| gSelectedSectorObject->getObjectType() == core::SectorObjectType::Walkway
 					|| gSelectedSectorObject->getObjectType() == core::SectorObjectType::ForceBridge
-					|| gSelectedSectorObject->getObjectType() == core::SectorObjectType::Ladder))
+					|| gSelectedSectorObject->getObjectType() == core::SectorObjectType::Ladder
+					|| gSelectedSectorObject->getObjectType() == core::SectorObjectType::Lift))
 			{
 				uint32_t liftIndex, stopIndex;
 				if (building->isLiftOwnedDoor(gSelectedSectorObject, &liftIndex, &stopIndex))
@@ -3298,6 +3588,26 @@ void handleShortcuts(shared_ptr<core::Building>& building)
 					auto plan = building->planRemoveShuttleStop(liftIndex, stopIndex);
 					if (!plan.valid) reportEditorError("Shuttle editor", plan.diagnostic);
 					else queueShuttleEdit(building, plan);
+				}
+				else if (gSelectedSectorObject->getObjectType() == core::SectorObjectType::Lift)
+				{
+					auto room = gSelectedSectorObject->getSector();
+					uint32_t index = ~0u;
+					for (uint32_t i = 0; i < room->getNumObjects(); ++i)
+						if (room->getObject(i) == gSelectedSectorObject) { index = i; break; }
+					auto plan = building->planRemovePlatformLift(room->getIndex(), index);
+					if (!plan.valid) reportEditorError("PlatformLift editor", plan.diagnostic);
+					else queuePlatformLiftEdit(building, plan);
+				}
+				else if (gSelectedSectorObject->getObjectType() == core::SectorObjectType::Walkway)
+				{
+					auto room = gSelectedSectorObject->getSector();
+					uint32_t index = ~0u;
+					for (uint32_t i = 0; i < room->getNumObjects(); ++i)
+						if (room->getObject(i) == gSelectedSectorObject) { index = i; break; }
+					auto plan = building->planRemoveSectorWalkway(room->getIndex(), index);
+					if (!plan.valid) reportEditorError("Walkway editor", plan.diagnostic);
+					else queueWalkwayEdit(building, plan);
 				}
 				else try
 				{
@@ -3965,19 +4275,12 @@ void renderWalkwayPanel(shared_ptr<core::Building> const& building,
 	ImGui::Separator();
 	if (ImGui::Button("Delete Walkway"))
 	{
-		try
-		{
-			auto undo = captureDocumentSnapshot(building);
-			if (removeClipboardSelection(building)) commitDocumentEdit(std::move(undo));
-		}
-		catch (core::Exception const& error)
-		{
-			reportEditorError("Walkway editor", error.getMessage());
-		}
-		catch (std::exception const& error)
-		{
-			reportEditorError("Walkway editor", error.what());
-		}
+		uint32_t objectIndex = ~0u;
+		for (uint32_t i = 0; i < room->getNumObjects(); ++i)
+			if (room->getObject(i) == object) { objectIndex = i; break; }
+		auto plan = building->planRemoveSectorWalkway(room->getIndex(), objectIndex);
+		if (!plan.valid) reportEditorError("Walkway editor", plan.diagnostic);
+		else queueWalkwayEdit(building, plan);
 	}
 	ImGui::SameLine();
 	ImGui::TextDisabled("Delete key");
@@ -4430,6 +4733,88 @@ void renderLadderPanel(shared_ptr<core::Building> const& building,
 		{ reportEditorError("Room Ladder editor", error.getMessage()); }
 		catch (std::exception const& error)
 		{ reportEditorError("Room Ladder editor", error.what()); }
+	}
+	ImGui::SameLine(); ImGui::TextDisabled("Delete key");
+}
+
+
+void renderPlatformLiftPanel(shared_ptr<core::Building> const& building,
+	shared_ptr<const core::SectorObject> object)
+{
+	auto room = object->getSector();
+	uint32_t objectIndex = ~0u;
+	for (uint32_t i = 0; i < room->getNumObjects(); ++i)
+		if (room->getObject(i) == object) { objectIndex = i; break; }
+	core::Building::CreateLiftOptions current;
+	if (objectIndex == ~0u || !building->getPlatformLiftOptions(room->getIndex(), objectIndex, current))
+	{
+		ImGui::TextDisabled("The selected PlatformLift has no authored definition.");
+		return;
+	}
+
+	ImGui::TextUnformatted("Platform Lift");
+	ImGui::Text("Room: %s", room->getName().c_str());
+	ImGui::Text("Layer: %s", room->getLayerIndex() == CORE_LAYER_FORE ? "Fore" : "Back");
+	ImGui::Text("Position: %u, %u", object->getCellX(), object->getCellY());
+
+	static core::Building const* editedBuilding = nullptr;
+	static core::SectorObject const* editedObject = nullptr;
+	static core::Building::CreateLiftOptions draft;
+	if (editedBuilding != building.get() || editedObject != object.get())
+	{
+		editedBuilding = building.get(); editedObject = object.get(); draft = current;
+	}
+	ImGui::Separator();
+	ImGui::TextUnformatted("Connected levels");
+	bool ground = true;
+	ImGui::BeginDisabled();
+	ImGui::Checkbox("Ground (mandatory)", &ground);
+	ImGui::EndDisabled();
+
+	auto candidates = building->getPlatformLiftStopCandidates(room->getIndex(),
+		object->getCellX() - room->getCellX());
+	for (auto const& candidate : candidates)
+	{
+		bool selected = find(draft.stopOffsets.begin(), draft.stopOffsets.end(), candidate.deckOffset)
+			!= draft.stopOffsets.end();
+		auto tentative = draft;
+		if (!selected) tentative.stopOffsets.push_back(candidate.deckOffset);
+		else tentative.stopOffsets.erase(remove(tentative.stopOffsets.begin(), tentative.stopOffsets.end(),
+			candidate.deckOffset), tentative.stopOffsets.end());
+		bool lastWalkway = selected && draft.stopOffsets.size() <= 2;
+		auto validation = lastWalkway ? core::Building::PlatformLiftEditPlan{}
+			: building->planPlatformLiftEdit(room->getIndex(), objectIndex, tentative);
+		bool disabled = lastWalkway || (!selected && !validation.valid);
+		ImGui::PushID((int)candidate.deckOffset);
+		ImGui::BeginDisabled(disabled);
+		if (ImGui::Checkbox("##stop", &selected)) draft = tentative;
+		ImGui::EndDisabled();
+		ImGui::SameLine();
+		ImGui::Text("Walkway: deck %u (global y %u)", candidate.deckOffset,
+			room->getCellY() + candidate.deckOffset);
+		if (disabled && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+			ImGui::SetTooltip("%s", lastWalkway
+				? "A PlatformLift requires at least one Walkway stop"
+				: validation.diagnostic.c_str());
+		ImGui::PopID();
+	}
+	if (candidates.empty()) ImGui::TextDisabled("No Walkways exist above this column.");
+	sort(draft.stopOffsets.begin(), draft.stopOffsets.end());
+	bool changed = draft.stopOffsets != current.stopOffsets;
+	ImGui::BeginDisabled(!changed);
+	if (ImGui::Button("Apply PlatformLift stops"))
+	{
+		auto plan = building->planPlatformLiftEdit(room->getIndex(), objectIndex, draft);
+		if (!plan.valid) reportEditorError("PlatformLift editor", plan.diagnostic);
+		else { editedObject = nullptr; queuePlatformLiftEdit(building, plan); }
+	}
+	ImGui::EndDisabled();
+	ImGui::Separator();
+	if (ImGui::Button("Delete Platform Lift"))
+	{
+		auto plan = building->planRemovePlatformLift(room->getIndex(), objectIndex);
+		if (!plan.valid) reportEditorError("PlatformLift editor", plan.diagnostic);
+		else { editedObject = nullptr; queuePlatformLiftEdit(building, plan); }
 	}
 	ImGui::SameLine(); ImGui::TextDisabled("Delete key");
 }
@@ -5111,8 +5496,7 @@ void renderSelectedObjectPanel(shared_ptr<core::Building> const& building)
 			break;
 
 		case core::SectorObjectType::Lift:
-			renderLiftPanel(building,
-				static_pointer_cast<const core::LiftSectorObject>(gSelectedSectorObject)->getLift());
+			renderPlatformLiftPanel(building, gSelectedSectorObject);
 			break;
 
 		case core::SectorObjectType::Marker:
@@ -5782,22 +6166,7 @@ namespace
 				resetObjectMove();
 				return;
 			}
-			try
-			{
-				auto undo = captureDocumentSnapshot(building);
-				if (!building->isSimulationPaused()) building->pauseSimulation();
-				gUISettings.worldPaused = true;
-				gSelectedSectorObject = building->applyObjectMove(gObjectMove.preview);
-				gHoveredSectorObject.reset();
-				gSelectedSector.reset();
-				gSelectedAgent = nullptr;
-				commitDocumentEdit(std::move(undo));
-			}
-			catch (core::Exception const& error)
-			{
-				core::addLogMessage("Object editor", 0, core::LogLevel::Error, error.getMessage());
-			}
-			resetObjectMove();
+			queueObjectMove(building, gObjectMove.preview);
 		}
 	}
 
@@ -6260,6 +6629,8 @@ void renderWorldWindow(shared_ptr<core::Building> building, shared_ptr<const cor
 			gHoveredSectorObject = markerAtScreenPosition(building, ImGui::GetIO().MousePos);
 			if (!gHoveredSectorObject)
 				gHoveredSectorObject = ladderAtScreenPosition(building, ImGui::GetIO().MousePos);
+			if (!gHoveredSectorObject)
+				gHoveredSectorObject = platformLiftAtScreenPosition(building, ImGui::GetIO().MousePos);
 			if (!gHoveredSectorObject)
 				gHoveredSectorObject = forceBridgeAtScreenPosition(building, ImGui::GetIO().MousePos);
 			if (!gHoveredSectorObject)

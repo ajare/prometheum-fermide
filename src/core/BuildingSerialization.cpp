@@ -6,6 +6,7 @@
 #include "core/ShuttleTransit.h"
 #include "core/LadderTransit.h"
 #include "core/LadderSectorObject.h"
+#include "core/LiftSectorObject.h"
 #include "core/StaircaseTransit.h"
 #include "core/Location.h"
 #include "core/DoorSectorObject.h"
@@ -1852,6 +1853,36 @@ namespace core
 					source.f = (uint32_t)distance(stops.begin(), nearest);
 					source.values = std::move(stops);
 				}
+				else if (source.type == ConstructionType::PlatformLift)
+				{
+					auto originalStops = source.values;
+					vector<uint32_t> supported{ 0 };
+					auto room = source.a < candidate.mSectors.size()
+						? dynamic_pointer_cast<const Location>(candidate.mSectors[source.a]) : nullptr;
+					if (room && !room->isCorridor() && source.b == 0 && source.c < room->getCellsWide())
+					{
+						for (size_t stop = 1; stop < originalStops.size(); ++stop)
+							for (uint32_t i = 0; i < room->getNumObjects(); ++i)
+							{
+								auto walkway = dynamic_pointer_cast<const WalkwaySectorObject>(room->getObject(i));
+								if (walkway && walkway->getCellX() == room->getCellX() + source.c
+									&& walkway->getCellY() == room->getCellY() + originalStops[stop])
+								{ supported.push_back(originalStops[stop]); break; }
+							}
+					}
+					if (supported.size() < 2)
+					{
+						for (uint32_t slot = 0; slot < originalStops.size() + 1; ++slot)
+						{
+							ConstructionRecord tombstone{ ConstructionType::ObjectTombstone };
+							tombstone.a = source.a;
+							candidate.applyConstructionRecord(tombstone);
+							records.push_back(std::move(tombstone));
+						}
+						continue;
+					}
+					source.values = std::move(supported);
+				}
 				else if (source.type == ConstructionType::Staircase)
 				{
 					vector<uint32_t> supported;
@@ -2015,6 +2046,24 @@ namespace core
 		return false;
 	}
 
+	bool Building::platformLiftIsActive(shared_ptr<const Lift> const& lift) const
+	{
+		if (!lift) return false;
+		for (auto const& [id, resource] : mTraversalResources.entries())
+		{
+			(void)id;
+			if (resource->mLift.get() != lift.get()) continue;
+			return resource->mLiftMoving || !resource->mAdmissionQueue.empty()
+				|| !resource->mLiftTripIntents.empty() || !resource->mLiftConfirmationQueue.empty()
+				|| any_of(resource->mVirtualBoundaryOwners.begin(), resource->mVirtualBoundaryOwners.end(),
+					[](auto owner) { return (bool)owner; })
+				|| any_of(resource->mOccupants.begin(), resource->mOccupants.end(), [](auto owner) { return (bool)owner; })
+				|| any_of(resource->mAdmissionReservations.begin(), resource->mAdmissionReservations.end(),
+					[](auto owner) { return (bool)owner; });
+		}
+		return false;
+	}
+
 	bool Building::forceBridgeIsActive(shared_ptr<const ForceBridge> const& bridge) const
 	{
 		if (!bridge) return false;
@@ -2131,6 +2180,13 @@ namespace core
 					diagnostic = "A Room Ladder cannot be changed while it is in use";
 					return false;
 				}
+				auto liftObject = dynamic_pointer_cast<LiftSectorObject>(owner->getObject(i));
+				if (liftObject && liftObject->getCellX() == sourceX
+					&& platformLiftIsActive(liftObject->getLift()))
+				{
+					diagnostic = "The connected PlatformLift is in use";
+					return false;
+				}
 			}
 		}
 		if (type == SectorObjectType::Ladder
@@ -2159,6 +2215,41 @@ namespace core
 
 		auto targetRight = (uint64_t)plan.x + (uint32_t)ceil(object->getSize().x);
 		uint64_t targetTop = (uint64_t)plan.y + (uint32_t)ceil(object->getSize().y);
+		if (type == SectorObjectType::Lift)
+		{
+			auto room = dynamic_pointer_cast<const Location>(owner);
+			if (!room || room->isCorridor() || plan.y != room->getCellY()
+				|| plan.x < room->getCellX() || plan.x >= room->getCellX() + room->getCellsWide())
+			{
+				diagnostic = "PlatformLifts must remain on a Room's ground floor";
+				return false;
+			}
+			auto liftObject = static_pointer_cast<LiftSectorObject>(object);
+			if (platformLiftIsActive(liftObject->getLift()))
+			{
+				diagnostic = "The PlatformLift cannot be moved while it is in use";
+				return false;
+			}
+			auto candidates = getPlatformLiftStopCandidates(owner->getIndex(), plan.x - room->getCellX());
+			uint32_t lowest = ~0u;
+			auto layer = mLayers[room->getLayerIndex()];
+			bool groundLeft = plan.x > room->getCellX0() + 1
+				&& layer->getCellDefinition(plan.x - 1, plan.y).isTraversableOnFoot();
+			bool groundRight = plan.x + 1 < room->getCellX1()
+				&& layer->getCellDefinition(plan.x + 1, plan.y).isTraversableOnFoot();
+			for (auto const& candidate : candidates)
+				if ((groundLeft && candidate.leftButton) || (groundRight && candidate.rightButton))
+				{ lowest = candidate.deckOffset; break; }
+			if (lowest == ~0u)
+			{
+				diagnostic = "No eligible Walkway exists above this PlatformLift position";
+				return false;
+			}
+			found->values = { 0, lowest };
+			found->b = 0;
+			found->c = plan.x - room->getCellX();
+			targetTop = (uint64_t)plan.y + lowest + 1;
+		}
 		if (type == SectorObjectType::Ladder)
 		{
 			if (plan.x < owner->getCellX() || plan.y < owner->getCellY()
@@ -2306,6 +2397,45 @@ namespace core
 			newSectorIndex = targetOwner->getIndex();
 		}
 		else newSectorIndex = owner->getIndex();
+
+		if (type == SectorObjectType::Walkway && (plan.x != sourceX || plan.y != sourceY))
+		{
+			uint32_t sourceDeck = sourceY - owner->getCellY();
+			vector<ConstructionRecord> reconciled;
+			for (auto const& record : records)
+			{
+				if (record.type != ConstructionType::PlatformLift || record.a != owner->getIndex()
+					|| owner->getCellX() + record.c != sourceX
+					|| find(record.values.begin(), record.values.end(), sourceDeck) == record.values.end())
+				{
+					reconciled.push_back(record);
+					continue;
+				}
+				if (record.values.size() <= 2)
+				{
+					for (uint32_t slot = 0; slot < record.values.size() + 1; ++slot)
+					{
+						ConstructionRecord tombstone{ ConstructionType::ObjectTombstone };
+						tombstone.a = owner->getIndex(); reconciled.push_back(std::move(tombstone));
+					}
+				}
+				else
+				{
+					auto updated = record;
+					updated.values.erase(remove(updated.values.begin(), updated.values.end(), sourceDeck), updated.values.end());
+					reconciled.push_back(std::move(updated));
+					ConstructionRecord tombstone{ ConstructionType::ObjectTombstone };
+					tombstone.a = owner->getIndex(); reconciled.push_back(std::move(tombstone));
+				}
+			}
+			records = std::move(reconciled);
+			found = find_if(records.begin(), records.end(), [&](auto const& record)
+			{
+				return record.type == ConstructionType::Walkway && record.a == owner->getIndex()
+					&& owner->getCellX() + record.c == plan.x && owner->getCellY() + record.b == plan.y;
+			});
+			if (found == records.end()) { diagnostic = "Could not retain the moved Walkway"; return false; }
+		}
 
 		if (!normalizeRoomLadderRecords(records, diagnostic)) return false;
 
@@ -2677,6 +2807,198 @@ namespace core
 		return false;
 	}
 
+	bool Building::getPlatformLiftOptions(uint32_t sectorIndex, uint32_t objectIndex,
+		CreateLiftOptions& options) const
+	{
+		if (sectorIndex >= mSectors.size() || objectIndex >= mSectors[sectorIndex]->getNumObjects()) return false;
+		auto object = dynamic_pointer_cast<const LiftSectorObject>(mSectors[sectorIndex]->getObject(objectIndex));
+		if (!object) return false;
+		auto found = find_if(mConstructionRecords.begin(), mConstructionRecords.end(), [&](auto const& record)
+		{
+			return record.type == ConstructionType::PlatformLift && record.a == sectorIndex
+				&& mSectors[sectorIndex]->getCellX() + record.c == object->getCellX()
+				&& mSectors[sectorIndex]->getCellY() + record.b == object->getCellY();
+		});
+		if (found == mConstructionRecords.end()) return false;
+		options.cellsWide = found->d;
+		options.stopOffsets = found->values;
+		options.capacity = found->e;
+		options.minimumDwellSeconds = found->x;
+		options.maximumBoardingSeconds = found->y;
+		return true;
+	}
+
+	bool Building::preparePlatformLiftEdit(PlatformLiftEditPlan const& plan,
+		vector<ConstructionRecord>& records, string& diagnostic) const
+	{
+		records = mConstructionRecords;
+		if (plan.sectorIndex >= mSectors.size() || plan.objectIndex >= mSectors[plan.sectorIndex]->getNumObjects())
+		{ diagnostic = "The selected PlatformLift no longer exists"; return false; }
+		auto object = dynamic_pointer_cast<const LiftSectorObject>(mSectors[plan.sectorIndex]->getObject(plan.objectIndex));
+		if (!object) { diagnostic = "The selected object is not a PlatformLift"; return false; }
+		auto found = find_if(records.begin(), records.end(), [&](auto const& record)
+		{
+			return record.type == ConstructionType::PlatformLift && record.a == plan.sectorIndex
+				&& mSectors[plan.sectorIndex]->getCellX() + record.c == object->getCellX()
+				&& mSectors[plan.sectorIndex]->getCellY() + record.b == object->getCellY();
+		});
+		if (found == records.end()) { diagnostic = "The PlatformLift has no authored definition"; return false; }
+		if (plan.remove)
+		{
+			auto slots = (uint32_t)found->values.size() + 1;
+			auto position = (size_t)distance(records.begin(), found);
+			records.erase(records.begin() + position);
+			for (uint32_t slot = 0; slot < slots; ++slot)
+			{
+				ConstructionRecord tombstone{ ConstructionType::ObjectTombstone };
+				tombstone.a = plan.sectorIndex;
+				records.insert(records.begin() + position + slot, std::move(tombstone));
+			}
+		}
+		else
+		{
+			found->d = plan.options.cellsWide;
+			found->e = plan.options.capacity;
+			found->x = plan.options.minimumDwellSeconds;
+			found->y = plan.options.maximumBoardingSeconds;
+			found->values = plan.options.stopOffsets;
+			sort(found->values.begin(), found->values.end());
+			found->values.erase(unique(found->values.begin(), found->values.end()), found->values.end());
+		}
+		try
+		{
+			Building candidate(mName, mCellsWide, mDecksHigh);
+			candidate.mDeserializingConstruction = true;
+			for (auto const& record : records) candidate.applyConstructionRecord(record);
+			candidate.finishBuild();
+		}
+		catch (Exception const& error) { diagnostic = error.getMessage(); return false; }
+		catch (exception const& error) { diagnostic = error.what(); return false; }
+		diagnostic.clear();
+		return true;
+	}
+
+	Building::PlatformLiftEditPlan Building::planPlatformLiftEdit(uint32_t sectorIndex,
+		uint32_t objectIndex, CreateLiftOptions const& options) const
+	{
+		PlatformLiftEditPlan plan;
+		plan.sectorIndex = sectorIndex; plan.objectIndex = objectIndex; plan.options = options;
+		if (sectorIndex >= mSectors.size() || objectIndex >= mSectors[sectorIndex]->getNumObjects())
+		{ plan.diagnostic = "The selected PlatformLift no longer exists"; return plan; }
+		auto object = dynamic_pointer_cast<const LiftSectorObject>(mSectors[sectorIndex]->getObject(objectIndex));
+		if (!object) { plan.diagnostic = "The selected object is not a PlatformLift"; return plan; }
+		if (platformLiftIsActive(object->getLift()))
+		{ plan.diagnostic = "The PlatformLift cannot be edited while it has active journeys, queues, crossings, or reservations"; return plan; }
+		CreateLiftOptions current;
+		if (!getPlatformLiftOptions(sectorIndex, objectIndex, current))
+		{ plan.diagnostic = "The PlatformLift has no authored definition"; return plan; }
+		auto desired = options.stopOffsets;
+		sort(desired.begin(), desired.end()); desired.erase(unique(desired.begin(), desired.end()), desired.end());
+		if (desired.size() < 2 || desired.front() != 0)
+		{ plan.diagnostic = "A PlatformLift requires ground and at least one Walkway stop"; return plan; }
+		plan.options.stopOffsets = desired;
+		for (auto stop : current.stopOffsets)
+			if (find(desired.begin(), desired.end(), stop) == desired.end())
+				plan.consequences.push_back(format("Remove PlatformLift landing, button, pathing, and stop at deck {}", stop));
+		auto room = mSectors[sectorIndex];
+		auto candidates = getPlatformLiftStopCandidates(sectorIndex,
+			object->getCellX() - room->getCellX());
+		auto buttonSide = [&](vector<uint32_t> const& stops)
+		{
+			auto layer = mLayers[room->getLayerIndex()];
+			auto x = object->getCellX();
+			bool left = x > room->getCellX0() + 1
+				&& layer->getCellDefinition(x - 1, room->getCellY()).isTraversableOnFoot();
+			bool right = x + 1 < room->getCellX1()
+				&& layer->getCellDefinition(x + 1, room->getCellY()).isTraversableOnFoot();
+			for (size_t i = 1; i < stops.size(); ++i)
+			{
+				auto found = find_if(candidates.begin(), candidates.end(), [&](auto const& value)
+					{ return value.deckOffset == stops[i]; });
+				left = left && found != candidates.end() && found->leftButton;
+				right = right && found != candidates.end() && found->rightButton;
+			}
+			return right ? CORE_SIDE_RIGHT : left ? CORE_SIDE_LEFT : CORE_SIDE_MIDDLE;
+		};
+		auto oldSide = buttonSide(current.stopOffsets), newSide = buttonSide(desired);
+		if (oldSide != newSide && newSide != CORE_SIDE_MIDDLE)
+			plan.consequences.push_back(format("Move all PlatformLift landing buttons to the {} side",
+				newSide == CORE_SIDE_LEFT ? "left" : "right"));
+		vector<ConstructionRecord> records;
+		plan.valid = preparePlatformLiftEdit(plan, records, plan.diagnostic);
+		return plan;
+	}
+
+	Building::PlatformLiftEditPlan Building::planRemovePlatformLift(uint32_t sectorIndex,
+		uint32_t objectIndex) const
+	{
+		CreateLiftOptions options;
+		auto plan = planPlatformLiftEdit(sectorIndex, objectIndex,
+			getPlatformLiftOptions(sectorIndex, objectIndex, options) ? options : CreateLiftOptions{});
+		if (!plan.valid) return plan;
+		plan.remove = true;
+		plan.consequences.clear();
+		vector<ConstructionRecord> records;
+		plan.valid = preparePlatformLiftEdit(plan, records, plan.diagnostic);
+		return plan;
+	}
+
+	shared_ptr<const SectorObject> Building::applyPlatformLiftEdit(PlatformLiftEditPlan const& requested)
+	{
+		if (!mSimulationPaused) throw BuildingException(this, "Editing a PlatformLift requires the simulation to be paused");
+		auto plan = requested.remove ? planRemovePlatformLift(requested.sectorIndex, requested.objectIndex)
+			: planPlatformLiftEdit(requested.sectorIndex, requested.objectIndex, requested.options);
+		if (!plan.valid) throw BuildingException(this, plan.diagnostic);
+		vector<ConstructionRecord> records; string diagnostic;
+		if (!preparePlatformLiftEdit(plan, records, diagnostic)) throw BuildingException(this, diagnostic);
+		auto room = mSectors[plan.sectorIndex];
+		auto x = room->getCellX();
+		if (plan.objectIndex < room->getNumObjects() && room->getObject(plan.objectIndex))
+			x = room->getObject(plan.objectIndex)->getCellX();
+		rebuildFromConstructionRecords(std::move(records));
+		if (plan.remove) return nullptr;
+		room = mSectors[plan.sectorIndex];
+		for (uint32_t i = 0; i < room->getNumObjects(); ++i)
+		{
+			auto object = room->getObject(i);
+			if (object && object->getObjectType() == SectorObjectType::Lift && object->getCellX() == x)
+				return object;
+		}
+		throw BuildingException(this, "Could not locate the edited PlatformLift");
+	}
+
+	Building::WalkwayEditPlan Building::planRemoveSectorWalkway(uint32_t sectorIndex,
+		uint32_t objectIndex) const
+	{
+		WalkwayEditPlan plan;
+		plan.sectorIndex = sectorIndex; plan.objectIndex = objectIndex;
+		if (sectorIndex >= mSectors.size() || objectIndex >= mSectors[sectorIndex]->getNumObjects()
+			|| !dynamic_pointer_cast<const WalkwaySectorObject>(mSectors[sectorIndex]->getObject(objectIndex)))
+		{ plan.diagnostic = "The selected Walkway no longer exists"; return plan; }
+		auto walkway = mSectors[sectorIndex]->getObject(objectIndex);
+		for (uint32_t i = 0; i < mSectors[sectorIndex]->getNumObjects(); ++i)
+		{
+			auto liftObject = dynamic_pointer_cast<const LiftSectorObject>(mSectors[sectorIndex]->getObject(i));
+			if (!liftObject || liftObject->getCellX() != walkway->getCellX()) continue;
+			CreateLiftOptions options;
+			if (!getPlatformLiftOptions(sectorIndex, i, options)) continue;
+			auto deck = walkway->getCellY() - mSectors[sectorIndex]->getCellY();
+			if (find(options.stopOffsets.begin(), options.stopOffsets.end(), deck) == options.stopOffsets.end()) continue;
+			if (platformLiftIsActive(liftObject->getLift()))
+			{ plan.diagnostic = "The connected PlatformLift is in use"; return plan; }
+			if (options.stopOffsets.size() <= 2)
+				plan.consequences.push_back("Delete connected PlatformLift");
+		}
+		plan.valid = true;
+		return plan;
+	}
+
+	bool Building::applyWalkwayEdit(WalkwayEditPlan const& plan)
+	{
+		if (!plan.valid) throw BuildingException(this, plan.diagnostic);
+		return removeSectorWalkway(plan.sectorIndex, plan.objectIndex);
+	}
+
 	bool Building::removeSectorWalkway(uint32_t sectorIndex, uint32_t objectIndex)
 	{
 		if (!mSimulationPaused)
@@ -2711,6 +3033,31 @@ namespace core
 		auto room = mSectors[sectorIndex];
 		auto layer = mLayers[room->getLayerIndex()];
 		uint32_t supportX = object->getCellX(), supportY = object->getCellY();
+		uint32_t supportDeck = supportY - room->getCellY();
+		map<size_t, ConstructionRecord> platformUpdates;
+		set<size_t> platformDeletions;
+		for (size_t recordIndex = 0; recordIndex < mConstructionRecords.size(); ++recordIndex)
+		{
+			auto const& record = mConstructionRecords[recordIndex];
+			if (record.type != ConstructionType::PlatformLift || record.a != sectorIndex
+				|| room->getCellX() + record.c != supportX
+				|| find(record.values.begin(), record.values.end(), supportDeck) == record.values.end()) continue;
+			shared_ptr<const LiftSectorObject> liftObject;
+			for (uint32_t i = 0; i < room->getNumObjects(); ++i)
+			{
+				auto candidate = dynamic_pointer_cast<const LiftSectorObject>(room->getObject(i));
+				if (candidate && candidate->getCellX() == supportX) { liftObject = candidate; break; }
+			}
+			if (liftObject && platformLiftIsActive(liftObject->getLift()))
+				throw BuildingException(this, "The connected PlatformLift is in use");
+			if (record.values.size() <= 2) platformDeletions.insert(recordIndex);
+			else
+			{
+				auto updated = record;
+				updated.values.erase(remove(updated.values.begin(), updated.values.end(), supportDeck), updated.values.end());
+				platformUpdates.emplace(recordIndex, std::move(updated));
+			}
+		}
 		map<size_t, ConstructionRecord> bridgeUpdates;
 		for (size_t recordIndex = 0; recordIndex < mConstructionRecords.size(); ++recordIndex)
 		{
@@ -2790,6 +3137,22 @@ namespace core
 		{
 			if (&mConstructionRecords[i] == &*source)
 			{
+				ConstructionRecord tombstone{ ConstructionType::ObjectTombstone };
+				tombstone.a = sectorIndex;
+				records.push_back(std::move(tombstone));
+			}
+			else if (platformDeletions.contains(i))
+			{
+				for (uint32_t slot = 0; slot < mConstructionRecords[i].values.size() + 1; ++slot)
+				{
+					ConstructionRecord tombstone{ ConstructionType::ObjectTombstone };
+					tombstone.a = sectorIndex;
+					records.push_back(std::move(tombstone));
+				}
+			}
+			else if (auto update = platformUpdates.find(i); update != platformUpdates.end())
+			{
+				records.push_back(update->second);
 				ConstructionRecord tombstone{ ConstructionType::ObjectTombstone };
 				tombstone.a = sectorIndex;
 				records.push_back(std::move(tombstone));
@@ -2925,6 +3288,31 @@ namespace core
 							&& mSectors[sectorIndex]->getCellX() + record.c == x
 							&& mSectors[sectorIndex]->getCellY() + record.b == y)
 						{ plan.previewHeight = record.d; break; }
+				if (plan.valid && object->getObjectType() == SectorObjectType::Lift
+					&& (x != object->getCellX() || y != object->getCellY()))
+				{
+					for (auto const& record : records)
+						if (record.type == ConstructionType::PlatformLift && record.a == sectorIndex
+							&& mSectors[sectorIndex]->getCellX() + record.c == x)
+						{
+							plan.previewHeight = record.values.back() + 1;
+							plan.consequences = {
+								"Move PlatformLift and rebuild its landing buttons",
+								"Reset PlatformLift stops to ground and the lowest eligible Walkway" };
+							break;
+						}
+				}
+				if (plan.valid && object->getObjectType() == SectorObjectType::Walkway
+					&& (x != object->getCellX() || y != object->getCellY()))
+				{
+					uint32_t sourceDeck = object->getCellY() - object->getSector()->getCellY();
+					for (auto const& record : mConstructionRecords)
+						if (record.type == ConstructionType::PlatformLift && record.a == sectorIndex
+							&& mSectors[sectorIndex]->getCellX() + record.c == object->getCellX()
+							&& find(record.values.begin(), record.values.end(), sourceDeck) != record.values.end())
+							if (record.values.size() <= 2)
+								plan.consequences.push_back("Delete connected PlatformLift");
+				}
 			}
 		}
 		return plan;
@@ -2999,6 +3387,15 @@ namespace core
 			return plan;
 		}
 		auto sector = mSectors[sectorIndex];
+		for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
+		{
+			auto liftObject = dynamic_pointer_cast<const LiftSectorObject>(sector->getObject(i));
+			if (liftObject && platformLiftIsActive(liftObject->getLift()))
+			{
+				plan.diagnostic = "A Room cannot be edited while its PlatformLift is in use";
+				return plan;
+			}
+		}
 		auto sectorId = SectorId{ (uint64_t)sectorIndex + 1 };
 		for (auto const& [id, resource] : mTraversalResources.entries())
 		{
@@ -3083,6 +3480,32 @@ namespace core
 			if (!inside || losesFloor || walkwayCropped)
 				plan.consequences.push_back("Delete " + object->getDescription());
 		}
+		for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
+		{
+			auto liftObject = dynamic_pointer_cast<const LiftSectorObject>(sector->getObject(i));
+			if (!liftObject) continue;
+			CreateLiftOptions options;
+			if (!getPlatformLiftOptions(sectorIndex, i, options)) continue;
+			uint32_t retained = 1;
+			for (size_t stop = 1; stop < options.stopOffsets.size(); ++stop)
+			{
+				bool walkwayRetained = false;
+				for (uint32_t j = 0; j < sector->getNumObjects(); ++j)
+				{
+					auto walkway = dynamic_pointer_cast<const WalkwaySectorObject>(sector->getObject(j));
+					if (!walkway || walkway->getCellX() != liftObject->getCellX()
+						|| walkway->getCellY() != sector->getCellY() + options.stopOffsets[stop]) continue;
+					auto relativeX = walkway->getCellX() - sector->getCellX();
+					auto relativeY = walkway->getCellY() - sector->getCellY();
+					walkwayRetained = plan.move || (relativeX < cellsWide && relativeY < decksHigh);
+					break;
+				}
+				if (walkwayRetained) ++retained;
+				else plan.consequences.push_back(format("Remove PlatformLift stop at deck {}", options.stopOffsets[stop]));
+			}
+			if (!plan.move && (liftObject->getCellX() - sector->getCellX() >= cellsWide || retained < 2))
+				plan.consequences.push_back("Delete Platform Lift");
+		}
 		for (auto const& [id, agent] : mAgents.entries())
 		{
 			(void)id;
@@ -3145,6 +3568,15 @@ namespace core
 			return plan;
 		}
 		auto sector = mSectors[sectorIndex];
+		for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
+		{
+			auto liftObject = dynamic_pointer_cast<const LiftSectorObject>(sector->getObject(i));
+			if (liftObject && platformLiftIsActive(liftObject->getLift()))
+			{
+				plan.diagnostic = "A Room cannot be deleted while its PlatformLift is in use";
+				return plan;
+			}
+		}
 		auto sectorId = SectorId{ (uint64_t)sectorIndex + 1 };
 		for (auto const& [id, resource] : mTraversalResources.entries())
 		{
