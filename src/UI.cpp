@@ -3116,7 +3116,6 @@ namespace
 				<< YAML::Key << "object" << YAML::Value << YAML::BeginMap
 				<< YAML::Key << "extensible" << YAML::Value << options.extensible
 				<< YAML::Key << "startExtended" << YAML::Value << options.startExtended
-				<< YAML::Key << "agentSpacing" << YAML::Value << options.agentSpacing
 				<< YAML::Key << "directionalBatchLimit" << YAML::Value << options.directionalBatchLimit
 				<< YAML::EndMap;
 		}
@@ -3260,7 +3259,6 @@ namespace
 			definition.type = ClipboardObjectType::RoomLadder;
 			definition.ladder.extensible = requiredYaml<bool>(object, "extensible");
 			definition.ladder.startExtended = requiredYaml<bool>(object, "startExtended");
-			definition.ladder.agentSpacing = requiredYaml<float>(object, "agentSpacing");
 			definition.ladder.directionalBatchLimit = requiredYaml<uint32_t>(object, "directionalBatchLimit");
 		}
 		else throw runtime_error("Clipboard object type is not supported");
@@ -4971,7 +4969,6 @@ void renderLadderPanel(shared_ptr<core::Building> const& building,
 	static core::Building const* editedBuilding = nullptr;
 	static core::SectorObject const* editedObject = nullptr;
 	static bool extensible = false, initiallyExtended = true;
-	static float agentSpacing = CORE_LADDER_AGENT_SPACING;
 	static int directionalBatchLimit = 4;
 	core::Building::CreateLadderOptions current{};
 	if ((editedBuilding != building.get() || editedObject != object.get())
@@ -4980,11 +4977,10 @@ void renderLadderPanel(shared_ptr<core::Building> const& building,
 		editedBuilding = building.get(); editedObject = object.get();
 		extensible = current.extensible;
 		initiallyExtended = current.extensible ? current.startExtended : true;
-		agentSpacing = current.agentSpacing;
 		directionalBatchLimit = (int)current.directionalBatchLimit;
 	}
 	auto commitSettings = [&](bool desiredExtensible, bool desiredInitiallyExtended,
-		float desiredSpacing, int desiredBatchLimit)
+		int desiredBatchLimit)
 	{
 		auto undo = captureDocumentSnapshot(building);
 		try
@@ -4994,7 +4990,7 @@ void renderLadderPanel(shared_ptr<core::Building> const& building,
 			gSelectedSectorObject = building->applyRoomLadderOptions(room->getIndex(), objectIndex,
 				{ ladder->getDecksHigh(), desiredExtensible,
 					desiredExtensible ? desiredInitiallyExtended : true,
-					desiredSpacing, (uint32_t)desiredBatchLimit });
+					(uint32_t)desiredBatchLimit });
 			editedObject = gSelectedSectorObject.get();
 			commitDocumentEdit(std::move(undo));
 			return true;
@@ -5011,24 +5007,23 @@ void renderLadderPanel(shared_ptr<core::Building> const& building,
 	if (ImGui::Checkbox("Extensible", &extensible))
 	{
 		if (!extensible) initiallyExtended = true;
-		if (commitSettings(extensible, initiallyExtended, agentSpacing, directionalBatchLimit)) return;
+		if (commitSettings(extensible, initiallyExtended, directionalBatchLimit)) return;
 		extensible = previousExtensible;
 	}
 	ImGui::BeginDisabled(!extensible);
 	bool previousInitiallyExtended = initiallyExtended;
 	if (ImGui::Checkbox("Initially extended", &initiallyExtended))
 	{
-		if (commitSettings(extensible, initiallyExtended, agentSpacing, directionalBatchLimit)) return;
+		if (commitSettings(extensible, initiallyExtended, directionalBatchLimit)) return;
 		initiallyExtended = previousInitiallyExtended;
 	}
 	ImGui::EndDisabled();
 	if (!extensible) initiallyExtended = true;
-	ImGui::InputFloat("Agent spacing", &agentSpacing, 0.05f, 0.25f, "%.2f");
 	ImGui::InputInt("Directional batch limit", &directionalBatchLimit);
-	ImGui::BeginDisabled(objectIndex == ~0u || agentSpacing <= 0.0f || directionalBatchLimit <= 0);
+	ImGui::BeginDisabled(objectIndex == ~0u || directionalBatchLimit <= 0);
 	if (ImGui::Button("Apply Ladder settings"))
 	{
-		if (commitSettings(extensible, initiallyExtended, agentSpacing, directionalBatchLimit)) return;
+		if (commitSettings(extensible, initiallyExtended, directionalBatchLimit)) return;
 	}
 	ImGui::EndDisabled();
 	ImGui::Separator();
@@ -5627,7 +5622,6 @@ void renderSelectedObjectPanel(shared_ptr<core::Building> const& building)
 			static uint32_t editedSector = ~0u;
 			static bool extensible = false;
 			static bool initiallyExtended = true;
-			static float agentSpacing = CORE_LADDER_AGENT_SPACING;
 			static int directionalBatchLimit = 4;
 			core::Building::CreateLadderOptions current{ 0, false, true };
 			if ((editedBuilding != building.get() || editedSector != gSelectedSector->getIndex())
@@ -5637,7 +5631,6 @@ void renderSelectedObjectPanel(shared_ptr<core::Building> const& building)
 				editedSector = gSelectedSector->getIndex();
 				extensible = current.extensible;
 				initiallyExtended = current.extensible ? current.startExtended : true;
-				agentSpacing = current.agentSpacing;
 				directionalBatchLimit = (int)current.directionalBatchLimit;
 			}
 			auto applyToggleImmediately = [&]()
@@ -5679,15 +5672,14 @@ void renderSelectedObjectPanel(shared_ptr<core::Building> const& building)
 				initiallyExtended = previousInitiallyExtended;
 			}
 			ImGui::EndDisabled();
-			ImGui::InputFloat("Agent spacing", &agentSpacing, 0.05f, 0.25f, "%.2f");
 			ImGui::InputInt("Directional batch limit", &directionalBatchLimit);
-			bool valuesValid = agentSpacing > 0.0f && directionalBatchLimit > 0;
+			bool valuesValid = directionalBatchLimit > 0;
 			ImGui::BeginDisabled(!valuesValid);
 			if (ImGui::Button("Apply Ladder settings"))
 			{
 				core::Building::CreateLadderOptions options{
 					gSelectedSector->getDecksHigh(), extensible,
-					extensible ? initiallyExtended : true, agentSpacing,
+					extensible ? initiallyExtended : true,
 					(uint32_t)directionalBatchLimit };
 				auto plan = building->planResizeLadder(gSelectedSector->getIndex(),
 					gSelectedSector->getCellX(), gSelectedSector->getCellY(), options);

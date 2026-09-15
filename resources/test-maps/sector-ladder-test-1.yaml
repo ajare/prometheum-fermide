@@ -19,7 +19,6 @@ construction:
     decksHigh: 4
     extensible: false
     startExtended: true
-    agentSpacing: 1
     directionalBatchLimit: 4
   - type: marker
     sectorIndex: 0

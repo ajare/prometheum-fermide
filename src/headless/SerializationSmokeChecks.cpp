@@ -572,7 +572,7 @@ agents: []
 		auto agentId = building.createAgent("Ladder user", created.ladder.sector->getIndex(), 1, 0.5f);
 		auto originalAgentPosition = building.lookupAgent(agentId).entity->getGlobalPosition();
 
-		core::Building::CreateLadderOptions edited{ 3, true, false, 0.5f, 3 };
+		core::Building::CreateLadderOptions edited{ 3, true, false, 3 };
 		auto move = building.planResizeLadder(created.ladder.sector->getIndex(), 4, 1, edited);
 		require(move.valid && move.move, "Valid Ladder move was not planned");
 		auto movedIndex = building.applyLadderEdit(move);
@@ -587,8 +587,7 @@ agents: []
 			"An occupying Agent did not move with the Ladder");
 		core::Building::CreateLadderOptions loaded{};
 		require(building.getLadderOptions(movedIndex, loaded) && loaded.extensible
-			&& !loaded.startExtended && std::abs(loaded.agentSpacing - 0.5f) < 0.001f
-			&& loaded.directionalBatchLimit == 3,
+			&& !loaded.startExtended && loaded.directionalBatchLimit == 3,
 			"Ladder configuration was not retained");
 		auto countControls = [&](uint32_t sectorIndex)
 		{

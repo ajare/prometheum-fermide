@@ -242,7 +242,7 @@ Agents will approach resources, queue at reserved positions, operate required co
 - Source occupancy remains committed until exit crossing completes.
 - Ordinary locations and staircases are unlimited by default.
 - Narrow staircases may opt into directional capacity.
-- Ladders derive capacity from usable length and agent spacing.
+- Ladders derive capacity from the number of crossed floors (`decksHigh - 1`) divided by `CORE_LADDER_AGENT_SPACING / CORE_CELL_YX_RENDER_RATIO`.
 - Ladders admit multiple same-direction climbers while preventing opposing occupancy and committed entry.
 - Once opposite-direction demand exists, same-direction admissions stop after a configurable batch limit. Existing occupants drain before direction switches to the oldest waiting side.
 - Extensible ladders hold extension leases while occupied, reserved, or being entered and cannot retract until every lease is released.

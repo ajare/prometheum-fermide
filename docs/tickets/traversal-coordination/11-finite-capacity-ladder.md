@@ -12,7 +12,7 @@
 
 **Status:** complete
 
-- [x] Ladder capacity is derived from usable length and configured agent spacing.
+- [x] Ladder capacity is derived from crossed floors and fixed `CORE_LADDER_AGENT_SPACING`, scaled by `CORE_CELL_YX_RENDER_RATIO`.
 - [x] Occupants plus admission reservations never exceed capacity.
 - [x] Each admitted agent owns a distinct climbing-position reservation.
 - [x] Waiting agents cannot enter merely because the ladder edge appears in their path.

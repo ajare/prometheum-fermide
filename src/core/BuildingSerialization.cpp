@@ -139,7 +139,7 @@ namespace core
 		case ConstructionType::Ladder:
 			serializer.writeUint32("y", record.a); serializer.writeUint32("x", record.b);
 			serializer.writeUint32("decksHigh", record.c); serializer.writeBool("extensible", record.p);
-			serializer.writeBool("startExtended", record.q); serializer.writeFloat("agentSpacing", record.x);
+			serializer.writeBool("startExtended", record.q);
 			serializer.writeUint32("directionalBatchLimit", record.d); break;
 		case ConstructionType::Staircase:
 			serializer.writeUint32("y", record.a); serializer.writeUint32("x", record.b);
@@ -195,7 +195,7 @@ namespace core
 			serializer.writeUint32("sectorIndex", record.a); serializer.writeUint32("deckIndex", record.b);
 			serializer.writeUint32("xOffset", record.c); serializer.writeUint32("decksHigh", record.d);
 			serializer.writeBool("extensible", record.p); serializer.writeBool("startExtended", record.q);
-			serializer.writeFloat("agentSpacing", record.x); serializer.writeUint32("directionalBatchLimit", record.e); break;
+			serializer.writeUint32("directionalBatchLimit", record.e); break;
 		case ConstructionType::PlatformLift:
 			serializer.writeUint32("sectorIndex", record.a); serializer.writeUint32("deckIndex", record.b);
 			serializer.writeUint32("xOffset", record.c); serializer.writeUint32("cellsWide", record.d);
@@ -339,7 +339,8 @@ namespace core
 		case ConstructionType::Ladder:
 			record.a = serializer.readUint32("y"); record.b = serializer.readUint32("x");
 			record.c = serializer.readUint32("decksHigh"); record.p = serializer.readBool("extensible");
-			record.q = serializer.readBool("startExtended"); record.x = serializer.readFloat("agentSpacing");
+			record.q = serializer.readBool("startExtended");
+			(void)serializer.readFloat("agentSpacing", true, CORE_LADDER_AGENT_SPACING);
 			record.d = serializer.readUint32("directionalBatchLimit"); break;
 		case ConstructionType::Staircase:
 			record.a = serializer.readUint32("y"); record.b = serializer.readUint32("x");
@@ -397,7 +398,8 @@ namespace core
 			record.a = serializer.readUint32("sectorIndex"); record.b = serializer.readUint32("deckIndex");
 			record.c = serializer.readUint32("xOffset"); record.d = serializer.readUint32("decksHigh");
 			record.p = serializer.readBool("extensible"); record.q = serializer.readBool("startExtended");
-			record.x = serializer.readFloat("agentSpacing"); record.e = serializer.readUint32("directionalBatchLimit"); break;
+			(void)serializer.readFloat("agentSpacing", true, CORE_LADDER_AGENT_SPACING);
+			record.e = serializer.readUint32("directionalBatchLimit"); break;
 		case ConstructionType::PlatformLift:
 			record.a = serializer.readUint32("sectorIndex"); record.b = serializer.readUint32("deckIndex");
 			record.c = serializer.readUint32("xOffset"); record.d = serializer.readUint32("cellsWide");
@@ -617,7 +619,7 @@ namespace core
 			break;
 		case ConstructionType::Ladder:
 			addLadder(record.a, record.b,
-				{ record.c, record.p, record.q, record.x, record.d });
+				{ record.c, record.p, record.q, record.d });
 			break;
 		case ConstructionType::Staircase:
 			addStaircase(record.a, record.b,
@@ -653,7 +655,7 @@ namespace core
 			break;
 		case ConstructionType::SectorLadder:
 			addSectorLadder(record.a, record.b, record.c,
-				{ record.d, record.p, record.q, record.x, record.e });
+				{ record.d, record.p, record.q, record.e });
 			break;
 		case ConstructionType::PlatformLift:
 			addSectorPlatformLift(record.a, record.b, record.c,
@@ -1328,7 +1330,7 @@ namespace core
 			if (!producer) continue;
 			if (producerIndex++ != sectorIndex) continue;
 			if (record.type != ConstructionType::Ladder) return false;
-			options = { record.c, record.p, record.q, record.x, record.d };
+			options = { record.c, record.p, record.q, record.d };
 			return true;
 		}
 		return false;
@@ -1380,7 +1382,6 @@ namespace core
 		{
 			found->a = plan.y; found->b = plan.x; found->c = plan.options.decksHigh;
 			found->p = plan.options.extensible; found->q = plan.options.startExtended;
-			found->x = plan.options.agentSpacing;
 			found->d = plan.options.directionalBatchLimit;
 		}
 
@@ -1427,8 +1428,6 @@ namespace core
 			&& (x != ladder->getCellX() || y != ladder->getCellY());
 		if (options.decksHigh < 2)
 		{ plan.diagnostic = "A Ladder must span at least two decks"; return plan; }
-		if (options.agentSpacing <= 0.0f)
-		{ plan.diagnostic = "Ladder agent spacing must be positive"; return plan; }
 		if (options.directionalBatchLimit == 0)
 		{ plan.diagnostic = "Ladder directional batch limit must be positive"; return plan; }
 		if (x >= mCellsWide || y >= mDecksHigh || y + options.decksHigh > mDecksHigh)
@@ -1454,9 +1453,9 @@ namespace core
 		{ plan.diagnostic = format("The Fore-layer floor at {},{} is not traversable", x, y); return plan; }
 		if (!upper.isTraversableOnFoot())
 		{ plan.diagnostic = format("The Fore-layer floor at {},{} is not traversable", x, upperY); return plan; }
-		auto usableLength = (float)(options.decksHigh - 1) + CORE_LADDER_HEIGHT_AT_TOP
-			- CORE_LADDER_HEIGHT_OFF_GROUND;
-		auto capacity = max(1u, (uint32_t)floor(usableLength / options.agentSpacing));
+		auto crossedFloors = (float)(options.decksHigh - 1);
+		auto agentSpacing = CORE_LADDER_AGENT_SPACING / CORE_CELL_YX_RENDER_RATIO;
+		auto capacity = max(1u, (uint32_t)floor(crossedFloors / agentSpacing));
 		if (ladder->getAgents().size() > capacity)
 		{ plan.diagnostic = "Ladder capacity is below its current occupancy"; return plan; }
 
@@ -2795,7 +2794,7 @@ namespace core
 					&& mSectors[sectorIndex]->getCellY() + record.b == object->getCellY();
 			});
 		if (source == mConstructionRecords.end()) return false;
-		options = { source->d, source->p, source->q, source->x, source->e };
+		options = { source->d, source->p, source->q, source->e };
 		return true;
 	}
 
@@ -2823,7 +2822,6 @@ namespace core
 		if (found == records.end()) throw BuildingException(this, "The Room Ladder has no authored definition");
 		found->p = options.extensible;
 		found->q = options.extensible ? options.startExtended : true;
-		found->x = options.agentSpacing;
 		found->e = options.directionalBatchLimit;
 		string diagnostic;
 		if (!normalizeRoomLadderRecords(records, diagnostic)) throw BuildingException(this, diagnostic);

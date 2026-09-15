@@ -107,7 +107,6 @@ namespace core
 			uint32_t decksHigh;
 			bool extensible;  // implies controlled
 			bool startExtended;
-			float agentSpacing{ CORE_LADDER_AGENT_SPACING };
 			uint32_t directionalBatchLimit{ 4 };
 		};
 
@@ -1114,7 +1113,7 @@ namespace core
 			std::shared_ptr<Window> window);
 
 		TraversalResourceId createLadderTraversalResource(std::string const& name,
-			std::shared_ptr<Ladder> ladder, SectorId ladderSector, float agentSpacing,
+			std::shared_ptr<Ladder> ladder, SectorId ladderSector,
 			uint32_t directionalBatchLimit);
 
 		TraversalResourceId createLiftTraversalResource(std::string const& name,

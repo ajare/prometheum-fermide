@@ -574,8 +574,7 @@ namespace
 		auto lower = building.addRoomLadder(room, 0, 1);
 		auto upper = building.addRoomLadder(room, 2, 1);
 		core::Building::CreateLadderOptions defaultOptions{};
-		if (!building.getRoomLadderOptions(room, lower.ladder.index, defaultOptions)
-			|| std::abs(defaultOptions.agentSpacing - CORE_LADDER_AGENT_SPACING) > 0.001f)
+		if (!building.getRoomLadderOptions(room, lower.ladder.index, defaultOptions))
 			return false;
 		if (std::static_pointer_cast<const core::LadderSectorObject>(
 			lower.ladder.sector->getObject(lower.ladder.index))->getLadder()->getDecksHigh() != 3) return false;
@@ -616,7 +615,7 @@ namespace
 			}
 		}
 		if (movedIndex == ~0u) return false;
-		auto edited = building.applyRoomLadderOptions(room, movedIndex, { 0, true, false, 0.5f, 2 });
+		auto edited = building.applyRoomLadderOptions(room, movedIndex, { 0, true, false, 2 });
 		if (!edited) return false;
 		core::Building::CreateLadderOptions options{};
 		rebuiltRoom = building.getSector(room);
@@ -624,7 +623,7 @@ namespace
 		for (uint32_t i = 0; i < rebuiltRoom->getNumObjects(); ++i)
 			if (rebuiltRoom->getObject(i) == edited) { movedIndex = i; break; }
 		if (movedIndex == ~0u || !building.getRoomLadderOptions(room, movedIndex, options)
-			|| !options.extensible || options.startExtended || options.agentSpacing != 0.5f
+			|| !options.extensible || options.startExtended
 			|| options.directionalBatchLimit != 2) return false;
 		uint32_t insetControls = 0;
 		for (uint32_t i = 0; i < rebuiltRoom->getNumObjects(); ++i)
@@ -1388,6 +1387,55 @@ namespace
 		return false;
 	}
 
+	bool doorQueueRequestsBeforeOccupiedTail()
+	{
+		core::Building building("Early Door queue", 8, 2);
+		auto fore = building.addRoom("Approach", CORE_LAYER_FORE, 0, 0, 7, 1);
+		building.addRoom("Destination", CORE_LAYER_BACK, 0, 0, 7, 1);
+		core::Building::CreateDoorOptions options;
+		options.activationMode = core::DoorActivationMode::Automatic;
+		auto created = building.addSectorDoor(0, 3, options);
+		uint32_t approachId;
+		building.addSectorMarker(fore, 0, 2.75f, &approachId);
+		building.finishBuild();
+
+		auto edge = *find_if(building.getGraph()->getEdges().begin(),
+			building.getGraph()->getEdges().end(), [&](auto const& candidate)
+				{ return candidate->getTraversalResourceId() == created.traversalResource; });
+		auto source = edge->getVertex(0)->getSector()->getIndex() == fore
+			? edge->getVertex(0) : edge->getVertex(1);
+		auto destination = edge->getOtherVertex(source);
+		auto blocker = building.createAgent("Door queue head", fore, 0, source->getSectorOffset().x);
+		building.lookupAgent(blocker).entity->setPath(twoNodePath(source, destination, edge), true);
+		for (uint32_t tick = 0; tick < 20; ++tick) building.advanceTick();
+
+		auto approach = building.getGraph()->getVertexByIdentifier(approachId);
+		auto waiter = building.createAgent("Door waiter", fore, 0, 2.75f);
+		auto waiterEntity = building.lookupAgent(waiter).entity;
+		auto path = building.getGraph()->calculatePath(waiterEntity, approach, destination);
+		if (!path) return false;
+		waiterEntity->setPath(std::move(path), true);
+		for (uint32_t tick = 0; tick < MaximumSimulationTicks; ++tick)
+		{
+			building.advanceTick();
+			auto snapshot = building.getSimulationSnapshot();
+			auto request = find_if(snapshot.traversalRequests.begin(), snapshot.traversalRequests.end(),
+				[&](auto const& value) { return value.owner == waiter; });
+			if (request == snapshot.traversalRequests.end() || !request->hasQueuePosition) continue;
+			auto resource = find_if(snapshot.traversalResources.begin(), snapshot.traversalResources.end(),
+				[&](auto const& value) { return value.id == created.traversalResource; });
+			auto agent = find_if(snapshot.agents.begin(), snapshot.agents.end(),
+				[&](auto const& value) { return value.id == waiter; });
+			if (resource == snapshot.traversalResources.end() || agent == snapshot.agents.end()) return false;
+			auto const& lane = resource->queueLanes[request->queueApproach];
+			auto const target = lane.positions[request->queuePosition].position;
+			return agent->globalPosition.x < lane.origin.x
+				&& target.x >= agent->globalPosition.x - 0.001f
+				&& target.x <= lane.origin.x + 0.001f;
+		}
+		return false;
+	}
+
 	bool queuedCancellationReleasesAndAdvancesPositions()
 	{
 		core::Building building("Queue cancellation", 8, 2);
@@ -1650,15 +1698,14 @@ namespace
 	{
 		core::Building building("Finite ladder", 4, 4);
 		auto lower = building.addCorridor(0, 0, 3);
-		auto upper = building.addCorridor(2, 0, 3);
-		core::Building::CreateLadderOptions options{ 3, false, true };
-		options.agentSpacing = 10.0f; // Deliberately derive a single capacity slot.
+		auto upper = building.addCorridor(1, 0, 3);
+		core::Building::CreateLadderOptions options{ 2, false, true };
 		auto created = building.addLadder(0, 1, options);
 		building.finishBuild();
 		if (!created.traversalResource) return false;
 
 		auto const& graph = building.getGraph();
-		auto target = graph->getClosestVertexInSector(building.getSector(upper).get(), { 1.5f, 2.0f });
+		auto target = graph->getClosestVertexInSector(building.getSector(upper).get(), { 1.5f, 1.0f });
 		if (!target) return false;
 		std::vector<core::AgentId> ids = {
 			building.createAgent("First climber", lower, 0, 1.5f),
@@ -1685,6 +1732,8 @@ namespace
 			auto resource = std::find_if(snapshot.traversalResources.begin(), snapshot.traversalResources.end(),
 				[&](auto const& value) { return value.id == created.traversalResource; });
 			if (resource == snapshot.traversalResources.end() || !resource->isLadder
+				|| std::abs(resource->agentSpacing
+					- CORE_LADDER_AGENT_SPACING / CORE_CELL_YX_RENDER_RATIO) > 0.001f
 				|| resource->capacity != 1 || resource->queueLanes.size() != 2
 				|| resource->occupantCount + resource->admissionReservationCount > resource->capacity
 				|| resource->capacityPositions.size() != resource->capacity)
@@ -1719,10 +1768,10 @@ namespace
 		auto snapshot = building.getSimulationSnapshot();
 		auto resource = std::find_if(snapshot.traversalResources.begin(), snapshot.traversalResources.end(),
 			[&](auto const& value) { return value.id == created.traversalResource; });
-		// Two vertical units at 0.25 units/second require about 480 fixed ticks;
+		// One vertical unit at 0.25 units/second requires about 240 fixed ticks;
 		// this also detects accidentally using walking speed.
 		return observedFull && observedQueuePosition && cancelledWaiter && climbStarted && climbFinished
-			&& climbFinished - climbStarted >= 470
+			&& climbFinished - climbStarted >= 230
 			&& building.lookupAgent(ids[0]).entity->getSector() == building.getSector(upper).get()
 			&& building.lookupAgent(ids[1]).entity->getSector() == building.getSector(upper).get()
 			&& building.lookupAgent(ids[2]).entity->getSector() == building.getSector(lower).get()
@@ -1735,9 +1784,8 @@ namespace
 	{
 		core::Building building("Ladder queue approach", 8, 4);
 		auto lower = building.addCorridor(0, 0, 7);
-		auto upper = building.addCorridor(2, 0, 7);
-		core::Building::CreateLadderOptions options{ 3, false, true };
-		options.agentSpacing = 10.0f;
+		auto upper = building.addCorridor(1, 0, 7);
+		core::Building::CreateLadderOptions options{ 2, false, true };
 		auto created = building.addLadder(0, 3, options);
 		uint32_t lowerApproachId, upperApproachId;
 		building.addSectorMarker(lower, 0, 1.0f, &lowerApproachId);
@@ -1747,7 +1795,7 @@ namespace
 		auto lowerApproach = building.getGraph()->getVertexByIdentifier(lowerApproachId);
 		auto upperApproach = building.getGraph()->getVertexByIdentifier(upperApproachId);
 		auto upperTarget = building.getGraph()->getClosestVertexInSector(
-			building.getSector(upper).get(), { 3.5f, 2.0f });
+			building.getSector(upper).get(), { 3.5f, 1.0f });
 		auto lowerTarget = building.getGraph()->getClosestVertexInSector(
 			building.getSector(lower).get(), { 3.5f, 0.0f });
 		if (!upperTarget || !lowerTarget) return false;
@@ -1868,7 +1916,6 @@ namespace
 		auto lower = building.addCorridor(0, 0, 3);
 		auto upper = building.addCorridor(2, 0, 3);
 		core::Building::CreateLadderOptions options{ 3, true, false };
-		options.agentSpacing = 10.0f;
 		auto created = building.addLadder(0, 1, options);
 		building.finishBuild();
 
@@ -1914,22 +1961,23 @@ namespace
 
 	bool directionalLadderBoundsBatchesAndPreventsOpposingAdmission()
 	{
-		core::Building building("Directional ladder", 4, 4);
+		core::Building building("Directional ladder", 4, 5);
 		auto lower = building.addCorridor(0, 0, 3);
-		auto upper = building.addCorridor(2, 0, 3);
-		core::Building::CreateLadderOptions options{ 3, false, true };
-		options.agentSpacing = 1.0f;
-		options.directionalBatchLimit = 2;
+		auto upper = building.addCorridor(3, 0, 3);
+		core::Building::CreateLadderOptions options{ 4, false, true };
+		options.directionalBatchLimit = 4;
 		auto created = building.addLadder(0, 1, options);
 		building.finishBuild();
 
 		auto graph = building.getGraph();
-		auto upperTarget = graph->getClosestVertexInSector(building.getSector(upper).get(), { 1.5f, 2.0f });
+		auto upperTarget = graph->getClosestVertexInSector(building.getSector(upper).get(), { 1.5f, 3.0f });
 		auto lowerTarget = graph->getClosestVertexInSector(building.getSector(lower).get(), { 1.5f, 0.0f });
 		if (!upperTarget || !lowerTarget) return false;
 		std::vector<core::AgentId> ascending = {
 			building.createAgent("Ascending one", lower, 0, 1.5f),
 			building.createAgent("Ascending two", lower, 0, 1.5f),
+			building.createAgent("Ascending three", lower, 0, 1.5f),
+			building.createAgent("Ascending four", lower, 0, 1.5f),
 			building.createAgent("Ascending next batch", lower, 0, 1.5f)
 		};
 		auto descending = building.createAgent("Descending waiter", upper, 0, 1.5f);
@@ -1947,18 +1995,20 @@ namespace
 			agent->setPath(path, true);
 		}
 
-		bool observedOppositeWaiting = false;
+		bool observedFourConcurrent = false;
+		bool observedFullBatch = false;
+		uint64_t fourthAscendingFinished = 0;
 		uint64_t descendingFinished = 0;
-		uint64_t thirdAscendingFinished = 0;
+		uint64_t fifthAscendingFinished = 0;
 		for (uint32_t i = 0; i < MaximumSimulationTicks * 4; ++i)
 		{
 			building.advanceTick();
 			auto snapshot = building.getSimulationSnapshot();
 			auto resource = std::find_if(snapshot.traversalResources.begin(), snapshot.traversalResources.end(),
 				[&](auto const& value) { return value.id == created.traversalResource; });
-			if (resource == snapshot.traversalResources.end() || resource->capacity != 2
-				|| resource->occupantCount + resource->admissionReservationCount > 2
-				|| resource->directionalBatchLimit != 2) return false;
+			if (resource == snapshot.traversalResources.end() || resource->capacity != 5
+				|| resource->occupantCount + resource->admissionReservationCount > 5
+				|| resource->directionalBatchLimit != 4) return false;
 
 			core::TraversalDirection admittedDirection = core::TraversalDirection::None;
 			for (auto const& request : snapshot.traversalRequests)
@@ -1971,18 +2021,25 @@ namespace
 			if (resource->activeDirection != core::TraversalDirection::None
 				&& admittedDirection != core::TraversalDirection::None
 				&& resource->activeDirection != admittedDirection) return false;
-			observedOppositeWaiting = observedOppositeWaiting
+			observedFourConcurrent = observedFourConcurrent
+				|| (resource->activeDirection == core::TraversalDirection::Ascending
+					&& resource->occupantCount + resource->admissionReservationCount == 4);
+			observedFullBatch = observedFullBatch
 				|| (resource->activeDirection == core::TraversalDirection::Ascending
 					&& resource->descendingWaitingCount == 1
-					&& resource->directionalBatchCount == 2);
+					&& resource->directionalBatchCount == 4);
+			if (!fourthAscendingFinished && building.lookupAgent(ascending[3]).entity->getState() == core::Agent::State::Idle)
+				fourthAscendingFinished = building.getSimulationTick();
 			if (!descendingFinished && building.lookupAgent(descending).entity->getState() == core::Agent::State::Idle)
 				descendingFinished = building.getSimulationTick();
-			if (!thirdAscendingFinished && building.lookupAgent(ascending[2]).entity->getState() == core::Agent::State::Idle)
-				thirdAscendingFinished = building.getSimulationTick();
-			if (descendingFinished && thirdAscendingFinished) break;
+			if (!fifthAscendingFinished && building.lookupAgent(ascending[4]).entity->getState() == core::Agent::State::Idle)
+				fifthAscendingFinished = building.getSimulationTick();
+			if (fourthAscendingFinished && descendingFinished && fifthAscendingFinished) break;
 		}
-		return observedOppositeWaiting && descendingFinished && thirdAscendingFinished
-			&& descendingFinished < thirdAscendingFinished;
+		return observedFourConcurrent && observedFullBatch
+			&& fourthAscendingFinished && descendingFinished && fifthAscendingFinished
+			&& fourthAscendingFinished < descendingFinished
+			&& descendingFinished < fifthAscendingFinished;
 	}
 
 	bool staircaseCoordinationIsExplicitlyOptIn()
@@ -2297,6 +2354,104 @@ namespace
 			&& passenger->getSector() == building.getSector(upper).get()
 			&& lift != final.traversalResources.end() && !lift->liftPassenger
 			&& lift->occupantCount == 0;
+	}
+
+	bool liftDoorQueueRequestsBeforeOccupiedTail()
+	{
+		core::Building building("Early Lift Door queue", 8, 4);
+		auto lower = building.addCorridor(0, 0, 7);
+		auto upper = building.addCorridor(2, 0, 7);
+		core::Building::CreateLiftOptions options;
+		options.cellsWide = 1;
+		options.stopOffsets = { 0, 2 };
+		options.capacity = 1;
+		auto created = building.addLift(0, 3, options);
+		uint32_t approachId;
+		building.addSectorMarker(lower, 0, 2.75f, &approachId);
+		building.finishBuild();
+
+		auto upperTarget = building.getGraph()->getClosestVertexInSector(
+			building.getSector(upper).get(), { 3.5f, 2.0f });
+		auto lowerTarget = building.getGraph()->getClosestVertexInSector(
+			building.getSector(lower).get(), { 3.5f, 0.0f });
+		if (!upperTarget || !lowerTarget) return false;
+
+		// Send the sole-capacity car away with an occupant so the lower landing
+		// queue remains unavailable while the following Agents approach it.
+		auto rider = building.createAgent("Descending rider", upper, 0, 3.5f);
+		auto riderEntity = building.lookupAgent(rider).entity;
+		auto riderPath = building.getGraph()->calculatePath(riderEntity, lowerTarget);
+		if (!riderPath) return false;
+		riderEntity->setPath(std::move(riderPath), true);
+		bool descending = false;
+		for (uint32_t tick = 0; tick < MaximumSimulationTicks * 4; ++tick)
+		{
+			building.advanceTick();
+			auto snapshot = building.getSimulationSnapshot();
+			auto lift = find_if(snapshot.traversalResources.begin(), snapshot.traversalResources.end(),
+				[&](auto const& value) { return value.id == created.traversalResource; });
+			if (lift != snapshot.traversalResources.end() && lift->liftMoving
+				&& lift->liftDirection == core::TraversalDirection::Descending
+				&& lift->occupantCount == 1)
+			{
+				descending = true;
+				break;
+			}
+		}
+		if (!descending) return false;
+
+		auto blocker = building.createAgent("Lift queue head", lower, 0, 3.5f);
+		auto blockerEntity = building.lookupAgent(blocker).entity;
+		auto blockerPath = building.getGraph()->calculatePath(blockerEntity, upperTarget);
+		if (!blockerPath) return false;
+		blockerEntity->setPath(std::move(blockerPath), true);
+		bool queueEstablished = false;
+		for (uint32_t tick = 0; tick < MaximumSimulationTicks; ++tick)
+		{
+			building.advanceTick();
+			auto snapshot = building.getSimulationSnapshot();
+			auto landing = find_if(snapshot.traversalResources.begin(), snapshot.traversalResources.end(),
+				[&](auto const& value) { return value.id == created.doors.front().traversalResource; });
+			if (landing != snapshot.traversalResources.end()
+				&& any_of(snapshot.traversalRequests.begin(), snapshot.traversalRequests.end(),
+					[&](auto const& request) { return request.resource == created.doors.front().traversalResource
+						&& request.state == core::TraversalRequestState::Pending
+						&& request.hasQueuePosition; }))
+			{
+				queueEstablished = true;
+				break;
+			}
+		}
+		if (!queueEstablished) return false;
+
+		auto approach = building.getGraph()->getVertexByIdentifier(approachId);
+		auto waiter = building.createAgent("Lift waiter", lower, 0, 2.75f);
+		auto waiterEntity = building.lookupAgent(waiter).entity;
+		auto path = building.getGraph()->calculatePath(waiterEntity, approach, upperTarget);
+		if (!path) return false;
+		waiterEntity->setPath(std::move(path), true);
+		for (uint32_t tick = 0; tick < MaximumSimulationTicks; ++tick)
+		{
+			auto const positionBeforeTick = waiterEntity->getGlobalPosition();
+			building.advanceTick();
+			auto snapshot = building.getSimulationSnapshot();
+			auto request = find_if(snapshot.traversalRequests.begin(), snapshot.traversalRequests.end(),
+				[&](auto const& value) { return value.owner == waiter
+					&& value.resource == created.doors.front().traversalResource
+					&& value.state == core::TraversalRequestState::Pending; });
+			if (request == snapshot.traversalRequests.end() || !request->hasQueuePosition) continue;
+			auto landing = find_if(snapshot.traversalResources.begin(), snapshot.traversalResources.end(),
+				[&](auto const& value) { return value.id == created.doors.front().traversalResource; });
+			auto agent = find_if(snapshot.agents.begin(), snapshot.agents.end(),
+				[&](auto const& value) { return value.id == waiter; });
+			if (landing == snapshot.traversalResources.end() || agent == snapshot.agents.end()) return false;
+			auto const& lane = landing->queueLanes[request->queueApproach];
+			auto const target = lane.positions[request->queuePosition].position;
+			return positionBeforeTick.x < lane.origin.x
+				&& target.x >= positionBeforeTick.x - 0.001f
+				&& target.x <= lane.origin.x + 0.001f;
+		}
+		return false;
 	}
 
 	bool waitingLiftPassengersFillArrivingCar()
@@ -3435,6 +3590,11 @@ int main()
 			std::cerr << "FAIL: queue positions were not selected by object then agent proximity\n";
 			return 1;
 		}
+		if (!doorQueueRequestsBeforeOccupiedTail())
+		{
+			std::cerr << "FAIL: Door queue request was not made before its occupied tail\n";
+			return 1;
+		}
 		if (!queuedCancellationReleasesAndAdvancesPositions())
 		{
 			std::cerr << "FAIL: queued cancellation leaked a ticket or physical position\n";
@@ -3468,6 +3628,11 @@ int main()
 		if (!openPlatformLiftUsesVirtualBoundaryAndTransportPolicy())
 		{
 			std::cerr << "FAIL: open platform lift journey, virtual boundary, or attachment failed\n";
+			return 1;
+		}
+		if (!liftDoorQueueRequestsBeforeOccupiedTail())
+		{
+			std::cerr << "FAIL: Lift Door queue request was not made before its occupied tail\n";
 			return 1;
 		}
 		if (!waitingLiftPassengersFillArrivingCar())

@@ -376,10 +376,6 @@ namespace core
 
 	void Building::validateSectorLadderOptions(string const& caller, CreateLadderOptions const& options) const
 	{
-		if (options.agentSpacing <= 0.0f)
-		{
-			throw BuildingException(this, format("{} - Ladder agent spacing must be positive.", caller));
-		}
 		if (options.directionalBatchLimit == 0)
 		{
 			throw BuildingException(this, format("{} - Ladder directional batch limit must be positive.", caller));
@@ -1323,8 +1319,7 @@ namespace core
 		auto ladderTransit = dynamic_pointer_cast<LadderTransit>(ladderSector);
 		auto ladder = ladderTransit->getLadder();
 		auto traversalResource = createLadderTraversalResource("Ladder capacity", ladder,
-			SectorId{ (uint64_t)sectorIndex + 1 }, options.agentSpacing,
-			options.directionalBatchLimit);
+			SectorId{ (uint64_t)sectorIndex + 1 }, options.directionalBatchLimit);
 		configureLadderQueueLanes(traversalResource,
 			{ SectorId{ (uint64_t)foreSector0->getIndex() + 1 },
 				SectorId{ (uint64_t)foreSector1->getIndex() + 1 } },
@@ -1369,7 +1364,7 @@ namespace core
 		};
 		ConstructionRecord record{ ConstructionType::Ladder };
 		record.a = y; record.b = x; record.c = options.decksHigh; record.d = options.directionalBatchLimit;
-		record.p = options.extensible; record.q = options.startExtended; record.x = options.agentSpacing;
+		record.p = options.extensible; record.q = options.startExtended;
 		recordConstruction(std::move(record));
 		return result;
 	}
@@ -3499,8 +3494,7 @@ namespace core
 		auto ladder = dynamic_pointer_cast<LadderSectorObject>(
 			ladderObject.sector->_getObject(ladderObject.index))->getLadder();
 		auto traversalResource = createLadderTraversalResource("Ladder capacity", ladder,
-			SectorId{ (uint64_t)sectorIndex + 1 }, options.agentSpacing,
-			options.directionalBatchLimit);
+			SectorId{ (uint64_t)sectorIndex + 1 }, options.directionalBatchLimit);
 		auto const location = SectorId{ (uint64_t)sectorIndex + 1 };
 		configureLadderQueueLanes(traversalResource, { location, location },
 			{ Vector2{ (float)x + 0.5f, (float)y0 },
@@ -3570,7 +3564,7 @@ namespace core
 		ConstructionRecord record{ ConstructionType::SectorLadder };
 		record.a = sectorIndex; record.b = deckIndex; record.c = xOffset;
 		record.d = options.decksHigh; record.e = options.directionalBatchLimit;
-		record.p = options.extensible; record.q = options.startExtended; record.x = options.agentSpacing;
+		record.p = options.extensible; record.q = options.startExtended;
 		recordConstruction(std::move(record));
 		return result;
 	}
@@ -4890,9 +4884,7 @@ namespace core
 	{
 		if (!edge || movementDistance < 0.0f || !agent.getSector()) return false;
 		auto resource = mTraversalResources.find(edge->getTraversalResourceId());
-		// Validate early queue interception against Ladders first. Door and Lift
-		// queues retain their established behavior until this policy is proven.
-		if (!resource || !resource->mLadder) return false;
+		if (!resource || (!resource->mDoor && !resource->mLadder)) return false;
 
 		auto const sourceSector = SectorId{ (uint64_t)agent.getSector()->getIndex() + 1 };
 		DoorQueueLane const* lane = nullptr;
@@ -4955,9 +4947,9 @@ namespace core
 					&& resource->mActiveDirection != approachingDirection);
 		}
 
-		// With no established queue and immediately available Ladder capacity, the
-		// first Agent proceeds to the endpoint. A queued tail or unavailable Ladder
-		// admission claims the nearest forward spot before the Agent reaches it.
+		// With no established queue, an Agent proceeds to an available threshold.
+		// An existing Door/Lift tail, or unavailable Ladder admission, claims the
+		// nearest forward spot before the Agent reaches it.
 		if (!hasAvailablePosition
 			|| (!hasOccupiedPosition && !ladderCannotAdmitImmediately)) return false;
 		auto const reachesQueue = direction > 0
@@ -5315,6 +5307,9 @@ namespace core
 	bool Building::isLadderAdmission(TraversalRequest const& request,
 		TraversalResource const& resource) const
 	{
+		// Only the edge that claims climbing capacity is admission-controlled.
+		// Mount/dismount edges which do not put a new Agent on the climbing span
+		// must remain immediately traversable or an Agent could reserve capacity twice.
 		if ((!resource.mLadder && !resource.mStaircase)
 			|| request.mDestinationSector != resource.mLadderSector)
 		{
@@ -5327,6 +5322,8 @@ namespace core
 			return request.mSourceSector == resource.mLadderSector
 				&& request.mEdgeType == EdgeType::Staircase;
 		}
+		// Entering a dedicated Ladder sector starts occupancy. For a Room Ladder,
+		// whose climb remains inside one Room sector, the Ladder edge itself starts it.
 		if (request.mSourceSector != resource.mLadderSector)
 		{
 			return true;
@@ -5346,6 +5343,9 @@ namespace core
 		if (!request) return;
 		if (request->mDirection == TraversalDirection::None)
 		{
+			// Direction is fixed when the request joins the admission queue. Dedicated
+			// Ladder sectors reveal it from the cross-deck edge; Room Ladders reveal it
+			// from the side of the physical midpoint where the Agent approaches.
 			if (request->mSourceSector == resource.mLadderSector)
 			{
 				auto deltaY = request->mDestinationEndpoint.y - request->mSourceEndpoint.y;
@@ -5362,6 +5362,9 @@ namespace core
 					? TraversalDirection::Ascending : TraversalDirection::Descending;
 			}
 		}
+		// A queue ticket gives a Ladder requester a physical place to wait. The
+		// admission queue is separately sorted for deterministic first-come ordering;
+		// stable ID tie-breakers make equal-tick requests independent of iteration order.
 		if (resource.mLadder) attachQueueTicket(requestId, resource);
 		if (find(resource.mAdmissionQueue.begin(), resource.mAdmissionQueue.end(), requestId)
 			== resource.mAdmissionQueue.end())
@@ -5382,9 +5385,14 @@ namespace core
 
 	void Building::tryGrantLadderAdmissions(TraversalResource& resource)
 	{
+		// Disabled or moving/retracted equipment cannot safely accept a new climber.
+		// Existing occupants retain their ownership while the admission gate is closed.
 		if (!resource.mEnabled || (!resource.mLadder && !resource.mStaircase)
 			|| (resource.mExtensible && !resource.mExtensible->isExtended())) return;
 
+		// Occupants and granted-but-not-yet-committed reservations are both in flight.
+		// Direction may change only after both sets are empty, so opposite-direction
+		// Agents can never meet on the climbing span.
 		auto hasInFlight = any_of(resource.mOccupants.begin(), resource.mOccupants.end(),
 			[](auto id) { return (bool)id; })
 			|| any_of(resource.mAdmissionReservations.begin(), resource.mAdmissionReservations.end(),
@@ -5410,6 +5418,9 @@ namespace core
 				});
 		};
 
+		// Start with the oldest request. Once a directional batch is underway, drain
+		// the span before switching. An opposite queue gets the next turn when the
+		// current direction has no demand or has consumed its configured batch limit.
 		if (resource.mActiveDirection == TraversalDirection::None)
 		{
 			resource.mActiveDirection = oldestDirection();
@@ -5435,10 +5446,14 @@ namespace core
 
 		auto opposite = resource.mActiveDirection == TraversalDirection::Ascending
 			? TraversalDirection::Descending : TraversalDirection::Ascending;
+		// Stop enlarging this batch when opposite demand is waiting. Current climbers
+		// finish first; the empty-span rule above will then reverse the direction.
 		if (hasWaitingDirection(opposite)
 			&& resource.mDirectionalBatchCount >= resource.mDirectionalBatchLimit)
 			return;
 
+		// Fill every physically available spacing slot, but only with requests in the
+		// active direction whose Agent has actually reached the head of its queue.
 		for (uint32_t position = 0; position < resource.mCapacity; ++position)
 		{
 			if (resource.mOccupants[position] || resource.mAdmissionReservations[position]) continue;
@@ -5472,6 +5487,8 @@ namespace core
 				if (auto agent = mAgents.find(request->mOwner)) agent->mTraversalLocalGoal.reset();
 				refreshQueuePositions(resource);
 			}
+			// Reserve before issuing the permit: movement and commit can now rely on
+			// this exact slot remaining unavailable to every other Agent.
 			resource.mAdmissionReservations[position] = requestId;
 			request->mCapacityPosition = position;
 			++resource.mDirectionalBatchCount;
@@ -5484,6 +5501,8 @@ namespace core
 	void Building::releaseLadderAdmission(TraversalRequestId requestId,
 		TraversalResource& resource)
 	{
+		// Cancellation, denial, or completion must surrender every form of waiting
+		// ownership so neither a queue place nor a capacity reservation leaks.
 		resource.mAdmissionQueue.erase(remove(resource.mAdmissionQueue.begin(),
 			resource.mAdmissionQueue.end(), requestId), resource.mAdmissionQueue.end());
 		for (auto& lane : resource.mQueueLanes)
@@ -5503,6 +5522,8 @@ namespace core
 
 	void Building::releaseLadderOccupancy(AgentId agentId, TraversalResource& resource)
 	{
+		// Occupancy lasts until the Agent leaves the climbing span, not merely until
+		// its entry permit commits. Releasing it is what makes room for the next Agent.
 		for (auto& occupant : resource.mOccupants)
 		{
 			if (occupant == agentId) occupant = {};
@@ -7208,6 +7229,9 @@ namespace core
 
 		if (auto resource = ladderResource; resource && (resource->mLadder || resource->mStaircase))
 		{
+			// Committing entry converts the provisional slot reservation into occupancy;
+			// committing exit frees occupancy. Room Ladders instead release their slot
+			// after the in-sector vertical edge has completed.
 			if (resource->mLadder && request->mSourceSector != resource->mLadderSector
 				&& request->mDestinationSector == resource->mLadderSector
 				&& request->mCapacityPosition < resource->mCapacity)
@@ -7237,6 +7261,7 @@ namespace core
 				// vertical edge is active; there is no separate transit membership.
 				releaseLadderAdmission(requestId, *resource);
 			}
+			// Every capacity-changing commit is an opportunity to admit another waiter.
 			tryGrantLadderAdmissions(*resource);
 		}
 
@@ -7920,25 +7945,28 @@ namespace core
 	}
 
 	TraversalResourceId Building::createLadderTraversalResource(string const& name,
-		shared_ptr<Ladder> ladder, SectorId ladderSector, float agentSpacing,
-		uint32_t directionalBatchLimit)
+		shared_ptr<Ladder> ladder, SectorId ladderSector, uint32_t directionalBatchLimit)
 	{
 		beginStructuralEdit("createLadderTraversalResource");
 		if (!ladder || !ladderSector || ladderSector.value > mSectors.size()
-			|| agentSpacing <= 0.0f || directionalBatchLimit == 0)
+			|| directionalBatchLimit == 0)
 		{
-			throw invalid_argument("A ladder traversal resource requires a Ladder, sector, and positive spacing");
+			throw invalid_argument("A ladder traversal resource requires a Ladder, sector, and positive batch limit");
 		}
-		auto usableLength = ladder->getUsableLength();
-		auto capacity = max(1u, (uint32_t)floor(usableLength / agentSpacing));
+		// Capacity is a physical property of the usable vertical span: each slot keeps
+		// neighbouring Agents at least CORE_LADDER_AGENT_SPACING apart in render space.
+		// Even a short valid Ladder admits one Agent.
+		auto crossedFloors = (float)(ladder->getDecksHigh() - 1);
+		auto agentSpacing = CORE_LADDER_AGENT_SPACING / CORE_CELL_YX_RENDER_RATIO;
+		auto capacity = max(1u, (uint32_t)floor(crossedFloors / agentSpacing));
 		vector<Vector2> positions;
 		positions.reserve(capacity);
 		auto origin = ladder->getPosition();
 		auto x = origin.x + ladder->getSize().x * 0.5f;
 		for (uint32_t i = 0; i < capacity; ++i)
 		{
-			positions.push_back({ x, origin.y + (agentSpacing >= usableLength
-				? usableLength * 0.5f : agentSpacing * ((float)i + 0.5f)) });
+			positions.push_back({ x, origin.y + (agentSpacing >= crossedFloors
+				? crossedFloors * 0.5f : agentSpacing * ((float)i + 0.5f)) });
 		}
 
 		auto id = mTraversalResources.add(unique_ptr<TraversalResource>(new TraversalResource(
@@ -8162,7 +8190,8 @@ namespace core
 			};
 
 			// Unlike a Door, the Ladder endpoint itself must remain clear for
-			// mounting and dismounting. Queue positions therefore begin at step 1.
+			// mounting and dismounting. Queue positions therefore begin at step 1;
+			// admission later requires the selected Agent to have reached one of them.
 			vector<Vector2> positions;
 			bool scanLeft = true, scanRight = true;
 			for (uint32_t step = 1; scanLeft || scanRight; ++step)
