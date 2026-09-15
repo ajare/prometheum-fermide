@@ -2734,42 +2734,8 @@ void handleWorldInteraction(shared_ptr<core::Building> building,
 	if (!gPegmanConsumesLeftMouse
 		&& mouseStatus.state[MouseButtonStatus::Left] == MouseButtonStatus::State::Clicked)
 	{
-		// Try and select
-		if (gUISettings.selectionMode == UISettings::SelectionMode::Sector)
-		{
-			gSelectedSector = gHoveredSector;
-			gSelectedAgent = nullptr;
-			gSelectedVertex.reset();
-			gSelectedSectorObject.reset();
-		}
-		else if (gHoveredAgent)
-		{
-			gSelectedAgent = gHoveredAgent;
-			gSelectedSector.reset();
-			gSelectedSectorObject.reset();
-		}
-		else if (gHoveredInteractionPoint)
-		{
-			if (gUISettings.worldPaused && gHoveredSectorObject)
-			{
-				setSelectionMode(UISettings::SelectionMode::Object);
-				gSelectedAgent = nullptr; gSelectedSector.reset();
-				gSelectedSectorObject = gHoveredSectorObject;
-			}
-			else if (!gUISettings.worldPaused && gSelectedAgent)
-			{
-				auto actor = building->getAgentId(gSelectedAgent);
-				if (actor) building->requestInteraction(gHoveredInteractionPoint, actor);
-			}
-		}
-		else if (gHoveredSectorObject)
-		{
-			setSelectionMode(UISettings::SelectionMode::Object);
-			gSelectedAgent = nullptr;
-			gSelectedSector.reset();
-			gSelectedSectorObject = gHoveredSectorObject;
-		}
-		else if (gHoveredVertex)
+		// Select the visually topmost item and adopt its selection mode.
+		if (gHoveredVertex)
 		{
 			if (gSelectingAgentPathDestination && gSelectedAgent)
 			{
@@ -2796,8 +2762,36 @@ void handleWorldInteraction(shared_ptr<core::Building> building,
 			}
 			else
 			{
+				setSelectionMode(UISettings::SelectionMode::Vertex);
 				gSelectedVertex = gHoveredVertex;
 			}
+		}
+		else if (gHoveredAgent)
+		{
+			setSelectionMode(UISettings::SelectionMode::Object);
+			gSelectedAgent = gHoveredAgent;
+			gSelectedSector.reset();
+			gSelectedSectorObject.reset();
+		}
+		else if (gHoveredInteractionPoint && !gUISettings.worldPaused && gSelectedAgent)
+		{
+			auto actor = building->getAgentId(gSelectedAgent);
+			if (actor) building->requestInteraction(gHoveredInteractionPoint, actor);
+		}
+		else if (gHoveredSectorObject)
+		{
+			setSelectionMode(UISettings::SelectionMode::Object);
+			gSelectedAgent = nullptr;
+			gSelectedSector.reset();
+			gSelectedSectorObject = gHoveredSectorObject;
+		}
+		else if (gHoveredSector)
+		{
+			setSelectionMode(UISettings::SelectionMode::Sector);
+			gSelectedSector = gHoveredSector;
+			gSelectedAgent = nullptr;
+			gSelectedVertex.reset();
+			gSelectedSectorObject.reset();
 		}
 	}
 
@@ -4757,7 +4751,8 @@ namespace
 		}
 
 		auto hoverEdge = gSectorResize.dragging ? gSectorResize.edge
-			: hoveredResizeEdge(gSelectedSector, io.MousePos);
+			: gHoveredSector == gSelectedSector
+				? hoveredResizeEdge(gSelectedSector, io.MousePos) : ResizeEdge::None;
 		if (hoverEdge == ResizeEdge::Left || hoverEdge == ResizeEdge::Right)
 			ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
 		else if (hoverEdge == ResizeEdge::Top || hoverEdge == ResizeEdge::Bottom)
@@ -5098,35 +5093,36 @@ void renderWorldWindow(shared_ptr<core::Building> building, shared_ptr<const cor
 	{
 		auto mousePos = getMouseWorldPosition();
 		gLastWorldCursor = mousePos;
-		if (gUISettings.selectionMode == UISettings::SelectionMode::Sector)
-		{
-			auto sector = building->getSectorAtPosition(gUISettings.visibleLayer, mousePos.x, mousePos.y);
-			if (sector && (sector->getType() == core::SectorType::Location
-				|| sector->getType() == core::SectorType::Lift
-				|| sector->getType() == core::SectorType::Shuttle)) gHoveredSector = sector;
-		}
-		else if (gUISettings.selectionMode == UISettings::SelectionMode::Object)
-		{
-			gHoveredAgent = building->getAgentAtPosition(gUISettings.visibleLayer, mousePos.x, mousePos.y);
-			if (!gHoveredAgent)
-			{
-				gHoveredSectorObject = markerAtScreenPosition(building, ImGui::GetIO().MousePos);
-				if (!gHoveredSectorObject)
-				{
-					shared_ptr<const core::SectorObject> sectorObject;
-					auto object = building->getObjectAtPosition(gUISettings.visibleLayer,
-						mousePos.x, mousePos.y, &sectorObject);
-					if (sectorObject && sectorObject->getObjectType() != core::SectorObjectType::Marker)
-						gHoveredSectorObject = sectorObject;
-					if (auto button = dynamic_pointer_cast<const core::Button>(object))
-						gHoveredInteractionPoint = button->getInteractionPointId();
-				}
-			}
-		}
-		else
-		{
+		// Hit-test in reverse visual order. Graph vertices are rendered over agents,
+		// agents over sector objects, and sector objects over their owning sector.
+		if (gUISettings.renderGraph)
 			gHoveredVertex = graph->getVertexAtPosition(gUISettings.visibleLayer, mousePos.x,
 				mousePos.y, RENDER_VERTEX_SIZE / (float)CORE_DECK_HEIGHT_PIXELS);
+		if (!gHoveredVertex)
+			gHoveredAgent = building->getAgentAtPosition(gUISettings.visibleLayer,
+				mousePos.x, mousePos.y);
+		if (!gHoveredVertex && !gHoveredAgent)
+		{
+			gHoveredSectorObject = markerAtScreenPosition(building, ImGui::GetIO().MousePos);
+			if (!gHoveredSectorObject)
+			{
+				shared_ptr<const core::SectorObject> sectorObject;
+				auto object = building->getObjectAtPosition(gUISettings.visibleLayer,
+					mousePos.x, mousePos.y, &sectorObject);
+				if (sectorObject && sectorObject->getObjectType() != core::SectorObjectType::Marker)
+					gHoveredSectorObject = sectorObject;
+				if (auto button = dynamic_pointer_cast<const core::Button>(object))
+					gHoveredInteractionPoint = button->getInteractionPointId();
+			}
+		}
+		if (!gHoveredVertex && !gHoveredAgent && !gHoveredSectorObject)
+		{
+			auto sector = building->getSectorAtPosition(gUISettings.visibleLayer,
+				mousePos.x, mousePos.y);
+			if (sector && (sector->getType() == core::SectorType::Location
+				|| sector->getType() == core::SectorType::Lift
+				|| sector->getType() == core::SectorType::Shuttle))
+				gHoveredSector = sector;
 		}
 
 		if (gHoveredAgent || gHoveredSector || gHoveredSectorObject || gHoveredVertex)
