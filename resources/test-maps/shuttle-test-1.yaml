@@ -1,0 +1,36 @@
+version: 2
+name: Untitled
+cellsWide: 48
+decksHigh: 6
+construction:
+  - type: corridor
+    y: 1
+    x: 1
+    cellsWide: 6
+    decksHigh: 1
+  - type: corridor
+    y: 1
+    x: 15
+    cellsWide: 6
+    decksHigh: 1
+  - type: shuttle
+    y: 1
+    x: 3
+    cellsWide: 16
+    numCars: 1
+    carWidth: 3
+    stopOffsets: [0, 13]
+    initialStop: 0
+    capacityPerCarriage: 5
+    doorMask: 5
+    minimumDwellSeconds: 0.75
+    maximumBoardingSeconds: 5
+    allowPartialLandings: false
+agents:
+  - id: 1
+    agent:
+      name: Agent 1
+      flags: 0
+    sector: 0
+    localX: 0.578125
+    localY: 0

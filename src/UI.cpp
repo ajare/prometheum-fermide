@@ -214,7 +214,8 @@ namespace
 		None,
 		Room,
 		Corridor,
-		Lift
+		Lift,
+		Shuttle
 	};
 
 	struct PaintState
@@ -238,6 +239,27 @@ namespace
 
 	PaintState gPaint;
 
+	struct ShuttleDraft
+	{
+		uint32_t x{ 0 }, y{ 0 }, cellsWide{ 0 };
+		int numCars{ 1 };
+		int carWidth{ 3 };
+		uint32_t doorMask{ 1u << 1 };
+		int capacity{ 1 };
+		int initialStop{ 0 };
+		float minimumDwellSeconds{ CORE_LIFT_DOOR_PAUSE_TIME };
+		float maximumBoardingSeconds{ CORE_DOOR_STAY_OPEN_TIME };
+		bool allowPartialLandings{ false };
+		vector<uint32_t> stopOffsets;
+		string diagnostic;
+	};
+
+	optional<ShuttleDraft> gShuttleDraft;
+	bool gOpenShuttleDraftPopup{ false };
+	vector<core::Building::ShuttleStopCandidate> gShuttleDoorCandidates;
+	int gSelectedShuttleDoorCandidate{ 0 };
+	bool gOpenShuttleStopPopup{ false };
+
 	enum class ResizeEdge
 	{
 		None,
@@ -252,16 +274,19 @@ namespace
 	{
 		bool dragging{ false };
 		bool lift{ false };
+		bool shuttle{ false };
 		ResizeEdge edge{ ResizeEdge::None };
 		ImVec2 pressPosition{};
 		uint32_t originalX{ 0 }, originalY{ 0 }, originalWidth{ 0 }, originalHeight{ 0 };
 		core::Building::LocationEditPlan preview;
 		core::Building::LiftEditPlan liftPreview;
+		core::Building::ShuttleEditPlan shuttlePreview;
 	};
 
 	SectorResizeState gSectorResize;
 	optional<core::Building::LocationEditPlan> gPendingLocationEdit;
 	optional<core::Building::LiftEditPlan> gPendingLiftEdit;
+	optional<core::Building::ShuttleEditPlan> gPendingShuttleEdit;
 
 	struct ObjectMoveState
 	{
@@ -456,7 +481,9 @@ namespace
 			target.cellX = landingX;
 		target.sector = building->getSectorAtPosition(CORE_LAYER_FORE,
 			(float)target.cellX, world.y);
-		building->canAddCorridorDoor(target.cellY, target.cellX, &target.diagnostic);
+		auto shuttleStops = building->getShuttleStopCandidatesForDoor(target.cellY, target.cellX);
+		if (!shuttleStops.empty()) target.diagnostic.clear();
+		else building->canAddCorridorDoor(target.cellY, target.cellX, &target.diagnostic);
 		return target;
 	}
 
@@ -590,6 +617,64 @@ namespace
 		}
 	}
 
+	vector<uint32_t> shuttleCandidates(shared_ptr<const core::Building> const& building,
+		ShuttleDraft const& draft)
+	{
+		if (draft.numCars <= 0 || (draft.carWidth != 3 && draft.carWidth != 4)) return {};
+		return building->getValidShuttleStopOffsets(draft.y, draft.x, draft.cellsWide,
+			(uint32_t)draft.numCars, (uint32_t)draft.carWidth, draft.allowPartialLandings,
+			draft.doorMask);
+	}
+
+	bool validateShuttleDraft(shared_ptr<const core::Building> const& building,
+		ShuttleDraft& draft)
+	{
+		draft.diagnostic.clear();
+		if (draft.numCars <= 0) draft.diagnostic = "A Shuttle requires at least one carriage";
+		else if (draft.carWidth != 3 && draft.carWidth != 4) draft.diagnostic = "Carriage width must be 3 or 4 cells";
+		else if (draft.doorMask == 0 || (draft.doorMask >> draft.carWidth) != 0)
+			draft.diagnostic = "Select at least one door cell within the carriage";
+		else if (draft.capacity <= 0 || draft.capacity > (int)floor((float)draft.carWidth / CORE_AGENT_MAX_WIDTH))
+			draft.diagnostic = "Capacity cannot be represented by separated carriage positions";
+		else if (draft.minimumDwellSeconds < 0.0f
+			|| draft.maximumBoardingSeconds < draft.minimumDwellSeconds)
+			draft.diagnostic = "Maximum boarding time must be at least the non-negative minimum dwell";
+		auto candidates = shuttleCandidates(building, draft);
+		draft.stopOffsets.erase(remove_if(draft.stopOffsets.begin(), draft.stopOffsets.end(),
+			[&](auto stop) { return find(candidates.begin(), candidates.end(), stop) == candidates.end(); }),
+			draft.stopOffsets.end());
+		sort(draft.stopOffsets.begin(), draft.stopOffsets.end());
+		draft.stopOffsets.erase(unique(draft.stopOffsets.begin(), draft.stopOffsets.end()), draft.stopOffsets.end());
+		auto shuttleWidth = draft.numCars > 0 && draft.carWidth > 0
+			? draft.numCars * draft.carWidth + draft.numCars - 1 : 0;
+		if (draft.diagnostic.empty() && draft.stopOffsets.size() < 2)
+			draft.diagnostic = "Select at least two valid platform alignments";
+		for (size_t i = 1; draft.diagnostic.empty() && i < draft.stopOffsets.size(); ++i)
+			if (draft.stopOffsets[i] - draft.stopOffsets[i - 1] < (uint32_t)shuttleWidth)
+				draft.diagnostic = "Stops must be separated by at least the coupled vehicle width";
+		draft.initialStop = clamp(draft.initialStop, 0,
+			max(0, (int)draft.stopOffsets.size() - 1));
+		return draft.diagnostic.empty();
+	}
+
+	ShuttleDraft makeShuttleDraft(shared_ptr<const core::Building> const& building,
+		uint32_t x, uint32_t y, uint32_t cellsWide)
+	{
+		ShuttleDraft draft;
+		draft.x = x; draft.y = y; draft.cellsWide = cellsWide;
+		auto candidates = shuttleCandidates(building, draft);
+		auto shuttleWidth = (uint32_t)(draft.numCars * draft.carWidth + draft.numCars - 1);
+		if (!candidates.empty())
+		{
+			draft.stopOffsets.push_back(candidates.front());
+			auto last = find_if(candidates.rbegin(), candidates.rend(), [&](auto value)
+				{ return value - candidates.front() >= shuttleWidth; });
+			if (last != candidates.rend()) draft.stopOffsets.push_back(*last);
+		}
+		validateShuttleDraft(building, draft);
+		return draft;
+	}
+
 	PaintRectangle getPaintRectangle(shared_ptr<const core::Building> const& building,
 		ImVec2 mousePosition)
 	{
@@ -604,7 +689,7 @@ namespace
 		int endX = clamp((int)floor(world.x), 0, (int)building->getCellsWide() - 1);
 		if (gPaint.tool == PaintTool::Lift)
 			endX = clamp(endX, gPaint.anchorX - 1, gPaint.anchorX + 1);
-		int endY = gPaint.tool == PaintTool::Corridor
+		int endY = (gPaint.tool == PaintTool::Corridor || gPaint.tool == PaintTool::Shuttle)
 			? gPaint.anchorY
 			: clamp((int)floor(world.y), 0, (int)building->getDecksHigh() - 1);
 		int directionX = endX >= gPaint.anchorX ? 1 : -1;
@@ -675,6 +760,15 @@ namespace
 				best.diagnostic = "A Lift requires at least two fully overlapping corridor floors";
 			}
 		}
+		else if (best.valid && gPaint.tool == PaintTool::Shuttle)
+		{
+			auto draft = makeShuttleDraft(building, best.x, best.y, best.width);
+			if (!draft.diagnostic.empty())
+			{
+				best.valid = false;
+				best.diagnostic = draft.diagnostic;
+			}
+		}
 		return best;
 	}
 
@@ -733,6 +827,13 @@ namespace
 
 	void placeDoor(shared_ptr<core::Building> const& building, PegmanTarget const& target)
 	{
+		gShuttleDoorCandidates = building->getShuttleStopCandidatesForDoor(target.cellY, target.cellX);
+		if (!gShuttleDoorCandidates.empty())
+		{
+			gSelectedShuttleDoorCandidate = 0;
+			gOpenShuttleStopPopup = true;
+			return;
+		}
 		auto undo = captureDocumentSnapshot(building);
 		try
 		{
@@ -813,7 +914,8 @@ namespace
 		if (gPaint.dragging && gPaint.layer != (uint32_t)gUISettings.visibleLayer)
 			resetPaint(false);
 		if ((gPaint.tool == PaintTool::Corridor && gUISettings.visibleLayer == CORE_LAYER_BACK)
-			|| (gPaint.tool == PaintTool::Lift && gUISettings.visibleLayer == CORE_LAYER_FORE))
+			|| ((gPaint.tool == PaintTool::Lift || gPaint.tool == PaintTool::Shuttle)
+				&& gUISettings.visibleLayer == CORE_LAYER_FORE))
 			resetPaint();
 
 		if (gPegman.phase == PalettePhase::Falling)
@@ -833,6 +935,7 @@ namespace
 		auto roomMin = trayTopLeft + ImVec2(PalettePadding, PalettePadding);
 		auto corridorMin = roomMin + ImVec2(PaletteSlotWidth + PaletteGap, 0.0f);
 		auto liftMin = corridorMin + ImVec2(PaletteSlotWidth + PaletteGap, 0.0f);
+		auto shuttleMin = liftMin + ImVec2(PaletteSlotWidth + PaletteGap, 0.0f);
 		auto agentMin = roomMin + ImVec2(0.0f, PaletteSlotSize + PaletteGap);
 		auto markerMin = corridorMin + ImVec2(0.0f, PaletteSlotSize + PaletteGap);
 		auto doorMin = liftMin + ImVec2(0.0f, PaletteSlotSize + PaletteGap);
@@ -840,6 +943,7 @@ namespace
 		auto roomMax = roomMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
 		auto corridorMax = corridorMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
 		auto liftMax = liftMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
+		auto shuttleMax = shuttleMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
 		auto windowMax = windowMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
 		auto doorMax = doorMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
 		auto agentMax = agentMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
@@ -851,6 +955,7 @@ namespace
 		bool roomHovered = gWorldHovered && pointInRect(io.MousePos, roomMin, roomMax);
 		bool corridorHovered = gWorldHovered && pointInRect(io.MousePos, corridorMin, corridorMax);
 		bool liftHovered = gWorldHovered && pointInRect(io.MousePos, liftMin, liftMax);
+		bool shuttleHovered = gWorldHovered && pointInRect(io.MousePos, shuttleMin, shuttleMax);
 		bool corridorDisabled = gUISettings.visibleLayer == CORE_LAYER_BACK;
 		bool liftDisabled = gUISettings.visibleLayer == CORE_LAYER_FORE;
 		if (overTray) paletteConsumedMouse = true;
@@ -866,22 +971,25 @@ namespace
 			drawList->AddText(textPosition, disabled ? disabledColour : IM_COL32_WHITE, label);
 		};
 
-		if (gPegman.phase == PalettePhase::Home && (roomHovered || corridorHovered || liftHovered))
+		if (gPegman.phase == PalettePhase::Home
+			&& (roomHovered || corridorHovered || liftHovered || shuttleHovered))
 		{
 			paletteConsumedMouse = true;
 			ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
 			if (corridorHovered && corridorDisabled)
 				ImGui::SetTooltip("Corridors can only be painted on the Fore Layer");
-			else if (liftHovered && liftDisabled)
-				ImGui::SetTooltip("Lifts can only be painted on the Back Layer");
+			else if ((liftHovered || shuttleHovered) && liftDisabled)
+				ImGui::SetTooltip("Lifts and Shuttles can only be painted on the Back Layer");
 			else
-				ImGui::SetTooltip(roomHovered ? "Paint Room" : corridorHovered ? "Paint Corridor" : "Paint Lift");
+				ImGui::SetTooltip(roomHovered ? "Paint Room" : corridorHovered ? "Paint Corridor"
+					: liftHovered ? "Paint Lift" : "Paint Shuttle");
 
 			if (io.MouseClicked[0] && !(corridorHovered && corridorDisabled)
-				&& !(liftHovered && liftDisabled))
+				&& !((liftHovered || shuttleHovered) && liftDisabled))
 			{
 				auto clickedTool = roomHovered ? PaintTool::Room
-					: corridorHovered ? PaintTool::Corridor : PaintTool::Lift;
+					: corridorHovered ? PaintTool::Corridor
+					: liftHovered ? PaintTool::Lift : PaintTool::Shuttle;
 				gPaint.tool = gPaint.tool == clickedTool ? PaintTool::None : clickedTool;
 				gPaint.dragging = false;
 				resetPegman();
@@ -897,6 +1005,8 @@ namespace
 		drawPaintButton(corridorMin, corridorMax, "Corridor", PaintTool::Corridor,
 			corridorHovered, corridorDisabled);
 		drawPaintButton(liftMin, liftMax, "Lift", PaintTool::Lift, liftHovered, liftDisabled);
+		drawPaintButton(shuttleMin, shuttleMax, "Shuttle", PaintTool::Shuttle,
+			shuttleHovered, liftDisabled);
 		drawWindowIcon(drawList, windowMin, windowMax, yellow);
 
 		bool paintWasActive = gPaint.tool != PaintTool::None;
@@ -958,7 +1068,13 @@ namespace
 				resetPaint(false);
 				if (paintRectangle.valid)
 				{
-					try
+					if (tool == PaintTool::Shuttle)
+					{
+						gShuttleDraft = makeShuttleDraft(building, paintRectangle.x,
+							paintRectangle.y, paintRectangle.width);
+						gOpenShuttleDraftPopup = true;
+					}
+					else try
 					{
 						auto undo = captureDocumentSnapshot(building);
 						if (tool == PaintTool::Room)
@@ -968,9 +1084,8 @@ namespace
 						else if (tool == PaintTool::Corridor)
 							building->addCorridor(paintRectangle.y, paintRectangle.x,
 								paintRectangle.width, 1);
-						else
-							building->addLift(paintRectangle.y, paintRectangle.x,
-								paintRectangle.width, paintRectangle.height);
+						else building->addLift(paintRectangle.y, paintRectangle.x,
+							paintRectangle.width, paintRectangle.height);
 						building->finishBuild();
 						commitDocumentEdit(std::move(undo));
 					}
@@ -1300,6 +1415,9 @@ namespace
 		resetAgentMove();
 		gPendingLocationEdit.reset();
 		gPendingLiftEdit.reset();
+		gPendingShuttleEdit.reset();
+		gShuttleDraft.reset();
+		gShuttleDoorCandidates.clear();
 		gUISettings.worldPaused = false;
 		if (clearHistory)
 		{
@@ -1591,6 +1709,39 @@ namespace
 		else commitLiftEdit(building, plan);
 	}
 
+	void commitShuttleEdit(shared_ptr<core::Building> const& building,
+		core::Building::ShuttleEditPlan const& plan)
+	{
+		auto undo = captureDocumentSnapshot(building);
+		try
+		{
+			auto newIndex = building->applyShuttleEdit(plan);
+			gUISettings.worldPaused = true;
+			gHoveredAgent = nullptr; gHoveredSector.reset(); gHoveredSectorObject.reset();
+			gSelectedAgent = nullptr; gSelectedSectorObject.reset();
+			gSelectedSector = plan.remove ? nullptr : building->getSector(newIndex);
+			commitDocumentEdit(std::move(undo));
+		}
+		catch (core::Exception const& error)
+		{ core::addLogMessage("Shuttle editor", 0, core::LogLevel::Error, error.getMessage()); }
+		catch (std::exception const& error)
+		{ core::addLogMessage("Shuttle editor", 0, core::LogLevel::Error, error.what()); }
+		resetSectorResize();
+	}
+
+	void queueShuttleEdit(shared_ptr<core::Building> const& building,
+		core::Building::ShuttleEditPlan const& plan)
+	{
+		if (!building->isSimulationPaused()) building->pauseSimulation();
+		gUISettings.worldPaused = true;
+		if (plan.requiresConfirmation())
+		{
+			gPendingShuttleEdit = plan;
+			gOpenLocationEditPopup = true;
+		}
+		else commitShuttleEdit(building, plan);
+	}
+
 	void renderFilePopups(shared_ptr<core::Building>& building)
 	{
 		if (gOpenUnsavedChangesPopup)
@@ -1669,6 +1820,178 @@ namespace
 			ImGui::EndPopup();
 		}
 
+		if (gOpenShuttleDraftPopup)
+		{
+			ImGui::OpenPopup("Create Shuttle");
+			gOpenShuttleDraftPopup = false;
+		}
+		if (ImGui::BeginPopupModal("Create Shuttle", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+		{
+			if (!building || !gShuttleDraft)
+			{
+				ImGui::CloseCurrentPopup();
+			}
+			else
+			{
+				auto& draft = *gShuttleDraft;
+				ImGui::Text("Track: deck %u, x %u..%u", draft.y, draft.x,
+					draft.x + draft.cellsWide - 1);
+				ImGui::InputInt("Carriages", &draft.numCars);
+				ImGui::InputInt("Carriage width", &draft.carWidth);
+				if (draft.carWidth > 0 && draft.carWidth < 32)
+					draft.doorMask &= (1u << draft.carWidth) - 1;
+				ImGui::TextUnformatted("Carriage door layout (click cells to toggle)");
+				if (draft.carWidth == 3 || draft.carWidth == 4)
+				{
+					for (int cell = 0; cell < draft.carWidth; ++cell)
+					{
+						bool door = (draft.doorMask & (1u << cell)) != 0;
+						ImGui::PushID(cell);
+						if (ImGui::Selectable(door ? "Door" : "Wall", door,
+							ImGuiSelectableFlags_DontClosePopups, ImVec2(58.0f, 36.0f)))
+							draft.doorMask ^= 1u << cell;
+						ImGui::PopID();
+						if (cell + 1 < draft.carWidth) ImGui::SameLine();
+					}
+				}
+				ImGui::InputInt("Capacity per carriage", &draft.capacity);
+				ImGui::InputFloat("Minimum dwell (seconds)", &draft.minimumDwellSeconds, 0.1f, 1.0f, "%.2f");
+				ImGui::InputFloat("Maximum boarding (seconds)", &draft.maximumBoardingSeconds, 0.1f, 1.0f, "%.2f");
+				ImGui::Checkbox("Allow partial landings", &draft.allowPartialLandings);
+
+				auto candidates = shuttleCandidates(building, draft);
+				draft.stopOffsets.erase(remove_if(draft.stopOffsets.begin(), draft.stopOffsets.end(),
+					[&](auto value) { return find(candidates.begin(), candidates.end(), value) == candidates.end(); }),
+					draft.stopOffsets.end());
+				ImGui::Separator();
+				ImGui::TextUnformatted("Stops");
+				for (auto offset : candidates)
+				{
+					bool selected = find(draft.stopOffsets.begin(), draft.stopOffsets.end(), offset)
+						!= draft.stopOffsets.end();
+					ImGui::PushID((int)offset);
+					if (ImGui::Checkbox("##stop", &selected))
+					{
+						if (selected) draft.stopOffsets.push_back(offset);
+						else draft.stopOffsets.erase(remove(draft.stopOffsets.begin(),
+							draft.stopOffsets.end(), offset), draft.stopOffsets.end());
+					}
+					ImGui::SameLine();
+					uint32_t coverage = 0;
+					auto fore = static_cast<core::Building const&>(*building).getLayer(CORE_LAYER_FORE);
+					uint32_t selectedDoors = 0;
+					for (int cell = 0; cell < draft.carWidth; ++cell)
+						selectedDoors += (draft.doorMask & (1u << cell)) != 0;
+					for (int car = 0; car < draft.numCars; ++car)
+						for (int doorOffset = 0; doorOffset < draft.carWidth; ++doorOffset)
+						{
+							if ((draft.doorMask & (1u << doorOffset)) == 0) continue;
+							auto doorX = draft.x + offset + car * (draft.carWidth + 1) + doorOffset;
+							coverage += fore->getCellDefinition(doorX, draft.y).sectorIndex != ~0u;
+						}
+					ImGui::Text("offset %u (global x %u, %u/%u door landings)",
+						offset, draft.x + offset, coverage,
+						(uint32_t)draft.numCars * selectedDoors);
+					ImGui::PopID();
+				}
+				if (draft.stopOffsets.size() < 2 && ImGui::Button("Use endpoint suggestions"))
+				{
+					draft.stopOffsets.clear();
+					auto vehicleWidth = (uint32_t)max(0,
+						draft.numCars * draft.carWidth + draft.numCars - 1);
+					if (!candidates.empty())
+					{
+						draft.stopOffsets.push_back(candidates.front());
+						auto last = find_if(candidates.rbegin(), candidates.rend(), [&](auto value)
+							{ return value - candidates.front() >= vehicleWidth; });
+						if (last != candidates.rend()) draft.stopOffsets.push_back(*last);
+					}
+				}
+				sort(draft.stopOffsets.begin(), draft.stopOffsets.end());
+				bool valid = validateShuttleDraft(building, draft);
+				if (!draft.stopOffsets.empty())
+				{
+					vector<string> labels;
+					string items;
+					for (auto offset : draft.stopOffsets)
+					{
+						labels.push_back(format("Stop at x {}", draft.x + offset));
+						items += labels.back(); items += '\0';
+					}
+					ImGui::Combo("Initial stop", &draft.initialStop, items.c_str());
+				}
+				if (!valid) ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "%s", draft.diagnostic.c_str());
+				ImGui::BeginDisabled(!valid);
+				if (ImGui::Button("Create"))
+				{
+					auto undo = captureDocumentSnapshot(building);
+					try
+					{
+						core::Building::CreateShuttleOptions options{
+							(uint32_t)draft.numCars, (uint32_t)draft.carWidth, draft.stopOffsets,
+							(uint32_t)draft.initialStop, (uint32_t)draft.capacity,
+							draft.minimumDwellSeconds, draft.maximumBoardingSeconds,
+							draft.allowPartialLandings, draft.doorMask };
+						auto created = building->addShuttle(draft.y, draft.x, draft.cellsWide, options);
+						building->finishBuild();
+						setSelectionMode(UISettings::SelectionMode::Sector);
+						gSelectedSector = created.shuttle.sector;
+						commitDocumentEdit(std::move(undo));
+						gShuttleDraft.reset();
+						ImGui::CloseCurrentPopup();
+					}
+					catch (core::Exception const& error)
+					{ draft.diagnostic = error.getMessage(); }
+					catch (std::exception const& error)
+					{ draft.diagnostic = error.what(); }
+				}
+				ImGui::EndDisabled();
+				ImGui::SameLine();
+				if (ImGui::Button("Cancel"))
+				{
+					gShuttleDraft.reset();
+					ImGui::CloseCurrentPopup();
+				}
+			}
+			ImGui::EndPopup();
+		}
+
+		if (gOpenShuttleStopPopup)
+		{
+			ImGui::OpenPopup("Add Shuttle stop");
+			gOpenShuttleStopPopup = false;
+		}
+		if (ImGui::BeginPopupModal("Add Shuttle stop", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+		{
+			if (!building || gShuttleDoorCandidates.empty()) ImGui::CloseCurrentPopup();
+			else
+			{
+				string items;
+				for (auto const& candidate : gShuttleDoorCandidates)
+				{
+					items += format("Shuttle {} at offset {}", candidate.sectorIndex, candidate.stopOffset);
+					items += '\0';
+				}
+				ImGui::Combo("Alignment", &gSelectedShuttleDoorCandidate, items.c_str());
+				if (ImGui::Button("Add stop"))
+				{
+					auto candidate = gShuttleDoorCandidates[(size_t)gSelectedShuttleDoorCandidate];
+					auto plan = building->planAddShuttleStop(candidate.sectorIndex, candidate.stopOffset);
+					gShuttleDoorCandidates.clear();
+					ImGui::CloseCurrentPopup();
+					if (!plan.valid) core::addLogMessage("Shuttle editor", 0, core::LogLevel::Error, plan.diagnostic);
+					else queueShuttleEdit(building, plan);
+				}
+				ImGui::SameLine();
+				if (ImGui::Button("Cancel"))
+				{
+					gShuttleDoorCandidates.clear();
+					ImGui::CloseCurrentPopup();
+				}
+			}
+			ImGui::EndPopup();
+		}
+
 		if (gOpenLocationEditPopup)
 		{
 			ImGui::OpenPopup("Confirm sector edit");
@@ -1684,21 +2007,28 @@ namespace
 			if (gPendingLiftEdit)
 				for (auto const& consequence : gPendingLiftEdit->consequences)
 					ImGui::BulletText("%s", consequence.c_str());
+			if (gPendingShuttleEdit)
+				for (auto const& consequence : gPendingShuttleEdit->consequences)
+					ImGui::BulletText("%s", consequence.c_str());
 			ImGui::Separator();
-			if (ImGui::Button("OK") && building && (gPendingLocationEdit || gPendingLiftEdit))
+			if (ImGui::Button("OK") && building
+				&& (gPendingLocationEdit || gPendingLiftEdit || gPendingShuttleEdit))
 			{
 				auto locationPlan = gPendingLocationEdit;
 				auto liftPlan = gPendingLiftEdit;
-				gPendingLocationEdit.reset(); gPendingLiftEdit.reset();
+				auto shuttlePlan = gPendingShuttleEdit;
+				gPendingLocationEdit.reset(); gPendingLiftEdit.reset(); gPendingShuttleEdit.reset();
 				ImGui::CloseCurrentPopup();
 				if (locationPlan) commitLocationEdit(building, *locationPlan);
-				else commitLiftEdit(building, *liftPlan);
+				else if (liftPlan) commitLiftEdit(building, *liftPlan);
+				else commitShuttleEdit(building, *shuttlePlan);
 			}
 			ImGui::SameLine();
 			if (ImGui::Button("Cancel"))
 			{
 				gPendingLocationEdit.reset();
 				gPendingLiftEdit.reset();
+				gPendingShuttleEdit.reset();
 				resetSectorResize();
 				ImGui::CloseCurrentPopup();
 			}
@@ -2030,7 +2360,8 @@ namespace
 		if (!building) return;
 		if (gPegman.phase != PalettePhase::Home || gPaint.tool != PaintTool::None
 			|| gAgentMove.dragging || gObjectMove.dragging || gSectorResize.dragging
-			|| gPendingLocationEdit || gPendingLiftEdit)
+			|| gPendingLocationEdit || gPendingLiftEdit || gPendingShuttleEdit
+			|| gShuttleDraft || !gShuttleDoorCandidates.empty())
 		{
 			reportClipboardError("Finish the current placement first");
 			return;
@@ -2256,6 +2587,12 @@ void handleShortcuts(shared_ptr<core::Building>& building)
 					if (!plan.valid) core::addLogMessage("Lift editor", 0, core::LogLevel::Error, plan.diagnostic);
 					else queueLiftEdit(building, plan);
 				}
+				else if (gSelectedSector->getType() == core::SectorType::Shuttle)
+				{
+					auto plan = building->planRemoveShuttle(gSelectedSector->getIndex());
+					if (!plan.valid) core::addLogMessage("Shuttle editor", 0, core::LogLevel::Error, plan.diagnostic);
+					else queueShuttleEdit(building, plan);
+				}
 				else
 				{
 					auto plan = building->planRemoveLocation(gSelectedSector->getIndex());
@@ -2291,6 +2628,12 @@ void handleShortcuts(shared_ptr<core::Building>& building)
 					auto plan = building->planRemoveLiftStop(liftIndex, stopIndex);
 					if (!plan.valid) core::addLogMessage("Lift editor", 0, core::LogLevel::Error, plan.diagnostic);
 					else queueLiftEdit(building, plan);
+				}
+				else if (building->isShuttleOwnedDoor(gSelectedSectorObject, &liftIndex, &stopIndex))
+				{
+					auto plan = building->planRemoveShuttleStop(liftIndex, stopIndex);
+					if (!plan.valid) core::addLogMessage("Shuttle editor", 0, core::LogLevel::Error, plan.diagnostic);
+					else queueShuttleEdit(building, plan);
 				}
 				else try
 				{
@@ -3061,18 +3404,20 @@ void renderDoorPanel(shared_ptr<core::Building> const& building,
 	ImGui::Text("From: %s", door->getSector(CORE_LAYER_FORE)->getDescription().c_str());
 	ImGui::Text("To: %s", door->getSector(CORE_LAYER_BACK)->getDescription().c_str());
 
-	uint32_t liftSector, stopIndex;
+	uint32_t liftSector, stopIndex, carriageIndex;
 	bool const liftOwned = building->isLiftOwnedDoor(object, &liftSector, &stopIndex);
-	if (liftOwned)
+	bool const shuttleOwned = building->isShuttleOwnedDoor(object, &liftSector, &stopIndex, &carriageIndex);
+	if (liftOwned || shuttleOwned)
 	{
 		ImGui::Separator();
-		ImGui::TextUnformatted("Owned by Lift");
-		ImGui::Text("Lift sector: %u", liftSector);
-		ImGui::Text("Stop: %u (floor %u)", stopIndex, object->getCellY());
-		ImGui::TextDisabled("Landing geometry and controls are managed by the Lift.");
+		ImGui::Text("Owned by %s", liftOwned ? "Lift" : "Shuttle");
+		ImGui::Text("%s sector: %u", liftOwned ? "Lift" : "Shuttle", liftSector);
+		if (liftOwned) ImGui::Text("Stop: %u (floor %u)", stopIndex, object->getCellY());
+		else ImGui::Text("Stop: %u, carriage: %u", stopIndex, carriageIndex);
+		ImGui::TextDisabled("Landing geometry and controls are managed by the transport.");
 	}
 
-	ImGui::BeginDisabled(!building->isSimulationPaused() || liftOwned);
+	ImGui::BeginDisabled(!building->isSimulationPaused() || liftOwned || shuttleOwned);
 	if (ImGui::Button("Add Door Button"))
 	{
 		auto undo = captureDocumentSnapshot(building);
@@ -3111,15 +3456,18 @@ void renderDoorPanel(shared_ptr<core::Building> const& building,
 void renderLiftOwnedControlPanel(shared_ptr<core::Building> const& building,
 	shared_ptr<const core::SectorObject> object)
 {
-	uint32_t liftSector, stopIndex;
-	if (!building->isLiftOwnedControl(object, &liftSector, &stopIndex)) return;
-	ImGui::TextUnformatted("Lift call button");
+	uint32_t transportSector, stopIndex;
+	bool const liftOwned = building->isLiftOwnedControl(object, &transportSector, &stopIndex);
+	bool const shuttleOwned = building->isShuttleOwnedControl(object, &transportSector, &stopIndex);
+	if (!liftOwned && !shuttleOwned) return;
+	ImGui::Text("%s call button", liftOwned ? "Lift" : "Shuttle");
 	ImGui::Text("Position: %u, %u", object->getCellX(), object->getCellY());
 	ImGui::Separator();
-	ImGui::TextUnformatted("Owned by Lift");
-	ImGui::Text("Lift sector: %u", liftSector);
-	ImGui::Text("Stop: %u (floor %u)", stopIndex, object->getCellY());
-	ImGui::TextDisabled("This button is managed by its Lift landing and is read-only.");
+	ImGui::Text("Owned by %s", liftOwned ? "Lift" : "Shuttle");
+	ImGui::Text("%s sector: %u", liftOwned ? "Lift" : "Shuttle", transportSector);
+	if (liftOwned) ImGui::Text("Stop: %u (floor %u)", stopIndex, object->getCellY());
+	else ImGui::Text("Stop: %u", stopIndex);
+	ImGui::TextDisabled("This button is managed by its transport landing and is read-only.");
 }
 
 void renderForceBridgePanel(shared_ptr<const core::SectorObject> object)
@@ -3290,37 +3638,128 @@ void renderLiftPanel(shared_ptr<const core::Building> const& building,
 }
 
 
-void renderShuttlePanel(shared_ptr<const core::Shuttle> shuttle)
+void renderShuttlePanel(shared_ptr<const core::Building> const& building,
+	shared_ptr<const core::Shuttle> shuttle, bool includeAgentDebug = false)
 {
-	ImGuiTableFlags flags =
-		ImGuiTableFlags_SizingStretchSame |
-		ImGuiTableFlags_Resizable |
-		ImGuiTableFlags_BordersOuter |
-		ImGuiTableFlags_BordersV |
-		ImGuiTableFlags_ContextMenuInBody;
-
-	// Internals
+	ImGuiTableFlags flags = ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_Resizable
+		| ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersV
+		| ImGuiTableFlags_ContextMenuInBody;
 	auto internals = shuttle->getInternalsStrings();
-
+	internals.push_back({ "Carriages", to_string(shuttle->getNumCars()) });
+	internals.push_back({ "Carriage width", to_string(shuttle->getCarWidth()) });
+	core::Building::CreateShuttleOptions options{};
+	if (building && building->getShuttleOptions(shuttle.get(), options))
+	{
+		string doorLayout;
+		for (uint32_t cell = 0; cell < options.carWidth; ++cell)
+			doorLayout += (options.doorMask & (1u << cell)) != 0 ? "D" : "-";
+		internals.push_back({ "Carriage doors", std::move(doorLayout) });
+		internals.push_back({ "Capacity per carriage", to_string(options.capacity) });
+		internals.push_back({ "Minimum dwell", format("{:.2f} s", options.minimumDwellSeconds) });
+		internals.push_back({ "Maximum boarding", format("{:.2f} s", options.maximumBoardingSeconds) });
+		internals.push_back({ "Partial landings", options.allowPartialLandings ? "Allowed" : "Not allowed" });
+	}
 	if (ImGui::BeginTable("Stops", 2, flags))
 	{
-		ImGui::TableSetupColumn("Key");
-		ImGui::TableSetupColumn("Value");
-		ImGui::TableHeadersRow();
-
-		for (auto const& kvp : internals)
+		ImGui::TableSetupColumn("Key"); ImGui::TableSetupColumn("Value"); ImGui::TableHeadersRow();
+		for (auto const& [key, value] : internals)
 		{
-			auto const& [key, value] = kvp;
-
 			ImGui::TableNextRow();
-
-			ImGui::TableSetColumnIndex(0);
-			ImGui::TextUnformatted(key.c_str());
-
-			ImGui::TableSetColumnIndex(1);
-			ImGui::TextUnformatted(value.c_str());
+			ImGui::TableSetColumnIndex(0); ImGui::TextUnformatted(key.c_str());
+			ImGui::TableSetColumnIndex(1); ImGui::TextUnformatted(value.c_str());
 		}
-
+		ImGui::EndTable();
+	}
+	if (!includeAgentDebug || !building) return;
+	auto resourceId = building->getTraversalResourceId(shuttle.get());
+	auto snapshot = building->getSimulationSnapshot();
+	auto resource = find_if(snapshot.traversalResources.begin(), snapshot.traversalResources.end(),
+		[resourceId](auto const& value) { return value.id == resourceId; });
+	if (!resourceId || resource == snapshot.traversalResources.end())
+	{
+		ImGui::TextDisabled("Shuttle traversal resource is unavailable.");
+		return;
+	}
+	const char* phase = "Idle";
+	switch (resource->liftStopPhase)
+	{
+	case core::LiftStopPhase::Opening: phase = "Opening"; break;
+	case core::LiftStopPhase::Disembarking: phase = "Disembarking"; break;
+	case core::LiftStopPhase::Boarding: phase = "Boarding"; break;
+	case core::LiftStopPhase::Closing: phase = "Closing"; break;
+	case core::LiftStopPhase::Moving: phase = "Moving"; break;
+	case core::LiftStopPhase::Idle: break;
+	}
+	ImGui::Separator();
+	ImGui::Text("Resource: %llu", (unsigned long long)resourceId.value);
+	ImGui::Text("Position: %.2f", resource->liftPosition);
+	ImGui::Text("Current stop: %u", resource->liftCurrentStop);
+	if (resource->liftTargetStop == ~0u) ImGui::TextUnformatted("Target stop: <none>");
+	else ImGui::Text("Target stop: %u", resource->liftTargetStop);
+	ImGui::Text("Phase: %s", phase);
+	ImGui::Text("Capacity: %u total, %u per carriage (%u occupied, %u reserved)",
+		resource->capacity, resource->shuttleCapacityPerCarriage,
+		resource->occupantCount, resource->admissionReservationCount);
+	if (ImGui::BeginTable("ShuttleCarriages", 3, flags))
+	{
+		ImGui::TableSetupColumn("Carriage"); ImGui::TableSetupColumn("Occupied");
+		ImGui::TableSetupColumn("Reserved"); ImGui::TableHeadersRow();
+		for (auto const& carriage : resource->shuttleCarriages)
+		{
+			ImGui::TableNextRow();
+			ImGui::TableSetColumnIndex(0); ImGui::Text("%u", carriage.index);
+			ImGui::TableSetColumnIndex(1); ImGui::Text("%u / %u", carriage.occupantCount, carriage.capacity);
+			ImGui::TableSetColumnIndex(2); ImGui::Text("%u", carriage.admissionReservationCount);
+		}
+		ImGui::EndTable();
+	}
+	ImGui::TextUnformatted("Passengers using shuttle");
+	if (ImGui::BeginTable("ShuttlePassengers", 4, flags))
+	{
+		ImGui::TableSetupColumn("Agent"); ImGui::TableSetupColumn("State");
+		ImGui::TableSetupColumn("Target stop"); ImGui::TableSetupColumn("Carriage");
+		ImGui::TableHeadersRow();
+		for (auto const& passenger : resource->liftAgents)
+		{
+			auto agent = find_if(snapshot.agents.begin(), snapshot.agents.end(),
+				[&](auto const& value) { return value.id == passenger.agent; });
+			if (agent == snapshot.agents.end()) continue;
+			const char* state = "Queuing at platform";
+			switch (passenger.state)
+			{
+			case core::LiftAgentState::Entering: state = "Entering"; break;
+			case core::LiftAgentState::InLift: state = "In shuttle"; break;
+			case core::LiftAgentState::Exiting: state = "Exiting"; break;
+			case core::LiftAgentState::QueuingAtDoor: break;
+			}
+			auto request = find_if(snapshot.traversalRequests.begin(), snapshot.traversalRequests.end(),
+				[&](auto const& value) { return value.owner == passenger.agent && value.shuttleCarriage != ~0u; });
+			ImGui::TableNextRow();
+			ImGui::TableSetColumnIndex(0); ImGui::TextUnformatted(agent->name.c_str());
+			ImGui::TableSetColumnIndex(1); ImGui::TextUnformatted(state);
+			ImGui::TableSetColumnIndex(2);
+			if (passenger.targetStop == ~0u) ImGui::TextUnformatted("<unknown>"); else ImGui::Text("%u", passenger.targetStop);
+			ImGui::TableSetColumnIndex(3);
+			if (request == snapshot.traversalRequests.end()) ImGui::TextUnformatted("<unassigned>");
+			else ImGui::Text("%u", request->shuttleCarriage);
+		}
+		ImGui::EndTable();
+	}
+	if (ImGui::BeginTable("ShuttleAccessZones", 4, flags))
+	{
+		ImGui::TableSetupColumn("Stop"); ImGui::TableSetupColumn("Zone");
+		ImGui::TableSetupColumn("Direction"); ImGui::TableSetupColumn("Queued"); ImGui::TableHeadersRow();
+		for (auto const& zone : resource->shuttleAccessZones)
+		{
+			ImGui::TableNextRow();
+			ImGui::TableSetColumnIndex(0); ImGui::Text("%u", zone.stopIndex);
+			ImGui::TableSetColumnIndex(1); ImGui::Text("%u", zone.accessZoneIndex);
+			ImGui::TableSetColumnIndex(2);
+			const char* direction = zone.direction == core::TraversalDirection::Ascending ? "Right"
+				: zone.direction == core::TraversalDirection::Descending ? "Left" : "None";
+			ImGui::TextUnformatted(direction);
+			ImGui::TableSetColumnIndex(3); ImGui::Text("%u", (uint32_t)zone.queue.size());
+		}
 		ImGui::EndTable();
 	}
 }
@@ -3544,7 +3983,8 @@ void renderSelectedObjectPanel(shared_ptr<core::Building> const& building)
 			break;
 
 		case core::SectorType::Shuttle:
-			renderShuttlePanel(static_pointer_cast<const core::ShuttleTransit>(gSelectedSector)->getShuttle());
+			renderShuttlePanel(building,
+				static_pointer_cast<const core::ShuttleTransit>(gSelectedSector)->getShuttle(), true);
 			break;
 
 		default:
@@ -4029,7 +4469,8 @@ namespace
 	ResizeEdge hoveredResizeEdge(shared_ptr<const core::Sector> const& sector, ImVec2 mouse)
 	{
 		if (!sector || (sector->getType() != core::SectorType::Location
-			&& sector->getType() != core::SectorType::Lift)) return ResizeEdge::None;
+			&& sector->getType() != core::SectorType::Lift
+			&& sector->getType() != core::SectorType::Shuttle)) return ResizeEdge::None;
 		auto topLeft = worldToScreen({ (float)sector->getCellX(),
 			(float)(sector->getCellY() + sector->getDecksHigh()) });
 		auto bottomRight = worldToScreen({ (float)(sector->getCellX() + sector->getCellsWide()),
@@ -4042,8 +4483,9 @@ namespace
 			candidates.push_back({ ResizeEdge::Left, abs(mouse.x - topLeft.x) });
 			candidates.push_back({ ResizeEdge::Right, abs(mouse.x - bottomRight.x) });
 		}
-		bool corridor = sector->getType() == core::SectorType::Location
-			&& sector->getTopDeckHeight() == CORE_CORRIDOR_HEIGHT;
+		bool corridor = sector->getType() == core::SectorType::Shuttle
+			|| (sector->getType() == core::SectorType::Location
+				&& sector->getTopDeckHeight() == CORE_CORRIDOR_HEIGHT);
 		if (!corridor && mouse.x >= topLeft.x - tolerance && mouse.x <= bottomRight.x + tolerance)
 		{
 			candidates.push_back({ ResizeEdge::Top, abs(mouse.y - topLeft.y) });
@@ -4170,7 +4612,9 @@ namespace
 		}
 
 		if (building->isLiftOwnedDoor(gSelectedSectorObject)
-			|| building->isLiftOwnedControl(gSelectedSectorObject))
+			|| building->isLiftOwnedControl(gSelectedSectorObject)
+			|| building->isShuttleOwnedDoor(gSelectedSectorObject)
+			|| building->isShuttleOwnedControl(gSelectedSectorObject))
 		{
 			resetObjectMove();
 			return;
@@ -4276,13 +4720,15 @@ namespace
 		if (!gSectorResize.dragging && gWorldHovered && hoverEdge != ResizeEdge::None && io.MouseClicked[0])
 		{
 			bool const selectedLift = gSelectedSector->getType() == core::SectorType::Lift;
-			if (hoverEdge != ResizeEdge::Move && !selectedLift)
+			bool const selectedShuttle = gSelectedSector->getType() == core::SectorType::Shuttle;
+			if (hoverEdge != ResizeEdge::Move && !selectedLift && !selectedShuttle)
 			{
 				if (!building->isSimulationPaused()) building->pauseSimulation();
 				gUISettings.worldPaused = true;
 			}
 			gSectorResize.dragging = true;
 			gSectorResize.lift = selectedLift;
+			gSectorResize.shuttle = selectedShuttle;
 			gSectorResize.edge = hoverEdge;
 			gSectorResize.pressPosition = io.MousePos;
 			gSectorResize.originalX = gSelectedSector->getCellX();
@@ -4293,6 +4739,9 @@ namespace
 				gSectorResize.liftPreview = building->planResizeLift(gSelectedSector->getIndex(),
 					gSectorResize.originalX, gSectorResize.originalY,
 					gSectorResize.originalWidth, gSectorResize.originalHeight);
+			else if (gSectorResize.shuttle)
+				gSectorResize.shuttlePreview = building->planResizeShuttle(gSelectedSector->getIndex(),
+					gSectorResize.originalX, gSectorResize.originalY, gSectorResize.originalWidth);
 			else
 				gSectorResize.preview = building->planResizeLocation(gSelectedSector->getIndex(),
 					gSectorResize.originalX, gSectorResize.originalY,
@@ -4367,6 +4816,14 @@ namespace
 				gSectorResize.liftPreview = building->planResizeLift(gSelectedSector->getIndex(),
 					(uint32_t)left, (uint32_t)bottom, (uint32_t)(right - left), (uint32_t)(top - bottom));
 		}
+		else if (gSectorResize.shuttle)
+		{
+			if (gSectorResize.shuttlePreview.x != (uint32_t)left
+				|| gSectorResize.shuttlePreview.y != (uint32_t)bottom
+				|| gSectorResize.shuttlePreview.cellsWide != (uint32_t)(right - left))
+				gSectorResize.shuttlePreview = building->planResizeShuttle(gSelectedSector->getIndex(),
+					(uint32_t)left, (uint32_t)bottom, (uint32_t)(right - left));
+		}
 		else if (gSectorResize.preview.x != (uint32_t)left
 			|| gSectorResize.preview.y != (uint32_t)bottom
 			|| gSectorResize.preview.cellsWide != (uint32_t)(right - left)
@@ -4390,13 +4847,20 @@ namespace
 					gSectorResize.liftPreview.diagnostic);
 				resetSectorResize();
 			}
-			else if (!gSectorResize.lift && !gSectorResize.preview.valid)
+			else if (gSectorResize.shuttle && !gSectorResize.shuttlePreview.valid)
+			{
+				core::addLogMessage("Shuttle editor", 0, core::LogLevel::Error,
+					gSectorResize.shuttlePreview.diagnostic);
+				resetSectorResize();
+			}
+			else if (!gSectorResize.lift && !gSectorResize.shuttle && !gSectorResize.preview.valid)
 			{
 				core::addLogMessage("Sector editor", 0, core::LogLevel::Error,
 					gSectorResize.preview.diagnostic);
 				resetSectorResize();
 			}
 			else if (gSectorResize.lift) queueLiftEdit(building, gSectorResize.liftPreview);
+			else if (gSectorResize.shuttle) queueShuttleEdit(building, gSectorResize.shuttlePreview);
 			else queueLocationEdit(building, gSectorResize.preview);
 		}
 	}
@@ -4404,7 +4868,8 @@ namespace
 	void drawSectorEditOverlay(ImDrawList* drawList)
 	{
 		if (gWorldHovered && gUISettings.selectionMode == UISettings::SelectionMode::Sector
-			&& gSelectedSector && !gSectorResize.dragging && !gPendingLocationEdit && !gPendingLiftEdit)
+			&& gSelectedSector && !gSectorResize.dragging && !gPendingLocationEdit
+			&& !gPendingLiftEdit && !gPendingShuttleEdit)
 		{
 			auto edge = hoveredResizeEdge(gSelectedSector, ImGui::GetIO().MousePos);
 			auto topLeft = worldToScreen({ (float)gSelectedSector->getCellX(),
@@ -4434,6 +4899,12 @@ namespace
 			hasPlan = true; valid = plan.valid; remove = plan.remove; x = plan.x; y = plan.y;
 			width = plan.cellsWide; height = plan.decksHigh; diagnostic = plan.diagnostic;
 		}
+		else if (gSectorResize.shuttle && (gSectorResize.dragging || gSectorResize.shuttlePreview.cellsWide))
+		{
+			auto const& plan = gSectorResize.shuttlePreview;
+			hasPlan = true; valid = plan.valid; remove = plan.remove; x = plan.x; y = plan.y;
+			width = plan.cellsWide; height = 1; diagnostic = plan.diagnostic;
+		}
 		else if (gSectorResize.dragging || (gSectorResize.preview.cellsWide && !gPendingLocationEdit))
 		{
 			auto const& plan = gSectorResize.preview;
@@ -4446,11 +4917,43 @@ namespace
 			hasPlan = true; valid = plan.valid; remove = plan.remove; x = plan.x; y = plan.y;
 			width = plan.cellsWide; height = plan.decksHigh; diagnostic = plan.diagnostic;
 		}
+		else if (gPendingShuttleEdit)
+		{
+			auto const& plan = *gPendingShuttleEdit;
+			hasPlan = true; valid = plan.valid; remove = plan.remove; x = plan.x; y = plan.y;
+			width = plan.cellsWide; height = 1; diagnostic = plan.diagnostic;
+		}
 		else if (gPendingLocationEdit)
 		{
 			auto const& plan = *gPendingLocationEdit;
 			hasPlan = true; valid = plan.valid; remove = plan.remove; x = plan.x; y = plan.y;
 			width = plan.cellsWide; height = plan.decksHigh; diagnostic = plan.diagnostic;
+		}
+		if (gShuttleDraft)
+		{
+			auto const& draft = *gShuttleDraft;
+			auto topLeft = worldToScreen({ (float)draft.x, (float)draft.y + 1.0f });
+			auto bottomRight = worldToScreen({ (float)(draft.x + draft.cellsWide), (float)draft.y });
+			auto colour = draft.diagnostic.empty() ? IM_COL32(255, 255, 0, 255) : IM_COL32(255, 64, 64, 255);
+			drawList->AddRectFilled(topLeft, bottomRight,
+				draft.diagnostic.empty() ? IM_COL32(255, 255, 0, 35) : IM_COL32(255, 64, 64, 35));
+			drawList->AddRect(topLeft, bottomRight, colour, 0.0f, 0, 2.0f);
+			for (auto offset : draft.stopOffsets)
+				for (int car = 0; car < draft.numCars; ++car)
+				{
+					auto carX = draft.x + offset + car * (draft.carWidth + 1);
+					auto carTop = worldToScreen({ (float)carX, (float)draft.y + CORE_SHUTTLE_CAR_HEIGHT });
+					auto carBottom = worldToScreen({ (float)(carX + draft.carWidth), (float)draft.y });
+					drawList->AddRect(carTop, carBottom, colour, 0.0f, 0, 2.0f);
+					for (int doorOffset = 0; doorOffset < draft.carWidth; ++doorOffset)
+					{
+						if ((draft.doorMask & (1u << doorOffset)) == 0) continue;
+						auto doorTop = worldToScreen({ (float)(carX + doorOffset),
+							(float)draft.y + CORE_SHUTTLE_CAR_HEIGHT * 0.75f });
+						auto doorBottom = worldToScreen({ (float)(carX + doorOffset + 1), (float)draft.y });
+						drawList->AddRectFilled(doorTop, doorBottom, IM_COL32(80, 180, 255, 90));
+					}
+				}
 		}
 		if (!hasPlan || remove || width == 0 || height == 0) return;
 		auto topLeft = worldToScreen({ (float)x, (float)(y + height) });

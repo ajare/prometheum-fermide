@@ -3,6 +3,7 @@
 #include "core/Exceptions.h"
 #include "core/Transit.h"
 #include "core/LiftTransit.h"
+#include "core/ShuttleTransit.h"
 #include "core/Location.h"
 #include "core/DoorSectorObject.h"
 #include "core/MarkerSectorObject.h"
@@ -134,6 +135,7 @@ namespace core
 			serializer.writeUint32("cellsWide", record.c); serializer.writeUint32("numCars", record.d);
 			serializer.writeUint32("carWidth", record.e); writeStops();
 			serializer.writeUint32("initialStop", record.f); serializer.writeUint32("capacityPerCarriage", record.g);
+			serializer.writeUint32("doorMask", record.h ? record.h : (1u << 1));
 			serializer.writeFloat("minimumDwellSeconds", record.x);
 			serializer.writeFloat("maximumBoardingSeconds", record.y);
 			serializer.writeBool("allowPartialLandings", record.p); break;
@@ -317,6 +319,7 @@ namespace core
 			record.c = serializer.readUint32("cellsWide"); record.d = serializer.readUint32("numCars");
 			record.e = serializer.readUint32("carWidth"); readStops();
 			record.f = serializer.readUint32("initialStop"); record.g = serializer.readUint32("capacityPerCarriage");
+			record.h = serializer.readUint32("doorMask", true, 1u << 1);
 			record.x = serializer.readFloat("minimumDwellSeconds");
 			record.y = serializer.readFloat("maximumBoardingSeconds");
 			record.p = serializer.readBool("allowPartialLandings"); break;
@@ -529,7 +532,8 @@ namespace core
 			break;
 		case ConstructionType::Shuttle:
 			addShuttle(record.a, record.b, record.c,
-				{ record.d, record.e, record.values, record.f, record.g, record.x, record.y, record.p });
+				{ record.d, record.e, record.values, record.f, record.g, record.x, record.y,
+					record.p, record.h ? record.h : (1u << 1) });
 			break;
 		case ConstructionType::Door:
 			addSectorDoor(record.a, record.b,
@@ -881,6 +885,269 @@ namespace core
 		return cell.sectorIndex;
 	}
 
+	bool Building::prepareShuttleEdit(ShuttleEditPlan const& plan,
+		vector<ConstructionRecord>& records, string& diagnostic) const
+	{
+		records = mConstructionRecords;
+		uint32_t producerIndex = 0;
+		auto found = records.end();
+		for (auto it = records.begin(); it != records.end(); ++it)
+		{
+			bool producer = it->type == ConstructionType::Corridor || it->type == ConstructionType::Room
+				|| it->type == ConstructionType::Ladder || it->type == ConstructionType::Staircase
+				|| it->type == ConstructionType::Lift || it->type == ConstructionType::Shuttle;
+			if (!producer) continue;
+			if (producerIndex++ == plan.sectorIndex) { found = it; break; }
+		}
+		if (found == records.end() || found->type != ConstructionType::Shuttle)
+		{
+			diagnostic = "The selected Shuttle no longer has an authored definition";
+			return false;
+		}
+		if (plan.remove) records.erase(found);
+		else
+		{
+			auto oldCurrentStop = found->f;
+			auto oldPosition = (float)(found->b + found->values[oldCurrentStop]);
+			for (auto const& [id, resource] : mTraversalResources.entries())
+			{
+				(void)id;
+				if (resource->mShuttle && resource->mLiftSector.value == (uint64_t)plan.sectorIndex + 1)
+				{ oldPosition = resource->mLiftPosition; oldCurrentStop = resource->mLiftCurrentStop; break; }
+			}
+			found->a = plan.y; found->b = plan.x; found->c = plan.cellsWide;
+			found->values = plan.stopOffsets;
+			auto nearest = min_element(found->values.begin(), found->values.end(), [&](auto a, auto b)
+			{
+				auto da = abs((float)(plan.x + a) - oldPosition);
+				auto db = abs((float)(plan.x + b) - oldPosition);
+				return da == db ? a < b : da < db;
+			});
+			found->f = plan.move && oldCurrentStop < found->values.size()
+				? oldCurrentStop : (uint32_t)distance(found->values.begin(), nearest);
+		}
+		records = canonicalConstructionRecords(std::move(records));
+		try
+		{
+			Building candidate(mName, mCellsWide, mDecksHigh);
+			candidate.mDeserializingConstruction = true;
+			for (auto const& record : records) candidate.applyConstructionRecord(record);
+			candidate.finishBuild();
+		}
+		catch (Exception const& error) { diagnostic = error.getMessage(); return false; }
+		catch (exception const& error) { diagnostic = error.what(); return false; }
+		return true;
+	}
+
+	Building::ShuttleEditPlan Building::planResizeShuttle(uint32_t sectorIndex,
+		uint32_t x, uint32_t y, uint32_t cellsWide) const
+	{
+		ShuttleEditPlan plan;
+		plan.sectorIndex = sectorIndex; plan.x = x; plan.y = y; plan.cellsWide = cellsWide;
+		if (sectorIndex >= mSectors.size() || !dynamic_pointer_cast<const ShuttleTransit>(mSectors[sectorIndex]))
+		{ plan.diagnostic = "Only Shuttles can be resized"; return plan; }
+		auto shuttleTransit = dynamic_pointer_cast<const ShuttleTransit>(mSectors[sectorIndex]);
+		auto shuttle = shuttleTransit->getShuttle();
+		plan.move = cellsWide == shuttleTransit->getCellsWide()
+			&& (x != shuttleTransit->getCellX() || y != shuttleTransit->getCellY());
+		if (cellsWide == 0 || x + cellsWide > mCellsWide || y >= mDecksHigh)
+		{ plan.diagnostic = "The Shuttle track is outside the Building bounds"; return plan; }
+		if (!shuttleTransit->getAgents().empty())
+		{ plan.diagnostic = "The Shuttle cannot be edited while agents occupy it"; return plan; }
+
+		ConstructionRecord const* authored = nullptr;
+		uint32_t producerIndex = 0;
+		for (auto const& record : mConstructionRecords)
+		{
+			bool producer = record.type == ConstructionType::Corridor || record.type == ConstructionType::Room
+				|| record.type == ConstructionType::Ladder || record.type == ConstructionType::Staircase
+				|| record.type == ConstructionType::Lift || record.type == ConstructionType::Shuttle;
+			if (!producer) continue;
+			if (producerIndex++ == sectorIndex) { authored = &record; break; }
+		}
+		if (!authored || authored->type != ConstructionType::Shuttle)
+		{ plan.diagnostic = "The selected Shuttle no longer has an authored definition"; return plan; }
+		auto shuttleWidth = authored->d * authored->e + authored->d - 1;
+		if (cellsWide < shuttleWidth)
+		{ plan.diagnostic = "The Shuttle track is shorter than the coupled vehicle"; return plan; }
+
+		for (auto const& [id, resource] : mTraversalResources.entries())
+		{
+			if (!resource->mShuttle || resource->mLiftSector.value != (uint64_t)sectorIndex + 1) continue;
+			bool active = !resource->mAdmissionQueue.empty() || !resource->mLiftConfirmationQueue.empty()
+				|| !resource->mLiftTripIntents.empty() || resource->mLiftMoving
+				|| any_of(resource->mOccupants.begin(), resource->mOccupants.end(), [](auto owner) { return (bool)owner; })
+				|| any_of(resource->mAdmissionReservations.begin(), resource->mAdmissionReservations.end(),
+					[](auto owner) { return (bool)owner; });
+			for (auto const& [landingId, landing] : mTraversalResources.entries())
+			{
+				(void)landingId;
+				if (landing->mLiftCoordinator != id) continue;
+				active = active || !landing->mOpenLeases.empty()
+					|| any_of(landing->mCrossingOwners.begin(), landing->mCrossingOwners.end(),
+						[](auto owner) { return (bool)owner; });
+				for (auto const& lane : landing->mQueueLanes) active = active || !lane.queue.empty();
+			}
+			if (active)
+			{ plan.diagnostic = "The Shuttle cannot be edited while it has active journeys, queues, or reservations"; return plan; }
+		}
+		for (uint32_t ix = x; ix < x + cellsWide; ++ix)
+		{
+			auto occupant = mLayers[CORE_LAYER_BACK]->getCellDefinition(ix, y).sectorIndex;
+			if (occupant != ~0u && occupant != sectorIndex)
+			{ plan.diagnostic = format("Sector at {},{} blocks the Shuttle", ix, y); return plan; }
+		}
+
+		auto supported = [&](uint32_t offset)
+		{
+			if (offset + shuttleWidth > cellsWide) return false;
+			bool any = false, all = true;
+			auto doorMask = authored->h ? authored->h : (1u << 1);
+			for (uint32_t car = 0; car < authored->d; ++car)
+				for (uint32_t doorOffset = 0; doorOffset < authored->e; ++doorOffset)
+				{
+					if ((doorMask & (1u << doorOffset)) == 0) continue;
+					auto doorX = x + offset + car * (authored->e + 1) + doorOffset;
+					auto const& cell = mLayers[CORE_LAYER_FORE]->getCellDefinition(doorX, y);
+					bool valid = cell.sectorIndex != ~0u
+						&& mSectors[cell.sectorIndex]->getType() == SectorType::Location
+						&& cell.isTraversableOnFoot() && cell.markers.empty();
+					if (valid && cell.hasObject())
+					{
+						auto object = mSectors[cell.sectorIndex]->getObject(cell.sectorObjectIndex);
+						uint32_t owner;
+						valid = (isShuttleOwnedDoor(object, &owner) || isShuttleOwnedControl(object, &owner))
+							&& owner == sectorIndex;
+					}
+					if (valid)
+					{
+						auto sector = mSectors[cell.sectorIndex];
+						valid = doorX != sector->getCellX0() || doorX != sector->getCellX1();
+					}
+					any = any || valid; all = all && valid;
+				}
+			return any && (authored->p || all);
+		};
+
+		vector<uint32_t> oldGlobalStops, newGlobalStops;
+		for (auto offset : authored->values) oldGlobalStops.push_back(authored->b + offset);
+		for (auto offset : authored->values)
+		{
+			int64_t transformed = plan.move ? offset
+				: (int64_t)authored->b + offset - (int64_t)x;
+			if (transformed < 0 || transformed > UINT32_MAX || !supported((uint32_t)transformed)) continue;
+			plan.stopOffsets.push_back((uint32_t)transformed);
+			newGlobalStops.push_back(x + (uint32_t)transformed);
+		}
+		if (plan.stopOffsets.size() < 2)
+		{ plan.diagnostic = "The Shuttle requires at least two valid platform stops"; return plan; }
+		for (size_t i = 1; i < plan.stopOffsets.size(); ++i)
+			if (plan.stopOffsets[i] - plan.stopOffsets[i - 1] < shuttleWidth)
+			{ plan.diagnostic = "Shuttle stops must be separated by at least the coupled vehicle width"; return plan; }
+
+		if (plan.move) plan.consequences.push_back("Move the Shuttle and rebuild every landing door and button");
+		else if (x != shuttleTransit->getCellX() || cellsWide != shuttleTransit->getCellsWide())
+			plan.consequences.push_back("Resize the Shuttle track and rebuild affected landings");
+		if (!plan.move)
+		{
+			for (auto global : oldGlobalStops)
+				if (find(newGlobalStops.begin(), newGlobalStops.end(), global) == newGlobalStops.end())
+					plan.consequences.push_back(format("Remove Shuttle stop and landings at position {}", global));
+			for (auto const& [id, resource] : mTraversalResources.entries())
+			{
+				(void)id;
+				if (!resource->mShuttle || resource->mLiftSector.value != (uint64_t)sectorIndex + 1) continue;
+				if (find(newGlobalStops.begin(), newGlobalStops.end(), (uint32_t)round(resource->mLiftPosition))
+					== newGlobalStops.end())
+					plan.consequences.push_back("Relocate the Shuttle to the nearest remaining stop");
+			}
+		}
+		vector<ConstructionRecord> records;
+		plan.valid = prepareShuttleEdit(plan, records, plan.diagnostic);
+		return plan;
+	}
+
+	Building::ShuttleEditPlan Building::planRemoveShuttle(uint32_t sectorIndex) const
+	{
+		if (sectorIndex >= mSectors.size() || !dynamic_pointer_cast<const ShuttleTransit>(mSectors[sectorIndex]))
+		{ ShuttleEditPlan plan; plan.diagnostic = "Only a Shuttle can be deleted"; return plan; }
+		auto transit = dynamic_pointer_cast<const ShuttleTransit>(mSectors[sectorIndex]);
+		auto plan = planResizeShuttle(sectorIndex, transit->getCellX(), transit->getCellY(), transit->getCellsWide());
+		if (!plan.valid) return plan;
+		plan.remove = true; plan.consequences.clear();
+		for (uint32_t stop = 0; stop < transit->getNumStops(); ++stop)
+			plan.consequences.push_back(format("Delete Shuttle stop {} and all carriage landings", stop));
+		vector<ConstructionRecord> records;
+		plan.valid = prepareShuttleEdit(plan, records, plan.diagnostic);
+		return plan;
+	}
+
+	Building::ShuttleEditPlan Building::planRemoveShuttleStop(uint32_t sectorIndex, uint32_t stopIndex) const
+	{
+		ShuttleEditPlan invalid;
+		if (sectorIndex >= mSectors.size()) { invalid.diagnostic = "The selected Shuttle no longer exists"; return invalid; }
+		auto transit = dynamic_pointer_cast<const ShuttleTransit>(mSectors[sectorIndex]);
+		if (!transit || stopIndex >= transit->getNumStops())
+		{ invalid.diagnostic = "The selected Shuttle stop no longer exists"; return invalid; }
+		if (transit->getNumStops() <= 2)
+		{ invalid.diagnostic = "Deleting this landing would leave the Shuttle with fewer than two stops"; return invalid; }
+		auto plan = planResizeShuttle(sectorIndex, transit->getCellX(), transit->getCellY(), transit->getCellsWide());
+		if (!plan.valid) return plan;
+		plan.stopOffsets.clear();
+		for (uint32_t stop = 0; stop < transit->getNumStops(); ++stop)
+		{
+			if (stop == stopIndex) continue;
+			auto const& value = transit->getStop(stop);
+			plan.stopOffsets.push_back((uint32_t)((int)value.sector->getCellX()
+				+ value.sectorOffsetX - (int)transit->getCellX()));
+		}
+		plan.consequences = { format("Delete Shuttle stop {} and all carriage doors, buttons, access zones, and pathing", stopIndex) };
+		vector<ConstructionRecord> records;
+		plan.valid = prepareShuttleEdit(plan, records, plan.diagnostic);
+		return plan;
+	}
+
+	Building::ShuttleEditPlan Building::planAddShuttleStop(uint32_t sectorIndex, uint32_t stopOffset) const
+	{
+		ShuttleEditPlan invalid;
+		if (sectorIndex >= mSectors.size()) { invalid.diagnostic = "The selected Shuttle no longer exists"; return invalid; }
+		auto transit = dynamic_pointer_cast<const ShuttleTransit>(mSectors[sectorIndex]);
+		if (!transit) { invalid.diagnostic = "The selected sector is not a Shuttle"; return invalid; }
+		auto plan = planResizeShuttle(sectorIndex, transit->getCellX(), transit->getCellY(), transit->getCellsWide());
+		if (!plan.valid) return plan;
+		if (find(plan.stopOffsets.begin(), plan.stopOffsets.end(), stopOffset) != plan.stopOffsets.end())
+		{ invalid.diagnostic = "The Shuttle already has this stop"; return invalid; }
+		plan.stopOffsets.push_back(stopOffset);
+		sort(plan.stopOffsets.begin(), plan.stopOffsets.end());
+		plan.consequences = { format("Create Shuttle stop and supported carriage landings at position {}",
+			transit->getCellX() + stopOffset) };
+		vector<ConstructionRecord> records;
+		plan.valid = prepareShuttleEdit(plan, records, plan.diagnostic);
+		return plan;
+	}
+
+	uint32_t Building::applyShuttleEdit(ShuttleEditPlan const& requested)
+	{
+		if (!mSimulationPaused) throw BuildingException(this, "Editing a Shuttle requires the simulation to be paused");
+		auto plan = requested.remove ? planRemoveShuttle(requested.sectorIndex)
+			: planResizeShuttle(requested.sectorIndex, requested.x, requested.y, requested.cellsWide);
+		if (!plan.valid) throw BuildingException(this, plan.diagnostic);
+		if (!requested.remove && requested.stopOffsets.size() >= 2
+			&& requested.stopOffsets != plan.stopOffsets)
+		{
+			plan.stopOffsets = requested.stopOffsets;
+			plan.consequences = requested.consequences;
+			vector<ConstructionRecord> validationRecords;
+			if (!prepareShuttleEdit(plan, validationRecords, plan.diagnostic))
+				throw BuildingException(this, plan.diagnostic);
+		}
+		vector<ConstructionRecord> records; string diagnostic;
+		if (!prepareShuttleEdit(plan, records, diagnostic)) throw BuildingException(this, diagnostic);
+		rebuildFromConstructionRecords(std::move(records));
+		if (plan.remove) return ~0u;
+		return mLayers[CORE_LAYER_BACK]->getCellDefinition(plan.x, plan.y).sectorIndex;
+	}
+
 	bool Building::prepareLocationEdit(LocationEditPlan const& plan,
 		vector<ConstructionRecord>& records, uint32_t& newSectorIndex,
 		string& diagnostic) const
@@ -1009,13 +1276,18 @@ namespace core
 					vector<uint32_t> stops;
 					for (auto offset : originalStops)
 					{
-						bool supported = false;
+						bool any = false, all = true;
+						auto doorMask = source.h ? source.h : (1u << 1);
 						for (uint32_t car = 0; car < source.d; ++car)
-						{
-							auto doorX = source.b + offset + car * (source.e + 1) + 1;
-							supported = supported || locationAt(doorX, source.a) != nullptr;
-						}
-						if (supported) stops.push_back(offset);
+							for (uint32_t doorOffset = 0; doorOffset < source.e; ++doorOffset)
+							{
+								if ((doorMask & (1u << doorOffset)) == 0) continue;
+								auto doorX = source.b + offset + car * (source.e + 1) + doorOffset;
+								bool supported = locationAt(doorX, source.a) != nullptr;
+								any = any || supported;
+								all = all && supported;
+							}
+						if (any && (source.p || all)) stops.push_back(offset);
 					}
 					if (stops.size() < 2)
 					{
@@ -1032,7 +1304,6 @@ namespace core
 						return da == db ? a < b : da < db;
 					});
 					source.f = (uint32_t)distance(stops.begin(), nearest);
-					source.p = true;
 					source.values = std::move(stops);
 				}
 				else if (source.type == ConstructionType::Staircase)
@@ -1344,6 +1615,16 @@ namespace core
 			rebuildFromConstructionRecords(std::move(records));
 			return true;
 		}
+		uint32_t shuttleIndex;
+		if (isShuttleOwnedDoor(object, &shuttleIndex, &stopIndex))
+		{
+			auto plan = planRemoveShuttleStop(shuttleIndex, stopIndex);
+			if (!plan.valid) throw BuildingException(this, plan.diagnostic);
+			vector<ConstructionRecord> records; string diagnostic;
+			if (!prepareShuttleEdit(plan, records, diagnostic)) throw BuildingException(this, diagnostic);
+			rebuildFromConstructionRecords(std::move(records));
+			return true;
+		}
 
 		auto door = object->getDoor();
 		auto source = find_if(mConstructionRecords.begin(), mConstructionRecords.end(),
@@ -1601,6 +1882,31 @@ namespace core
 			return plan;
 		}
 		auto sector = mSectors[sectorIndex];
+		auto sectorId = SectorId{ (uint64_t)sectorIndex + 1 };
+		for (auto const& [id, resource] : mTraversalResources.entries())
+		{
+			if (!resource->mShuttle || none_of(resource->mShuttleDoors.begin(), resource->mShuttleDoors.end(),
+				[sectorId](auto const& door) { return door.locationSector == sectorId; })) continue;
+			bool active = resource->mLiftMoving || !resource->mAdmissionQueue.empty()
+				|| !resource->mLiftTripIntents.empty() || !resource->mLiftConfirmationQueue.empty()
+				|| any_of(resource->mOccupants.begin(), resource->mOccupants.end(), [](auto owner) { return (bool)owner; })
+				|| any_of(resource->mAdmissionReservations.begin(), resource->mAdmissionReservations.end(),
+					[](auto owner) { return (bool)owner; });
+			for (auto const& [landingId, landing] : mTraversalResources.entries())
+			{
+				(void)landingId;
+				if (landing->mLiftCoordinator != id) continue;
+				active = active || !landing->mOpenLeases.empty()
+					|| any_of(landing->mCrossingOwners.begin(), landing->mCrossingOwners.end(),
+						[](auto owner) { return (bool)owner; });
+				for (auto const& lane : landing->mQueueLanes) active = active || !lane.queue.empty();
+			}
+			if (active)
+			{
+				plan.diagnostic = "A platform cannot be edited while its Shuttle has active journeys, queues, crossings, or reservations";
+				return plan;
+			}
+		}
 		plan.move = (x != sector->getCellX() || y != sector->getCellY())
 			&& cellsWide == sector->getCellsWide() && decksHigh == sector->getDecksHigh();
 		if (cellsWide == 0 || decksHigh == 0 || x + cellsWide > mCellsWide || y + decksHigh > mDecksHigh)
@@ -1657,6 +1963,16 @@ namespace core
 				|| (y != sector->getCellY() && (uint32_t)floor(pos.y) == sector->getCellY()))
 				plan.consequences.push_back("Delete Agent " + agent->getName());
 		}
+		for (auto const& [id, resource] : mTraversalResources.entries())
+		{
+			(void)id;
+			if (!resource->mShuttle) continue;
+			set<uint32_t> affectedStops;
+			for (auto const& door : resource->mShuttleDoors)
+				if (door.locationSector == sectorId) affectedStops.insert(door.stopIndex);
+			for (auto stop : affectedStops)
+				plan.consequences.push_back(format("Reconcile Shuttle stop {} carriage landings", stop));
+		}
 		for (auto const& candidate : mSectors)
 		{
 			auto transit = dynamic_pointer_cast<Transit const>(candidate);
@@ -1699,6 +2015,31 @@ namespace core
 			return plan;
 		}
 		auto sector = mSectors[sectorIndex];
+		auto sectorId = SectorId{ (uint64_t)sectorIndex + 1 };
+		for (auto const& [id, resource] : mTraversalResources.entries())
+		{
+			if (!resource->mShuttle || none_of(resource->mShuttleDoors.begin(), resource->mShuttleDoors.end(),
+				[sectorId](auto const& door) { return door.locationSector == sectorId; })) continue;
+			bool active = resource->mLiftMoving || !resource->mAdmissionQueue.empty()
+				|| !resource->mLiftTripIntents.empty() || !resource->mLiftConfirmationQueue.empty()
+				|| any_of(resource->mOccupants.begin(), resource->mOccupants.end(), [](auto owner) { return (bool)owner; })
+				|| any_of(resource->mAdmissionReservations.begin(), resource->mAdmissionReservations.end(),
+					[](auto owner) { return (bool)owner; });
+			for (auto const& [landingId, landing] : mTraversalResources.entries())
+			{
+				(void)landingId;
+				if (landing->mLiftCoordinator != id) continue;
+				active = active || !landing->mOpenLeases.empty()
+					|| any_of(landing->mCrossingOwners.begin(), landing->mCrossingOwners.end(),
+						[](auto owner) { return (bool)owner; });
+				for (auto const& lane : landing->mQueueLanes) active = active || !lane.queue.empty();
+			}
+			if (active)
+			{
+				plan.diagnostic = "A platform cannot be deleted while its Shuttle has active journeys, queues, crossings, or reservations";
+				return plan;
+			}
+		}
 		plan.x = sector->getCellX(); plan.y = sector->getCellY();
 		plan.cellsWide = sector->getCellsWide(); plan.decksHigh = sector->getDecksHigh();
 		set<void const*> seen;
@@ -1713,6 +2054,16 @@ namespace core
 			(void)id;
 			if (agent->getSector() == sector.get())
 				plan.consequences.push_back("Delete Agent " + agent->getName());
+		}
+		for (auto const& [id, resource] : mTraversalResources.entries())
+		{
+			(void)id;
+			if (!resource->mShuttle) continue;
+			set<uint32_t> affectedStops;
+			for (auto const& door : resource->mShuttleDoors)
+				if (door.locationSector == sectorId) affectedStops.insert(door.stopIndex);
+			for (auto stop : affectedStops)
+				plan.consequences.push_back(format("Remove Shuttle stop {} carriage landing", stop));
 		}
 		for (auto const& candidate : mSectors)
 		{

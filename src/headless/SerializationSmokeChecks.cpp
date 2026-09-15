@@ -11,6 +11,7 @@
 #include "core/Defines.h"
 #include "core/Serializable.h"
 #include "core/SerializationException.h"
+#include "core/ShuttleTransit.h"
 #include "core/YamlSerializer.h"
 
 namespace
@@ -334,6 +335,56 @@ agents: []
 			"Location resize did not include the final world column");
 	}
 
+	void editedShuttleRoundTripsWithoutSchemaChanges()
+	{
+		core::Building building("Serializable Shuttle", 32, 3);
+		building.addCorridor(0, 0, 31);
+		building.addCorridor(1, 0, 31);
+		core::Building::CreateShuttleOptions options{ 2, 3, { 0, 18 }, 0 };
+		options.capacity = 2;
+		options.doorMask = 0b101;
+		options.minimumDwellSeconds = 1.25f;
+		options.maximumBoardingSeconds = 4.5f;
+		auto created = building.addShuttle(0, 0, 27, options);
+		building.finishBuild();
+		building.pauseSimulation();
+		auto move = building.planResizeShuttle(created.shuttle.sector->getIndex(), 1, 1, 27);
+		require(move.valid, "Serializable Shuttle move was rejected");
+		auto shuttleIndex = building.applyShuttleEdit(move);
+		auto add = building.planAddShuttleStop(shuttleIndex, 9);
+		require(add.valid, "Serializable Shuttle stop addition was rejected");
+		shuttleIndex = building.applyShuttleEdit(add);
+
+		core::SerializationWorkData workData;
+		auto writer = core::YamlSerializer::toString();
+		building.serialize(*writer, workData);
+		writer->serialize();
+		auto yaml = writer->getSerializedString();
+		require(yaml.find("type: shuttle") != std::string::npos
+			&& yaml.find("numCars: 2") != std::string::npos
+			&& yaml.find("capacityPerCarriage: 2") != std::string::npos
+			&& yaml.find("doorMask: 5") != std::string::npos
+			&& yaml.find("allowPartialLandings: false") != std::string::npos,
+			"Edited Shuttle did not use the existing explicit YAML schema");
+
+		core::Building loaded("placeholder", 1, 1);
+		auto reader = core::YamlSerializer::fromString(yaml);
+		reader->deserialize();
+		require(loaded.deserialize(*reader, workData), "Edited Shuttle YAML did not deserialize");
+		auto shuttle = std::dynamic_pointer_cast<const core::ShuttleTransit>(loaded.getSector(shuttleIndex));
+		require(shuttle && shuttle->getCellX() == 1 && shuttle->getCellY() == 1
+			&& shuttle->getCellsWide() == 27 && shuttle->getNumStops() == 3,
+			"Edited Shuttle geometry or stops did not round-trip");
+		core::Building::CreateShuttleOptions loadedOptions{};
+		require(loaded.getShuttleOptions(shuttle->getShuttle().get(), loadedOptions)
+			&& loadedOptions.numCars == 2 && loadedOptions.carWidth == 3
+			&& loadedOptions.capacity == 2 && loadedOptions.doorMask == 0b101
+			&& std::abs(loadedOptions.minimumDwellSeconds - 1.25f) < 0.001f
+			&& std::abs(loadedOptions.maximumBoardingSeconds - 4.5f) < 0.001f
+			&& !loadedOptions.allowPartialLandings,
+			"Edited Shuttle configuration did not round-trip");
+	}
+
 	float controlCenterX(core::Building::CreateObjectResult const& control)
 	{
 		auto object = control.sector->getObject(control.index)->_getObject();
@@ -480,6 +531,7 @@ void runSerializationSmokeChecks()
 	buildingRoundTripsAuthoredStateAndAgents();
 	legacyBuildingYamlStillLoads();
 	locationEditsArePlannedAndAppliedAtomically();
+	editedShuttleRoundTripsWithoutSchemaChanges();
 	physicalControlsPreferDistinctWallPositions();
 	recentFilesPersistAcrossStartup();
 	serializableTracksModificationState();

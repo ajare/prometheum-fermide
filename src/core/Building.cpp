@@ -31,6 +31,15 @@ namespace core
 
 	using namespace std;
 
+	static vector<uint32_t> shuttleDoorOffsets(uint32_t carriageWidth, uint32_t doorMask)
+	{
+		vector<uint32_t> result;
+		if (!carriageWidth || !doorMask || (doorMask >> carriageWidth) != 0) return result;
+		for (uint32_t cell = 0; cell < carriageWidth; ++cell)
+			if ((doorMask & (1u << cell)) != 0) result.push_back(cell);
+		return result;
+	}
+
 	Building::CreateDoorOptions Building::ManualDoor1Options{ 1, { false, false }, DoorActivationMode::Manual };
 	Building::CreateDoorOptions Building::RemoteControlledDoor1Options{ 1, { true, true }, DoorActivationMode::RemoteControlled };
 	Building::CreateDoorOptions Building::UnavailableDoor1Options{ 1, { false, false }, DoorActivationMode::Unavailable };
@@ -420,6 +429,10 @@ namespace core
 		if (options.carWidth != 3 && options.carWidth != 4)
 		{
 			throw BuildingException(this, format("{} - Shuttle car width must be 3 or 4.", caller));
+		}
+		if (options.doorMask == 0 || (options.doorMask >> options.carWidth) != 0)
+		{
+			throw BuildingException(this, format("{} - Shuttle carriage door layout must select at least one cell and remain within the carriage width.", caller));
 		}
 
 		if (options.stopOffsets.size() < 2)
@@ -1682,25 +1695,22 @@ namespace core
 				throw BuildingException(this, format("{} - shuttle is too wide to fit at stop offset {}", caller, i));
 			}
 
-			// A stop remains usable when at least one carriage door has a complete
-			// Location landing. Missing carriage landings are simply omitted.
+			// A stop remains usable when at least one configured carriage door has
+			// a Location landing. Partial mode omits unsupported individual doors.
 			bool hasLanding = false;
-			for (uint32_t j = 0; j < options.numCars; ++j)
-			{
-				uint32_t cx = ix + j * (options.carWidth + 1) + 1;
-				auto const& cell = foreLayer->getCellDefinition(cx, y);
-				bool supported = cell.sectorIndex != ~0u
-					&& getSector(cell.sectorIndex)->getType() == SectorType::Location;
-				if (supported && options.carWidth == 4)
+			auto doorOffsets = shuttleDoorOffsets(options.carWidth, options.doorMask);
+			for (uint32_t car = 0; car < options.numCars; ++car)
+				for (uint32_t door = 0; door < doorOffsets.size(); ++door)
 				{
-					auto const& second = foreLayer->getCellDefinition(cx + 1, y);
-					supported = second.sectorIndex == cell.sectorIndex;
+					uint32_t cx = ix + car * (options.carWidth + 1) + doorOffsets[door];
+					auto const& cell = foreLayer->getCellDefinition(cx, y);
+					bool supported = cell.sectorIndex != ~0u
+						&& getSector(cell.sectorIndex)->getType() == SectorType::Location;
+					if (!supported && !options.allowPartialLandings)
+						throw BuildingException(this, format("{} - door {} of carriage {} at stop offset {} has no supported landing",
+							caller, door, car, options.stopOffsets[i]));
+					hasLanding = hasLanding || supported;
 				}
-				if (!supported && !options.allowPartialLandings)
-					throw BuildingException(this, format("{} - carriage {} at stop offset {} has no supported landing",
-						caller, j, options.stopOffsets[i]));
-				hasLanding = hasLanding || supported;
-			}
 			if (!hasLanding)
 				throw BuildingException(this, format("{} - stop offset {} has no supported carriage landing", caller, options.stopOffsets[i]));
 		}
@@ -1724,32 +1734,33 @@ namespace core
 		shuttleRes.shuttle = shuttleObject;
 
 		// Create landing thresholds and physical InteractionPoints. Keep a fixed
-		// stop/carriage result grid so later coordination can skip absent doors.
-		shuttleRes.doors.resize(options.stopOffsets.size() * options.numCars);
-		for (uint32_t stop = 0; stop < options.stopOffsets.size(); ++stop)
+		// stop/carriage/door result grid so absent partial landings remain explicit.
+		auto doorOffsets = shuttleDoorOffsets(options.carWidth, options.doorMask);
+		auto doorResultIndex = [&](uint32_t stop, uint32_t car, uint32_t door)
 		{
-			uint32_t doorWidth = options.carWidth - 2;
+			return (stop * options.numCars + car) * doorOffsets.size() + door;
+		};
+		shuttleRes.doors.resize(options.stopOffsets.size() * options.numCars * doorOffsets.size());
+		for (uint32_t stop = 0; stop < options.stopOffsets.size(); ++stop)
 			for (uint32_t car = 0; car < options.numCars; ++car)
-			{
-				uint32_t doorX = car * (options.carWidth + 1) + 1;
-				auto globalX = x + options.stopOffsets[stop] + doorX;
-				auto const& cell = foreLayer->getCellDefinition(globalX, y);
-				bool supported = cell.sectorIndex != ~0u;
-				if (supported && options.carWidth == 4)
-					supported = foreLayer->getCellDefinition(globalX + 1, y).sectorIndex == cell.sectorIndex;
-				if (supported)
-					shuttleRes.doors[stop * options.numCars + car] = _addSectorDoor(y, globalX,
-						{ doorWidth, { true, false }, DoorActivationMode::Unavailable }, true);
-			}
-		}
+				for (uint32_t door = 0; door < doorOffsets.size(); ++door)
+				{
+					auto globalX = x + options.stopOffsets[stop]
+						+ car * (options.carWidth + 1) + doorOffsets[door];
+					auto const& cell = foreLayer->getCellDefinition(globalX, y);
+					bool supported = cell.sectorIndex != ~0u;
+					if (supported)
+						shuttleRes.doors[doorResultIndex(stop, car, door)] = _addSectorDoor(y, globalX,
+							{ 1, { true, false }, DoorActivationMode::Unavailable }, true);
+				}
 
 		vector<LiftStop> stops;
 		for (uint32_t i = 0; i < options.stopOffsets.size(); ++i)
 		{
-			uint32_t doorIndex = i * options.numCars;
-			while (doorIndex < (i + 1) * options.numCars
-				&& !shuttleRes.doors[doorIndex].traversalResource) ++doorIndex;
-			assert(doorIndex < (i + 1) * options.numCars);
+			uint32_t doorIndex = i * options.numCars * (uint32_t)doorOffsets.size();
+			auto stopEnd = (i + 1) * options.numCars * (uint32_t)doorOffsets.size();
+			while (doorIndex < stopEnd && !shuttleRes.doors[doorIndex].traversalResource) ++doorIndex;
+			assert(doorIndex < stopEnd);
 			auto location = shuttleRes.doors[doorIndex].door.sector;
 			stops.push_back({ SectorId{ (uint64_t)location->getIndex() + 1 },
 				(float)(x + options.stopOffsets[i]), shuttleRes.doors[doorIndex].traversalResource, {} });
@@ -1770,13 +1781,14 @@ namespace core
 		{
 			map<SectorId, uint32_t> accessZones;
 			for (uint32_t carriage = 0; carriage < options.numCars; ++carriage)
+				for (uint32_t door = 0; door < doorOffsets.size(); ++door)
 			{
-				auto doorIndex = stop * options.numCars + carriage;
+				auto doorIndex = doorResultIndex(stop, carriage, door);
 				auto& doorResult = shuttleRes.doors[doorIndex];
 				if (!doorResult.traversalResource) continue;
 				auto landing = mTraversalResources.find(doorResult.traversalResource);
 				auto doorX = x + options.stopOffsets[stop]
-					+ carriage * (options.carWidth + 1) + 1;
+					+ carriage * (options.carWidth + 1) + doorOffsets[door];
 				auto location = getSector(foreLayer->getCellDefinition(doorX, y).sectorIndex);
 				auto locationId = SectorId{ (uint64_t)location->getIndex() + 1 };
 				auto [zone, inserted] = accessZones.emplace(locationId, (uint32_t)accessZones.size());
@@ -1847,7 +1859,7 @@ namespace core
 		ConstructionRecord record{ ConstructionType::Shuttle };
 		record.a = y; record.b = x; record.c = cellsWide; record.d = options.numCars;
 		record.e = options.carWidth; record.f = options.initialStop; record.g = options.capacity;
-		record.p = options.allowPartialLandings;
+		record.h = options.doorMask; record.p = options.allowPartialLandings;
 		record.x = options.minimumDwellSeconds; record.y = options.maximumBoardingSeconds;
 		record.values = options.stopOffsets;
 		recordConstruction(std::move(record));
@@ -2052,6 +2064,142 @@ namespace core
 		return false;
 	}
 
+	bool Building::isShuttleOwnedDoor(shared_ptr<const SectorObject> const& object,
+		uint32_t* shuttleSectorIndex, uint32_t* stopIndex, uint32_t* carriageIndex) const
+	{
+		auto doorObject = dynamic_pointer_cast<const DoorSectorObject>(object);
+		if (!doorObject) return false;
+		auto landingId = doorObject->getDoor()->getTraversalResourceId();
+		auto landing = mTraversalResources.find(landingId);
+		if (!landing || !landing->mLiftCoordinator) return false;
+		auto coordinator = mTraversalResources.find(landing->mLiftCoordinator);
+		if (!coordinator || !coordinator->mShuttle || !coordinator->mLiftSector) return false;
+		auto mapping = find_if(coordinator->mShuttleDoors.begin(), coordinator->mShuttleDoors.end(),
+			[landingId](auto const& value) { return value.landingResource == landingId; });
+		if (mapping == coordinator->mShuttleDoors.end()) return false;
+		if (shuttleSectorIndex) *shuttleSectorIndex = (uint32_t)coordinator->mLiftSector.value - 1;
+		if (stopIndex) *stopIndex = mapping->stopIndex;
+		if (carriageIndex) *carriageIndex = mapping->carriageIndex;
+		return true;
+	}
+
+	bool Building::isShuttleOwnedControl(shared_ptr<const SectorObject> const& object,
+		uint32_t* shuttleSectorIndex, uint32_t* stopIndex) const
+	{
+		if (!object || object->getObjectType() != SectorObjectType::InteractionPoint) return false;
+		auto button = dynamic_pointer_cast<const Button>(object->_getObject());
+		if (!button || !button->getInteractionPointId()) return false;
+		auto point = mInteractionPoints.find(button->getInteractionPointId());
+		if (!point) return false;
+		for (auto const& binding : point->mBindings)
+		{
+			if (binding.command.type != DeviceCommandType::CallShuttle) continue;
+			auto resource = mTraversalResources.find(binding.command.traversalResource);
+			if (!resource || !resource->mShuttle || !resource->mLiftSector) continue;
+			if (shuttleSectorIndex) *shuttleSectorIndex = (uint32_t)resource->mLiftSector.value - 1;
+			if (stopIndex) *stopIndex = binding.command.stopIndex;
+			return true;
+		}
+		return false;
+	}
+
+	vector<uint32_t> Building::getValidShuttleStopOffsets(uint32_t y, uint32_t x,
+		uint32_t cellsWide, uint32_t numCars, uint32_t carWidth,
+		bool allowPartialLandings, uint32_t doorMask) const
+	{
+		vector<uint32_t> result;
+		if (y >= mDecksHigh || x >= mCellsWide || cellsWide > mCellsWide - x
+			|| numCars == 0 || (carWidth != 3 && carWidth != 4)
+			|| doorMask == 0 || (doorMask >> carWidth) != 0
+			|| numCars > (cellsWide + 1) / (carWidth + 1)) return result;
+		auto shuttleWidth = numCars * carWidth + numCars - 1;
+		auto doorOffsets = shuttleDoorOffsets(carWidth, doorMask);
+		if (shuttleWidth > cellsWide) return result;
+		for (uint32_t offset = 0; offset + shuttleWidth <= cellsWide; ++offset)
+		{
+			bool any = false, all = true;
+			for (uint32_t car = 0; car < numCars; ++car)
+				for (auto doorOffset : doorOffsets)
+				{
+					auto doorX = x + offset + car * (carWidth + 1) + doorOffset;
+					auto const& first = mLayers[CORE_LAYER_FORE]->getCellDefinition(doorX, y);
+					bool supported = first.sectorIndex != ~0u
+						&& mSectors[first.sectorIndex]->getType() == SectorType::Location;
+					supported = supported && first.isTraversableOnFoot()
+						&& !first.hasObject() && first.markers.empty();
+					if (supported)
+					{
+						auto sector = mSectors[first.sectorIndex];
+						supported = doorX != sector->getCellX0() || doorX != sector->getCellX1();
+					}
+					any = any || supported;
+					all = all && supported;
+				}
+			if (any && (allowPartialLandings || all)) result.push_back(offset);
+		}
+		return result;
+	}
+
+	bool Building::getShuttleOptions(Shuttle const* shuttle, CreateShuttleOptions& options) const
+	{
+		if (!shuttle) return false;
+		uint32_t sectorIndex = 0;
+		for (auto const& record : mConstructionRecords)
+		{
+			bool producer = record.type == ConstructionType::Corridor || record.type == ConstructionType::Room
+				|| record.type == ConstructionType::Ladder || record.type == ConstructionType::Staircase
+				|| record.type == ConstructionType::Lift || record.type == ConstructionType::Shuttle;
+			if (!producer) continue;
+			if (record.type == ConstructionType::Shuttle && sectorIndex < mSectors.size())
+			{
+				auto transit = dynamic_pointer_cast<const ShuttleTransit>(mSectors[sectorIndex]);
+				if (transit && transit->getShuttle().get() == shuttle)
+				{
+					options = { record.d, record.e, record.values, record.f, record.g,
+						record.x, record.y, record.p, record.h ? record.h : (1u << 1) };
+					return true;
+				}
+			}
+			++sectorIndex;
+		}
+		return false;
+	}
+
+	vector<Building::ShuttleStopCandidate> Building::getShuttleStopCandidatesForDoor(
+		uint32_t y, uint32_t doorX) const
+	{
+		vector<ShuttleStopCandidate> result;
+		uint32_t sectorIndex = 0;
+		for (auto const& record : mConstructionRecords)
+		{
+			bool producer = record.type == ConstructionType::Corridor || record.type == ConstructionType::Room
+				|| record.type == ConstructionType::Ladder || record.type == ConstructionType::Staircase
+				|| record.type == ConstructionType::Lift || record.type == ConstructionType::Shuttle;
+			if (!producer) continue;
+			if (record.type == ConstructionType::Shuttle && record.a == y)
+			{
+				auto doorMask = record.h ? record.h : (1u << 1);
+				auto doorOffsets = shuttleDoorOffsets(record.e, doorMask);
+				for (auto offset : getValidShuttleStopOffsets(record.a, record.b, record.c,
+					record.d, record.e, record.p, doorMask))
+				{
+					if (find(record.values.begin(), record.values.end(), offset) != record.values.end()) continue;
+					auto vehicleWidth = record.d * record.e + record.d - 1;
+					if (any_of(record.values.begin(), record.values.end(), [&](auto existing)
+						{ return max(existing, offset) - min(existing, offset) < vehicleWidth; })) continue;
+					bool matchesDoor = false;
+					for (uint32_t car = 0; car < record.d && !matchesDoor; ++car)
+						for (auto doorOffset : doorOffsets)
+							matchesDoor = matchesDoor || doorX == record.b + offset
+								+ car * (record.e + 1) + doorOffset;
+					if (matchesDoor) result.push_back({ sectorIndex, offset });
+				}
+			}
+			++sectorIndex;
+		}
+		return result;
+	}
+
 	bool Building::canAddCorridorDoor(uint32_t y, uint32_t x, string* diagnostic) const
 	{
 		uint32_t liftX, liftWidth;
@@ -2220,8 +2368,8 @@ namespace core
 
 		auto doorObject = dynamic_pointer_cast<DoorSectorObject>(
 			mSectors[sectorIndex]->getObject(objectIndex));
-		if (doorObject && isLiftOwnedDoor(doorObject))
-			throw BuildingException(this, "Lift-owned Doors are read-only; their call button is managed by the Lift");
+		if (doorObject && (isLiftOwnedDoor(doorObject) || isShuttleOwnedDoor(doorObject)))
+			throw BuildingException(this, "Transport-owned Doors are read-only; their call button is managed by the transport");
 		if (!doorObject)
 		{
 			throw BuildingException(this, "The selected object is not a Door");

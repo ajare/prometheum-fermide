@@ -172,11 +172,14 @@ namespace core
 			float minimumDwellSeconds{ CORE_LIFT_DOOR_PAUSE_TIME };
 			float maximumBoardingSeconds{ CORE_DOOR_STAY_OPEN_TIME };
 			bool allowPartialLandings{ false };
+			// Bit N selects carriage cell N as a one-cell-wide door.
+			uint32_t doorMask{ 1u << 1 };
 		};
 
 		struct CreateShuttleResult
 		{
 			CreateObjectResult shuttle;
+			// Fixed stop/carriage/door grid; unsupported partial landings are empty.
 			std::vector<CreateDoorResult> doors;
 			TraversalResourceId traversalResource;
 			InteractionPointId interiorSelector;
@@ -219,6 +222,26 @@ namespace core
 			std::vector<std::string> consequences;
 
 			[[nodiscard]] bool requiresConfirmation() const { return !consequences.empty(); }
+		};
+
+		struct ShuttleEditPlan
+		{
+			bool valid{ false };
+			bool remove{ false };
+			bool move{ false };
+			uint32_t sectorIndex{ ~0u };
+			uint32_t x{ 0 }, y{ 0 }, cellsWide{ 0 };
+			std::vector<uint32_t> stopOffsets;
+			std::string diagnostic;
+			std::vector<std::string> consequences;
+
+			[[nodiscard]] bool requiresConfirmation() const { return !consequences.empty(); }
+		};
+
+		struct ShuttleStopCandidate
+		{
+			uint32_t sectorIndex{ ~0u };
+			uint32_t stopOffset{ 0 };
 		};
 
 	public:
@@ -325,7 +348,7 @@ namespace core
 		{
 			ConstructionType type{};
 			std::string name{};
-			uint32_t a{ 0 }, b{ 0 }, c{ 0 }, d{ 0 }, e{ 0 }, f{ 0 }, g{ 0 };
+			uint32_t a{ 0 }, b{ 0 }, c{ 0 }, d{ 0 }, e{ 0 }, f{ 0 }, g{ 0 }, h{ 0 };
 			int32_t i{ 0 }, j{ 0 };
 			float x{ 0.0f }, y{ 0.0f };
 			bool p{ false }, q{ false };
@@ -385,6 +408,9 @@ namespace core
 			uint32_t& newObjectIndex, std::string& diagnostic) const;
 
 		bool prepareLiftEdit(LiftEditPlan const& plan,
+			std::vector<ConstructionRecord>& records, std::string& diagnostic) const;
+
+		bool prepareShuttleEdit(ShuttleEditPlan const& plan,
 			std::vector<ConstructionRecord>& records, std::string& diagnostic) const;
 
 		std::vector<ConstructionRecord> canonicalConstructionRecords(
@@ -704,6 +730,22 @@ namespace core
 		bool isLiftOwnedControl(std::shared_ptr<const SectorObject> const& object,
 			uint32_t* liftSectorIndex = nullptr, uint32_t* stopIndex = nullptr) const;
 
+		bool isShuttleOwnedDoor(std::shared_ptr<const SectorObject> const& object,
+			uint32_t* shuttleSectorIndex = nullptr, uint32_t* stopIndex = nullptr,
+			uint32_t* carriageIndex = nullptr) const;
+
+		bool isShuttleOwnedControl(std::shared_ptr<const SectorObject> const& object,
+			uint32_t* shuttleSectorIndex = nullptr, uint32_t* stopIndex = nullptr) const;
+
+		std::vector<uint32_t> getValidShuttleStopOffsets(uint32_t y, uint32_t x,
+			uint32_t cellsWide, uint32_t numCars, uint32_t carWidth,
+			bool allowPartialLandings, uint32_t doorMask = 1u << 1) const;
+
+		bool getShuttleOptions(Shuttle const* shuttle, CreateShuttleOptions& options) const;
+
+		std::vector<ShuttleStopCandidate> getShuttleStopCandidatesForDoor(
+			uint32_t y, uint32_t doorX) const;
+
 		bool getSectorDoorOptions(uint32_t y, uint32_t x, uint32_t width,
 			CreateDoorOptions& options) const;
 
@@ -776,6 +818,17 @@ namespace core
 		LiftEditPlan planRemoveLiftStop(uint32_t sectorIndex, uint32_t stopIndex) const;
 
 		uint32_t applyLiftEdit(LiftEditPlan const& plan);
+
+		ShuttleEditPlan planResizeShuttle(uint32_t sectorIndex, uint32_t x,
+			uint32_t y, uint32_t cellsWide) const;
+
+		ShuttleEditPlan planRemoveShuttle(uint32_t sectorIndex) const;
+
+		ShuttleEditPlan planRemoveShuttleStop(uint32_t sectorIndex, uint32_t stopIndex) const;
+
+		ShuttleEditPlan planAddShuttleStop(uint32_t sectorIndex, uint32_t stopOffset) const;
+
+		uint32_t applyShuttleEdit(ShuttleEditPlan const& plan);
 
 		ObjectMovePlan planMoveSectorObject(uint32_t sectorIndex, uint32_t objectIndex,
 			uint32_t x, uint32_t y) const;

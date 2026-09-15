@@ -1074,7 +1074,12 @@ void renderSector(shared_ptr<const core::Sector> sector, int layer, bool visible
 		break;
 
 	case core::SectorType::Shuttle:
-		renderShuttle(static_pointer_cast<const core::ShuttleTransit>(sector)->getShuttle(), layer, visibleLayer, selected, drawList);
+		// A hidden Back layer may contribute a wireframe sector outline, but its
+		// vehicle must only appear on the Fore layer when an aperture explicitly
+		// renders this sector through a Door or clear Window clip rectangle.
+		if (visibleLayer || layer != CORE_LAYER_BACK)
+			renderShuttle(static_pointer_cast<const core::ShuttleTransit>(sector)->getShuttle(),
+				layer, visibleLayer, selected, drawList);
 		break;
 
 	case core::SectorType::Staircase:

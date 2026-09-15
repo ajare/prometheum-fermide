@@ -2349,6 +2349,90 @@ namespace
 		return !building.getSectorAtPosition(CORE_LAYER_BACK, 5.0f, 0.0f);
 	}
 
+	bool editorShuttleAuthoringReconcilesOwnedLandings()
+	{
+		core::Building building("Editor shuttle authoring", 32, 3);
+		building.addCorridor(0, 0, 31);
+		building.addCorridor(1, 0, 31);
+		core::Building::CreateShuttleOptions options{ 2, 3, { 0, 18 }, 0 };
+		options.doorMask = 0b101;
+		auto candidates = building.getValidShuttleStopOffsets(0, 0, 27, 2, 3, false, 2);
+		if (find(candidates.begin(), candidates.end(), 0) == candidates.end()
+			|| find(candidates.begin(), candidates.end(), 18) == candidates.end()) return false;
+		auto created = building.addShuttle(0, 0, 27, options);
+		building.finishBuild();
+		auto shuttle = dynamic_pointer_cast<const core::ShuttleTransit>(created.shuttle.sector);
+		if (!shuttle || shuttle->getNumStops() != 2 || created.doors.size() != 8) return false;
+		for (auto const& door : created.doors)
+		{
+			uint32_t owner, stop, carriage;
+			if (!building.isShuttleOwnedDoor(door.door.sector->getObject(door.door.index),
+				&owner, &stop, &carriage) || owner != shuttle->getIndex()
+				|| stop >= 2 || carriage >= 2) return false;
+		}
+		auto doorCandidates = building.getShuttleStopCandidatesForDoor(0, 9);
+		if (none_of(doorCandidates.begin(), doorCandidates.end(), [&](auto const& candidate)
+			{ return candidate.sectorIndex == shuttle->getIndex() && candidate.stopOffset == 9; })) return false;
+
+		building.pauseSimulation();
+		auto move = building.planResizeShuttle(shuttle->getIndex(), 1, 1, 27);
+		if (!move.valid || !move.move || move.stopOffsets != std::vector<uint32_t>({ 0, 18 })) return false;
+		auto movedIndex = building.applyShuttleEdit(move);
+		shuttle = dynamic_pointer_cast<const core::ShuttleTransit>(building.getSector(movedIndex));
+		if (!shuttle || shuttle->getCellX() != 1 || shuttle->getCellY() != 1) return false;
+
+		auto resize = building.planResizeShuttle(movedIndex, 1, 1, 26);
+		if (!resize.valid || resize.move || resize.stopOffsets != std::vector<uint32_t>({ 0, 18 })) return false;
+		movedIndex = building.applyShuttleEdit(resize);
+		shuttle = dynamic_pointer_cast<const core::ShuttleTransit>(building.getSector(movedIndex));
+		if (!shuttle || shuttle->getCellsWide() != 26) return false;
+
+		auto add = building.planAddShuttleStop(movedIndex, 9);
+		if (!add.valid || !add.requiresConfirmation()) return false;
+		movedIndex = building.applyShuttleEdit(add);
+		shuttle = dynamic_pointer_cast<const core::ShuttleTransit>(building.getSector(movedIndex));
+		if (!shuttle || shuttle->getNumStops() != 3) return false;
+		auto removeStop = building.planRemoveShuttleStop(movedIndex, 1);
+		if (!removeStop.valid || !removeStop.requiresConfirmation()) return false;
+		movedIndex = building.applyShuttleEdit(removeStop);
+		shuttle = dynamic_pointer_cast<const core::ShuttleTransit>(building.getSector(movedIndex));
+		if (!shuttle || shuttle->getNumStops() != 2) return false;
+		auto remove = building.planRemoveShuttle(movedIndex);
+		if (!remove.valid) return false;
+		building.applyShuttleEdit(remove);
+		if (building.getSectorAtPosition(CORE_LAYER_BACK, 1.0f, 1.0f)) return false;
+
+		core::Building manyDoors("Schematic Shuttle doors", 24, 2);
+		manyDoors.addCorridor(0, 0, 23);
+		core::Building::CreateShuttleOptions manyDoorOptions{ 1, 4, { 0, 10 }, 0 };
+		manyDoorOptions.doorMask = 0b1111;
+		auto manyDoorResult = manyDoors.addShuttle(0, 0, 20, manyDoorOptions);
+		manyDoors.finishBuild();
+		if (manyDoorResult.doors.size() != 8
+			|| !manyDoors.getValidShuttleStopOffsets(0, 0, 20, 1, 4, false, 1u << 4).empty()) return false;
+		for (uint32_t door = 0; door < 4; ++door)
+			if (manyDoorResult.doors[door].door.sector->getObject(
+				manyDoorResult.doors[door].door.index)->getCellX() != door) return false;
+
+		core::Building partial("Partial Shuttle authoring", 24, 2);
+		partial.addCorridor(0, 0, 4);
+		partial.addCorridor(0, 10, 4);
+		core::Building::CreateShuttleOptions partialOptions{ 2, 3, { 0, 10 }, 0 };
+		partialOptions.allowPartialLandings = true;
+		partialOptions.doorMask = 0b101;
+		auto partialCreated = partial.addShuttle(0, 0, 20, partialOptions);
+		partial.finishBuild();
+		return partialCreated.doors.size() == 8
+			&& partialCreated.doors[0].traversalResource
+			&& partialCreated.doors[1].traversalResource
+			&& !partialCreated.doors[2].traversalResource
+			&& !partialCreated.doors[3].traversalResource
+			&& partialCreated.doors[4].traversalResource
+			&& partialCreated.doors[5].traversalResource
+			&& !partialCreated.doors[6].traversalResource
+			&& !partialCreated.doors[7].traversalResource;
+	}
+
 	bool unavailableDoorRejectsTraversal()
 	{
 		core::Building building("Unavailable door", 6, 2);
@@ -2763,6 +2847,11 @@ int main()
 		if (!editorLiftAuthoringReconcilesOwnedLandings())
 		{
 			std::cerr << "FAIL: editor Lift authoring did not reconcile owned landings\n";
+			return 1;
+		}
+		if (!editorShuttleAuthoringReconcilesOwnedLandings())
+		{
+			std::cerr << "FAIL: editor Shuttle authoring did not reconcile owned landings\n";
 			return 1;
 		}
 		if (!unavailableDoorRejectsTraversal())
