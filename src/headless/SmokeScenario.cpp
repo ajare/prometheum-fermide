@@ -2839,6 +2839,73 @@ namespace
 			&& building.lookupAgent(journeys[2].id).entity->getSector() == building.getSector(middle).get();
 	}
 
+	bool shuttlePassengerWalksToForwardInteriorSpot()
+	{
+		core::Building building("Shuttle interior walking", 16, 2);
+		auto left = building.addRoom("Left platform", CORE_LAYER_FORE, 0, 0, 4, 1);
+		auto right = building.addRoom("Right platform", CORE_LAYER_FORE, 0, 10, 4, 1);
+		core::Building::CreateShuttleOptions options{ 1, 4, { 0, 10 }, 0 };
+		options.capacity = 3;
+		options.doorMask = 0b0001;
+		options.minimumDwellSeconds = 0.0f;
+		options.maximumBoardingSeconds = 0.1f;
+		auto created = building.addShuttle(0, 0, 15, options);
+		building.finishBuild();
+
+		auto target = building.getGraph()->getClosestVertexInSector(
+			building.getSector(right).get(), { 11.5f, 0.0f });
+		if (!target) return false;
+		auto passengerId = building.createAgent("Walking shuttle passenger", left, 0, 0.5f);
+		auto passenger = building.lookupAgent(passengerId).entity;
+		auto path = building.getGraph()->calculatePath(passenger, target);
+		if (!path) return false;
+		passenger->setPath(path, true);
+
+		bool boardedWithoutTeleport = false;
+		bool selectedForwardmostSpot = false;
+		bool reachedInteriorSpot = false;
+		bool walkedWhileShuttleMoving = false;
+		bool wasOnboard = false;
+		float previousX = passenger->getGlobalPosition().x;
+		for (uint32_t tick = 0; tick < MaximumSimulationTicks * 8; ++tick)
+		{
+			building.advanceTick();
+			auto snapshot = building.getSimulationSnapshot();
+			auto shuttle = std::find_if(snapshot.traversalResources.begin(),
+				snapshot.traversalResources.end(), [&](auto const& resource)
+				{ return resource.id == created.traversalResource; });
+			if (shuttle == snapshot.traversalResources.end()
+				|| shuttle->shuttleCarriages.size() != 1
+				|| shuttle->shuttleCarriages.front().positions.size() != options.capacity) return false;
+
+			auto onboard = passenger->getSector()
+				== building.getSector(created.shuttle.sector->getIndex()).get();
+			if (onboard && !wasOnboard)
+			{
+				boardedWithoutTeleport = std::abs(passenger->getGlobalPosition().x - previousX)
+					<= passenger->getWalkSpeed() * building.getFixedTimestep() + 0.001f;
+				auto const& positions = shuttle->shuttleCarriages.front().positions;
+				selectedForwardmostSpot = positions.back().occupant == passengerId;
+			}
+			if (onboard)
+			{
+				auto const& forward = shuttle->shuttleCarriages.front().positions.back().position;
+				auto passengerCarriageX = passenger->getGlobalPosition().x - shuttle->liftPosition;
+				reachedInteriorSpot = reachedInteriorSpot
+					|| std::abs(passengerCarriageX - forward.x) < 0.01f;
+				walkedWhileShuttleMoving = walkedWhileShuttleMoving
+					|| (shuttle->liftMoving && passengerCarriageX < forward.x - 0.01f);
+			}
+			wasOnboard = onboard;
+			previousX = passenger->getGlobalPosition().x;
+			if (passenger->getState() == core::Agent::State::Idle
+				&& passenger->getSector() == building.getSector(right).get()) break;
+		}
+		return boardedWithoutTeleport && selectedForwardmostSpot && reachedInteriorSpot
+			&& walkedWhileShuttleMoving && passenger->getState() == core::Agent::State::Idle
+			&& passenger->getSector() == building.getSector(right).get();
+	}
+
 	bool singleCarriageShuttleUsesTransportJourneyProtocol()
 	{
 		core::Building building("Single carriage shuttle", 12, 2);
@@ -2890,7 +2957,7 @@ namespace
 		bool sawFullWithWaiter = false;
 		bool sawAttachedMotion = false;
 		bool sawDisembarkBeforeBoard = false;
-		std::map<core::AgentId, float> previousShuttleX;
+		std::map<core::AgentId, float> previousCarriageX;
 		for (uint32_t tick = 0; tick < MaximumSimulationTicks * 14; ++tick)
 		{
 			building.advanceTick();
@@ -2908,16 +2975,16 @@ namespace
 				auto passenger = building.lookupAgent(passengerId).entity;
 				if (passenger->getSector() != building.getSector(created.shuttle.sector->getIndex()).get())
 				{
-					previousShuttleX.erase(passengerId);
+					previousCarriageX.erase(passengerId);
 					continue;
 				}
-				auto x = passenger->getGlobalPosition().x;
-				if (auto previous = previousShuttleX.find(passengerId); previous != previousShuttleX.end())
+				auto carriageX = passenger->getGlobalPosition().x - shuttle->liftPosition;
+				if (auto previous = previousCarriageX.find(passengerId); previous != previousCarriageX.end())
 				{
-					if (std::abs(x - previous->second) > passenger->getWalkSpeed()
+					if (std::abs(carriageX - previous->second) > passenger->getWalkSpeed()
 						* building.getFixedTimestep() + 0.001f) return false;
 				}
-				previousShuttleX[passengerId] = x;
+				previousCarriageX[passengerId] = carriageX;
 			}
 			sawFullWithWaiter = sawFullWithWaiter
 				|| (shuttle->occupantCount == options.capacity && !shuttle->admissionQueue.empty());
@@ -3793,6 +3860,11 @@ int main()
 		if (!liftFailuresCancellationAndDisableDrainSafely())
 		{
 			std::cerr << "FAIL: lift failure, cancellation, or disabled draining was unsafe\n";
+			return 1;
+		}
+		if (!shuttlePassengerWalksToForwardInteriorSpot())
+		{
+			std::cerr << "FAIL: Shuttle passenger teleported or did not walk to the forward interior spot\n";
 			return 1;
 		}
 		if (!singleCarriageShuttleUsesTransportJourneyProtocol())

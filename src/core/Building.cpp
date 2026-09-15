@@ -6621,7 +6621,28 @@ namespace core
 					count = carriage.capacity;
 				}
 				uint32_t position = ~0u;
-				for (uint32_t i = first; i < first + count; ++i)
+				if (coordinator->mShuttle)
+				{
+					// Fill the carriage from its leading end. A boarding passenger
+					// chooses the furthest available spot in the direction of travel,
+					// then walks there after crossing the threshold.
+					float direction = coordinator->mLiftDirection == TraversalDirection::Descending
+						? -1.0f : 1.0f;
+					float bestProgress = -numeric_limits<float>::infinity();
+					for (uint32_t i = first; i < first + count; ++i)
+					{
+						if (coordinator->mOccupants[i] || coordinator->mAdmissionReservations[i]) continue;
+						auto globalX = coordinator->mLiftPosition
+							+ coordinator->mCapacityPositions[i].x;
+						auto progress = direction * (globalX - actor->getGlobalPosition().x);
+						if (position == ~0u || progress > bestProgress)
+						{
+							position = i;
+							bestProgress = progress;
+						}
+					}
+				}
+				else for (uint32_t i = first; i < first + count; ++i)
 					if (!coordinator->mOccupants[i] && !coordinator->mAdmissionReservations[i])
 					{ position = i; break; }
 				if (position == ~0u) return;
@@ -7252,10 +7273,18 @@ namespace core
 				request->mCapacityPosition = ~0u;
 				auto local = lift->mCapacityPositions[position];
 				if (lift->mShuttle)
-					local.x += lift->mLiftPosition - destinationSector->getPosition().x;
+				{
+					// Crossing commits occupancy at the carriage threshold. Walking to
+					// the reserved interior spot remains ordinary Agent locomotion.
+					auto target = destinationSector->getPosition() + local;
+					target.x += lift->mLiftPosition - destinationSector->getPosition().x;
+					agent.mTraversalLocalGoal = target;
+				}
 				else
+				{
 					local.y += lift->mLiftPosition - destinationSector->getPosition().y;
-				agent.setPosition({ destinationSector.get(), local }, false);
+					agent.setPosition({ destinationSector.get(), local }, false);
+				}
 			}
 			else if (request->mSourceSector == lift->mLiftSector
 				&& request->mDestinationSector != lift->mLiftSector)
@@ -8687,6 +8716,7 @@ namespace core
 			(void)resourceId;
 			auto& resource = *resourcePtr;
 			if ((!resource.mLift && !resource.mShuttle) || resource.mLiftStops.empty()) continue;
+			auto previousVehiclePosition = resource.mLiftPosition;
 			auto forEachLanding = [&](auto&& callback)
 			{
 				if (resource.mShuttle)
@@ -8877,14 +8907,29 @@ namespace core
 					|| resource.mLiftStopPhase == LiftStopPhase::Boarding);
 			if (resource.mLift) resource.mLift->setCoordinatedPosition(resource.mLiftPosition);
 			else resource.mShuttle->setCoordinatedPosition(resource.mLiftPosition);
-			for (uint32_t i = 0; resource.mLiftMoving && i < resource.mOccupants.size(); ++i)
+			for (uint32_t i = 0; i < resource.mOccupants.size(); ++i)
 				if (auto passenger = mAgents.find(resource.mOccupants[i]))
 				{
 					auto transit = mSectors[(size_t)resource.mLiftSector.value - 1].get();
 					auto local = resource.mCapacityPositions[i];
-					if (resource.mShuttle) local.x += resource.mLiftPosition - transit->getPosition().x;
-					else local.y += resource.mLiftPosition - transit->getPosition().y;
-					passenger->setPosition({ transit, local }, false);
+					if (resource.mShuttle)
+					{
+						// Carry the passenger by the vehicle's translation without changing
+						// their position within the carriage, then let Agent locomotion close
+						// the remaining distance to the reserved standing position.
+						auto vehicleDelta = resource.mLiftPosition - previousVehiclePosition;
+						if (abs(vehicleDelta) > 0.0f)
+							passenger->setPosition({ transit,
+								passenger->getLocalPosition() + Vector2{ vehicleDelta, 0.0f } }, false);
+						auto target = transit->getPosition() + local;
+						target.x += resource.mLiftPosition - transit->getPosition().x;
+						passenger->mTraversalLocalGoal = target;
+					}
+					else if (resource.mLiftMoving)
+					{
+						local.y += resource.mLiftPosition - transit->getPosition().y;
+						passenger->setPosition({ transit, local }, false);
+					}
 				}
 		}
 	}
