@@ -5301,6 +5301,8 @@ namespace core
 				agent->mTraversalLocalGoal.reset();
 			}
 		}
+		if (resource.mPreparationOperator == requestId)
+			resource.mPreparationOperator = {};
 		refreshQueuePositions(resource);
 	}
 
@@ -6540,9 +6542,25 @@ namespace core
 				request->mPreparationRequested = true;
 				if (interaction && !interaction->mOperations.empty())
 					request->mPreparationOperation = interaction->mOperations.front().first;
+				// A passenger physically operating the landing call cannot also walk
+				// toward a reserved queue position. Suspend that position until the
+				// button has been pressed; logical FIFO admission is retained.
+				if (!edgeResource.mPreparationOperator)
+				{
+					edgeResource.mPreparationOperator = requestId;
+					refreshQueuePositions(edgeResource);
+				}
 				return;
 			}
 			auto operation = mDeviceOperations.find(request->mPreparationOperation);
+			if (edgeResource.mPreparationOperator == requestId && operation
+				&& (operation->mActivated
+					|| (operation->mState != DeviceOperationState::Pending
+						&& operation->mState != DeviceOperationState::Running)))
+			{
+				edgeResource.mPreparationOperator = {};
+				refreshQueuePositions(edgeResource);
+			}
 			if (!operation || operation->mState == DeviceOperationState::Pending
 				|| operation->mState == DeviceOperationState::Running) return;
 			if (operation->mState != DeviceOperationState::Succeeded)

@@ -2505,6 +2505,7 @@ namespace
 		auto path = building.getGraph()->calculatePath(waiterEntity, approach, upperTarget);
 		if (!path) return false;
 		waiterEntity->setPath(std::move(path), true);
+		bool requestedBeforeOccupiedTail = false;
 		for (uint32_t tick = 0; tick < MaximumSimulationTicks; ++tick)
 		{
 			auto const positionBeforeTick = waiterEntity->getGlobalPosition();
@@ -2514,17 +2515,76 @@ namespace
 				[&](auto const& value) { return value.owner == waiter
 					&& value.resource == created.doors.front().traversalResource
 					&& value.state == core::TraversalRequestState::Pending; });
-			if (request == snapshot.traversalRequests.end() || !request->hasQueuePosition) continue;
+			if (request == snapshot.traversalRequests.end()) continue;
 			auto landing = find_if(snapshot.traversalResources.begin(), snapshot.traversalResources.end(),
 				[&](auto const& value) { return value.id == created.doors.front().traversalResource; });
-			auto agent = find_if(snapshot.agents.begin(), snapshot.agents.end(),
-				[&](auto const& value) { return value.id == waiter; });
-			if (landing == snapshot.traversalResources.end() || agent == snapshot.agents.end()) return false;
+			if (landing == snapshot.traversalResources.end()) return false;
+			if (request->queueApproach >= landing->queueLanes.size()) continue;
 			auto const& lane = landing->queueLanes[request->queueApproach];
+			requestedBeforeOccupiedTail = requestedBeforeOccupiedTail
+				|| positionBeforeTick.x < lane.origin.x;
+			if (!request->hasQueuePosition) continue;
 			auto const target = lane.positions[request->queuePosition].position;
-			return positionBeforeTick.x < lane.origin.x
-				&& target.x >= positionBeforeTick.x - 0.001f
-				&& target.x <= lane.origin.x + 0.001f;
+			return requestedBeforeOccupiedTail && target.x <= lane.origin.x + 0.001f;
+		}
+		return false;
+	}
+
+	bool liftCallOperatorDoesNotFightItsQueuePosition()
+	{
+		core::Building building("Lift call operator queue", 16, 3);
+		auto bottom = building.addCorridor(0, 0, 16);
+		auto middle = building.addCorridor(1, 0, 16);
+		auto top = building.addCorridor(2, 0, 16);
+		core::Building::CreateLiftOptions options;
+		options.cellsWide = 1;
+		options.stopOffsets = { 0, 1, 2 };
+		options.capacity = 2;
+		options.minimumDwellSeconds = 0.75f;
+		options.maximumBoardingSeconds = 5.0f;
+		building.addLift(0, 8, options);
+		uint32_t bottomTargetId, middleTargetId, topTargetId;
+		building.addSectorMarker(bottom, 0, 0.5f, &bottomTargetId);
+		building.addSectorMarker(middle, 0, 0.5f, &middleTargetId);
+		building.addSectorMarker(top, 0, 0.5f, &topTargetId);
+		building.finishBuild();
+
+		auto graph = building.getGraph();
+		auto bottomTarget = graph->getVertexByIdentifier(bottomTargetId);
+		auto middleTarget = graph->getVertexByIdentifier(middleTargetId);
+		auto topTarget = graph->getVertexByIdentifier(topTargetId);
+		struct Group { uint32_t sector; std::shared_ptr<const core::Vertex> target; char const* name; };
+		Group groups[] = {
+			{ bottom, topTarget, "Bottom Right" },
+			{ middle, bottomTarget, "Middle Right" },
+			{ top, middleTarget, "Top Right" }
+		};
+		std::vector<core::AgentId> agents;
+		for (auto const& group : groups)
+			for (uint32_t i = 0; i < 3; ++i)
+			{
+				auto id = building.createAgent(
+					std::string(group.name) + " " + std::to_string(i + 1),
+					group.sector, 0, 14.75f - i * 0.75f);
+				auto agent = building.lookupAgent(id).entity;
+				auto path = graph->calculatePath(agent, group.target);
+				if (!path) return false;
+				agent->setPath(std::move(path), true);
+				agents.push_back(id);
+			}
+
+		for (uint32_t tick = 0; tick < MaximumSimulationTicks * 12; ++tick)
+		{
+			building.advanceTick();
+			auto snapshot = building.getSimulationSnapshot();
+			if (std::any_of(snapshot.traversalRequests.begin(), snapshot.traversalRequests.end(),
+				[](auto const& request)
+				{ return request.failureReason == core::TraversalFailureReason::LocalGoalUnreachable; }))
+				return false;
+			if (std::all_of(agents.begin(), agents.end(), [&](auto id)
+				{ return building.lookupAgent(id).entity->getState() == core::Agent::State::Idle; }))
+				return building.lookupAgent(agents[4]).entity->getSector()
+					== building.getSector(bottom).get();
 		}
 		return false;
 	}
@@ -3713,6 +3773,11 @@ int main()
 		if (!waitingLiftPassengersFillArrivingCar())
 		{
 			std::cerr << "FAIL: waiting passengers did not fill an arriving lift with available capacity\n";
+			return 1;
+		}
+		if (!liftCallOperatorDoesNotFightItsQueuePosition())
+		{
+			std::cerr << "FAIL: Lift call operator fought its reserved queue position\n";
 			return 1;
 		}
 		if (!liftCapacityAndStopPhasesAreEnforced())
