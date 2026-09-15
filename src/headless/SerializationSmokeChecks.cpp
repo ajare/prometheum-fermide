@@ -15,6 +15,7 @@
 #include "core/Serializable.h"
 #include "core/SerializationException.h"
 #include "core/LadderTransit.h"
+#include "core/LiftTransit.h"
 #include "core/ShuttleTransit.h"
 #include "core/Staircase.h"
 #include "core/StaircaseTransit.h"
@@ -493,6 +494,28 @@ agents: []
 			"Unavoidable same-X controls did not use the height fallback");
 	}
 
+	void enclosedLiftsSupportMultiDeckRooms()
+	{
+		core::Building building("Room lift", 16, 3);
+		auto room = building.addRoom("Lift Hall", CORE_LAYER_FORE, 0, 0, 16, 3);
+		for (uint32_t deck = 1; deck < 3; ++deck)
+			for (uint32_t x = 0; x < 16; ++x)
+				building.addSectorWalkway(room, deck, x);
+
+		core::Building::CreateLiftOptions options;
+		options.cellsWide = 1;
+		options.decksHigh = 3;
+		options.stopOffsets = { 0, 1, 2 };
+		auto created = building.addLift(0, 8, options);
+		building.addSectorMarker(room, 1, 0.5f);
+		building.addSectorMarker(room, 2, 15.5f);
+		building.finishBuild();
+
+		auto lift = std::dynamic_pointer_cast<const core::LiftTransit>(created.lift.sector);
+		require(lift && lift->getNumStops() == 3 && created.doors.size() == 3,
+			"An enclosed Lift could not connect Ground and Walkways in one Fore-layer Room");
+	}
+
 	void staircaseSectorsAreCanvasSelectable()
 	{
 		require(isCanvasSelectableSectorType(core::SectorType::Staircase),
@@ -831,6 +854,7 @@ void runSerializationSmokeChecks()
 	legacyBuildingYamlStillLoads();
 	locationEditsArePlannedAndAppliedAtomically();
 	editedShuttleRoundTripsWithoutSchemaChanges();
+	enclosedLiftsSupportMultiDeckRooms();
 	staircaseSectorsAreCanvasSelectable();
 	laddersCanBeValidatedEditedAndDeleted();
 	staircasesCanBeValidatedEditedAndDeleted();

@@ -644,7 +644,7 @@ namespace core
 		assert(foreSector->getType() == SectorType::Location);
 
 		// Create door in Fore Location and add to Back.
-		uint32_t doorIndex = foreSector->createDoor(foreSector, backSector, x, cellsWide, vertexIdentifier);
+		uint32_t doorIndex = foreSector->createDoor(foreSector, backSector, x, y, cellsWide, vertexIdentifier);
 		backSector->addDoor(dynamic_pointer_cast<DoorSectorObject>(foreSector->_getObject(doorIndex)));
 
 		return {
@@ -1522,8 +1522,8 @@ namespace core
 			{
 				auto const& firstCell = mLayers[CORE_LAYER_FORE]->getCellDefinition(x, iy);
 				if (firstCell.sectorIndex == ~0u) continue;
-				auto corridor = dynamic_pointer_cast<const Location>(mSectors[firstCell.sectorIndex]);
-				if (!corridor || !corridor->isCorridor()) continue;
+				auto location = dynamic_pointer_cast<const Location>(mSectors[firstCell.sectorIndex]);
+				if (!location) continue;
 				bool complete = true;
 				bool obstructed = false;
 				for (uint32_t ix = x; ix < x + cellsWide; ++ix)
@@ -1586,13 +1586,13 @@ namespace core
 					throw BuildingException(this, format("{} - foreground cell at {},{} is not occupied, which blocks lift being placed", caller, ix, iy));
 				}
 
-				// Enclosed lifts only connect fully overlapping corridors.
+				// Enclosed lifts connect fully overlapping Fore-layer Locations.
 				auto const& foreSector = getSector(foreSectorIndex);
-				auto corridor = dynamic_pointer_cast<const Location>(foreSector);
+				auto location = dynamic_pointer_cast<const Location>(foreSector);
 
-				if (!corridor || !corridor->isCorridor())
+				if (!location)
 				{
-					throw BuildingException(this, format("{} - foreground cell at {},{} is not a Corridor, which blocks lift being placed", caller, ix, iy));
+					throw BuildingException(this, format("{} - foreground cell at {},{} is not a Location, which blocks lift being placed", caller, ix, iy));
 				}
 
 				// Lifts must not be in the air and every intersecting landing must be clear.
@@ -2655,6 +2655,19 @@ namespace core
 			lane.positionOwners.assign(lane.positions.size(), {});
 		}
 
+		// The shared Door can have different local object indices in its two Sectors.
+		uint32_t backDoorIndex = ~0u;
+		for (uint32_t i = 0; i < sectors[CORE_LAYER_BACK]->getNumObjects(); ++i)
+		{
+			if (sectors[CORE_LAYER_BACK]->getObject(i) == doorSectorObject)
+			{
+				backDoorIndex = i;
+				break;
+			}
+		}
+		if (backDoorIndex == ~0u)
+			throw BuildingException(this, format("{} - could not locate Door in its Back-layer Sector", caller));
+
 		// Set layers
 		for (uint32_t ix = x; ix < x + cellsWide; ++ix)
 		{
@@ -2664,7 +2677,7 @@ namespace core
 			cellDef0.sectorObjectIndex = doorObject.index;
 			cellDef0.sectorObjectType = doorObject.type;
 
-			cellDef1.sectorObjectIndex = doorObject.index;
+			cellDef1.sectorObjectIndex = backDoorIndex;
 			cellDef1.sectorObjectType = doorObject.type;
 		}
 
@@ -3153,8 +3166,9 @@ namespace core
 		auto const cellX = sector->getCellX() + (uint32_t)floor(xOffset);
 		auto const cellY = sector->getCellY() + deckIndex;
 		auto const& cellDef = mLayers[sector->getLayerIndex()]->getCellDefinition(cellX, cellY);
-		if (cellDef.floorType != CellFloorType::Ground)
-			return reject("Markers require a ground floor");
+		if (cellDef.floorType != CellFloorType::Ground
+			&& cellDef.floorType != CellFloorType::Walkway)
+			return reject("Markers require ground or a Walkway");
 
 		auto const globalX = sector->getCellX() + xOffset;
 		for (uint32_t i = 0; i < sector->getNumObjects(); ++i)

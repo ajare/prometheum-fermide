@@ -334,8 +334,9 @@ namespace core
 	{
 		ASSERT_INDEX_OK(obj.index);
 
-		// Doors are only ever created on the fore Layer
-		auto doorObject = obj.sectors[CORE_LAYER_FORE]->_getObject(obj.index);
+		// A shared Door can have a different object index in each owning Sector.
+		// Resolve it through the layer currently being scanned.
+		auto doorObject = obj.sectors[obj.layerIndex]->_getObject(obj.index);
 		auto sector = obj.sectors[obj.layerIndex];
 
 		// Create Vertex based on Sector type
@@ -923,7 +924,7 @@ namespace core
 					{					
 						// Only process one cell, so if this Door is wider than one, just
 						// process left-most
-						if (x == 0 || layers[0]->getCellDefinition(x - 1, y).sectorObjectIndex != cellDef.sectorObjectIndex)
+						if (x == 0 || layer->getCellDefinition(x - 1, y).sectorObjectIndex != cellDef.sectorObjectIndex)
 						{
 							// Get both Layer Locations here, as Doors need them both
 							auto cellDef0 = layers[0]->getCellDefinition(x, y);

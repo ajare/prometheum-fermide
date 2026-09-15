@@ -911,8 +911,8 @@ namespace core
 		{
 			auto const& first = mLayers[CORE_LAYER_FORE]->getCellDefinition(x, iy);
 			if (first.sectorIndex == ~0u) continue;
-			auto corridor = dynamic_pointer_cast<const Location>(mSectors[first.sectorIndex]);
-			if (!corridor || !corridor->isCorridor()) continue;
+			auto location = dynamic_pointer_cast<const Location>(mSectors[first.sectorIndex]);
+			if (!location) continue;
 			bool complete = true;
 			for (uint32_t ix = x; ix < x + cellsWide; ++ix)
 			{
@@ -929,7 +929,7 @@ namespace core
 			if (complete) plan.stopOffsets.push_back(iy - y);
 		}
 		if (plan.stopOffsets.size() < 2)
-		{ plan.diagnostic = "The Lift requires at least two fully overlapping Fore-layer corridor floors"; return plan; }
+		{ plan.diagnostic = "The Lift requires at least two fully overlapping Fore-layer Location floors"; return plan; }
 		vector<uint32_t> oldStops;
 		for (uint32_t i = 0; i < lift->getNumStops(); ++i)
 			oldStops.push_back((uint32_t)((int)lift->getStop(i).sector->getCellY() + lift->getStop(i).sectorOffsetY));

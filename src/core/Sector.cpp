@@ -181,13 +181,15 @@ namespace core
 		return SectorPosition(this, x, y);
 	}
 
-	uint32_t Sector::createDoor(shared_ptr<const Sector> sector, shared_ptr<const Sector> backSector, uint32_t x, uint32_t cellsWide, uint32_t* vertexIdentifier)
+	uint32_t Sector::createDoor(shared_ptr<const Sector> sector, shared_ptr<const Sector> backSector,
+		uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t* vertexIdentifier)
 	{
 		ASSERT_PTR_EQ_THIS(sector);
 		assert(x >= getCellX0() && x <= getCellX1());
+		assert(y >= getCellY0() && y <= getCellY1());
 
 		shared_ptr<const Sector> sectors[2] = { sector, backSector };
-		auto door = make_shared<DoorSectorObject>(x, getCellY(), cellsWide, sectors, vertexIdentifier);
+		auto door = make_shared<DoorSectorObject>(x, y, cellsWide, sectors, vertexIdentifier);
 
 		return addSectorObject(door);
 	}
