@@ -142,6 +142,9 @@ namespace core
 			uint32_t initialStop{ 0 };
 			// Zero preserves the legacy API behaviour of ending at the highest stop.
 			uint32_t decksHigh{ 0 };
+			// Used only by open PlatformLifts. Enclosed Lifts retain their separate
+			// minimum-dwell and maximum-boarding timings.
+			float platformStopDurationSeconds{ CORE_PLATFORM_LIFT_STOP_DURATION };
 		};
 
 		struct CreateLiftResult
@@ -414,7 +417,7 @@ namespace core
 			std::string name{};
 			uint32_t a{ 0 }, b{ 0 }, c{ 0 }, d{ 0 }, e{ 0 }, f{ 0 }, g{ 0 }, h{ 0 };
 			int32_t i{ 0 }, j{ 0 };
-			float x{ 0.0f }, y{ 0.0f };
+			float x{ 0.0f }, y{ 0.0f }, z{ 0.0f };
 			bool p{ false }, q{ false };
 			std::vector<uint32_t> values{};
 		};
@@ -1131,8 +1134,8 @@ namespace core
 
 		TraversalResourceId createOpenPlatformLiftTraversalResource(std::string const& name,
 			std::shared_ptr<Lift> lift, SectorId locationSector, std::vector<LiftStop> stops,
-			uint32_t capacity = 1, float minimumDwellSeconds = CORE_LIFT_DOOR_PAUSE_TIME,
-			float maximumBoardingSeconds = CORE_DOOR_STAY_OPEN_TIME);
+			uint32_t capacity = 1,
+			float stopDurationSeconds = CORE_PLATFORM_LIFT_STOP_DURATION);
 
 		TraversalResourceId createShuttleTraversalResource(std::string const& name,
 			std::shared_ptr<Shuttle> shuttle, SectorId shuttleSector, std::vector<LiftStop> stops,

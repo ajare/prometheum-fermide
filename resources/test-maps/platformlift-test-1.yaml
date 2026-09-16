@@ -102,8 +102,7 @@ construction:
     cellsWide: 1
     stopOffsets: [0, 1, 2, 3]
     capacity: 2
-    minimumDwellSeconds: 0.75
-    maximumBoardingSeconds: 5
+    stopDurationSeconds: 10
   - type: marker
     sectorIndex: 0
     deckIndex: 3

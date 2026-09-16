@@ -298,7 +298,10 @@ namespace core
 		// doors with one capacity-limited virtual crossing boundary.
 		bool mOpenPlatformLift{ false };
 		std::vector<TraversalRequestId> mVirtualBoundaryOwners;
-		std::map<TraversalRequestId, uint64_t> mVirtualBoardingStarted;
+		// Callers that missed an exact PlatformLift cutoff remain physically still
+		// until that car begins another boarding window at their stop.
+		std::set<TraversalRequestId> mOpenPlatformMissedBoarding;
+		std::map<TraversalRequestId, Vector2> mOpenPlatformMissedPositions;
 		LiftStopPhase mLiftStopPhase{ LiftStopPhase::Idle };
 		uint64_t mLiftServiceStartedTick{ 0 };
 		uint64_t mLiftBoardingCutoffTick{ 0 };

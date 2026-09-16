@@ -200,8 +200,7 @@ namespace core
 			serializer.writeUint32("sectorIndex", record.a); serializer.writeUint32("deckIndex", record.b);
 			serializer.writeUint32("xOffset", record.c); serializer.writeUint32("cellsWide", record.d);
 			writeStops(); serializer.writeUint32("capacity", record.e);
-			serializer.writeFloat("minimumDwellSeconds", record.x);
-			serializer.writeFloat("maximumBoardingSeconds", record.y); break;
+			serializer.writeFloat("stopDurationSeconds", record.z); break;
 		case ConstructionType::Walkway:
 			serializer.writeUint32("sectorIndex", record.a); serializer.writeUint32("deckIndex", record.b);
 			serializer.writeUint32("xOffset", record.c); break;
@@ -404,8 +403,12 @@ namespace core
 			record.a = serializer.readUint32("sectorIndex"); record.b = serializer.readUint32("deckIndex");
 			record.c = serializer.readUint32("xOffset"); record.d = serializer.readUint32("cellsWide");
 			readStops(); record.e = serializer.readUint32("capacity");
-			record.x = serializer.readFloat("minimumDwellSeconds");
-			record.y = serializer.readFloat("maximumBoardingSeconds"); break;
+			// Legacy timing fields remain accepted for old maps, but PlatformLift now
+			// has one independent per-stop duration.
+			record.x = serializer.readFloat("minimumDwellSeconds", true, CORE_LIFT_DOOR_PAUSE_TIME);
+			record.y = serializer.readFloat("maximumBoardingSeconds", true,
+				CORE_PLATFORM_LIFT_STOP_DURATION);
+			record.z = serializer.readFloat("stopDurationSeconds", true, record.y); break;
 		case ConstructionType::Walkway:
 			record.a = serializer.readUint32("sectorIndex"); record.b = serializer.readUint32("deckIndex");
 			record.c = serializer.readUint32("xOffset"); break;
@@ -659,7 +662,7 @@ namespace core
 			break;
 		case ConstructionType::PlatformLift:
 			addSectorPlatformLift(record.a, record.b, record.c,
-				{ record.d, record.values, record.e, record.x, record.y });
+				{ record.d, record.values, record.e, record.x, record.y, 0, 0, record.z });
 			break;
 		case ConstructionType::Walkway:
 			addSectorWalkway(record.a, record.b, record.c);
@@ -3011,6 +3014,7 @@ namespace core
 		options.capacity = found->e;
 		options.minimumDwellSeconds = found->x;
 		options.maximumBoardingSeconds = found->y;
+		options.platformStopDurationSeconds = found->z;
 		return true;
 	}
 
@@ -3047,6 +3051,7 @@ namespace core
 			found->e = plan.options.capacity;
 			found->x = plan.options.minimumDwellSeconds;
 			found->y = plan.options.maximumBoardingSeconds;
+			found->z = plan.options.platformStopDurationSeconds;
 			found->values = plan.options.stopOffsets;
 			sort(found->values.begin(), found->values.end());
 			found->values.erase(unique(found->values.begin(), found->values.end()), found->values.end());

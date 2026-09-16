@@ -3099,8 +3099,8 @@ namespace
 			output << YAML::Key << "type" << YAML::Value << "PlatformLift"
 				<< YAML::Key << "object" << YAML::Value << YAML::BeginMap
 				<< YAML::Key << "capacity" << YAML::Value << options.capacity
-				<< YAML::Key << "minimumDwellSeconds" << YAML::Value << options.minimumDwellSeconds
-				<< YAML::Key << "maximumBoardingSeconds" << YAML::Value << options.maximumBoardingSeconds
+				<< YAML::Key << "stopDurationSeconds" << YAML::Value
+				<< options.platformStopDurationSeconds
 				<< YAML::EndMap;
 		}
 		else if (gSelectedSectorObject->getObjectType() == core::SectorObjectType::Ladder)
@@ -3251,8 +3251,16 @@ namespace
 			definition.type = ClipboardObjectType::PlatformLift;
 			definition.platformLift.cellsWide = 1;
 			definition.platformLift.capacity = requiredYaml<uint32_t>(object, "capacity");
-			definition.platformLift.minimumDwellSeconds = requiredYaml<float>(object, "minimumDwellSeconds");
-			definition.platformLift.maximumBoardingSeconds = requiredYaml<float>(object, "maximumBoardingSeconds");
+			if (object["stopDurationSeconds"])
+				definition.platformLift.platformStopDurationSeconds = requiredYaml<float>(
+					object, "stopDurationSeconds");
+			else
+				// Legacy clipboard payloads had separate timings. Their maximum boarding
+				// window is the closest equivalent to the new fixed stop duration.
+				definition.platformLift.platformStopDurationSeconds = requiredYaml<float>(
+					object, "maximumBoardingSeconds");
+			if (definition.platformLift.platformStopDurationSeconds < 0.0f)
+				throw runtime_error("PlatformLift stopDurationSeconds cannot be negative");
 		}
 		else if (type == "RoomLadder")
 		{
@@ -5117,10 +5125,13 @@ void renderPlatformLiftPanel(shared_ptr<core::Building> const& building,
 		ImGui::PopID();
 	}
 	if (candidates.empty()) ImGui::TextDisabled("No Walkways exist above this column.");
+	ImGui::InputFloat("Stop duration (seconds)", &draft.platformStopDurationSeconds,
+		0.5f, 1.0f, "%.2f");
 	sort(draft.stopOffsets.begin(), draft.stopOffsets.end());
-	bool changed = draft.stopOffsets != current.stopOffsets;
-	ImGui::BeginDisabled(!changed);
-	if (ImGui::Button("Apply PlatformLift stops"))
+	bool changed = draft.stopOffsets != current.stopOffsets
+		|| abs(draft.platformStopDurationSeconds - current.platformStopDurationSeconds) > 0.0001f;
+	ImGui::BeginDisabled(!changed || draft.platformStopDurationSeconds < 0.0f);
+	if (ImGui::Button("Apply PlatformLift settings"))
 	{
 		auto plan = building->planPlatformLiftEdit(room->getIndex(), objectIndex, draft);
 		if (!plan.valid) reportEditorError("PlatformLift editor", plan.diagnostic);

@@ -80,6 +80,7 @@
 #define CORE_LIFT_CAR_HEIGHT						(CORE_LIFT_DOORWAY_HEIGHT + 0.05f)
 #define CORE_LIFT_SPEED								0.5f
 #define CORE_LIFT_DOOR_PAUSE_TIME					0.75f
+#define CORE_PLATFORM_LIFT_STOP_DURATION			10.0f
 
 //
 // Shuttles

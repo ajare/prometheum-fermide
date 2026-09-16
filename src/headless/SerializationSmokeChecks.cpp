@@ -494,6 +494,47 @@ agents: []
 			"Unavoidable same-X controls did not use the height fallback");
 	}
 
+	void platformLiftStopDurationRoundTrips()
+	{
+		core::Building original("Serializable PlatformLift", 7, 4);
+		auto room = original.addRoom("Platform room", CORE_LAYER_FORE, 0, 0, 6, 3);
+		for (uint32_t deck = 1; deck <= 2; ++deck)
+		{
+			original.addSectorWalkway(room, deck, 2);
+			original.addSectorWalkway(room, deck, 3);
+		}
+		core::Building::CreateLiftOptions options;
+		options.stopOffsets = { 0, 1, 2 };
+		options.platformStopDurationSeconds = 3.5f;
+		auto created = original.addSectorPlatformLift(room, 0, 2, options);
+		original.finishBuild();
+
+		core::SerializationWorkData workData;
+		auto writer = core::YamlSerializer::toString();
+		original.serialize(*writer, workData);
+		writer->serialize();
+		auto yaml = writer->getSerializedString();
+		require(yaml.find("stopDurationSeconds: 3.5") != std::string::npos
+			&& yaml.find("minimumDwellSeconds") == std::string::npos
+			&& yaml.find("maximumBoardingSeconds") == std::string::npos,
+			"PlatformLift did not serialize its single stop timer");
+
+		core::Building loaded("placeholder", 1, 1);
+		auto reader = core::YamlSerializer::fromString(yaml);
+		reader->deserialize();
+		require(loaded.deserialize(*reader, workData), "PlatformLift YAML did not deserialize");
+		core::Building::CreateLiftOptions loadedOptions;
+		require(loaded.getPlatformLiftOptions(created.lift.sector->getIndex(), created.lift.index,
+				loadedOptions)
+			&& std::abs(loadedOptions.platformStopDurationSeconds - 3.5f) < 0.001f,
+			"PlatformLift stop timer did not round-trip");
+
+		core::Building::CreateLiftOptions defaults;
+		require(std::abs(defaults.platformStopDurationSeconds
+			- CORE_PLATFORM_LIFT_STOP_DURATION) < 0.001f,
+			"PlatformLift stop timer default is not the Defines.h value");
+	}
+
 	void enclosedLiftsSupportMultiDeckRooms()
 	{
 		core::Building building("Room lift", 16, 3);
@@ -855,6 +896,7 @@ void runSerializationSmokeChecks()
 	fileYamlRoundTrips();
 	malformedValuesAndInvalidUsageThrowUsefulErrors();
 	buildingRoundTripsAuthoredStateAndAgents();
+	platformLiftStopDurationRoundTrips();
 	legacyBuildingYamlStillLoads();
 	locationEditsArePlannedAndAppliedAtomically();
 	editedShuttleRoundTripsWithoutSchemaChanges();
