@@ -12,6 +12,7 @@ namespace core
 		Ladder,
 		Lift,
 		Shuttle,
+		Stairwell,
 		Staircase
 	};
 

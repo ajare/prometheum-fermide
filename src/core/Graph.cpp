@@ -18,7 +18,8 @@
 #include "core/ShuttleVertex.h"
 #include "core/SectorObjectVertex.h"
 #include "core/SectorMarkerVertex.h"
-#include "core/StaircaseLocationVertex.h"
+#include "core/StairwellLocationVertex.h"
+#include "core/StairwellVertex.h"
 #include "core/StaircaseVertex.h"
 #include "core/WindowVertex.h"
 
@@ -31,6 +32,7 @@
 #include "core/LadderMountEdge.h"
 #include "core/LiftMountEdge.h"
 #include "core/ShuttleMountEdge.h"
+#include "core/StairwellMountEdge.h"
 #include "core/StaircaseMountEdge.h"
 #include "core/SectorEdge.h"
 
@@ -41,7 +43,7 @@
 
 // Transits
 #include "core/LadderTransit.h"
-#include "core/StaircaseTransit.h"
+#include "core/StairwellTransit.h"
 
 
 namespace core
@@ -710,9 +712,9 @@ namespace core
 		return shuttleVertex;
 	}
 
-	void Graph::processStaircaseTransit(int layerIndex, uint32_t curSectorIndex, uint32_t backSectorIndex, uint32_t x, uint32_t y, uint32_t deckOffset, PositionVertexMap& interLayerVertexLookup, VertexList& workVertices, map<shared_ptr<VerticalEdgeCreator>, VertexList>& crossDeckVertices)
+	void Graph::processStairwellTransit(int layerIndex, uint32_t curSectorIndex, uint32_t backSectorIndex, uint32_t x, uint32_t y, uint32_t deckOffset, PositionVertexMap& interLayerVertexLookup, VertexList& workVertices, map<shared_ptr<VerticalEdgeCreator>, VertexList>& crossDeckVertices)
 	{
-		// Staircase Vertices are probably the most complex to place, as we have to design a usable path through the transit
+		// Stairwell Vertices are probably the most complex to place, as we have to design a usable path through the transit
 		// area, whose steps are not too steep.  Also need to take into account the width of Agents as they pass through.
 		
 		// There are 16 square steps horizontally.  This makes 20 vertically, given it's 2 cells wide.
@@ -722,16 +724,16 @@ namespace core
 		float yOffset = (float)(y - sector->getCellY());
 
 		auto backSector = mwBuilding->_getSector(backSectorIndex);
-		auto staircaseTransit = dynamic_pointer_cast<StaircaseTransit>(backSector);
+		auto stairwellTransit = dynamic_pointer_cast<StairwellTransit>(backSector);
 
 		auto xOffset0 = xOffset;
 
 		// Fore Vertex
 		if (layerIndex == CORE_LAYER_FORE)
 		{
-			auto locStaircaseVert = make_shared<StaircaseLocationVertex>(sector, xOffset0, yOffset);
+			auto locStairwellVert = make_shared<StairwellLocationVertex>(sector, xOffset0, yOffset);
 
-			workVertices.push_back(locStaircaseVert);
+			workVertices.push_back(locStairwellVert);
 
 			// Add to cross-layer lookup
 			auto cellPos = make_pair(x, y);
@@ -739,11 +741,11 @@ namespace core
 
 			if (it == interLayerVertexLookup.end())
 			{
-				interLayerVertexLookup[cellPos] = locStaircaseVert;
+				interLayerVertexLookup[cellPos] = locStairwellVert;
 			}
 			else
 			{
-				string errMsg = format("A StaircaseTransit was already set on Layer 0 CellDefinition at {},{}", x, y);
+				string errMsg = format("A StairwellTransit was already set on Layer 0 CellDefinition at {},{}", x, y);
 
 				mBuildLog.push_back({ "Graph", ~0u, LogLevel::Error, errMsg });
 				throw BuildingException(mwBuilding, errMsg);
@@ -753,12 +755,12 @@ namespace core
 		// Back Vertex
 		if (layerIndex == CORE_LAYER_BACK)
 		{
-			auto staircase = staircaseTransit->getStaircase();
-			auto path = staircase->getDeckPath(deckOffset);
-			auto staircaseVert0 = make_shared<StaircaseVertex>(sector, staircase,
+			auto stairwell = stairwellTransit->getStairwell();
+			auto path = stairwell->getDeckPath(deckOffset);
+			auto stairwellVert0 = make_shared<StairwellVertex>(sector, stairwell,
 				path[0].x, path[0].y, deckOffset);
 
-			workVertices.push_back(staircaseVert0);
+			workVertices.push_back(stairwellVert0);
 
 			// Edge
 			auto cellPos = make_pair(x, y);
@@ -766,37 +768,71 @@ namespace core
 
 			if (it != interLayerVertexLookup.end())
 			{
-				auto connectZ = interLayerVertexLookup[cellPos]->getSector()->getLayerIndex() != staircaseVert0->getSector()->getLayerIndex();
-				addEdge(make_shared<StaircaseMountEdge>(staircase), interLayerVertexLookup[cellPos], staircaseVert0, connectZ);
+				auto connectZ = interLayerVertexLookup[cellPos]->getSector()->getLayerIndex() != stairwellVert0->getSector()->getLayerIndex();
+				addEdge(make_shared<StairwellMountEdge>(stairwell), interLayerVertexLookup[cellPos], stairwellVert0, connectZ);
 			}
 			else
 			{
-				string errMsg = format("A StaircaseTransit was not set on Layer 0 CellDefinition at {},{}", x, y);
+				string errMsg = format("A StairwellTransit was not set on Layer 0 CellDefinition at {},{}", x, y);
 
 				mBuildLog.push_back({ "Graph", ~0u, LogLevel::Error, errMsg });
 				throw BuildingException(mwBuilding, errMsg);
 			}
 
 			// Add Ladder Vertex to lookup for joining up
-			addCrossDeckVertex(staircaseTransit, staircaseVert0, crossDeckVertices);
+			addCrossDeckVertex(stairwellTransit, stairwellVert0, crossDeckVertices);
 
 			// Intermediate Vertices
-			if (y < (staircaseTransit->getCellY() + staircaseTransit->getDecksHigh() - 1))
+			if (y < (stairwellTransit->getCellY() + stairwellTransit->getDecksHigh() - 1))
 			{
 				// Lower landing
-				auto staircaseVert1 = make_shared<StaircaseVertex>(sector, staircase,
+				auto stairwellVert1 = make_shared<StairwellVertex>(sector, stairwell,
 					path[1].x, path[1].y, deckOffset);
 
-				mVertices.push_back(staircaseVert1);
-				addCrossDeckVertex(staircaseTransit, staircaseVert1, crossDeckVertices);
+				mVertices.push_back(stairwellVert1);
+				addCrossDeckVertex(stairwellTransit, stairwellVert1, crossDeckVertices);
 
 				// Upper landing
-				auto staircaseVert2 = make_shared<StaircaseVertex>(sector, staircase,
+				auto stairwellVert2 = make_shared<StairwellVertex>(sector, stairwell,
 					path[2].x, path[2].y, deckOffset);
 
-				mVertices.push_back(staircaseVert2);
-				addCrossDeckVertex(staircaseTransit, staircaseVert2, crossDeckVertices);
+				mVertices.push_back(stairwellVert2);
+				addCrossDeckVertex(stairwellTransit, stairwellVert2, crossDeckVertices);
 			}
+		}
+	}
+
+	void Graph::processStaircaseTransit(int layerIndex, uint32_t curSectorIndex,
+		uint32_t backSectorIndex, uint32_t x, uint32_t y,
+		PositionVertexMap& interLayerVertexLookup, VertexList& workVertices,
+		map<shared_ptr<VerticalEdgeCreator>, VertexList>& crossDeckVertices)
+	{
+		auto transit = dynamic_pointer_cast<StaircaseTransit>(mwBuilding->_getSector(backSectorIndex));
+		auto staircase = transit->getStaircase();
+		auto path = staircase->getPath();
+		bool const lower = y == transit->getCellY();
+		auto const point = path[lower ? 0 : 1];
+		auto cellPos = make_pair(x, y);
+
+		if (layerIndex == CORE_LAYER_FORE)
+		{
+			auto sector = mwBuilding->_getSector(curSectorIndex);
+			auto locationVertex = make_shared<StairwellLocationVertex>(sector,
+				(float)(x - sector->getCellX()) + 0.5f, (float)(y - sector->getCellY()));
+			workVertices.push_back(locationVertex);
+			if (!interLayerVertexLookup.emplace(cellPos, locationVertex).second)
+				throw BuildingException(mwBuilding, format("A Transit was already set at {},{}", x, y));
+		}
+		else
+		{
+			auto sector = mwBuilding->_getSector(curSectorIndex);
+			auto staircaseVertex = make_shared<StaircaseVertex>(sector, staircase, point.x, point.y);
+			workVertices.push_back(staircaseVertex);
+			auto found = interLayerVertexLookup.find(cellPos);
+			if (found == interLayerVertexLookup.end())
+				throw BuildingException(mwBuilding, format("A Staircase endpoint has no Corridor at {},{}", x, y));
+			addEdge(make_shared<StaircaseMountEdge>(staircase), found->second, staircaseVertex, true);
+			addCrossDeckVertex(transit, staircaseVertex, crossDeckVertices);
 		}
 	}
 
@@ -1140,15 +1176,27 @@ namespace core
 								processLadderTransit(layerIndex, curSectorIndex, x, y, lowest ? CORE_LEVEL_LOW : CORE_LEVEL_HIGH, interLayerVertexLookup, workVertices, crossDeckVertexLists);
 							}
 						}
+						else if (backSector->getType() == SectorType::Stairwell)
+						{
+							// Stairwells are 2 cells wide, but we only want to process one cell for them.
+							auto stairwellTransit = dynamic_pointer_cast<StairwellTransit>(backSector);
+
+							if (stairwellTransit->getCellX() == x)
+							{
+								processStairwellTransit(layerIndex, curSectorIndex, backCellDef.sectorIndex, x, y, y - stairwellTransit->getCellY(), interLayerVertexLookup, workVertices, crossDeckVertexLists);
+							}
+						}
 						else if (backSector->getType() == SectorType::Staircase)
 						{
-							// Staircases are 2 cells wide, but we only want to process one cell for them.
-							auto staircaseTransit = dynamic_pointer_cast<StaircaseTransit>(backSector);
-
-							if (staircaseTransit->getCellX() == x)
-							{
-								processStaircaseTransit(layerIndex, curSectorIndex, backCellDef.sectorIndex, x, y, y - staircaseTransit->getCellY(), interLayerVertexLookup, workVertices, crossDeckVertexLists);
-							}
+							auto staircase = dynamic_pointer_cast<StaircaseTransit>(backSector);
+							uint32_t const lowerX = staircase->getRiseSide() == CORE_SIDE_RIGHT
+								? staircase->getCellX() : staircase->getCellX() + staircase->getCellsWide() - 1;
+							uint32_t const upperX = staircase->getRiseSide() == CORE_SIDE_RIGHT
+								? staircase->getCellX() + staircase->getCellsWide() - 1 : staircase->getCellX();
+							if ((y == staircase->getCellY() && x == lowerX)
+								|| (y == staircase->getCellY() + 1 && x == upperX))
+								processStaircaseTransit(layerIndex, curSectorIndex, backCellDef.sectorIndex,
+									x, y, interLayerVertexLookup, workVertices, crossDeckVertexLists);
 						}
 					}
 

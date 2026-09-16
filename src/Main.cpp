@@ -589,7 +589,7 @@ std::shared_ptr<core::Building> createTestBuilding()
 		//
 		building->addLadder(ReactorDeck, 4, { 3, true, true });
 		building->addLadder(HospitalDeck + 1, 18, { 2, true, true });
-		building->addStaircase(ReactorDeck, 19, 4, CORE_SIDE_LEFT);
+		building->addStairwell(ReactorDeck, 19, 4, CORE_SIDE_LEFT);
 		building->addLift(ReactorDeck, 17, { 1, { 0, 1, 3 } });
 		building->addLift(HospitalDeck, 6, { 2, { 0, 1, 2, 3 } });
 

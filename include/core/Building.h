@@ -117,7 +117,7 @@ namespace core
 			TraversalResourceId traversalResource;
 		};
 
-		struct CreateStaircaseOptions
+		struct CreateStairwellOptions
 		{
 			uint32_t decksHigh;
 			int mountSide;
@@ -126,10 +126,17 @@ namespace core
 			uint32_t directionalBatchLimit{ 4 };
 		};
 
-		struct CreateStaircaseResult
+		struct CreateStairwellResult
 		{
 			uint32_t sectorIndex{ ~0u };
 			TraversalResourceId traversalResource;
+		};
+
+		struct CreateStaircaseOptions
+		{
+			uint32_t cellsWide{ 2 };
+			// CORE_SIDE_RIGHT rises left-to-right; CORE_SIDE_LEFT is mirrored.
+			int riseSide{ CORE_SIDE_RIGHT };
 		};
 
 		struct CreateLiftOptions
@@ -291,14 +298,28 @@ namespace core
 			[[nodiscard]] bool requiresConfirmation() const { return !consequences.empty(); }
 		};
 
-		struct StaircaseEditPlan
+		struct StairwellEditPlan
 		{
 			bool valid{ false };
 			bool remove{ false };
 			bool move{ false };
 			uint32_t sectorIndex{ ~0u };
 			uint32_t x{ 0 }, y{ 0 }, decksHigh{ 0 };
-			CreateStaircaseOptions options{ 0, CORE_SIDE_LEFT };
+			CreateStairwellOptions options{ 0, CORE_SIDE_LEFT };
+			std::string diagnostic;
+			std::vector<std::string> consequences;
+
+			[[nodiscard]] bool requiresConfirmation() const { return !consequences.empty(); }
+		};
+
+		struct StaircaseEditPlan
+		{
+			bool valid{ false };
+			bool remove{ false };
+			bool move{ false };
+			uint32_t sectorIndex{ ~0u };
+			uint32_t x{ 0 }, y{ 0 };
+			CreateStaircaseOptions options{};
 			std::string diagnostic;
 			std::vector<std::string> consequences;
 
@@ -392,6 +413,7 @@ namespace core
 			Corridor,
 			Room,
 			Ladder,
+			Stairwell,
 			Staircase,
 			Lift,
 			Shuttle,
@@ -496,7 +518,7 @@ namespace core
 		bool prepareLadderEdit(LadderEditPlan const& plan,
 			std::vector<ConstructionRecord>& records, std::string& diagnostic) const;
 
-		bool prepareStaircaseEdit(StaircaseEditPlan const& plan,
+		bool prepareStairwellEdit(StairwellEditPlan const& plan,
 			std::vector<ConstructionRecord>& records, std::string& diagnostic) const;
 
 		std::vector<ConstructionRecord> canonicalConstructionRecords(
@@ -569,7 +591,9 @@ namespace core
 
 		uint32_t createLadder(uint32_t x, uint32_t y, CreateLadderOptions const& options);
 
-		uint32_t createStaircase(uint32_t x, uint32_t y, uint32_t decksHigh, int mountSide);
+		uint32_t createStairwell(uint32_t x, uint32_t y, uint32_t decksHigh, int mountSide);
+
+		uint32_t createStaircase(uint32_t x, uint32_t y, uint32_t cellsWide, int riseSide);
 
 		CreateObjectResult createLift(uint32_t x, uint32_t y, uint32_t cellsWide,
 			uint32_t decksHigh, std::vector<uint32_t> const& stopOffsets);
@@ -810,14 +834,20 @@ namespace core
 
 		bool getLadderOptions(uint32_t sectorIndex, CreateLadderOptions& options) const;
 
-		uint32_t addStaircase(uint32_t y, uint32_t x, uint32_t decksHigh, int mountSide);
+		uint32_t addStairwell(uint32_t y, uint32_t x, uint32_t decksHigh, int mountSide);
 
-		CreateStaircaseResult addStaircase(uint32_t y, uint32_t x,
-			CreateStaircaseOptions const& options);
+		CreateStairwellResult addStairwell(uint32_t y, uint32_t x,
+			CreateStairwellOptions const& options);
 
-		bool canAddStaircase(uint32_t y, uint32_t x, uint32_t decksHigh,
+		bool canAddStairwell(uint32_t y, uint32_t x, uint32_t decksHigh,
 			std::string* diagnostic = nullptr) const;
 
+		bool getStairwellOptions(uint32_t sectorIndex, CreateStairwellOptions& options) const;
+
+		uint32_t addStaircase(uint32_t y, uint32_t x, uint32_t cellsWide, int riseSide);
+		uint32_t addStaircase(uint32_t y, uint32_t x, CreateStaircaseOptions const& options);
+		bool canAddStaircase(uint32_t y, uint32_t x, uint32_t cellsWide, int riseSide,
+			std::string* diagnostic = nullptr) const;
 		bool getStaircaseOptions(uint32_t sectorIndex, CreateStaircaseOptions& options) const;
 
 		CreateLiftResult addLift(uint32_t y, uint32_t x, CreateLiftOptions const& options);
@@ -1035,11 +1065,16 @@ namespace core
 
 		uint32_t applyLadderEdit(LadderEditPlan const& plan);
 
+		StairwellEditPlan planResizeStairwell(uint32_t sectorIndex, uint32_t x,
+			uint32_t y, CreateStairwellOptions const& options) const;
+
+		StairwellEditPlan planRemoveStairwell(uint32_t sectorIndex) const;
+
+		uint32_t applyStairwellEdit(StairwellEditPlan const& plan);
+
 		StaircaseEditPlan planResizeStaircase(uint32_t sectorIndex, uint32_t x,
 			uint32_t y, CreateStaircaseOptions const& options) const;
-
 		StaircaseEditPlan planRemoveStaircase(uint32_t sectorIndex) const;
-
 		uint32_t applyStaircaseEdit(StaircaseEditPlan const& plan);
 
 		ObjectMovePlan planMoveSectorObject(uint32_t sectorIndex, uint32_t objectIndex,
@@ -1145,8 +1180,8 @@ namespace core
 		TraversalResourceId createForceBridgeTraversalResource(std::string const& name,
 			std::shared_ptr<ForceBridge> forceBridge);
 
-		TraversalResourceId createStaircaseTraversalResource(std::string const& name,
-			std::shared_ptr<Staircase> staircase, SectorId staircaseSector,
+		TraversalResourceId createStairwellTraversalResource(std::string const& name,
+			std::shared_ptr<Stairwell> stairwell, SectorId stairwellSector,
 			uint32_t capacity, uint32_t directionalBatchLimit);
 
 		// Defines one physical waiting lane. The direction is normalized and

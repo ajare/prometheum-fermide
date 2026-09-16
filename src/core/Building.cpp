@@ -15,6 +15,7 @@
 #include "core/LadderTransit.h"
 #include "core/LiftTransit.h"
 #include "core/ShuttleTransit.h"
+#include "core/StairwellTransit.h"
 #include "core/StaircaseTransit.h"
 #include "core/ButtonSectorObject.h"
 #include "core/ForceBridgeSectorObject.h"
@@ -500,11 +501,11 @@ namespace core
 		return sectorIndex;
 	}
 
-	uint32_t Building::createStaircase(uint32_t x, uint32_t y, uint32_t decksHigh, int mountSide)
+	uint32_t Building::createStairwell(uint32_t x, uint32_t y, uint32_t decksHigh, int mountSide)
 	{
 		ASSERT_SIDE_OK(mountSide);
 
-		// Get Locations this Staircase connects.  Because a Staircase is two cells wide, we
+		// Get Locations this Stairwell connects.  Because a Stairwell is two cells wide, we
 		// just check the first horizontal cell, ie xOffset==0.
 		vector<TransitStop> stops;
 
@@ -521,9 +522,27 @@ namespace core
 		}
 
 		auto sectorIndex = (uint32_t)mSectors.size();
-		auto staircase = make_shared<StaircaseTransit>(sectorIndex, x, y, decksHigh, mountSide, stops);
+		auto stairwell = make_shared<StairwellTransit>(sectorIndex, x, y, decksHigh, mountSide, stops);
 
-		mSectors.push_back(staircase);
+		mSectors.push_back(stairwell);
+		return sectorIndex;
+	}
+
+	uint32_t Building::createStaircase(uint32_t x, uint32_t y, uint32_t cellsWide, int riseSide)
+	{
+		ASSERT_SIDE_OK(riseSide);
+		uint32_t const lowerX = riseSide == CORE_SIDE_RIGHT ? x : x + cellsWide - 1;
+		uint32_t const upperX = riseSide == CORE_SIDE_RIGHT ? x + cellsWide - 1 : x;
+		auto const& lowerCell = mLayers[CORE_LAYER_FORE]->getCellDefinition(lowerX, y);
+		auto const& upperCell = mLayers[CORE_LAYER_FORE]->getCellDefinition(upperX, y + 1);
+		auto lower = getSector(lowerCell.sectorIndex);
+		auto upper = getSector(upperCell.sectorIndex);
+		vector<TransitStop> stops{
+			{ lower, (int)lowerX - (int)lower->getCellX(), (int)y - (int)lower->getCellY() },
+			{ upper, (int)upperX - (int)upper->getCellX(), (int)(y + 1) - (int)upper->getCellY() }
+		};
+		auto sectorIndex = (uint32_t)mSectors.size();
+		mSectors.push_back(make_shared<StaircaseTransit>(sectorIndex, x, y, cellsWide, riseSide, stops));
 		return sectorIndex;
 	}
 
@@ -1384,7 +1403,7 @@ namespace core
 		return result;
 	}
 
-	bool Building::canAddStaircase(uint32_t y, uint32_t x, uint32_t decksHigh,
+	bool Building::canAddStairwell(uint32_t y, uint32_t x, uint32_t decksHigh,
 		string* diagnostic) const
 	{
 		auto reject = [&](string message)
@@ -1393,10 +1412,10 @@ namespace core
 			return false;
 		};
 		if (diagnostic) diagnostic->clear();
-		if (decksHigh < 2) return reject("A Staircase must span at least two decks");
+		if (decksHigh < 2) return reject("A Stairwell must span at least two decks");
 		if (x >= mCellsWide || y >= mDecksHigh || x + 2 > mCellsWide
 			|| y + decksHigh > mDecksHigh)
-			return reject("The Staircase is outside the Building bounds");
+			return reject("The Stairwell is outside the Building bounds");
 		for (uint32_t iy = y; iy < y + decksHigh; ++iy)
 		{
 			auto const& first = mLayers[CORE_LAYER_FORE]->getCellDefinition(x, iy);
@@ -1409,27 +1428,27 @@ namespace core
 			{
 				auto const& fore = mLayers[CORE_LAYER_FORE]->getCellDefinition(ix, iy);
 				if (fore.sectorIndex != first.sectorIndex)
-					return reject(format("The Staircase spans different Fore-layer Locations at deck {}", iy));
+					return reject(format("The Stairwell spans different Fore-layer Locations at deck {}", iy));
 				if (!fore.isTraversableOnFoot())
 					return reject(format("The Fore-layer floor at {},{} is not traversable", ix, iy));
 				auto const occupant = mLayers[CORE_LAYER_BACK]->getCellDefinition(ix, iy).sectorIndex;
 				if (occupant != ~0u)
-					return reject(format("A Back-layer Sector at {},{} blocks the Staircase", ix, iy));
+					return reject(format("A Back-layer Sector at {},{} blocks the Stairwell", ix, iy));
 			}
 		}
 		return true;
 	}
 
-	uint32_t Building::addStaircase(uint32_t y, uint32_t x, uint32_t decksHigh, int mountSide)
+	uint32_t Building::addStairwell(uint32_t y, uint32_t x, uint32_t decksHigh, int mountSide)
 	{
-		beginStructuralEdit("addStaircase");
-		return addStaircase(y, x, CreateStaircaseOptions{ decksHigh, mountSide }).sectorIndex;
+		beginStructuralEdit("addStairwell");
+		return addStairwell(y, x, CreateStairwellOptions{ decksHigh, mountSide }).sectorIndex;
 	}
 
-	Building::CreateStaircaseResult Building::addStaircase(uint32_t y, uint32_t x,
-		CreateStaircaseOptions const& options)
+	Building::CreateStairwellResult Building::addStairwell(uint32_t y, uint32_t x,
+		CreateStairwellOptions const& options)
 	{
-		beginStructuralEdit("addStaircase");
+		beginStructuralEdit("addStairwell");
 		auto decksHigh = options.decksHigh;
 		auto mountSide = options.mountSide;
 		ASSERT_SIDE_OK(mountSide);
@@ -1439,11 +1458,11 @@ namespace core
 		const uint32_t cellsWide = 2;
 
 		// Checks
-		string caller = format("Building::addStaircase({}, {}, {}, {})", y, x, decksHigh, mountSide);
+		string caller = format("Building::addStairwell({}, {}, {}, {})", y, x, decksHigh, mountSide);
 
 		if (decksHigh < 2)
 		{
-			throw BuildingException(this, format("{} - Staircase at {},{} must be at least 2 decks high", caller, x, y));
+			throw BuildingException(this, format("{} - Stairwell at {},{} must be at least 2 decks high", caller, x, y));
 		}
 
 		validateBounds(caller, x, y, cellsWide, decksHigh);
@@ -1460,38 +1479,38 @@ namespace core
 				auto foreSectorIndex = cellDef.sectorIndex;
 
 				// Make sure the foreground cells have a Sector, and that the horizontal Sectors are not different:
-				// Staircases cannot span different Sectors horizontally, due to placement of the door leading to them.
+				// Stairwells cannot span different Sectors horizontally, due to placement of the door leading to them.
 				if (foreSectorIndex != deckSectorIndex)
 				{
-					throw BuildingException(this, format("{} - the staircase horizontally spans different foreground Sectors between {},{} and {},{}, which is not allowed", caller, x, iy, x + 1, iy));
+					throw BuildingException(this, format("{} - the stairwell horizontally spans different foreground Sectors between {},{} and {},{}, which is not allowed", caller, x, iy, x + 1, iy));
 				}
 
 				// Fore Sector can't be empty
 				if (foreSectorIndex == ~0u)
 				{
-					throw BuildingException(this, format("{} - foreground cell at {},{} is not occupied, which blocks staircase being placed", caller, ix, iy));
+					throw BuildingException(this, format("{} - foreground cell at {},{} is not occupied, which blocks stairwell being placed", caller, ix, iy));
 				}
 
-				// Staircases can only connect Locations
+				// Stairwells can only connect Locations
 				auto const& foreSector = getSector(foreSectorIndex);
 
 				if (foreSector->getType() != SectorType::Location)
 				{
-					throw BuildingException(this, format("{} - foreground cell at {},{} is not a Location, which blocks staircase being placed", caller, ix, iy));
+					throw BuildingException(this, format("{} - foreground cell at {},{} is not a Location, which blocks stairwell being placed", caller, ix, iy));
 				}
 
-				// Staircases must not be in the air
-				validateCellTraversableOnFoot(caller, "Staircase", CORE_LAYER_FORE, ix, iy);
+				// Stairwells must not be in the air
+				validateCellTraversableOnFoot(caller, "Stairwell", CORE_LAYER_FORE, ix, iy);
 			}
 		}
 
 		if (options.directionalCapacity > 0 && options.directionalBatchLimit == 0)
 		{
-			throw BuildingException(this, format("{} - Narrow staircase directional batch limit must be positive.", caller));
+			throw BuildingException(this, format("{} - Narrow stairwell directional batch limit must be positive.", caller));
 		}
 
-		// Create staircase
-		auto sectorIndex = createStaircase(x, y, decksHigh, mountSide);
+		// Create stairwell
+		auto sectorIndex = createStairwell(x, y, decksHigh, mountSide);
 
 		// Set layers
 		for (uint32_t iy = y; iy < y + decksHigh; ++iy)
@@ -1507,19 +1526,71 @@ namespace core
 		TraversalResourceId traversalResource;
 		if (options.directionalCapacity > 0)
 		{
-			auto staircaseTransit = dynamic_pointer_cast<StaircaseTransit>(_getSector(sectorIndex));
-			auto staircase = staircaseTransit->getStaircase();
-			traversalResource = createStaircaseTraversalResource("Narrow staircase capacity",
-				staircase, SectorId{ (uint64_t)sectorIndex + 1 }, options.directionalCapacity,
+			auto stairwellTransit = dynamic_pointer_cast<StairwellTransit>(_getSector(sectorIndex));
+			auto stairwell = stairwellTransit->getStairwell();
+			traversalResource = createStairwellTraversalResource("Narrow stairwell capacity",
+				stairwell, SectorId{ (uint64_t)sectorIndex + 1 }, options.directionalCapacity,
 				options.directionalBatchLimit);
-			staircase->configureTraversal(traversalResource);
+			stairwell->configureTraversal(traversalResource);
 		}
 
-		ConstructionRecord record{ ConstructionType::Staircase };
+		ConstructionRecord record{ ConstructionType::Stairwell };
 		record.a = y; record.b = x; record.c = options.decksHigh;
 		record.i = options.mountSide; record.d = options.directionalCapacity; record.e = options.directionalBatchLimit;
 		recordConstruction(std::move(record));
 		return { sectorIndex, traversalResource };
+	}
+
+	bool Building::canAddStaircase(uint32_t y, uint32_t x, uint32_t cellsWide,
+		int riseSide, string* diagnostic) const
+	{
+		auto reject = [&](string message) { if (diagnostic) *diagnostic = std::move(message); return false; };
+		if (diagnostic) diagnostic->clear();
+		if (riseSide != CORE_SIDE_LEFT && riseSide != CORE_SIDE_RIGHT)
+			return reject("The Staircase rise direction is invalid");
+		if (cellsWide < 2) return reject("A Staircase must be at least two cells wide");
+		if (x >= mCellsWide || y >= mDecksHigh || cellsWide > mCellsWide - x || y + 1 >= mDecksHigh)
+			return reject("The Staircase is outside the Building bounds");
+		for (uint32_t iy = y; iy <= y + 1; ++iy)
+			for (uint32_t ix = x; ix < x + cellsWide; ++ix)
+				if (mLayers[CORE_LAYER_BACK]->getCellDefinition(ix, iy).occupied())
+					return reject(format("A Back-layer Sector at {},{} blocks the Staircase", ix, iy));
+
+		uint32_t const lowerX = riseSide == CORE_SIDE_RIGHT ? x : x + cellsWide - 1;
+		uint32_t const upperX = riseSide == CORE_SIDE_RIGHT ? x + cellsWide - 1 : x;
+		for (auto const [endpointX, endpointY] : { pair{ lowerX, y }, pair{ upperX, y + 1 } })
+		{
+			auto const& cell = mLayers[CORE_LAYER_FORE]->getCellDefinition(endpointX, endpointY);
+			if (!cell.occupied()) return reject(format("A Fore-layer Corridor is required at {},{}", endpointX, endpointY));
+			auto location = dynamic_pointer_cast<const Location>(mSectors[cell.sectorIndex]);
+			if (!location || !location->isCorridor())
+				return reject(format("A Fore-layer Corridor is required at {},{}", endpointX, endpointY));
+			if (!cell.isTraversableOnFoot())
+				return reject(format("The Corridor floor at {},{} is not traversable", endpointX, endpointY));
+		}
+		return true;
+	}
+
+	uint32_t Building::addStaircase(uint32_t y, uint32_t x, uint32_t cellsWide, int riseSide)
+	{
+		return addStaircase(y, x, CreateStaircaseOptions{ cellsWide, riseSide });
+	}
+
+	uint32_t Building::addStaircase(uint32_t y, uint32_t x, CreateStaircaseOptions const& options)
+	{
+		beginStructuralEdit("addStaircase");
+		string diagnostic;
+		if (!canAddStaircase(y, x, options.cellsWide, options.riseSide, &diagnostic))
+			throw BuildingException(this, format("Building::addStaircase({}, {}) - {}", y, x, diagnostic));
+		auto sectorIndex = createStaircase(x, y, options.cellsWide, options.riseSide);
+		auto back = getLayer(CORE_LAYER_BACK);
+		for (uint32_t iy = y; iy <= y + 1; ++iy)
+			for (uint32_t ix = x; ix < x + options.cellsWide; ++ix)
+				back->getCellDefinition(ix, iy).sectorIndex = sectorIndex;
+		ConstructionRecord record{ ConstructionType::Staircase };
+		record.a = y; record.b = x; record.c = options.cellsWide; record.i = options.riseSide;
+		recordConstruction(std::move(record));
+		return sectorIndex;
 	}
 
 	Building::CreateLiftResult Building::addLift(uint32_t y, uint32_t x, uint32_t cellsWide,
@@ -2244,7 +2315,7 @@ namespace core
 		for (auto const& record : mConstructionRecords)
 		{
 			bool producer = record.type == ConstructionType::Corridor || record.type == ConstructionType::Room
-				|| record.type == ConstructionType::Ladder || record.type == ConstructionType::Staircase
+				|| record.type == ConstructionType::Ladder || record.type == ConstructionType::Stairwell || record.type == ConstructionType::Staircase
 				|| record.type == ConstructionType::Lift || record.type == ConstructionType::Shuttle;
 			if (!producer) continue;
 			if (record.type == ConstructionType::Shuttle && sectorIndex < mSectors.size())
@@ -2270,7 +2341,7 @@ namespace core
 		for (auto const& record : mConstructionRecords)
 		{
 			bool producer = record.type == ConstructionType::Corridor || record.type == ConstructionType::Room
-				|| record.type == ConstructionType::Ladder || record.type == ConstructionType::Staircase
+				|| record.type == ConstructionType::Ladder || record.type == ConstructionType::Stairwell || record.type == ConstructionType::Staircase
 				|| record.type == ConstructionType::Lift || record.type == ConstructionType::Shuttle;
 			if (!producer) continue;
 			if (record.type == ConstructionType::Shuttle && record.a == y)
@@ -3960,8 +4031,8 @@ namespace core
 				: edge->getType() == EdgeType::ForceBridge ? resource->mForceBridge != nullptr
 				: edge->getType() == EdgeType::Ladder || edge->getType() == EdgeType::LadderMount
 					? resource->mLadder != nullptr
-				: edge->getType() == EdgeType::Staircase || edge->getType() == EdgeType::StaircaseMount
-					? resource->mStaircase != nullptr
+				: edge->getType() == EdgeType::Stairwell || edge->getType() == EdgeType::StairwellMount
+					? resource->mStairwell != nullptr
 				: edge->getType() == EdgeType::Lift || edge->getType() == EdgeType::LiftMount
 					? resource->mLift != nullptr
 				: edge->getType() == EdgeType::Shuttle || edge->getType() == EdgeType::ShuttleMount
@@ -4031,9 +4102,9 @@ namespace core
 			if (resource.mLadder)
 				require(resource.mLadder->getTraversalResourceId() == id,
 					format("Ladder resource {} is not the ladder's configured authority", id.value));
-			if (resource.mStaircase)
-				require(resource.mStaircase->getTraversalResourceId() == id,
-					format("Staircase resource {} is not the staircase's configured authority", id.value));
+			if (resource.mStairwell)
+				require(resource.mStairwell->getTraversalResourceId() == id,
+					format("Stairwell resource {} is not the stairwell's configured authority", id.value));
 			if (resource.mForceBridge)
 				require(resource.mForceBridge->getTraversalResourceId() == id,
 					format("Force-bridge resource {} is not the bridge's configured authority", id.value));
@@ -4614,7 +4685,7 @@ namespace core
 		result.retractionPending = resource.mRetractionPending;
 		result.extensionRequestLeaseCount = (uint32_t)resource.mExtensionRequestLeases.size();
 		result.extensionOccupantLeaseCount = (uint32_t)resource.mExtensionOccupantLeases.size();
-		result.isNarrowStaircase = resource.mStaircase != nullptr;
+		result.isNarrowStairwell = resource.mStairwell != nullptr;
 		result.enabled = resource.mEnabled;
 		result.capacity = resource.mCapacity;
 		result.agentSpacing = resource.mLadderSpacing;
@@ -4892,7 +4963,7 @@ namespace core
 				resource->mExtensible->acquireExtensionLease();
 			if ((resource->mDoor && !resource->mLiftCoordinator) || resource->mForceBridge)
 				attachQueueTicket(id, *resource);
-			else if ((resource->mLadder || resource->mStaircase)
+			else if ((resource->mLadder || resource->mStairwell)
 				&& isLadderAdmission(*request, *resource))
 				attachLadderAdmissionRequest(id, *resource);
 		}
@@ -5209,7 +5280,7 @@ namespace core
 		request->mState = TraversalRequestState::Pending;
 		request->mFailureReason = TraversalFailureReason::PermitExpired;
 		if (auto resource = mTraversalResources.find(request->mResource);
-			resource && (resource->mLadder || resource->mStaircase))
+			resource && (resource->mLadder || resource->mStairwell))
 		{
 			if (isLadderAdmission(*request, *resource))
 			{
@@ -5386,17 +5457,17 @@ namespace core
 		// Only the edge that claims climbing capacity is admission-controlled.
 		// Mount/dismount edges which do not put a new Agent on the climbing span
 		// must remain immediately traversable or an Agent could reserve capacity twice.
-		if ((!resource.mLadder && !resource.mStaircase)
+		if ((!resource.mLadder && !resource.mStairwell)
 			|| request.mDestinationSector != resource.mLadderSector)
 		{
 			return false;
 		}
-		if (resource.mStaircase)
+		if (resource.mStairwell)
 		{
-			// Ordinary mount edges remain unconstrained. A narrow staircase owns
+			// Ordinary mount edges remain unconstrained. A narrow stairwell owns
 			// capacity only for the actual sloping, cross-deck edge.
 			return request.mSourceSector == resource.mLadderSector
-				&& request.mEdgeType == EdgeType::Staircase;
+				&& request.mEdgeType == EdgeType::Stairwell;
 		}
 		// Entering a dedicated Ladder sector starts occupancy. For a Room Ladder,
 		// whose climb remains inside one Room sector, the Ladder edge itself starts it.
@@ -5431,9 +5502,9 @@ namespace core
 			else
 			{
 				auto objectY = resource.mLadder ? resource.mLadder->getPosition().y
-					: resource.mStaircase->getPosition().y;
+					: resource.mStairwell->getPosition().y;
 				auto objectHeight = resource.mLadder ? resource.mLadder->getSize().y
-					: resource.mStaircase->getSize().y;
+					: resource.mStairwell->getSize().y;
 				request->mDirection = request->mSourceEndpoint.y < objectY + objectHeight * 0.5f
 					? TraversalDirection::Ascending : TraversalDirection::Descending;
 			}
@@ -5465,7 +5536,7 @@ namespace core
 		// when an Agent mounts persists for its whole climb. A new climber may only
 		// be admitted once every in-flight Agent has cleared the entry altitude by a
 		// full spacing; otherwise the newcomer catches up and overlaps on the span.
-		// Narrow staircases carry no spacing and remain governed by capacity alone.
+		// Narrow stairwells carry no spacing and remain governed by capacity alone.
 		if (!resource.mLadder || resource.mLadderSpacing <= 0.0f) return true;
 		auto const ascending = resource.mActiveDirection != TraversalDirection::Descending;
 		auto const entryAltitude = resource.mLadder->getPosition().y - CORE_LADDER_HEIGHT_OFF_GROUND
@@ -5498,7 +5569,7 @@ namespace core
 	{
 		// Disabled or moving/retracted equipment cannot safely accept a new climber.
 		// Existing occupants retain their ownership while the admission gate is closed.
-		if (!resource.mEnabled || (!resource.mLadder && !resource.mStaircase)
+		if (!resource.mEnabled || (!resource.mLadder && !resource.mStairwell)
 			|| (resource.mExtensible && !resource.mExtensible->isExtended())) return;
 
 		// Occupants and granted-but-not-yet-committed reservations are both in flight.
@@ -5733,7 +5804,7 @@ namespace core
 				tryGrantDoorQueue(*resource);
 				return;
 			}
-			if (resource->mLadder || resource->mStaircase)
+			if (resource->mLadder || resource->mStairwell)
 			{
 				if (resource->mLadder && resource->mExtensible
 					&& resource->mExtensible->isExtended() && resource->mPreparationOperator)
@@ -7295,7 +7366,7 @@ namespace core
 			{
 				releaseLiftAdmission(requestId, *resource);
 			}
-			else if (resource->mLadder || resource->mStaircase)
+			else if (resource->mLadder || resource->mStairwell)
 			{
 				releaseLadderAdmission(requestId, *resource);
 				tryGrantLadderAdmissions(*resource);
@@ -7358,7 +7429,7 @@ namespace core
 					|| lift->mAdmissionReservations[request->mCapacityPosition] != requestId
 					|| lift->mOccupants[request->mCapacityPosition])) return false;
 		}
-		if (ladderResource && (ladderResource->mLadder || ladderResource->mStaircase)
+		if (ladderResource && (ladderResource->mLadder || ladderResource->mStairwell)
 			&& isLadderAdmission(*request, *ladderResource))
 		{
 			if (request->mCapacityPosition >= ladderResource->mCapacity
@@ -7446,7 +7517,7 @@ namespace core
 				if (boundaryOwner == requestId) boundaryOwner = {};
 		}
 
-		if (auto resource = ladderResource; resource && (resource->mLadder || resource->mStaircase))
+		if (auto resource = ladderResource; resource && (resource->mLadder || resource->mStairwell))
 		{
 			// Committing entry converts the provisional slot reservation into occupancy;
 			// committing exit frees occupancy. Room Ladders instead release their slot
@@ -7549,7 +7620,7 @@ namespace core
 				}
 				else if (resource->mLift || resource->mShuttle)
 					releaseLiftAdmission(requestId, *resource);
-				else if (resource->mLadder || resource->mStaircase)
+				else if (resource->mLadder || resource->mStairwell)
 				{
 					releaseLadderAdmission(requestId, *resource);
 					tryGrantLadderAdmissions(*resource);
@@ -7618,7 +7689,7 @@ namespace core
 				}
 				else if (resource->mLift || resource->mShuttle)
 					releaseLiftAdmission(requestId, *resource);
-				else if (resource->mLadder || resource->mStaircase)
+				else if (resource->mLadder || resource->mStairwell)
 				{
 					releaseLadderAdmission(requestId, *resource);
 					tryGrantLadderAdmissions(*resource);
@@ -8334,26 +8405,26 @@ namespace core
 		return id;
 	}
 
-	TraversalResourceId Building::createStaircaseTraversalResource(string const& name,
-		shared_ptr<Staircase> staircase, SectorId staircaseSector, uint32_t capacity,
+	TraversalResourceId Building::createStairwellTraversalResource(string const& name,
+		shared_ptr<Stairwell> stairwell, SectorId stairwellSector, uint32_t capacity,
 		uint32_t directionalBatchLimit)
 	{
-		beginStructuralEdit("createStaircaseTraversalResource");
-		if (!staircase || !staircaseSector || staircaseSector.value > mSectors.size()
+		beginStructuralEdit("createStairwellTraversalResource");
+		if (!stairwell || !stairwellSector || stairwellSector.value > mSectors.size()
 			|| capacity == 0 || directionalBatchLimit == 0)
 		{
-			throw invalid_argument("A narrow staircase resource requires a Staircase, sector, capacity, and batch limit");
+			throw invalid_argument("A narrow stairwell resource requires a Stairwell, sector, capacity, and batch limit");
 		}
 		vector<Vector2> positions;
 		positions.reserve(capacity);
-		auto origin = staircase->getPosition();
+		auto origin = stairwell->getPosition();
 		for (uint32_t i = 0; i < capacity; ++i)
 		{
-			positions.push_back({ origin.x + ((float)i + 0.5f) * staircase->getSize().x / capacity,
-				origin.y + staircase->getSize().y * 0.5f });
+			positions.push_back({ origin.x + ((float)i + 0.5f) * stairwell->getSize().x / capacity,
+				origin.y + stairwell->getSize().y * 0.5f });
 		}
 		auto id = mTraversalResources.add(unique_ptr<TraversalResource>(new TraversalResource(
-			name, staircase, staircaseSector, capacity, directionalBatchLimit, std::move(positions))));
+			name, stairwell, stairwellSector, capacity, directionalBatchLimit, std::move(positions))));
 		SimulationEvent event;
 		event.sequence = mNextEventSequence++;
 		event.tick = mSimulationTick;
@@ -8698,7 +8769,7 @@ namespace core
 			bool matches = resource->mDoor.get() == object || resource->mWindow.get() == object
 				|| resource->mLadder.get() == object || resource->mForceBridge.get() == object
 				|| resource->mLift.get() == object || resource->mShuttle.get() == object
-				|| resource->mStaircase.get() == object;
+				|| resource->mStairwell.get() == object;
 			if (!matches) continue;
 			return resource->mLiftCoordinator ? resource->mLiftCoordinator : id;
 		}
@@ -8714,7 +8785,7 @@ namespace core
 		}
 		bool structural = found.entity->mDoor || found.entity->mWindow || found.entity->mLadder
 			|| found.entity->mForceBridge || found.entity->mLift || found.entity->mShuttle
-			|| found.entity->mStaircase;
+			|| found.entity->mStairwell;
 		if (!structural && mGraph)
 			structural = any_of(mGraph->getEdges().begin(), mGraph->getEdges().end(),
 				[id](auto const& edge) { return edge->getTraversalResourceId() == id; });

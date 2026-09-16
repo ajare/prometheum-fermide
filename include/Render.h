@@ -16,7 +16,7 @@ inline bool shouldRenderLadderGeometry(int layer, bool visibleLayer)
 	return visibleLayer || layer != CORE_LAYER_BACK;
 }
 
-inline bool shouldRenderStaircaseGeometry(int layer, bool visibleLayer)
+inline bool shouldRenderStairwellGeometry(int layer, bool visibleLayer)
 {
 	return visibleLayer || layer != CORE_LAYER_BACK;
 }
@@ -34,6 +34,7 @@ inline bool shouldRenderLadderGeometryAfterSectorContents()
 inline bool shouldRenderSectorAgents(core::SectorType sectorType, int layer, bool visibleLayer)
 {
 	if (sectorType == core::SectorType::Ladder
+		|| sectorType == core::SectorType::Stairwell
 		|| sectorType == core::SectorType::Staircase)
 		return visibleLayer || layer != CORE_LAYER_BACK;
 	if (sectorType == core::SectorType::Shuttle)

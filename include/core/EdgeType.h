@@ -18,6 +18,8 @@ namespace core
 		LiftMount,
 		Shuttle,
 		ShuttleMount,
+		Stairwell,
+		StairwellMount,
 		Staircase,
 		StaircaseMount
 	};

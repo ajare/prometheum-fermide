@@ -74,7 +74,7 @@ flowchart TD
 ```mermaid
 flowchart TD
     Call["Building::tryGrantLadderAdmissions"]
-    Gate{"Resource enabled,<br/>is Ladder/Staircase,<br/>and fully extended?"}
+    Gate{"Resource enabled,<br/>is Ladder/Stairwell,<br/>and fully extended?"}
     Direction{"Active direction set?"}
     Oldest["Choose direction of oldest pending request<br/>reset batch count"]
     InFlight{"Any occupant or<br/>admission reservation?"}

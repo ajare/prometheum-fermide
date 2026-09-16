@@ -65,7 +65,7 @@ A crossing permit is not granted until the threshold is physically safe. Crossin
 
 Ladders and force bridges use desired-state device operations and independently owned extension leases. Admission closes immediately when safe retraction is requested, but physical retraction waits for request and occupant leases to drain.
 
-Finite-capacity and directional ladders serialize incompatible demand. Ladder movement uses configured climb speed rather than ordinary horizontal walking speed. Staircase coordination remains explicit and opt-in. See [Sector Ladder agent flow](sector-ladder-agent-flow.md) for the endpoint, queue, admission, climb, and exit process with code references.
+Finite-capacity and directional ladders serialize incompatible demand. Ladder movement uses configured climb speed rather than ordinary horizontal walking speed. Stairwell coordination remains explicit and opt-in. See [Sector Ladder agent flow](sector-ladder-agent-flow.md) for the endpoint, queue, admission, climb, and exit process with code references.
 
 ## Lifts and platform lifts
 
@@ -105,7 +105,7 @@ The headless suite verifies, among other cases:
 - automatic, manual, remote-controlled, and unavailable doors;
 - fair two-sided queues, wide-door lanes, and safe closure;
 - finite-capacity, directional, and extensible ladders;
-- coordinated force bridges and opt-in staircases;
+- coordinated force bridges and opt-in stairwells;
 - platform lifts, multi-stop lift scheduling, and failure recovery;
 - single- and multi-carriage shuttle journeys and access zones;
 - atomic paused topology rebuild and ownership cleanup.

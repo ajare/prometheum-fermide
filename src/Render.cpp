@@ -22,6 +22,7 @@
 #include "core/LadderTransit.h"
 #include "core/LiftTransit.h"
 #include "core/ShuttleTransit.h"
+#include "core/StairwellTransit.h"
 #include "core/StaircaseTransit.h"
 #include "core/ButtonSectorObject.h"
 #include "core/DoorSectorObject.h"
@@ -56,7 +57,7 @@ ImColor LightsOffColour = ImColor(48, 48, 48);
 ImColor LadderColour = ImColor(128, 128, 192);
 ImColor LiftColour = ImColor(128, 128, 192);
 ImColor ShuttleColour = ImColor(128, 128, 192);
-ImColor StaircaseColour = ImColor(128, 128, 192);
+ImColor StairwellColour = ImColor(128, 128, 192);
 ImColor VertexColour = ImColor(255, 128, 0);
 ImColor EdgeColour = ImColor(255, 128, 0);
 ImColor InterLayerEdgeColour = ImColor(255, 255, 64);
@@ -75,7 +76,8 @@ void renderLiftTransit(shared_ptr<const core::LiftTransit> liftTransit, int laye
 
 void renderShuttleTransit(shared_ptr<const core::ShuttleTransit> shuttleTransit, int layer, bool visibleLayer, bool wireframe, ImColor colour, ImDrawList* drawList);
 
-void renderStaircaseTransit(shared_ptr<const core::StaircaseTransit> staircaseTransit, int layer, bool visibleLayer, bool wireframe, ImColor colour, ImDrawList* drawList);
+void renderStairwellTransit(shared_ptr<const core::StairwellTransit> stairwellTransit, int layer, bool visibleLayer, bool wireframe, ImColor colour, ImDrawList* drawList);
+void renderStaircase(shared_ptr<const core::Staircase> staircase, ImDrawList* drawList);
 
 void transformPosition(core::Vector2& p)
 {
@@ -119,6 +121,9 @@ void renderSelectedQueues(shared_ptr<const core::Building> const& building, int 
 			break;
 		case core::SectorType::Shuttle:
 			selectedObject = static_pointer_cast<const core::ShuttleTransit>(gSelectedSector)->getShuttle();
+			break;
+		case core::SectorType::Stairwell:
+			selectedObject = static_pointer_cast<const core::StairwellTransit>(gSelectedSector)->getStairwell();
 			break;
 		case core::SectorType::Staircase:
 			selectedObject = static_pointer_cast<const core::StaircaseTransit>(gSelectedSector)->getStaircase();
@@ -806,10 +811,10 @@ void renderShuttle(shared_ptr<const core::Shuttle> shuttle, int /* layer */, boo
 }
 
 
-void renderStaircase(shared_ptr<const core::Staircase> staircase, int /* layer*/, bool /* visibleLayer */, bool /* selected */, ImDrawList* drawList)
+void renderStairwell(shared_ptr<const core::Stairwell> stairwell, int /* layer*/, bool /* visibleLayer */, bool /* selected */, ImDrawList* drawList)
 {
 	core::Vector2 worldMin, worldMax;
-	staircase->getCurrentShape(worldMin, worldMax);
+	stairwell->getCurrentShape(worldMin, worldMax);
 
 	auto screenMin = worldMin;
 	auto screenMax = worldMax;
@@ -826,14 +831,14 @@ void renderStaircase(shared_ptr<const core::Staircase> staircase, int /* layer*/
 		return ImVec2{ point.x, point.y };
 	};
 
-	// Staircase::getDeckPath is also used to place the Graph vertices. Build one
+	// Stairwell::getDeckPath is also used to place the Graph vertices. Build one
 	// continuous polyline so adjacent flights share their exact deck endpoint.
 	vector<ImVec2> pathPoints;
-	if (staircase->getDecksHigh() > 1)
-		pathPoints.reserve(1 + (staircase->getDecksHigh() - 1) * 3);
-	for (uint32_t deck = 0; deck + 1 < staircase->getDecksHigh(); ++deck)
+	if (stairwell->getDecksHigh() > 1)
+		pathPoints.reserve(1 + (stairwell->getDecksHigh() - 1) * 3);
+	for (uint32_t deck = 0; deck + 1 < stairwell->getDecksHigh(); ++deck)
 	{
-		auto path = staircase->getDeckPath(deck);
+		auto path = stairwell->getDeckPath(deck);
 		if (pathPoints.empty()) pathPoints.push_back(toScreen(path[0]));
 		pathPoints.push_back(toScreen(path[1]));
 		pathPoints.push_back(toScreen(path[2]));
@@ -848,6 +853,40 @@ void renderStaircase(shared_ptr<const core::Staircase> staircase, int /* layer*/
 	}
 }
 
+
+void renderStaircase(shared_ptr<const core::Staircase> staircase, ImDrawList* drawList)
+{
+	auto path = staircase->getPath();
+	core::Vector2 origin, ignored;
+	staircase->getCurrentShape(origin, ignored);
+	uint32_t const count = staircase->getStepCount();
+	vector<ImVec2> points;
+	points.reserve(count * 2 + 1);
+	auto addPoint = [&](float x, float y)
+	{
+		core::Vector2 point{ origin.x + x, origin.y + y };
+		transformPosition(point);
+		points.push_back({ point.x, point.y });
+	};
+	addPoint(path[0].x, path[0].y);
+	for (uint32_t i = 0; i < count; ++i)
+	{
+		float const t0 = (float)i / (float)count;
+		float const t1 = (float)(i + 1) / (float)count;
+		float const x1 = path[0].x + (path[1].x - path[0].x) * t1;
+		float const y0 = path[0].y + (path[1].y - path[0].y) * t0;
+		float const y1 = path[0].y + (path[1].y - path[0].y) * t1;
+		addPoint(x1, y0);
+		addPoint(x1, y1);
+	}
+	if (points.size() > 1)
+	{
+		drawList->AddPolyline(points.data(), (int)points.size(), IM_COL32(32, 32, 32, 255),
+			ImDrawFlags_None, 10.0f);
+		drawList->AddPolyline(points.data(), (int)points.size(), IM_COL32(220, 220, 220, 255),
+			ImDrawFlags_None, 6.0f);
+	}
+}
 
 void renderSelected(shared_ptr<const core::Object> object, int /* layer */, bool /* visibleLayer */, ImDrawList* drawList)
 {
@@ -1143,10 +1182,15 @@ void renderSector(shared_ptr<const core::Sector> sector, int layer, bool visible
 				layer, visibleLayer, selected, drawList);
 		break;
 
-	case core::SectorType::Staircase:
-		if (shouldRenderStaircaseGeometry(layer, visibleLayer))
-			renderStaircase(static_pointer_cast<const core::StaircaseTransit>(sector)->getStaircase(),
+	case core::SectorType::Stairwell:
+		if (shouldRenderStairwellGeometry(layer, visibleLayer))
+			renderStairwell(static_pointer_cast<const core::StairwellTransit>(sector)->getStairwell(),
 				layer, visibleLayer, selected, drawList);
+		break;
+
+	case core::SectorType::Staircase:
+		if (visibleLayer || layer != CORE_LAYER_BACK)
+			renderStaircase(static_pointer_cast<const core::StaircaseTransit>(sector)->getStaircase(), drawList);
 		break;
 
 	default:
@@ -1379,20 +1423,20 @@ void renderShuttleTransit(shared_ptr<const core::ShuttleTransit> shuttleTransit,
 }
 
 
-void renderStaircaseTransit(shared_ptr<const core::StaircaseTransit> staircaseTransit, int layer, bool visibleLayer, bool wireframe, ImColor colour, ImDrawList* drawList)
+void renderStairwellTransit(shared_ptr<const core::StairwellTransit> stairwellTransit, int layer, bool visibleLayer, bool wireframe, ImColor colour, ImDrawList* drawList)
 {
-	// Transit Staircases go behind the Location.  We need to render it clipped, for each Deck.
+	// Transit Stairwells go behind the Location.  We need to render it clipped, for each Deck.
 	if (layer == CORE_LAYER_FORE && visibleLayer)
 	{
-		for (uint32_t i = 0; i < staircaseTransit->getDecksHigh(); ++i)
+		for (uint32_t i = 0; i < stairwellTransit->getDecksHigh(); ++i)
 		{
 			drawList->AddDrawCmd();
 
-			auto x = (float)(staircaseTransit->getCellX() + 1.0f);
-			auto y = (float)(staircaseTransit->getCellY() + i);
+			auto x = (float)(stairwellTransit->getCellX() + 1.0f);
+			auto y = (float)(stairwellTransit->getCellY() + i);
 
-			core::Vector2 doorwayBounds0{ x - CORE_STAIRCASE_DOORWAY_WIDTH * 0.5f, y };
-			core::Vector2 doorwayBounds1{ x + CORE_STAIRCASE_DOORWAY_WIDTH * 0.5f, y + CORE_STAIRCASE_DOORWAY_HEIGHT };
+			core::Vector2 doorwayBounds0{ x - CORE_STAIRWELL_DOORWAY_WIDTH * 0.5f, y };
+			core::Vector2 doorwayBounds1{ x + CORE_STAIRWELL_DOORWAY_WIDTH * 0.5f, y + CORE_STAIRWELL_DOORWAY_HEIGHT };
 
 			transformPosition(doorwayBounds0);
 			transformPosition(doorwayBounds1);
@@ -1400,7 +1444,7 @@ void renderStaircaseTransit(shared_ptr<const core::StaircaseTransit> staircaseTr
 			// ImGui clipping expects ascending Y coordinates, but we have flipped them for rendering
 			drawList->PushClipRect({ doorwayBounds0.x, doorwayBounds1.y }, { doorwayBounds1.x, doorwayBounds0.y }, true);
 
-			renderSector(staircaseTransit, layer, visibleLayer, wireframe, false, colour, drawList);
+			renderSector(stairwellTransit, layer, visibleLayer, wireframe, false, colour, drawList);
 
 			drawList->PopClipRect();
 			drawList->AddDrawCmd();
@@ -1408,10 +1452,10 @@ void renderStaircaseTransit(shared_ptr<const core::StaircaseTransit> staircaseTr
 	}
 	else
 	{
-		// renderSector applies the visible-layer policy to both the Staircase and
+		// renderSector applies the visible-layer policy to both the Stairwell and
 		// its occupants. Do not redraw either over the Fore layer from the hidden
 		// Back-layer wireframe pass.
-		renderSector(staircaseTransit, layer, visibleLayer, wireframe, true, colour, drawList);
+		renderSector(stairwellTransit, layer, visibleLayer, wireframe, true, colour, drawList);
 	}
 }
 
@@ -1447,10 +1491,29 @@ void renderSectors(shared_ptr<const core::Building> building, int layer, bool vi
 					visibleLayer, wireframe, ForeLocationColour, drawList);
 				break;
 
-			case core::SectorType::Staircase:
-				renderStaircaseTransit(static_pointer_cast<const core::StaircaseTransit>(sector),
+			case core::SectorType::Stairwell:
+				renderStairwellTransit(static_pointer_cast<const core::StairwellTransit>(sector),
 					layer, visibleLayer, wireframe, BackLocationColour, drawList);
 				break;
+
+			case core::SectorType::Staircase:
+			{
+				auto staircase = static_pointer_cast<const core::StaircaseTransit>(sector);
+				for (auto const& candidate : visibleSectors)
+				{
+					auto corridor = dynamic_pointer_cast<const core::Location>(candidate);
+					if (!corridor || !corridor->isCorridor()) continue;
+					core::Vector2 clip0, clip1;
+					corridor->getBounds(clip0, clip1);
+					transformPosition(clip0); transformPosition(clip1);
+					drawList->PushClipRect({ min(clip0.x, clip1.x), min(clip0.y, clip1.y) },
+						{ max(clip0.x, clip1.x), max(clip0.y, clip1.y) }, true);
+					renderStaircase(staircase->getStaircase(), drawList);
+					renderSectorAgents(staircase, layer, visibleLayer, drawList);
+					drawList->PopClipRect();
+				}
+				break;
+			}
 
 			default:
 				break;

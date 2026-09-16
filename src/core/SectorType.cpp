@@ -23,6 +23,9 @@ namespace core
 		case SectorType::Shuttle:
 			return "Shuttle";
 
+		case SectorType::Stairwell:
+			return "Stairwell";
+
 		case SectorType::Staircase:
 			return "Staircase";
 

@@ -2155,32 +2155,32 @@ namespace
 			&& descendingFinished < fifthAscendingFinished;
 	}
 
-	bool staircaseCoordinationIsExplicitlyOptIn()
+	bool stairwellCoordinationIsExplicitlyOptIn()
 	{
-		core::Building ordinary("Ordinary staircase", 5, 3);
+		core::Building ordinary("Ordinary stairwell", 5, 3);
 		ordinary.addCorridor(0, 0, 4);
 		ordinary.addCorridor(1, 0, 4);
-		ordinary.addStaircase(0, 1, 2, CORE_SIDE_LEFT);
+		ordinary.addStairwell(0, 1, 2, CORE_SIDE_LEFT);
 		ordinary.finishBuild();
 		if (!ordinary.getSimulationSnapshot().traversalResources.empty()) return false;
 
-		core::Building narrow("Narrow staircase", 5, 3);
+		core::Building narrow("Narrow stairwell", 5, 3);
 		narrow.addCorridor(0, 0, 4);
 		narrow.addCorridor(1, 0, 4);
-		core::Building::CreateStaircaseOptions options{ 2, CORE_SIDE_LEFT };
+		core::Building::CreateStairwellOptions options{ 2, CORE_SIDE_LEFT };
 		options.directionalCapacity = 1;
 		options.directionalBatchLimit = 3;
-		auto created = narrow.addStaircase(0, 1, options);
+		auto created = narrow.addStairwell(0, 1, options);
 		narrow.finishBuild();
 		auto snapshot = narrow.getSimulationSnapshot();
 		if (!created.traversalResource || snapshot.traversalResources.size() != 1
-			|| !snapshot.traversalResources.front().isNarrowStaircase
+			|| !snapshot.traversalResources.front().isNarrowStairwell
 			|| snapshot.traversalResources.front().capacity != 1
 			|| snapshot.traversalResources.front().directionalBatchLimit != 3) return false;
 		return std::all_of(narrow.getGraph()->getEdges().begin(), narrow.getGraph()->getEdges().end(),
 			[&](auto const& edge)
 			{
-				return edge->getType() != core::EdgeType::Staircase
+				return edge->getType() != core::EdgeType::Stairwell
 					|| edge->getTraversalResourceId() == created.traversalResource;
 			});
 	}
@@ -4078,9 +4078,9 @@ int main()
 			std::cerr << "FAIL: extensible force bridge preparation or lease cleanup failed\n";
 			return 1;
 		}
-		if (!staircaseCoordinationIsExplicitlyOptIn())
+		if (!stairwellCoordinationIsExplicitlyOptIn())
 		{
-			std::cerr << "FAIL: ordinary/narrow staircase coordination policy was incorrect\n";
+			std::cerr << "FAIL: ordinary/narrow stairwell coordination policy was incorrect\n";
 			return 1;
 		}
 

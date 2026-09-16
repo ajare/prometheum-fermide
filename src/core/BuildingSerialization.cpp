@@ -7,6 +7,7 @@
 #include "core/LadderTransit.h"
 #include "core/LadderSectorObject.h"
 #include "core/LiftSectorObject.h"
+#include "core/StairwellTransit.h"
 #include "core/StaircaseTransit.h"
 #include "core/Location.h"
 #include "core/DoorSectorObject.h"
@@ -64,6 +65,7 @@ namespace core
 		case ConstructionType::Corridor: return "corridor";
 		case ConstructionType::Room: return "room";
 		case ConstructionType::Ladder: return "ladder";
+		case ConstructionType::Stairwell: return "stairwell";
 		case ConstructionType::Staircase: return "staircase";
 		case ConstructionType::Lift: return "lift";
 		case ConstructionType::Shuttle: return "shuttle";
@@ -141,11 +143,14 @@ namespace core
 			serializer.writeUint32("decksHigh", record.c); serializer.writeBool("extensible", record.p);
 			serializer.writeBool("startExtended", record.q);
 			serializer.writeUint32("directionalBatchLimit", record.d); break;
-		case ConstructionType::Staircase:
+		case ConstructionType::Stairwell:
 			serializer.writeUint32("y", record.a); serializer.writeUint32("x", record.b);
 			serializer.writeUint32("decksHigh", record.c); serializer.writeString("mountSide", sideName(record.i));
 			serializer.writeUint32("directionalCapacity", record.d);
 			serializer.writeUint32("directionalBatchLimit", record.e); break;
+		case ConstructionType::Staircase:
+			serializer.writeUint32("y", record.a); serializer.writeUint32("x", record.b);
+			serializer.writeUint32("cellsWide", record.c); serializer.writeString("riseSide", sideName(record.i)); break;
 		case ConstructionType::Lift:
 			serializer.writeUint32("y", record.a); serializer.writeUint32("x", record.b);
 			serializer.writeUint32("cellsWide", record.c); serializer.writeUint32("decksHigh", record.e);
@@ -341,11 +346,14 @@ namespace core
 			record.q = serializer.readBool("startExtended");
 			(void)serializer.readFloat("agentSpacing", true, CORE_LADDER_AGENT_SPACING);
 			record.d = serializer.readUint32("directionalBatchLimit"); break;
-		case ConstructionType::Staircase:
+		case ConstructionType::Stairwell:
 			record.a = serializer.readUint32("y"); record.b = serializer.readUint32("x");
 			record.c = serializer.readUint32("decksHigh"); record.i = readSide("mountSide");
 			record.d = serializer.readUint32("directionalCapacity");
 			record.e = serializer.readUint32("directionalBatchLimit"); break;
+		case ConstructionType::Staircase:
+			record.a = serializer.readUint32("y"); record.b = serializer.readUint32("x");
+			record.c = serializer.readUint32("cellsWide"); record.i = readSide("riseSide"); break;
 		case ConstructionType::Lift:
 			record.a = serializer.readUint32("y"); record.b = serializer.readUint32("x");
 			record.c = serializer.readUint32("cellsWide"); record.e = serializer.readUint32("decksHigh");
@@ -624,9 +632,12 @@ namespace core
 			addLadder(record.a, record.b,
 				{ record.c, record.p, record.q, record.d });
 			break;
-		case ConstructionType::Staircase:
-			addStaircase(record.a, record.b,
+		case ConstructionType::Stairwell:
+			addStairwell(record.a, record.b,
 				{ record.c, record.i, record.d, record.e });
+			break;
+		case ConstructionType::Staircase:
+			addStaircase(record.a, record.b, { record.c, record.i });
 			break;
 		case ConstructionType::Lift:
 			addLift(record.a, record.b,
@@ -689,7 +700,7 @@ namespace core
 		auto createsSector = [](ConstructionType type)
 		{
 			return type == ConstructionType::Corridor || type == ConstructionType::Room
-				|| type == ConstructionType::Ladder || type == ConstructionType::Staircase
+				|| type == ConstructionType::Ladder || type == ConstructionType::Stairwell || type == ConstructionType::Staircase
 				|| type == ConstructionType::Lift || type == ConstructionType::Shuttle;
 		};
 		auto isLocation = [](ConstructionType type)
@@ -744,7 +755,7 @@ namespace core
 		for (auto it = records.begin(); it != records.end(); ++it)
 		{
 			bool producer = it->type == ConstructionType::Corridor || it->type == ConstructionType::Room
-				|| it->type == ConstructionType::Ladder || it->type == ConstructionType::Staircase
+				|| it->type == ConstructionType::Ladder || it->type == ConstructionType::Stairwell || it->type == ConstructionType::Staircase
 				|| it->type == ConstructionType::Lift || it->type == ConstructionType::Shuttle;
 			if (!producer) continue;
 			if (producerIndex++ == plan.sectorIndex) { found = it; break; }
@@ -1042,7 +1053,7 @@ namespace core
 		for (auto it = records.begin(); it != records.end(); ++it)
 		{
 			bool producer = it->type == ConstructionType::Corridor || it->type == ConstructionType::Room
-				|| it->type == ConstructionType::Ladder || it->type == ConstructionType::Staircase
+				|| it->type == ConstructionType::Ladder || it->type == ConstructionType::Stairwell || it->type == ConstructionType::Staircase
 				|| it->type == ConstructionType::Lift || it->type == ConstructionType::Shuttle;
 			if (!producer) continue;
 			if (producerIndex++ == plan.sectorIndex) { found = it; break; }
@@ -1123,7 +1134,7 @@ namespace core
 		for (auto const& record : mConstructionRecords)
 		{
 			bool producer = record.type == ConstructionType::Corridor || record.type == ConstructionType::Room
-				|| record.type == ConstructionType::Ladder || record.type == ConstructionType::Staircase
+				|| record.type == ConstructionType::Ladder || record.type == ConstructionType::Stairwell || record.type == ConstructionType::Staircase
 				|| record.type == ConstructionType::Lift || record.type == ConstructionType::Shuttle;
 			if (!producer) continue;
 			if (producerIndex++ == sectorIndex) { authored = &record; break; }
@@ -1328,7 +1339,7 @@ namespace core
 		for (auto const& record : mConstructionRecords)
 		{
 			bool producer = record.type == ConstructionType::Corridor || record.type == ConstructionType::Room
-				|| record.type == ConstructionType::Ladder || record.type == ConstructionType::Staircase
+				|| record.type == ConstructionType::Ladder || record.type == ConstructionType::Stairwell || record.type == ConstructionType::Staircase
 				|| record.type == ConstructionType::Lift || record.type == ConstructionType::Shuttle;
 			if (!producer) continue;
 			if (producerIndex++ != sectorIndex) continue;
@@ -1345,7 +1356,7 @@ namespace core
 		auto createsSector = [](ConstructionType type)
 		{
 			return type == ConstructionType::Corridor || type == ConstructionType::Room
-				|| type == ConstructionType::Ladder || type == ConstructionType::Staircase
+				|| type == ConstructionType::Ladder || type == ConstructionType::Stairwell || type == ConstructionType::Staircase
 				|| type == ConstructionType::Lift || type == ConstructionType::Shuttle;
 		};
 		auto referencesSector = [](ConstructionType type)
@@ -1523,30 +1534,146 @@ namespace core
 		return mLayers[CORE_LAYER_BACK]->getCellDefinition(plan.x, plan.y).sectorIndex;
 	}
 
-	bool Building::getStaircaseOptions(uint32_t sectorIndex, CreateStaircaseOptions& options) const
+	bool Building::getStairwellOptions(uint32_t sectorIndex, CreateStairwellOptions& options) const
 	{
 		uint32_t producerIndex = 0;
 		for (auto const& record : mConstructionRecords)
 		{
 			bool producer = record.type == ConstructionType::Corridor || record.type == ConstructionType::Room
-				|| record.type == ConstructionType::Ladder || record.type == ConstructionType::Staircase
+				|| record.type == ConstructionType::Ladder || record.type == ConstructionType::Stairwell || record.type == ConstructionType::Staircase
 				|| record.type == ConstructionType::Lift || record.type == ConstructionType::Shuttle;
 			if (!producer) continue;
 			if (producerIndex++ != sectorIndex) continue;
-			if (record.type != ConstructionType::Staircase) return false;
+			if (record.type != ConstructionType::Stairwell) return false;
 			options = { record.c, record.i, record.d, record.e };
 			return true;
 		}
 		return false;
 	}
 
-	bool Building::prepareStaircaseEdit(StaircaseEditPlan const& plan,
+	bool Building::getStaircaseOptions(uint32_t sectorIndex, CreateStaircaseOptions& options) const
+	{
+		uint32_t producerIndex = 0;
+		for (auto const& record : mConstructionRecords)
+		{
+			bool producer = record.type == ConstructionType::Corridor || record.type == ConstructionType::Room
+				|| record.type == ConstructionType::Ladder || record.type == ConstructionType::Stairwell
+				|| record.type == ConstructionType::Staircase || record.type == ConstructionType::Lift
+				|| record.type == ConstructionType::Shuttle;
+			if (!producer) continue;
+			if (producerIndex++ != sectorIndex) continue;
+			if (record.type != ConstructionType::Staircase) return false;
+			options = { record.c, record.i };
+			return true;
+		}
+		return false;
+	}
+
+	Building::StaircaseEditPlan Building::planResizeStaircase(uint32_t sectorIndex,
+		uint32_t x, uint32_t y, CreateStaircaseOptions const& options) const
+	{
+		StaircaseEditPlan plan;
+		plan.sectorIndex = sectorIndex; plan.x = x; plan.y = y; plan.options = options;
+		if (sectorIndex >= mSectors.size() || !dynamic_pointer_cast<const StaircaseTransit>(mSectors[sectorIndex]))
+			{ plan.diagnostic = "Only Staircases can be edited"; return plan; }
+		if (options.riseSide != CORE_SIDE_LEFT && options.riseSide != CORE_SIDE_RIGHT)
+			{ plan.diagnostic = "The Staircase rise direction is invalid"; return plan; }
+		if (options.cellsWide < 2)
+			{ plan.diagnostic = "A Staircase must be at least two cells wide"; return plan; }
+		if (x >= mCellsWide || y >= mDecksHigh || options.cellsWide > mCellsWide - x || y + 1 >= mDecksHigh)
+			{ plan.diagnostic = "The Staircase is outside the Building bounds"; return plan; }
+		for (uint32_t iy = y; iy <= y + 1; ++iy)
+			for (uint32_t ix = x; ix < x + options.cellsWide; ++ix)
+			{
+				auto occupant = mLayers[CORE_LAYER_BACK]->getCellDefinition(ix, iy).sectorIndex;
+				if (occupant != ~0u && occupant != sectorIndex)
+					{ plan.diagnostic = format("A Back-layer Sector at {},{} blocks the Staircase", ix, iy); return plan; }
+			}
+		uint32_t lowerX = options.riseSide == CORE_SIDE_RIGHT ? x : x + options.cellsWide - 1;
+		uint32_t upperX = options.riseSide == CORE_SIDE_RIGHT ? x + options.cellsWide - 1 : x;
+		for (auto [endpointX, endpointY] : { pair{ lowerX, y }, pair{ upperX, y + 1 } })
+		{
+			auto const& cell = mLayers[CORE_LAYER_FORE]->getCellDefinition(endpointX, endpointY);
+			auto location = cell.occupied() ? dynamic_pointer_cast<const Location>(mSectors[cell.sectorIndex]) : nullptr;
+			if (!location || !location->isCorridor() || !cell.isTraversableOnFoot())
+				{ plan.diagnostic = format("A traversable Fore-layer Corridor is required at {},{}", endpointX, endpointY); return plan; }
+		}
+		auto old = dynamic_pointer_cast<const StaircaseTransit>(mSectors[sectorIndex]);
+		plan.move = old->getCellX() != x || old->getCellY() != y;
+		plan.valid = true;
+		return plan;
+	}
+
+	Building::StaircaseEditPlan Building::planRemoveStaircase(uint32_t sectorIndex) const
+	{
+		StaircaseEditPlan plan;
+		plan.sectorIndex = sectorIndex; plan.remove = true;
+		if (sectorIndex >= mSectors.size() || !dynamic_pointer_cast<const StaircaseTransit>(mSectors[sectorIndex]))
+			{ plan.diagnostic = "Only a Staircase can be deleted"; return plan; }
+		plan.valid = getStaircaseOptions(sectorIndex, plan.options);
+		if (!plan.valid) { plan.diagnostic = "The selected Staircase no longer has an authored definition"; return plan; }
+		plan.consequences.push_back("Delete Staircase");
+		return plan;
+	}
+
+	uint32_t Building::applyStaircaseEdit(StaircaseEditPlan const& requested)
+	{
+		if (!mSimulationPaused) throw BuildingException(this, "Editing a Staircase requires the simulation to be paused");
+		auto plan = requested.remove ? planRemoveStaircase(requested.sectorIndex)
+			: planResizeStaircase(requested.sectorIndex, requested.x, requested.y, requested.options);
+		if (!plan.valid) throw BuildingException(this, plan.diagnostic);
+		auto createsSector = [](ConstructionType type)
+		{
+			return type == ConstructionType::Corridor || type == ConstructionType::Room
+				|| type == ConstructionType::Ladder || type == ConstructionType::Stairwell
+				|| type == ConstructionType::Staircase || type == ConstructionType::Lift
+				|| type == ConstructionType::Shuttle;
+		};
+		auto referencesSector = [](ConstructionType type)
+		{
+			return type == ConstructionType::LightSwitch || type == ConstructionType::ForceBridge
+				|| type == ConstructionType::SectorLadder || type == ConstructionType::PlatformLift
+				|| type == ConstructionType::Walkway || type == ConstructionType::Marker
+				|| type == ConstructionType::RemoveWall || type == ConstructionType::RemoveMarker
+				|| type == ConstructionType::ObjectTombstone;
+		};
+		auto records = mConstructionRecords;
+		uint32_t producerIndex = 0;
+		auto found = records.end();
+		for (auto it = records.begin(); it != records.end(); ++it)
+			if (createsSector(it->type) && producerIndex++ == plan.sectorIndex) { found = it; break; }
+		if (found == records.end() || found->type != ConstructionType::Staircase)
+			throw BuildingException(this, "The selected Staircase no longer has an authored definition");
+		if (plan.remove)
+		{
+			records.erase(found);
+			records.erase(remove_if(records.begin(), records.end(), [&](auto& record)
+			{
+				if (!referencesSector(record.type)) return false;
+				if (record.a == plan.sectorIndex) return true;
+				if (record.a > plan.sectorIndex) --record.a;
+				return false;
+			}), records.end());
+		}
+		else
+		{
+			found->a = plan.y; found->b = plan.x; found->c = plan.options.cellsWide; found->i = plan.options.riseSide;
+		}
+		auto old = mSectors[plan.sectorIndex];
+		int deltaX = plan.move ? (int)plan.x - (int)old->getCellX() : 0;
+		int deltaY = plan.move ? (int)plan.y - (int)old->getCellY() : 0;
+		rebuildFromConstructionRecords(std::move(records), plan.remove ? ~0u : plan.sectorIndex, deltaX, deltaY);
+		if (plan.remove) return ~0u;
+		return mLayers[CORE_LAYER_BACK]->getCellDefinition(plan.x, plan.y).sectorIndex;
+	}
+
+	bool Building::prepareStairwellEdit(StairwellEditPlan const& plan,
 		vector<ConstructionRecord>& records, string& diagnostic) const
 	{
 		auto createsSector = [](ConstructionType type)
 		{
 			return type == ConstructionType::Corridor || type == ConstructionType::Room
-				|| type == ConstructionType::Ladder || type == ConstructionType::Staircase
+				|| type == ConstructionType::Ladder || type == ConstructionType::Stairwell || type == ConstructionType::Staircase
 				|| type == ConstructionType::Lift || type == ConstructionType::Shuttle;
 		};
 		auto referencesSector = [](ConstructionType type)
@@ -1566,9 +1693,9 @@ namespace core
 			if (!createsSector(it->type)) continue;
 			if (producerIndex++ == plan.sectorIndex) { found = it; break; }
 		}
-		if (found == records.end() || found->type != ConstructionType::Staircase)
+		if (found == records.end() || found->type != ConstructionType::Stairwell)
 		{
-			diagnostic = "The selected Staircase no longer has an authored definition";
+			diagnostic = "The selected Stairwell no longer has an authored definition";
 			return false;
 		}
 		if (plan.remove)
@@ -1621,28 +1748,28 @@ namespace core
 		return true;
 	}
 
-	Building::StaircaseEditPlan Building::planResizeStaircase(uint32_t sectorIndex,
-		uint32_t x, uint32_t y, CreateStaircaseOptions const& options) const
+	Building::StairwellEditPlan Building::planResizeStairwell(uint32_t sectorIndex,
+		uint32_t x, uint32_t y, CreateStairwellOptions const& options) const
 	{
-		StaircaseEditPlan plan;
+		StairwellEditPlan plan;
 		plan.sectorIndex = sectorIndex; plan.x = x; plan.y = y; plan.decksHigh = options.decksHigh;
 		plan.options = options;
-		if (sectorIndex >= mSectors.size() || !dynamic_pointer_cast<const StaircaseTransit>(mSectors[sectorIndex]))
-		{ plan.diagnostic = "Only Staircases can be edited"; return plan; }
-		auto staircase = dynamic_pointer_cast<const StaircaseTransit>(mSectors[sectorIndex]);
-		plan.move = x != staircase->getCellX() || y != staircase->getCellY();
+		if (sectorIndex >= mSectors.size() || !dynamic_pointer_cast<const StairwellTransit>(mSectors[sectorIndex]))
+		{ plan.diagnostic = "Only Stairwells can be edited"; return plan; }
+		auto stairwell = dynamic_pointer_cast<const StairwellTransit>(mSectors[sectorIndex]);
+		plan.move = x != stairwell->getCellX() || y != stairwell->getCellY();
 		if (options.mountSide != CORE_SIDE_LEFT && options.mountSide != CORE_SIDE_RIGHT)
-		{ plan.diagnostic = "The Staircase mounting side is invalid"; return plan; }
+		{ plan.diagnostic = "The Stairwell mounting side is invalid"; return plan; }
 		if (options.decksHigh < 2)
-		{ plan.diagnostic = "A Staircase must span at least two decks"; return plan; }
+		{ plan.diagnostic = "A Stairwell must span at least two decks"; return plan; }
 		if (options.directionalCapacity > 0 && options.directionalBatchLimit == 0)
-		{ plan.diagnostic = "A constrained Staircase requires a positive directional batch limit"; return plan; }
+		{ plan.diagnostic = "A constrained Stairwell requires a positive directional batch limit"; return plan; }
 		if (options.directionalCapacity > 0
-			&& staircase->getAgents().size() > options.directionalCapacity)
-		{ plan.diagnostic = "Directional capacity is below the current Staircase occupancy"; return plan; }
+			&& stairwell->getAgents().size() > options.directionalCapacity)
+		{ plan.diagnostic = "Directional capacity is below the current Stairwell occupancy"; return plan; }
 		if (x >= mCellsWide || y >= mDecksHigh || x + 2 > mCellsWide
 			|| y + options.decksHigh > mDecksHigh)
-		{ plan.diagnostic = "The Staircase is outside the Building bounds"; return plan; }
+		{ plan.diagnostic = "The Stairwell is outside the Building bounds"; return plan; }
 		for (uint32_t iy = y; iy < y + options.decksHigh; ++iy)
 		{
 			auto const& first = mLayers[CORE_LAYER_FORE]->getCellDefinition(x, iy);
@@ -1653,67 +1780,67 @@ namespace core
 			{
 				auto const& fore = mLayers[CORE_LAYER_FORE]->getCellDefinition(ix, iy);
 				if (fore.sectorIndex != first.sectorIndex)
-				{ plan.diagnostic = format("The Staircase spans different Fore-layer Locations at deck {}", iy); return plan; }
+				{ plan.diagnostic = format("The Stairwell spans different Fore-layer Locations at deck {}", iy); return plan; }
 				if (!fore.isTraversableOnFoot())
 				{ plan.diagnostic = format("The Fore-layer floor at {},{} is not traversable", ix, iy); return plan; }
 				auto occupant = mLayers[CORE_LAYER_BACK]->getCellDefinition(ix, iy).sectorIndex;
 				if (occupant != ~0u && occupant != sectorIndex)
-				{ plan.diagnostic = format("A Back-layer Sector at {},{} blocks the Staircase", ix, iy); return plan; }
+				{ plan.diagnostic = format("A Back-layer Sector at {},{} blocks the Stairwell", ix, iy); return plan; }
 			}
 		}
 
 		for (auto const& [id, agent] : mAgents.entries())
 		{
 			(void)id;
-			if (agent->getSector() != staircase.get() || plan.move) continue;
+			if (agent->getSector() != stairwell.get() || plan.move) continue;
 			auto position = agent->getGlobalPosition();
 			if (position.y < y || position.y >= y + options.decksHigh)
 				plan.consequences.push_back("Delete Agent " + agent->getName());
 		}
 		vector<ConstructionRecord> records;
-		plan.valid = prepareStaircaseEdit(plan, records, plan.diagnostic);
+		plan.valid = prepareStairwellEdit(plan, records, plan.diagnostic);
 		if (plan.valid && records.size() < mConstructionRecords.size())
 			plan.consequences.push_back(format("Delete {} dependent authored object(s)",
 				mConstructionRecords.size() - records.size()));
 		return plan;
 	}
 
-	Building::StaircaseEditPlan Building::planRemoveStaircase(uint32_t sectorIndex) const
+	Building::StairwellEditPlan Building::planRemoveStairwell(uint32_t sectorIndex) const
 	{
-		StaircaseEditPlan plan;
+		StairwellEditPlan plan;
 		plan.remove = true; plan.sectorIndex = sectorIndex;
-		if (sectorIndex >= mSectors.size() || !dynamic_pointer_cast<const StaircaseTransit>(mSectors[sectorIndex]))
-		{ plan.diagnostic = "Only a Staircase can be deleted"; return plan; }
-		auto staircase = dynamic_pointer_cast<const StaircaseTransit>(mSectors[sectorIndex]);
-		plan.x = staircase->getCellX(); plan.y = staircase->getCellY();
-		if (!getStaircaseOptions(sectorIndex, plan.options))
-		{ plan.diagnostic = "The selected Staircase no longer has an authored definition"; return plan; }
+		if (sectorIndex >= mSectors.size() || !dynamic_pointer_cast<const StairwellTransit>(mSectors[sectorIndex]))
+		{ plan.diagnostic = "Only a Stairwell can be deleted"; return plan; }
+		auto stairwell = dynamic_pointer_cast<const StairwellTransit>(mSectors[sectorIndex]);
+		plan.x = stairwell->getCellX(); plan.y = stairwell->getCellY();
+		if (!getStairwellOptions(sectorIndex, plan.options))
+		{ plan.diagnostic = "The selected Stairwell no longer has an authored definition"; return plan; }
 		plan.decksHigh = plan.options.decksHigh;
-		plan.consequences.push_back("Delete Staircase");
+		plan.consequences.push_back("Delete Stairwell");
 		for (auto const& [id, agent] : mAgents.entries())
 		{
 			(void)id;
-			if (agent->getSector() == staircase.get())
+			if (agent->getSector() == stairwell.get())
 				plan.consequences.push_back("Delete Agent " + agent->getName());
 		}
 		vector<ConstructionRecord> records;
-		plan.valid = prepareStaircaseEdit(plan, records, plan.diagnostic);
+		plan.valid = prepareStairwellEdit(plan, records, plan.diagnostic);
 		if (plan.valid && records.size() + 1 < mConstructionRecords.size())
 			plan.consequences.push_back(format("Delete {} dependent authored object(s)",
 				mConstructionRecords.size() - records.size() - 1));
 		return plan;
 	}
 
-	uint32_t Building::applyStaircaseEdit(StaircaseEditPlan const& requested)
+	uint32_t Building::applyStairwellEdit(StairwellEditPlan const& requested)
 	{
 		if (!mSimulationPaused)
-			throw BuildingException(this, "Editing a Staircase requires the simulation to be paused");
-		auto plan = requested.remove ? planRemoveStaircase(requested.sectorIndex)
-			: planResizeStaircase(requested.sectorIndex, requested.x, requested.y, requested.options);
+			throw BuildingException(this, "Editing a Stairwell requires the simulation to be paused");
+		auto plan = requested.remove ? planRemoveStairwell(requested.sectorIndex)
+			: planResizeStairwell(requested.sectorIndex, requested.x, requested.y, requested.options);
 		if (!plan.valid) throw BuildingException(this, plan.diagnostic);
 		vector<ConstructionRecord> records;
 		string diagnostic;
-		if (!prepareStaircaseEdit(plan, records, diagnostic)) throw BuildingException(this, diagnostic);
+		if (!prepareStairwellEdit(plan, records, diagnostic)) throw BuildingException(this, diagnostic);
 		auto old = mSectors[plan.sectorIndex];
 		int deltaX = plan.remove ? 0 : (int)plan.x - (int)old->getCellX();
 		int deltaY = plan.remove ? 0 : (int)plan.y - (int)old->getCellY();
@@ -1730,7 +1857,7 @@ namespace core
 		auto createsSector = [](ConstructionType type)
 		{
 			return type == ConstructionType::Corridor || type == ConstructionType::Room
-				|| type == ConstructionType::Ladder || type == ConstructionType::Staircase
+				|| type == ConstructionType::Ladder || type == ConstructionType::Stairwell || type == ConstructionType::Staircase
 				|| type == ConstructionType::Lift || type == ConstructionType::Shuttle;
 		};
 		auto referencesSector = [](ConstructionType type)
@@ -1911,7 +2038,7 @@ namespace core
 					}
 					source.values = std::move(supported);
 				}
-				else if (source.type == ConstructionType::Staircase)
+				else if (source.type == ConstructionType::Stairwell)
 				{
 					vector<uint32_t> supported;
 					for (uint32_t y = source.a; y < source.a + source.c; ++y)
@@ -1921,14 +2048,14 @@ namespace core
 					}
 					if (supported.size() < 2)
 					{
-						diagnostic = "The edit would leave a Staircase with fewer than two supported decks. "
-							"Delete the Staircase first (transit deletion is not yet supported by the editor).";
+						diagnostic = "The edit would leave a Stairwell with fewer than two supported decks. "
+							"Delete the Stairwell first (transit deletion is not yet supported by the editor).";
 						return false;
 					}
 					for (size_t i = 1; i < supported.size(); ++i)
 						if (supported[i] != supported[i - 1] + 1)
 						{
-							diagnostic = "The edit would create an unsupported gap in a Staircase.";
+							diagnostic = "The edit would create an unsupported gap in a Stairwell.";
 							return false;
 						}
 					source.a = supported.front();
@@ -1996,7 +2123,7 @@ namespace core
 			else if (record.type == ConstructionType::Room)
 				locations[sectorIndex++] = { true, record.d, record.e };
 			else if (record.type == ConstructionType::Ladder
-				|| record.type == ConstructionType::Staircase || record.type == ConstructionType::Lift
+				|| record.type == ConstructionType::Stairwell || record.type == ConstructionType::Staircase || record.type == ConstructionType::Lift
 				|| record.type == ConstructionType::Shuttle) ++sectorIndex;
 		}
 		auto hasWalkway = [&](uint32_t owner, uint32_t deck, uint32_t x)

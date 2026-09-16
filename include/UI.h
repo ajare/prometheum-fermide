@@ -15,6 +15,7 @@ inline bool isCanvasSelectableSectorType(core::SectorType type)
 		|| type == core::SectorType::Lift
 		|| type == core::SectorType::Shuttle
 		|| type == core::SectorType::Ladder
+		|| type == core::SectorType::Stairwell
 		|| type == core::SectorType::Staircase;
 }
 

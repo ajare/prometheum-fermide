@@ -15,7 +15,9 @@ namespace core
 		Lift,
 		// For vertices which are part of a Shuttle
 		Shuttle,
-		// For vertices which are in a Staircase
+		// For vertices which are in a Stairwell
+		Stairwell,
+		// For vertices which are on a straight Staircase
 		Staircase
 	};
 
@@ -46,7 +48,9 @@ namespace core
 		// Placed at a Shuttle entrance, for either type of Lift (SectorObject or Transit)
 		// Connects to ShuttleVertices via ShuttleMountPoints
 		Shuttle,
-		// Placed at a point within a Staircase
+		// Placed at a point within a Stairwell
+		Stairwell,
+		// Placed at either end of a Staircase
 		Staircase
 	};
 

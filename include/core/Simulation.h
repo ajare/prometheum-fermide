@@ -175,7 +175,7 @@ namespace core
 		bool retractionPending{ false };
 		uint32_t extensionRequestLeaseCount{ 0 };
 		uint32_t extensionOccupantLeaseCount{ 0 };
-		bool isNarrowStaircase{ false };
+		bool isNarrowStairwell{ false };
 		bool enabled{ true };
 		uint32_t capacity{ 0 };
 		uint32_t occupantCount{ 0 };

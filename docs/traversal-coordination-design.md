@@ -92,8 +92,8 @@ Agents will approach resources, queue at reserved positions, operate required co
 68. As an agent using a ladder, I want compatible climbers admitted up to its capacity, so that the ladder is not unnecessarily single-occupancy.
 69. As an agent waiting for a ladder, I want directional batches bounded, so that continuous traffic from one side cannot starve me.
 70. As an agent using an extensible ladder, I want it held extended while occupied or reserved, so that it cannot retract beneath me.
-71. As an agent using an ordinary staircase, I want unconstrained bidirectional movement, so that wide stairs do not create unnecessary queues.
-72. As an agent using a narrow staircase, I want configurable directional capacity, so that constrained stairs can use ladder-like coordination.
+71. As an agent using an ordinary stairwell, I want unconstrained bidirectional movement, so that wide stairs do not create unnecessary queues.
+72. As an agent using a narrow stairwell, I want configurable directional capacity, so that constrained stairs can use ladder-like coordination.
 73. As an agent crossing a force bridge, I want it held extended while occupied or reserved, so that it cannot retract during use.
 74. As an agent approaching a window, I want only a fully open window treated as normally traversable, so that closed or broken windows remain barriers.
 75. As an agent using a bulkhead door, I want the same queue, activation, and safety guarantees as other controlled doors, so that same-layer geometry cannot bypass it.
@@ -240,8 +240,8 @@ Agents will approach resources, queue at reserved positions, operate required co
 - Interior standing positions are generated and validated against vehicle geometry. Construction fails if declared capacity cannot be represented.
 - Destination capacity remains reserved until entry completes or the reservation is cancelled or expires.
 - Source occupancy remains committed until exit crossing completes.
-- Ordinary locations and staircases are unlimited by default.
-- Narrow staircases may opt into directional capacity.
+- Ordinary locations and stairwells are unlimited by default.
+- Narrow stairwells may opt into directional capacity.
 - Ladders derive capacity from the number of crossed floors (`decksHigh - 1`) divided by `CORE_LADDER_AGENT_SPACING / CORE_CELL_YX_RENDER_RATIO`.
 - Ladders admit multiple same-direction climbers while preventing opposing occupancy and committed entry.
 - Once opposite-direction demand exists, same-direction admissions stop after a configurable batch limit. Existing occupants drain before direction switches to the oldest waiting side.
@@ -250,7 +250,7 @@ Agents will approach resources, queue at reserved positions, operate required co
 
 ### Transport model
 
-- A transit sector remains static and represents the shaft, route, ladder, or staircase connectivity.
+- A transit sector remains static and represents the shaft, route, ladder, or stairwell connectivity.
 - Exact transport occupancy is represented separately by the vehicle manifest and spatial parent.
 - One lift car is supported per shaft and one coupled shuttle per shuttle route in the initial implementation.
 - A coupled shuttle is one scheduled and moving transport vehicle composed of capacity-owning carriages.
@@ -385,8 +385,8 @@ Agents will approach resources, queue at reserved positions, operate required co
 38. Same-direction ladder users enter up to capacity while opposite-direction users wait.
 39. Opposite ladder traffic receives service after the current bounded batch drains.
 40. An occupied or reserved extensible ladder cannot retract.
-41. An ordinary staircase remains unconstrained and bidirectional.
-42. A configured narrow staircase enforces directional capacity.
+41. An ordinary stairwell remains unconstrained and bidirectional.
+42. A configured narrow stairwell enforces directional capacity.
 43. An occupied or reserved force bridge cannot retract.
 44. A fully open window permits configured traversal while closed or broken windows do not.
 45. Same-layer bulkhead traversal cannot bypass its resource policy.

@@ -11,6 +11,7 @@
 #include "core/CellDefinition.h"
 #include "core/LiftTransit.h"
 #include "core/ShuttleTransit.h"
+#include "core/StaircaseTransit.h"
 #include "core/Path.h"
 #include "core/Log.h"
 
@@ -79,7 +80,11 @@ namespace core
 
 		void processLadderTransit(int layerIndex, uint32_t curSectorIndex, uint32_t x, uint32_t y, int level, PositionVertexMap& interLayerVertexLookup, VertexList& workVertices, std::map<std::shared_ptr<VerticalEdgeCreator>, VertexList>& crossDeckVertices);
 
-		void processStaircaseTransit(int layerIndex, uint32_t curSectorIndex, uint32_t backSectorIndex, uint32_t x, uint32_t y, uint32_t deckOffset, PositionVertexMap& interLayerVertexLookup, VertexList& workVertices, std::map<std::shared_ptr<VerticalEdgeCreator>, VertexList>& crossDeckVertices);
+		void processStairwellTransit(int layerIndex, uint32_t curSectorIndex, uint32_t backSectorIndex, uint32_t x, uint32_t y, uint32_t deckOffset, PositionVertexMap& interLayerVertexLookup, VertexList& workVertices, std::map<std::shared_ptr<VerticalEdgeCreator>, VertexList>& crossDeckVertices);
+
+		void processStaircaseTransit(int layerIndex, uint32_t curSectorIndex, uint32_t backSectorIndex,
+			uint32_t x, uint32_t y, PositionVertexMap& interLayerVertexLookup, VertexList& workVertices,
+			std::map<std::shared_ptr<VerticalEdgeCreator>, VertexList>& crossDeckVertices);
 
 		std::shared_ptr<Vertex> createLiftTransitVertex(std::shared_ptr<LiftTransit> liftTransit, uint32_t x, uint32_t y, std::map<std::shared_ptr<VerticalEdgeCreator>, VertexList>& crossDeckVertices);
 

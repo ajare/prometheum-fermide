@@ -18,7 +18,7 @@ construction:
     x: 4
     cellsWide: 8
     decksHigh: 1
-  - type: staircase
+  - type: stairwell
     y: 1
     x: 7
     decksHigh: 3

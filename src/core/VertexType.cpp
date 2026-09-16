@@ -23,6 +23,9 @@ namespace core
 		case VertexType::Shuttle:
 			return "Shuttle";
 
+		case VertexType::Stairwell:
+			return "Stairwell";
+
 		case VertexType::Staircase:
 			return "Staircase";
 
@@ -61,6 +64,9 @@ namespace core
 
 		case VertexSubType::Shuttle:
 			return "Shuttle";
+
+		case VertexSubType::Stairwell:
+			return "Stairwell";
 
 		case VertexSubType::Staircase:
 			return "Staircase";

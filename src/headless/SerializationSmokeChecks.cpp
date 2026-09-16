@@ -17,6 +17,8 @@
 #include "core/LadderTransit.h"
 #include "core/LiftTransit.h"
 #include "core/ShuttleTransit.h"
+#include "core/Stairwell.h"
+#include "core/StairwellTransit.h"
 #include "core/Staircase.h"
 #include "core/StaircaseTransit.h"
 #include "core/YamlSerializer.h"
@@ -557,37 +559,104 @@ agents: []
 			"An enclosed Lift could not connect Ground and Walkways in one Fore-layer Room");
 	}
 
-	void staircaseSectorsAreCanvasSelectable()
+	void stairwellSectorsAreCanvasSelectable()
 	{
-		require(isCanvasSelectableSectorType(core::SectorType::Staircase),
-			"Placed Staircases cannot be selected by the canvas hit-test");
+		require(isCanvasSelectableSectorType(core::SectorType::Stairwell),
+			"Placed Stairwells cannot be selected by the canvas hit-test");
 		require(!shouldDrawCanvasSectorEditOverlay(CORE_LAYER_BACK, CORE_LAYER_FORE),
-			"A selected Back-layer Staircase is overlaid in front of the Fore layer");
-		require(!shouldRenderStaircaseGeometry(CORE_LAYER_BACK, false),
-			"Hidden Back-layer Staircase geometry is rendered over the Fore layer");
-		require(shouldRenderStaircaseGeometry(CORE_LAYER_BACK, true)
-			&& shouldRenderStaircaseGeometry(CORE_LAYER_FORE, true),
-			"Staircase geometry was suppressed from a visible or clipped Fore-layer pass");
-		require(!shouldRenderSectorAgents(core::SectorType::Staircase, CORE_LAYER_BACK, false)
-			&& shouldRenderSectorAgents(core::SectorType::Staircase, CORE_LAYER_FORE, true)
-			&& shouldRenderSectorAgents(core::SectorType::Staircase, CORE_LAYER_BACK, true),
-			"Staircase Agents do not obey the Staircase's foreground aperture clipping");
-		core::Staircase leftStaircase(0, 0, 3, CORE_SIDE_LEFT);
-		core::Staircase rightStaircase(0, 0, 3, CORE_SIDE_RIGHT);
-		auto left = leftStaircase.getDeckPath(0);
-		auto right = rightStaircase.getDeckPath(0);
+			"A selected Back-layer Stairwell is overlaid in front of the Fore layer");
+		require(!shouldRenderStairwellGeometry(CORE_LAYER_BACK, false),
+			"Hidden Back-layer Stairwell geometry is rendered over the Fore layer");
+		require(shouldRenderStairwellGeometry(CORE_LAYER_BACK, true)
+			&& shouldRenderStairwellGeometry(CORE_LAYER_FORE, true),
+			"Stairwell geometry was suppressed from a visible or clipped Fore-layer pass");
+		require(!shouldRenderSectorAgents(core::SectorType::Stairwell, CORE_LAYER_BACK, false)
+			&& shouldRenderSectorAgents(core::SectorType::Stairwell, CORE_LAYER_FORE, true)
+			&& shouldRenderSectorAgents(core::SectorType::Stairwell, CORE_LAYER_BACK, true),
+			"Stairwell Agents do not obey the Stairwell's foreground aperture clipping");
+		core::Stairwell leftStairwell(0, 0, 3, CORE_SIDE_LEFT);
+		core::Stairwell rightStairwell(0, 0, 3, CORE_SIDE_RIGHT);
+		auto left = leftStairwell.getDeckPath(0);
+		auto right = rightStairwell.getDeckPath(0);
 		for (size_t i = 0; i < left.size(); ++i)
 			require(std::abs(left[i].x + right[i].x - 2.0f) < 0.0001f
 				&& left[i].y == right[i].y,
-				"Right-mounted Staircase path is not mirrored horizontally");
+				"Right-mounted Stairwell path is not mirrored horizontally");
 		require(left[0].x == 1.0f && left[0].y == 0.0f
 			&& std::abs(left[1].x - 1.666f) < 0.0001f && left[1].y == 0.25f
 			&& std::abs(left[2].x - 0.334f) < 0.0001f && left[2].y == 0.75f
 			&& left[3].x == 1.0f && left[3].y == 1.0f,
-			"Staircase primitive endpoints do not match its path vertices");
-		auto nextDeck = leftStaircase.getDeckPath(1);
+			"Stairwell primitive endpoints do not match its path vertices");
+		auto nextDeck = leftStairwell.getDeckPath(1);
 		require(left[3] == nextDeck[0],
-			"Adjacent Staircase diagonal paths do not share a deck endpoint");
+			"Adjacent Stairwell diagonal paths do not share a deck endpoint");
+	}
+
+	void staircasesConnectAdjacentCorridorsAndRoundTrip()
+	{
+		require(isCanvasSelectableSectorType(core::SectorType::Staircase),
+			"Placed Staircases cannot be selected by the canvas hit-test");
+		require(!shouldRenderSectorAgents(core::SectorType::Staircase, CORE_LAYER_BACK, false)
+			&& shouldRenderSectorAgents(core::SectorType::Staircase, CORE_LAYER_FORE, true),
+			"Staircase Agents do not obey corridor clipping");
+
+		core::Staircase right(0, 0, 4, CORE_SIDE_RIGHT);
+		core::Staircase left(0, 0, 4, CORE_SIDE_LEFT);
+		auto rightPath = right.getPath();
+		auto leftPath = left.getPath();
+		require(right.getStepCount() == 32 && rightPath[0].x == 0.5f
+			&& rightPath[1].x == 3.5f && leftPath[0].x == 3.5f
+			&& leftPath[1].x == 0.5f,
+			"Staircase direction, endpoints, or width-based step count is incorrect");
+
+		core::Building building("Staircase", 6, 3);
+		building.addCorridor(0, 0, 1);
+		building.addCorridor(0, 3, 1);
+		building.addCorridor(1, 0, 1);
+		building.addCorridor(1, 3, 1);
+		std::string diagnostic;
+		require(!building.canAddStaircase(0, 0, 1, CORE_SIDE_RIGHT, &diagnostic),
+			"A one-cell Staircase was accepted");
+		require(building.canAddStaircase(0, 0, 4, CORE_SIDE_RIGHT, &diagnostic),
+			"A valid Staircase between endpoint Corridors was rejected");
+		auto index = building.addStaircase(0, 0, 4, CORE_SIDE_RIGHT);
+		building.finishBuild();
+		auto transit = std::dynamic_pointer_cast<const core::StaircaseTransit>(building.getSector(index));
+		require(transit && transit->getCellsWide() == 4 && transit->getDecksHigh() == 2,
+			"Staircase Transit has the wrong footprint");
+		core::Building::CreateStaircaseOptions options;
+		require(building.getStaircaseOptions(index, options) && options.cellsWide == 4
+			&& options.riseSide == CORE_SIDE_RIGHT,
+			"Staircase authored options were not retained");
+
+		core::SerializationWorkData workData;
+		auto writer = core::YamlSerializer::toString();
+		building.serialize(*writer, workData); writer->serialize();
+		auto yaml = writer->getSerializedString();
+		require(yaml.find("type: staircase") != std::string::npos,
+			"Staircase was not serialized as its own construction type");
+		core::Building loaded("placeholder", 1, 1);
+		auto reader = core::YamlSerializer::fromString(yaml); reader->deserialize();
+		require(loaded.deserialize(*reader, workData), "Staircase YAML did not deserialize");
+		auto loadedTransit = std::dynamic_pointer_cast<const core::StaircaseTransit>(loaded.getSector(index));
+		require(loadedTransit && loadedTransit->getRiseSide() == CORE_SIDE_RIGHT,
+			"Staircase did not round-trip through YAML");
+
+		building.pauseSimulation();
+		auto flip = building.planResizeStaircase(index, 0, 0, { 4, CORE_SIDE_LEFT });
+		require(flip.valid, "A valid Staircase direction flip was rejected");
+		index = building.applyStaircaseEdit(flip);
+		transit = std::dynamic_pointer_cast<const core::StaircaseTransit>(building.getSector(index));
+		require(transit && transit->getRiseSide() == CORE_SIDE_LEFT,
+			"Staircase direction was not edited");
+		auto removal = building.planRemoveStaircase(index);
+		require(removal.valid && removal.requiresConfirmation(),
+			"Staircase deletion was not planned as a confirmed edit");
+		require(building.applyStaircaseEdit(removal) == ~0u,
+			"Staircase deletion did not return the removed-sector sentinel");
+		require(!static_cast<core::Building const&>(building).getLayer(CORE_LAYER_BACK)
+			->getCellDefinition(0, 0).occupied(),
+			"Deleted Staircase still occupies the Back layer");
 	}
 
 	void laddersCanBeValidatedEditedAndDeleted()
@@ -685,41 +754,41 @@ agents: []
 			"Deleted Ladder still occupies the Back layer");
 	}
 
-	void staircasesCanBeValidatedEditedAndDeleted()
+	void stairwellsCanBeValidatedEditedAndDeleted()
 	{
-		core::Building building("Staircase editing", 10, 5);
+		core::Building building("Stairwell editing", 10, 5);
 		for (uint32_t y = 0; y < 5; ++y) building.addCorridor(y, 0, 10);
 		std::string diagnostic;
-		require(!building.canAddStaircase(0, 1, 1, &diagnostic)
+		require(!building.canAddStairwell(0, 1, 1, &diagnostic)
 			&& diagnostic.find("at least two") != std::string::npos,
-			"Staircase placement accepted a one-deck footprint");
-		require(building.canAddStaircase(0, 1, 3, &diagnostic),
-			"Valid Staircase placement was rejected");
-		auto created = building.addStaircase(0, 1,
-			core::Building::CreateStaircaseOptions{ 3, CORE_SIDE_LEFT });
+			"Stairwell placement accepted a one-deck footprint");
+		require(building.canAddStairwell(0, 1, 3, &diagnostic),
+			"Valid Stairwell placement was rejected");
+		auto created = building.addStairwell(0, 1,
+			core::Building::CreateStairwellOptions{ 3, CORE_SIDE_LEFT });
 		building.finishBuild();
 		building.pauseSimulation();
 		auto agentId = building.createAgent("Stair user", created.sectorIndex, 1, 1.0f);
 		auto originalAgentPosition = building.lookupAgent(agentId).entity->getGlobalPosition();
 
-		core::Building::CreateStaircaseOptions edited{ 3, CORE_SIDE_RIGHT, 2, 3 };
-		auto move = building.planResizeStaircase(created.sectorIndex, 4, 1, edited);
-		require(move.valid && move.move, "Valid Staircase move was not planned");
-		auto movedIndex = building.applyStaircaseEdit(move);
-		auto staircase = std::dynamic_pointer_cast<const core::StaircaseTransit>(
+		core::Building::CreateStairwellOptions edited{ 3, CORE_SIDE_RIGHT, 2, 3 };
+		auto move = building.planResizeStairwell(created.sectorIndex, 4, 1, edited);
+		require(move.valid && move.move, "Valid Stairwell move was not planned");
+		auto movedIndex = building.applyStairwellEdit(move);
+		auto stairwell = std::dynamic_pointer_cast<const core::StairwellTransit>(
 			building.getSector(movedIndex));
-		require(staircase && staircase->getCellX() == 4 && staircase->getCellY() == 1
-			&& staircase->getDecksHigh() == 3 && staircase->getMountSide() == CORE_SIDE_RIGHT,
-			"Staircase geometry or mounting side was not edited");
+		require(stairwell && stairwell->getCellX() == 4 && stairwell->getCellY() == 1
+			&& stairwell->getDecksHigh() == 3 && stairwell->getMountSide() == CORE_SIDE_RIGHT,
+			"Stairwell geometry or mounting side was not edited");
 		auto movedAgent = building.lookupAgent(agentId).entity;
 		require(movedAgent
 			&& std::abs(movedAgent->getGlobalPosition().x - originalAgentPosition.x - 3.0f) < 0.001f
 			&& std::abs(movedAgent->getGlobalPosition().y - originalAgentPosition.y - 1.0f) < 0.001f,
-			"An occupying Agent did not move with the Staircase");
-		core::Building::CreateStaircaseOptions loaded{};
-		require(building.getStaircaseOptions(movedIndex, loaded)
+			"An occupying Agent did not move with the Stairwell");
+		core::Building::CreateStairwellOptions loaded{};
+		require(building.getStairwellOptions(movedIndex, loaded)
 			&& loaded.directionalCapacity == 2 && loaded.directionalBatchLimit == 3,
-			"Staircase coordination properties were not retained");
+			"Stairwell coordination properties were not retained");
 
 		core::SerializationWorkData workData;
 		auto writer = core::YamlSerializer::toString();
@@ -728,28 +797,28 @@ agents: []
 		core::Building replayed("placeholder", 1, 1);
 		auto reader = core::YamlSerializer::fromString(writer->getSerializedString());
 		reader->deserialize();
-		require(replayed.deserialize(*reader, workData), "Edited Staircase YAML did not deserialize");
-		core::Building::CreateStaircaseOptions replayedOptions{};
-		auto replayedStaircase = std::dynamic_pointer_cast<const core::StaircaseTransit>(
+		require(replayed.deserialize(*reader, workData), "Edited Stairwell YAML did not deserialize");
+		core::Building::CreateStairwellOptions replayedOptions{};
+		auto replayedStairwell = std::dynamic_pointer_cast<const core::StairwellTransit>(
 			replayed.getSector(movedIndex));
-		require(replayedStaircase && replayedStaircase->getCellX() == 4
-			&& replayedStaircase->getCellY() == 1
-			&& replayed.getStaircaseOptions(movedIndex, replayedOptions)
+		require(replayedStairwell && replayedStairwell->getCellX() == 4
+			&& replayedStairwell->getCellY() == 1
+			&& replayed.getStairwellOptions(movedIndex, replayedOptions)
 			&& replayedOptions.mountSide == CORE_SIDE_RIGHT
 			&& replayedOptions.directionalCapacity == 2
 			&& replayedOptions.directionalBatchLimit == 3,
-			"Edited Staircase did not round-trip through YAML");
+			"Edited Stairwell did not round-trip through YAML");
 
-		auto blocked = building.planResizeStaircase(movedIndex, 9, 1, edited);
-		require(!blocked.valid, "Out-of-bounds Staircase edit was accepted");
-		auto removal = building.planRemoveStaircase(movedIndex);
+		auto blocked = building.planResizeStairwell(movedIndex, 9, 1, edited);
+		require(!blocked.valid, "Out-of-bounds Stairwell edit was accepted");
+		auto removal = building.planRemoveStairwell(movedIndex);
 		require(removal.valid && removal.requiresConfirmation(),
-			"Staircase deletion was not planned as a confirmed edit");
-		require(building.applyStaircaseEdit(removal) == ~0u,
-			"Staircase deletion did not return the removed-sector sentinel");
+			"Stairwell deletion was not planned as a confirmed edit");
+		require(building.applyStairwellEdit(removal) == ~0u,
+			"Stairwell deletion did not return the removed-sector sentinel");
 		require(!static_cast<core::Building const&>(building).getLayer(CORE_LAYER_BACK)
 			->getCellDefinition(4, 1).occupied(),
-			"Deleted Staircase still occupies the Back layer");
+			"Deleted Stairwell still occupies the Back layer");
 	}
 
 	void bulkheadDoorsSupportIndependentObjectEditing()
@@ -901,9 +970,10 @@ void runSerializationSmokeChecks()
 	locationEditsArePlannedAndAppliedAtomically();
 	editedShuttleRoundTripsWithoutSchemaChanges();
 	enclosedLiftsSupportMultiDeckRooms();
-	staircaseSectorsAreCanvasSelectable();
+	stairwellSectorsAreCanvasSelectable();
+	staircasesConnectAdjacentCorridorsAndRoundTrip();
 	laddersCanBeValidatedEditedAndDeleted();
-	staircasesCanBeValidatedEditedAndDeleted();
+	stairwellsCanBeValidatedEditedAndDeleted();
 	physicalControlsPreferDistinctWallPositions();
 	bulkheadDoorsSupportIndependentObjectEditing();
 	recentFilesPersistAcrossStartup();

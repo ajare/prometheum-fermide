@@ -24,7 +24,15 @@ A named location that may occupy either the fore or back layer.
 A location that occupies the fore layer.
 
 **Transit**:
-A static sector that connects locations through one or more stops, such as a lift shaft, shuttle route, ladder, or staircase. Within a lift or shuttle transit, an agent may also occupy a specific transport vehicle or carriage.
+A static sector that connects locations through one or more stops, such as a lift shaft, shuttle route, ladder, or stairwell. Within a lift or shuttle transit, an agent may also occupy a specific transport vehicle or carriage.
+
+**Stairwell**:
+A compact stair transit that may connect several consecutive levels using alternating flights.
+_Avoid_: Staircase
+
+**Staircase**:
+A single straight flight of steps connecting two adjacent levels. It may rise in either horizontal direction and can be traversed both ways.
+_Avoid_: Stairwell
 
 **Stop**:
 A place at which a transit resource connects to a location.
@@ -70,7 +78,7 @@ _Avoid_: Lift, when distinguishing the open room object from an enclosed lift tr
 A simulated person with a position, destination path, and current movement state.
 
 **Shared resource**:
-A constrained facility that agents must coordinate to use, such as a lift car, shuttle carriage, ladder, staircase, or doorway.
+A constrained facility that agents must coordinate to use, such as a lift car, shuttle carriage, ladder, stairwell, or doorway.
 
 **Transport vehicle**:
 An independently scheduled moving resource: either a lift car or a complete coupled shuttle.

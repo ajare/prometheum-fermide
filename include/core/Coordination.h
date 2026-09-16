@@ -22,7 +22,7 @@ namespace core
 	class Ladder;
 	class Lift;
 	class Shuttle;
-	class Staircase;
+	class Stairwell;
 	class Window;
 
 	enum struct TraversalDirection { None, Ascending, Descending };
@@ -280,7 +280,7 @@ namespace core
 		std::shared_ptr<Ladder> mLadder;
 		std::shared_ptr<Lift> mLift;
 		std::shared_ptr<Shuttle> mShuttle;
-		std::shared_ptr<Staircase> mStaircase;
+		std::shared_ptr<Stairwell> mStairwell;
 		// Lift coordinators are separate from their landing-door resources. The
 		// latter point back to the coordinator and one stop.
 		TraversalResourceId mLiftCoordinator;
@@ -402,11 +402,11 @@ namespace core
 		{
 			if (!mLiftStops.empty()) mLiftPosition = mLiftStops.front().globalPosition;
 		}
-		TraversalResource(std::string name, std::shared_ptr<Staircase> staircase,
-			SectorId staircaseSector, uint32_t capacity, uint32_t batchLimit,
+		TraversalResource(std::string name, std::shared_ptr<Stairwell> stairwell,
+			SectorId stairwellSector, uint32_t capacity, uint32_t batchLimit,
 			std::vector<Vector2> positions)
-			: mName(std::move(name)), mStaircase(std::move(staircase)),
-			  mLadderSector(staircaseSector), mCapacity(capacity),
+			: mName(std::move(name)), mStairwell(std::move(stairwell)),
+			  mLadderSector(stairwellSector), mCapacity(capacity),
 			  mCapacityPositions(std::move(positions)), mOccupants(capacity),
 			  mAdmissionReservations(capacity), mDirectionalBatchLimit(batchLimit) {}
 	public:
@@ -421,7 +421,7 @@ namespace core
 		bool isOpenPlatformLift() const { return mOpenPlatformLift; }
 		bool isShuttle() const { return mShuttle != nullptr; }
 		bool isExtensible() const { return mExtensible != nullptr; }
-		bool isNarrowStaircase() const { return mStaircase != nullptr; }
+		bool isNarrowStairwell() const { return mStairwell != nullptr; }
 		bool isEnabled() const { return mEnabled; }
 		uint32_t getCapacity() const { return mCapacity; }
 		SectorId getLadderSector() const { return mLadderSector; }
