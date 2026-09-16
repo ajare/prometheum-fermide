@@ -1,3 +1,4 @@
+#include <cmath>
 #include <format>
 
 #include "core/Defines.h"
@@ -7,10 +8,12 @@ namespace core
 {
 	using namespace std;
 
-	Staircase::Staircase(uint32_t cellX, uint32_t cellY, uint32_t cellsWide, int riseSide)
+	Staircase::Staircase(uint32_t cellX, uint32_t cellY, uint32_t cellsWide, int riseSide,
+		float speed)
 		: Object((float)cellX, (float)cellY, (float)cellsWide, 2.0f)
 		, mCellsWide(cellsWide)
 		, mRiseSide(riseSide)
+		, mSpeed(speed)
 	{
 		ASSERT_SIDE_OK(riseSide);
 	}
@@ -24,8 +27,20 @@ namespace core
 			: array<Vector2, 2>{ Vector2{ right, 0.0f }, Vector2{ left, 1.0f } };
 	}
 
+	void Staircase::update(float frameTime)
+	{
+		if (!isEscalator()) return;
+		auto const path = getPath();
+		float const length = path[0].distanceTo(path[1]);
+		mAnimationPhase = fmod(mAnimationPhase + mSpeed * frameTime / length, 1.0f);
+		if (mAnimationPhase < 0.0f) mAnimationPhase += 1.0f;
+	}
+
 	string Staircase::getDescription() const
 	{
+		if (isEscalator())
+			return format("Escalator - {} cells wide, moving {} at {}", mCellsWide,
+				mSpeed > 0.0f ? "up" : "down", abs(mSpeed));
 		return format("Staircase - {} cells wide, rising {}", mCellsWide,
 			mRiseSide == CORE_SIDE_RIGHT ? "right" : "left");
 	}

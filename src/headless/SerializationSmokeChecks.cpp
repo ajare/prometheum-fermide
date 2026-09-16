@@ -608,6 +608,16 @@ agents: []
 			&& rightPath[1].x == 3.5f && leftPath[0].x == 3.5f
 			&& leftPath[1].x == 0.5f,
 			"Staircase direction, endpoints, or width-based step count is incorrect");
+		float const pathLength = rightPath[0].distanceTo(rightPath[1]);
+		core::Staircase upEscalator(0, 0, 4, CORE_SIDE_RIGHT, 1.0f);
+		core::Staircase downEscalator(0, 0, 4, CORE_SIDE_RIGHT, -1.0f);
+		upEscalator.update(pathLength * 0.25f);
+		downEscalator.update(pathLength * 0.25f);
+		right.update(pathLength);
+		require(std::abs(upEscalator.getAnimationPhase() - 0.25f) < 0.001f
+			&& std::abs(downEscalator.getAnimationPhase() - 0.75f) < 0.001f
+			&& right.getAnimationPhase() == 0.0f,
+			"Escalator step animation does not follow its signed world speed");
 
 		core::Building building("Staircase", 6, 3);
 		building.addCorridor(0, 0, 1);
@@ -619,36 +629,64 @@ agents: []
 			"A one-cell Staircase was accepted");
 		require(building.canAddStaircase(0, 0, 4, CORE_SIDE_RIGHT, &diagnostic),
 			"A valid Staircase between endpoint Corridors was rejected");
-		auto index = building.addStaircase(0, 0, 4, CORE_SIDE_RIGHT);
+		auto index = building.addStaircase(0, 0, 4, CORE_SIDE_RIGHT, 1.25f);
 		building.finishBuild();
 		auto transit = std::dynamic_pointer_cast<const core::StaircaseTransit>(building.getSector(index));
 		require(transit && transit->getCellsWide() == 4 && transit->getDecksHigh() == 2,
 			"Staircase Transit has the wrong footprint");
 		core::Building::CreateStaircaseOptions options;
 		require(building.getStaircaseOptions(index, options) && options.cellsWide == 4
-			&& options.riseSide == CORE_SIDE_RIGHT,
+			&& options.riseSide == CORE_SIDE_RIGHT && std::abs(options.speed - 1.25f) < 0.001f,
 			"Staircase authored options were not retained");
 
 		core::SerializationWorkData workData;
 		auto writer = core::YamlSerializer::toString();
 		building.serialize(*writer, workData); writer->serialize();
 		auto yaml = writer->getSerializedString();
-		require(yaml.find("type: staircase") != std::string::npos,
-			"Staircase was not serialized as its own construction type");
+		require(yaml.find("type: staircase") != std::string::npos
+			&& yaml.find("speed: 1.25") != std::string::npos,
+			"Staircase speed was not serialized");
 		core::Building loaded("placeholder", 1, 1);
 		auto reader = core::YamlSerializer::fromString(yaml); reader->deserialize();
 		require(loaded.deserialize(*reader, workData), "Staircase YAML did not deserialize");
 		auto loadedTransit = std::dynamic_pointer_cast<const core::StaircaseTransit>(loaded.getSector(index));
-		require(loadedTransit && loadedTransit->getRiseSide() == CORE_SIDE_RIGHT,
+		require(loadedTransit && loadedTransit->getRiseSide() == CORE_SIDE_RIGHT
+			&& std::abs(loadedTransit->getStaircase()->getSpeed() - 1.25f) < 0.001f,
 			"Staircase did not round-trip through YAML");
 
+		auto escalatorEdge = std::find_if(building.getGraph()->getEdges().begin(),
+			building.getGraph()->getEdges().end(), [](auto const& edge)
+			{ return edge->getType() == core::EdgeType::Staircase; });
+		require(escalatorEdge != building.getGraph()->getEdges().end(),
+			"Escalator traversal edge was not created");
+		auto edge = *escalatorEdge;
+		auto low = edge->getVertex(0)->getPosition().y < edge->getVertex(1)->getPosition().y
+			? edge->getVertex(0) : edge->getVertex(1);
+		auto high = low == edge->getVertex(0) ? edge->getVertex(1) : edge->getVertex(0);
+		require(edge->isTraversable(high, nullptr) && !edge->isTraversable(low, nullptr)
+			&& std::isfinite(edge->getWeight(high, nullptr, true))
+			&& !std::isfinite(edge->getWeight(low, nullptr, true))
+			&& std::abs(edge->getTraversalSpeed(nullptr) - 1.25f) < 0.001f,
+			"Positive-speed Escalator is not one-way upward at its configured speed");
+
 		building.pauseSimulation();
-		auto flip = building.planResizeStaircase(index, 0, 0, { 4, CORE_SIDE_LEFT });
+		auto flip = building.planResizeStaircase(index, 0, 0, { 4, CORE_SIDE_LEFT, -0.75f });
 		require(flip.valid, "A valid Staircase direction flip was rejected");
 		index = building.applyStaircaseEdit(flip);
 		transit = std::dynamic_pointer_cast<const core::StaircaseTransit>(building.getSector(index));
-		require(transit && transit->getRiseSide() == CORE_SIDE_LEFT,
-			"Staircase direction was not edited");
+		require(transit && transit->getRiseSide() == CORE_SIDE_LEFT
+			&& std::abs(transit->getStaircase()->getSpeed() + 0.75f) < 0.001f,
+			"Staircase direction or Escalator speed was not edited");
+		escalatorEdge = std::find_if(building.getGraph()->getEdges().begin(),
+			building.getGraph()->getEdges().end(), [](auto const& candidate)
+			{ return candidate->getType() == core::EdgeType::Staircase; });
+		edge = *escalatorEdge;
+		low = edge->getVertex(0)->getPosition().y < edge->getVertex(1)->getPosition().y
+			? edge->getVertex(0) : edge->getVertex(1);
+		high = low == edge->getVertex(0) ? edge->getVertex(1) : edge->getVertex(0);
+		require(edge->isTraversable(low, nullptr) && !edge->isTraversable(high, nullptr)
+			&& std::abs(edge->getTraversalSpeed(nullptr) - 0.75f) < 0.001f,
+			"Negative-speed Escalator is not one-way downward at its configured speed");
 		auto removal = building.planRemoveStaircase(index);
 		require(removal.valid && removal.requiresConfirmation(),
 			"Staircase deletion was not planned as a confirmed edit");

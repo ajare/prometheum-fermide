@@ -5870,13 +5870,14 @@ void renderSelectedObjectPanel(shared_ptr<core::Building> const& building)
 			static int y = 0;
 			static int width = 2;
 			static int riseSide = CORE_SIDE_RIGHT;
+			static float speed = 0.0f;
 			core::Building::CreateStaircaseOptions current;
 			if ((editedBuilding != building.get() || editedSector != gSelectedSector->getIndex())
 				&& building->getStaircaseOptions(gSelectedSector->getIndex(), current))
 			{
 				editedBuilding = building.get(); editedSector = gSelectedSector->getIndex();
 				x = (int)gSelectedSector->getCellX(); y = (int)gSelectedSector->getCellY();
-				width = (int)current.cellsWide; riseSide = current.riseSide;
+				width = (int)current.cellsWide; riseSide = current.riseSide; speed = current.speed;
 			}
 			ImGui::InputInt("X", &x);
 			ImGui::InputInt("Lower level", &y);
@@ -5884,12 +5885,14 @@ void renderSelectedObjectPanel(shared_ptr<core::Building> const& building)
 			int sideIndex = riseSide == CORE_SIDE_LEFT ? 0 : 1;
 			if (ImGui::Combo("Rises toward", &sideIndex, "Left\0Right\0"))
 				riseSide = sideIndex == 0 ? CORE_SIDE_LEFT : CORE_SIDE_RIGHT;
+			ImGui::InputFloat("Speed", &speed, 0.1f, 1.0f, "%.2f");
+			ImGui::TextDisabled("0 = stairs, + = up, - = down");
 			auto apply = [&](bool remove)
 			{
 				auto plan = remove ? building->planRemoveStaircase(gSelectedSector->getIndex())
 					: building->planResizeStaircase(gSelectedSector->getIndex(),
 						(uint32_t)max(0, x), (uint32_t)max(0, y),
-						{ (uint32_t)max(0, width), riseSide });
+						{ (uint32_t)max(0, width), riseSide, speed });
 				if (!plan.valid) { core::addLogMessage("Staircase editor", 0, core::LogLevel::Error, plan.diagnostic); return; }
 				try
 				{

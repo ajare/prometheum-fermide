@@ -1,0 +1,33 @@
+version: 3
+name: Untitled
+cellsWide: 16
+decksHigh: 3
+construction:
+  - type: corridor
+    y: 0
+    x: 0
+    cellsWide: 7
+    decksHigh: 1
+  - type: corridor
+    y: 1
+    x: 3
+    cellsWide: 7
+    decksHigh: 1
+  - type: staircase
+    y: 0
+    x: 4
+    cellsWide: 4
+    riseSide: right
+    speed: 0.4
+  - type: marker
+    sectorIndex: 1
+    deckIndex: 0
+    xOffset: 6.5625
+agents:
+  - id: 1
+    agent:
+      name: Agent 1
+      flags: 0
+    sector: 1
+    localX: 6.5625
+    localY: 0

@@ -7,12 +7,12 @@ namespace core
 	using namespace std;
 
 	StaircaseTransit::StaircaseTransit(uint32_t index, uint32_t cellX, uint32_t cellY,
-		uint32_t cellsWide, int riseSide, vector<TransitStop> const& stops)
+		uint32_t cellsWide, int riseSide, float speed, vector<TransitStop> const& stops)
 		: Transit(SectorType::Staircase, "Staircase", CORE_LAYER_BACK, index,
 			cellX, cellY, 0.0f, 0.0f, (float)cellsWide,
 			1.0f + CORE_CORRIDOR_HEIGHT, cellsWide, 2, 1.0f, ~0u, stops)
 		, VerticalEdgeCreator()
-		, mStaircase(make_shared<Staircase>(cellX, cellY, cellsWide, riseSide))
+		, mStaircase(make_shared<Staircase>(cellX, cellY, cellsWide, riseSide, speed))
 	{
 	}
 
@@ -25,5 +25,10 @@ namespace core
 	{
 		ASSERT_PTR_EQ_THIS(edgeCreator);
 		return make_shared<StaircaseEdge>(mStaircase);
+	}
+
+	void StaircaseTransit::updateImpl(float frameTime)
+	{
+		mStaircase->update(frameTime);
 	}
 }

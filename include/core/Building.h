@@ -137,6 +137,8 @@ namespace core
 			uint32_t cellsWide{ 2 };
 			// CORE_SIDE_RIGHT rises left-to-right; CORE_SIDE_LEFT is mirrored.
 			int riseSide{ CORE_SIDE_RIGHT };
+			// Zero is stationary; positive moves up and negative moves down.
+			float speed{ 0.0f };
 		};
 
 		struct CreateLiftOptions
@@ -593,7 +595,8 @@ namespace core
 
 		uint32_t createStairwell(uint32_t x, uint32_t y, uint32_t decksHigh, int mountSide);
 
-		uint32_t createStaircase(uint32_t x, uint32_t y, uint32_t cellsWide, int riseSide);
+		uint32_t createStaircase(uint32_t x, uint32_t y, uint32_t cellsWide,
+			int riseSide, float speed);
 
 		CreateObjectResult createLift(uint32_t x, uint32_t y, uint32_t cellsWide,
 			uint32_t decksHigh, std::vector<uint32_t> const& stopOffsets);
@@ -844,7 +847,8 @@ namespace core
 
 		bool getStairwellOptions(uint32_t sectorIndex, CreateStairwellOptions& options) const;
 
-		uint32_t addStaircase(uint32_t y, uint32_t x, uint32_t cellsWide, int riseSide);
+		uint32_t addStaircase(uint32_t y, uint32_t x, uint32_t cellsWide, int riseSide,
+			float speed = 0.0f);
 		uint32_t addStaircase(uint32_t y, uint32_t x, CreateStaircaseOptions const& options);
 		bool canAddStaircase(uint32_t y, uint32_t x, uint32_t cellsWide, int riseSide,
 			std::string* diagnostic = nullptr) const;

@@ -1,3 +1,4 @@
+#include <array>
 #include <cassert>
 #include <cfloat>
 #include <set>
@@ -856,19 +857,50 @@ void renderStairwell(shared_ptr<const core::Stairwell> stairwell, int /* layer*/
 
 void renderStaircase(shared_ptr<const core::Staircase> staircase, ImDrawList* drawList)
 {
-	auto path = staircase->getPath();
+	auto const path = staircase->getPath();
 	core::Vector2 origin, ignored;
 	staircase->getCurrentShape(origin, ignored);
 	uint32_t const count = staircase->getStepCount();
-	vector<ImVec2> points;
-	points.reserve(count * 2 + 1);
-	auto addPoint = [&](float x, float y)
+	auto toScreen = [&](float x, float y)
 	{
 		core::Vector2 point{ origin.x + x, origin.y + y };
 		transformPosition(point);
-		points.push_back({ point.x, point.y });
+		return ImVec2{ point.x, point.y };
 	};
-	addPoint(path[0].x, path[0].y);
+	auto drawSteps = [&](auto const& segments, ImU32 colour, float thickness)
+	{
+		for (auto const& segment : segments)
+			drawList->AddPolyline(segment.data(), (int)segment.size(), colour,
+				ImDrawFlags_None, thickness);
+	};
+
+	if (staircase->isEscalator())
+	{
+		// Each L-shaped tread/riser advances along the incline at the Escalator's
+		// world speed, then wraps to the opposite endpoint.
+		vector<array<ImVec2, 3>> segments;
+		segments.reserve(count);
+		float const step = 1.0f / (float)count;
+		float const phase = staircase->getAnimationPhase();
+		for (uint32_t i = 0; i < count; ++i)
+		{
+			float t = fmod((float)i * step + phase, 1.0f);
+			if (t < 0.0f) t += 1.0f;
+			float const previous = max(0.0f, t - step);
+			float const x0 = path[0].x + (path[1].x - path[0].x) * previous;
+			float const x1 = path[0].x + (path[1].x - path[0].x) * t;
+			float const y0 = path[0].y + (path[1].y - path[0].y) * previous;
+			float const y1 = path[0].y + (path[1].y - path[0].y) * t;
+			segments.push_back({ toScreen(x0, y0), toScreen(x1, y0), toScreen(x1, y1) });
+		}
+		drawSteps(segments, IM_COL32(32, 32, 32, 255), 10.0f);
+		drawSteps(segments, IM_COL32(220, 220, 220, 255), 6.0f);
+		return;
+	}
+
+	vector<ImVec2> points;
+	points.reserve(count * 2 + 1);
+	points.push_back(toScreen(path[0].x, path[0].y));
 	for (uint32_t i = 0; i < count; ++i)
 	{
 		float const t0 = (float)i / (float)count;
@@ -876,16 +908,13 @@ void renderStaircase(shared_ptr<const core::Staircase> staircase, ImDrawList* dr
 		float const x1 = path[0].x + (path[1].x - path[0].x) * t1;
 		float const y0 = path[0].y + (path[1].y - path[0].y) * t0;
 		float const y1 = path[0].y + (path[1].y - path[0].y) * t1;
-		addPoint(x1, y0);
-		addPoint(x1, y1);
+		points.push_back(toScreen(x1, y0));
+		points.push_back(toScreen(x1, y1));
 	}
-	if (points.size() > 1)
-	{
-		drawList->AddPolyline(points.data(), (int)points.size(), IM_COL32(32, 32, 32, 255),
-			ImDrawFlags_None, 10.0f);
-		drawList->AddPolyline(points.data(), (int)points.size(), IM_COL32(220, 220, 220, 255),
-			ImDrawFlags_None, 6.0f);
-	}
+	drawList->AddPolyline(points.data(), (int)points.size(), IM_COL32(32, 32, 32, 255),
+		ImDrawFlags_None, 10.0f);
+	drawList->AddPolyline(points.data(), (int)points.size(), IM_COL32(220, 220, 220, 255),
+		ImDrawFlags_None, 6.0f);
 }
 
 void renderSelected(shared_ptr<const core::Object> object, int /* layer */, bool /* visibleLayer */, ImDrawList* drawList)

@@ -729,12 +729,15 @@ namespace core
 				--mTraversalTask->traversalTicksRemaining;
 				break;
 			}
-			if (mTraversalTask
-				&& moveToPosition(mTraversalTask->destinationVertex->getPosition(), frameTime,
-					mTraversalTask->edge->getType() == EdgeType::Ladder
-						? getClimbSpeed() : getWalkSpeed()))
+			if (mTraversalTask)
 			{
-				mState = State::AwaitingTraversalCommit;
+				float traversalSpeed = mTraversalTask->edge->getTraversalSpeed(this);
+				if (traversalSpeed <= 0.0f)
+					traversalSpeed = mTraversalTask->edge->getType() == EdgeType::Ladder
+						? getClimbSpeed() : getWalkSpeed();
+				if (moveToPosition(mTraversalTask->destinationVertex->getPosition(), frameTime,
+					traversalSpeed))
+					mState = State::AwaitingTraversalCommit;
 			}
 			break;
 

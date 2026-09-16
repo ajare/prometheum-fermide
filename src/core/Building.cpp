@@ -528,7 +528,8 @@ namespace core
 		return sectorIndex;
 	}
 
-	uint32_t Building::createStaircase(uint32_t x, uint32_t y, uint32_t cellsWide, int riseSide)
+	uint32_t Building::createStaircase(uint32_t x, uint32_t y, uint32_t cellsWide,
+		int riseSide, float speed)
 	{
 		ASSERT_SIDE_OK(riseSide);
 		uint32_t const lowerX = riseSide == CORE_SIDE_RIGHT ? x : x + cellsWide - 1;
@@ -542,7 +543,8 @@ namespace core
 			{ upper, (int)upperX - (int)upper->getCellX(), (int)(y + 1) - (int)upper->getCellY() }
 		};
 		auto sectorIndex = (uint32_t)mSectors.size();
-		mSectors.push_back(make_shared<StaircaseTransit>(sectorIndex, x, y, cellsWide, riseSide, stops));
+		mSectors.push_back(make_shared<StaircaseTransit>(sectorIndex, x, y, cellsWide,
+			riseSide, speed, stops));
 		return sectorIndex;
 	}
 
@@ -1571,24 +1573,28 @@ namespace core
 		return true;
 	}
 
-	uint32_t Building::addStaircase(uint32_t y, uint32_t x, uint32_t cellsWide, int riseSide)
+	uint32_t Building::addStaircase(uint32_t y, uint32_t x, uint32_t cellsWide,
+		int riseSide, float speed)
 	{
-		return addStaircase(y, x, CreateStaircaseOptions{ cellsWide, riseSide });
+		return addStaircase(y, x, CreateStaircaseOptions{ cellsWide, riseSide, speed });
 	}
 
 	uint32_t Building::addStaircase(uint32_t y, uint32_t x, CreateStaircaseOptions const& options)
 	{
 		beginStructuralEdit("addStaircase");
 		string diagnostic;
+		if (!isfinite(options.speed))
+			throw BuildingException(this, "A Staircase speed must be finite");
 		if (!canAddStaircase(y, x, options.cellsWide, options.riseSide, &diagnostic))
 			throw BuildingException(this, format("Building::addStaircase({}, {}) - {}", y, x, diagnostic));
-		auto sectorIndex = createStaircase(x, y, options.cellsWide, options.riseSide);
+		auto sectorIndex = createStaircase(x, y, options.cellsWide, options.riseSide, options.speed);
 		auto back = getLayer(CORE_LAYER_BACK);
 		for (uint32_t iy = y; iy <= y + 1; ++iy)
 			for (uint32_t ix = x; ix < x + options.cellsWide; ++ix)
 				back->getCellDefinition(ix, iy).sectorIndex = sectorIndex;
 		ConstructionRecord record{ ConstructionType::Staircase };
 		record.a = y; record.b = x; record.c = options.cellsWide; record.i = options.riseSide;
+		record.x = options.speed;
 		recordConstruction(std::move(record));
 		return sectorIndex;
 	}

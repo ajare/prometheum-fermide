@@ -31,8 +31,11 @@ A compact stair transit that may connect several consecutive levels using altern
 _Avoid_: Staircase
 
 **Staircase**:
-A single straight flight of steps connecting two adjacent levels. It may rise in either horizontal direction and can be traversed both ways.
+A single straight flight of steps connecting two adjacent levels. It may rise in either horizontal direction and is bidirectional while stationary.
 _Avoid_: Stairwell
+
+**Escalator**:
+A staircase whose steps move at a non-zero speed. Its movement direction determines its sole permitted travel direction and its agents' travel speed.
 
 **Stop**:
 A place at which a transit resource connects to a location.

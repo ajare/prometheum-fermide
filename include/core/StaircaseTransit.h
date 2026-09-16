@@ -15,7 +15,11 @@ namespace core
 
 	public:
 		StaircaseTransit(uint32_t index, uint32_t cellX, uint32_t cellY,
-			uint32_t cellsWide, int riseSide, std::vector<TransitStop> const& stops);
+			uint32_t cellsWide, int riseSide, float speed,
+			std::vector<TransitStop> const& stops);
+		StaircaseTransit(uint32_t index, uint32_t cellX, uint32_t cellY,
+			uint32_t cellsWide, int riseSide, std::vector<TransitStop> const& stops)
+			: StaircaseTransit(index, cellX, cellY, cellsWide, riseSide, 0.0f, stops) {}
 		~StaircaseTransit() = default;
 
 		[[nodiscard]] std::shared_ptr<Staircase> getStaircase() const { return mStaircase; }
@@ -24,5 +28,7 @@ namespace core
 		[[nodiscard]] bool sectorSupportsObjectType(SectorObjectType type) const override;
 		[[nodiscard]] std::shared_ptr<Edge> createCrossDeckEdge(
 			std::shared_ptr<VerticalEdgeCreator> edgeCreator) const override;
+
+		void updateImpl(float frameTime) override;
 	};
 }

@@ -150,7 +150,8 @@ namespace core
 			serializer.writeUint32("directionalBatchLimit", record.e); break;
 		case ConstructionType::Staircase:
 			serializer.writeUint32("y", record.a); serializer.writeUint32("x", record.b);
-			serializer.writeUint32("cellsWide", record.c); serializer.writeString("riseSide", sideName(record.i)); break;
+			serializer.writeUint32("cellsWide", record.c); serializer.writeString("riseSide", sideName(record.i));
+			serializer.writeFloat("speed", record.x); break;
 		case ConstructionType::Lift:
 			serializer.writeUint32("y", record.a); serializer.writeUint32("x", record.b);
 			serializer.writeUint32("cellsWide", record.c); serializer.writeUint32("decksHigh", record.e);
@@ -353,7 +354,8 @@ namespace core
 			record.e = serializer.readUint32("directionalBatchLimit"); break;
 		case ConstructionType::Staircase:
 			record.a = serializer.readUint32("y"); record.b = serializer.readUint32("x");
-			record.c = serializer.readUint32("cellsWide"); record.i = readSide("riseSide"); break;
+			record.c = serializer.readUint32("cellsWide"); record.i = readSide("riseSide");
+			record.x = serializer.readFloat("speed", true, 0.0f); break;
 		case ConstructionType::Lift:
 			record.a = serializer.readUint32("y"); record.b = serializer.readUint32("x");
 			record.c = serializer.readUint32("cellsWide"); record.e = serializer.readUint32("decksHigh");
@@ -637,7 +639,7 @@ namespace core
 				{ record.c, record.i, record.d, record.e });
 			break;
 		case ConstructionType::Staircase:
-			addStaircase(record.a, record.b, { record.c, record.i });
+			addStaircase(record.a, record.b, { record.c, record.i, record.x });
 			break;
 		case ConstructionType::Lift:
 			addLift(record.a, record.b,
@@ -1563,7 +1565,7 @@ namespace core
 			if (!producer) continue;
 			if (producerIndex++ != sectorIndex) continue;
 			if (record.type != ConstructionType::Staircase) return false;
-			options = { record.c, record.i };
+			options = { record.c, record.i, record.x };
 			return true;
 		}
 		return false;
@@ -1578,6 +1580,8 @@ namespace core
 			{ plan.diagnostic = "Only Staircases can be edited"; return plan; }
 		if (options.riseSide != CORE_SIDE_LEFT && options.riseSide != CORE_SIDE_RIGHT)
 			{ plan.diagnostic = "The Staircase rise direction is invalid"; return plan; }
+		if (!isfinite(options.speed))
+			{ plan.diagnostic = "A Staircase speed must be finite"; return plan; }
 		if (options.cellsWide < 2)
 			{ plan.diagnostic = "A Staircase must be at least two cells wide"; return plan; }
 		if (x >= mCellsWide || y >= mDecksHigh || options.cellsWide > mCellsWide - x || y + 1 >= mDecksHigh)
@@ -1658,6 +1662,7 @@ namespace core
 		else
 		{
 			found->a = plan.y; found->b = plan.x; found->c = plan.options.cellsWide; found->i = plan.options.riseSide;
+			found->x = plan.options.speed;
 		}
 		auto old = mSectors[plan.sectorIndex];
 		int deltaX = plan.move ? (int)plan.x - (int)old->getCellX() : 0;
