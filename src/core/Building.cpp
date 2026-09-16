@@ -3759,6 +3759,39 @@ namespace core
 		lift->configureTraversal(coordinator);
 		liftRes.traversalResource = coordinator;
 		auto resource = mTraversalResources.find(coordinator);
+
+		// Open platforms have no landing Door resource, so their coordinator owns
+		// one physical waiting lane per stop. The positions use the same queue-ticket
+		// allocator, spacing, progress tracking, and cancellation cleanup as Doors,
+		// Lifts, and Ladders.
+		resource->mQueueLanes.clear();
+		resource->mQueueLanes.resize(stops.size());
+		auto const halfAgentWidth = CORE_AGENT_MAX_WIDTH * 0.5f;
+		auto const queueDirection = side == CORE_SIDE_RIGHT ? 1.0f : -1.0f;
+		for (uint32_t stop = 0; stop < stops.size(); ++stop)
+		{
+			auto& lane = resource->mQueueLanes[stop];
+			lane.sector = SectorId{ (uint64_t)sector->getIndex() + 1 };
+			lane.origin = { side == CORE_SIDE_RIGHT ? (float)(x + options.cellsWide) : (float)x,
+				stops[stop].globalPosition };
+			lane.direction = Vector2::UNIT_X * queueDirection;
+			for (uint32_t step = 0; ; ++step)
+			{
+				auto distance = halfAgentWidth + step * (float)CORE_DOOR_QUEUE_STOP_WIDTH;
+				auto position = lane.origin + lane.direction * distance;
+				if (position.x - halfAgentWidth < sector->getCellX0() - 0.001f
+					|| position.x + halfAgentWidth > sector->getCellX1() + 1.0f + 0.001f)
+					break;
+				auto cellX = min(sector->getCellX1(), (uint32_t)floor(position.x));
+				auto cellY = min(sector->getCellY1(), (uint32_t)floor(position.y));
+				if (!layer->getCellDefinition(cellX, cellY).isTraversableOnFoot()) break;
+				lane.positions.push_back(position);
+			}
+			lane.positionOwners.resize(lane.positions.size());
+			lane.extent = lane.positions.empty() ? 0.0f
+				: lane.origin.distanceTo(lane.positions.back());
+		}
+
 		auto standingWidth = CORE_AGENT_MAX_WIDTH * options.capacity;
 		auto standingStart = x + (options.cellsWide - standingWidth) * 0.5f
 			+ CORE_AGENT_MAX_WIDTH * 0.5f - sector->getPosition().x;
@@ -3964,6 +3997,30 @@ namespace core
 							&& position.y >= sector->getCellY0() - 0.001f
 							&& position.y + CORE_AGENT_MAX_HEIGHT <= sector->getCellY1() + 1.001f,
 							format("Queued crossing resource {} has a queue position outside its approach sector", id.value));
+				}
+			}
+			if (resource.mOpenPlatformLift)
+			{
+				require(resource.mQueueLanes.size() == resource.mLiftStops.size(),
+					format("Platform-lift resource {} does not have one queue lane per stop", id.value));
+				for (uint32_t stop = 0; stop < resource.mQueueLanes.size(); ++stop)
+				{
+					auto const& lane = resource.mQueueLanes[stop];
+					require(lane.sector == resource.mLiftSector && validSector(lane.sector)
+						&& lane.positions.size() == lane.positionOwners.size()
+						&& !lane.positions.empty(),
+						format("Platform-lift resource {} has invalid queue geometry at stop {}",
+							id.value, stop));
+					auto sector = mSectors[(size_t)lane.sector.value - 1];
+					for (auto const& position : lane.positions)
+						require(isfinite(position.x) && isfinite(position.y)
+							&& abs(position.y - resource.mLiftStops[stop].globalPosition) <= 0.001f
+							&& position.x - CORE_AGENT_MAX_WIDTH * 0.5f
+								>= sector->getCellX0() - 0.001f
+							&& position.x + CORE_AGENT_MAX_WIDTH * 0.5f
+								<= sector->getCellX1() + 1.001f,
+							format("Platform-lift resource {} has an invalid queue position at stop {}",
+								id.value, stop));
 				}
 			}
 			if (resource.mWindow)
@@ -4851,7 +4908,7 @@ namespace core
 	void Building::attachQueueTicket(TraversalRequestId requestId, TraversalResource& resource)
 	{
 		auto request = mTraversalRequests.find(requestId);
-		if (!request || request->mQueueTicket)
+		if (!request || (request->mQueueTicket && request->mQueueApproach != ~0u))
 		{
 			return;
 		}
@@ -4869,10 +4926,20 @@ namespace core
 			}
 		}
 		if (approach == ~0u) return;
-		request->mQueueTicket = QueueTicketId{ mNextQueueTicketValue++ };
-		request->mQueuedAtTick = mSimulationTick;
+		if (!request->mQueueTicket)
+		{
+			request->mQueueTicket = QueueTicketId{ mNextQueueTicketValue++ };
+			request->mQueuedAtTick = mSimulationTick;
+		}
 		request->mQueueApproach = approach;
-		resource.mQueueLanes[approach].queue.push_back(requestId);
+		auto& queue = resource.mQueueLanes[approach].queue;
+		if (find(queue.begin(), queue.end(), requestId) == queue.end()) queue.push_back(requestId);
+		sort(queue.begin(), queue.end(), [&](auto left, auto right)
+		{
+			auto lhs = mTraversalRequests.find(left);
+			auto rhs = mTraversalRequests.find(right);
+			return lhs && rhs ? lhs->mQueueTicket < rhs->mQueueTicket : left < right;
+		});
 		refreshQueuePositions(resource);
 	}
 
@@ -4882,7 +4949,8 @@ namespace core
 	{
 		if (!edge || movementDistance < 0.0f || !agent.getSector()) return false;
 		auto resource = mTraversalResources.find(edge->getTraversalResourceId());
-		if (!resource || (!resource->mDoor && !resource->mLadder && !resource->mForceBridge)) return false;
+		if (!resource || (!resource->mDoor && !resource->mLadder && !resource->mForceBridge
+			&& !resource->mOpenPlatformLift)) return false;
 
 		auto const sourceSector = SectorId{ (uint64_t)agent.getSector()->getIndex() + 1 };
 		DoorQueueLane const* lane = nullptr;
@@ -5985,6 +6053,18 @@ namespace core
 		for (auto& reservation : resource.mAdmissionReservations)
 			if (reservation == requestId) reservation = {};
 		if (resource.mLiftAdmissionReservation == requestId) resource.mLiftAdmissionReservation = {};
+		if (resource.mOpenPlatformLift)
+		{
+			for (auto& lane : resource.mQueueLanes)
+				lane.queue.erase(remove(lane.queue.begin(), lane.queue.end(), requestId), lane.queue.end());
+			if (auto request = mTraversalRequests.find(requestId))
+			{
+				request->mQueuePosition = ~0u;
+				request->mQueueApproach = ~0u;
+				if (auto agent = mAgents.find(request->mOwner)) agent->mTraversalLocalGoal.reset();
+			}
+			refreshQueuePositions(resource);
+		}
 		if (auto request = mTraversalRequests.find(requestId)) request->mCapacityPosition = ~0u;
 	}
 
@@ -6358,6 +6438,14 @@ namespace core
 		}
 		auto origin = findLiftStop(resource, request->mSourceEndpoint);
 		auto destination = findLiftStop(resource, request->mDestinationEndpoint);
+		auto existingIntent = resource.mLiftTripIntents.find(request->mOwner);
+		if (existingIntent != resource.mLiftTripIntents.end())
+			destination = existingIntent->second.destinationStop;
+		else if (auto actor = mAgents.find(request->mOwner))
+		{
+			auto journeyDestination = findAgentLiftDestination(*actor, resource);
+			if (journeyDestination < resource.mLiftStops.size()) destination = journeyDestination;
+		}
 		if (origin >= resource.mLiftStops.size() || destination >= resource.mLiftStops.size()
 			|| origin == destination)
 		{
@@ -6391,14 +6479,50 @@ namespace core
 				|| operation->mState == DeviceOperationState::Running) return;
 			if (operation->mState != DeviceOperationState::Succeeded)
 			{ denyTraversalRequest(requestId, TraversalFailureReason::PreparationFailed); return; }
+
+			// Calling the platform establishes logical priority; after the physical
+			// interaction completes, join this stop's ordinary reserved-position lane.
+			auto actor = mAgents.find(request->mOwner);
+			if (resource.mVirtualBoundaryOwners.front() != requestId)
+			{
+				if (request->mQueueApproach == ~0u) attachQueueTicket(requestId, resource);
+				if (request->mQueueApproach >= resource.mQueueLanes.size()
+					|| request->mQueuePosition == ~0u) return;
+				auto const& queueLane = resource.mQueueLanes[request->mQueueApproach];
+				if (request->mQueuePosition >= queueLane.positions.size() || !actor
+					|| actor->getGlobalPosition().distanceTo(
+						queueLane.positions[request->mQueuePosition]) > 0.001f) return;
+			}
+
 			if (resource.mLiftMoving || resource.mLiftCurrentStop != origin
-				|| resource.mLiftStopPhase != LiftStopPhase::Boarding
-				|| mSimulationTick > resource.mLiftBoardingCutoffTick) return;
-			if (!isLiftBoardingDirectionCompatible(resource, origin, destination)) return;
-			if (resource.mAdmissionQueue.empty() || resource.mAdmissionQueue.front() != requestId) return;
+				|| resource.mLiftStopPhase != LiftStopPhase::Boarding) return;
 
 			if (request->mCapacityPosition == ~0u)
 			{
+				auto desiredDirection = resource.mLiftStops[destination].globalPosition
+					> resource.mLiftStops[origin].globalPosition
+					? TraversalDirection::Ascending : TraversalDirection::Descending;
+				auto hasBoardingReservation = any_of(resource.mAdmissionReservations.begin(),
+					resource.mAdmissionReservations.end(), [](auto value) { return (bool)value; });
+				if (mSimulationTick > resource.mLiftBoardingCutoffTick
+					|| (hasBoardingReservation && resource.mLiftDirection != desiredDirection)
+					|| !isLiftBoardingDirectionCompatible(resource, origin, destination)) return;
+				// Preserve FIFO among passengers eligible at this aligned stop and in the
+				// active LOOK direction. Demand at another floor must not block boarding.
+				auto selected = find_if(resource.mAdmissionQueue.begin(), resource.mAdmissionQueue.end(),
+					[&](TraversalRequestId candidateId)
+					{
+						auto candidate = mTraversalRequests.find(candidateId);
+						if (!candidate) return false;
+						auto intent = resource.mLiftTripIntents.find(candidate->mOwner);
+						if (intent == resource.mLiftTripIntents.end()
+							|| intent->second.originStop != origin) return false;
+						auto desired = resource.mLiftStops[intent->second.destinationStop].globalPosition
+							> resource.mLiftStops[origin].globalPosition
+							? TraversalDirection::Ascending : TraversalDirection::Descending;
+						return desired == resource.mLiftDirection;
+					});
+				if (selected == resource.mAdmissionQueue.end() || *selected != requestId) return;
 				for (uint32_t i = 0; i < resource.mCapacity; ++i)
 					if (!resource.mOccupants[i] && !resource.mAdmissionReservations[i])
 					{ request->mCapacityPosition = i; resource.mAdmissionReservations[i] = requestId; break; }
@@ -6409,24 +6533,46 @@ namespace core
 				if (resource.mVirtualBoundaryOwners.front()) return;
 				resource.mVirtualBoundaryOwners.front() = requestId;
 				resource.mVirtualBoardingStarted[requestId] = mSimulationTick;
+				auto& laneQueue = resource.mQueueLanes[request->mQueueApproach].queue;
+				laneQueue.erase(remove(laneQueue.begin(), laneQueue.end(), requestId), laneQueue.end());
+				request->mQueuePosition = ~0u;
+				auto location = mSectors[(size_t)resource.mLiftSector.value - 1].get();
+				auto target = location->getPosition()
+					+ resource.mCapacityPositions[request->mCapacityPosition];
+				target.y = resource.mLiftPosition;
+				actor->mTraversalLocalGoal = target;
+				refreshQueuePositions(resource);
 				return;
 			}
-			if (mSimulationTick <= resource.mVirtualBoardingStarted[requestId]) return;
+			if (mSimulationTick <= resource.mVirtualBoardingStarted[requestId] || !actor
+				|| !resource.mLift) return;
+			// The virtual boundary remains occupied until the passenger's whole body is
+			// over the car. This keeps the car stationary while ordinary locomotion
+			// carries them across the threshold.
+			auto const halfWidth = CORE_AGENT_MAX_WIDTH * 0.5f;
+			auto const platformX0 = resource.mLift->getPosition().x;
+			auto const platformX1 = platformX0 + resource.mLift->getSize().x;
+			auto const actorX = actor->getGlobalPosition().x;
+			if (actorX - halfWidth < platformX0 - 0.001f
+				|| actorX + halfWidth > platformX1 + 0.001f) return;
 			auto position = request->mCapacityPosition;
 			resource.mVirtualBoundaryOwners.front() = {};
 			resource.mVirtualBoardingStarted.erase(requestId);
 			resource.mAdmissionReservations[position] = {};
 			resource.mOccupants[position] = request->mOwner;
-			resource.mAdmissionQueue.erase(resource.mAdmissionQueue.begin());
+			resource.mAdmissionQueue.erase(remove(resource.mAdmissionQueue.begin(),
+				resource.mAdmissionQueue.end(), requestId), resource.mAdmissionQueue.end());
 			request->mCapacityPosition = ~0u;
 			request->mPreparationRequested = false;
 			request->mPreparationOperation = {};
 			if (auto actor = mAgents.find(request->mOwner))
 			{
+				// The passenger is onboard as soon as they cross the platform boundary,
+				// but reaching the reserved standing position remains ordinary locomotion.
 				auto location = mSectors[(size_t)resource.mLiftSector.value - 1].get();
-				auto local = resource.mCapacityPositions[position];
-				local.y += resource.mLiftPosition - location->getPosition().y;
-				actor->setPosition({ location, local }, false);
+				auto target = location->getPosition() + resource.mCapacityPositions[position];
+				target.y = resource.mLiftPosition;
+				actor->mTraversalLocalGoal = target;
 			}
 			return;
 		}
@@ -7203,11 +7349,15 @@ namespace core
 		auto const commitsAtQueueBoundary = request && agent.mQueuedTraversalTask
 			&& request->mEdgeType == EdgeType::Location
 			&& request->mSourceSector == request->mDestinationSector;
+		auto const commitsAfterSkippedVertex = request && destination && agent.mTraversalTask
+			&& agent.mTraversalTask->request == requestId
+			&& agent.mTraversalTask->pathNodesConsumed > 1
+			&& agent.getGlobalPosition().distanceTo(destination->getPosition()) <= 0.001f;
 		if (!request || !permit || !destination || request->mOwner != owner || permit->mOwner != owner
 			|| permit->mRequest != requestId || request->mPermit != permitId
 			|| request->mState != TraversalRequestState::Granted
 			|| permit->mState != TraversalPermitState::Active
-			|| (!commitsAtQueueBoundary
+			|| (!commitsAtQueueBoundary && !commitsAfterSkippedVertex
 				&& agent.getGlobalPosition().distanceTo(request->mDestinationEndpoint) > 0.001f))
 		{
 			return false;
@@ -7217,7 +7367,8 @@ namespace core
 		auto destinationSector = destination->getSector();
 		if (!sourceSector
 			|| request->mSourceSector != SectorId{ (uint64_t)sourceSector->getIndex() + 1 }
-			|| request->mDestinationSector != SectorId{ (uint64_t)destinationSector->getIndex() + 1 })
+			|| (!commitsAfterSkippedVertex
+				&& request->mDestinationSector != SectorId{ (uint64_t)destinationSector->getIndex() + 1 }))
 		{
 			return false;
 		}
@@ -8770,6 +8921,23 @@ namespace core
 				else for (uint32_t stop = 0; stop < resource.mLiftStops.size(); ++stop)
 					callback(stop, mTraversalResources.find(resource.mLiftStops[stop].landingResource));
 			};
+			auto hasWaitingAdmissionAtStop = [&](uint32_t stop)
+			{
+				return any_of(resource.mAdmissionQueue.begin(), resource.mAdmissionQueue.end(),
+					[&](TraversalRequestId id)
+					{
+						auto request = mTraversalRequests.find(id);
+						if (!request) return false;
+						if (resource.mOpenPlatformLift)
+						{
+							auto intent = resource.mLiftTripIntents.find(request->mOwner);
+							return intent != resource.mLiftTripIntents.end()
+								&& intent->second.originStop == stop;
+						}
+						auto landing = mTraversalResources.find(request->mResource);
+						return landing && landing->mLiftStopIndex == stop;
+					});
+			};
 			auto beginBoardingWindow = [&]
 			{
 				resource.mLiftStopPhase = LiftStopPhase::Boarding;
@@ -8800,7 +8968,12 @@ namespace core
 			if ((resource.mLiftStopPhase == LiftStopPhase::Idle
 				|| resource.mLiftStopPhase == LiftStopPhase::Closing) && !resource.mLiftMoving)
 			{
-				resource.mLiftTargetStop = chooseNextLiftStop(resource);
+				// An idle car is already available to callers at its aligned stop, even
+				// while their physical call interaction is still in progress. Service
+				// them before dispatching the empty car to an earlier completed call.
+				resource.mLiftTargetStop = resource.mLiftStopPhase == LiftStopPhase::Idle
+					&& hasWaitingAdmissionAtStop(resource.mLiftCurrentStop)
+					? resource.mLiftCurrentStop : chooseNextLiftStop(resource);
 			}
 
 			if (resource.mLiftTargetStop < resource.mLiftStops.size()
@@ -8908,19 +9081,7 @@ namespace core
 				[](auto id) { return (bool)id; });
 			auto unresolvedDestination = any_of(resource.mOccupants.begin(), resource.mOccupants.end(), [&](auto owner)
 				{ return owner && !resource.mLiftPassengerDestinations.contains(owner); });
-			bool waitingHere = false;
-			for (auto id : resource.mAdmissionQueue)
-				if (auto request = mTraversalRequests.find(id); request)
-				{
-					if (resource.mOpenPlatformLift)
-					{
-						auto intent = resource.mLiftTripIntents.find(request->mOwner);
-						waitingHere = waitingHere || (intent != resource.mLiftTripIntents.end()
-							&& intent->second.originStop == resource.mLiftCurrentStop);
-					}
-					else if (auto landing = mTraversalResources.find(request->mResource);
-						landing && landing->mLiftStopIndex == resource.mLiftCurrentStop) waitingHere = true;
-				}
+			bool waitingHere = hasWaitingAdmissionAtStop(resource.mLiftCurrentStop);
 
 			if (resource.mLiftStopPhase == LiftStopPhase::Boarding
 				&& mSimulationTick >= resource.mLiftServiceStartedTick + resource.mLiftMinimumDwellTicks
@@ -8966,6 +9127,19 @@ namespace core
 								passenger->getLocalPosition() + Vector2{ vehicleDelta, 0.0f } }, false);
 						auto target = transit->getPosition() + local;
 						target.x += resource.mLiftPosition - transit->getPosition().x;
+						passenger->mTraversalLocalGoal = target;
+					}
+					else if (resource.mOpenPlatformLift)
+					{
+						// The open platform may depart while a newly boarded passenger is still
+						// walking to their spot. Translate their current position with the car
+						// and keep the reserved spot as an ordinary walking goal.
+						auto vehicleDelta = resource.mLiftPosition - previousVehiclePosition;
+						if (abs(vehicleDelta) > 0.0f)
+							passenger->setPosition({ transit,
+								passenger->getLocalPosition() + Vector2{ 0.0f, vehicleDelta } }, false);
+						auto target = transit->getPosition() + local;
+						target.y = resource.mLiftPosition;
 						passenger->mTraversalLocalGoal = target;
 					}
 					else if (resource.mLiftMoving)

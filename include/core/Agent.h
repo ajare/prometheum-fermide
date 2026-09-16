@@ -57,6 +57,7 @@ namespace core
 			std::shared_ptr<const Edge> edge;
 			std::shared_ptr<const Vertex> sourceVertex;
 			std::shared_ptr<const Vertex> destinationVertex;
+			uint32_t pathNodesConsumed{ 1 };
 			uint64_t traversalTicksRemaining{ 0 };
 		};
 
@@ -119,6 +120,8 @@ namespace core
 		void clearRuntimePath();
 
 		bool moveToPosition(Vector2 const& pos, float frameTime, float speed);
+
+		uint32_t getSkippablePathTarget(uint32_t vertexA) const;
 
 		bool moveToPosition(Vector2 const& pos, float frameTime)
 		{

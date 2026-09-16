@@ -5051,6 +5051,9 @@ void renderLadderPanel(shared_ptr<core::Building> const& building,
 }
 
 
+void renderLiftPanel(shared_ptr<const core::Building> const& building,
+	shared_ptr<const core::Lift> lift, bool includeAgentDebug = false);
+
 void renderPlatformLiftPanel(shared_ptr<core::Building> const& building,
 	shared_ptr<const core::SectorObject> object)
 {
@@ -5065,10 +5068,12 @@ void renderPlatformLiftPanel(shared_ptr<core::Building> const& building,
 		return;
 	}
 
+	auto platformLift = static_pointer_cast<const core::LiftSectorObject>(object)->getLift();
 	ImGui::TextUnformatted("Platform Lift");
 	ImGui::Text("Room: %s", room->getName().c_str());
 	ImGui::Text("Layer: %s", room->getLayerIndex() == CORE_LAYER_FORE ? "Fore" : "Back");
 	ImGui::Text("Position: %u, %u", object->getCellX(), object->getCellY());
+	ImGui::Text("Car y: %.2f", platformLift->getPosition().y);
 
 	static core::Building const* editedBuilding = nullptr;
 	static core::SectorObject const* editedObject = nullptr;
@@ -5122,6 +5127,10 @@ void renderPlatformLiftPanel(shared_ptr<core::Building> const& building,
 		else { editedObject = nullptr; queuePlatformLiftEdit(building, plan); }
 	}
 	ImGui::EndDisabled();
+
+	ImGui::Separator();
+	renderLiftPanel(building, platformLift, true);
+
 	ImGui::Separator();
 	if (ImGui::Button("Delete Platform Lift"))
 	{
@@ -5134,7 +5143,7 @@ void renderPlatformLiftPanel(shared_ptr<core::Building> const& building,
 
 
 void renderLiftPanel(shared_ptr<const core::Building> const& building,
-	shared_ptr<const core::Lift> lift, bool includeAgentDebug = false)
+	shared_ptr<const core::Lift> lift, bool includeAgentDebug)
 {
 	ImGuiTableFlags flags =
 		ImGuiTableFlags_SizingStretchSame |
@@ -5191,15 +5200,21 @@ void renderLiftPanel(shared_ptr<const core::Building> const& building,
 	}
 	ImGui::Separator();
 	ImGui::Text("Resource: %llu", (unsigned long long)resourceId.value);
-	ImGui::Text("Position: %.2f", resource->liftPosition);
 	ImGui::Text("Current stop: %u", resource->liftCurrentStop);
 	if (resource->liftTargetStop == ~0u) ImGui::TextUnformatted("Target stop: <none>");
 	else ImGui::Text("Target stop: %u", resource->liftTargetStop);
+	string queuedStops;
+	for (auto stop : resource->liftScheduledStops)
+	{
+		if (!queuedStops.empty()) queuedStops += ", ";
+		queuedStops += to_string(stop);
+	}
+	ImGui::Text("Queued stops: %s", queuedStops.empty() ? "<none>" : queuedStops.c_str());
 	ImGui::Text("Phase: %s", phase);
 	ImGui::Text("Capacity: %u (%u occupied, %u reserved)", resource->capacity,
 		resource->occupantCount, resource->admissionReservationCount);
 
-	ImGui::TextUnformatted("Agents using lift");
+	ImGui::TextUnformatted("Agents waiting for / using lift");
 	if (ImGui::BeginTable("LiftAgents", 3, flags))
 	{
 		ImGui::TableSetupColumn("Agent");
@@ -5590,6 +5605,11 @@ void renderSelectedObjectPanel(shared_ptr<core::Building> const& building)
 		ImGui::Text("Sector index: %u", gSelectedSector->getIndex());
 		ImGui::Text("Layer: %s", gSelectedSector->getLayerIndex() == CORE_LAYER_FORE ? "Fore" : "Back");
 		ImGui::Text("Position: %u, %u", gSelectedSector->getCellX(), gSelectedSector->getCellY());
+		if (gSelectedSector->getType() == core::SectorType::Lift)
+		{
+			auto lift = static_pointer_cast<const core::LiftTransit>(gSelectedSector)->getLift();
+			ImGui::Text("Car y: %.2f", lift->getPosition().y);
+		}
 		ImGui::Text("Size: %u x %u cells", gSelectedSector->getCellsWide(),
 			gSelectedSector->getDecksHigh());
 		ImGui::Text("Agents: %u", (uint32_t)gSelectedSector->getAgents().size());

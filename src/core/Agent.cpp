@@ -397,6 +397,56 @@ namespace core
 		return (int)offsets[chosen].second;
 	}
 
+	uint32_t Agent::getSkippablePathTarget(uint32_t vertexA) const
+	{
+		if (!mPath.path || !getSector() || vertexA + 1 >= mPath.path->nodes.size()) return vertexA;
+		auto const& nodeA = mPath.path->nodes[vertexA];
+		if (!nodeA.targetVertex
+			|| nodeA.targetVertex->getSubType() == VertexSubType::Interactable) return vertexA;
+		auto const positionA = nodeA.targetVertex->getPosition();
+
+		auto requiresActionAtSource = [&](shared_ptr<const Edge> const& edge)
+		{
+			if (!edge) return true;
+			if (edge->getType() == EdgeType::Location) return false;
+			if (edge->getType() == EdgeType::LiftMount && mBuilding)
+			{
+				auto resource = mBuilding->lookupTraversalResource(edge->getTraversalResourceId());
+				// An open platform's mount edge is a topology-only exit handoff. Calls and
+				// destination selection occur on its Lift edges instead.
+				return !resource || !resource.entity->isOpenPlatformLift();
+			}
+			return true;
+		};
+
+		// Coincident nodes are topology-only. Look through them to obtain the next
+		// physical vertex, but stop at an edge that requires an action at the current
+		// waypoint (for example, operating a lift call control).
+		auto vertexB = vertexA + 1;
+		while (vertexB < mPath.path->nodes.size())
+		{
+			auto const& node = mPath.path->nodes[vertexB];
+			if (!node.targetVertex
+				|| node.targetVertex->getSubType() == VertexSubType::Interactable
+				|| requiresActionAtSource(node.edge)) return vertexA;
+			if (node.targetVertex->getPosition().distanceTo(positionA) > 0.001f) break;
+			++vertexB;
+		}
+		if (vertexB >= mPath.path->nodes.size()) return vertexA;
+
+		auto const& nodeB = mPath.path->nodes[vertexB];
+		auto const positionB = nodeB.targetVertex->getPosition();
+		auto const agentPosition = getGlobalPosition();
+		auto const layer = getSector()->getLayerIndex();
+		if (nodeA.targetVertex->getSector()->getLayerIndex() != layer
+			|| nodeB.targetVertex->getSector()->getLayerIndex() != layer
+			|| abs(positionA.y - positionB.y) > 0.001f
+			|| abs(positionA.x - positionB.x) <= 0.001f) return vertexA;
+		auto const sideA = positionA.x - agentPosition.x;
+		auto const sideB = positionB.x - agentPosition.x;
+		return sideA * sideB < -0.000001f ? vertexB : vertexA;
+	}
+
 	void Agent::moveToVertex(float frameTime)
 	{
 		if (!mPath.path || mPath.targetNode >= mPath.path->nodes.size())
@@ -405,6 +455,7 @@ namespace core
 			return;
 		}
 
+		mPath.targetNode = getSkippablePathTarget(mPath.targetNode);
 		auto const& targetPos = mPath.path->nodes[mPath.targetNode].targetVertex->getPosition();
 		if (mBuilding && mPath.targetNode + 1 < mPath.path->nodes.size()
 			&& mBuilding->stopForAvailableQueuePosition(*this,
@@ -476,6 +527,27 @@ namespace core
 		if (requestLookup && requestLookup.entity->getState() == TraversalRequestState::Granted)
 		{
 			mTraversalTask->permit = requestLookup.entity->getPermit();
+			auto vertexA = mPath.targetNode + 1;
+			auto resource = mBuilding->lookupTraversalResource(requestLookup.entity->getResource());
+			if (resource && resource.entity->isOpenPlatformLift()
+				&& requestLookup.entity->getEdgeType() == EdgeType::Lift)
+			{
+				// Adjacent Platform Lift edges form one transport journey. LOOK may pass
+				// intermediate floors, so the traversal endpoint is the final contiguous
+				// Lift vertex rather than the first graph segment.
+				while (vertexA + 1 < mPath.path->nodes.size()
+					&& mPath.path->nodes[vertexA + 1].edge
+					&& mPath.path->nodes[vertexA + 1].edge->getType() == EdgeType::Lift)
+					++vertexA;
+				mTraversalTask->destinationVertex = mPath.path->nodes[vertexA].targetVertex;
+				mTraversalTask->pathNodesConsumed = vertexA - mPath.targetNode;
+			}
+			auto const directTarget = getSkippablePathTarget(vertexA);
+			if (directTarget != vertexA)
+			{
+				mTraversalTask->destinationVertex = mPath.path->nodes[directTarget].targetVertex;
+				mTraversalTask->pathNodesConsumed = directTarget - mPath.targetNode;
+			}
 			// Inter-layer thresholds have coincident 2D endpoints. Keep the
 			// locomotion task visible for a short deterministic crossing instead
 			// of committing in the permit-allocation tick.
@@ -499,7 +571,8 @@ namespace core
 			return;
 		}
 
-		nextPathNode();
+		auto const consumed = mTraversalTask->pathNodesConsumed;
+		for (uint32_t i = 0; i < consumed && mPath.path; ++i) nextPathNode();
 	}
 
 	float Agent::estimateRemainingPathSeconds(shared_ptr<Path> const& path, uint32_t fromNode) const

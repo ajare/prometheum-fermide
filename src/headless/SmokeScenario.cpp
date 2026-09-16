@@ -2308,18 +2308,21 @@ namespace
 		core::Building::CreateLiftOptions options;
 		options.cellsWide = 1;
 		options.stopOffsets = { 0, 2 };
-		options.capacity = 1;
+		options.capacity = 2;
 		options.minimumDwellSeconds = 0.1f;
 		options.maximumBoardingSeconds = 0.5f;
+		building.addSectorWalkway(room, 2, 0);
+		building.addSectorWalkway(room, 2, 1);
 		building.addSectorWalkway(room, 2, 2);
 		building.addSectorWalkway(room, 2, 3);
 		auto created = building.addSectorPlatformLift(room, 0, 2, options);
+		uint32_t destinationVertexId;
+		building.addSectorMarker(room, 2, 0.5f, &destinationVertexId);
 		building.finishBuild();
 		if (!created.traversalResource || !created.interiorSelector || created.buttons.size() != 2)
 			return false;
 
-		auto target = building.getGraph()->getClosestVertexInSector(
-			building.getSector(room).get(), { 2.5f, 2.0f });
+		auto target = building.getGraph()->getVertexByIdentifier(destinationVertexId);
 		auto passengerId = building.createAgent("Platform passenger", room, 0, 0.5f);
 		auto passenger = building.lookupAgent(passengerId).entity;
 		auto path = building.getGraph()->calculatePath(passenger, target);
@@ -2328,9 +2331,18 @@ namespace
 		passenger->setPath(path, true);
 
 		bool sawBoundary = false;
+		bool sawPhysicalQueuePosition = false;
 		bool sawOnboard = false;
+		bool boardedWithoutTeleport = false;
+		bool fullyInsideWhenRegistered = false;
+		bool reachedAssignedPosition = false;
+		bool walkedIntoPositionWhileMoving = false;
+		bool exitedTowardNextVertex = false;
+		bool checkedExitDirection = false;
+		bool wasOnboard = false;
 		bool sawAttachedMotion = false;
 		bool sawDestinationConfirmation = false;
+		auto previousPosition = passenger->getGlobalPosition();
 		for (uint32_t tick = 0; tick < MaximumSimulationTicks * 6
 			&& passenger->getState() != core::Agent::State::Idle; ++tick)
 		{
@@ -2342,8 +2354,35 @@ namespace
 				|| platform->liftCarDoorOpen
 				|| platform->occupantCount + platform->admissionReservationCount > options.capacity)
 				return false;
+			if (platform->queueLanes.size() != options.stopOffsets.size()
+				|| std::any_of(platform->queueLanes.begin(), platform->queueLanes.end(),
+					[](auto const& lane) { return lane.positions.empty(); })) return false;
 			sawBoundary = sawBoundary || platform->virtualBoundaryCrossingCount == 1;
-			sawOnboard = sawOnboard || platform->occupantCount == 1;
+			sawPhysicalQueuePosition = sawPhysicalQueuePosition
+				|| std::any_of(snapshot.traversalRequests.begin(), snapshot.traversalRequests.end(),
+					[&](auto const& request)
+					{ return request.owner == passengerId && request.hasQueuePosition; });
+			auto onboard = platform->occupantCount == 1;
+			sawOnboard = sawOnboard || onboard;
+			if (onboard && !wasOnboard)
+			{
+				boardedWithoutTeleport = passenger->getGlobalPosition().distanceTo(previousPosition)
+					<= passenger->getWalkSpeed() * building.getFixedTimestep() + 0.001f;
+				auto const centerX = passenger->getGlobalPosition().x;
+				fullyInsideWhenRegistered = centerX - CORE_AGENT_MAX_WIDTH * 0.5f >= 2.0f - 0.001f
+					&& centerX + CORE_AGENT_MAX_WIDTH * 0.5f <= 3.0f + 0.001f;
+			}
+			if (!onboard && platform->liftMoving) return false;
+			if (onboard)
+			{
+				auto assignedX = building.getSector(room)->getPosition().x
+					+ platform->capacityPositions.front().position.x;
+				reachedAssignedPosition = reachedAssignedPosition
+					|| std::abs(passenger->getGlobalPosition().x - assignedX) < 0.01f;
+				walkedIntoPositionWhileMoving = walkedIntoPositionWhileMoving
+					|| (platform->liftMoving
+						&& std::abs(passenger->getGlobalPosition().x - assignedX) > 0.01f);
+			}
 			for (auto const& operation : snapshot.deviceOperations)
 				if (operation.command.type == core::DeviceCommandType::SelectLiftDestination
 					&& operation.state == core::DeviceOperationState::Succeeded)
@@ -2354,16 +2393,122 @@ namespace
 				if (std::abs(passenger->getGlobalPosition().y - platform->liftPosition) < 0.001f)
 					sawAttachedMotion = true;
 			}
+			auto horizontalStep = passenger->getGlobalPosition().x - previousPosition.x;
+			if (!checkedExitDirection && platform->liftCurrentStop == 1 && !platform->liftMoving
+				&& passenger->getState() == core::Agent::State::TraversingEdge
+				&& std::abs(horizontalStep) > 0.0001f)
+			{
+				checkedExitDirection = true;
+				exitedTowardNextVertex = horizontalStep < 0.0f;
+			}
+			wasOnboard = onboard;
+			previousPosition = passenger->getGlobalPosition();
 		}
 		auto final = building.getSimulationSnapshot();
 		auto platform = std::find_if(final.traversalResources.begin(), final.traversalResources.end(),
 			[&](auto const& resource) { return resource.id == created.traversalResource; });
-		return sawBoundary && sawOnboard && sawAttachedMotion && sawDestinationConfirmation
+		return sawBoundary && sawPhysicalQueuePosition && sawOnboard
+			&& boardedWithoutTeleport && fullyInsideWhenRegistered
+			&& reachedAssignedPosition && walkedIntoPositionWhileMoving
+			&& exitedTowardNextVertex && sawAttachedMotion && sawDestinationConfirmation
 			&& passenger->getState() == core::Agent::State::Idle
 			&& passenger->getSector() == building.getSector(room).get()
 			&& passenger->getGlobalPosition().distanceTo(target->getPosition()) < 0.001f
 			&& platform != final.traversalResources.end() && platform->occupantCount == 0
 			&& platform->virtualBoundaryCrossingCount == 0;
+	}
+
+	bool openPlatformLiftUsesOneJourneyAcrossIntermediateStops()
+	{
+		core::Building building("Multi-stop open platform lift", 7, 5);
+		auto room = building.addRoom("Platform room", CORE_LAYER_FORE, 0, 0, 6, 4);
+		core::Building::CreateLiftOptions options;
+		options.cellsWide = 1;
+		options.stopOffsets = { 0, 1, 2 };
+		options.capacity = 1;
+		options.minimumDwellSeconds = 0.1f;
+		options.maximumBoardingSeconds = 0.5f;
+		building.addSectorWalkway(room, 1, 2);
+		building.addSectorWalkway(room, 1, 3);
+		for (uint32_t x = 0; x < 4; ++x) building.addSectorWalkway(room, 2, x);
+		auto created = building.addSectorPlatformLift(room, 0, 2, options);
+		uint32_t sourceVertexId;
+		uint32_t destinationVertexId;
+		building.addSectorMarker(room, 0, 0.5f, &sourceVertexId);
+		building.addSectorMarker(room, 2, 0.5f, &destinationVertexId);
+		building.finishBuild();
+
+		auto source = building.getGraph()->getVertexByIdentifier(sourceVertexId);
+		auto destination = building.getGraph()->getVertexByIdentifier(destinationVertexId);
+		auto passengerId = building.createAgent("Multi-stop platform passenger", room, 0, 0.5f);
+		auto passenger = building.lookupAgent(passengerId).entity;
+		auto path = building.getGraph()->calculatePath(passenger, source, destination);
+		if (!path || std::count_if(path->nodes.begin(), path->nodes.end(), [](auto const& node)
+			{ return node.edge && node.edge->getType() == core::EdgeType::Lift; }) != 2) return false;
+		passenger->setPath(path, true);
+
+		bool passedIntermediateFloorWhileMoving = false;
+		for (uint32_t tick = 0; tick < MaximumSimulationTicks * 8
+			&& passenger->getState() != core::Agent::State::Idle; ++tick)
+		{
+			building.advanceTick();
+			auto snapshot = building.getSimulationSnapshot();
+			auto platform = std::find_if(snapshot.traversalResources.begin(),
+				snapshot.traversalResources.end(), [&](auto const& resource)
+				{ return resource.id == created.traversalResource; });
+			if (platform == snapshot.traversalResources.end()) return false;
+			if (platform->liftCurrentStop == 1 && !platform->liftMoving) return false;
+			passedIntermediateFloorWhileMoving = passedIntermediateFloorWhileMoving
+				|| (platform->liftMoving && std::abs(platform->liftPosition - 1.0f) < 0.01f);
+		}
+		return passedIntermediateFloorWhileMoving
+			&& passenger->getState() == core::Agent::State::Idle
+			&& passenger->getGlobalPosition().distanceTo(destination->getPosition()) < 0.001f;
+	}
+
+	bool idlePlatformLiftServesAlignedWaitersBeforeRemoteCalls()
+	{
+		core::Building building("Aligned platform waiters", 7, 5);
+		auto room = building.addRoom("Platform room", CORE_LAYER_FORE, 0, 0, 6, 4);
+		for (uint32_t deck = 1; deck <= 3; ++deck)
+			for (uint32_t x = 0; x < 6; ++x) building.addSectorWalkway(room, deck, x);
+		core::Building::CreateLiftOptions options;
+		options.cellsWide = 1;
+		options.stopOffsets = { 0, 1, 2, 3 };
+		options.capacity = 2;
+		options.minimumDwellSeconds = 0.75f;
+		options.maximumBoardingSeconds = 5.0f;
+		auto created = building.addSectorPlatformLift(room, 0, 3, options);
+		uint32_t groundSourceId, groundTargetId, remoteSourceId, remoteTargetId;
+		building.addSectorMarker(room, 0, 1.6f, &groundSourceId);
+		building.addSectorMarker(room, 1, 0.3f, &groundTargetId);
+		building.addSectorMarker(room, 2, 1.7f, &remoteSourceId);
+		building.addSectorMarker(room, 3, 5.7f, &remoteTargetId);
+		building.finishBuild();
+
+		auto groundId = building.createAgent("Aligned ground caller", room, 0, 1.6f);
+		auto remoteId = building.createAgent("Earlier remote caller", room, 2, 1.7f);
+		auto ground = building.lookupAgent(groundId).entity;
+		auto remote = building.lookupAgent(remoteId).entity;
+		ground->setPath(building.getGraph()->calculatePath(ground,
+			building.getGraph()->getVertexByIdentifier(groundSourceId),
+			building.getGraph()->getVertexByIdentifier(groundTargetId)), true);
+		remote->setPath(building.getGraph()->calculatePath(remote,
+			building.getGraph()->getVertexByIdentifier(remoteSourceId),
+			building.getGraph()->getVertexByIdentifier(remoteTargetId)), true);
+
+		for (uint32_t tick = 0; tick < MaximumSimulationTicks * 2; ++tick)
+		{
+			building.advanceTick();
+			auto snapshot = building.getSimulationSnapshot();
+			auto platform = std::find_if(snapshot.traversalResources.begin(),
+				snapshot.traversalResources.end(), [&](auto const& resource)
+				{ return resource.id == created.traversalResource; });
+			if (platform == snapshot.traversalResources.end()) return false;
+			if (platform->liftMoving)
+				return platform->liftCurrentStop == 0 && platform->occupantCount > 0;
+		}
+		return false;
 	}
 
 	bool singlePassengerCompletesTwoStopLiftJourney()
@@ -3876,6 +4021,16 @@ int main()
 		if (!openPlatformLiftUsesVirtualBoundaryAndTransportPolicy())
 		{
 			std::cerr << "FAIL: open platform lift journey, virtual boundary, or attachment failed\n";
+			return 1;
+		}
+		if (!openPlatformLiftUsesOneJourneyAcrossIntermediateStops())
+		{
+			std::cerr << "FAIL: open platform lift did not apply LOOK across intermediate stops\n";
+			return 1;
+		}
+		if (!idlePlatformLiftServesAlignedWaitersBeforeRemoteCalls())
+		{
+			std::cerr << "FAIL: idle PlatformLift left aligned waiting passengers behind\n";
 			return 1;
 		}
 		if (!liftDoorQueueRequestsBeforeOccupiedTail())

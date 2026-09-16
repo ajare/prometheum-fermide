@@ -37,6 +37,10 @@ _Avoid_: Stop, queue position
 An agent's planned sequence of vertices and edges. A path expresses route intent, not permission to traverse every edge immediately.
 _Avoid_: Reservation, traversal permit
 
+**Skippable path vertex**:
+An intermediate waypoint that an agent need not physically visit when the agent and the next two physical vertices share a layer, those vertices lie horizontally on opposite sides of the agent at the same height, and no interaction or other specific action is required at the nearer vertex. Coincident topology-only vertices do not count as distinct physical waypoints.
+_Avoid_: Removing the vertex from the authored path
+
 **Transport journey**:
 An agent's coordinated use of one transport vehicle, from waiting and boarding at an origin stop through disembarking at a destination stop.
 _Avoid_: Path, ride edge

@@ -1,6 +1,5 @@
 #pragma once
 
-#include <array>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -352,7 +351,9 @@ namespace core
 		DeviceOperationId mSharedPreparationOperation;
 		uint32_t mPreparationAttempts{ 0 };
 		uint64_t mNextPreparationTick{ 0 };
-		std::array<DoorQueueLane, 2> mQueueLanes;
+		// Most thresholds have two approaches. Open platform lifts instead own one
+		// physical waiting lane per stop, all using the same queue allocator.
+		std::vector<DoorQueueLane> mQueueLanes{ 2 };
 		std::vector<TraversalRequestId> mCrossingOwners;
 		explicit TraversalResource(std::string name) : mName(std::move(name)) {}
 		TraversalResource(std::string name, std::shared_ptr<Door> door,
