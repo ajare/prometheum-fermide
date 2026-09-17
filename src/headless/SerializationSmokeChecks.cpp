@@ -533,6 +533,62 @@ agents: []
 			"Agent in a removed Transit was retained");
 	}
 
+	// Authored record order carries dependencies: a wall removal has to replay
+	// before the Staircase which needs that wall open, and records which point at a
+	// Sector must keep pointing at the same Sector after the indices compact.
+	void layerDeletionPreservesAuthoredRecordDependencies()
+	{
+		core::Building building("Dependencies", 16, 3);
+		building.addLayer();
+		building.addCorridor(0, 0, 7);
+		building.addCorridor(1, 3, 7);
+		building.addStaircase(0, 4, { 4, CORE_SIDE_RIGHT, 0.4f });
+		building.addRoom("Room 1", 0, 1, 10, 4, 2);
+		building.addCorridor(2, 14, 2);
+		building.removeLocationWall(3, 1, CORE_SIDE_RIGHT);
+		building.addStaircase(1, 11, { 3, CORE_SIDE_RIGHT, 0.0f });
+		building.finishBuild();
+		building.pauseSimulation();
+
+		// Deleting the Transit Layer drops two Sectors ahead of the Room, so the
+		// wall removal must follow the Room rather than land on a renumbered Sector.
+		auto const middle = building.planDeleteLayer(1);
+		require(middle.valid,
+			("Dependency-aware layer deletion was rejected: " + middle.diagnostic).c_str());
+		require(middle.transitsRemoved == 2, "Dependency test dropped the wrong Transits");
+		building.applyDeleteLayer(middle);
+		require(building.getNumSectors() == 4, "Dependency test compacted to the wrong Sector count");
+		require(building.getSector(2)->getName() == "Room 1",
+			"The wall removal did not follow its Room through the Sector compaction");
+		require(building.getSector(2)->getEndType(1, CORE_SIDE_RIGHT) != core::SectorEndType::Wall,
+			"The removed wall came back after the layer deletion");
+		require(building.isTraversalTopologyValid(),
+			("Layer deletion left an invalid topology: " + building.getTopologyDiagnostic()).c_str());
+
+		// Deleting the back-most Layer drops nothing, so this exercises the record
+		// ordering alone.
+		core::Building untouched("Dependencies", 16, 3);
+		untouched.addLayer();
+		untouched.addCorridor(0, 0, 7);
+		untouched.addCorridor(1, 3, 7);
+		untouched.addStaircase(0, 4, { 4, CORE_SIDE_RIGHT, 0.4f });
+		untouched.addRoom("Room 1", 0, 1, 10, 4, 2);
+		untouched.addCorridor(2, 14, 2);
+		untouched.removeLocationWall(3, 1, CORE_SIDE_RIGHT);
+		untouched.addStaircase(1, 11, { 3, CORE_SIDE_RIGHT, 0.0f });
+		untouched.finishBuild();
+		untouched.pauseSimulation();
+		auto const back = untouched.planDeleteLayer(2);
+		require(back.valid,
+			("Deleting the back-most Layer broke an authored dependency: " + back.diagnostic).c_str());
+		untouched.applyDeleteLayer(back);
+		require(untouched.getNumSectors() == 6 && untouched.getLayerCount() == 2,
+			"Deleting the back-most Layer changed more than the Layer count");
+		require(untouched.isTraversalTopologyValid(),
+			("Back-most layer deletion left an invalid topology: "
+				+ untouched.getTopologyDiagnostic()).c_str());
+	}
+
 	void layerDeletionKeepsAtLeastTwoLayers()
 	{
 		core::Building building("Two layers", 4, 2);
@@ -1319,6 +1375,7 @@ void runSerializationSmokeChecks()
 	layerCountIsCappedAtCoreMaxLayers();
 	deletingAMiddleLayerCompactsTheLayersAboveIt();
 	deletingTheFrontLayerRemovesTransitsOneLayerBehind();
+	layerDeletionPreservesAuthoredRecordDependencies();
 	layerDeletionKeepsAtLeastTwoLayers();
 	locationEditsArePlannedAndAppliedAtomically();
 	editedShuttleRoundTripsWithoutSchemaChanges();

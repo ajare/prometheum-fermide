@@ -756,6 +756,13 @@ namespace core
 				|| type == ConstructionType::RemoveWall || type == ConstructionType::RemoveMarker
 				|| type == ConstructionType::ObjectTombstone;
 		};
+		// A wall removal is a Location prerequisite, not a Location payload: a
+		// Staircase or Escalator validates against the wall being open as it is
+		// created, so removals have to replay before Transits rather than after them.
+		auto isLocationPrerequisite = [](ConstructionType type)
+		{
+			return type == ConstructionType::RemoveWall;
+		};
 		struct Item { ConstructionRecord record; uint32_t oldSector{ ~0u }; };
 		vector<Item> locations, transits, other;
 		uint32_t oldSector = 0;
@@ -763,7 +770,8 @@ namespace core
 		{
 			bool const producer = createsSector(record.type);
 			Item item{ std::move(record), producer ? oldSector++ : ~0u };
-			if (isLocation(item.record.type)) locations.push_back(std::move(item));
+			if (isLocation(item.record.type) || isLocationPrerequisite(item.record.type))
+				locations.push_back(std::move(item));
 			else if (createsSector(item.record.type)) transits.push_back(std::move(item));
 			else other.push_back(std::move(item));
 		}
@@ -947,20 +955,34 @@ namespace core
 		// still asserts the two-Layer back boundary, so the neighbour is derived here.
 		auto const behind = layerIndex + 1;
 
-		// Sectors are created one per record, in record order, so a producing
-		// record's position among the producers is its live Sector index.
-		vector<ConstructionRecord> records;
-		records.reserve(mConstructionRecords.size());
-
-		auto removedSector = [&](uint32_t sectorIndex)
+		auto isTransitRecord = [](ConstructionType type)
 		{
-			return sectorIndex >= impact.sectorRemoved.size()
-				? true : impact.sectorRemoved[sectorIndex];
+			return type == ConstructionType::Ladder || type == ConstructionType::Stairwell
+				|| type == ConstructionType::Staircase || type == ConstructionType::Lift
+				|| type == ConstructionType::Shuttle;
+		};
+		auto isSectorReference = [](ConstructionType type)
+		{
+			return type == ConstructionType::LightSwitch || type == ConstructionType::ForceBridge
+				|| type == ConstructionType::SectorLadder || type == ConstructionType::PlatformLift
+				|| type == ConstructionType::Walkway || type == ConstructionType::Marker
+				|| type == ConstructionType::RemoveWall || type == ConstructionType::RemoveMarker
+				|| type == ConstructionType::ObjectTombstone;
 		};
 
+		// Sectors are created one per record, in record order, so a producing
+		// record's position among the producers is its live Sector index.  Decide
+		// which Sectors survive first, and which index each one takes in the
+		// compacted Building, so that records pointing at a Sector can be re-pointed
+		// against the *original* numbering rather than a renumbered copy of it.
+		vector<bool> keepRecord(mConstructionRecords.size(), true);
+		vector<uint32_t> sectorMap(mSectors.size(), ~0u);
 		uint32_t producerIndex = 0;
-		for (auto record : mConstructionRecords)
+		uint32_t nextSector = 0;
+
+		for (size_t i = 0; i < mConstructionRecords.size(); ++i)
 		{
+			auto const& record = mConstructionRecords[i];
 			bool keep = true;
 
 			switch (record.type)
@@ -973,55 +995,71 @@ namespace core
 			case ConstructionType::Lift:
 			case ConstructionType::Shuttle:
 			{
-				bool const transit = record.type != ConstructionType::Corridor
-					&& record.type != ConstructionType::Room;
+				bool const transit = isTransitRecord(record.type);
 				auto const layer = producerIndex < mSectors.size() && mSectors[producerIndex]
 						? mSectors[producerIndex]->getLayerIndex() : layerIndex;
 				keep = layer != layerIndex && !(transit && layer == behind);
-				if (record.type == ConstructionType::Room && record.a > layerIndex) record.a -= 1;
 				if (producerIndex < impact.sectorRemoved.size())
 					impact.sectorRemoved[producerIndex] = !keep;
-				if (!keep)
-				{
-					if (transit) ++impact.transitsRemoved;
-					else ++impact.locationsRemoved;
-				}
+				if (keep) sectorMap[producerIndex] = nextSector++;
+				else if (transit) ++impact.transitsRemoved;
+				else ++impact.locationsRemoved;
 				++producerIndex;
 				break;
 			}
 			case ConstructionType::Door:
-			{
 				// A Door record carries no Layer field; the Layers it really crosses
 				// come from the Sectors which hold the Door object.
 				keep = thresholdLayers(SectorObjectType::Door, record.b, record.a)
 					.count(layerIndex) == 0;
 				if (!keep) ++impact.doorsRemoved;
 				break;
-			}
 			case ConstructionType::Window:
-			{
-				if (record.a == layerIndex) keep = false;
-				else keep = thresholdLayers(SectorObjectType::Window, record.c, record.b)
-					.count(layerIndex) == 0;
+				keep = record.a != layerIndex
+					&& thresholdLayers(SectorObjectType::Window, record.c, record.b)
+						.count(layerIndex) == 0;
 				if (!keep) ++impact.windowsRemoved;
-				else if (record.a > layerIndex) record.a -= 1;
 				break;
-			}
 			case ConstructionType::BulkheadDoor:
 				// A Bulkhead Door joins two Locations on its own Layer.
-				if (record.a == layerIndex) keep = false;
-				else if (record.a > layerIndex) record.a -= 1;
+				keep = record.a != layerIndex;
 				break;
 			default:
 				// Everything else is authored against a Sector and dies with it.
-				keep = !removedSector(record.a);
+				keep = record.a < sectorMap.size() && sectorMap[record.a] != ~0u;
 				break;
 			}
 
-			if (keep) records.push_back(std::move(record));
+			keepRecord[i] = keep;
 		}
 
-		return canonicalConstructionRecords(std::move(records));
+		// The authored record order is preserved.  It is the order the Building was
+		// built and replayed in, and that order carries dependencies: a wall removal
+		// has to precede the Staircase which needs the wall to be open.
+		vector<ConstructionRecord> records;
+		records.reserve(mConstructionRecords.size());
+
+		for (size_t i = 0; i < mConstructionRecords.size(); ++i)
+		{
+			if (!keepRecord[i]) continue;
+
+			auto record = mConstructionRecords[i];
+			switch (record.type)
+			{
+			case ConstructionType::Room:
+			case ConstructionType::Window:
+			case ConstructionType::BulkheadDoor:
+				if (record.a > layerIndex) record.a -= 1;
+				break;
+			default:
+				if (isSectorReference(record.type) && record.a < sectorMap.size())
+					record.a = sectorMap[record.a];
+				break;
+			}
+			records.push_back(std::move(record));
+		}
+
+		return records;
 	}
 
 	Building::LayerDeletePlan Building::planDeleteLayer(uint32_t layerIndex) const
