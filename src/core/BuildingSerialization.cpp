@@ -919,6 +919,268 @@ namespace core
 		}
 	}
 
+	set<uint32_t> Building::thresholdLayers(SectorObjectType type, uint32_t x, uint32_t y) const
+	{
+		set<uint32_t> layers;
+		for (auto const& sector : mSectors)
+		{
+			if (!sector) continue;
+			for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
+			{
+				auto const object = sector->getObject(i);
+				if (!object || object->getObjectType() != type) continue;
+				if (object->getCellX() != x || object->getCellY() != y) continue;
+				layers.insert(sector->getLayerIndex());
+			}
+		}
+		return layers;
+	}
+
+	vector<Building::ConstructionRecord> Building::recordsWithoutLayer(uint32_t layerIndex,
+		LayerDeleteImpact& impact) const
+	{
+		impact = {};
+		impact.sectorRemoved.assign(mSectors.size(), false);
+
+		// A Transit on layer N lands on the Layer in front of it, so deleting a Layer
+		// also breaks the Transits one Layer *behind* the deletion.  layerBehind()
+		// still asserts the two-Layer back boundary, so the neighbour is derived here.
+		auto const behind = layerIndex + 1;
+
+		// Sectors are created one per record, in record order, so a producing
+		// record's position among the producers is its live Sector index.
+		vector<ConstructionRecord> records;
+		records.reserve(mConstructionRecords.size());
+
+		auto removedSector = [&](uint32_t sectorIndex)
+		{
+			return sectorIndex >= impact.sectorRemoved.size()
+				? true : impact.sectorRemoved[sectorIndex];
+		};
+
+		uint32_t producerIndex = 0;
+		for (auto record : mConstructionRecords)
+		{
+			bool keep = true;
+
+			switch (record.type)
+			{
+			case ConstructionType::Corridor:
+			case ConstructionType::Room:
+			case ConstructionType::Ladder:
+			case ConstructionType::Stairwell:
+			case ConstructionType::Staircase:
+			case ConstructionType::Lift:
+			case ConstructionType::Shuttle:
+			{
+				bool const transit = record.type != ConstructionType::Corridor
+					&& record.type != ConstructionType::Room;
+				auto const layer = producerIndex < mSectors.size() && mSectors[producerIndex]
+						? mSectors[producerIndex]->getLayerIndex() : layerIndex;
+				keep = layer != layerIndex && !(transit && layer == behind);
+				if (record.type == ConstructionType::Room && record.a > layerIndex) record.a -= 1;
+				if (producerIndex < impact.sectorRemoved.size())
+					impact.sectorRemoved[producerIndex] = !keep;
+				if (!keep)
+				{
+					if (transit) ++impact.transitsRemoved;
+					else ++impact.locationsRemoved;
+				}
+				++producerIndex;
+				break;
+			}
+			case ConstructionType::Door:
+			{
+				// A Door record carries no Layer field; the Layers it really crosses
+				// come from the Sectors which hold the Door object.
+				keep = thresholdLayers(SectorObjectType::Door, record.b, record.a)
+					.count(layerIndex) == 0;
+				if (!keep) ++impact.doorsRemoved;
+				break;
+			}
+			case ConstructionType::Window:
+			{
+				if (record.a == layerIndex) keep = false;
+				else keep = thresholdLayers(SectorObjectType::Window, record.c, record.b)
+					.count(layerIndex) == 0;
+				if (!keep) ++impact.windowsRemoved;
+				else if (record.a > layerIndex) record.a -= 1;
+				break;
+			}
+			case ConstructionType::BulkheadDoor:
+				// A Bulkhead Door joins two Locations on its own Layer.
+				if (record.a == layerIndex) keep = false;
+				else if (record.a > layerIndex) record.a -= 1;
+				break;
+			default:
+				// Everything else is authored against a Sector and dies with it.
+				keep = !removedSector(record.a);
+				break;
+			}
+
+			if (keep) records.push_back(std::move(record));
+		}
+
+		return canonicalConstructionRecords(std::move(records));
+	}
+
+	Building::LayerDeletePlan Building::planDeleteLayer(uint32_t layerIndex) const
+	{
+		LayerDeletePlan plan;
+		plan.layerIndex = layerIndex;
+		plan.layerCountBefore = getLayerCount();
+		plan.layerCountAfter = plan.layerCountBefore - 1;
+
+		if (layerIndex >= plan.layerCountBefore)
+		{
+			plan.diagnostic = format("There is no Layer {} to delete", layerIndex);
+			return plan;
+		}
+		if (plan.layerCountAfter < 2)
+		{
+			plan.diagnostic = "A Building must keep at least two Layers";
+			return plan;
+		}
+
+		plan.layerName = mLayerNames[layerIndex];
+
+		LayerDeleteImpact impact;
+		vector<ConstructionRecord> records;
+		try
+		{
+			records = recordsWithoutLayer(layerIndex, impact);
+		}
+		catch (Exception const& error) { plan.diagnostic = error.getMessage(); return plan; }
+		catch (exception const& error) { plan.diagnostic = error.what(); return plan; }
+
+		for (auto const& [id, agent] : mAgents.entries())
+		{
+			(void)id;
+			auto const* sector = agent->getSector();
+			if (!sector) continue;
+			auto const index = sector->getIndex();
+			if (index < impact.sectorRemoved.size() && impact.sectorRemoved[index])
+				++plan.agentsRemoved;
+		}
+
+		// The rewritten records must rebuild a valid Building before their
+		// consequences can be offered to the user as a confirmed edit.
+		try
+		{
+			Building candidate(mName, mCellsWide, mDecksHigh);
+			while (candidate.getLayerCount() < plan.layerCountAfter) candidate.addLayer();
+			candidate.mDeserializingConstruction = true;
+			for (auto const& record : records) candidate.applyConstructionRecord(record);
+			candidate.finishBuild();
+		}
+		catch (Exception const& error) { plan.diagnostic = error.getMessage(); return plan; }
+		catch (exception const& error) { plan.diagnostic = error.what(); return plan; }
+
+		plan.locationsRemoved = impact.locationsRemoved;
+		plan.transitsRemoved = impact.transitsRemoved;
+		plan.doorsRemoved = impact.doorsRemoved;
+		plan.windowsRemoved = impact.windowsRemoved;
+
+		if (plan.locationsRemoved > 0)
+			plan.consequences.push_back(format("Delete {} Sector{} on {}",
+				plan.locationsRemoved, plan.locationsRemoved == 1 ? "" : "s", plan.layerName));
+		if (plan.transitsRemoved > 0)
+		{
+			auto const targets = layerIndex + 1 < plan.layerCountBefore
+				? format("{} and {}", plan.layerName, mLayerNames[layerIndex + 1])
+				: plan.layerName;
+			plan.consequences.push_back(format("Delete {} Transit{} on {}",
+				plan.transitsRemoved, plan.transitsRemoved == 1 ? "" : "s", targets));
+		}
+		if (plan.doorsRemoved > 0)
+			plan.consequences.push_back(format("Delete {} Door{} crossing {}",
+				plan.doorsRemoved, plan.doorsRemoved == 1 ? "" : "s", plan.layerName));
+		if (plan.windowsRemoved > 0)
+			plan.consequences.push_back(format("Delete {} Window{} crossing {}",
+				plan.windowsRemoved, plan.windowsRemoved == 1 ? "" : "s", plan.layerName));
+		if (plan.agentsRemoved > 0)
+			plan.consequences.push_back(format("Remove {} Agent{} in the deleted Sectors",
+				plan.agentsRemoved, plan.agentsRemoved == 1 ? "" : "s"));
+		for (uint32_t layer = layerIndex + 1; layer < plan.layerCountBefore; ++layer)
+			plan.consequences.push_back(format("{} moves from Layer {} to Layer {}",
+				mLayerNames[layer], layer, layer - 1));
+		if (plan.consequences.empty())
+			plan.consequences.push_back(format("{} is removed; nothing was on it",
+				plan.layerName));
+
+		plan.valid = true;
+		return plan;
+	}
+
+	bool Building::applyDeleteLayer(LayerDeletePlan const& requested)
+	{
+		auto const plan = planDeleteLayer(requested.layerIndex);
+		if (!plan.valid) throw BuildingException(this, plan.diagnostic);
+
+		LayerDeleteImpact impact;
+		auto records = recordsWithoutLayer(plan.layerIndex, impact);
+
+		struct SavedAgent
+		{
+			AgentId id;
+			string name;
+			uint32_t flags;
+			uint32_t layer;
+			Vector2 position;
+		};
+		vector<SavedAgent> agents;
+		for (auto const& [id, agent] : mAgents.entries())
+		{
+			auto const* sector = agent->getSector();
+			if (!sector) continue;
+			auto const index = sector->getIndex();
+			if (index < impact.sectorRemoved.size() && impact.sectorRemoved[index]) continue;
+			auto layer = sector->getLayerIndex();
+			if (layer > plan.layerIndex) layer -= 1;
+			agents.push_back({ id, agent->getName(), agent->getFlags(), layer,
+				agent->getGlobalPosition() });
+		}
+
+		// Compact the Layer storage before the reset so the surviving Layers are
+		// recreated at their new depth.
+		mLayers.erase(mLayers.begin() + plan.layerIndex);
+		mLayerNames.erase(mLayerNames.begin() + plan.layerIndex);
+
+		resetForDeserialization(mName, mCellsWide, mDecksHigh);
+		mDeserializingConstruction = true;
+		try
+		{
+			for (auto const& record : records) applyConstructionRecord(record);
+			finishBuild();
+		}
+		catch (...) { mDeserializingConstruction = false; throw; }
+		mDeserializingConstruction = false;
+		mConstructionRecords = std::move(records);
+		mSimulationPaused = true;
+		modify();
+
+		for (auto const& saved : agents)
+		{
+			auto sector = getSectorAtPosition(saved.layer, saved.position.x, saved.position.y);
+			if (!sector) continue;
+			auto cellX = (uint32_t)floor(saved.position.x);
+			auto cellY = (uint32_t)floor(saved.position.y);
+			if (cellX >= mCellsWide || cellY >= mDecksHigh) continue;
+			if (sector->getType() == SectorType::Location
+				&& !mLayers[saved.layer]->getCellDefinition(cellX, cellY).isTraversableOnFoot()) continue;
+			auto agent = make_unique<Agent>(saved.name);
+			agent->setFlags(saved.flags);
+			auto* raw = agent.get();
+			raw->attachToBuilding(this);
+			raw->mPosition = SectorPosition(sector.get(), saved.position - sector->getPosition());
+			_getSector(sector->getIndex())->mAgents.insert(raw);
+			mAgents.restore(saved.id, std::move(agent));
+			mAgentIds.emplace(raw, saved.id);
+		}
+
+		return true;
+	}
+
 	Building::LiftEditPlan Building::planResizeLift(uint32_t sectorIndex,
 		uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh) const
 	{

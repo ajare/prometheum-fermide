@@ -329,6 +329,7 @@ namespace
 	optional<core::Building::PlatformLiftEditPlan> gPendingPlatformLiftEdit;
 	optional<core::Building::WalkwayEditPlan> gPendingWalkwayEdit;
 	optional<core::Building::ObjectMovePlan> gPendingObjectMove;
+	optional<core::Building::LayerDeletePlan> gPendingLayerDelete;
 
 	void reportEditorError(string const& source, string message);
 
@@ -2196,6 +2197,7 @@ namespace
 		gPendingPlatformLiftEdit.reset();
 		gPendingWalkwayEdit.reset();
 		gPendingObjectMove.reset();
+		gPendingLayerDelete.reset();
 		gShuttleDraft.reset();
 		gShuttleDoorCandidates.clear();
 		gLayerNameEdits.clear();
@@ -2669,6 +2671,54 @@ namespace
 		else commitObjectMove(building, plan);
 	}
 
+	void commitLayerDelete(shared_ptr<core::Building> const& building,
+		core::Building::LayerDeletePlan const& plan)
+	{
+		auto undo = captureDocumentSnapshot(building);
+		try
+		{
+			if (!building->isSimulationPaused()) building->pauseSimulation();
+			gUISettings.worldPaused = true;
+			building->applyDeleteLayer(plan);
+
+			// Selections and inline name edits can point at Sectors, Agents, and
+			// Layers which no longer exist.
+			gHoveredAgent = nullptr;
+			gSelectedAgent = nullptr;
+			gHoveredSector.reset();
+			gSelectedSector.reset();
+			gHoveredSectorObject.reset();
+			gSelectedSectorObject.reset();
+			gLayerNameEdits.clear();
+			gUISettings.visibleLayer = std::clamp(gUISettings.visibleLayer, 0,
+				static_cast<int>(building->getLayerCount()) - 1);
+			commitDocumentEdit(std::move(undo));
+			core::addLogMessage("Layers", 0, core::LogLevel::Info,
+				format("Deleted {} and compacted the Layers behind it", plan.layerName));
+		}
+		catch (core::Exception const& error) { reportEditorError("Layers", error.getMessage()); }
+		catch (std::exception const& error) { reportEditorError("Layers", error.what()); }
+	}
+
+	// Layer deletion is always destructive, so it is planned first and only applied
+	// once the user confirms the consequence list.
+	void requestLayerDelete(shared_ptr<core::Building> const& building, uint32_t layer)
+	{
+		if (!building) return;
+		if (!building->isSimulationPaused()) building->pauseSimulation();
+		gUISettings.worldPaused = true;
+
+		auto const plan = building->planDeleteLayer(layer);
+		if (!plan.valid)
+		{
+			reportEditorError("Layers", plan.diagnostic);
+			return;
+		}
+
+		gPendingLayerDelete = plan;
+		gOpenLocationEditPopup = true;
+	}
+
 	void renderFilePopups(shared_ptr<core::Building>& building)
 	{
 		if (gOpenUnsavedChangesPopup)
@@ -2938,7 +2988,9 @@ namespace
 		}
 		if (ImGui::BeginPopupModal("Confirm sector edit", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
 		{
-			ImGui::TextUnformatted("This edit will also:");
+			ImGui::TextUnformatted(gPendingLayerDelete
+				? "Deleting this Layer will:"
+				: "This edit will also:");
 			ImGui::Separator();
 			if (gPendingLocationEdit)
 				for (auto const& consequence : gPendingLocationEdit->consequences)
@@ -2964,11 +3016,14 @@ namespace
 			if (gPendingObjectMove)
 				for (auto const& consequence : gPendingObjectMove->consequences)
 					ImGui::BulletText("%s", consequence.c_str());
+			if (gPendingLayerDelete)
+				for (auto const& consequence : gPendingLayerDelete->consequences)
+					ImGui::BulletText("%s", consequence.c_str());
 			ImGui::Separator();
 			if (ImGui::Button("OK") && building
 				&& (gPendingLocationEdit || gPendingLiftEdit || gPendingShuttleEdit
 					|| gPendingLadderEdit || gPendingStairwellEdit || gPendingPlatformLiftEdit
-					|| gPendingWalkwayEdit || gPendingObjectMove))
+					|| gPendingWalkwayEdit || gPendingObjectMove || gPendingLayerDelete))
 			{
 				auto locationPlan = gPendingLocationEdit;
 				auto liftPlan = gPendingLiftEdit;
@@ -2978,9 +3033,11 @@ namespace
 				auto platformLiftPlan = gPendingPlatformLiftEdit;
 				auto walkwayPlan = gPendingWalkwayEdit;
 				auto objectMove = gPendingObjectMove;
+				auto layerDelete = gPendingLayerDelete;
 				gPendingLocationEdit.reset(); gPendingLiftEdit.reset(); gPendingShuttleEdit.reset();
 				gPendingLadderEdit.reset(); gPendingStairwellEdit.reset();
 				gPendingPlatformLiftEdit.reset(); gPendingWalkwayEdit.reset(); gPendingObjectMove.reset();
+				gPendingLayerDelete.reset();
 				ImGui::CloseCurrentPopup();
 				if (locationPlan) commitLocationEdit(building, *locationPlan);
 				else if (liftPlan) commitLiftEdit(building, *liftPlan);
@@ -2989,7 +3046,8 @@ namespace
 				else if (stairwellPlan) commitStairwellEdit(building, *stairwellPlan);
 				else if (platformLiftPlan) commitPlatformLiftEdit(building, *platformLiftPlan);
 				else if (walkwayPlan) commitWalkwayEdit(building, *walkwayPlan);
-				else commitObjectMove(building, *objectMove);
+				else if (objectMove) commitObjectMove(building, *objectMove);
+				else if (layerDelete) commitLayerDelete(building, *layerDelete);
 			}
 			ImGui::SameLine();
 			if (ImGui::Button("Cancel"))
@@ -3002,6 +3060,7 @@ namespace
 				gPendingPlatformLiftEdit.reset();
 				gPendingWalkwayEdit.reset();
 				gPendingObjectMove.reset();
+				gPendingLayerDelete.reset();
 				resetSectorResize();
 				ImGui::CloseCurrentPopup();
 			}
@@ -3509,8 +3568,8 @@ namespace
 			|| gAgentMove.dragging || gObjectMove.dragging || gSectorResize.dragging
 			|| gPendingLocationEdit || gPendingLiftEdit || gPendingShuttleEdit
 			|| gPendingLadderEdit || gPendingStairwellEdit || gPendingPlatformLiftEdit
-			|| gPendingWalkwayEdit || gPendingObjectMove || gShuttleDraft
-			|| !gShuttleDoorCandidates.empty())
+			|| gPendingWalkwayEdit || gPendingObjectMove || gPendingLayerDelete
+			|| gShuttleDraft || !gShuttleDoorCandidates.empty())
 		{
 			reportClipboardError("Finish the current placement first");
 			return;
@@ -6235,10 +6294,11 @@ void renderLayersPanel(shared_ptr<core::Building> const& building)
 		ImGuiTableFlags_BordersV |
 		ImGuiTableFlags_RowBg;
 
-	if (ImGui::BeginTable("Layers", 2, flags))
+	if (ImGui::BeginTable("Layers", 3, flags))
 	{
 		ImGui::TableSetupColumn("View", ImGuiTableColumnFlags_WidthFixed, 40.0f);
 		ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
+		ImGui::TableSetupColumn("Delete", ImGuiTableColumnFlags_WidthFixed, 40.0f);
 
 		for (uint32_t layer = 0; layer < layerCount; ++layer)
 		{
@@ -6272,6 +6332,24 @@ void renderLayersPanel(shared_ptr<core::Building> const& building)
 
 			ImGui::TableSetColumnIndex(1);
 			renderLayerNameEditor(building, layer);
+
+			// A Building keeps at least two Layers, so deletion is only offered while
+			// it has more than two.
+			ImGui::TableSetColumnIndex(2);
+			bool const canDelete = layerCount > 2;
+			ImGui::BeginDisabled(!canDelete);
+			if (ImGui::Button(ICON_FA_TRASH, ImVec2(ImGui::GetFrameHeight(), 0.0f)))
+			{
+				requestLayerDelete(building, layer);
+			}
+			ImGui::EndDisabled();
+			if (ImGui::IsItemHovered())
+			{
+				if (canDelete)
+					ImGui::SetTooltip("Delete %s and everything on it", building->getLayerName(layer).c_str());
+				else
+					ImGui::SetTooltip("A Building must keep at least two layers");
+			}
 
 			ImGui::PopID();
 		}

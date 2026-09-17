@@ -3,6 +3,7 @@
 #include <string>
 #include <array>
 #include <vector>
+#include <set>
 #include <memory>
 #include <map>
 
@@ -334,6 +335,30 @@ namespace core
 			uint32_t stopOffset{ 0 };
 		};
 
+		// Deleting a Layer is destructive, so its consequences are listed before the
+		// user confirms them.  Every Sector on the deleted Layer is removed, Transits
+		// on that Layer and on the Layer directly behind it lose their landings and
+		// are removed, thresholds which cross the deleted Layer are removed, and
+		// Agents in removed Sectors are removed.  Layers behind the deleted Layer
+		// compact forward by one, keeping their names.
+		struct LayerDeletePlan
+		{
+			bool valid{ false };
+			uint32_t layerIndex{ 0 };
+			std::string layerName;
+			uint32_t layerCountBefore{ 0 };
+			uint32_t layerCountAfter{ 0 };
+			uint32_t locationsRemoved{ 0 };
+			uint32_t transitsRemoved{ 0 };
+			uint32_t doorsRemoved{ 0 };
+			uint32_t windowsRemoved{ 0 };
+			uint32_t agentsRemoved{ 0 };
+			std::string diagnostic;
+			std::vector<std::string> consequences;
+
+			[[nodiscard]] bool requiresConfirmation() const { return !consequences.empty(); }
+		};
+
 	public:
 
 		static CreateDoorOptions ManualDoor1Options, RemoteControlledDoor1Options, UnavailableDoor1Options;
@@ -531,6 +556,24 @@ namespace core
 			uint32_t movedSectorIndex = ~0u, int deltaX = 0, int deltaY = 0);
 
 		static std::string defaultLayerName(uint32_t layer);
+
+		struct LayerDeleteImpact
+		{
+			std::vector<bool> sectorRemoved;
+			uint32_t locationsRemoved{ 0 };
+			uint32_t transitsRemoved{ 0 };
+			uint32_t doorsRemoved{ 0 };
+			uint32_t windowsRemoved{ 0 };
+		};
+
+		// Layers of the live Sectors which hold the threshold object authored at a
+		// cell.  A threshold is shared by the Sectors on both sides of it.
+		std::set<uint32_t> thresholdLayers(SectorObjectType type, uint32_t x, uint32_t y) const;
+
+		// Authored construction records rewritten for a Layer deletion: casualties
+		// are dropped and every remaining Layer index compacts forward by one.
+		std::vector<ConstructionRecord> recordsWithoutLayer(uint32_t layerIndex,
+			LayerDeleteImpact& impact) const;
 
 		void resetForDeserialization(std::string name, uint32_t cellsWide, uint32_t decksHigh);
 
@@ -825,6 +868,16 @@ namespace core
 		// Appends a new back-most Layer with the default name and returns its index.
 		// Throws if the Building already has CORE_MAX_LAYERS layers.
 		uint32_t addLayer();
+
+		// Plans the destructive deletion of a Layer.  The plan is side-effect free
+		// and validates that the compacted Building can be rebuilt before it is
+		// offered for confirmation.  A Building must keep at least two Layers.
+		LayerDeletePlan planDeleteLayer(uint32_t layerIndex) const;
+
+		// Applies a confirmed Layer deletion by rewriting and replaying the authored
+		// construction records.  Leaves the simulation paused.  Throws if the Layer
+		// can no longer be deleted.
+		bool applyDeleteLayer(LayerDeletePlan const& plan);
 
 		uint32_t getNumSectors() const;
 

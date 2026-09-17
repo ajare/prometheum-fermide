@@ -448,6 +448,132 @@ agents: []
 			"A rejected addLayer() still changed the layer count");
 	}
 
+	void deletingAMiddleLayerCompactsTheLayersAboveIt()
+	{
+		core::Building building("Compacting", 8, 3);
+		building.addLayer();
+		building.addCorridor(0, 0, 8);
+		building.addRoom("Basement", 1, 0, 0, 8, 1);
+		building.addRoom("Cellar", 2, 0, 0, 8, 1);
+		building.setLayerName(2, "Deep Cellar");
+		building.addSectorDoor(0, 2);
+		building.addSectorWindow(2, 0, 5, 1, 1);
+		building.finishBuild();
+		auto const survivor = building.createAgent("Walker", 0, 0, 1.0f);
+		auto const buried = building.createAgent("Buried", 1, 0, 1.0f);
+
+		building.pauseSimulation();
+		auto const plan = building.planDeleteLayer(1);
+		require(plan.valid, ("Middle layer deletion was rejected: " + plan.diagnostic).c_str());
+		require(plan.layerCountBefore == 3 && plan.layerCountAfter == 2,
+			"Layer deletion did not report its compaction");
+		require(plan.locationsRemoved == 1 && plan.doorsRemoved == 1
+			&& plan.windowsRemoved == 1 && plan.agentsRemoved == 1,
+			"Layer deletion did not report its destructive consequences");
+		require(plan.requiresConfirmation(),
+			"A destructive layer deletion did not require confirmation");
+		require(!plan.consequences.empty(), "Layer deletion produced no consequence list");
+		require(building.applyDeleteLayer(plan), "Layer deletion was not applied");
+
+		require(building.getLayerCount() == 2, "Layers were not compacted");
+		require(building.getLayerName(1) == "Deep Cellar",
+			"Layer names did not travel with the compacted layer");
+		require(building.getNumSectors() == 2, "Sectors were not removed with their layer");
+		require(building.getSector(0)->getLayerIndex() == 0
+			&& building.getSector(1)->getName() == "Cellar"
+			&& building.getSector(1)->getLayerIndex() == 1,
+			"Higher layers were not compacted down by one");
+		require(building.lookupAgent(survivor).entity != nullptr,
+			"Agent outside the deleted layer was removed");
+		require(building.lookupAgent(buried).entity == nullptr,
+			"Agent in the deleted layer was retained");
+		require(building.isSimulationPaused(), "Layer deletion resumed the simulation");
+
+		core::SerializationWorkData workData;
+		auto writer = core::YamlSerializer::toString();
+		building.serialize(*writer, workData);
+		writer->serialize();
+		core::Building reloaded("placeholder", 1, 1);
+		auto reader = core::YamlSerializer::fromString(writer->getSerializedString());
+		reader->deserialize();
+		require(reloaded.deserialize(*reader, workData),
+			"A compacted Building did not round-trip");
+		require(reloaded.getLayerCount() == 2
+			&& reloaded.getLayerName(1) == "Deep Cellar"
+			&& reloaded.getNumSectors() == 2
+			&& reloaded.getSector(1)->getName() == "Cellar",
+			"Layer compaction did not survive serialization");
+	}
+
+	void deletingTheFrontLayerRemovesTransitsOneLayerBehind()
+	{
+		core::Building building("Front deletion", 8, 3);
+		building.addLayer();
+		building.addCorridor(0, 0, 8);
+		building.addCorridor(2, 0, 8);
+		building.addRoom("Deep", 2, 0, 0, 8, 3);
+		building.addLadder(0, 3, { 3, false, true });
+		building.finishBuild();
+		auto const climber = building.createAgent("Climber", 3, 0, 0.5f);
+
+		building.pauseSimulation();
+		auto const plan = building.planDeleteLayer(0);
+		require(plan.valid, ("Front layer deletion was rejected: " + plan.diagnostic).c_str());
+		require(plan.locationsRemoved == 2, "Front layer Sectors were not counted");
+		require(plan.transitsRemoved == 1,
+			"Transits one layer behind the deletion were not counted");
+		require(plan.agentsRemoved == 1, "Agents in the deleted Transit were not counted");
+		require(building.applyDeleteLayer(plan), "Front layer deletion was not applied");
+		require(building.getLayerCount() == 2, "Layers were not compacted");
+		require(building.getNumSectors() == 1
+			&& building.getSector(0)->getName() == "Deep"
+			&& building.getSector(0)->getLayerIndex() == 1,
+			"The surviving Room did not compact to the layer behind the deletion");
+		require(building.lookupAgent(climber).entity == nullptr,
+			"Agent in a removed Transit was retained");
+	}
+
+	void layerDeletionKeepsAtLeastTwoLayers()
+	{
+		core::Building building("Two layers", 4, 2);
+		building.addCorridor(0, 0, 4);
+		building.finishBuild();
+
+		auto const last = building.planDeleteLayer(1);
+		require(!last.valid && !last.diagnostic.empty(),
+			"Deleting down to a single layer was not rejected");
+
+		bool threw = false;
+		try
+		{
+			building.applyDeleteLayer(last);
+		}
+		catch (std::exception const&)
+		{
+			threw = true;
+		}
+		require(threw, "applyDeleteLayer did not reject an invalid plan");
+		require(building.getLayerCount() == 2, "A rejected layer deletion changed the layer count");
+
+		auto const missing = building.planDeleteLayer(7);
+		require(!missing.valid && !missing.diagnostic.empty(),
+			"Deleting a nonexistent layer was not rejected");
+
+		core::Building emptyBack("Empty back", 4, 2);
+		emptyBack.addCorridor(0, 0, 4);
+		emptyBack.addLayer();
+		emptyBack.finishBuild();
+		emptyBack.pauseSimulation();
+		auto const back = emptyBack.planDeleteLayer(2);
+		require(back.valid, ("Deleting the empty back-most layer was rejected: " + back.diagnostic).c_str());
+		require(back.requiresConfirmation() && !back.consequences.empty(),
+			"An empty layer deletion offered nothing to confirm");
+		require(emptyBack.applyDeleteLayer(back) && emptyBack.getLayerCount() == 2,
+			"The empty back-most layer was not removed");
+		require(emptyBack.getNumSectors() == 1,
+			"Deleting an empty layer changed the Sector count");
+	}
+
 	void locationEditsArePlannedAndAppliedAtomically()
 	{
 		core::Building building("Editable", 8, 3);
@@ -1191,6 +1317,9 @@ void runSerializationSmokeChecks()
 	buildingLayerNamesRoundTrip();
 	addedLayersAppendToTheBackAndRoundTrip();
 	layerCountIsCappedAtCoreMaxLayers();
+	deletingAMiddleLayerCompactsTheLayersAboveIt();
+	deletingTheFrontLayerRemovesTransitsOneLayerBehind();
+	layerDeletionKeepsAtLeastTwoLayers();
 	locationEditsArePlannedAndAppliedAtomically();
 	editedShuttleRoundTripsWithoutSchemaChanges();
 	enclosedLiftsSupportMultiDeckRooms();
