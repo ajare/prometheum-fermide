@@ -101,6 +101,7 @@ namespace core
 		, mCellsWide(cellsWide)
 		, mDecksHigh(decksHigh)
 		, mLayers(2)
+		, mLayerNames{ defaultLayerName(0), defaultLayerName(1) }
 	{
 		for (uint32_t i = 0; i < mLayers.size(); ++i)
 		{
@@ -130,6 +131,24 @@ namespace core
 	uint32_t Building::getLayerCount() const
 	{
 		return static_cast<uint32_t>(mLayers.size());
+	}
+
+	string const& Building::getLayerName(uint32_t layerIndex) const
+	{
+		validateLayer("Building::getLayerName", layerIndex);
+		return mLayerNames[layerIndex];
+	}
+
+	void Building::setLayerName(uint32_t layerIndex, std::string name)
+	{
+		validateLayer("Building::setLayerName", layerIndex);
+		mLayerNames[layerIndex] = std::move(name);
+		modify();
+	}
+
+	string Building::defaultLayerName(uint32_t layer)
+	{
+		return format("Layer {}", layer);
 	}
 
 	uint32_t Building::getNumSectors() const

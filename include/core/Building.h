@@ -347,6 +347,7 @@ namespace core
 		uint32_t mCellsWide, mDecksHigh;
 
 		std::vector<std::shared_ptr<Layer>> mLayers;
+		std::vector<std::string> mLayerNames;
 
 		std::vector<std::shared_ptr<Sector>> mSectors;
 
@@ -528,6 +529,8 @@ namespace core
 
 		void rebuildFromConstructionRecords(std::vector<ConstructionRecord> records,
 			uint32_t movedSectorIndex = ~0u, int deltaX = 0, int deltaY = 0);
+
+		static std::string defaultLayerName(uint32_t layer);
 
 		void resetForDeserialization(std::string name, uint32_t cellsWide, uint32_t decksHigh);
 
@@ -815,6 +818,9 @@ namespace core
 		uint32_t getDecksHigh() const;
 
 		uint32_t getLayerCount() const;
+
+		std::string const& getLayerName(uint32_t layerIndex) const;
+		void setLayerName(uint32_t layerIndex, std::string name);
 
 		uint32_t getNumSectors() const;
 

@@ -226,10 +226,15 @@ namespace core
 	void Building::serializeImpl(Serializer& serializer, SerializationWorkData& workData) const
 	{
 		serializer.beginMap("building");
-		serializer.writeUint32("version", 3);
+		serializer.writeUint32("version", 4);
 		serializer.writeString("name", mName);
 		serializer.writeUint32("cellsWide", mCellsWide);
 		serializer.writeUint32("decksHigh", mDecksHigh);
+		serializer.writeUint32("layers", getLayerCount());
+
+		serializer.beginArray("layerNames");
+		for (auto const& name : mLayerNames) serializer.writeString("", name);
+		serializer.endArray();
 
 		serializer.beginArray("construction");
 		for (auto const& record : mConstructionRecords)
@@ -440,7 +445,7 @@ namespace core
 	{
 		serializer.beginMap("building");
 		auto const version = serializer.readUint32("version");
-		if (version < 1 || version > 3)
+		if (version < 1 || version > 4)
 		{
 			throw SerializationException("Unsupported Building serialization version");
 		}
@@ -450,6 +455,36 @@ namespace core
 		if (cellsWide == 0 || decksHigh == 0)
 		{
 			throw SerializationException("Building dimensions must be positive");
+		}
+
+		auto const layerCount = serializer.readUint32("layers", true, 2);
+		if (layerCount < 2 || layerCount > CORE_MAX_LAYERS)
+		{
+			throw SerializationException(format("Building layer count {} is out of range", layerCount));
+		}
+		mLayers.resize(layerCount);
+		mLayerNames.resize(layerCount);
+		for (uint32_t i = 0; i < layerCount; ++i)
+		{
+			mLayerNames[i] = defaultLayerName(i);
+		}
+		if (serializer.hasField("layerNames"))
+		{
+			serializer.beginArray("layerNames");
+			uint32_t index = 0;
+			while (serializer.nextArrayItem())
+			{
+				if (index >= layerCount)
+				{
+					throw SerializationException("layerNames array is longer than the layer count");
+				}
+				mLayerNames[index++] = serializer.readString("");
+			}
+			serializer.endArray();
+			if (index != layerCount)
+			{
+				throw SerializationException("layerNames array is shorter than the layer count");
+			}
 		}
 
 		std::vector<ConstructionRecord> records;

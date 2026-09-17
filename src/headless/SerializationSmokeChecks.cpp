@@ -193,7 +193,11 @@ namespace
 		original.serialize(*writer, workData);
 		writer->serialize();
 		auto const yaml = writer->getSerializedString();
-		require(yaml.find("version: 3") != std::string::npos
+		require(yaml.find("version: 4") != std::string::npos
+			&& yaml.find("layers: 2") != std::string::npos
+			&& yaml.find("layerNames:") != std::string::npos
+			&& yaml.find("- Layer 0") != std::string::npos
+			&& yaml.find("- Layer 1") != std::string::npos
 			&& yaml.find("type: room") != std::string::npos
 			&& yaml.find("cellsWide:") != std::string::npos
 			&& yaml.find("foreControl: true") != std::string::npos
@@ -213,6 +217,9 @@ namespace
 		require(loaded.getName() == original.getName()
 			&& loaded.getCellsWide() == original.getCellsWide()
 			&& loaded.getDecksHigh() == original.getDecksHigh()
+			&& loaded.getLayerCount() == original.getLayerCount()
+			&& loaded.getLayerName(0) == "Layer 0"
+			&& loaded.getLayerName(1) == "Layer 1"
 			&& loaded.getNumSectors() == original.getNumSectors(),
 			"Building metadata or sectors did not round-trip");
 		require(loaded.getGraph() && !loaded.getGraph()->getVertices().empty(),
@@ -280,6 +287,60 @@ agents: []
 		require(loaded.deserialize(*reader, workData), "version 1 Building YAML no longer loads");
 		require(loaded.getName() == "Legacy" && loaded.getNumSectors() == 1,
 			"version 1 Building YAML loaded incorrectly");
+	}
+
+	void legacyVersion3BuildingYamlStillLoadsWithDefaultLayers()
+	{
+		auto const yaml = R"yaml(version: 3
+name: Legacy v3
+cellsWide: 4
+decksHigh: 2
+construction:
+  - type: corridor
+    y: 0
+    x: 0
+    cellsWide: 4
+    decksHigh: 1
+agents: []
+)yaml";
+		core::Building loaded("placeholder", 1, 1);
+		core::SerializationWorkData workData;
+		auto reader = core::YamlSerializer::fromString(yaml);
+		reader->deserialize();
+		require(loaded.deserialize(*reader, workData), "version 3 Building YAML no longer loads");
+		require(loaded.getName() == "Legacy v3"
+			&& loaded.getLayerCount() == 2
+			&& loaded.getLayerName(0) == "Layer 0"
+			&& loaded.getLayerName(1) == "Layer 1",
+			"version 3 Building YAML loaded with wrong layer defaults");
+	}
+
+	void buildingLayerNamesRoundTrip()
+	{
+		core::Building original("Named layers", 4, 2);
+		original.setLayerName(0, "Front");
+		original.setLayerName(1, "Rear");
+		original.addCorridor(0, 0, 4);
+		original.finishBuild();
+
+		core::SerializationWorkData workData;
+		auto writer = core::YamlSerializer::toString();
+		original.serialize(*writer, workData);
+		writer->serialize();
+		auto const yaml = writer->getSerializedString();
+		require(yaml.find("layerNames:") != std::string::npos
+			&& yaml.find("- Front") != std::string::npos
+			&& yaml.find("- Rear") != std::string::npos,
+			"Custom layer names were not serialized");
+
+		core::Building loaded("placeholder", 1, 1);
+		auto reader = core::YamlSerializer::fromString(yaml);
+		reader->deserialize();
+		require(loaded.deserialize(*reader, workData), "Named layer Building did not deserialize");
+		require(loaded.getLayerCount() == 2
+			&& loaded.getLayerName(0) == "Front"
+			&& loaded.getLayerName(1) == "Rear",
+			"Custom layer names did not round-trip");
 	}
 
 	void locationEditsArePlannedAndAppliedAtomically()
@@ -1020,6 +1081,8 @@ void runSerializationSmokeChecks()
 	buildingRoundTripsAuthoredStateAndAgents();
 	platformLiftStopDurationRoundTrips();
 	legacyBuildingYamlStillLoads();
+	legacyVersion3BuildingYamlStillLoadsWithDefaultLayers();
+	buildingLayerNamesRoundTrip();
 	locationEditsArePlannedAndAppliedAtomically();
 	editedShuttleRoundTripsWithoutSchemaChanges();
 	enclosedLiftsSupportMultiDeckRooms();
