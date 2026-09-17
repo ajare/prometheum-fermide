@@ -468,7 +468,7 @@ void renderDoorVertFromFloor(shared_ptr<const core::Door> door, int layer, bool 
 	transformPosition(bounds1);
 	transformPosition(bounds2);
 
-	if (layer == CORE_LAYER_FORE)
+	if (core::isFrontMostLayer((uint32_t)layer))
 	{
 		auto doorColour = ImColor(64, 192, 255);
 		drawList->AddRectFilled({ bounds1.x, bounds1.y }, { bounds2.x, bounds2.y }, doorColour);
@@ -478,7 +478,7 @@ void renderDoorVertFromFloor(shared_ptr<const core::Door> door, int layer, bool 
 		// ImGui clipping expects ascending Y coordinates, but we have flipped them for rendering
 		drawList->PushClipRect({ bounds1.x, bounds1.y }, { bounds2.x, bounds0.y }, true);
 
-		auto backSector = door->getSector(CORE_LAYER_BACK);
+		auto backSector = door->getSector(core::layerBehind(0));
 		renderSector(backSector, layer, false, false, false, BackLocationColour, drawList);
 
 		drawList->PopClipRect();
@@ -507,7 +507,7 @@ void renderDoor(shared_ptr<const core::Door> door, int layer, bool visibleLayer,
 {
 	// Don't render if we're rendering the back layer but it's not the visible one, because it
 	// will be already rendered by the fore layer Location.
-	if (layer != CORE_LAYER_BACK && !visibleLayer)
+	if (!core::isBackMostLayer((uint32_t)layer) && !visibleLayer)
 	{
 		return;
 	}
@@ -579,9 +579,9 @@ void renderWindowClear(shared_ptr<const core::Window> window, int layer, bool /*
 	transformPosition(bounds1);
 
 	// Render Sector behind Window.
-	auto backSector = window->getSector(CORE_LAYER_BACK);
+	auto backSector = window->getSector(core::layerBehind(0));
 
-	if (layer == CORE_LAYER_FORE || backSector)
+	if (core::isFrontMostLayer((uint32_t)layer) || backSector)
 	{
 		drawList->AddDrawCmd();
 
@@ -590,7 +590,7 @@ void renderWindowClear(shared_ptr<const core::Window> window, int layer, bool /*
 
 		if (backSector)
 		{
-			if (layer == CORE_LAYER_FORE)
+			if (core::isFrontMostLayer((uint32_t)layer))
 			{
 				renderSector(backSector, layer, false, false, false, BackLocationColour, drawList);
 			}
@@ -630,7 +630,7 @@ void renderWindow(shared_ptr<const core::Window> window, int layer, bool visible
 {
 	// Don't render if we're rendering the back layer but it's not the visible one, because it
 	// will be already rendered by the fore layer Location.
-	if (layer != CORE_LAYER_BACK && !visibleLayer)
+	if (!core::isBackMostLayer((uint32_t)layer) && !visibleLayer)
 	{
 		return;
 	}
@@ -668,7 +668,7 @@ void renderWindow(shared_ptr<const core::Window> window, int layer, bool visible
 
 void renderPhysicalControl(shared_ptr<const core::Button> button, int layer, bool visibleLayer, bool /* selected */, ImDrawList* drawList)
 {
-	if (layer != CORE_LAYER_BACK && !visibleLayer) return;
+	if (!core::isBackMostLayer((uint32_t)layer) && !visibleLayer) return;
 
 	core::Vector2 bounds0, bounds1;
 	button->getFullShape(bounds0, bounds1);
@@ -1049,7 +1049,7 @@ void renderSectorObjects(shared_ptr<const core::Sector> sector, int layer, bool 
 
 
 void renderForePhysicalControlsAndAgents(vector<shared_ptr<const core::Sector>> const& sectors,
-	ImDrawList* drawList)
+	int layer, ImDrawList* drawList)
 {
 	for (auto const& sector : sectors)
 	{
@@ -1059,7 +1059,7 @@ void renderForePhysicalControlsAndAgents(vector<shared_ptr<const core::Sector>> 
 			if (!object || object->getObjectType() != core::SectorObjectType::InteractionPoint)
 				continue;
 			auto button = static_pointer_cast<const core::Button>(object->_getObject());
-			renderPhysicalControl(button, CORE_LAYER_FORE, true,
+			renderPhysicalControl(button, layer, true,
 				object == gSelectedSectorObject, drawList);
 		}
 	}
@@ -1068,7 +1068,7 @@ void renderForePhysicalControlsAndAgents(vector<shared_ptr<const core::Sector>> 
 	// Agents afterwards so no physical control can be painted in front of them.
 	for (auto const& sector : sectors)
 	{
-		renderSectorAgents(sector, CORE_LAYER_FORE, true, drawList);
+		renderSectorAgents(sector, layer, true, drawList);
 	}
 }
 
@@ -1182,7 +1182,7 @@ void renderSector(shared_ptr<const core::Sector> sector, int layer, bool visible
 	// Render some objects before the sector-specific stuff, like windows
 	// If we are on the Fore layer, then we will only be dealing with Locations, so nothing needs
 	// to be rendered here
-	if (layer == CORE_LAYER_BACK)
+	if (core::isBackMostLayer((uint32_t)layer))
 	{
 		renderSectorObjects(sector, layer, visibleLayer, wireframe, RENDER_SECTOR_OBJECTS_BEHIND, drawList);
 	}
@@ -1206,7 +1206,7 @@ void renderSector(shared_ptr<const core::Sector> sector, int layer, bool visible
 		// A hidden Back layer may contribute a wireframe sector outline, but its
 		// vehicle must only appear on the Fore layer when an aperture explicitly
 		// renders this sector through a Door or clear Window clip rectangle.
-		if (visibleLayer || layer != CORE_LAYER_BACK)
+		if (visibleLayer || !core::isBackMostLayer((uint32_t)layer))
 			renderShuttle(static_pointer_cast<const core::ShuttleTransit>(sector)->getShuttle(),
 				layer, visibleLayer, selected, drawList);
 		break;
@@ -1218,7 +1218,7 @@ void renderSector(shared_ptr<const core::Sector> sector, int layer, bool visible
 		break;
 
 	case core::SectorType::Staircase:
-		if (visibleLayer || layer != CORE_LAYER_BACK)
+		if (visibleLayer || !core::isBackMostLayer((uint32_t)layer))
 			renderStaircase(static_pointer_cast<const core::StaircaseTransit>(sector)->getStaircase(), drawList);
 		break;
 
@@ -1231,7 +1231,7 @@ void renderSector(shared_ptr<const core::Sector> sector, int layer, bool visible
 	{
 		int flags = RENDER_SECTOR_OBJECTS_INFRONT;
 		
-		if (layer == CORE_LAYER_FORE)
+		if (core::isFrontMostLayer((uint32_t)layer))
 		{
 			flags |= RENDER_SECTOR_OBJECTS_BEHIND;
 		}
@@ -1315,7 +1315,7 @@ void renderLadderTransit(shared_ptr<const core::LadderTransit> ladderTransit, in
 	// rendered as part of the Fore layer.
 
 	// Clip against upper Sector, then lower.
-	if (layer == CORE_LAYER_FORE && visibleLayer)
+	if (core::isFrontMostLayer((uint32_t)layer) && visibleLayer)
 	{
 		core::Vector2 locBounds0, locBounds1;
 
@@ -1371,7 +1371,7 @@ void renderLadderTransit(shared_ptr<const core::LadderTransit> ladderTransit, in
 void renderLiftTransit(shared_ptr<const core::LiftTransit> liftTransit, int layer, bool visibleLayer, bool wireframe, bool selected, ImColor colour, ImDrawList* drawList)
 {
 	// Transit Lifts go behind the Location.  We need to render it clipped, for each Deck.
-	if (layer == CORE_LAYER_FORE && visibleLayer)
+	if (core::isFrontMostLayer((uint32_t)layer) && visibleLayer)
 	{
 		for (uint32_t i = 0; i < liftTransit->getNumStops(); ++i)
 		{
@@ -1413,7 +1413,7 @@ void renderLiftTransit(shared_ptr<const core::LiftTransit> liftTransit, int laye
 void renderShuttleTransit(shared_ptr<const core::ShuttleTransit> shuttleTransit, int layer, bool visibleLayer, bool wireframe, bool selected, ImColor colour, ImDrawList* drawList)
 {
 	// Transit Shuttles go behind the Location.  We need to render it clipped, for each stop.
-	if (layer == CORE_LAYER_FORE && visibleLayer)
+	if (core::isFrontMostLayer((uint32_t)layer) && visibleLayer)
 	{
 		for (uint32_t i = 0; i < shuttleTransit->getNumStops(); ++i)
 		{
@@ -1455,7 +1455,7 @@ void renderShuttleTransit(shared_ptr<const core::ShuttleTransit> shuttleTransit,
 void renderStairwellTransit(shared_ptr<const core::StairwellTransit> stairwellTransit, int layer, bool visibleLayer, bool wireframe, ImColor colour, ImDrawList* drawList)
 {
 	// Transit Stairwells go behind the Location.  We need to render it clipped, for each Deck.
-	if (layer == CORE_LAYER_FORE && visibleLayer)
+	if (core::isFrontMostLayer((uint32_t)layer) && visibleLayer)
 	{
 		for (uint32_t i = 0; i < stairwellTransit->getDecksHigh(); ++i)
 		{
@@ -1506,9 +1506,9 @@ void renderSectors(shared_ptr<const core::Building> building, int layer, bool vi
 
 	// If Layer is 0 (Fore) then we want to render Transits, clipped against Fore Locations, unless they
 	// have a Door in front of them, in which case they will already be rendered.
-	if (layer == CORE_LAYER_FORE && visibleLayer)
+	if (core::isFrontMostLayer((uint32_t)layer) && visibleLayer)
 	{
-		sectors = building->getSectorsInBounds(CORE_LAYER_BACK, -gUISettings.xOffset, 0,
+		sectors = building->getSectorsInBounds(core::layerBehind(0), -gUISettings.xOffset, 0,
 			gUISettings.worldViewportWidth, gUISettings.worldViewportHeight);
 
 		for (auto sector : sectors)
@@ -1551,7 +1551,7 @@ void renderSectors(shared_ptr<const core::Building> building, int layer, bool vi
 
 		// Clipped Back-layer transits intentionally draw over Fore Locations. Redraw
 		// controls above those transits, then Agents above the controls.
-		renderForePhysicalControlsAndAgents(visibleSectors, drawList);
+		renderForePhysicalControlsAndAgents(visibleSectors, layer, drawList);
 	}
 }
 
@@ -1560,7 +1560,8 @@ void renderBuilding(shared_ptr<const core::Building> building)
 {
 	auto drawList = ImGui::GetWindowDrawList();
 
-	assert(gUISettings.visibleLayer == 0 || gUISettings.visibleLayer == 1);
+	assert(core::isFrontMostLayer((uint32_t)gUISettings.visibleLayer)
+		|| core::isBackMostLayer((uint32_t)gUISettings.visibleLayer));
 
 	// Locations
 	renderSectors(building, (uint32_t)gUISettings.visibleLayer, true, false, drawList);
@@ -1568,7 +1569,9 @@ void renderBuilding(shared_ptr<const core::Building> building)
 	// Other Layer
 	if (gUISettings.renderNonVisibleLayer)
 	{
-		renderSectors(building, 1 - (uint32_t)gUISettings.visibleLayer, false, true, drawList);
+		renderSectors(building, core::isFrontMostLayer((uint32_t)gUISettings.visibleLayer)
+			? core::layerBehind((uint32_t)gUISettings.visibleLayer)
+			: core::layerInFront((uint32_t)gUISettings.visibleLayer), false, true, drawList);
 	}
 
 	// Queue diagnostics are selection overlays and should remain visible above

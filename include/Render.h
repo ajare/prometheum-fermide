@@ -13,12 +13,12 @@ inline bool shouldRenderLadderGeometry(int layer, bool visibleLayer)
 {
 	// When Fore is visible, Ladder transits are rendered separately through
 	// their Location clip rectangles. Do not redraw the complete Back geometry.
-	return visibleLayer || layer != CORE_LAYER_BACK;
+	return visibleLayer || !core::isBackMostLayer((uint32_t)layer);
 }
 
 inline bool shouldRenderStairwellGeometry(int layer, bool visibleLayer)
 {
-	return visibleLayer || layer != CORE_LAYER_BACK;
+	return visibleLayer || !core::isBackMostLayer((uint32_t)layer);
 }
 
 inline bool shouldRenderForeContentAfterTransit(core::SectorType transitType)
@@ -43,9 +43,9 @@ inline bool shouldRenderSectorAgents(core::SectorType sectorType, int layer, boo
 	if (sectorType == core::SectorType::Ladder
 		|| sectorType == core::SectorType::Stairwell
 		|| sectorType == core::SectorType::Staircase)
-		return visibleLayer || layer != CORE_LAYER_BACK;
+		return visibleLayer || !core::isBackMostLayer((uint32_t)layer);
 	if (sectorType == core::SectorType::Shuttle)
-		return visibleLayer || layer != CORE_LAYER_BACK;
+		return visibleLayer || !core::isBackMostLayer((uint32_t)layer);
 	return true;
 }
 

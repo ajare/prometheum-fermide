@@ -411,7 +411,7 @@ namespace core
 			// Not found.  Doors are added to CellDefinitions on both
 			// Layers, so if we're on Layer 0 then add it to the map,
 			// and if we're on Layer 1, we have an error.
-			if (obj.layerIndex == CORE_LAYER_FORE)
+			if (isFrontMostLayer(obj.layerIndex))
 			{
 				interLayerVertexLookup[cellPos] = vertex;
 			}
@@ -427,7 +427,7 @@ namespace core
 		{
 			// Found.  If we are on Fore Layer, then this should not exist already!
 			// Else if on Back Layer, then create an Edge.
-			if (obj.layerIndex == CORE_LAYER_FORE)
+			if (isFrontMostLayer(obj.layerIndex))
 			{
 				string errMsg = format("A Door was already set on Fore Layer CellDefinition at {},{}", obj.x, obj.y);
 
@@ -438,7 +438,7 @@ namespace core
 			{
 				shared_ptr<Vertex> doorVerts[2] = { it->second, vertex };
 
-				if (doorVerts[0]->getSector()->getLayerIndex() == CORE_LAYER_BACK)
+				if (isBackMostLayer(doorVerts[0]->getSector()->getLayerIndex()))
 				{
 					string errMsg = format("A Door was already set on Back Layer CellDefinition at {},{}", obj.x, obj.y);
 
@@ -447,12 +447,12 @@ namespace core
 				}
 
 				auto door = dynamic_pointer_cast<DoorSectorObject>(doorObject)->getDoor();
-				auto connectZ = doorVerts[CORE_LAYER_FORE]->getSector()->getLayerIndex() != doorVerts[CORE_LAYER_BACK]->getSector()->getLayerIndex();
+				auto connectZ = doorVerts[0]->getSector()->getLayerIndex() != doorVerts[layerBehind(0)]->getSector()->getLayerIndex();
 				
 				addSectorObjectVertexLookup(doorObject, doorVerts[0]);
 				addSectorObjectVertexLookup(doorObject, doorVerts[1]);
 
-				addEdge(make_shared<DoorEdge>(door), doorVerts[CORE_LAYER_FORE], doorVerts[CORE_LAYER_BACK], connectZ);
+				addEdge(make_shared<DoorEdge>(door), doorVerts[0], doorVerts[layerBehind(0)], connectZ);
 			}
 		}
 	}
@@ -630,7 +630,7 @@ namespace core
 		float yOffset = (float)(y - sector->getCellY());
 
 		// Fore Vertex
-		if (layerIndex == CORE_LAYER_FORE)
+		if (isFrontMostLayer(layerIndex))
 		{
 			auto locLadderVert = make_shared<SectorMarkerVertex>(sector, xOffset, yOffset);
 			
@@ -654,7 +654,7 @@ namespace core
 		}
 
 		// Back Vertex
-		if (layerIndex == CORE_LAYER_BACK)
+		if (isBackMostLayer(layerIndex))
 		{
 			auto ladderTransit = dynamic_pointer_cast<LadderTransit>(sector);
 			auto ladder = ladderTransit->getLadder();
@@ -729,7 +729,7 @@ namespace core
 		auto xOffset0 = xOffset;
 
 		// Fore Vertex
-		if (layerIndex == CORE_LAYER_FORE)
+		if (isFrontMostLayer(layerIndex))
 		{
 			auto locStairwellVert = make_shared<StairwellLocationVertex>(sector, xOffset0, yOffset);
 
@@ -753,7 +753,7 @@ namespace core
 		}
 
 		// Back Vertex
-		if (layerIndex == CORE_LAYER_BACK)
+		if (isBackMostLayer(layerIndex))
 		{
 			auto stairwell = stairwellTransit->getStairwell();
 			auto path = stairwell->getDeckPath(deckOffset);
@@ -814,7 +814,7 @@ namespace core
 		auto const point = path[lower ? 0 : 1];
 		auto cellPos = make_pair(x, y);
 
-		if (layerIndex == CORE_LAYER_FORE)
+		if (isFrontMostLayer(layerIndex))
 		{
 			auto sector = mwBuilding->_getSector(curSectorIndex);
 			// Mount at the Staircase path endpoint rather than the endpoint cell's
@@ -920,12 +920,12 @@ namespace core
 		map<shared_ptr<VerticalEdgeCreator>, VertexList> crossDeckVertexLists;
 
 		// Go through each Layer, deck by deck, building up Vertices and Edges left-to-right.
-		shared_ptr<Layer> layers[2] = {
+		array<shared_ptr<Layer>, 2> layers = {
 			mwBuilding->getLayer(0),
-			mwBuilding->getLayer(1)
+			mwBuilding->getLayer(layerBehind(0))
 		};
 
-		for (uint32_t layerIndex = 0; layerIndex < CORE_NUM_LAYERS; ++layerIndex)
+		for (uint32_t layerIndex = 0; layerIndex < layers.size(); ++layerIndex)
 		{
 			auto layer = layers[layerIndex];
 			for (uint32_t y = 0; y < mwBuilding->getDecksHigh(); ++y)
@@ -948,10 +948,10 @@ namespace core
 					// itself has no floor; the open adjacent Location is the landing. Keep
 					// processing that endpoint so its mount vertex can be created.
 					bool unflooredStaircaseEndpoint = false;
-					if (layerIndex == CORE_LAYER_FORE && cellDef.sectorIndex != ~0u
+					if (isFrontMostLayer(layerIndex) && cellDef.sectorIndex != ~0u
 						&& cellDef.floorType == CellFloorType::None)
 					{
-						auto const& backCell = layers[CORE_LAYER_BACK]->getCellDefinition(x, y);
+						auto const& backCell = layers[layerBehind(0)]->getCellDefinition(x, y);
 						if (backCell.occupied())
 						{
 							auto staircase = dynamic_pointer_cast<StaircaseTransit>(
@@ -1184,7 +1184,7 @@ namespace core
 					}
 
 					// See if there is a Transit on the back layer.
-					auto backCellDef = layers[CORE_LAYER_BACK]->getCellDefinition(x, y);
+					auto backCellDef = layers[layerBehind(0)]->getCellDefinition(x, y);
 
 					if (backCellDef.occupied())
 					{
@@ -1193,8 +1193,8 @@ namespace core
 						if (backSector->getType() == SectorType::Ladder)
 						{
 							// Want to make sure we only process the lowest and highest cells of the Ladder.
-							bool lowest = y == 0 || layers[CORE_LAYER_BACK]->getCellDefinition(x, y - 1).sectorIndex != backCellDef.sectorIndex;
-							bool highest = y == (mwBuilding->getDecksHigh() - 1) || layers[CORE_LAYER_BACK]->getCellDefinition(x, y + 1).sectorIndex != backCellDef.sectorIndex;
+							bool lowest = y == 0 || layers[layerBehind(0)]->getCellDefinition(x, y - 1).sectorIndex != backCellDef.sectorIndex;
+							bool highest = y == (mwBuilding->getDecksHigh() - 1) || layers[layerBehind(0)]->getCellDefinition(x, y + 1).sectorIndex != backCellDef.sectorIndex;
 
 							if (lowest || highest)
 							{
