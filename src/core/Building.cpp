@@ -100,6 +100,7 @@ namespace core
 		: mName(name)
 		, mCellsWide(cellsWide)
 		, mDecksHigh(decksHigh)
+		, mLayers(2)
 	{
 		for (uint32_t i = 0; i < mLayers.size(); ++i)
 		{
@@ -124,6 +125,11 @@ namespace core
 	uint32_t Building::getDecksHigh() const
 	{
 		return mDecksHigh;
+	}
+
+	uint32_t Building::getLayerCount() const
+	{
+		return static_cast<uint32_t>(mLayers.size());
 	}
 
 	uint32_t Building::getNumSectors() const
