@@ -256,7 +256,7 @@ namespace core
 		TraversalResourceId landingResource;
 	};
 
-	struct DoorQueueLane
+	struct QueueLane
 	{
 		SectorId sector;
 		Vector2 origin;
@@ -356,7 +356,7 @@ namespace core
 		uint64_t mNextPreparationTick{ 0 };
 		// Most thresholds have two approaches. Open platform lifts instead own one
 		// physical waiting lane per stop, all using the same queue allocator.
-		std::vector<DoorQueueLane> mQueueLanes{ 2 };
+		std::vector<QueueLane> mQueueLanes{ 2 };
 		std::vector<TraversalRequestId> mCrossingOwners;
 		explicit TraversalResource(std::string name) : mName(std::move(name)) {}
 		TraversalResource(std::string name, std::shared_ptr<Door> door,

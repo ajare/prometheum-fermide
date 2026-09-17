@@ -76,7 +76,7 @@ namespace core
 		TraversalRequestId owner;
 	};
 
-	struct DoorQueueLaneSnapshot
+	struct QueueLaneSnapshot
 	{
 		SectorId sector;
 		Vector2 origin;
@@ -204,7 +204,7 @@ namespace core
 		TraversalRequestId preparationOperator;
 		TraversalRequestId crossingOwner;
 		std::vector<DoorCrossingLaneSnapshot> crossingLanes;
-		std::vector<DoorQueueLaneSnapshot> queueLanes;
+		std::vector<QueueLaneSnapshot> queueLanes;
 	};
 
 	struct TraversalRequestSnapshot

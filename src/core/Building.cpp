@@ -4814,17 +4814,17 @@ namespace core
 			{
 				continue;
 			}
-			DoorQueueLaneSnapshot laneSnapshot;
-			laneSnapshot.sector = lane.sector;
-			laneSnapshot.origin = lane.origin;
-			laneSnapshot.direction = lane.direction;
-			laneSnapshot.extent = lane.extent;
-			laneSnapshot.queue = lane.queue;
+			QueueLaneSnapshot queueLaneSnapshot;
+			queueLaneSnapshot.sector = lane.sector;
+			queueLaneSnapshot.origin = lane.origin;
+			queueLaneSnapshot.direction = lane.direction;
+			queueLaneSnapshot.extent = lane.extent;
+			queueLaneSnapshot.queue = lane.queue;
 			for (uint32_t i = 0; i < lane.positions.size(); ++i)
 			{
-				laneSnapshot.positions.push_back({ i, lane.positions[i], lane.positionOwners[i] });
+				queueLaneSnapshot.positions.push_back({ i, lane.positions[i], lane.positionOwners[i] });
 			}
-			result.queueLanes.push_back(std::move(laneSnapshot));
+			result.queueLanes.push_back(std::move(queueLaneSnapshot));
 		}
 		if (resource.mDoor)
 		{
@@ -5032,7 +5032,7 @@ namespace core
 			&& !resource->mOpenPlatformLift)) return false;
 
 		auto const sourceSector = SectorId{ (uint64_t)agent.getSector()->getIndex() + 1 };
-		DoorQueueLane const* lane = nullptr;
+		QueueLane const* lane = nullptr;
 		float closestEndpoint = numeric_limits<float>::max();
 		for (auto const& candidate : resource->mQueueLanes)
 		{
@@ -8589,7 +8589,7 @@ namespace core
 			throw invalid_argument("Door queue lane does not fit inside its source sector");
 		}
 
-		DoorQueueLane* lane = nullptr;
+		QueueLane* lane = nullptr;
 		for (auto& candidate : resource->mQueueLanes)
 		{
 			if (candidate.sector == sectorId)
