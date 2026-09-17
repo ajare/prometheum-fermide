@@ -163,8 +163,8 @@ namespace
 	void buildingRoundTripsAuthoredStateAndAgents()
 	{
 		core::Building original("Serializable building", 8, 3);
-		auto const fore = original.addRoom("Fore room", CORE_LAYER_FORE, 0, 0, 7, 2);
-		original.addRoom("Back room", CORE_LAYER_BACK, 0, 0, 7, 2);
+		auto const fore = original.addRoom("Fore room", 0, 0, 0, 7, 2);
+		original.addRoom("Back room", 1, 0, 0, 7, 2);
 		core::Building::CreateDoorOptions doorOptions;
 		doorOptions.width = 2;
 		doorOptions.activationMode = core::DoorActivationMode::RemoteControlled;
@@ -285,7 +285,7 @@ agents: []
 	void locationEditsArePlannedAndAppliedAtomically()
 	{
 		core::Building building("Editable", 8, 3);
-		auto room = building.addRoom("Room", CORE_LAYER_FORE, 0, 0, 5, 2);
+		auto room = building.addRoom("Room", 0, 0, 0, 5, 2);
 		building.addSectorMarker(room, 0, 4.5f);
 		auto removed = building.addSectorMarker(room, 0, 1.5f);
 		building.removeSectorMarker(room, removed.index);
@@ -429,21 +429,21 @@ agents: []
 	{
 		core::Building building("Control placement", 9, 2);
 		building.addCorridor(0, 1, 7);
-		auto room = building.addRoom("Back room", CORE_LAYER_BACK, 0, 4, 3, 1);
+		auto room = building.addRoom("Back room", 1, 0, 4, 3, 1);
 		core::Building::CreateDoorOptions options;
 		options.activationMode = core::DoorActivationMode::RemoteControlled;
-		options.controls[CORE_LAYER_BACK] = true;
+		options.controls[1] = true;
 
 		auto first = building.addSectorDoor(0, 5, options);
 		auto second = building.addSectorDoor(0, 6, options);
-		require(std::abs(controlCenterX(first.controls[CORE_LAYER_BACK]) - 5.0f) < 0.0001f
-			&& std::abs(controlCenterX(second.controls[CORE_LAYER_BACK]) - 6.0f) < 0.0001f,
+		require(std::abs(controlCenterX(first.controls[1]) - 5.0f) < 0.0001f
+			&& std::abs(controlCenterX(second.controls[1]) - 6.0f) < 0.0001f,
 			"Adjacent Citadel-style Door controls did not choose distinct X positions");
 		auto standardY = CORE_BUTTON_Y_OFFSET
-			+ first.controls[CORE_LAYER_BACK].sector->getObject(first.controls[CORE_LAYER_BACK].index)
+			+ first.controls[1].sector->getObject(first.controls[1].index)
 				->_getObject()->getSize().y * 0.5f;
-		require(std::abs(controlCenterY(first.controls[CORE_LAYER_BACK]) - standardY) < 0.0001f
-			&& std::abs(controlCenterY(second.controls[CORE_LAYER_BACK]) - standardY) < 0.0001f,
+		require(std::abs(controlCenterY(first.controls[1]) - standardY) < 0.0001f
+			&& std::abs(controlCenterY(second.controls[1]) - standardY) < 0.0001f,
 			"Separated Door controls retained obsolete height offsets");
 
 		core::SerializationWorkData workData;
@@ -486,20 +486,20 @@ agents: []
 
 		core::Building fallback("Control fallback", 4, 2);
 		fallback.addCorridor(0, 0, 2);
-		fallback.addRoom("Narrow back room", CORE_LAYER_BACK, 0, 0, 2, 1);
+		fallback.addRoom("Narrow back room", 1, 0, 0, 2, 1);
 		auto left = fallback.addSectorDoor(0, 0, options);
 		auto right = fallback.addSectorDoor(0, 1, options);
-		require(std::abs(controlCenterX(left.controls[CORE_LAYER_BACK])
-				- controlCenterX(right.controls[CORE_LAYER_BACK])) < 0.0001f
-			&& std::abs(controlCenterY(left.controls[CORE_LAYER_BACK])
-				- controlCenterY(right.controls[CORE_LAYER_BACK])) > 0.049f,
+		require(std::abs(controlCenterX(left.controls[1])
+				- controlCenterX(right.controls[1])) < 0.0001f
+			&& std::abs(controlCenterY(left.controls[1])
+				- controlCenterY(right.controls[1])) > 0.049f,
 			"Unavoidable same-X controls did not use the height fallback");
 	}
 
 	void platformLiftStopDurationRoundTrips()
 	{
 		core::Building original("Serializable PlatformLift", 7, 4);
-		auto room = original.addRoom("Platform room", CORE_LAYER_FORE, 0, 0, 6, 3);
+		auto room = original.addRoom("Platform room", 0, 0, 0, 6, 3);
 		for (uint32_t deck = 1; deck <= 2; ++deck)
 		{
 			original.addSectorWalkway(room, deck, 2);
@@ -540,7 +540,7 @@ agents: []
 	void enclosedLiftsSupportMultiDeckRooms()
 	{
 		core::Building building("Room lift", 16, 3);
-		auto room = building.addRoom("Lift Hall", CORE_LAYER_FORE, 0, 0, 16, 3);
+		auto room = building.addRoom("Lift Hall", 0, 0, 0, 16, 3);
 		for (uint32_t deck = 1; deck < 3; ++deck)
 			for (uint32_t x = 0; x < 16; ++x)
 				building.addSectorWalkway(room, deck, x);
@@ -563,16 +563,16 @@ agents: []
 	{
 		require(isCanvasSelectableSectorType(core::SectorType::Stairwell),
 			"Placed Stairwells cannot be selected by the canvas hit-test");
-		require(!shouldDrawCanvasSectorEditOverlay(CORE_LAYER_BACK, CORE_LAYER_FORE),
+		require(!shouldDrawCanvasSectorEditOverlay(1, 0),
 			"A selected Back-layer Stairwell is overlaid in front of the Fore layer");
-		require(!shouldRenderStairwellGeometry(CORE_LAYER_BACK, false),
+		require(!shouldRenderStairwellGeometry(1, false),
 			"Hidden Back-layer Stairwell geometry is rendered over the Fore layer");
-		require(shouldRenderStairwellGeometry(CORE_LAYER_BACK, true)
-			&& shouldRenderStairwellGeometry(CORE_LAYER_FORE, true),
+		require(shouldRenderStairwellGeometry(1, true)
+			&& shouldRenderStairwellGeometry(0, true),
 			"Stairwell geometry was suppressed from a visible or clipped Fore-layer pass");
-		require(!shouldRenderSectorAgents(core::SectorType::Stairwell, CORE_LAYER_BACK, false)
-			&& shouldRenderSectorAgents(core::SectorType::Stairwell, CORE_LAYER_FORE, true)
-			&& shouldRenderSectorAgents(core::SectorType::Stairwell, CORE_LAYER_BACK, true),
+		require(!shouldRenderSectorAgents(core::SectorType::Stairwell, 1, false)
+			&& shouldRenderSectorAgents(core::SectorType::Stairwell, 0, true)
+			&& shouldRenderSectorAgents(core::SectorType::Stairwell, 1, true),
 			"Stairwell Agents do not obey the Stairwell's foreground aperture clipping");
 		core::Stairwell leftStairwell(0, 0, 3, CORE_SIDE_LEFT);
 		core::Stairwell rightStairwell(0, 0, 3, CORE_SIDE_RIGHT);
@@ -599,8 +599,8 @@ agents: []
 		require(shouldRenderStaircaseAfterSector(core::SectorType::Location)
 			&& !shouldRenderStaircaseAfterSector(core::SectorType::Staircase),
 			"Staircases are not ordered after Fore-layer Rooms and Corridors");
-		require(!shouldRenderSectorAgents(core::SectorType::Staircase, CORE_LAYER_BACK, false)
-			&& shouldRenderSectorAgents(core::SectorType::Staircase, CORE_LAYER_FORE, true),
+		require(!shouldRenderSectorAgents(core::SectorType::Staircase, 1, false)
+			&& shouldRenderSectorAgents(core::SectorType::Staircase, 0, true),
 			"Staircase Agents do not obey corridor clipping");
 
 		core::Staircase right(0, 0, 4, CORE_SIDE_RIGHT);
@@ -695,7 +695,7 @@ agents: []
 			"Staircase deletion was not planned as a confirmed edit");
 		require(building.applyStaircaseEdit(removal) == ~0u,
 			"Staircase deletion did not return the removed-sector sentinel");
-		require(!static_cast<core::Building const&>(building).getLayer(CORE_LAYER_BACK)
+		require(!static_cast<core::Building const&>(building).getLayer(1)
 			->getCellDefinition(0, 0).occupied(),
 			"Deleted Staircase still occupies the Back layer");
 	}
@@ -704,18 +704,18 @@ agents: []
 	{
 		require(isCanvasSelectableSectorType(core::SectorType::Ladder),
 			"Placed Ladders cannot be selected by the canvas hit-test");
-		require(!shouldRenderLadderGeometry(CORE_LAYER_BACK, false),
+		require(!shouldRenderLadderGeometry(1, false),
 			"Hidden Back-layer Ladder geometry bypasses Fore-layer corridor clipping");
-		require(shouldRenderLadderGeometry(CORE_LAYER_BACK, true)
-			&& shouldRenderLadderGeometry(CORE_LAYER_FORE, true),
+		require(shouldRenderLadderGeometry(1, true)
+			&& shouldRenderLadderGeometry(0, true),
 			"Ladder geometry was suppressed from a visible or clipped Fore-layer pass");
 		require(shouldRenderForeContentAfterTransit(core::SectorType::Ladder),
 			"Clipped sector Ladder geometry is rendered in front of its Location contents");
 		require(!shouldRenderLadderGeometryAfterSectorContents(),
 			"Sector Ladder geometry is redrawn in front of its occupying Agents");
-		require(!shouldRenderSectorAgents(core::SectorType::Ladder, CORE_LAYER_BACK, false)
-			&& shouldRenderSectorAgents(core::SectorType::Ladder, CORE_LAYER_FORE, false)
-			&& shouldRenderSectorAgents(core::SectorType::Ladder, CORE_LAYER_BACK, true),
+		require(!shouldRenderSectorAgents(core::SectorType::Ladder, 1, false)
+			&& shouldRenderSectorAgents(core::SectorType::Ladder, 0, false)
+			&& shouldRenderSectorAgents(core::SectorType::Ladder, 1, true),
 			"Sector Ladder Agents do not obey the Ladder's foreground aperture clipping");
 		core::Building edgeBuilding("Edge Ladder controls", 5, 3);
 		edgeBuilding.addCorridor(0, 0, 5);
@@ -790,7 +790,7 @@ agents: []
 			"Ladder deletion was not planned as a confirmed edit");
 		require(building.applyLadderEdit(removal) == ~0u,
 			"Ladder deletion did not return the removed-sector sentinel");
-		require(!static_cast<core::Building const&>(building).getLayer(CORE_LAYER_BACK)
+		require(!static_cast<core::Building const&>(building).getLayer(1)
 			->getCellDefinition(4, 1).occupied(),
 			"Deleted Ladder still occupies the Back layer");
 	}
@@ -857,7 +857,7 @@ agents: []
 			"Stairwell deletion was not planned as a confirmed edit");
 		require(building.applyStairwellEdit(removal) == ~0u,
 			"Stairwell deletion did not return the removed-sector sentinel");
-		require(!static_cast<core::Building const&>(building).getLayer(CORE_LAYER_BACK)
+		require(!static_cast<core::Building const&>(building).getLayer(1)
 			->getCellDefinition(4, 1).occupied(),
 			"Deleted Stairwell still occupies the Back layer");
 	}
@@ -865,25 +865,25 @@ agents: []
 	void bulkheadDoorsSupportIndependentObjectEditing()
 	{
 		core::Building building("Bulkhead editor", 7, 2);
-		auto const left = building.addRoom("Left", CORE_LAYER_FORE, 0, 0, 2, 1);
-		building.addRoom("Middle", CORE_LAYER_FORE, 0, 2, 2, 1);
-		building.addRoom("Right", CORE_LAYER_FORE, 0, 4, 2, 1);
+		auto const left = building.addRoom("Left", 0, 0, 0, 2, 1);
+		building.addRoom("Middle", 0, 0, 2, 2, 1);
+		building.addRoom("Right", 0, 0, 4, 2, 1);
 		std::string diagnostic;
-		require(building.canAddSectorBulkheadDoor(CORE_LAYER_FORE, 0, 2,
+		require(building.canAddSectorBulkheadDoor(0, 0, 2,
 			CORE_SIDE_LEFT, {}, &diagnostic), "valid left-edge Bulkhead Door placement was rejected");
-		require(!building.canAddSectorBulkheadDoor(CORE_LAYER_FORE, 0, 0,
+		require(!building.canAddSectorBulkheadDoor(0, 0, 0,
 			CORE_SIDE_LEFT, {}, &diagnostic), "Bulkhead Door was accepted at the world edge");
-		require(!building.canAddSectorBulkheadDoor(CORE_LAYER_FORE, 0, 1,
+		require(!building.canAddSectorBulkheadDoor(0, 0, 1,
 			CORE_SIDE_LEFT, {}, &diagnostic), "Bulkhead Door was accepted inside one Location");
 
-		auto created = building.addSectorBulkheadDoor(CORE_LAYER_FORE, 0, 2, CORE_SIDE_LEFT);
+		auto created = building.addSectorBulkheadDoor(0, 0, 2, CORE_SIDE_LEFT);
 		std::shared_ptr<const core::SectorObject> object =
 			created.door.sector->getObject(created.door.index);
 		require(object && object->getObjectType() == core::SectorObjectType::BulkheadDoor
 			&& object->getCellX() + 1 == 2,
 			"Bulkhead Door was not created on the selected cell's left edge");
 		uint32_t ownedControls = 0;
-		for (auto const& sector : building.getSectors(CORE_LAYER_FORE))
+		for (auto const& sector : building.getSectors(0))
 			for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
 				if (building.isBulkheadDoorOwnedControl(sector->getObject(i))) ++ownedControls;
 		require(ownedControls == 2, "Bulkhead Door controls were not recognized as managed objects");
@@ -929,7 +929,7 @@ agents: []
 		auto reader = core::YamlSerializer::fromString(writer->getSerializedString());
 		reader->deserialize();
 		require(loaded.deserialize(*reader, workData), "Bulkhead Door building did not round-trip");
-		auto loadedLeft = loaded.getSectorAtPosition(CORE_LAYER_FORE, 3.5f, 0.5f);
+		auto loadedLeft = loaded.getSectorAtPosition(0, 3.5f, 0.5f);
 		objectIndex = ~0u;
 		for (uint32_t i = 0; loadedLeft && i < loadedLeft->getNumObjects(); ++i)
 		{
@@ -1002,12 +1002,12 @@ agents: []
 
 void layerHelperApiIsConsistentWithTwoLayerConstants()
 {
-	require(core::isFrontMostLayer(CORE_LAYER_FORE), "fore layer is not reported as front-most");
-	require(!core::isFrontMostLayer(CORE_LAYER_BACK), "back layer reported as front-most");
-	require(core::isBackMostLayer(CORE_LAYER_BACK), "back layer is not reported as back-most");
-	require(!core::isBackMostLayer(CORE_LAYER_FORE), "fore layer reported as back-most");
-	require(core::layerInFront(CORE_LAYER_BACK) == CORE_LAYER_FORE, "layerInFront(back) did not return fore");
-	require(core::layerBehind(CORE_LAYER_FORE) == CORE_LAYER_BACK, "layerBehind(fore) did not return back");
+	require(core::isFrontMostLayer(0), "fore layer is not reported as front-most");
+	require(!core::isFrontMostLayer(1), "back layer reported as front-most");
+	require(core::isBackMostLayer(1), "back layer is not reported as back-most");
+	require(!core::isBackMostLayer(0), "fore layer reported as back-most");
+	require(core::layerInFront(1) == 0, "layerInFront(back) did not return fore");
+	require(core::layerBehind(0) == 1, "layerBehind(fore) did not return back");
 	require(CORE_MAX_LAYERS == 256, "CORE_MAX_LAYERS is not 256");
 }
 

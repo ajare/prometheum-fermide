@@ -25,33 +25,29 @@
 #define CORE_LEVEL_LOW								0
 #define CORE_LEVEL_HIGH								1
 
-#define CORE_NUM_LAYERS								2
 #define CORE_MAX_LAYERS								256
-
-#define CORE_LAYER_FORE								0
-#define CORE_LAYER_BACK								1
 
 namespace core
 {
 	inline bool isFrontMostLayer(uint32_t layer)
 	{
-		return layer == CORE_LAYER_FORE;
+		return layer == 0;
 	}
 
 	inline bool isBackMostLayer(uint32_t layer)
 	{
-		return layer == CORE_NUM_LAYERS - 1;
+		return layer == 1;
 	}
 
 	inline uint32_t layerInFront(uint32_t layer)
 	{
-		assert(layer > CORE_LAYER_FORE && "No layer in front of the front-most layer");
+		assert(layer > 0 && "No layer in front of the front-most layer");
 		return layer - 1;
 	}
 
 	inline uint32_t layerBehind(uint32_t layer)
 	{
-		assert(layer < CORE_NUM_LAYERS - 1 && "No layer behind the back-most layer");
+		assert(layer < 1 && "No layer behind the back-most layer");
 		return layer + 1;
 	}
 }
@@ -163,7 +159,7 @@ namespace core
 // Macros
 //
 #define ASSERT_INDEX_OK(index)				assert(index != ~0u && "Index is -1");
-#define ASSERT_LAYER_OK(layer)					assert((layer == CORE_LAYER_FORE || layer == CORE_LAYER_BACK) && "Invalid layer")
+#define ASSERT_LAYER_OK(layer)					assert((layer == 0 || layer == 1) && "Invalid layer")
 #define ASSERT_DIM_OK(dim)						assert((dim == CORE_DIM_X || dim == CORE_DIM_Y) && "Invalid dimension")
 #define ASSERT_SIDE_OK(side)					assert((side == CORE_SIDE_LEFT || side == CORE_SIDE_RIGHT) && "Invalid side")
 #define ASSERT_LEVEL_OK(level)					assert((level == CORE_LEVEL_LOW || level == CORE_LEVEL_HIGH) && "Invalid level");

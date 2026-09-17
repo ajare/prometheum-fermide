@@ -252,7 +252,7 @@ namespace
 	{
 		PaintTool tool{ PaintTool::None };
 		bool dragging{ false };
-		uint32_t layer{ CORE_LAYER_FORE };
+		uint32_t layer{ 0 };
 		int anchorX{ 0 };
 		int anchorY{ 0 };
 	};
@@ -967,7 +967,7 @@ namespace
 	string nextRoomName(shared_ptr<const core::Building> const& building)
 	{
 		set<string> names;
-		for (uint32_t layer = 0; layer < CORE_NUM_LAYERS; ++layer)
+		for (uint32_t layer = 0; layer < 2; ++layer)
 		{
 			for (auto const& sector : building->getSectors(layer))
 				names.insert(sector->getName());
@@ -1140,7 +1140,7 @@ namespace
 		if (best.valid && gPaint.tool == PaintTool::Lift)
 		{
 			uint32_t stops = 0;
-			auto fore = building->getLayer(CORE_LAYER_FORE);
+			auto fore = building->getLayer(0);
 			for (uint32_t y = best.y; y < best.y + best.height; ++y)
 			{
 				auto const& first = fore->getCellDefinition(best.x, y);
@@ -1452,10 +1452,10 @@ namespace
 
 		if (gPaint.dragging && gPaint.layer != (uint32_t)gUISettings.visibleLayer)
 			resetPaint(false);
-		if ((gPaint.tool == PaintTool::Corridor && gUISettings.visibleLayer == CORE_LAYER_BACK)
+		if ((gPaint.tool == PaintTool::Corridor && gUISettings.visibleLayer == 1)
 			|| ((gPaint.tool == PaintTool::Ladder || gPaint.tool == PaintTool::Stairwell
 				|| gPaint.tool == PaintTool::Lift || gPaint.tool == PaintTool::Shuttle)
-				&& gUISettings.visibleLayer == CORE_LAYER_FORE))
+				&& gUISettings.visibleLayer == 0))
 			resetPaint();
 
 		if (gPegman.phase == PalettePhase::Falling)
@@ -1515,8 +1515,8 @@ namespace
 		bool liftHovered = gWorldHovered && pointInRect(io.MousePos, liftMin, liftMax);
 		bool shuttleHovered = gWorldHovered && pointInRect(io.MousePos, shuttleMin, shuttleMax);
 		bool staircaseHovered = gWorldHovered && pointInRect(io.MousePos, staircaseMin, staircaseMax);
-		bool corridorDisabled = gUISettings.visibleLayer == CORE_LAYER_BACK;
-		bool backOnlyDisabled = gUISettings.visibleLayer == CORE_LAYER_FORE;
+		bool corridorDisabled = gUISettings.visibleLayer == 1;
+		bool backOnlyDisabled = gUISettings.visibleLayer == 0;
 		if (overTray) paletteConsumedMouse = true;
 
 		auto drawPaintButton = [&](ImVec2 min, ImVec2 max, char const* label,
@@ -2750,7 +2750,7 @@ namespace
 					}
 					ImGui::SameLine();
 					uint32_t coverage = 0;
-					auto fore = static_cast<core::Building const&>(*building).getLayer(CORE_LAYER_FORE);
+					auto fore = static_cast<core::Building const&>(*building).getLayer(0);
 					uint32_t selectedDoors = 0;
 					for (int cell = 0; cell < draft.carWidth; ++cell)
 						selectedDoors += (draft.doorMask & (1u << cell)) != 0;
@@ -3090,7 +3090,7 @@ namespace
 			auto window = static_pointer_cast<const core::WindowSectorObject>(gSelectedSectorObject)->getWindow();
 			core::Building::CreateWindowOptions options;
 			bool found = false;
-			for (uint32_t layer = 0; layer < CORE_NUM_LAYERS && !found; ++layer)
+			for (uint32_t layer = 0; layer < 2 && !found; ++layer)
 				found = building->getSectorWindowOptions(layer, gSelectedSectorObject->getCellY(),
 					gSelectedSectorObject->getCellX(), window->getCellsWide(), window->getDecksHigh(), options);
 			if (!found) throw runtime_error("The selected Window has no authored definition");
@@ -4446,7 +4446,7 @@ void renderStatusBar()
 	{
 		if (ImGui::BeginMenuBar())
 		{
-			ImGui::Text("Layer: %s", gUISettings.visibleLayer == CORE_LAYER_FORE ? "Fore" : "Back");
+			ImGui::Text("Layer: %s", gUISettings.visibleLayer == 0 ? "Fore" : "Back");
 
 			ImGui::SetNextItemWidth(128);
 
@@ -4516,7 +4516,7 @@ void renderWalkwayPanel(shared_ptr<core::Building> const& building,
 	ImGui::TextUnformatted("Walkway");
 	ImGui::Text("Room: %s", room->getName().c_str());
 	ImGui::Text("Room index: %u", room->getIndex());
-	ImGui::Text("Layer: %s", room->getLayerIndex() == CORE_LAYER_FORE ? "Fore" : "Back");
+	ImGui::Text("Layer: %s", room->getLayerIndex() == 0 ? "Fore" : "Back");
 	ImGui::Text("Position: %u, %u", walkway->getCellX(), walkway->getCellY());
 	ImGui::Text("Deck offset: %u", walkway->getCellY() - room->getCellY());
 	ImGui::Separator();
@@ -4569,9 +4569,9 @@ void renderWindowPanel(shared_ptr<const core::SectorObject> object)
 	ImGui::Text("State: %s", state);
 	ImGui::Text("Traversable: %s", window->isTraversalConfigured() ? "Yes" : "No");
 	auto owner = object->getSector();
-	ImGui::Text("Layer: %s", owner->getLayerIndex() == CORE_LAYER_FORE ? "Fore" : "Back");
+	ImGui::Text("Layer: %s", owner->getLayerIndex() == 0 ? "Fore" : "Back");
 	ImGui::Text("Sector: %s", owner->getDescription().c_str());
-	for (uint32_t layer = 0; layer < CORE_NUM_LAYERS; ++layer)
+	for (uint32_t layer = 0; layer < 2; ++layer)
 		if (auto sector = window->getSector(layer); sector && sector != owner)
 			ImGui::Text("Connected sector: %s", sector->getDescription().c_str());
 }
@@ -4590,7 +4590,7 @@ void renderBulkheadDoorPanel(shared_ptr<core::Building> const& building,
 	ImGui::TextUnformatted("Bulkhead Door");
 	ImGui::Text("Threshold position: %.1f, %u", (float)object->getCellX() + 1.0f,
 		object->getCellY());
-	ImGui::Text("Layer: %s", owner->getLayerIndex() == CORE_LAYER_FORE ? "Fore" : "Back");
+	ImGui::Text("Layer: %s", owner->getLayerIndex() == 0 ? "Fore" : "Back");
 	float pct = door->getOpenPercentage() * 100.0f;
 	char const* state = "Unknown";
 	switch (door->getState())
@@ -4766,8 +4766,8 @@ void renderDoorPanel(shared_ptr<core::Building> const& building,
 	ImGui::Text("Open wait time: %3.2fs", door->getOpenWaitTime());
 	
 	// Sectors
-	ImGui::Text("From: %s", door->getSector(CORE_LAYER_FORE)->getDescription().c_str());
-	ImGui::Text("To: %s", door->getSector(CORE_LAYER_BACK)->getDescription().c_str());
+	ImGui::Text("From: %s", door->getSector(0)->getDescription().c_str());
+	ImGui::Text("To: %s", door->getSector(1)->getDescription().c_str());
 
 	uint32_t liftSector, stopIndex, carriageIndex;
 	bool const liftOwned = building->isLiftOwnedDoor(object, &liftSector, &stopIndex);
@@ -4879,7 +4879,7 @@ void renderForceBridgePanel(shared_ptr<core::Building> const& building,
 	ImGui::TextUnformatted("Force Bridge");
 	ImGui::Text("Room: %s", room->getName().c_str());
 	ImGui::Text("Room index: %u", room->getIndex());
-	ImGui::Text("Layer: %s", room->getLayerIndex() == CORE_LAYER_FORE ? "Fore" : "Back");
+	ImGui::Text("Layer: %s", room->getLayerIndex() == 0 ? "Fore" : "Back");
 	ImGui::Text("Position: %u, %u", object->getCellX(), object->getCellY());
 	ImGui::Text("Deck offset: %u", object->getCellY() - room->getCellY());
 	float pct = forceBridge->getExtendedPercentage() * 100.0f;
@@ -5011,7 +5011,7 @@ void renderLadderPanel(shared_ptr<core::Building> const& building,
 
 	ImGui::TextUnformatted("Room Ladder");
 	ImGui::Text("Room: %s", room->getName().c_str());
-	ImGui::Text("Layer: %s", room->getLayerIndex() == CORE_LAYER_FORE ? "Fore" : "Back");
+	ImGui::Text("Layer: %s", room->getLayerIndex() == 0 ? "Fore" : "Back");
 	ImGui::Text("Position: %u, %u", object->getCellX(), object->getCellY());
 	ImGui::Text("Calculated height: %u decks", ladder->getDecksHigh());
 	float pct = ladder->getExtendedPercentage() * 100.0f;
@@ -5131,7 +5131,7 @@ void renderPlatformLiftPanel(shared_ptr<core::Building> const& building,
 	auto platformLift = static_pointer_cast<const core::LiftSectorObject>(object)->getLift();
 	ImGui::TextUnformatted("Platform Lift");
 	ImGui::Text("Room: %s", room->getName().c_str());
-	ImGui::Text("Layer: %s", room->getLayerIndex() == CORE_LAYER_FORE ? "Fore" : "Back");
+	ImGui::Text("Layer: %s", room->getLayerIndex() == 0 ? "Fore" : "Back");
 	ImGui::Text("Position: %u, %u", object->getCellX(), object->getCellY());
 	ImGui::Text("Car y: %.2f", platformLift->getPosition().y);
 
@@ -5455,7 +5455,7 @@ void renderAgentView(shared_ptr<const core::Building> building)
 
 		core::Agent* newSelectedAgent{ gSelectedAgent };
 
-		for (int l = 0; l < CORE_NUM_LAYERS; ++l)
+		for (int l = 0; l < 2; ++l)
 		{
 			auto sectors = building->getSectors(l);
 
@@ -5563,7 +5563,7 @@ void renderObjectView(shared_ptr<const core::Building> building)
 		ImGuiTreeNodeFlags_OpenOnDoubleClick |
 		ImGuiTreeNodeFlags_SpanAvailWidth;
 
-	for (int l = 0; l < CORE_NUM_LAYERS; ++l)
+	for (int l = 0; l < 2; ++l)
 	{
 		auto sectors = building->getSectors(l);
 
@@ -5731,7 +5731,7 @@ void renderSelectedObjectPanel(shared_ptr<core::Building> const& building)
 		}
 		ImGui::Text("%s: %s", type, gSelectedSector->getName().c_str());
 		ImGui::Text("Sector index: %u", gSelectedSector->getIndex());
-		ImGui::Text("Layer: %s", gSelectedSector->getLayerIndex() == CORE_LAYER_FORE ? "Fore" : "Back");
+		ImGui::Text("Layer: %s", gSelectedSector->getLayerIndex() == 0 ? "Fore" : "Back");
 		ImGui::Text("Position: %u, %u", gSelectedSector->getCellX(), gSelectedSector->getCellY());
 		if (gSelectedSector->getType() == core::SectorType::Lift)
 		{

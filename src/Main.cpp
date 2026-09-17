@@ -454,23 +454,23 @@ std::shared_ptr<core::Building> createTestBuilding()
 		// First corridor
 		building->addCorridor(ReactorDeck, 1, 8);
 		
-		building->addRoom("Pump Room", CORE_LAYER_BACK, ReactorDeck, 0, 4, 1);
+		building->addRoom("Pump Room", 1, ReactorDeck, 0, 4, 1);
 		
 		//building->addSectorLightSwitch(pumpRoomIndex, 0);
 
-		building->addRoom("Fuel Cells", CORE_LAYER_BACK, ReactorDeck, 5, 3, 1);
+		building->addRoom("Fuel Cells", 1, ReactorDeck, 5, 3, 1);
 		
 		building->addSectorDoor(ReactorDeck, 6);
 		
 		building->addSectorDoor(ReactorDeck, 2);
 		/*
-		building->addSectorWindow(CORE_LAYER_FORE, ReactorDeck, 7, 1, 1);
+		building->addSectorWindow(0, ReactorDeck, 7, 1, 1);
 		
 		// Second corridor
 		auto corr2Index = building->addCorridor(ReactorDeck, 9, 6);
 
 		// Reactor core
-		auto reactorCoreIndex = building->addRoom("Reactor Core", CORE_LAYER_BACK, ReactorDeck, 9, 4, 3);
+		auto reactorCoreIndex = building->addRoom("Reactor Core", 1, ReactorDeck, 9, 4, 3);
 		
 		building->addSectorWalkway(reactorCoreIndex, 1, 0);
 		building->addSectorWalkway(reactorCoreIndex, 1, 2);
@@ -487,16 +487,16 @@ std::shared_ptr<core::Building> createTestBuilding()
 		
 		building->addSectorDoor(ReactorDeck, 10);
 
-		building->addSectorWindow(CORE_LAYER_FORE, ReactorDeck, 1, 1, 1);
+		building->addSectorWindow(0, ReactorDeck, 1, 1, 1);
 		
 		// Decontamination
-		building->addRoom("Decontamination", CORE_LAYER_BACK, ReactorDeck, 14, 3, 1);
+		building->addRoom("Decontamination", 1, ReactorDeck, 14, 3, 1);
 		building->addSectorDoor(ReactorDeck, 14);
 
-		building->addSectorWindow(CORE_LAYER_FORE, ReactorDeck, 11, 2, 1);
+		building->addSectorWindow(0, ReactorDeck, 11, 2, 1);
 
 		// Connect corridors
-		building->addSectorBulkheadDoor(CORE_LAYER_FORE, ReactorDeck, 9, CORE_SIDE_LEFT);
+		building->addSectorBulkheadDoor(0, ReactorDeck, 9, CORE_SIDE_LEFT);
 		
 		// Third corridor
 		building->addCorridor(ReactorDeck, 16, 14);
@@ -522,12 +522,12 @@ std::shared_ptr<core::Building> createTestBuilding()
 		building->addSectorWalkway(corrIndex, 1, 2);
 		building->addSectorWalkway(corrIndex, 1, 3);
 
-		auto icuIndex = building->addRoom("ICU", CORE_LAYER_BACK, HospitalDeck, 13, 3, 1, CORE_DOOR_HEIGHT + 0.1f);
+		auto icuIndex = building->addRoom("ICU", 1, HospitalDeck, 13, 3, 1, CORE_DOOR_HEIGHT + 0.1f);
 		building->addSectorDoor(HospitalDeck, 14);
 
 		building->removeLocationWall(icuIndex, 0, CORE_SIDE_LEFT);
 
-		auto acIndex = building->addRoom("Autoclaves", CORE_LAYER_BACK, HospitalDeck, 0, 3, 4, CORE_DOOR_HEIGHT + 0.1f);
+		auto acIndex = building->addRoom("Autoclaves", 1, HospitalDeck, 0, 3, 4, CORE_DOOR_HEIGHT + 0.1f);
 
 		building->addSectorWalkway(acIndex, 1, 0);
 		building->addSectorWalkway(acIndex, 1, 1);
@@ -539,7 +539,7 @@ std::shared_ptr<core::Building> createTestBuilding()
 		building->addSectorDoor(HospitalDeck, 2);
 		
 		auto morgueCorrIndex = building->addCorridor(HospitalDeck, 22, 9);
-		auto morgueIndex = building->addRoom("Morgue", CORE_LAYER_BACK, HospitalDeck, 22, 9, 1);
+		auto morgueIndex = building->addRoom("Morgue", 1, HospitalDeck, 22, 9, 1);
 		building->addSectorDoor(HospitalDeck, 26);
 
 		uint32_t vertexIdentifiers[20];
@@ -576,8 +576,8 @@ std::shared_ptr<core::Building> createTestBuilding()
 
 		building->addShuttle(StorageDeck, 10, 7, { 1, 3, { 0, 4 }, 0 });
 
-		//building->addSectorWindow(CORE_LAYER_FORE, StorageDeck, 10, 2, 1);
-		//building->addSectorWindow(CORE_LAYER_BACK, StorageDeck, 13, 1, 1);
+		//building->addSectorWindow(0, StorageDeck, 10, 2, 1);
+		//building->addSectorWindow(1, StorageDeck, 13, 1, 1);
 
 		//
 		// Flight deck
@@ -594,10 +594,10 @@ std::shared_ptr<core::Building> createTestBuilding()
 		building->addLift(HospitalDeck, 6, { 2, { 0, 1, 2, 3 } });
 
 		// Add Windows now that we've placed objects on both Layers
-		building->addSectorWindow(CORE_LAYER_BACK, HospitalDeck, 4, 1, 1);
-		building->addSectorWindow(CORE_LAYER_FORE, MaintenanceDeck, 17, 1, 1);
-		building->addSectorWindow(CORE_LAYER_BACK, MaintenanceDeck, 0, 1, 1);
-		building->addSectorWindow(CORE_LAYER_BACK, MaintenanceDeck, 12, 1, 1);
+		building->addSectorWindow(1, HospitalDeck, 4, 1, 1);
+		building->addSectorWindow(0, MaintenanceDeck, 17, 1, 1);
+		building->addSectorWindow(1, MaintenanceDeck, 0, 1, 1);
+		building->addSectorWindow(1, MaintenanceDeck, 12, 1, 1);
 */
 		building->finishBuild();
 

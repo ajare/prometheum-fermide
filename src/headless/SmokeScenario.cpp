@@ -243,7 +243,7 @@ namespace
 	bool markerPlacementEnforcesPaletteCoreRules()
 	{
 		core::Building building("Marker placement rules", 7, 3);
-		auto room = building.addRoom("Marker room", CORE_LAYER_FORE, 0, 0, 6, 2);
+		auto room = building.addRoom("Marker room", 0, 0, 0, 6, 2);
 		building.finishBuild();
 
 		std::string diagnostic;
@@ -272,9 +272,9 @@ namespace
 	{
 		core::Building building("Corridor Door placement rules", 10, 4);
 		auto corridor = building.addCorridor(0, 0, 6);
-		auto backRoom = building.addRoom("Back room", CORE_LAYER_BACK, 0, 0, 6, 1);
-		building.addRoom("Not a corridor", CORE_LAYER_FORE, 1, 0, 3, 1);
-		building.addRoom("Second back room", CORE_LAYER_BACK, 1, 0, 3, 1);
+		auto backRoom = building.addRoom("Back room", 1, 0, 0, 6, 1);
+		building.addRoom("Not a corridor", 0, 1, 0, 3, 1);
+		building.addRoom("Second back room", 1, 1, 0, 3, 1);
 		building.addCorridor(2, 0, 4);
 
 		std::string diagnostic;
@@ -304,7 +304,7 @@ namespace
 	{
 		core::Building building("Object movement", 10, 3);
 		auto corridor = building.addCorridor(0, 0, 8);
-		building.addRoom("Back room", CORE_LAYER_BACK, 0, 0, 8, 1);
+		building.addRoom("Back room", 1, 0, 0, 8, 1);
 		core::Building::CreateDoorOptions doorOptions;
 		doorOptions.controls[0] = true;
 		doorOptions.controls[1] = true;
@@ -336,15 +336,15 @@ namespace
 			|| !building.removeSectorDoor(doorOwner->getIndex(), movedDoorIndex)
 			|| building.lookupAgent(agentId).entity == nullptr
 			|| !building.getSimulationSnapshot().traversalResources.empty()) return false;
-		for (auto const& sector : building.getSectors(CORE_LAYER_FORE))
+		for (auto const& sector : building.getSectors(0))
 			for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
 				if (auto object = sector->getObject(i))
 					if (object->getObjectType() == core::SectorObjectType::Door) return false;
 
 		core::Building windowBuilding("Window editing", 10, 3);
-		auto fore = windowBuilding.addRoom("Fore", CORE_LAYER_FORE, 0, 0, 8, 1);
-		windowBuilding.addRoom("Back", CORE_LAYER_BACK, 0, 0, 8, 1);
-		auto createdWindow = windowBuilding.addSectorWindow(CORE_LAYER_FORE, 0, 1, 1, 1, {});
+		auto fore = windowBuilding.addRoom("Fore", 0, 0, 0, 8, 1);
+		windowBuilding.addRoom("Back", 1, 0, 0, 8, 1);
+		auto createdWindow = windowBuilding.addSectorWindow(0, 0, 1, 1, 1, {});
 		windowBuilding.finishBuild();
 		windowBuilding.pauseSimulation();
 		auto windowAgent = windowBuilding.createAgent("Stationary", fore, 0, 0.5f);
@@ -360,7 +360,7 @@ namespace
 			if (owner->getObject(i) == movedWindow) { movedIndex = i; break; }
 		if (movedIndex == ~0u || !windowBuilding.removeSectorWindow(owner->getIndex(), movedIndex))
 			return false;
-		for (auto const& sector : windowBuilding.getSectors(CORE_LAYER_FORE))
+		for (auto const& sector : windowBuilding.getSectors(0))
 			for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
 				if (auto object = sector->getObject(i))
 					if (object->getObjectType() == core::SectorObjectType::Window) return false;
@@ -370,8 +370,8 @@ namespace
 		core::Building pasteMoveBuilding("Paste-style movement", 10, 2);
 		pasteMoveBuilding.addCorridor(0, 0, 4);
 		auto right = pasteMoveBuilding.addCorridor(0, 6, 4);
-		pasteMoveBuilding.addRoom("Left back", CORE_LAYER_BACK, 0, 0, 4, 1);
-		pasteMoveBuilding.addRoom("Right back", CORE_LAYER_BACK, 0, 6, 4, 1);
+		pasteMoveBuilding.addRoom("Left back", 1, 0, 0, 4, 1);
+		pasteMoveBuilding.addRoom("Right back", 1, 0, 6, 4, 1);
 		auto crossSectorDoor = pasteMoveBuilding.addSectorDoor(0, 1);
 		pasteMoveBuilding.finishBuild();
 		pasteMoveBuilding.pauseSimulation();
@@ -411,7 +411,7 @@ namespace
 		core::Building building("Room staircase landing", 10, 3);
 		building.addCorridor(0, 0, 6);
 		auto upperCorridor = building.addCorridor(1, 0, 7);
-		auto room = building.addRoom("Upper room", CORE_LAYER_FORE, 1, 7, 3, 1);
+		auto room = building.addRoom("Upper room", 0, 1, 7, 3, 1);
 
 		std::string diagnostic;
 		if (building.canAddStaircase(0, 5, 3, CORE_SIDE_RIGHT, &diagnostic)) return false;
@@ -430,7 +430,7 @@ namespace
 			return false;
 
 		core::Building lowerRoomBuilding("Lower Room staircase endpoint", 8, 3);
-		lowerRoomBuilding.addRoom("Lower room", CORE_LAYER_FORE, 0, 0, 3, 1);
+		lowerRoomBuilding.addRoom("Lower room", 0, 0, 0, 3, 1);
 		lowerRoomBuilding.addCorridor(1, 4, 4);
 		if (!lowerRoomBuilding.canAddStaircase(0, 2, 3, CORE_SIDE_RIGHT, &diagnostic))
 			return false;
@@ -442,7 +442,7 @@ namespace
 		// escalator-test-1.yaml: the flight starts on the Room's bottom floor and
 		// reaches its upper-right edge, where the wall into the upper Corridor is open.
 		core::Building mapBuilding("Escalator map Room landing", 16, 3);
-		mapBuilding.addRoom("Room 1", CORE_LAYER_FORE, 1, 10, 4, 2);
+		mapBuilding.addRoom("Room 1", 0, 1, 10, 4, 2);
 		mapBuilding.addCorridor(2, 14, 2);
 		mapBuilding.removeLocationWall(0, 1, CORE_SIDE_RIGHT);
 		if (!mapBuilding.canAddStaircase(1, 11, 3, CORE_SIDE_RIGHT, &diagnostic))
@@ -456,8 +456,8 @@ namespace
 	bool sharedLocationWallsCanBeOpenedAndRestored()
 	{
 		core::Building building("Shared Location walls", 8, 4);
-		auto left = building.addRoom("Left", CORE_LAYER_FORE, 1, 0, 3, 2);
-		auto right = building.addRoom("Right", CORE_LAYER_FORE, 0, 3, 3, 3);
+		auto left = building.addRoom("Left", 0, 1, 0, 3, 2);
+		auto right = building.addRoom("Right", 0, 0, 3, 3, 3);
 		building.finishBuild();
 
 		std::string diagnostic;
@@ -488,8 +488,8 @@ namespace
 	bool walkwayEditingEnforcesPlacementMovementAndOccupancyRules()
 	{
 		core::Building building("Walkway editing", 10, 4);
-		auto room = building.addRoom("Walkway room", CORE_LAYER_FORE, 0, 0, 4, 3);
-		auto otherRoom = building.addRoom("Other room", CORE_LAYER_FORE, 0, 6, 3, 3);
+		auto room = building.addRoom("Walkway room", 0, 0, 0, 4, 3);
+		auto otherRoom = building.addRoom("Other room", 0, 0, 6, 3, 3);
 		std::string diagnostic;
 		if (building.canAddSectorWalkway(room, 0, 1, &diagnostic)
 			|| !building.canAddSectorWalkway(room, 1, 1, &diagnostic)) return false;
@@ -538,7 +538,7 @@ namespace
 	bool forceBridgeObjectEditingIsAtomic()
 	{
 		core::Building building("Force Bridge editing", 10, 4);
-		auto room = building.addRoom("Bridge room", CORE_LAYER_FORE, 0, 0, 8, 3);
+		auto room = building.addRoom("Bridge room", 0, 0, 0, 8, 3);
 		building.addSectorWalkway(room, 1, 0);
 		building.addSectorWalkway(room, 1, 3);
 		building.addSectorWalkway(room, 1, 6);
@@ -585,7 +585,7 @@ namespace
 	{
 		{
 			core::Building placement("Force Bridge inferred width", 8, 4);
-			auto placementRoom = placement.addRoom("Bridge room", CORE_LAYER_FORE, 0, 0, 6, 3);
+			auto placementRoom = placement.addRoom("Bridge room", 0, 0, 0, 6, 3);
 			placement.addSectorWalkway(placementRoom, 1, 0);
 			placement.addSectorWalkway(placementRoom, 1, 3);
 			uint32_t inferredWidth = 0;
@@ -600,7 +600,7 @@ namespace
 
 		{
 			core::Building right("Right-origin Force Bridge dependencies", 9, 4);
-			auto rightRoom = right.addRoom("Bridge room", CORE_LAYER_FORE, 0, 0, 7, 3);
+			auto rightRoom = right.addRoom("Bridge room", 0, 0, 0, 7, 3);
 			right.addSectorWalkway(rightRoom, 1, 2);
 			auto rightDestination = right.addSectorWalkway(rightRoom, 1, 3);
 			auto rightOrigin = right.addSectorWalkway(rightRoom, 1, 5);
@@ -629,7 +629,7 @@ namespace
 		}
 
 		core::Building building("Force Bridge walkway dependencies", 10, 4);
-		auto room = building.addRoom("Bridge room", CORE_LAYER_FORE, 0, 0, 7, 3);
+		auto room = building.addRoom("Bridge room", 0, 0, 0, 7, 3);
 		auto origin = building.addSectorWalkway(room, 1, 0);
 		auto destination = building.addSectorWalkway(room, 1, 2);
 		building.addSectorWalkway(room, 1, 3);
@@ -657,7 +657,7 @@ namespace
 	bool roomLadderEditingCalculatesAndMaintainsWalkwayEndpoints()
 	{
 		core::Building building("Room Ladder editing", 8, 6);
-		auto room = building.addRoom("Ladder room", CORE_LAYER_FORE, 0, 0, 5, 5);
+		auto room = building.addRoom("Ladder room", 0, 0, 0, 5, 5);
 		building.addSectorWalkway(room, 2, 1);
 		building.addSectorWalkway(room, 4, 1);
 		building.addSectorWalkway(room, 3, 3);
@@ -750,7 +750,7 @@ namespace
 	{
 		core::Building building("Walkway deletion isolation", 16, 6);
 		building.addCorridor(4, 9, 4);
-		auto room = building.addRoom("Walkway room", CORE_LAYER_BACK, 3, 9, 4, 2);
+		auto room = building.addRoom("Walkway room", 1, 3, 9, 4, 2);
 		core::Building::CreateObjectResult walkways[4];
 		for (uint32_t x = 0; x < 4; ++x)
 			walkways[x] = building.addSectorWalkway(room, 1, x);
@@ -971,8 +971,8 @@ namespace
 	bool singleAgentDoorJourney(core::DoorActivationMode mode)
 	{
 		core::Building building("Single-agent door", 6, 2);
-		auto fore = building.addRoom("Fore", CORE_LAYER_FORE, 0, 0, 5, 1);
-		auto back = building.addRoom("Back", CORE_LAYER_BACK, 0, 0, 5, 1);
+		auto fore = building.addRoom("Fore", 0, 0, 0, 5, 1);
+		auto back = building.addRoom("Back", 1, 0, 0, 5, 1);
 		core::Building::CreateDoorOptions options;
 		options.activationMode = mode;
 		options.holdOpenSeconds = core::Building::getFixedTimestep() * 8.0f;
@@ -1040,12 +1040,12 @@ namespace
 		// A bulkhead is horizontal and same-layer, but still queues and waits for
 		// its fully-open resource permit.
 		core::Building bulkheadBuilding("Bulkhead threshold", 8, 2);
-		auto left = bulkheadBuilding.addRoom("Left", CORE_LAYER_FORE, 0, 0, 3, 1);
-		auto right = bulkheadBuilding.addRoom("Right", CORE_LAYER_FORE, 0, 3, 3, 1);
+		auto left = bulkheadBuilding.addRoom("Left", 0, 0, 0, 3, 1);
+		auto right = bulkheadBuilding.addRoom("Right", 0, 0, 3, 3, 1);
 		core::Building::CreateBulkheadDoorOptions bulkheadOptions;
 		bulkheadOptions.activationMode = core::DoorActivationMode::Manual;
 		bulkheadOptions.controls[0] = bulkheadOptions.controls[1] = false;
-		auto bulkhead = bulkheadBuilding.addSectorBulkheadDoor(CORE_LAYER_FORE, 0, 3,
+		auto bulkhead = bulkheadBuilding.addSectorBulkheadDoor(0, 0, 3,
 			CORE_SIDE_LEFT, bulkheadOptions);
 		bulkheadBuilding.finishBuild();
 		auto bulkheadEdge = std::find_if(bulkheadBuilding.getGraph()->getEdges().begin(),
@@ -1083,12 +1083,12 @@ namespace
 		// Traversable windows contribute conditional topology, and only the clear,
 		// fully-open state can receive a permit.
 		core::Building windowBuilding("Window threshold", 6, 2);
-		auto fore = windowBuilding.addRoom("Fore", CORE_LAYER_FORE, 0, 0, 5, 1);
-		auto back = windowBuilding.addRoom("Back", CORE_LAYER_BACK, 0, 0, 5, 1);
+		auto fore = windowBuilding.addRoom("Fore", 0, 0, 0, 5, 1);
+		auto back = windowBuilding.addRoom("Back", 1, 0, 0, 5, 1);
 		core::Building::CreateWindowOptions windowOptions;
 		windowOptions.traversable = true;
 		windowOptions.initialState = core::Window::State::Open;
-		auto window = windowBuilding.addSectorWindow(CORE_LAYER_FORE, 0, 2, 1, 1, windowOptions);
+		auto window = windowBuilding.addSectorWindow(0, 0, 2, 1, 1, windowOptions);
 		windowBuilding.finishBuild();
 		auto windowEdge = std::find_if(windowBuilding.getGraph()->getEdges().begin(),
 			windowBuilding.getGraph()->getEdges().end(), [](auto const& edge)
@@ -1128,8 +1128,8 @@ namespace
 	bool pausedTopologyRebuildIsAtomicAndCleansOwnership()
 	{
 		core::Building building("Paused topology rebuild", 8, 2);
-		auto fore = building.addRoom("Fore", CORE_LAYER_FORE, 0, 0, 7, 1);
-		auto back = building.addRoom("Back", CORE_LAYER_BACK, 0, 0, 7, 1);
+		auto fore = building.addRoom("Fore", 0, 0, 0, 7, 1);
+		auto back = building.addRoom("Back", 1, 0, 0, 7, 1);
 		core::Building::CreateDoorOptions options;
 		options.activationMode = core::DoorActivationMode::Manual;
 		options.holdOpenSeconds = core::Building::getFixedTimestep() * 8.0f;
@@ -1184,8 +1184,8 @@ namespace
 		// Candidate failure leaves the previous graph installed, the simulation
 		// paused, and removed handles permanently invalid.
 		core::Building invalid("Invalid paused rebuild", 6, 2);
-		invalid.addRoom("Fore", CORE_LAYER_FORE, 0, 0, 5, 1);
-		invalid.addRoom("Back", CORE_LAYER_BACK, 0, 0, 5, 1);
+		invalid.addRoom("Fore", 0, 0, 0, 5, 1);
+		invalid.addRoom("Back", 1, 0, 0, 5, 1);
 		auto invalidDoor = invalid.addSectorDoor(0, 2);
 		invalid.finishBuild();
 		auto previousGraph = invalid.getGraph();
@@ -1206,8 +1206,8 @@ namespace
 		// the in-sector path leading from the far Door to the controlled Door.
 		core::Building building("Opportunistic remote door", 8, 2);
 		auto corridor = building.addCorridor(0, 1, 5);
-		building.addRoom("Destination", CORE_LAYER_BACK, 0, 0, 3, 1);
-		building.addRoom("Far room", CORE_LAYER_BACK, 0, 4, 3, 1);
+		building.addRoom("Destination", 1, 0, 0, 3, 1);
+		building.addRoom("Far room", 1, 0, 4, 3, 1);
 		uint32_t markerId;
 		building.addSectorMarker(1, 0, 0.5f, &markerId);
 		core::Building::CreateDoorOptions remote;
@@ -1268,8 +1268,8 @@ namespace
 	bool remoteDoorUsesOnePhysicalOperatorAndSharedOperation()
 	{
 		core::Building building("Shared remote door", 7, 2);
-		auto fore = building.addRoom("Fore", CORE_LAYER_FORE, 0, 0, 6, 1);
-		auto back = building.addRoom("Back", CORE_LAYER_BACK, 0, 0, 6, 1);
+		auto fore = building.addRoom("Fore", 0, 0, 0, 6, 1);
+		auto back = building.addRoom("Back", 1, 0, 0, 6, 1);
 		core::Building::CreateDoorOptions options;
 		options.activationMode = core::DoorActivationMode::RemoteControlled;
 		options.controls[0] = true;
@@ -1331,8 +1331,8 @@ namespace
 	bool remoteDoorWithoutReachableControlIsUnavailable()
 	{
 		core::Building building("Uncontrolled remote door", 6, 2);
-		auto fore = building.addRoom("Fore", CORE_LAYER_FORE, 0, 0, 5, 1);
-		building.addRoom("Back", CORE_LAYER_BACK, 0, 0, 5, 1);
+		auto fore = building.addRoom("Fore", 0, 0, 0, 5, 1);
+		building.addRoom("Back", 1, 0, 0, 5, 1);
 		core::Building::CreateDoorOptions options;
 		options.activationMode = core::DoorActivationMode::RemoteControlled;
 		options.controls[0] = false;
@@ -1357,8 +1357,8 @@ namespace
 	bool fairDoorQueuesServeBothSidesInStableOrder()
 	{
 		core::Building building("Fair two-sided door", 8, 2);
-		auto fore = building.addRoom("Fore queue", CORE_LAYER_FORE, 0, 0, 7, 1);
-		auto back = building.addRoom("Back queue", CORE_LAYER_BACK, 0, 0, 7, 1);
+		auto fore = building.addRoom("Fore queue", 0, 0, 0, 7, 1);
+		auto back = building.addRoom("Back queue", 1, 0, 0, 7, 1);
 		core::Building::CreateDoorOptions options;
 		options.activationMode = core::DoorActivationMode::Manual;
 		auto created = building.addSectorDoor(0, 3, options);
@@ -1431,8 +1431,8 @@ namespace
 	bool queuePositionsPreferObjectProximityThenAgentProximity()
 	{
 		core::Building building("Nearest queue position", 8, 2);
-		auto fore = building.addRoom("Queue room", CORE_LAYER_FORE, 0, 0, 7, 1);
-		building.addRoom("Destination", CORE_LAYER_BACK, 0, 0, 7, 1);
+		auto fore = building.addRoom("Queue room", 0, 0, 0, 7, 1);
+		building.addRoom("Destination", 1, 0, 0, 7, 1);
 		building.addSectorDoor(0, 3);
 		building.finishBuild();
 		auto edge = *std::find_if(building.getGraph()->getEdges().begin(), building.getGraph()->getEdges().end(),
@@ -1483,8 +1483,8 @@ namespace
 	bool doorQueueRequestsBeforeOccupiedTail()
 	{
 		core::Building building("Early Door queue", 8, 2);
-		auto fore = building.addRoom("Approach", CORE_LAYER_FORE, 0, 0, 7, 1);
-		building.addRoom("Destination", CORE_LAYER_BACK, 0, 0, 7, 1);
+		auto fore = building.addRoom("Approach", 0, 0, 0, 7, 1);
+		building.addRoom("Destination", 1, 0, 0, 7, 1);
 		core::Building::CreateDoorOptions options;
 		options.activationMode = core::DoorActivationMode::Automatic;
 		auto created = building.addSectorDoor(0, 3, options);
@@ -1532,8 +1532,8 @@ namespace
 	bool queuedCancellationReleasesAndAdvancesPositions()
 	{
 		core::Building building("Queue cancellation", 8, 2);
-		auto fore = building.addRoom("Queue room", CORE_LAYER_FORE, 0, 0, 7, 1);
-		building.addRoom("Destination", CORE_LAYER_BACK, 0, 0, 7, 1);
+		auto fore = building.addRoom("Queue room", 0, 0, 0, 7, 1);
+		building.addRoom("Destination", 1, 0, 0, 7, 1);
 		auto created = building.addSectorDoor(0, 3);
 		building.finishBuild();
 		auto edge = *std::find_if(building.getGraph()->getEdges().begin(), building.getGraph()->getEdges().end(),
@@ -1578,8 +1578,8 @@ namespace
 	bool resilientWaitingRetainsPriorityAndExpiresPermits()
 	{
 		core::Building building("Resilient door waiting", 8, 2);
-		auto fore = building.addRoom("Waiting side", CORE_LAYER_FORE, 0, 0, 7, 1);
-		building.addRoom("Destination side", CORE_LAYER_BACK, 0, 0, 7, 1);
+		auto fore = building.addRoom("Waiting side", 0, 0, 0, 7, 1);
+		building.addRoom("Destination side", 1, 0, 0, 7, 1);
 		auto created = building.addSectorDoor(0, 3);
 		building.finishBuild();
 		auto initialEdge = *std::find_if(building.getGraph()->getEdges().begin(), building.getGraph()->getEdges().end(),
@@ -1687,8 +1687,8 @@ namespace
 	bool wideDoorLanesAndGracefulDisableAreSafe()
 	{
 		core::Building building("Wide safe door", 9, 2);
-		auto fore = building.addRoom("Wide fore", CORE_LAYER_FORE, 0, 0, 8, 1);
-		auto back = building.addRoom("Wide back", CORE_LAYER_BACK, 0, 0, 8, 1);
+		auto fore = building.addRoom("Wide fore", 0, 0, 0, 8, 1);
+		auto back = building.addRoom("Wide back", 1, 0, 0, 8, 1);
 		core::Building::CreateDoorOptions options;
 		options.width = 2;
 		options.crossingLanes = 2;
@@ -1743,8 +1743,8 @@ namespace
 	bool doorLeasesAndSensorObservationsPreventUnsafeClosure()
 	{
 		core::Building building("Door observation safety", 7, 2);
-		auto fore = building.addRoom("Sensor fore", CORE_LAYER_FORE, 0, 0, 6, 1);
-		building.addRoom("Sensor back", CORE_LAYER_BACK, 0, 0, 6, 1);
+		auto fore = building.addRoom("Sensor fore", 0, 0, 0, 6, 1);
+		building.addRoom("Sensor back", 1, 0, 0, 6, 1);
 		core::Building::CreateDoorOptions options;
 		options.activationMode = core::DoorActivationMode::Automatic;
 		options.holdOpenSeconds = core::Building::getFixedTimestep() * 2.0f;
@@ -1954,7 +1954,7 @@ namespace
 	bool extensibleForceBridgeCompletesThroughPhysicalControl()
 	{
 		core::Building building("Extensible force bridge", 6, 4);
-		auto room = building.addRoom("Bridge room", CORE_LAYER_BACK, 0, 0, 4, 3);
+		auto room = building.addRoom("Bridge room", 1, 0, 0, 4, 3);
 		building.addSectorWalkway(room, 1, 0);
 		building.addSectorWalkway(room, 1, 2);
 		building.addSectorWalkway(room, 1, 3);
@@ -2281,7 +2281,7 @@ namespace
 	{
 		{
 			core::Building offset("PlatformLift initial floor", 8, 6);
-			auto offsetRoom = offset.addRoom("Offset room", CORE_LAYER_FORE, 1, 0, 7, 4);
+			auto offsetRoom = offset.addRoom("Offset room", 0, 1, 0, 7, 4);
 			offset.addSectorWalkway(offsetRoom, 2, 2);
 			offset.addSectorWalkway(offsetRoom, 2, 3);
 			core::Building::CreateLiftOptions offsetOptions;
@@ -2294,14 +2294,14 @@ namespace
 			auto resource = std::find_if(snapshot.traversalResources.begin(), snapshot.traversalResources.end(),
 				[&](auto const& value) { return value.id == placed.traversalResource; });
 			std::shared_ptr<const core::SectorObject> hitObject;
-			auto hit = offset.getObjectAtPosition(CORE_LAYER_FORE, 2.5f, 0.975f, &hitObject);
+			auto hit = offset.getObjectAtPosition(0, 2.5f, 0.975f, &hitObject);
 			if (!object || std::abs(object->getLift()->getPosition().y - 1.0f) > 0.001f
 				|| resource == snapshot.traversalResources.end()
 				|| std::abs(resource->liftPosition - 1.0f) > 0.001f
 				|| hit.get() != object->getLift().get() || hitObject != object) return false;
 		}
 		core::Building building("PlatformLift authoring", 8, 5);
-		auto room = building.addRoom("Lift room", CORE_LAYER_FORE, 0, 0, 7, 4);
+		auto room = building.addRoom("Lift room", 0, 0, 0, 7, 4);
 		building.addSectorWalkway(room, 1, 2);
 		building.addSectorWalkway(room, 1, 3);
 		building.addSectorWalkway(room, 3, 2);
@@ -2340,7 +2340,7 @@ namespace
 		if (findObject(core::SectorObjectType::Lift, 2, 0) != ~0u) return false;
 
 		core::Building resized("PlatformLift resize", 8, 5);
-		auto resizedRoom = resized.addRoom("Lift room", CORE_LAYER_FORE, 0, 0, 7, 4);
+		auto resizedRoom = resized.addRoom("Lift room", 0, 0, 0, 7, 4);
 		resized.addSectorWalkway(resizedRoom, 1, 2); resized.addSectorWalkway(resizedRoom, 1, 3);
 		resized.addSectorWalkway(resizedRoom, 3, 2); resized.addSectorWalkway(resizedRoom, 3, 3);
 		options.stopOffsets = { 0, 1, 3 };
@@ -2364,7 +2364,7 @@ namespace
 				object && object->getObjectType() == core::SectorObjectType::Lift) return false;
 
 		core::Building moving("PlatformLift movement", 9, 5);
-		auto movingRoom = moving.addRoom("Lift room", CORE_LAYER_FORE, 0, 0, 8, 4);
+		auto movingRoom = moving.addRoom("Lift room", 0, 0, 0, 8, 4);
 		moving.addSectorWalkway(movingRoom, 1, 1); moving.addSectorWalkway(movingRoom, 1, 2);
 		moving.addSectorWalkway(movingRoom, 2, 3); moving.addSectorWalkway(movingRoom, 2, 4);
 		options.stopOffsets = { 0, 1 };
@@ -2396,7 +2396,7 @@ namespace
 	bool openPlatformLiftUsesVirtualBoundaryAndTransportPolicy()
 	{
 		core::Building building("Open platform lift", 7, 5);
-		auto room = building.addRoom("Platform room", CORE_LAYER_FORE, 0, 0, 6, 4);
+		auto room = building.addRoom("Platform room", 0, 0, 0, 6, 4);
 		core::Building::CreateLiftOptions options;
 		options.cellsWide = 1;
 		options.stopOffsets = { 0, 2 };
@@ -2513,7 +2513,7 @@ namespace
 	bool openPlatformLiftUsesOneJourneyAcrossIntermediateStops()
 	{
 		core::Building building("Multi-stop open platform lift", 7, 5);
-		auto room = building.addRoom("Platform room", CORE_LAYER_FORE, 0, 0, 6, 4);
+		auto room = building.addRoom("Platform room", 0, 0, 0, 6, 4);
 		core::Building::CreateLiftOptions options;
 		options.cellsWide = 1;
 		options.stopOffsets = { 0, 1, 2 };
@@ -3072,8 +3072,8 @@ namespace
 	bool shuttlePassengerWalksToForwardInteriorSpot()
 	{
 		core::Building building("Shuttle interior walking", 16, 2);
-		auto left = building.addRoom("Left platform", CORE_LAYER_FORE, 0, 0, 4, 1);
-		auto right = building.addRoom("Right platform", CORE_LAYER_FORE, 0, 10, 4, 1);
+		auto left = building.addRoom("Left platform", 0, 0, 0, 4, 1);
+		auto right = building.addRoom("Right platform", 0, 0, 10, 4, 1);
 		core::Building::CreateShuttleOptions options{ 1, 4, { 0, 10 }, 0 };
 		options.capacity = 3;
 		options.doorMask = 0b0001;
@@ -3139,8 +3139,8 @@ namespace
 	bool singleCarriageShuttleUsesTransportJourneyProtocol()
 	{
 		core::Building building("Single carriage shuttle", 12, 2);
-		auto left = building.addRoom("Left platform", CORE_LAYER_FORE, 0, 0, 3, 1);
-		auto right = building.addRoom("Right platform", CORE_LAYER_FORE, 0, 7, 3, 1);
+		auto left = building.addRoom("Left platform", 0, 0, 0, 3, 1);
+		auto right = building.addRoom("Right platform", 0, 0, 7, 3, 1);
 		core::Building::CreateShuttleOptions options{ 1, 3, { 0, 7 }, 0 };
 		options.capacity = 2;
 		options.minimumDwellSeconds = 0.1f;
@@ -3355,10 +3355,10 @@ namespace
 	bool multiCarriageShuttleCoordinatesIndependentCarriagesAndAccessZones()
 	{
 		core::Building building("Coupled shuttle", 20, 2);
-		auto leftA = building.addRoom("Left A", CORE_LAYER_FORE, 0, 0, 3, 1);
-		auto leftB = building.addRoom("Left B", CORE_LAYER_FORE, 0, 4, 3, 1);
-		auto rightA = building.addRoom("Right A", CORE_LAYER_FORE, 0, 12, 3, 1);
-		auto rightB = building.addRoom("Right B", CORE_LAYER_FORE, 0, 16, 3, 1);
+		auto leftA = building.addRoom("Left A", 0, 0, 0, 3, 1);
+		auto leftB = building.addRoom("Left B", 0, 0, 4, 3, 1);
+		auto rightA = building.addRoom("Right A", 0, 0, 12, 3, 1);
+		auto rightB = building.addRoom("Right B", 0, 0, 16, 3, 1);
 		core::Building::CreateShuttleOptions options{ 2, 3, { 0, 12 }, 0 };
 		options.capacity = 1;
 		options.minimumDwellSeconds = 0.1f;
@@ -3532,7 +3532,7 @@ namespace
 		building.addCorridor(3, 0, 8);
 		building.finishBuild();
 		lift = std::dynamic_pointer_cast<const core::LiftTransit>(
-			building.getSectorAtPosition(CORE_LAYER_BACK, 2.0f, 0.0f));
+			building.getSectorAtPosition(1, 2.0f, 0.0f));
 		if (!lift || lift->getNumStops() != 2) return false; // Corridors do not create stops.
 		uint32_t landingX = 0, landingWidth = 0;
 		if (!building.getLiftLandingGeometry(3, 3, landingX, landingWidth)
@@ -3540,7 +3540,7 @@ namespace
 		auto added = building.addSectorDoor(3, 3);
 		if (!building.isLiftOwnedDoor(added.door.sector->getObject(added.door.index))) return false;
 		lift = std::dynamic_pointer_cast<const core::LiftTransit>(
-			building.getSectorAtPosition(CORE_LAYER_BACK, 2.0f, 0.0f));
+			building.getSectorAtPosition(1, 2.0f, 0.0f));
 		if (!lift || lift->getNumStops() != 3) return false;
 
 		auto move = building.planResizeLift(lift->getIndex(), 5, 0, 2, 6);
@@ -3554,7 +3554,7 @@ namespace
 			auto floor = (uint32_t)((int)lift->getStop(stop).sector->getCellY()
 				+ lift->getStop(stop).sectorOffsetY);
 			auto const& cell = static_cast<core::Building const&>(building)
-				.getLayer(CORE_LAYER_FORE)->getCellDefinition(5, floor);
+				.getLayer(0)->getCellDefinition(5, floor);
 			auto door = building.getSector(cell.sectorIndex)->getObject(cell.sectorObjectIndex);
 			if (!building.isLiftOwnedDoor(door)) return false;
 		}
@@ -3566,7 +3566,7 @@ namespace
 		auto remove = building.planRemoveLift(lift->getIndex());
 		if (!remove.valid) return false;
 		building.applyLiftEdit(remove);
-		return !building.getSectorAtPosition(CORE_LAYER_BACK, 5.0f, 0.0f);
+		return !building.getSectorAtPosition(1, 5.0f, 0.0f);
 	}
 
 	bool editorShuttleAuthoringReconcilesOwnedLandings()
@@ -3617,11 +3617,11 @@ namespace
 		movedIndex = building.applyShuttleEdit(removeStop);
 		shuttle = dynamic_pointer_cast<const core::ShuttleTransit>(building.getSector(movedIndex));
 		if (!shuttle || shuttle->getNumStops() != 2) return false;
-		building.addSectorWindow(CORE_LAYER_FORE, 1, 10, 1, 1);
+		building.addSectorWindow(0, 1, 10, 1, 1);
 		auto remove = building.planRemoveShuttle(movedIndex);
 		if (!remove.valid) return false;
 		building.applyShuttleEdit(remove);
-		if (building.getSectorAtPosition(CORE_LAYER_BACK, 1.0f, 1.0f)) return false;
+		if (building.getSectorAtPosition(1, 1.0f, 1.0f)) return false;
 
 		core::Building manyDoors("Schematic Shuttle doors", 24, 2);
 		manyDoors.addCorridor(0, 0, 23);
@@ -3657,8 +3657,8 @@ namespace
 	bool unavailableDoorRejectsTraversal()
 	{
 		core::Building building("Unavailable door", 6, 2);
-		auto fore = building.addRoom("Fore", CORE_LAYER_FORE, 0, 0, 5, 1);
-		building.addRoom("Back", CORE_LAYER_BACK, 0, 0, 5, 1);
+		auto fore = building.addRoom("Fore", 0, 0, 0, 5, 1);
+		building.addRoom("Back", 1, 0, 0, 5, 1);
 		core::Building::CreateDoorOptions options;
 		options.activationMode = core::DoorActivationMode::Unavailable;
 		building.addSectorDoor(0, 2, options);
