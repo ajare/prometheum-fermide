@@ -2,10 +2,20 @@
 
 #include <cstdint>
 #include <memory>
+#include <vector>
 
 #include "core/Building.h"
+#include "core/Defines.h"
 #include "core/Graph.h"
+#include "core/LadderTransit.h"
+#include "core/LiftTransit.h"
+#include "core/Location.h"
+#include "core/Sector.h"
 #include "core/SectorType.h"
+#include "core/ShuttleTransit.h"
+#include "core/StaircaseTransit.h"
+#include "core/StairwellTransit.h"
+#include "core/Vector2.h"
 
 
 #define RENDER_VERTEX_SIZE						5
@@ -59,11 +69,38 @@ inline bool isDrawnSolid(LayerRenderStyle style)
 }
 
 // Transit geometry is drawn by the selected Layer's passes. The wireframe overlay
-// contributes outlines, never the Transit itself, which would otherwise paint over
-// the selected Layer.
+// contributes outlines, never the Transit's own filled geometry, which would
+// otherwise paint over the selected Layer.
 inline bool shouldRenderLadderGeometry(LayerRenderStyle style)
 {
 	return isDrawnSolid(style);
+}
+
+//
+// The world-space rectangle through which one Transit on the Layer behind the
+// selection may be drawn.
+//
+// A Transit never draws itself across the selected Layer. It is visible only
+// where the selected Layer's Locations open onto it, which is the clipping the
+// two-layer Fore/Back renderer already applied to Back-layer Transits.
+//
+struct TransitAperture
+{
+	core::Vector2 min;
+	core::Vector2 max;
+
+	// The Location on the selected Layer that this aperture opens through. Null
+	// when the aperture belongs to the Transit alone, as a Stairwell deck does.
+	std::shared_ptr<const core::Sector> location;
+};
+
+// True while Transit geometry must be clipped to its apertures. Only the selected
+// Layer draws its own Transits unclipped; the Layer directly behind is drawn
+// either solid through an aperture or as a wireframe overlay, and both are
+// clipped.
+inline bool shouldClipTransitToApertures(LayerRenderStyle style)
+{
+	return style == LayerRenderStyle::Aperture || style == LayerRenderStyle::Wireframe;
 }
 
 inline bool shouldRenderStairwellGeometry(LayerRenderStyle style)
@@ -86,6 +123,156 @@ inline bool shouldRenderStaircaseAfterSector(core::SectorType sectorType)
 	// The selected Layer's Transit pass runs after Locations. Both Corridors and
 	// Rooms are Location sectors and may expose part of a Staircase.
 	return sectorType == core::SectorType::Location;
+}
+
+// The apertures that one Transit on the Layer directly behind `viewLayer` has on
+// `viewLayer`. Each Transit type exposes its own aperture geometry:
+//
+//   Ladder     the bounds of each landing Location
+//   Lift       the doorway rectangle at each landing
+//   Shuttle    the doorway rectangle at each landing
+//   Stairwell  the doorway rectangle of each deck
+//   Staircase  the bounds of every Location on the selected Layer
+//
+// `viewLocations` is the selected Layer's Sectors, already culled to the
+// viewport. A Transit that does not sit directly behind `viewLayer`, or that has
+// no landing among those Locations, exposes no aperture and so is not drawn at
+// all.
+inline std::vector<TransitAperture> transitApertures(
+	std::shared_ptr<const core::Sector> const& transit,
+	uint32_t viewLayer,
+	std::vector<std::shared_ptr<const core::Sector>> const& viewLocations)
+{
+	std::vector<TransitAperture> apertures;
+
+	if (!transit || transit->getLayerIndex() != core::layerBehind(viewLayer))
+	{
+		return apertures;
+	}
+
+	auto landsOnViewLayer = [viewLayer](std::shared_ptr<const core::Sector> const& sector)
+	{
+		return sector && sector->getLayerIndex() == viewLayer;
+	};
+
+	auto addLocationAperture = [&](std::shared_ptr<const core::Sector> const& location)
+	{
+		if (!landsOnViewLayer(location))
+		{
+			return;
+		}
+
+		TransitAperture aperture;
+		aperture.location = location;
+		location->getBounds(aperture.min, aperture.max);
+		apertures.push_back(aperture);
+	};
+
+	auto addDoorwayAperture = [&](std::shared_ptr<const core::Sector> const& location,
+		float centerX, float y, float width, float height)
+	{
+		if (!landsOnViewLayer(location))
+		{
+			return;
+		}
+
+		apertures.push_back({
+			{ centerX - width * 0.5f, y },
+			{ centerX + width * 0.5f, y + height },
+			location });
+	};
+
+	switch (transit->getType())
+	{
+	case core::SectorType::Ladder:
+		if (auto const* ladder = dynamic_cast<core::LadderTransit const*>(transit.get()))
+		{
+			for (uint32_t stop = 0; stop < ladder->getNumStops(); ++stop)
+			{
+				addLocationAperture(ladder->getStop(stop).sector);
+			}
+		}
+		break;
+
+	case core::SectorType::Lift:
+		if (auto const* lift = dynamic_cast<core::LiftTransit const*>(transit.get()))
+		{
+			for (uint32_t stop = 0; stop < lift->getNumStops(); ++stop)
+			{
+				auto const& landing = lift->getStop(stop);
+				if (!landsOnViewLayer(landing.sector))
+				{
+					continue;
+				}
+
+				auto const cellX = (float)((int)landing.sector->getCellX() + landing.sectorOffsetX);
+				auto const cellY = (float)((int)landing.sector->getCellY() + landing.sectorOffsetY);
+				auto const width = (float)lift->getCellsWide()
+					- CORE_LIFT_DOORWAY_BORDER * 2.0f;
+
+				addDoorwayAperture(landing.sector, cellX + (float)lift->getCellsWide() * 0.5f,
+					cellY, width, CORE_LIFT_DOORWAY_HEIGHT);
+			}
+		}
+		break;
+
+	case core::SectorType::Shuttle:
+		if (auto const* shuttle = dynamic_cast<core::ShuttleTransit const*>(transit.get()))
+		{
+			for (uint32_t stop = 0; stop < shuttle->getNumStops(); ++stop)
+			{
+				auto const& landing = shuttle->getStop(stop);
+				if (!landsOnViewLayer(landing.sector))
+				{
+					continue;
+				}
+
+				auto const cellX = (float)((int)landing.sector->getCellX() + landing.sectorOffsetX);
+				auto const cellY = (float)((int)landing.sector->getCellY() + landing.sectorOffsetY);
+
+				addDoorwayAperture(landing.sector, cellX + 0.5f, cellY,
+					1.0f - CORE_SHUTTLE_DOORWAY_BORDER * 2.0f, CORE_SHUTTLE_DOORWAY_HEIGHT);
+			}
+		}
+		break;
+
+	case core::SectorType::Stairwell:
+		if (auto const* stairwell = dynamic_cast<core::StairwellTransit const*>(transit.get()))
+		{
+			for (uint32_t deck = 0; deck < stairwell->getDecksHigh(); ++deck)
+			{
+				// A deck opens at the shaft's own column rather than at a landing's
+				// cell, so the aperture carries no Location of its own.
+				apertures.push_back({
+					{ (float)stairwell->getCellX() + 1.0f
+						- CORE_STAIRWELL_DOORWAY_WIDTH * 0.5f,
+						(float)stairwell->getCellY() + (float)deck },
+					{ (float)stairwell->getCellX() + 1.0f
+						+ CORE_STAIRWELL_DOORWAY_WIDTH * 0.5f,
+						(float)stairwell->getCellY() + (float)deck + CORE_STAIRWELL_DOORWAY_HEIGHT },
+					deck < stairwell->getNumStops() ? stairwell->getStop(deck).sector : nullptr });
+			}
+		}
+		break;
+
+	case core::SectorType::Staircase:
+		for (auto const& location : viewLocations)
+		{
+			if (!std::dynamic_pointer_cast<const core::Location>(location)
+				|| !shouldRenderStaircaseAfterSector(location->getType()))
+			{
+				continue;
+			}
+
+			addLocationAperture(location);
+		}
+		break;
+
+	default:
+		break;
+	}
+
+	return apertures;
 }
 
 // Occupants follow the same rule as their Sector's geometry. The wireframe overlay

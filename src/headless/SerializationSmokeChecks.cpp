@@ -1212,6 +1212,172 @@ agents: []
 			"Deleted Stairwell still occupies the Back layer");
 	}
 
+	// A Transit on the Layer behind the selection is visible only through the
+	// apertures the selected Layer's Locations give it. Each Transit type exposes
+	// its own aperture geometry, and a Transit with no aperture is not drawn.
+	void transitsOnTheLayerBehindAreOnlyDrawnThroughApertures()
+	{
+		require(!shouldClipTransitToApertures(LayerRenderStyle::Solid),
+			"The selected Layer clips its own Transits to apertures");
+		require(shouldClipTransitToApertures(LayerRenderStyle::Aperture),
+			"A Transit seen through an aperture is drawn unclipped");
+		require(shouldClipTransitToApertures(LayerRenderStyle::Wireframe),
+			"The wireframe overlay draws the Layer behind's Transits unclipped");
+		require(!shouldClipTransitToApertures(LayerRenderStyle::Hidden),
+			"A hidden Layer is clipped instead of not drawn");
+
+		auto opensInsideLanding = [](TransitAperture const& aperture)
+		{
+			if (!aperture.location) return false;
+			core::Vector2 lo, hi;
+			aperture.location->getBounds(lo, hi);
+			return aperture.min.x >= lo.x && aperture.max.x <= hi.x
+				&& aperture.min.y >= lo.y && aperture.max.y <= hi.y;
+		};
+
+		// A Lift opens one doorway per landing, inset from the shaft's cells.
+		{
+			core::Building building("Lift apertures", 16, 3);
+			auto room = building.addRoom("Lift Hall", 0, 0, 0, 16, 3);
+			for (uint32_t deck = 1; deck < 3; ++deck)
+				for (uint32_t x = 0; x < 16; ++x)
+					building.addSectorWalkway(room, deck, x);
+			core::Building::CreateLiftOptions options;
+			options.cellsWide = 1;
+			options.decksHigh = 3;
+			options.stopOffsets = { 0, 1, 2 };
+			auto created = building.addLift(0, 8, options);
+			building.finishBuild();
+
+			auto const transit = created.lift.sector;
+			auto const apertures = transitApertures(transit, 0, building.getSectors(0));
+			require(apertures.size() == 3,
+				"A three-stop Lift does not expose one aperture per landing");
+			for (auto const& aperture : apertures)
+			{
+				require(std::abs((aperture.max.x - aperture.min.x)
+						- (1.0f - CORE_LIFT_DOORWAY_BORDER * 2.0f)) < 0.0001f
+						&& std::abs((aperture.max.y - aperture.min.y)
+							- CORE_LIFT_DOORWAY_HEIGHT) < 0.0001f,
+					"A Lift aperture is not its landing doorway");
+				require(opensInsideLanding(aperture),
+					"A Lift aperture opens outside the Location it lands in");
+			}
+			require(std::abs(apertures[1].min.y - apertures[0].min.y - 1.0f) < 0.0001f,
+				"Lift landing apertures do not step one deck each");
+			require(transitApertures(transit, 1, building.getSectors(1)).empty(),
+				"A Lift exposes apertures on a Layer it is not directly behind");
+		}
+
+		// A Shuttle opens one doorway per landing, one cell wide.
+		{
+			core::Building building("Shuttle apertures", 32, 3);
+			building.addCorridor(0, 0, 31);
+			building.addCorridor(1, 0, 31);
+			core::Building::CreateShuttleOptions options{ 2, 3, { 0, 18 }, 0 };
+			options.capacity = 2;
+			options.doorMask = 0b101;
+			auto created = building.addShuttle(0, 0, 27, options);
+			building.finishBuild();
+
+			auto const transit = created.shuttle.sector;
+			auto const apertures = transitApertures(transit, 0, building.getSectors(0));
+			require(apertures.size() == 2,
+				"A two-stop Shuttle does not expose one aperture per landing");
+			for (auto const& aperture : apertures)
+			{
+				require(std::abs((aperture.max.x - aperture.min.x)
+						- (1.0f - CORE_SHUTTLE_DOORWAY_BORDER * 2.0f)) < 0.0001f
+						&& std::abs((aperture.max.y - aperture.min.y)
+							- CORE_SHUTTLE_DOORWAY_HEIGHT) < 0.0001f,
+					"A Shuttle aperture is not its landing doorway");
+				require(opensInsideLanding(aperture),
+					"A Shuttle aperture opens outside the Location it lands in");
+			}
+		}
+
+		// A Ladder opens the whole of each Location it lands in.
+		{
+			core::Building building("Ladder apertures", 10, 5);
+			for (uint32_t y = 0; y < 5; ++y) building.addCorridor(y, 0, 10);
+			auto created = building.addLadder(0, 1, { 3, false, true });
+			building.finishBuild();
+
+			auto const transit = created.ladder.sector;
+			auto const apertures = transitApertures(transit, 0, building.getSectors(0));
+			require(apertures.size() == 2,
+				"A Ladder does not expose one aperture per landing Location");
+			require(apertures[0].location != apertures[1].location,
+				"A Ladder exposes the same Location twice instead of both endpoints");
+			for (auto const& aperture : apertures)
+			{
+				core::Vector2 lo, hi;
+				aperture.location->getBounds(lo, hi);
+				require(aperture.min.x == lo.x && aperture.min.y == lo.y
+					&& aperture.max.x == hi.x && aperture.max.y == hi.y,
+					"A Ladder aperture is not the full bounds of its landing Location");
+			}
+			require(apertures.size() < building.getSectors(0).size(),
+				"A Ladder is clipped by every Location rather than only its landings");
+		}
+
+		// A Stairwell opens one doorway per deck of its own shaft.
+		{
+			core::Building building("Stairwell apertures", 10, 5);
+			for (uint32_t y = 0; y < 5; ++y) building.addCorridor(y, 0, 10);
+			auto created = building.addStairwell(0, 1,
+				core::Building::CreateStairwellOptions{ 3, CORE_SIDE_LEFT });
+			building.finishBuild();
+
+			auto const transit = building.getSector(created.sectorIndex);
+			auto const apertures = transitApertures(transit, 0, building.getSectors(0));
+			require(apertures.size() == 3,
+				"A three-deck Stairwell does not expose one aperture per deck");
+			for (auto const& aperture : apertures)
+				require(std::abs((aperture.max.x - aperture.min.x)
+						- CORE_STAIRWELL_DOORWAY_WIDTH) < 0.0001f
+						&& std::abs((aperture.max.y - aperture.min.y)
+							- CORE_STAIRWELL_DOORWAY_HEIGHT) < 0.0001f,
+					"A Stairwell deck aperture is not the shaft doorway size");
+			require(std::abs(apertures[1].min.y - apertures[0].min.y - 1.0f) < 0.0001f,
+				"Stairwell deck apertures do not step one deck each");
+		}
+
+		// A Staircase crosses the whole selected Layer, so every Location there
+		// clips it.
+		{
+			core::Building building("Staircase apertures", 6, 3);
+			building.addCorridor(0, 0, 1);
+			building.addCorridor(0, 3, 1);
+			building.addCorridor(1, 0, 1);
+			building.addCorridor(1, 3, 1);
+			auto const index = building.addStaircase(0, 0, 4, CORE_SIDE_RIGHT, 1.25f);
+			building.finishBuild();
+
+			auto const viewSectors = building.getSectors(0);
+			uint32_t locations{ 0 };
+			for (auto const& sector : viewSectors)
+				if (sector->getType() == core::SectorType::Location) ++locations;
+			auto const apertures = transitApertures(building.getSector(index), 0, viewSectors);
+			require(apertures.size() == locations,
+				"A Staircase is not clipped by every Location on the selected Layer");
+			for (auto const& aperture : apertures)
+				require(opensInsideLanding(aperture),
+					"A Staircase aperture is not a Location on the selected Layer");
+		}
+
+		// A Location is not a Transit and never exposes an aperture.
+		{
+			core::Building building("Locations are not Transits", 4, 2);
+			auto const corridor = building.addCorridor(0, 0, 4);
+			building.finishBuild();
+			require(transitApertures(building.getSector(corridor), 0, building.getSectors(0)).empty(),
+				"A Location exposes a Transit aperture of its own");
+			require(transitApertures(nullptr, 0, building.getSectors(0)).empty(),
+				"A missing Sector exposes a Transit aperture");
+		}
+	}
+
 	void bulkheadDoorsSupportIndependentObjectEditing()
 	{
 		core::Building building("Bulkhead editor", 7, 2);
@@ -1423,6 +1589,7 @@ void runSerializationSmokeChecks()
 {
 	layerHelperApiIsConsistentWithTwoLayerConstants();
 	onlyTheSelectedLayerAndTheLayerBehindAreDrawn();
+	transitsOnTheLayerBehindAreOnlyDrawnThroughApertures();
 	stringYamlRoundTripsPrimitiveValues();
 	fileYamlRoundTrips();
 	malformedValuesAndInvalidUsageThrowUsefulErrors();

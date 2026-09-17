@@ -70,14 +70,9 @@ ImColor SelectedColour = ImColor(255, 255, 0);
 void renderSector(shared_ptr<const core::Sector> sector, uint32_t layer, LayerRenderStyle style, bool renderEdges, ImColor colour, ImDrawList* drawList);
 void renderSectorAgents(shared_ptr<const core::Sector> sector, ImDrawList* drawList);
 
-void renderLadderTransit(shared_ptr<const core::LadderTransit> ladderTransit, uint32_t layer,
-	LayerRenderStyle style, ImColor colour, ImDrawList* drawList);
+void renderTransitThroughApertures(shared_ptr<const core::Sector> const& transit, uint32_t behindLayer,
+	LayerRenderStyle style, std::vector<TransitAperture> const& apertures, ImDrawList* drawList);
 
-void renderLiftTransit(shared_ptr<const core::LiftTransit> liftTransit, uint32_t layer, LayerRenderStyle style, bool selected, ImColor colour, ImDrawList* drawList);
-
-void renderShuttleTransit(shared_ptr<const core::ShuttleTransit> shuttleTransit, uint32_t layer, LayerRenderStyle style, bool selected, ImColor colour, ImDrawList* drawList);
-
-void renderStairwellTransit(shared_ptr<const core::StairwellTransit> stairwellTransit, uint32_t layer, LayerRenderStyle style, ImColor colour, ImDrawList* drawList);
 void renderStaircase(shared_ptr<const core::Staircase> staircase, ImDrawList* drawList);
 
 void transformPosition(core::Vector2& p)
@@ -1220,7 +1215,11 @@ void renderSector(shared_ptr<const core::Sector> sector, uint32_t layer, LayerRe
 		break;
 
 	case core::SectorType::Lift:
-		renderLift(static_pointer_cast<const core::LiftTransit>(sector)->getLift(), layer, style, selected, drawList);
+		// Like every other Transit, a wireframe Layer contributes the Sector outline
+		// only. Painting the car filled here leaked it over the selected Layer.
+		if (isDrawnSolid(style))
+			renderLift(static_pointer_cast<const core::LiftTransit>(sector)->getLift(),
+				layer, style, selected, drawList);
 		break;
 
 	case core::SectorType::Shuttle:
@@ -1321,189 +1320,78 @@ void renderLocationContentAboveTransit(shared_ptr<const core::Sector> const& loc
 	renderSectorAgents(location, drawList);
 }
 
-void renderLadderTransit(shared_ptr<const core::LadderTransit> ladderTransit, uint32_t layer,
-	LayerRenderStyle style, ImColor colour, ImDrawList* drawList)
+//
+// Draws one Transit inside a single aperture of the selected Layer. Everything the
+// Transit contributes - Sector fill or outline, geometry, thresholds, and its own
+// Agents - is clipped to that aperture by the caller, so a Transit on the Layer
+// behind never paints over the Layer in front of it.
+//
+void renderTransitInAperture(shared_ptr<const core::Sector> const& transit, uint32_t behindLayer,
+	LayerRenderStyle style, TransitAperture const& aperture, ImDrawList* drawList)
 {
-	// Transit Ladders go behind the Location, so we need to render in two goes.  First, clipping against
-	// the upper Location, then against the lower.  And, despite being on the Layer behind, these need to
-	// be rendered as part of the Layer in front.
+	auto const colour = style == LayerRenderStyle::Solid ? ForeLocationColour : BackLocationColour;
 
-	// Clip against upper Sector, then lower.
-	if (style == LayerRenderStyle::Aperture)
+	// A Staircase is drawn as its own polyline across the Location it crosses rather
+	// than as a filled Sector, so it never contributes a Sector fill through an
+	// aperture. The wireframe overlay still outlines its footprint.
+	if (transit->getType() == core::SectorType::Staircase && style != LayerRenderStyle::Wireframe)
 	{
-		core::Vector2 locBounds0, locBounds1;
+		if (isDrawnSolid(style))
+		{
+			renderStaircase(
+				static_pointer_cast<const core::StaircaseTransit>(transit)->getStaircase(), drawList);
+			renderSectorAgents(transit, drawList);
+		}
+		return;
+	}
 
-		//
-		// Upper sector
-		//
+	renderSector(transit, behindLayer, style, false, colour, drawList);
+
+	// A Ladder sits behind the contents of the Location it lands in, so those
+	// contents are redrawn inside the same aperture.
+	if (aperture.location && shouldRenderForeContentAfterTransit(transit->getType()))
+	{
+		renderLocationContentAboveTransit(aperture.location, aperture.location->getLayerIndex(),
+			style, drawList);
+	}
+}
+
+//
+// Draws one Transit of the Layer behind the selection through each of the
+// apertures the selected Layer gives it. A Transit with no aperture is not drawn.
+//
+void renderTransitThroughApertures(shared_ptr<const core::Sector> const& transit,
+	uint32_t behindLayer, LayerRenderStyle style,
+	std::vector<TransitAperture> const& apertures, ImDrawList* drawList)
+{
+	if (!transit || !shouldClipTransitToApertures(style))
+	{
+		return;
+	}
+
+	for (auto const& aperture : apertures)
+	{
+		auto bounds0 = aperture.min;
+		auto bounds1 = aperture.max;
+		transformPosition(bounds0);
+		transformPosition(bounds1);
+
 		drawList->AddDrawCmd();
 
-		auto upperSector = ladderTransit->getStop(CORE_LEVEL_HIGH).sector;
-
-		upperSector->getBounds(locBounds0, locBounds1);
-
-		transformPosition(locBounds0);
-		transformPosition(locBounds1);
-
 		// ImGui clipping expects ascending Y coordinates, but we have flipped them for rendering
-		drawList->PushClipRect({ locBounds0.x, locBounds1.y }, { locBounds1.x, locBounds0.y }, true);
+		drawList->PushClipRect({ min(bounds0.x, bounds1.x), min(bounds0.y, bounds1.y) },
+			{ max(bounds0.x, bounds1.x), max(bounds0.y, bounds1.y) }, true);
 
-		renderSector(ladderTransit, layer, style, false, colour, drawList);
-		if (shouldRenderForeContentAfterTransit(ladderTransit->getType()))
-			renderLocationContentAboveTransit(upperSector, upperSector->getLayerIndex(), style, drawList);
+		renderTransitInAperture(transit, behindLayer, style, aperture, drawList);
 
 		drawList->PopClipRect();
 		drawList->AddDrawCmd();
-
-		//
-		// Lower sector
-		//
-		auto lowerSector = ladderTransit->getStop(CORE_LEVEL_LOW).sector;
-
-		lowerSector->getBounds(locBounds0, locBounds1);
-
-		transformPosition(locBounds0);
-		transformPosition(locBounds1);
-
-		// ImGui clipping expects ascending Y coordinates, but we have flipped them for rendering
-		drawList->PushClipRect({ locBounds0.x, locBounds1.y }, { locBounds1.x, locBounds0.y }, true);
-
-		renderSector(ladderTransit, layer, style, false, colour, drawList);
-		if (shouldRenderForeContentAfterTransit(ladderTransit->getType()))
-			renderLocationContentAboveTransit(lowerSector, lowerSector->getLayerIndex(), style, drawList);
-
-		drawList->PopClipRect();
-		drawList->AddDrawCmd();
-	}
-	else
-	{
-		renderSector(ladderTransit, layer, style, true, colour, drawList);
 	}
 }
 
 
-void renderLiftTransit(shared_ptr<const core::LiftTransit> liftTransit, uint32_t layer, LayerRenderStyle style, bool selected, ImColor colour, ImDrawList* drawList)
-{
-	// Transit Lifts go behind the Location.  We need to render it clipped, for each Deck.
-	if (style == LayerRenderStyle::Aperture)
-	{
-		for (uint32_t i = 0; i < liftTransit->getNumStops(); ++i)
-		{
-			auto const& stop = liftTransit->getStop(i);
-
-			drawList->AddDrawCmd();
-
-			uint32_t cellX = stop.sector->getCellX() + stop.sectorOffsetX;
-			uint32_t cellY = stop.sector->getCellY() + stop.sectorOffsetY;
-
-			auto x = (float)(cellX + liftTransit->getCellsWide() * 0.5f);
-			auto y = (float)(cellY);
-			auto width = liftTransit->getCellsWide() - CORE_LIFT_DOORWAY_BORDER * 2;
-
-			core::Vector2 doorwayBounds0{ x - width * 0.5f, y };
-			core::Vector2 doorwayBounds1{ x + width * 0.5f, y + CORE_LIFT_DOORWAY_HEIGHT };
-
-			transformPosition(doorwayBounds0);
-			transformPosition(doorwayBounds1);
-
-			// ImGui clipping expects ascending Y coordinates, but we have flipped them for rendering
-			drawList->PushClipRect({ doorwayBounds0.x, doorwayBounds1.y }, { doorwayBounds1.x, doorwayBounds0.y }, true);
-
-			renderSector(liftTransit, layer, style, false, colour, drawList);
-			renderLift(liftTransit->getLift(), layer, style, selected, drawList);
-
-			drawList->PopClipRect();
-			drawList->AddDrawCmd();
-		}
-	}
-	else
-	{
-		renderSector(liftTransit, layer, style, true, colour, drawList);
-		renderLift(liftTransit->getLift(), layer, style, selected, drawList);
-	}
-}
-
-
-void renderShuttleTransit(shared_ptr<const core::ShuttleTransit> shuttleTransit, uint32_t layer, LayerRenderStyle style, bool selected, ImColor colour, ImDrawList* drawList)
-{
-	// Transit Shuttles go behind the Location.  We need to render it clipped, for each stop.
-	if (style == LayerRenderStyle::Aperture)
-	{
-		for (uint32_t i = 0; i < shuttleTransit->getNumStops(); ++i)
-		{
-			auto const& stop = shuttleTransit->getStop(i);
-
-			drawList->AddDrawCmd();
-
-			uint32_t cellX = stop.sector->getCellX() + stop.sectorOffsetX;
-			uint32_t cellY = stop.sector->getCellY() + stop.sectorOffsetY;
-
-			auto x = (float)(cellX + 0.5f);
-			auto y = (float)(cellY);
-			auto width = 1.0f - CORE_SHUTTLE_DOORWAY_BORDER * 2.0f;
-
-			core::Vector2 doorwayBounds0{ x - width * 0.5f, y };
-			core::Vector2 doorwayBounds1{ x + width * 0.5f, y + CORE_SHUTTLE_DOORWAY_HEIGHT };
-
-			transformPosition(doorwayBounds0);
-			transformPosition(doorwayBounds1);
-
-			// ImGui clipping expects ascending Y coordinates, but we have flipped them for rendering
-			drawList->PushClipRect({ doorwayBounds0.x, doorwayBounds1.y }, { doorwayBounds1.x, doorwayBounds0.y }, true);
-
-			renderSector(shuttleTransit, layer, style, false, colour, drawList);
-			renderShuttle(shuttleTransit->getShuttle(), layer, style, selected, drawList);
-
-			drawList->PopClipRect();
-			drawList->AddDrawCmd();
-		}
-	}
-	else
-	{
-		renderSector(shuttleTransit, layer, style, true, colour, drawList);
-		renderShuttle(shuttleTransit->getShuttle(), layer, style, selected, drawList);
-	}
-}
-
-
-void renderStairwellTransit(shared_ptr<const core::StairwellTransit> stairwellTransit, uint32_t layer, LayerRenderStyle style, ImColor colour, ImDrawList* drawList)
-{
-	// Transit Stairwells go behind the Location.  We need to render it clipped, for each Deck.
-	if (style == LayerRenderStyle::Aperture)
-	{
-		for (uint32_t i = 0; i < stairwellTransit->getDecksHigh(); ++i)
-		{
-			drawList->AddDrawCmd();
-
-			auto x = (float)(stairwellTransit->getCellX() + 1.0f);
-			auto y = (float)(stairwellTransit->getCellY() + i);
-
-			core::Vector2 doorwayBounds0{ x - CORE_STAIRWELL_DOORWAY_WIDTH * 0.5f, y };
-			core::Vector2 doorwayBounds1{ x + CORE_STAIRWELL_DOORWAY_WIDTH * 0.5f, y + CORE_STAIRWELL_DOORWAY_HEIGHT };
-
-			transformPosition(doorwayBounds0);
-			transformPosition(doorwayBounds1);
-
-			// ImGui clipping expects ascending Y coordinates, but we have flipped them for rendering
-			drawList->PushClipRect({ doorwayBounds0.x, doorwayBounds1.y }, { doorwayBounds1.x, doorwayBounds0.y }, true);
-
-			renderSector(stairwellTransit, layer, style, false, colour, drawList);
-
-			drawList->PopClipRect();
-			drawList->AddDrawCmd();
-		}
-	}
-	else
-	{
-		// renderSector applies the Layer policy to both the Stairwell and its
-		// occupants. Do not redraw either over the Layer in front from a pass which
-		// is not drawing this Stairwell's own Layer.
-		renderSector(stairwellTransit, layer, style, true, colour, drawList);
-	}
-}
-
-
-void renderSectors(shared_ptr<const core::Building> building, uint32_t layer, LayerRenderStyle style, ImDrawList* drawList)
+void renderSectors(shared_ptr<const core::Building> building, uint32_t layer, LayerRenderStyle style,
+	uint32_t viewLayer, ImDrawList* drawList)
 {
 	if (style == LayerRenderStyle::Hidden)
 	{
@@ -1517,59 +1405,46 @@ void renderSectors(shared_ptr<const core::Building> building, uint32_t layer, La
 
 	for (auto sector : sectors)
 	{
+		// A Transit never draws itself while its Layer is only the overlay: it is
+		// visible solely through the apertures of the Layer in front, which that
+		// Layer's pass draws. The selected Layer draws its own Transits unclipped.
+		if (shouldClipTransitToApertures(style) && sector->getType() != core::SectorType::Location)
+		{
+			continue;
+		}
+
 		renderSector(sector, layer, style, true, colour, drawList);
 	}
 
-	// While the selected Layer is drawn solid, its Locations act as apertures onto
-	// the Transits on the Layer directly behind. A Transit with a Door in front of
-	// it is already drawn by that Door's aperture.
-	if (style == LayerRenderStyle::Solid && layer + 1 < building->getLayerCount())
+	if (layer + 1 >= building->getLayerCount())
 	{
-		auto const behindLayer = core::layerBehind(layer);
+		return;
+	}
 
-		auto transits = building->getSectorsInBounds(behindLayer, -gUISettings.xOffset, 0,
+	// The selected Layer's Locations are the apertures onto the Transits on the
+	// Layer directly behind. The selected Layer draws them solid through those
+	// apertures; the overlay outlines them through the same ones. Either way a
+	// Transit is never drawn outside an aperture, and a Transit with a Door in
+	// front of it is already drawn by that Door's own aperture.
+	auto const behindLayer = core::layerBehind(layer);
+	auto const viewSectors = viewLayer == layer
+		? sectors
+		: building->getSectorsInBounds(viewLayer, -gUISettings.xOffset, 0,
 			gUISettings.worldViewportWidth, gUISettings.worldViewportHeight);
 
-		for (auto sector : transits)
-		{
-			switch (sector->getType())
-			{
-			case core::SectorType::Ladder:
-				renderLadderTransit(static_pointer_cast<const core::LadderTransit>(sector), behindLayer,
-					LayerRenderStyle::Aperture, ForeLocationColour, drawList);
-				break;
+	auto const transits = building->getSectorsInBounds(behindLayer, -gUISettings.xOffset, 0,
+		gUISettings.worldViewportWidth, gUISettings.worldViewportHeight);
 
-			case core::SectorType::Stairwell:
-				renderStairwellTransit(static_pointer_cast<const core::StairwellTransit>(sector),
-					behindLayer, LayerRenderStyle::Aperture, BackLocationColour, drawList);
-				break;
+	for (auto const& transit : transits)
+	{
+		renderTransitThroughApertures(transit, behindLayer, style,
+			transitApertures(transit, viewLayer, viewSectors), drawList);
+	}
 
-			case core::SectorType::Staircase:
-			{
-				auto staircase = static_pointer_cast<const core::StaircaseTransit>(sector);
-				for (auto const& candidate : sectors)
-				{
-					auto location = dynamic_pointer_cast<const core::Location>(candidate);
-					if (!location || !shouldRenderStaircaseAfterSector(candidate->getType())) continue;
-					core::Vector2 clip0, clip1;
-					location->getBounds(clip0, clip1);
-					transformPosition(clip0); transformPosition(clip1);
-					drawList->PushClipRect({ min(clip0.x, clip1.x), min(clip0.y, clip1.y) },
-						{ max(clip0.x, clip1.x), max(clip0.y, clip1.y) }, true);
-					renderStaircase(staircase->getStaircase(), drawList);
-					renderSectorAgents(staircase, drawList);
-					drawList->PopClipRect();
-				}
-				break;
-			}
-
-			default:
-				break;
-			}
-		}
-
-		// Clipped transits intentionally draw over the selected Layer's Locations.
-		// Redraw controls above those transits, then Agents above the controls.
+	// Clipped transits intentionally draw over the selected Layer's Locations.
+	// Redraw controls above those transits, then Agents above the controls.
+	if (style == LayerRenderStyle::Solid)
+	{
 		renderControlsAndAgentsAboveTransit(sectors, layer, drawList);
 	}
 }
@@ -1584,14 +1459,16 @@ void renderBuilding(shared_ptr<const core::Building> building)
 		static_cast<int>(layerCount) - 1));
 
 	// The selected Layer, drawn solid.
-	renderSectors(building, viewLayer, LayerRenderStyle::Solid, drawList);
+	renderSectors(building, viewLayer, LayerRenderStyle::Solid, viewLayer, drawList);
 
 	// The Layer directly behind, drawn as a wireframe overlay. Every other Layer -
 	// those in front of the selection and those more than one Layer behind it - is
-	// not drawn at all.
+	// not drawn at all. Its Transits are clipped through the selected Layer's
+	// Location apertures rather than drawn over it.
 	if (gUISettings.renderNextLayerWireframe && viewLayer + 1 < layerCount)
 	{
-		renderSectors(building, core::layerBehind(viewLayer), LayerRenderStyle::Wireframe, drawList);
+		renderSectors(building, core::layerBehind(viewLayer), LayerRenderStyle::Wireframe,
+			viewLayer, drawList);
 	}
 
 	// Queue diagnostics are selection overlays and should remain visible above
