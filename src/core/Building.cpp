@@ -1544,7 +1544,7 @@ namespace core
 	}
 
 	bool Building::validateStaircaseEndpoint(uint32_t x, uint32_t y, bool upperEndpoint,
-		int riseSide, string& diagnostic) const
+		int /*riseSide*/, string& diagnostic) const
 	{
 		auto const& cell = mLayers[CORE_LAYER_FORE]->getCellDefinition(x, y);
 		if (!cell.occupied())
@@ -1553,58 +1553,42 @@ namespace core
 			return false;
 		}
 		auto location = dynamic_pointer_cast<const Location>(mSectors[cell.sectorIndex]);
-		if (!location || !cell.isTraversableOnFoot())
+		if (!location)
 		{
-			diagnostic = format("A traversable Fore-layer Location is required at {},{}", x, y);
+			diagnostic = format("A Fore-layer Location is required at {},{}", x, y);
 			return false;
 		}
-		// A lower landing may be anywhere on traversable Fore-layer Room or
-		// Corridor floor. Upper Room landings have the additional boundary rule
-		// below because the flight approaches them horizontally through a wall.
-		if (!upperEndpoint || location->isCorridor()) return true;
-		if (y != location->getCellY())
+		// Lower landings and Corridor landings require ordinary walkable floor.
+		// An upper Room landing may instead terminate at an open side wall whose
+		// adjacent Location supplies the walkable landing floor.
+		if (!upperEndpoint || location->isCorridor())
 		{
-			diagnostic = format("The Staircase may only enter Room '{}' on its bottom level",
-				location->getName());
+			if (cell.isTraversableOnFoot()) return true;
+			diagnostic = format("Traversable Fore-layer floor is required at {},{}", x, y);
 			return false;
 		}
 
-		// The upper end approaches from the opposite direction to the rise. It may
-		// enter a Room only through that Room's open boundary wall.
-		int const wallSide = riseSide == CORE_SIDE_RIGHT ? CORE_SIDE_LEFT : CORE_SIDE_RIGHT;
-		uint32_t const boundaryX = wallSide == CORE_SIDE_LEFT
-			? location->getCellX0() : location->getCellX1();
-		if (x != boundaryX || location->getEndType(0, wallSide) != SectorEndType::None)
+		auto const roomDeck = y - location->getCellY();
+		auto openLandingAt = [&](int wallSide)
 		{
-			diagnostic = format("The Staircase endpoint at {},{} must meet an open Room wall", x, y);
-			return false;
-		}
-		int const approachX = wallSide == CORE_SIDE_LEFT ? (int)x - 1 : (int)x + 1;
-		if (approachX < 0 || approachX >= (int)mCellsWide)
-		{
-			diagnostic = format("The open Room wall at {},{} has no approach Location", x, y);
-			return false;
-		}
-		auto const& approach = mLayers[CORE_LAYER_FORE]->getCellDefinition((uint32_t)approachX, y);
-		if (!approach.occupied() || !approach.isTraversableOnFoot())
-		{
-			diagnostic = format("Traversable floor is required outside the open Room wall at {},{}", x, y);
-			return false;
-		}
-		auto approachLocation = dynamic_pointer_cast<const Location>(mSectors[approach.sectorIndex]);
-		if (!approachLocation)
-		{
-			diagnostic = format("A Fore-layer Location is required outside the open Room wall at {},{}", x, y);
-			return false;
-		}
-		auto const approachDeck = y - approachLocation->getCellY();
-		if (approachDeck >= approachLocation->getDecksHigh()
-			|| approachLocation->getEndType(approachDeck, 1 - wallSide) != SectorEndType::None)
-		{
-			diagnostic = format("Both sides of the Room wall at {},{} must be open", x, y);
-			return false;
-		}
-		return true;
+			uint32_t const boundaryX = wallSide == CORE_SIDE_LEFT
+				? location->getCellX0() : location->getCellX1();
+			if (x != boundaryX || location->getEndType(roomDeck, wallSide) != SectorEndType::None)
+				return false;
+			int const adjacentX = wallSide == CORE_SIDE_LEFT ? (int)x - 1 : (int)x + 1;
+			if (adjacentX < 0 || adjacentX >= (int)mCellsWide) return false;
+			auto const& adjacent = mLayers[CORE_LAYER_FORE]
+				->getCellDefinition((uint32_t)adjacentX, y);
+			if (!adjacent.occupied() || !adjacent.isTraversableOnFoot()) return false;
+			auto adjacentLocation = dynamic_pointer_cast<const Location>(mSectors[adjacent.sectorIndex]);
+			if (!adjacentLocation || y < adjacentLocation->getCellY()) return false;
+			auto const adjacentDeck = y - adjacentLocation->getCellY();
+			return adjacentDeck < adjacentLocation->getDecksHigh()
+				&& adjacentLocation->getEndType(adjacentDeck, 1 - wallSide) == SectorEndType::None;
+		};
+		if (openLandingAt(CORE_SIDE_LEFT) || openLandingAt(CORE_SIDE_RIGHT)) return true;
+		diagnostic = format("The upper Staircase endpoint at {},{} must meet an open Room wall with adjacent traversable floor", x, y);
+		return false;
 	}
 
 	bool Building::canAddStaircase(uint32_t y, uint32_t x, uint32_t cellsWide,

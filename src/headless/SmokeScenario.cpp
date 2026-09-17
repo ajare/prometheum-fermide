@@ -34,6 +34,7 @@
 #include "core/Path.h"
 #include "core/SectorEdge.h"
 #include "core/Simulation.h"
+#include "core/Staircase.h"
 #include "core/Vector2.h"
 
 #ifdef _MSC_VER
@@ -393,7 +394,19 @@ namespace
 			&& movedMarker->getCellX() == 8;
 	}
 
-	bool staircaseCanEnterBottomOfForeRoomThroughOpenWall()
+	bool staircasePathSpansOuterCellEdges()
+	{
+		core::Staircase risingRight(5, 0, 3, CORE_SIDE_RIGHT);
+		auto const rightPath = risingRight.getPath();
+		core::Staircase risingLeft(5, 0, 3, CORE_SIDE_LEFT);
+		auto const leftPath = risingLeft.getPath();
+		return rightPath[0] == core::Vector2{ 0.0f, 0.0f }
+			&& rightPath[1] == core::Vector2{ 3.0f, 1.0f }
+			&& leftPath[0] == core::Vector2{ 3.0f, 0.0f }
+			&& leftPath[1] == core::Vector2{ 0.0f, 1.0f };
+	}
+
+	bool staircaseCanUseForeRoomEndpoints()
 	{
 		core::Building building("Room staircase landing", 10, 3);
 		building.addCorridor(0, 0, 6);
@@ -424,7 +437,20 @@ namespace
 		lowerRoomBuilding.addStaircase(0, 2,
 			core::Building::CreateStaircaseOptions{ 3, CORE_SIDE_RIGHT, 0.0f });
 		lowerRoomBuilding.finishBuild();
-		return lowerRoomBuilding.isTraversalTopologyValid();
+		if (!lowerRoomBuilding.isTraversalTopologyValid()) return false;
+
+		// escalator-test-1.yaml: the flight starts on the Room's bottom floor and
+		// reaches its upper-right edge, where the wall into the upper Corridor is open.
+		core::Building mapBuilding("Escalator map Room landing", 16, 3);
+		mapBuilding.addRoom("Room 1", CORE_LAYER_FORE, 1, 10, 4, 2);
+		mapBuilding.addCorridor(2, 14, 2);
+		mapBuilding.removeLocationWall(0, 1, CORE_SIDE_RIGHT);
+		if (!mapBuilding.canAddStaircase(1, 11, 3, CORE_SIDE_RIGHT, &diagnostic))
+			return false;
+		mapBuilding.addStaircase(1, 11,
+			core::Building::CreateStaircaseOptions{ 3, CORE_SIDE_RIGHT, 0.4f });
+		mapBuilding.finishBuild();
+		return mapBuilding.isTraversalTopologyValid();
 	}
 
 	bool sharedLocationWallsCanBeOpenedAndRestored()
@@ -3909,9 +3935,14 @@ int main()
 			std::cerr << "FAIL: Object movement did not validate and rebuild atomically\n";
 			return 1;
 		}
-		if (!staircaseCanEnterBottomOfForeRoomThroughOpenWall())
+		if (!staircasePathSpansOuterCellEdges())
 		{
-			std::cerr << "FAIL: Staircase could not enter a Fore-layer Room through its open bottom wall\n";
+			std::cerr << "FAIL: Staircase path did not span the outer edges of its endpoint cells\n";
+			return 1;
+		}
+		if (!staircaseCanUseForeRoomEndpoints())
+		{
+			std::cerr << "FAIL: Staircase could not use valid Fore-layer Room endpoints\n";
 			return 1;
 		}
 		if (!sharedLocationWallsCanBeOpenedAndRestored())

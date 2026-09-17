@@ -23,6 +23,23 @@ construction:
     sectorIndex: 1
     deckIndex: 0
     xOffset: 6.5625
+  - type: room
+    name: Room 1
+    layer: fore
+    y: 1
+    x: 10
+    cellsWide: 4
+    decksHigh: 2
+    topDeckHeight: 0.9
+  - type: corridor
+    y: 2
+    x: 14
+    cellsWide: 2
+    decksHigh: 1
+  - type: removeWall
+    sectorIndex: 3
+    deckIndex: 1
+    side: right
 agents:
   - id: 1
     agent:

@@ -20,8 +20,11 @@ namespace core
 
 	array<Vector2, 2> Staircase::getPath() const
 	{
-		float const left = 0.5f;
-		float const right = (float)mCellsWide - 0.5f;
+		// Span the complete authored footprint: the lower endpoint starts at the
+		// outside edge of its cell and the upper endpoint reaches the outside edge
+		// of the opposite cell.
+		float const left = 0.0f;
+		float const right = (float)mCellsWide;
 		return mRiseSide == CORE_SIDE_RIGHT
 			? array<Vector2, 2>{ Vector2{ left, 0.0f }, Vector2{ right, 1.0f } }
 			: array<Vector2, 2>{ Vector2{ right, 0.0f }, Vector2{ left, 1.0f } };

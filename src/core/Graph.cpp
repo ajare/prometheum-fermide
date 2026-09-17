@@ -817,8 +817,11 @@ namespace core
 		if (layerIndex == CORE_LAYER_FORE)
 		{
 			auto sector = mwBuilding->_getSector(curSectorIndex);
+			// Mount at the Staircase path endpoint rather than the endpoint cell's
+			// centre. Z-connected mount vertices must occupy the same global point.
+			auto const endpointX = (float)transit->getCellX() + point.x;
 			auto locationVertex = make_shared<StairwellLocationVertex>(sector,
-				(float)(x - sector->getCellX()) + 0.5f, (float)(y - sector->getCellY()));
+				endpointX - (float)sector->getCellX(), (float)(y - sector->getCellY()));
 			workVertices.push_back(locationVertex);
 			if (!interLayerVertexLookup.emplace(cellPos, locationVertex).second)
 				throw BuildingException(mwBuilding, format("A Transit was already set at {},{}", x, y));
@@ -941,8 +944,30 @@ namespace core
 
 					curSectorIndex = cellDef.sectorIndex;
 
-					if (cellDef.sectorIndex == ~0u ||
-						cellDef.floorType == CellFloorType::None)
+					// A Staircase may terminate at an upper Room boundary where the Room
+					// itself has no floor; the open adjacent Location is the landing. Keep
+					// processing that endpoint so its mount vertex can be created.
+					bool unflooredStaircaseEndpoint = false;
+					if (layerIndex == CORE_LAYER_FORE && cellDef.sectorIndex != ~0u
+						&& cellDef.floorType == CellFloorType::None)
+					{
+						auto const& backCell = layers[CORE_LAYER_BACK]->getCellDefinition(x, y);
+						if (backCell.occupied())
+						{
+							auto staircase = dynamic_pointer_cast<StaircaseTransit>(
+								mwBuilding->_getSector(backCell.sectorIndex));
+							if (staircase)
+							{
+								uint32_t const upperX = staircase->getRiseSide() == CORE_SIDE_RIGHT
+									? staircase->getCellX() + staircase->getCellsWide() - 1
+									: staircase->getCellX();
+								unflooredStaircaseEndpoint = y == staircase->getCellY() + 1
+									&& x == upperX;
+							}
+						}
+					}
+					if (cellDef.sectorIndex == ~0u
+						|| (cellDef.floorType == CellFloorType::None && !unflooredStaircaseEndpoint))
 					{
 						continue;
 					}

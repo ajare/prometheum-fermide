@@ -604,9 +604,9 @@ agents: []
 		core::Staircase left(0, 0, 4, CORE_SIDE_LEFT);
 		auto rightPath = right.getPath();
 		auto leftPath = left.getPath();
-		require(right.getStepCount() == 32 && rightPath[0].x == 0.5f
-			&& rightPath[1].x == 3.5f && leftPath[0].x == 3.5f
-			&& leftPath[1].x == 0.5f,
+		require(right.getStepCount() == 32 && rightPath[0].x == 0.0f
+			&& rightPath[1].x == 4.0f && leftPath[0].x == 4.0f
+			&& leftPath[1].x == 0.0f,
 			"Staircase direction, endpoints, or width-based step count is incorrect");
 		float const pathLength = rightPath[0].distanceTo(rightPath[1]);
 		core::Staircase upEscalator(0, 0, 4, CORE_SIDE_RIGHT, 1.0f);
