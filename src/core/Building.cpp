@@ -1543,6 +1543,70 @@ namespace core
 		return { sectorIndex, traversalResource };
 	}
 
+	bool Building::validateStaircaseEndpoint(uint32_t x, uint32_t y, bool upperEndpoint,
+		int riseSide, string& diagnostic) const
+	{
+		auto const& cell = mLayers[CORE_LAYER_FORE]->getCellDefinition(x, y);
+		if (!cell.occupied())
+		{
+			diagnostic = format("A Fore-layer Location is required at {},{}", x, y);
+			return false;
+		}
+		auto location = dynamic_pointer_cast<const Location>(mSectors[cell.sectorIndex]);
+		if (!location || !cell.isTraversableOnFoot())
+		{
+			diagnostic = format("A traversable Fore-layer Location is required at {},{}", x, y);
+			return false;
+		}
+		// A lower landing may be anywhere on traversable Fore-layer Room or
+		// Corridor floor. Upper Room landings have the additional boundary rule
+		// below because the flight approaches them horizontally through a wall.
+		if (!upperEndpoint || location->isCorridor()) return true;
+		if (y != location->getCellY())
+		{
+			diagnostic = format("The Staircase may only enter Room '{}' on its bottom level",
+				location->getName());
+			return false;
+		}
+
+		// The upper end approaches from the opposite direction to the rise. It may
+		// enter a Room only through that Room's open boundary wall.
+		int const wallSide = riseSide == CORE_SIDE_RIGHT ? CORE_SIDE_LEFT : CORE_SIDE_RIGHT;
+		uint32_t const boundaryX = wallSide == CORE_SIDE_LEFT
+			? location->getCellX0() : location->getCellX1();
+		if (x != boundaryX || location->getEndType(0, wallSide) != SectorEndType::None)
+		{
+			diagnostic = format("The Staircase endpoint at {},{} must meet an open Room wall", x, y);
+			return false;
+		}
+		int const approachX = wallSide == CORE_SIDE_LEFT ? (int)x - 1 : (int)x + 1;
+		if (approachX < 0 || approachX >= (int)mCellsWide)
+		{
+			diagnostic = format("The open Room wall at {},{} has no approach Location", x, y);
+			return false;
+		}
+		auto const& approach = mLayers[CORE_LAYER_FORE]->getCellDefinition((uint32_t)approachX, y);
+		if (!approach.occupied() || !approach.isTraversableOnFoot())
+		{
+			diagnostic = format("Traversable floor is required outside the open Room wall at {},{}", x, y);
+			return false;
+		}
+		auto approachLocation = dynamic_pointer_cast<const Location>(mSectors[approach.sectorIndex]);
+		if (!approachLocation)
+		{
+			diagnostic = format("A Fore-layer Location is required outside the open Room wall at {},{}", x, y);
+			return false;
+		}
+		auto const approachDeck = y - approachLocation->getCellY();
+		if (approachDeck >= approachLocation->getDecksHigh()
+			|| approachLocation->getEndType(approachDeck, 1 - wallSide) != SectorEndType::None)
+		{
+			diagnostic = format("Both sides of the Room wall at {},{} must be open", x, y);
+			return false;
+		}
+		return true;
+	}
+
 	bool Building::canAddStaircase(uint32_t y, uint32_t x, uint32_t cellsWide,
 		int riseSide, string* diagnostic) const
 	{
@@ -1560,16 +1624,10 @@ namespace core
 
 		uint32_t const lowerX = riseSide == CORE_SIDE_RIGHT ? x : x + cellsWide - 1;
 		uint32_t const upperX = riseSide == CORE_SIDE_RIGHT ? x + cellsWide - 1 : x;
-		for (auto const [endpointX, endpointY] : { pair{ lowerX, y }, pair{ upperX, y + 1 } })
-		{
-			auto const& cell = mLayers[CORE_LAYER_FORE]->getCellDefinition(endpointX, endpointY);
-			if (!cell.occupied()) return reject(format("A Fore-layer Corridor is required at {},{}", endpointX, endpointY));
-			auto location = dynamic_pointer_cast<const Location>(mSectors[cell.sectorIndex]);
-			if (!location || !location->isCorridor())
-				return reject(format("A Fore-layer Corridor is required at {},{}", endpointX, endpointY));
-			if (!cell.isTraversableOnFoot())
-				return reject(format("The Corridor floor at {},{} is not traversable", endpointX, endpointY));
-		}
+		string endpointDiagnostic;
+		if (!validateStaircaseEndpoint(lowerX, y, false, riseSide, endpointDiagnostic)
+			|| !validateStaircaseEndpoint(upperX, y + 1, true, riseSide, endpointDiagnostic))
+			return reject(std::move(endpointDiagnostic));
 		return true;
 	}
 
@@ -2027,44 +2085,147 @@ namespace core
 		return shuttleRes;
 	}
 
+	bool Building::canRemoveLocationWall(uint32_t sectorIndex, uint32_t deckIndex, int side,
+		string* diagnostic) const
+	{
+		auto reject = [&](string message)
+		{
+			if (diagnostic) *diagnostic = std::move(message);
+			return false;
+		};
+		if (side != CORE_SIDE_LEFT && side != CORE_SIDE_RIGHT)
+			return reject("A Location wall side must be left or right");
+		if (sectorIndex >= mSectors.size()) return reject("The Location does not exist");
+		auto sector = mSectors[sectorIndex];
+		if (sector->getType() != SectorType::Location)
+			return reject("Walls can only be edited on Rooms and Corridors");
+		if (deckIndex >= sector->getDecksHigh()) return reject("The Location deck does not exist");
+
+		auto const globalY = sector->getCellY() + deckIndex;
+		int const neighbourX = side == CORE_SIDE_LEFT
+			? (int)sector->getCellX() - 1
+			: (int)sector->getCellX() + (int)sector->getCellsWide();
+		if (neighbourX < 0 || neighbourX >= (int)getCellsWide())
+			return reject("The wall is on the outside of the Building");
+		auto const& neighbourCell = mLayers[sector->getLayerIndex()]
+			->getCellDefinition((uint32_t)neighbourX, globalY);
+		if (neighbourCell.sectorIndex == ~0u || neighbourCell.sectorIndex == sectorIndex)
+			return reject("No adjacent Room or Corridor shares this wall");
+		auto neighbour = mSectors[neighbourCell.sectorIndex];
+		if (neighbour->getType() != SectorType::Location)
+			return reject("The adjacent sector is not a Room or Corridor");
+		if (globalY < neighbour->getCellY()
+			|| globalY >= neighbour->getCellY() + neighbour->getDecksHigh())
+			return reject("The adjacent Location does not occupy this deck");
+		auto const neighbourDeck = globalY - neighbour->getCellY();
+		if (sector->getEndType(deckIndex, side) != SectorEndType::Wall
+			|| neighbour->getEndType(neighbourDeck, 1 - side) != SectorEndType::Wall)
+			return reject("The shared boundary is not a pair of walls");
+		if (diagnostic) diagnostic->clear();
+		return true;
+	}
+
+	bool Building::canAddLocationWall(uint32_t sectorIndex, uint32_t deckIndex, int side,
+		string* diagnostic) const
+	{
+		auto reject = [&](string message)
+		{
+			if (diagnostic) *diagnostic = std::move(message);
+			return false;
+		};
+		if (side != CORE_SIDE_LEFT && side != CORE_SIDE_RIGHT)
+			return reject("A Location wall side must be left or right");
+		if (sectorIndex >= mSectors.size()) return reject("The Location does not exist");
+		auto sector = mSectors[sectorIndex];
+		if (sector->getType() != SectorType::Location)
+			return reject("Walls can only be edited on Rooms and Corridors");
+		if (deckIndex >= sector->getDecksHigh()) return reject("The Location deck does not exist");
+
+		auto const globalY = sector->getCellY() + deckIndex;
+		int const neighbourX = side == CORE_SIDE_LEFT
+			? (int)sector->getCellX() - 1
+			: (int)sector->getCellX() + (int)sector->getCellsWide();
+		if (neighbourX < 0 || neighbourX >= (int)getCellsWide())
+			return reject("The wall is on the outside of the Building");
+		auto const& neighbourCell = mLayers[sector->getLayerIndex()]
+			->getCellDefinition((uint32_t)neighbourX, globalY);
+		if (neighbourCell.sectorIndex == ~0u || neighbourCell.sectorIndex == sectorIndex)
+			return reject("No adjacent Room or Corridor shares this opening");
+		auto neighbour = mSectors[neighbourCell.sectorIndex];
+		if (neighbour->getType() != SectorType::Location)
+			return reject("The adjacent sector is not a Room or Corridor");
+		if (globalY < neighbour->getCellY()
+			|| globalY >= neighbour->getCellY() + neighbour->getDecksHigh())
+			return reject("The adjacent Location does not occupy this deck");
+		auto const neighbourDeck = globalY - neighbour->getCellY();
+		if (sector->getEndType(deckIndex, side) != SectorEndType::None
+			|| neighbour->getEndType(neighbourDeck, 1 - side) != SectorEndType::None)
+			return reject("The shared boundary is not an open wall");
+		if (diagnostic) diagnostic->clear();
+		return true;
+	}
+
 	void Building::removeLocationWall(uint32_t sectorIndex, uint32_t deckIndex, int side)
 	{
+		string diagnostic;
+		if (!canRemoveLocationWall(sectorIndex, deckIndex, side, &diagnostic))
+			throw BuildingException(this, "Building::removeLocationWall - " + diagnostic);
 		beginStructuralEdit("removeLocationWall");
-		ASSERT_SIDE_OK(side);
 
 		auto sector = _getSector(sectorIndex);
-
+		auto const globalY = sector->getCellY() + deckIndex;
+		auto const neighbourX = side == CORE_SIDE_LEFT
+			? sector->getCellX() - 1
+			: sector->getCellX() + sector->getCellsWide();
+		auto const neighbourIndex = mLayers[sector->getLayerIndex()]
+			->getCellDefinition(neighbourX, globalY).sectorIndex;
+		auto neighbour = _getSector(neighbourIndex);
+		auto const neighbourDeck = globalY - neighbour->getCellY();
 		sector->removeEndWall(deckIndex, side);
-
-		// See if we need to remove anything on the other side.  Below code
-		// works because "Right" is value 1.
-		uint32_t x = sector->getCellX() + side * sector->getCellsWide();
-		auto layerIndex = sector->getLayerIndex();
-		auto layer = getLayer(layerIndex);
-		uint32_t neighbourSectorIndex{ ~0u };
-
-		if (side == CORE_SIDE_LEFT && x > 0)
-		{
-			neighbourSectorIndex = layer->getCellDefinition(x - 1, deckIndex).sectorIndex;
-		}
-		else if (side == CORE_SIDE_RIGHT && x < getCellsWide() - 1)
-		{
-			neighbourSectorIndex = layer->getCellDefinition(x + 1, deckIndex).sectorIndex;
-		}
-
-		if (neighbourSectorIndex != ~0u)
-		{
-			auto neighbour = _getSector(neighbourSectorIndex);
-
-			// Convert deckIndex as they may start on different decks.
-			uint32_t neighbourDeckIndex = (sector->getCellY() + deckIndex) - sector->getCellY();
-
-			neighbour->removeEndWall(neighbourDeckIndex, 1 - side);
-		}
+		neighbour->removeEndWall(neighbourDeck, 1 - side);
 
 		ConstructionRecord record{ ConstructionType::RemoveWall };
 		record.a = sectorIndex; record.b = deckIndex; record.i = side;
 		recordConstruction(std::move(record));
+	}
+
+	void Building::addLocationWall(uint32_t sectorIndex, uint32_t deckIndex, int side)
+	{
+		string diagnostic;
+		if (!canAddLocationWall(sectorIndex, deckIndex, side, &diagnostic))
+			throw BuildingException(this, "Building::addLocationWall - " + diagnostic);
+		beginStructuralEdit("addLocationWall");
+
+		auto sector = _getSector(sectorIndex);
+		auto const globalY = sector->getCellY() + deckIndex;
+		auto const boundaryX = side == CORE_SIDE_LEFT
+			? sector->getCellX() : sector->getCellX() + sector->getCellsWide();
+		auto const neighbourX = side == CORE_SIDE_LEFT
+			? sector->getCellX() - 1
+			: sector->getCellX() + sector->getCellsWide();
+		auto const neighbourIndex = mLayers[sector->getLayerIndex()]
+			->getCellDefinition(neighbourX, globalY).sectorIndex;
+		auto neighbour = _getSector(neighbourIndex);
+		auto const neighbourDeck = globalY - neighbour->getCellY();
+		sector->addEndWall(deckIndex, side);
+		neighbour->addEndWall(neighbourDeck, 1 - side);
+
+		// An open wall is persisted as a RemoveWall command. Restoring the wall
+		// removes either side's command for this same physical boundary.
+		mConstructionRecords.erase(remove_if(mConstructionRecords.begin(), mConstructionRecords.end(),
+			[&](ConstructionRecord const& record)
+			{
+				if (record.type != ConstructionType::RemoveWall
+					|| record.a >= mSectors.size()) return false;
+				auto commandSector = mSectors[record.a];
+				if (record.b >= commandSector->getDecksHigh()
+					|| commandSector->getLayerIndex() != sector->getLayerIndex()) return false;
+				auto const commandX = record.i == CORE_SIDE_LEFT
+					? commandSector->getCellX()
+					: commandSector->getCellX() + commandSector->getCellsWide();
+				auto const commandY = commandSector->getCellY() + record.b;
+				return commandX == boundaryX && commandY == globalY;
+			}), mConstructionRecords.end());
 	}
 
 	Building::CreateObjectResult Building::_createSectorButton(string const& name, shared_ptr<const Sector> sector, uint32_t x, uint32_t y, uint32_t flags, uint32_t* index)

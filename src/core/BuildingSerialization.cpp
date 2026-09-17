@@ -1595,13 +1595,9 @@ namespace core
 			}
 		uint32_t lowerX = options.riseSide == CORE_SIDE_RIGHT ? x : x + options.cellsWide - 1;
 		uint32_t upperX = options.riseSide == CORE_SIDE_RIGHT ? x + options.cellsWide - 1 : x;
-		for (auto [endpointX, endpointY] : { pair{ lowerX, y }, pair{ upperX, y + 1 } })
-		{
-			auto const& cell = mLayers[CORE_LAYER_FORE]->getCellDefinition(endpointX, endpointY);
-			auto location = cell.occupied() ? dynamic_pointer_cast<const Location>(mSectors[cell.sectorIndex]) : nullptr;
-			if (!location || !location->isCorridor() || !cell.isTraversableOnFoot())
-				{ plan.diagnostic = format("A traversable Fore-layer Corridor is required at {},{}", endpointX, endpointY); return plan; }
-		}
+		if (!validateStaircaseEndpoint(lowerX, y, false, options.riseSide, plan.diagnostic)
+			|| !validateStaircaseEndpoint(upperX, y + 1, true, options.riseSide, plan.diagnostic))
+			return plan;
 		auto old = dynamic_pointer_cast<const StaircaseTransit>(mSectors[sectorIndex]);
 		plan.move = old->getCellX() != x || old->getCellY() != y;
 		plan.valid = true;

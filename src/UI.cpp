@@ -5645,6 +5645,69 @@ void renderObjectView(shared_ptr<const core::Building> building)
 }
 
 
+void renderLocationWallEditor(shared_ptr<core::Building> const& building,
+	shared_ptr<const core::Sector> const& location)
+{
+	ImGui::Separator();
+	ImGui::TextUnformatted("Shared walls");
+	ImGui::TextDisabled("Open walls directly connect adjacent Rooms or Corridors.");
+	if (!ImGui::BeginTable("LocationWalls", 3, ImGuiTableFlags_BordersInnerV)) return;
+	ImGui::TableSetupColumn("Deck");
+	ImGui::TableSetupColumn("Left");
+	ImGui::TableSetupColumn("Right");
+	ImGui::TableHeadersRow();
+	for (uint32_t deck = 0; deck < location->getDecksHigh(); ++deck)
+	{
+		ImGui::TableNextRow();
+		ImGui::TableSetColumnIndex(0);
+		ImGui::Text("%u (floor %u)", deck, location->getCellY() + deck);
+		for (int side = CORE_SIDE_LEFT; side <= CORE_SIDE_RIGHT; ++side)
+		{
+			ImGui::TableSetColumnIndex(side + 1);
+			auto const end = location->getEndType(deck, side);
+			if (end == core::SectorEndType::BulkheadDoor)
+			{
+				ImGui::TextUnformatted("Bulkhead Door");
+				continue;
+			}
+			string diagnostic;
+			bool const isOpen = end == core::SectorEndType::None;
+			bool const canChange = isOpen
+				? building->canAddLocationWall(location->getIndex(), deck, side, &diagnostic)
+				: building->canRemoveLocationWall(location->getIndex(), deck, side, &diagnostic);
+			string const label = string(isOpen ? "Add wall" : "Open wall") + "##wall-"
+				+ to_string(deck) + "-" + to_string(side);
+			ImGui::BeginDisabled(!canChange);
+			bool const clicked = ImGui::Button(label.c_str());
+			ImGui::EndDisabled();
+			if (!canChange && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+				ImGui::SetTooltip("%s", diagnostic.c_str());
+			if (!clicked) continue;
+
+			auto undo = captureDocumentSnapshot(building);
+			try
+			{
+				if (!building->isSimulationPaused()) building->pauseSimulation();
+				gUISettings.worldPaused = true;
+				if (isOpen) building->addLocationWall(location->getIndex(), deck, side);
+				else building->removeLocationWall(location->getIndex(), deck, side);
+				building->finishBuild();
+				commitDocumentEdit(std::move(undo));
+			}
+			catch (core::Exception const& error)
+			{
+				reportEditorError("Wall editor", error.getMessage());
+			}
+			catch (std::exception const& error)
+			{
+				reportEditorError("Wall editor", error.what());
+			}
+		}
+	}
+	ImGui::EndTable();
+}
+
+
 void renderSelectedObjectPanel(shared_ptr<core::Building> const& building)
 {
 	if ((!gSelectedSector && !gSelectedSectorObject)
@@ -5681,6 +5744,10 @@ void renderSelectedObjectPanel(shared_ptr<core::Building> const& building)
 
 		switch (gSelectedSector->getType())
 		{
+		case core::SectorType::Location:
+			renderLocationWallEditor(building, gSelectedSector);
+			break;
+
 		case core::SectorType::Lift:
 			renderLiftPanel(building,
 				static_pointer_cast<const core::LiftTransit>(gSelectedSector)->getLift(), true);

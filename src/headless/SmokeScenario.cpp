@@ -393,6 +393,72 @@ namespace
 			&& movedMarker->getCellX() == 8;
 	}
 
+	bool staircaseCanEnterBottomOfForeRoomThroughOpenWall()
+	{
+		core::Building building("Room staircase landing", 10, 3);
+		building.addCorridor(0, 0, 6);
+		auto upperCorridor = building.addCorridor(1, 0, 7);
+		auto room = building.addRoom("Upper room", CORE_LAYER_FORE, 1, 7, 3, 1);
+
+		std::string diagnostic;
+		if (building.canAddStaircase(0, 5, 3, CORE_SIDE_RIGHT, &diagnostic)) return false;
+		building.removeLocationWall(room, 0, CORE_SIDE_LEFT);
+		if (!building.canAddStaircase(0, 5, 3, CORE_SIDE_RIGHT, &diagnostic)) return false;
+		auto staircase = building.addStaircase(0, 5,
+			core::Building::CreateStaircaseOptions{ 3, CORE_SIDE_RIGHT, 0.0f });
+		building.finishBuild();
+		if (staircase == ~0u || !building.isTraversalTopologyValid()) return false;
+		building.pauseSimulation();
+		auto edit = building.planResizeStaircase(staircase, 5, 0,
+			core::Building::CreateStaircaseOptions{ 3, CORE_SIDE_RIGHT, 0.0f });
+		if (!edit.valid
+			|| building.getSector(room)->getEndType(0, CORE_SIDE_LEFT) != core::SectorEndType::None
+			|| building.getSector(upperCorridor)->getEndType(0, CORE_SIDE_RIGHT) != core::SectorEndType::None)
+			return false;
+
+		core::Building lowerRoomBuilding("Lower Room staircase endpoint", 8, 3);
+		lowerRoomBuilding.addRoom("Lower room", CORE_LAYER_FORE, 0, 0, 3, 1);
+		lowerRoomBuilding.addCorridor(1, 4, 4);
+		if (!lowerRoomBuilding.canAddStaircase(0, 2, 3, CORE_SIDE_RIGHT, &diagnostic))
+			return false;
+		lowerRoomBuilding.addStaircase(0, 2,
+			core::Building::CreateStaircaseOptions{ 3, CORE_SIDE_RIGHT, 0.0f });
+		lowerRoomBuilding.finishBuild();
+		return lowerRoomBuilding.isTraversalTopologyValid();
+	}
+
+	bool sharedLocationWallsCanBeOpenedAndRestored()
+	{
+		core::Building building("Shared Location walls", 8, 4);
+		auto left = building.addRoom("Left", CORE_LAYER_FORE, 1, 0, 3, 2);
+		auto right = building.addRoom("Right", CORE_LAYER_FORE, 0, 3, 3, 3);
+		building.finishBuild();
+
+		std::string diagnostic;
+		if (!building.canRemoveLocationWall(left, 0, CORE_SIDE_RIGHT, &diagnostic)
+			|| building.canRemoveLocationWall(left, 0, CORE_SIDE_LEFT, &diagnostic)) return false;
+		bool activeEditRejected = false;
+		try { building.removeLocationWall(left, 0, CORE_SIDE_RIGHT); }
+		catch (std::exception const&) { activeEditRejected = true; }
+		if (!activeEditRejected) return false;
+
+		building.pauseSimulation();
+		building.removeLocationWall(left, 0, CORE_SIDE_RIGHT);
+		if (building.getSector(left)->getEndType(0, CORE_SIDE_RIGHT) != core::SectorEndType::None
+			|| building.getSector(right)->getEndType(1, CORE_SIDE_LEFT) != core::SectorEndType::None
+			|| !building.canAddLocationWall(right, 1, CORE_SIDE_LEFT, &diagnostic)) return false;
+		building.finishBuild();
+		if (!building.isTraversalTopologyValid()) return false;
+
+		building.addLocationWall(right, 1, CORE_SIDE_LEFT);
+		if (building.getSector(left)->getEndType(0, CORE_SIDE_RIGHT) != core::SectorEndType::Wall
+			|| building.getSector(right)->getEndType(1, CORE_SIDE_LEFT) != core::SectorEndType::Wall)
+			return false;
+		building.finishBuild();
+		return building.isTraversalTopologyValid()
+			&& building.canRemoveLocationWall(right, 1, CORE_SIDE_LEFT, &diagnostic);
+	}
+
 	bool walkwayEditingEnforcesPlacementMovementAndOccupancyRules()
 	{
 		core::Building building("Walkway editing", 10, 4);
@@ -3841,6 +3907,16 @@ int main()
 		if (!objectMoveValidatesAndRebuildsOnceCommitted())
 		{
 			std::cerr << "FAIL: Object movement did not validate and rebuild atomically\n";
+			return 1;
+		}
+		if (!staircaseCanEnterBottomOfForeRoomThroughOpenWall())
+		{
+			std::cerr << "FAIL: Staircase could not enter a Fore-layer Room through its open bottom wall\n";
+			return 1;
+		}
+		if (!sharedLocationWallsCanBeOpenedAndRestored())
+		{
+			std::cerr << "FAIL: shared Location walls could not be opened and restored\n";
 			return 1;
 		}
 		if (!walkwayEditingEnforcesPlacementMovementAndOccupancyRules())

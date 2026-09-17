@@ -547,6 +547,9 @@ namespace core
 
 		void validateCellHasNoDoor(std::string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y) const;
 
+		bool validateStaircaseEndpoint(uint32_t x, uint32_t y, bool upperEndpoint,
+			int riseSide, std::string& diagnostic) const;
+
 		void validateCellHasPhysicalControl(std::string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y, int side) const;
 
 		void validateCellHasNoPhysicalControl(std::string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y, int side) const;
@@ -1086,7 +1089,15 @@ namespace core
 
 		std::shared_ptr<const SectorObject> applyObjectMove(ObjectMovePlan const& plan);
 
+		bool canRemoveLocationWall(uint32_t sectorIndex, uint32_t deckIndex, int side,
+			std::string* diagnostic = nullptr) const;
+
+		bool canAddLocationWall(uint32_t sectorIndex, uint32_t deckIndex, int side,
+			std::string* diagnostic = nullptr) const;
+
 		void removeLocationWall(uint32_t sectorIndex, uint32_t deckIndex, int side);
+
+		void addLocationWall(uint32_t sectorIndex, uint32_t deckIndex, int side);
 
 		void finishBuild();
 

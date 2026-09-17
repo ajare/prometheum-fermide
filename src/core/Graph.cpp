@@ -830,7 +830,7 @@ namespace core
 			workVertices.push_back(staircaseVertex);
 			auto found = interLayerVertexLookup.find(cellPos);
 			if (found == interLayerVertexLookup.end())
-				throw BuildingException(mwBuilding, format("A Staircase endpoint has no Corridor at {},{}", x, y));
+				throw BuildingException(mwBuilding, format("A Staircase endpoint has no Location at {},{}", x, y));
 			addEdge(make_shared<StaircaseMountEdge>(staircase), found->second, staircaseVertex, true);
 			addCrossDeckVertex(transit, staircaseVertex, crossDeckVertices);
 		}
