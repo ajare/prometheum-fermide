@@ -21,7 +21,7 @@ namespace core
 	}
 
 	ShuttleTransit::ShuttleTransit(uint32_t index, uint32_t cellX, uint32_t cellY, uint32_t cellsWide, uint32_t numCars, uint32_t carWidth, vector<TransitStop> const& stops)
-		: Transit(SectorType::Shuttle, "Shuttle", CORE_LAYER_BACK, index,
+		: Transit(SectorType::Shuttle, "Shuttle", layerBehind(0), index,
 			cellX, cellY,
 			0.0f, 0.0f,
 			(float)cellsWide, CORE_SHUTTLE_HEIGHT,

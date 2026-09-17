@@ -22,7 +22,7 @@ namespace core
 
 	LiftTransit::LiftTransit(uint32_t index, uint32_t cellX, uint32_t cellY, uint32_t cellsWide,
 		uint32_t decksHigh, vector<TransitStop> const& stops)
-		: Transit(SectorType::Lift, "Lift", CORE_LAYER_BACK, index,
+		: Transit(SectorType::Lift, "Lift", layerBehind(0), index,
 			cellX, cellY,
 			0.0f, 0.0f,
 			(float)cellsWide, (float)decksHigh,

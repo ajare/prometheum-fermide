@@ -346,7 +346,7 @@ namespace core
 
 		uint32_t mCellsWide, mDecksHigh;
 
-		std::array<std::shared_ptr<Layer>, CORE_NUM_LAYERS> mLayers;
+		std::array<std::shared_ptr<Layer>, 2> mLayers;
 
 		std::vector<std::shared_ptr<Sector>> mSectors;
 

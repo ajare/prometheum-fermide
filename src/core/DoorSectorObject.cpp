@@ -26,7 +26,7 @@ namespace core
 	- cellX and cellY are global, not relative to the Location that it's in.
 	*/
 	DoorSectorObject::DoorSectorObject(uint32_t cellX, uint32_t cellY, uint32_t cellsWide, shared_ptr<const Sector> sectors[2], uint32_t* vertexIdentifer)
-		: SectorObject(SectorObjectType::Door, sectors[CORE_LAYER_FORE], cellX, cellY, cellsWide, 1, make_shared<Door>(cellX, cellY, cellsWide, sectors), vertexIdentifer)
+		: SectorObject(SectorObjectType::Door, sectors[0], cellX, cellY, cellsWide, 1, make_shared<Door>(cellX, cellY, cellsWide, sectors), vertexIdentifer)
 	{
 	}
 

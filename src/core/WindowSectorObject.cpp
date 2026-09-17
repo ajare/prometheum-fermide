@@ -26,7 +26,7 @@ namespace core
 	- cellsWide should generally be 1, but in theory there's no reason why it can't be any value greater than zero.
 	*/
 	WindowSectorObject::WindowSectorObject(uint32_t cellX, uint32_t cellY, uint32_t cellsWide, uint32_t decksHigh, shared_ptr<const Sector> sectors[2], uint32_t * vertexIdentifer)
-		: SectorObject(SectorObjectType::Window, sectors[CORE_LAYER_FORE], cellX, cellY, cellsWide, decksHigh, make_shared<Window>(cellX, cellY, cellsWide, decksHigh, sectors), vertexIdentifer)
+		: SectorObject(SectorObjectType::Window, sectors[0], cellX, cellY, cellsWide, decksHigh, make_shared<Window>(cellX, cellY, cellsWide, decksHigh, sectors), vertexIdentifer)
 	{
 	}
 

@@ -105,8 +105,8 @@ namespace core
 		};
 		auto layerName = [](uint32_t layer)
 		{
-			if (layer == CORE_LAYER_FORE) return "fore";
-			if (layer == CORE_LAYER_BACK) return "back";
+			if (isFrontMostLayer(layer)) return "fore";
+			if (isBackMostLayer(layer)) return "back";
 			throw SerializationException("Cannot serialize an unknown Building layer");
 		};
 		auto sideName = [](int side)
@@ -303,8 +303,8 @@ namespace core
 		auto readLayer = [&](char const* field)
 		{
 			auto const value = serializer.readString(field);
-			if (value == "fore") return static_cast<uint32_t>(CORE_LAYER_FORE);
-			if (value == "back") return static_cast<uint32_t>(CORE_LAYER_BACK);
+			if (value == "fore") return static_cast<uint32_t>(0);
+			if (value == "back") return static_cast<uint32_t>(layerBehind(0));
 			throw SerializationException(format("Unknown layer: {}", value));
 		};
 		auto readSide = [&](char const* field)
@@ -597,7 +597,7 @@ namespace core
 		mName = std::move(name);
 		mCellsWide = cellsWide;
 		mDecksHigh = decksHigh;
-		for (uint32_t layer = 0; layer < CORE_NUM_LAYERS; ++layer)
+		for (uint32_t layer = 0; layer < mLayers.size(); ++layer)
 		{
 			mLayers[layer] = std::make_shared<Layer>(this, cellsWide, decksHigh, layer);
 		}
@@ -919,20 +919,20 @@ namespace core
 		for (uint32_t iy = y; iy < y + decksHigh; ++iy)
 			for (uint32_t ix = x; ix < x + cellsWide; ++ix)
 			{
-				auto occupant = mLayers[CORE_LAYER_BACK]->getCellDefinition(ix, iy).sectorIndex;
+				auto occupant = mLayers[layerBehind(0)]->getCellDefinition(ix, iy).sectorIndex;
 				if (occupant != ~0u && occupant != sectorIndex)
 				{ plan.diagnostic = format("Sector at {},{} blocks the Lift", ix, iy); return plan; }
 			}
 		for (uint32_t iy = y; iy < y + decksHigh; ++iy)
 		{
-			auto const& first = mLayers[CORE_LAYER_FORE]->getCellDefinition(x, iy);
+			auto const& first = mLayers[0]->getCellDefinition(x, iy);
 			if (first.sectorIndex == ~0u) continue;
 			auto location = dynamic_pointer_cast<const Location>(mSectors[first.sectorIndex]);
 			if (!location) continue;
 			bool complete = true;
 			for (uint32_t ix = x; ix < x + cellsWide; ++ix)
 			{
-				auto const& cell = mLayers[CORE_LAYER_FORE]->getCellDefinition(ix, iy);
+				auto const& cell = mLayers[0]->getCellDefinition(ix, iy);
 				complete = complete && cell.sectorIndex == first.sectorIndex && cell.isTraversableOnFoot();
 				if (cell.hasObject())
 				{
@@ -1042,7 +1042,7 @@ namespace core
 		if (!prepareLiftEdit(plan, records, diagnostic)) throw BuildingException(this, diagnostic);
 		rebuildFromConstructionRecords(std::move(records));
 		if (plan.remove) return ~0u;
-		auto const& cell = mLayers[CORE_LAYER_BACK]->getCellDefinition(plan.x, plan.y);
+		auto const& cell = mLayers[layerBehind(0)]->getCellDefinition(plan.x, plan.y);
 		return cell.sectorIndex;
 	}
 
@@ -1076,7 +1076,7 @@ namespace core
 				if (record.type != ConstructionType::Window) return false;
 				for (uint32_t iy = record.b; iy < record.b + record.e && iy < mDecksHigh; ++iy)
 					for (uint32_t ix = record.c; ix < record.c + record.d && ix < mCellsWide; ++ix)
-						if (mLayers[CORE_LAYER_BACK]->getCellDefinition(ix, iy).sectorIndex
+						if (mLayers[layerBehind(0)]->getCellDefinition(ix, iy).sectorIndex
 							== plan.sectorIndex) return true;
 				return false;
 			}), records.end());
@@ -1169,7 +1169,7 @@ namespace core
 		}
 		for (uint32_t ix = x; ix < x + cellsWide; ++ix)
 		{
-			auto occupant = mLayers[CORE_LAYER_BACK]->getCellDefinition(ix, y).sectorIndex;
+			auto occupant = mLayers[layerBehind(0)]->getCellDefinition(ix, y).sectorIndex;
 			if (occupant != ~0u && occupant != sectorIndex)
 			{ plan.diagnostic = format("Sector at {},{} blocks the Shuttle", ix, y); return plan; }
 		}
@@ -1184,7 +1184,7 @@ namespace core
 				{
 					if ((doorMask & (1u << doorOffset)) == 0) continue;
 					auto doorX = x + offset + car * (authored->e + 1) + doorOffset;
-					auto const& cell = mLayers[CORE_LAYER_FORE]->getCellDefinition(doorX, y);
+					auto const& cell = mLayers[0]->getCellDefinition(doorX, y);
 					bool valid = cell.sectorIndex != ~0u
 						&& mSectors[cell.sectorIndex]->getType() == SectorType::Location
 						&& cell.isTraversableOnFoot() && cell.markers.empty();
@@ -1259,7 +1259,7 @@ namespace core
 			bool dependent = false;
 			for (uint32_t iy = record.b; !dependent && iy < record.b + record.e && iy < mDecksHigh; ++iy)
 				for (uint32_t ix = record.c; ix < record.c + record.d && ix < mCellsWide; ++ix)
-					if (mLayers[CORE_LAYER_BACK]->getCellDefinition(ix, iy).sectorIndex == sectorIndex)
+					if (mLayers[layerBehind(0)]->getCellDefinition(ix, iy).sectorIndex == sectorIndex)
 					{ dependent = true; break; }
 			if (dependent) plan.consequences.push_back(format(
 				"Delete dependent Window at {},{} ({} x {} cells)", record.c, record.b, record.d, record.e));
@@ -1332,7 +1332,7 @@ namespace core
 		if (!prepareShuttleEdit(plan, records, diagnostic)) throw BuildingException(this, diagnostic);
 		rebuildFromConstructionRecords(std::move(records));
 		if (plan.remove) return ~0u;
-		return mLayers[CORE_LAYER_BACK]->getCellDefinition(plan.x, plan.y).sectorIndex;
+		return mLayers[layerBehind(0)]->getCellDefinition(plan.x, plan.y).sectorIndex;
 	}
 
 	bool Building::getLadderOptions(uint32_t sectorIndex, CreateLadderOptions& options) const
@@ -1450,13 +1450,13 @@ namespace core
 		{ plan.diagnostic = "The Ladder is outside the Building bounds"; return plan; }
 		for (uint32_t iy = y; iy < y + options.decksHigh; ++iy)
 		{
-			auto occupant = mLayers[CORE_LAYER_BACK]->getCellDefinition(x, iy).sectorIndex;
+			auto occupant = mLayers[layerBehind(0)]->getCellDefinition(x, iy).sectorIndex;
 			if (occupant != ~0u && occupant != sectorIndex)
 			{ plan.diagnostic = format("A Back-layer Sector at {},{} blocks the Ladder", x, iy); return plan; }
 		}
 		auto upperY = y + options.decksHigh - 1;
-		auto const& lower = mLayers[CORE_LAYER_FORE]->getCellDefinition(x, y);
-		auto const& upper = mLayers[CORE_LAYER_FORE]->getCellDefinition(x, upperY);
+		auto const& lower = mLayers[0]->getCellDefinition(x, y);
+		auto const& upper = mLayers[0]->getCellDefinition(x, upperY);
 		if (lower.sectorIndex == ~0u || !mSectors[lower.sectorIndex]
 			|| mSectors[lower.sectorIndex]->getType() != SectorType::Location)
 		{ plan.diagnostic = format("A Fore-layer Location is required at {},{}", x, y); return plan; }
@@ -1533,7 +1533,7 @@ namespace core
 		rebuildFromConstructionRecords(std::move(records),
 			plan.remove ? ~0u : plan.sectorIndex, deltaX, deltaY);
 		if (plan.remove) return ~0u;
-		return mLayers[CORE_LAYER_BACK]->getCellDefinition(plan.x, plan.y).sectorIndex;
+		return mLayers[layerBehind(0)]->getCellDefinition(plan.x, plan.y).sectorIndex;
 	}
 
 	bool Building::getStairwellOptions(uint32_t sectorIndex, CreateStairwellOptions& options) const
@@ -1589,7 +1589,7 @@ namespace core
 		for (uint32_t iy = y; iy <= y + 1; ++iy)
 			for (uint32_t ix = x; ix < x + options.cellsWide; ++ix)
 			{
-				auto occupant = mLayers[CORE_LAYER_BACK]->getCellDefinition(ix, iy).sectorIndex;
+				auto occupant = mLayers[layerBehind(0)]->getCellDefinition(ix, iy).sectorIndex;
 				if (occupant != ~0u && occupant != sectorIndex)
 					{ plan.diagnostic = format("A Back-layer Sector at {},{} blocks the Staircase", ix, iy); return plan; }
 			}
@@ -1665,7 +1665,7 @@ namespace core
 		int deltaY = plan.move ? (int)plan.y - (int)old->getCellY() : 0;
 		rebuildFromConstructionRecords(std::move(records), plan.remove ? ~0u : plan.sectorIndex, deltaX, deltaY);
 		if (plan.remove) return ~0u;
-		return mLayers[CORE_LAYER_BACK]->getCellDefinition(plan.x, plan.y).sectorIndex;
+		return mLayers[layerBehind(0)]->getCellDefinition(plan.x, plan.y).sectorIndex;
 	}
 
 	bool Building::prepareStairwellEdit(StairwellEditPlan const& plan,
@@ -1773,18 +1773,18 @@ namespace core
 		{ plan.diagnostic = "The Stairwell is outside the Building bounds"; return plan; }
 		for (uint32_t iy = y; iy < y + options.decksHigh; ++iy)
 		{
-			auto const& first = mLayers[CORE_LAYER_FORE]->getCellDefinition(x, iy);
+			auto const& first = mLayers[0]->getCellDefinition(x, iy);
 			if (first.sectorIndex == ~0u || !mSectors[first.sectorIndex]
 				|| mSectors[first.sectorIndex]->getType() != SectorType::Location)
 			{ plan.diagnostic = format("A Fore-layer Location is required at {},{}", x, iy); return plan; }
 			for (uint32_t ix = x; ix < x + 2; ++ix)
 			{
-				auto const& fore = mLayers[CORE_LAYER_FORE]->getCellDefinition(ix, iy);
+				auto const& fore = mLayers[0]->getCellDefinition(ix, iy);
 				if (fore.sectorIndex != first.sectorIndex)
 				{ plan.diagnostic = format("The Stairwell spans different Fore-layer Locations at deck {}", iy); return plan; }
 				if (!fore.isTraversableOnFoot())
 				{ plan.diagnostic = format("The Fore-layer floor at {},{} is not traversable", ix, iy); return plan; }
-				auto occupant = mLayers[CORE_LAYER_BACK]->getCellDefinition(ix, iy).sectorIndex;
+				auto occupant = mLayers[layerBehind(0)]->getCellDefinition(ix, iy).sectorIndex;
 				if (occupant != ~0u && occupant != sectorIndex)
 				{ plan.diagnostic = format("A Back-layer Sector at {},{} blocks the Stairwell", ix, iy); return plan; }
 			}
@@ -1848,7 +1848,7 @@ namespace core
 		rebuildFromConstructionRecords(std::move(records),
 			plan.remove ? ~0u : plan.sectorIndex, deltaX, deltaY);
 		if (plan.remove) return ~0u;
-		return mLayers[CORE_LAYER_BACK]->getCellDefinition(plan.x, plan.y).sectorIndex;
+		return mLayers[layerBehind(0)]->getCellDefinition(plan.x, plan.y).sectorIndex;
 	}
 
 	bool Building::prepareLocationEdit(LocationEditPlan const& plan,
@@ -1880,7 +1880,7 @@ namespace core
 		auto locationAt = [&](uint32_t x, uint32_t y) -> shared_ptr<const Sector>
 		{
 			if (x >= candidate.mCellsWide || y >= candidate.mDecksHigh) return nullptr;
-			auto const& cell = candidate.mLayers[CORE_LAYER_FORE]->getCellDefinition(x, y);
+			auto const& cell = candidate.mLayers[0]->getCellDefinition(x, y);
 			if (cell.sectorIndex == ~0u) return nullptr;
 			auto sector = candidate.getSector(cell.sectorIndex);
 			return sector && sector->getType() == SectorType::Location ? sector : nullptr;
@@ -2485,7 +2485,7 @@ namespace core
 		}
 		if (type == SectorObjectType::Door)
 		{
-			for (uint32_t layer = 0; layer < CORE_NUM_LAYERS; ++layer)
+			for (uint32_t layer = 0; layer < mLayers.size(); ++layer)
 				for (uint32_t ix = plan.x; ix < targetRight; ++ix)
 				{
 					auto const& cell = mLayers[layer]->getCellDefinition(ix, plan.y);
@@ -2532,7 +2532,7 @@ namespace core
 			if (type == SectorObjectType::Door)
 			{
 				auto door = static_pointer_cast<DoorSectorObject>(object)->getDoor();
-				for (uint32_t layer = 0; layer < CORE_NUM_LAYERS; ++layer)
+				for (uint32_t layer = 0; layer < mLayers.size(); ++layer)
 				{
 					auto sector = door->getSector(layer);
 					if (!sector) continue;
@@ -2540,7 +2540,7 @@ namespace core
 					ConstructionRecord tombstone{ ConstructionType::ObjectTombstone };
 					tombstone.a = sector->getIndex();
 					tombstones.push_back(tombstone);
-					bool hasControl = layer == CORE_LAYER_FORE ? moved.p : moved.q;
+					bool hasControl = isFrontMostLayer(layer) ? moved.p : moved.q;
 					if (hasControl) tombstones.push_back(tombstone);
 				}
 			}
@@ -2560,7 +2560,7 @@ namespace core
 			else if (type == SectorObjectType::Window)
 			{
 				auto window = static_pointer_cast<WindowSectorObject>(object)->getWindow();
-				for (uint32_t layer = 0; layer < CORE_NUM_LAYERS; ++layer)
+				for (uint32_t layer = 0; layer < mLayers.size(); ++layer)
 					if (auto sector = window->getSector(layer)) owners.insert(sector->getIndex());
 				for (auto index : owners)
 				{
@@ -2715,14 +2715,14 @@ namespace core
 			}
 			// The Door is shared by both Locations and may also have added one
 			// control to either Location. Preserve each Sector's authored indices.
-			for (uint32_t layer = 0; layer < CORE_NUM_LAYERS; ++layer)
+			for (uint32_t layer = 0; layer < mLayers.size(); ++layer)
 			{
 				auto sector = door->getSector(layer);
 				if (!sector) continue;
 				ConstructionRecord doorTombstone{ ConstructionType::ObjectTombstone };
 				doorTombstone.a = sector->getIndex();
 				records.push_back(std::move(doorTombstone));
-				bool hadControl = layer == CORE_LAYER_FORE ? source->p : source->q;
+				bool hadControl = isFrontMostLayer(layer) ? source->p : source->q;
 				if (hadControl)
 				{
 					ConstructionRecord controlTombstone{ ConstructionType::ObjectTombstone };
@@ -3528,7 +3528,7 @@ namespace core
 			// Keep later authored object indices stable in every Sector that shared
 			// the Window, while omitting the Window and its traversal resource.
 			set<uint32_t> sectorIndices;
-			for (uint32_t layer = 0; layer < CORE_NUM_LAYERS; ++layer)
+			for (uint32_t layer = 0; layer < mLayers.size(); ++layer)
 				if (auto sector = window->getSector(layer)) sectorIndices.insert(sector->getIndex());
 			for (auto index : sectorIndices)
 			{

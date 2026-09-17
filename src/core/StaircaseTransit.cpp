@@ -8,7 +8,7 @@ namespace core
 
 	StaircaseTransit::StaircaseTransit(uint32_t index, uint32_t cellX, uint32_t cellY,
 		uint32_t cellsWide, int riseSide, float speed, vector<TransitStop> const& stops)
-		: Transit(SectorType::Staircase, "Staircase", CORE_LAYER_BACK, index,
+		: Transit(SectorType::Staircase, "Staircase", layerBehind(0), index,
 			cellX, cellY, 0.0f, 0.0f, (float)cellsWide,
 			1.0f + CORE_CORRIDOR_HEIGHT, cellsWide, 2, 1.0f, ~0u, stops)
 		, VerticalEdgeCreator()

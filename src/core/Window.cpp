@@ -25,7 +25,7 @@ namespace core
 
 	- cellX and cellY are global, not relative to the Location that it's in.
 	- cellsWide should generally be 1, but in theory there's no reason why it can't be any value greater than zero.
-	- locations[2] is the fore and back Location (see CORE_LAYER_FORE / CORE_LAYER_BACK)
+	- locations[2] is the fore and back Location (front first, adjacent layer behind second)
 	*/
 	Window::Window(uint32_t cellX, uint32_t cellY, uint32_t cellsWide, uint32_t decksHigh, shared_ptr<const Sector> sectors[2])
 		: Object((float)cellX + CORE_WINDOW_X_INSET, (float)cellY + CORE_WINDOW_Y_OFFSET, cellsWide - CORE_WINDOW_X_INSET * 2.0f, (decksHigh - 1) + CORE_WINDOW_HEIGHT)

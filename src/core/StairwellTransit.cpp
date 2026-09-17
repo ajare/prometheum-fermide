@@ -12,7 +12,7 @@ namespace core
 	using namespace std;
 
 	StairwellTransit::StairwellTransit(uint32_t index, uint32_t cellX, uint32_t cellY, uint32_t decksHigh, int mountSide, vector<TransitStop> const& stops)
-		: Transit(SectorType::Stairwell, "Stairwell", CORE_LAYER_BACK, index,
+		: Transit(SectorType::Stairwell, "Stairwell", layerBehind(0), index,
 			cellX, cellY,
 			0.0f, 0.0f,
 			2.0f, (float)((decksHigh - 1.0f) + CORE_CORRIDOR_HEIGHT),
