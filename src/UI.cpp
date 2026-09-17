@@ -4046,11 +4046,17 @@ void handleShortcuts(shared_ptr<core::Building>& building)
 	// View
 	if (ImGui::Shortcut(ImGuiKey_F2, 0, ImGuiInputFlags_RouteGlobalLow))
 	{
-		gUISettings.visibleLayer = 1 - gUISettings.visibleLayer;
+		if (building)
+		{
+			auto const layerCount = building->getLayerCount();
+			auto const current = static_cast<uint32_t>(std::clamp(gUISettings.visibleLayer, 0,
+				static_cast<int>(layerCount) - 1));
+			gUISettings.visibleLayer = static_cast<int>((current + 1) % layerCount);
+		}
 	}
 	if (ImGui::Shortcut(ImGuiKey_F3, 0, ImGuiInputFlags_RouteGlobalLow))
 	{
-		gUISettings.renderNonVisibleLayer = !gUISettings.renderNonVisibleLayer;
+		gUISettings.renderNextLayerWireframe = !gUISettings.renderNextLayerWireframe;
 	}
 	if (!gSelectingAgentPathDestination
 		&& ImGui::Shortcut(ImGuiKey_F4, 0, ImGuiInputFlags_RouteGlobalLow))
@@ -4408,7 +4414,7 @@ void renderMenu(shared_ptr<core::Building>& building)
 			}
 
 			ImGui::MenuItem("Grid", "G", &gUISettings.renderGrid);
-			ImGui::MenuItem("Show non-visible layer", "F3", &gUISettings.renderNonVisibleLayer);
+			ImGui::MenuItem("Show next layer wireframe", "F3", &gUISettings.renderNextLayerWireframe);
 			ImGui::MenuItem("Building graph", "F4", &gUISettings.renderGraph);
 			ImGui::MenuItem("Highlight nearest vertex", "F5", &gUISettings.highlightNearestVertex);
 
@@ -4482,7 +4488,7 @@ void renderDocumentToolbar(shared_ptr<core::Building>& building)
 	ImGui::EndDisabled();
 
 	ImGui::SameLine(0.0f, style.ItemSpacing.x * 2.0f);
-	imgui::ToggleButton("ToggleNonVisibleLayer", "Show non-visible layer", &gUISettings.renderNonVisibleLayer);
+	imgui::ToggleButton("ToggleNextLayerWireframe", "Next layer wireframe", &gUISettings.renderNextLayerWireframe);
 	ImGui::SameLine();
 	imgui::ToggleButton("ToggleGraph", "Building graph", &gUISettings.renderGraph);
 	ImGui::SameLine();
@@ -6303,6 +6309,11 @@ void renderLayersPanel(shared_ptr<core::Building> const& building)
 		for (uint32_t layer = 0; layer < layerCount; ++layer)
 		{
 			bool const visible = static_cast<int>(layer) == gUISettings.visibleLayer;
+			// The viewport draws the selected Layer solid and the Layer directly behind
+			// it as a wireframe overlay. Every other Layer is hidden.
+			bool const wireframeOverlay = !visible
+				&& static_cast<int>(layer) == gUISettings.visibleLayer + 1
+				&& gUISettings.renderNextLayerWireframe;
 
 			ImGui::TableNextRow();
 			ImGui::PushID(layer);
@@ -6311,6 +6322,11 @@ void renderLayersPanel(shared_ptr<core::Building> const& building)
 			{
 				ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0,
 					ImGui::GetColorU32(ImVec4(1.0f, 0.5f, 0.0f, 0.35f)));
+			}
+			else if (wireframeOverlay)
+			{
+				ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0,
+					ImGui::GetColorU32(ImVec4(0.45f, 0.55f, 1.0f, 0.20f)));
 			}
 
 			ImGui::TableSetColumnIndex(0);
@@ -6325,9 +6341,19 @@ void renderLayersPanel(shared_ptr<core::Building> const& building)
 			ImGui::PopStyleColor();
 			if (ImGui::IsItemHovered())
 			{
-				auto const tip = visible ? std::string("Viewing this layer")
-					: format("View {}", building->getLayerName(layer));
-				ImGui::SetTooltip("%s", tip.c_str());
+				if (visible)
+				{
+					ImGui::SetTooltip("Viewing this layer");
+				}
+				else if (wireframeOverlay)
+				{
+					ImGui::SetTooltip("%s\nDrawn as a wireframe overlay behind the selected layer",
+						building->getLayerName(layer).c_str());
+				}
+				else
+				{
+					ImGui::SetTooltip("View %s", building->getLayerName(layer).c_str());
+				}
 			}
 
 			ImGui::TableSetColumnIndex(1);

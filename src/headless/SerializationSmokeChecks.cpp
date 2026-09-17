@@ -913,15 +913,16 @@ agents: []
 			"Placed Stairwells cannot be selected by the canvas hit-test");
 		require(!shouldDrawCanvasSectorEditOverlay(1, 0),
 			"A selected Back-layer Stairwell is overlaid in front of the Fore layer");
-		require(!shouldRenderStairwellGeometry(1, false),
-			"Hidden Back-layer Stairwell geometry is rendered over the Fore layer");
-		require(shouldRenderStairwellGeometry(1, true)
-			&& shouldRenderStairwellGeometry(0, true),
-			"Stairwell geometry was suppressed from a visible or clipped Fore-layer pass");
-		require(!shouldRenderSectorAgents(core::SectorType::Stairwell, 1, false)
-			&& shouldRenderSectorAgents(core::SectorType::Stairwell, 0, true)
-			&& shouldRenderSectorAgents(core::SectorType::Stairwell, 1, true),
-			"Stairwell Agents do not obey the Stairwell's foreground aperture clipping");
+		require(!shouldRenderStairwellGeometry(LayerRenderStyle::Wireframe)
+			&& !shouldRenderStairwellGeometry(LayerRenderStyle::Hidden),
+			"A hidden Layer's Stairwell geometry is rendered over the selected Layer");
+		require(shouldRenderStairwellGeometry(LayerRenderStyle::Solid)
+			&& shouldRenderStairwellGeometry(LayerRenderStyle::Aperture),
+			"Stairwell geometry was suppressed from the selected Layer or an aperture pass");
+		require(!shouldRenderSectorAgents(core::SectorType::Stairwell, LayerRenderStyle::Wireframe)
+			&& shouldRenderSectorAgents(core::SectorType::Stairwell, LayerRenderStyle::Solid)
+			&& shouldRenderSectorAgents(core::SectorType::Stairwell, LayerRenderStyle::Aperture),
+			"Stairwell Agents do not obey the Stairwell's aperture clipping");
 		core::Stairwell leftStairwell(0, 0, 3, CORE_SIDE_LEFT);
 		core::Stairwell rightStairwell(0, 0, 3, CORE_SIDE_RIGHT);
 		auto left = leftStairwell.getDeckPath(0);
@@ -947,8 +948,8 @@ agents: []
 		require(shouldRenderStaircaseAfterSector(core::SectorType::Location)
 			&& !shouldRenderStaircaseAfterSector(core::SectorType::Staircase),
 			"Staircases are not ordered after Fore-layer Rooms and Corridors");
-		require(!shouldRenderSectorAgents(core::SectorType::Staircase, 1, false)
-			&& shouldRenderSectorAgents(core::SectorType::Staircase, 0, true),
+		require(!shouldRenderSectorAgents(core::SectorType::Staircase, LayerRenderStyle::Wireframe)
+			&& shouldRenderSectorAgents(core::SectorType::Staircase, LayerRenderStyle::Aperture),
 			"Staircase Agents do not obey corridor clipping");
 
 		core::Staircase right(0, 0, 4, CORE_SIDE_RIGHT);
@@ -1052,19 +1053,20 @@ agents: []
 	{
 		require(isCanvasSelectableSectorType(core::SectorType::Ladder),
 			"Placed Ladders cannot be selected by the canvas hit-test");
-		require(!shouldRenderLadderGeometry(1, false),
-			"Hidden Back-layer Ladder geometry bypasses Fore-layer corridor clipping");
-		require(shouldRenderLadderGeometry(1, true)
-			&& shouldRenderLadderGeometry(0, true),
-			"Ladder geometry was suppressed from a visible or clipped Fore-layer pass");
+		require(!shouldRenderLadderGeometry(LayerRenderStyle::Wireframe)
+			&& !shouldRenderLadderGeometry(LayerRenderStyle::Hidden),
+			"A hidden Layer's Ladder geometry bypasses the selected Layer's clipping");
+		require(shouldRenderLadderGeometry(LayerRenderStyle::Solid)
+			&& shouldRenderLadderGeometry(LayerRenderStyle::Aperture),
+			"Ladder geometry was suppressed from the selected Layer or an aperture pass");
 		require(shouldRenderForeContentAfterTransit(core::SectorType::Ladder),
 			"Clipped sector Ladder geometry is rendered in front of its Location contents");
 		require(!shouldRenderLadderGeometryAfterSectorContents(),
 			"Sector Ladder geometry is redrawn in front of its occupying Agents");
-		require(!shouldRenderSectorAgents(core::SectorType::Ladder, 1, false)
-			&& shouldRenderSectorAgents(core::SectorType::Ladder, 0, false)
-			&& shouldRenderSectorAgents(core::SectorType::Ladder, 1, true),
-			"Sector Ladder Agents do not obey the Ladder's foreground aperture clipping");
+		require(!shouldRenderSectorAgents(core::SectorType::Ladder, LayerRenderStyle::Wireframe)
+			&& shouldRenderSectorAgents(core::SectorType::Ladder, LayerRenderStyle::Aperture)
+			&& shouldRenderSectorAgents(core::SectorType::Ladder, LayerRenderStyle::Solid),
+			"Sector Ladder Agents do not obey the Ladder's aperture clipping");
 		core::Building edgeBuilding("Edge Ladder controls", 5, 3);
 		edgeBuilding.addCorridor(0, 0, 5);
 		edgeBuilding.addCorridor(2, 0, 5);
@@ -1359,9 +1361,68 @@ void layerHelperApiIsConsistentWithTwoLayerConstants()
 	require(CORE_MAX_LAYERS == 256, "CORE_MAX_LAYERS is not 256");
 }
 
+// The viewport draws the selected Layer solid and the Layer directly behind it as
+// a wireframe overlay. Every other Layer - in front of the selection, or more than
+// one Layer behind it - is hidden.
+void onlyTheSelectedLayerAndTheLayerBehindAreDrawn()
+{
+	require(layerRenderStyle(0, 0, 2) == LayerRenderStyle::Solid,
+		"The selected Layer is not drawn solid");
+	require(layerRenderStyle(1, 0, 2) == LayerRenderStyle::Wireframe,
+		"The Layer directly behind the selection is not drawn as a wireframe overlay");
+
+	require(layerRenderStyle(0, 1, 2) == LayerRenderStyle::Hidden
+		&& layerRenderStyle(1, 1, 2) == LayerRenderStyle::Solid,
+		"A Layer in front of the selection is still drawn");
+	require(!isLayerDrawn(0, 1, 2),
+		"The front-most Layer is drawn while the Layer behind it is selected");
+
+	require(layerRenderStyle(1, 1, 3) == LayerRenderStyle::Solid
+		&& layerRenderStyle(2, 1, 3) == LayerRenderStyle::Wireframe
+		&& layerRenderStyle(0, 1, 3) == LayerRenderStyle::Hidden,
+		"A middle Layer does not draw itself solid and the Layer behind it as wireframe");
+
+	require(layerRenderStyle(0, 0, 3) == LayerRenderStyle::Solid
+		&& layerRenderStyle(1, 0, 3) == LayerRenderStyle::Wireframe
+		&& layerRenderStyle(2, 0, 3) == LayerRenderStyle::Hidden,
+		"More than one Layer behind the selection is drawn");
+
+	require(layerRenderStyle(2, 2, 3) == LayerRenderStyle::Solid
+		&& !isLayerDrawn(0, 2, 3) && !isLayerDrawn(1, 2, 3),
+		"The back-most Layer does not draw itself solid, or leaves other Layers drawn");
+
+	require(!isLayerDrawn(3, 0, 3) && !isLayerDrawn(0, 3, 3),
+		"A Layer index outside the Building's Layers is drawn");
+
+	// The same policy against a live Building: whatever the Layer count, exactly the
+	// selected Layer and the Layer directly behind it are drawn.
+	core::Building building("Render layer policy", 4, 2);
+	building.addCorridor(0, 0, 4);
+	building.addLayer();
+	building.addLayer();
+	require(building.getLayerCount() == 4, "A four-layer Building could not be created");
+
+	for (uint32_t view = 0; view < building.getLayerCount(); ++view)
+	{
+		uint32_t drawn{ 0 };
+		for (uint32_t layer = 0; layer < building.getLayerCount(); ++layer)
+		{
+			auto const style = layerRenderStyle(layer, view, building.getLayerCount());
+			if (style == LayerRenderStyle::Hidden) continue;
+			++drawn;
+			require(style == (layer == view ? LayerRenderStyle::Solid : LayerRenderStyle::Wireframe),
+				"A drawn Layer is neither the selected Layer nor the Layer directly behind it");
+		}
+		auto const expected = view + 1 < building.getLayerCount() ? 2u : 1u;
+		require(drawn == expected,
+			"The number of drawn Layers does not match the selected Layer");
+	}
+}
+
 void runSerializationSmokeChecks()
 {
 	layerHelperApiIsConsistentWithTwoLayerConstants();
+	onlyTheSelectedLayerAndTheLayerBehindAreDrawn();
 	stringYamlRoundTripsPrimitiveValues();
 	fileYamlRoundTrips();
 	malformedValuesAndInvalidUsageThrowUsefulErrors();

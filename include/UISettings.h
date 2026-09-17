@@ -27,7 +27,10 @@ struct UISettings
 
 	bool renderGraph{ false };
 
-	bool renderNonVisibleLayer{ false };
+	// The viewport always draws the selected Layer solid. This controls whether the
+	// Layer directly behind it is also drawn, as a wireframe overlay. Every other
+	// Layer is never drawn.
+	bool renderNextLayerWireframe{ true };
 
 	bool highlightNearestVertex{ false };
 

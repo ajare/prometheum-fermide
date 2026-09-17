@@ -47,7 +47,7 @@ namespace core
 
 	inline uint32_t layerBehind(uint32_t layer)
 	{
-		assert(layer < 1 && "No layer behind the back-most layer");
+		assert(layer + 1 < CORE_MAX_LAYERS && "No layer behind the back-most layer");
 		return layer + 1;
 	}
 }
