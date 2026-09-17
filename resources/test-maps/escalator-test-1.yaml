@@ -1,7 +1,11 @@
-version: 3
+version: 4
 name: Untitled
 cellsWide: 16
 decksHigh: 3
+layers: 2
+layerNames:
+  - Layer 0
+  - Layer 1
 construction:
   - type: corridor
     y: 0
@@ -52,5 +56,5 @@ agents:
       name: Agent 1
       flags: 0
     sector: 1
-    localX: 6.5625
+    localX: 6.328125
     localY: 0
