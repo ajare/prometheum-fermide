@@ -1000,8 +1000,20 @@ agents: []
 	}
 }
 
+void layerHelperApiIsConsistentWithTwoLayerConstants()
+{
+	require(core::isFrontMostLayer(CORE_LAYER_FORE), "fore layer is not reported as front-most");
+	require(!core::isFrontMostLayer(CORE_LAYER_BACK), "back layer reported as front-most");
+	require(core::isBackMostLayer(CORE_LAYER_BACK), "back layer is not reported as back-most");
+	require(!core::isBackMostLayer(CORE_LAYER_FORE), "fore layer reported as back-most");
+	require(core::layerInFront(CORE_LAYER_BACK) == CORE_LAYER_FORE, "layerInFront(back) did not return fore");
+	require(core::layerBehind(CORE_LAYER_FORE) == CORE_LAYER_BACK, "layerBehind(fore) did not return back");
+	require(CORE_MAX_LAYERS == 256, "CORE_MAX_LAYERS is not 256");
+}
+
 void runSerializationSmokeChecks()
 {
+	layerHelperApiIsConsistentWithTwoLayerConstants();
 	stringYamlRoundTripsPrimitiveValues();
 	fileYamlRoundTrips();
 	malformedValuesAndInvalidUsageThrowUsefulErrors();

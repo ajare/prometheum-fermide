@@ -1,5 +1,8 @@
 #pragma once
 
+#include <cassert>
+#include <cstdint>
+
 #define CORE_VAR_UNUSED(x)							(void)x
 
 //
@@ -23,9 +26,35 @@
 #define CORE_LEVEL_HIGH								1
 
 #define CORE_NUM_LAYERS								2
+#define CORE_MAX_LAYERS								256
 
 #define CORE_LAYER_FORE								0
 #define CORE_LAYER_BACK								1
+
+namespace core
+{
+	inline bool isFrontMostLayer(uint32_t layer)
+	{
+		return layer == CORE_LAYER_FORE;
+	}
+
+	inline bool isBackMostLayer(uint32_t layer)
+	{
+		return layer == CORE_NUM_LAYERS - 1;
+	}
+
+	inline uint32_t layerInFront(uint32_t layer)
+	{
+		assert(layer > CORE_LAYER_FORE && "No layer in front of the front-most layer");
+		return layer - 1;
+	}
+
+	inline uint32_t layerBehind(uint32_t layer)
+	{
+		assert(layer < CORE_NUM_LAYERS - 1 && "No layer behind the back-most layer");
+		return layer + 1;
+	}
+}
 
 //
 // Agents
