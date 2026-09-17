@@ -343,6 +343,111 @@ agents: []
 			"Custom layer names did not round-trip");
 	}
 
+	void layerFieldsAcceptLegacyNamesAndIndices()
+	{
+		auto const yaml = R"yaml(version: 4
+name: Mixed layer spellings
+cellsWide: 6
+decksHigh: 2
+layers: 3
+layerNames:
+  - Ground
+  - Mezzanine
+  - Sublevel
+construction:
+  - type: room
+    name: Front
+    layer: fore
+    y: 0
+    x: 0
+    cellsWide: 3
+    decksHigh: 1
+    topDeckHeight: 0.9
+  - type: room
+    name: Deep
+    layer: 2
+    y: 0
+    x: 3
+    cellsWide: 3
+    decksHigh: 1
+    topDeckHeight: 0.9
+agents: []
+)yaml";
+		core::Building loaded("placeholder", 1, 1);
+		core::SerializationWorkData workData;
+		auto reader = core::YamlSerializer::fromString(yaml);
+		reader->deserialize();
+		require(loaded.deserialize(*reader, workData),
+			"A Building mixing legacy layer names and layer indices did not load");
+		core::Building const& loadedRef = loaded;
+		require(loadedRef.getNumSectors() == 2
+			&& loadedRef.getSector(0)->getLayerIndex() == 0
+			&& loadedRef.getSector(1)->getLayerIndex() == 2,
+			"Legacy and indexed layers were not resolved to the right layers");
+	}
+
+	void addedLayersAppendToTheBackAndRoundTrip()
+	{
+		core::Building original("Growing", 4, 2);
+		original.addCorridor(0, 0, 4);
+		require(original.getLayerCount() == 2, "A new Building does not start with two layers");
+
+		auto const appended = original.addLayer();
+		require(appended == 2 && original.getLayerCount() == 3,
+			"addLayer() did not append a third layer");
+		require(original.getLayerName(2) == "Layer 2",
+			"addLayer() did not name the new layer by its position");
+		require(original.getLayerName(0) == "Layer 0" && original.getLayerName(1) == "Layer 1",
+			"addLayer() disturbed the names of existing layers");
+
+		original.setLayerName(2, "Sub-basement");
+		original.addRoom("Store", 2, 0, 0, 3, 1);
+		original.finishBuild();
+
+		core::SerializationWorkData workData;
+		auto writer = core::YamlSerializer::toString();
+		original.serialize(*writer, workData);
+		writer->serialize();
+		auto const yaml = writer->getSerializedString();
+		require(yaml.find("layers: 3") != std::string::npos
+			&& yaml.find("- Sub-basement") != std::string::npos,
+			"The added layer was not serialized");
+
+		core::Building loaded("placeholder", 1, 1);
+		auto reader = core::YamlSerializer::fromString(yaml);
+		reader->deserialize();
+		require(loaded.deserialize(*reader, workData), "The three-layer Building did not deserialize");
+		require(loaded.getLayerCount() == 3
+			&& loaded.getLayerName(0) == "Layer 0"
+			&& loaded.getLayerName(1) == "Layer 1"
+			&& loaded.getLayerName(2) == "Sub-basement",
+			"The added layer did not round-trip");
+		core::Building const& loadedRef = loaded;
+		require(loadedRef.getLayer(2) && loadedRef.getLayer(2)->getZ() == 2,
+			"The added layer was not created at the expected depth");
+	}
+
+	void layerCountIsCappedAtCoreMaxLayers()
+	{
+		core::Building building("Capped", 1, 1);
+		while (building.getLayerCount() < CORE_MAX_LAYERS) building.addLayer();
+		require(building.getLayerCount() == CORE_MAX_LAYERS,
+			"addLayer() stopped short of CORE_MAX_LAYERS");
+
+		bool rejected = false;
+		try
+		{
+			building.addLayer();
+		}
+		catch (std::exception const&)
+		{
+			rejected = true;
+		}
+		require(rejected, "addLayer() did not reject going beyond CORE_MAX_LAYERS");
+		require(building.getLayerCount() == CORE_MAX_LAYERS,
+			"A rejected addLayer() still changed the layer count");
+	}
+
 	void locationEditsArePlannedAndAppliedAtomically()
 	{
 		core::Building building("Editable", 8, 3);
@@ -1082,7 +1187,10 @@ void runSerializationSmokeChecks()
 	platformLiftStopDurationRoundTrips();
 	legacyBuildingYamlStillLoads();
 	legacyVersion3BuildingYamlStillLoadsWithDefaultLayers();
+	layerFieldsAcceptLegacyNamesAndIndices();
 	buildingLayerNamesRoundTrip();
+	addedLayersAppendToTheBackAndRoundTrip();
+	layerCountIsCappedAtCoreMaxLayers();
 	locationEditsArePlannedAndAppliedAtomically();
 	editedShuttleRoundTripsWithoutSchemaChanges();
 	enclosedLiftsSupportMultiDeckRooms();

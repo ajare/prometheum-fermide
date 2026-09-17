@@ -103,12 +103,6 @@ namespace core
 			for (auto value : record.values) serializer.writeUint32("", value);
 			serializer.endArray();
 		};
-		auto layerName = [](uint32_t layer)
-		{
-			if (isFrontMostLayer(layer)) return "fore";
-			if (isBackMostLayer(layer)) return "back";
-			throw SerializationException("Cannot serialize an unknown Building layer");
-		};
 		auto sideName = [](int side)
 		{
 			if (side == CORE_SIDE_LEFT) return "left";
@@ -134,7 +128,8 @@ namespace core
 			serializer.writeUint32("y", record.a); serializer.writeUint32("x", record.b);
 			serializer.writeUint32("cellsWide", record.c); serializer.writeUint32("decksHigh", record.d); break;
 		case ConstructionType::Room:
-			serializer.writeString("name", record.name); serializer.writeString("layer", layerName(record.a));
+			// Version 4 records the layer index directly instead of a fore/back name.
+			serializer.writeString("name", record.name); serializer.writeUint32("layer", record.a);
 			serializer.writeUint32("y", record.b); serializer.writeUint32("x", record.c);
 			serializer.writeUint32("cellsWide", record.d); serializer.writeUint32("decksHigh", record.e);
 			serializer.writeFloat("topDeckHeight", record.x); break;
@@ -179,13 +174,13 @@ namespace core
 			static char const* styles[] = { "clear", "tinted", "frosted" };
 			if (record.i < 0 || record.i >= static_cast<int32_t>(size(states)) || record.j < 0 || record.j >= static_cast<int32_t>(size(styles)))
 				throw SerializationException("Cannot serialize an unknown Window state or style");
-			serializer.writeString("layer", layerName(record.a)); serializer.writeUint32("y", record.b);
+			serializer.writeUint32("layer", record.a); serializer.writeUint32("y", record.b);
 			serializer.writeUint32("x", record.c); serializer.writeUint32("cellsWide", record.d);
 			serializer.writeUint32("decksHigh", record.e); serializer.writeBool("traversable", record.p);
 			serializer.writeString("initialState", states[record.i]); serializer.writeString("style", styles[record.j]); break;
 		}
 		case ConstructionType::BulkheadDoor:
-			serializer.writeString("layer", layerName(record.a)); serializer.writeUint32("y", record.b);
+			serializer.writeUint32("layer", record.a); serializer.writeUint32("y", record.b);
 			serializer.writeUint32("x", record.c); serializer.writeString("side", sideName(record.i));
 			serializer.writeBool("foreControl", record.p); serializer.writeBool("backControl", record.q);
 			serializer.writeString("activationMode", activationName(record.j));
@@ -305,12 +300,21 @@ namespace core
 			return record;
 		}
 
-		auto readLayer = [&](char const* field)
+		auto readLayer = [&](char const* field) -> uint32_t
 		{
-			auto const value = serializer.readString(field);
-			if (value == "fore") return static_cast<uint32_t>(0);
-			if (value == "back") return static_cast<uint32_t>(layerBehind(0));
-			throw SerializationException(format("Unknown layer: {}", value));
+			// Version 4 writes a layer index.  The first version 4 writer still used the
+			// legacy "fore" / "back" names, so both spellings are accepted.
+			auto const legacy = serializer.readString(field, true, "");
+			if (legacy == "fore") return static_cast<uint32_t>(0);
+			if (legacy == "back") return static_cast<uint32_t>(layerBehind(0));
+
+			auto const layer = serializer.readUint32(field);
+			if (layer >= static_cast<uint32_t>(mLayers.size()))
+			{
+				throw SerializationException(format("Layer {} is outside the Building's {} layers",
+						layer, mLayers.size()));
+			}
+			return layer;
 		};
 		auto readSide = [&](char const* field)
 		{

@@ -822,6 +822,10 @@ namespace core
 		std::string const& getLayerName(uint32_t layerIndex) const;
 		void setLayerName(uint32_t layerIndex, std::string name);
 
+		// Appends a new back-most Layer with the default name and returns its index.
+		// Throws if the Building already has CORE_MAX_LAYERS layers.
+		uint32_t addLayer();
+
 		uint32_t getNumSectors() const;
 
 		std::shared_ptr<const Layer> getLayer(uint32_t layerIndex) const;

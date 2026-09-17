@@ -151,6 +151,23 @@ namespace core
 		return format("Layer {}", layer);
 	}
 
+	uint32_t Building::addLayer()
+	{
+		auto const layerIndex = static_cast<uint32_t>(mLayers.size());
+
+		if (layerIndex >= CORE_MAX_LAYERS)
+		{
+			throw BuildingException(this,
+				format("Building cannot have more than {} layers", CORE_MAX_LAYERS));
+		}
+
+		mLayers.push_back(make_shared<Layer>(this, mCellsWide, mDecksHigh, layerIndex));
+		mLayerNames.push_back(defaultLayerName(layerIndex));
+		modify();
+
+		return layerIndex;
+	}
+
 	uint32_t Building::getNumSectors() const
 	{
 		return (uint32_t)mSectors.size();

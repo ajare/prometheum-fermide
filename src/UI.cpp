@@ -1,8 +1,11 @@
 #include <algorithm>
+#include <array>
 #include <cfloat>
 #include <cmath>
+#include <cstring>
 #include <deque>
 #include <filesystem>
+#include <map>
 #include <optional>
 #include <set>
 
@@ -2072,6 +2075,79 @@ void clearSelections()
 
 namespace
 {
+	// Layer labels come from the Building's editable layer names.
+	string layerLabel(shared_ptr<const core::Building> const& building, uint32_t layer)
+	{
+		if (!building || layer >= building->getLayerCount())
+			return format("Layer {}", layer);
+		return building->getLayerName(layer);
+	}
+
+	constexpr size_t LayerNameBufferSize{ 64 };
+
+	struct LayerNameEdit
+	{
+		std::array<char, LayerNameBufferSize> text{};
+		bool editing{ false };
+		std::string previous;
+	};
+
+	std::map<uint32_t, LayerNameEdit> gLayerNameEdits;
+
+	std::string trimLayerName(std::string const& value)
+	{
+		auto const first = value.find_first_not_of(" \t");
+		if (first == std::string::npos) return {};
+		auto const last = value.find_last_not_of(" \t");
+		return value.substr(first, last - first + 1);
+	}
+
+	// Inline editor for one layer's name.  The edit is committed when the field is
+	// submitted with Enter or loses focus, and is undoable as a single document edit.
+	void renderLayerNameEditor(shared_ptr<core::Building> const& building, uint32_t layer)
+	{
+		auto& edit = gLayerNameEdits[layer];
+
+		if (!edit.editing)
+		{
+			auto const& name = building->getLayerName(layer);
+			std::strncpy(edit.text.data(), name.c_str(), edit.text.size() - 1);
+			edit.text[edit.text.size() - 1] = '\0';
+		}
+
+		ImGui::SetNextItemWidth(-1.0f);
+		auto const submitted = ImGui::InputText("##layerName", edit.text.data(), edit.text.size(),
+			ImGuiInputTextFlags_EnterReturnsTrue);
+
+		if (!edit.editing)
+		{
+			if (submitted || ImGui::IsItemActivated())
+			{
+				edit.editing = true;
+				edit.previous = building->getLayerName(layer);
+			}
+			return;
+		}
+
+		if (!submitted && ImGui::IsItemFocused()) return;
+
+		edit.editing = false;
+
+		auto const next = trimLayerName(edit.text.data());
+		if (next.empty() || next == edit.previous) return;
+
+		auto undo = captureDocumentSnapshot(building);
+		try
+		{
+			building->setLayerName(layer, next);
+			commitDocumentEdit(std::move(undo));
+		}
+		catch (std::exception const& error)
+		{
+			core::addLogMessage("Layers", 0, core::LogLevel::Error, error.what());
+		}
+	}
+
 	enum class PendingFileAction
 	{
 		None,
@@ -2122,6 +2198,7 @@ namespace
 		gPendingObjectMove.reset();
 		gShuttleDraft.reset();
 		gShuttleDoorCandidates.clear();
+		gLayerNameEdits.clear();
 		gUISettings.worldPaused = false;
 		if (clearHistory)
 		{
@@ -4388,21 +4465,27 @@ void renderToolbar(shared_ptr<core::Building> building)
 
 
 		// Select visible Layer
-		vector<string> layers = {
-			"Fore Layer",
-			"Back Layer"
-		};
+		auto const layerCount = building ? building->getLayerCount() : 0u;
 
 		string layersStr;
 
-		for (auto const& layer : layers)
+		for (uint32_t layer = 0; layer < layerCount; ++layer)
 		{
-			layersStr += layer;
+			layersStr += layerLabel(building, layer);
 			layersStr += '\0';
 		}
 
 		ImGui::SetNextItemWidth(128);
-		ImGui::Combo("Visible Layer", &gUISettings.visibleLayer, layersStr.c_str(), 6);
+
+		if (layerCount > 0)
+		{
+			auto const highest = static_cast<int>(layerCount) - 1;
+			gUISettings.visibleLayer = std::clamp(gUISettings.visibleLayer, 0, highest);
+
+			auto current = gUISettings.visibleLayer;
+			if (ImGui::Combo("Visible Layer", &current, layersStr.c_str(), highest + 1))
+				gUISettings.visibleLayer = std::clamp(current, 0, highest);
+		}
 
 		// Selection mode
 
@@ -4431,7 +4514,7 @@ void renderToolbar(shared_ptr<core::Building> building)
 }
 
 
-void renderStatusBar()
+void renderStatusBar(shared_ptr<const core::Building> const& building)
 {
 	ImGuiViewportP* viewport = (ImGuiViewportP*)(void*)ImGui::GetMainViewport();
 
@@ -4446,7 +4529,8 @@ void renderStatusBar()
 	{
 		if (ImGui::BeginMenuBar())
 		{
-			ImGui::Text("Layer: %s", gUISettings.visibleLayer == 0 ? "Fore" : "Back");
+			auto const shownLayer = static_cast<uint32_t>(max(gUISettings.visibleLayer, 0));
+			ImGui::Text("Layer: %s", layerLabel(building, shownLayer).c_str());
 
 			ImGui::SetNextItemWidth(128);
 
@@ -4516,7 +4600,7 @@ void renderWalkwayPanel(shared_ptr<core::Building> const& building,
 	ImGui::TextUnformatted("Walkway");
 	ImGui::Text("Room: %s", room->getName().c_str());
 	ImGui::Text("Room index: %u", room->getIndex());
-	ImGui::Text("Layer: %s", room->getLayerIndex() == 0 ? "Fore" : "Back");
+	ImGui::Text("Layer: %s", layerLabel(building, room->getLayerIndex()).c_str());
 	ImGui::Text("Position: %u, %u", walkway->getCellX(), walkway->getCellY());
 	ImGui::Text("Deck offset: %u", walkway->getCellY() - room->getCellY());
 	ImGui::Separator();
@@ -4534,7 +4618,8 @@ void renderWalkwayPanel(shared_ptr<core::Building> const& building,
 }
 
 
-void renderWindowPanel(shared_ptr<const core::SectorObject> object)
+void renderWindowPanel(shared_ptr<const core::Building> const& building,
+	shared_ptr<const core::SectorObject> object)
 {
 	auto window = static_pointer_cast<const core::WindowSectorObject>(object)->getWindow();
 	auto position = window->getPosition();
@@ -4569,7 +4654,7 @@ void renderWindowPanel(shared_ptr<const core::SectorObject> object)
 	ImGui::Text("State: %s", state);
 	ImGui::Text("Traversable: %s", window->isTraversalConfigured() ? "Yes" : "No");
 	auto owner = object->getSector();
-	ImGui::Text("Layer: %s", owner->getLayerIndex() == 0 ? "Fore" : "Back");
+	ImGui::Text("Layer: %s", layerLabel(building, owner->getLayerIndex()).c_str());
 	ImGui::Text("Sector: %s", owner->getDescription().c_str());
 	for (uint32_t layer = 0; layer < 2; ++layer)
 		if (auto sector = window->getSector(layer); sector && sector != owner)
@@ -4590,7 +4675,7 @@ void renderBulkheadDoorPanel(shared_ptr<core::Building> const& building,
 	ImGui::TextUnformatted("Bulkhead Door");
 	ImGui::Text("Threshold position: %.1f, %u", (float)object->getCellX() + 1.0f,
 		object->getCellY());
-	ImGui::Text("Layer: %s", owner->getLayerIndex() == 0 ? "Fore" : "Back");
+	ImGui::Text("Layer: %s", layerLabel(building, owner->getLayerIndex()).c_str());
 	float pct = door->getOpenPercentage() * 100.0f;
 	char const* state = "Unknown";
 	switch (door->getState())
@@ -4879,7 +4964,7 @@ void renderForceBridgePanel(shared_ptr<core::Building> const& building,
 	ImGui::TextUnformatted("Force Bridge");
 	ImGui::Text("Room: %s", room->getName().c_str());
 	ImGui::Text("Room index: %u", room->getIndex());
-	ImGui::Text("Layer: %s", room->getLayerIndex() == 0 ? "Fore" : "Back");
+	ImGui::Text("Layer: %s", layerLabel(building, room->getLayerIndex()).c_str());
 	ImGui::Text("Position: %u, %u", object->getCellX(), object->getCellY());
 	ImGui::Text("Deck offset: %u", object->getCellY() - room->getCellY());
 	float pct = forceBridge->getExtendedPercentage() * 100.0f;
@@ -5011,7 +5096,7 @@ void renderLadderPanel(shared_ptr<core::Building> const& building,
 
 	ImGui::TextUnformatted("Room Ladder");
 	ImGui::Text("Room: %s", room->getName().c_str());
-	ImGui::Text("Layer: %s", room->getLayerIndex() == 0 ? "Fore" : "Back");
+	ImGui::Text("Layer: %s", layerLabel(building, room->getLayerIndex()).c_str());
 	ImGui::Text("Position: %u, %u", object->getCellX(), object->getCellY());
 	ImGui::Text("Calculated height: %u decks", ladder->getDecksHigh());
 	float pct = ladder->getExtendedPercentage() * 100.0f;
@@ -5131,7 +5216,7 @@ void renderPlatformLiftPanel(shared_ptr<core::Building> const& building,
 	auto platformLift = static_pointer_cast<const core::LiftSectorObject>(object)->getLift();
 	ImGui::TextUnformatted("Platform Lift");
 	ImGui::Text("Room: %s", room->getName().c_str());
-	ImGui::Text("Layer: %s", room->getLayerIndex() == 0 ? "Fore" : "Back");
+	ImGui::Text("Layer: %s", layerLabel(building, room->getLayerIndex()).c_str());
 	ImGui::Text("Position: %u, %u", object->getCellX(), object->getCellY());
 	ImGui::Text("Car y: %.2f", platformLift->getPosition().y);
 
@@ -5554,8 +5639,6 @@ void renderAgentView(shared_ptr<const core::Building> building)
 
 void renderObjectView(shared_ptr<const core::Building> building)
 {
-	string layerNames[2] = { "Fore Layer", "Back Layer" };
-	
 	static void* selectedNode{ nullptr };
 
 	static ImGuiTreeNodeFlags nodeFlags =
@@ -5563,11 +5646,14 @@ void renderObjectView(shared_ptr<const core::Building> building)
 		ImGuiTreeNodeFlags_OpenOnDoubleClick |
 		ImGuiTreeNodeFlags_SpanAvailWidth;
 
-	for (int l = 0; l < 2; ++l)
-	{
-		auto sectors = building->getSectors(l);
+	auto const layerCount = building->getLayerCount();
 
-		if (ImGui::TreeNode(layerNames[l].c_str()))
+	for (uint32_t layer = 0; layer < layerCount; ++layer)
+	{
+		auto sectors = building->getSectors(layer);
+
+		ImGui::PushID(layer);
+		if (ImGui::TreeNode("layerObjects", "%s", layerLabel(building, layer).c_str()))
 		{
 			for (auto sector : sectors)
 			{
@@ -5640,6 +5726,7 @@ void renderObjectView(shared_ptr<const core::Building> building)
 
 			ImGui::TreePop();
 		}
+		ImGui::PopID();
 	}
 
 }
@@ -5731,7 +5818,7 @@ void renderSelectedObjectPanel(shared_ptr<core::Building> const& building)
 		}
 		ImGui::Text("%s: %s", type, gSelectedSector->getName().c_str());
 		ImGui::Text("Sector index: %u", gSelectedSector->getIndex());
-		ImGui::Text("Layer: %s", gSelectedSector->getLayerIndex() == 0 ? "Fore" : "Back");
+		ImGui::Text("Layer: %s", layerLabel(building, gSelectedSector->getLayerIndex()).c_str());
 		ImGui::Text("Position: %u, %u", gSelectedSector->getCellX(), gSelectedSector->getCellY());
 		if (gSelectedSector->getType() == core::SectorType::Lift)
 		{
@@ -6016,7 +6103,7 @@ void renderSelectedObjectPanel(shared_ptr<core::Building> const& building)
 			break;
 
 		case core::SectorObjectType::Window:
-			renderWindowPanel(gSelectedSectorObject);
+			renderWindowPanel(building, gSelectedSectorObject);
 			break;
 
 		case core::SectorObjectType::Walkway:
@@ -6095,6 +6182,119 @@ void renderSelectedAgentPanel(shared_ptr<const core::Building> building)
 			}
 		}
 	}
+}
+
+
+void addBackLayer(shared_ptr<core::Building> const& building)
+{
+	if (!building) return;
+
+	if (building->getLayerCount() >= CORE_MAX_LAYERS)
+	{
+		core::addLogMessage("Layers", 0, core::LogLevel::Warning,
+			format("A Building can have at most %u layers", (uint32_t)CORE_MAX_LAYERS));
+		return;
+	}
+
+	auto undo = captureDocumentSnapshot(building);
+	try
+	{
+		if (!building->isSimulationPaused()) building->pauseSimulation();
+
+		auto const layer = building->addLayer();
+		building->finishBuild();
+		commitDocumentEdit(std::move(undo));
+		core::addLogMessage("Layers", 0, core::LogLevel::Info,
+			format("Added {} as the new back layer", building->getLayerName(layer)));
+	}
+	catch (core::Exception const& error)
+	{
+		core::addLogMessage("Layers", 0, core::LogLevel::Error, error.getMessage());
+	}
+	catch (std::exception const& error)
+	{
+		core::addLogMessage("Layers", 0, core::LogLevel::Error, error.what());
+	}
+}
+
+
+void renderLayersPanel(shared_ptr<core::Building> const& building)
+{
+	if (!building) return;
+
+	auto const layerCount = building->getLayerCount();
+
+	// Loads, undos, and layer edits can all change the layer count from under us.
+	gUISettings.visibleLayer = std::clamp(gUISettings.visibleLayer, 0,
+		static_cast<int>(layerCount) - 1);
+
+	ImGuiTableFlags flags =
+		ImGuiTableFlags_SizingStretchProp |
+		ImGuiTableFlags_Resizable |
+		ImGuiTableFlags_BordersOuter |
+		ImGuiTableFlags_BordersV |
+		ImGuiTableFlags_RowBg;
+
+	if (ImGui::BeginTable("Layers", 2, flags))
+	{
+		ImGui::TableSetupColumn("View", ImGuiTableColumnFlags_WidthFixed, 40.0f);
+		ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
+
+		for (uint32_t layer = 0; layer < layerCount; ++layer)
+		{
+			bool const visible = static_cast<int>(layer) == gUISettings.visibleLayer;
+
+			ImGui::TableNextRow();
+			ImGui::PushID(layer);
+
+			if (visible)
+			{
+				ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0,
+					ImGui::GetColorU32(ImVec4(1.0f, 0.5f, 0.0f, 0.35f)));
+			}
+
+			ImGui::TableSetColumnIndex(0);
+			ImGui::PushStyleColor(ImGuiCol_Button, visible
+				? ImGui::GetColorU32(ImVec4(1.0f, 0.5f, 0.0f, 0.75f))
+				: ImGui::GetColorU32(ImVec4(0.0f, 0.0f, 0.0f, 0.0f)));
+			if (ImGui::Button(visible ? ICON_FA_EYE : ICON_FA_EYE_SLASH,
+				ImVec2(ImGui::GetFrameHeight(), 0.0f)))
+			{
+				gUISettings.visibleLayer = static_cast<int>(layer);
+			}
+			ImGui::PopStyleColor();
+			if (ImGui::IsItemHovered())
+			{
+				auto const tip = visible ? std::string("Viewing this layer")
+					: format("View {}", building->getLayerName(layer));
+				ImGui::SetTooltip("%s", tip.c_str());
+			}
+
+			ImGui::TableSetColumnIndex(1);
+			renderLayerNameEditor(building, layer);
+
+			ImGui::PopID();
+		}
+
+		ImGui::EndTable();
+	}
+
+	ImGui::Spacing();
+
+	bool const atMaximum = layerCount >= static_cast<uint32_t>(CORE_MAX_LAYERS);
+
+	ImGui::BeginDisabled(atMaximum);
+	if (ImGui::Button(ICON_FA_PLUS " Add Layer"))
+		addBackLayer(building);
+	ImGui::EndDisabled();
+	if (atMaximum && ImGui::IsItemHovered())
+	{
+		ImGui::SetTooltip("A Building can have at most %u layers",
+			(uint32_t)CORE_MAX_LAYERS);
+	}
+
+	ImGui::SameLine();
+	ImGui::TextDisabled("%u of %u layers", layerCount, (uint32_t)CORE_MAX_LAYERS);
 }
 
 
@@ -6431,6 +6631,8 @@ void renderControlsWindow(shared_ptr<core::Building> building, shared_ptr<const 
 
 	if (ImGui::CollapsingHeader("Simulation", ImGuiTreeNodeFlags_DefaultOpen))
 		renderToolbar(building);
+	if (ImGui::CollapsingHeader("Layers", ImGuiTreeNodeFlags_DefaultOpen))
+		renderLayersPanel(building);
 	if (ImGui::CollapsingHeader("Building", ImGuiTreeNodeFlags_DefaultOpen))
 		renderBuildingPanel(building);
 	if (ImGui::CollapsingHeader("Path finding"))
@@ -7261,7 +7463,7 @@ void renderUI(shared_ptr<core::Building>& building, shared_ptr<core::Agent> path
 	}
 
 	auto const graph = building->getGraph();
-	renderStatusBar();
+	renderStatusBar(building);
 	renderControlsWindow(building, graph, pathingAgent);
 	renderWorldWindow(building, graph);
 }
