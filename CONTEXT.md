@@ -8,7 +8,7 @@ A simulation of people moving through a two-dimensional building while doors, li
 The complete simulated world, including its spatial structure, movement network, devices, and agents.
 
 **Layer**:
-One of the two overlapping spatial planes used to represent depth in the two-dimensional world: fore or back.
+One of the ordered spatial planes used to represent depth in the two-dimensional world. Layers are numbered from front (0) to back. A Building may have between 2 and 256 layers.
 
 **Sector**:
 An occupancy region to which an agent belongs at a point in time. A sector is either a stationary location or a transit region.
@@ -18,13 +18,13 @@ A stationary sector such as a room or corridor.
 _Avoid_: Sector, when specifically referring to stationary space
 
 **Room**:
-A named location that may occupy either the fore or back layer.
+A named location that may occupy any layer.
 
 **Corridor**:
-A location that occupies the fore layer.
+A location that may occupy any layer.
 
 **Transit**:
-A static sector that connects locations through one or more stops, such as a lift shaft, shuttle route, ladder, or stairwell. Within a lift or shuttle transit, an agent may also occupy a specific transport vehicle or carriage.
+A static sector that connects locations through one or more stops, such as a lift shaft, shuttle route, ladder, or stairwell. A transit is placed on layer L and its landing locations are on layer L-1. Within a lift or shuttle transit, an agent may also occupy a specific transport vehicle or carriage.
 
 **Stairwell**:
 A compact stair transit that may connect several consecutive levels using alternating flights.
@@ -67,6 +67,13 @@ _Avoid_: Trip intent, queue ticket
 **Threshold**:
 The controlled boundary between two sectors, such as a doorway or the entrance to a lift.
 _Avoid_: Vertex, when discussing physical movement rules
+
+**Door**:
+A threshold that connects two adjacent layers. It is authored on the front layer of the pair and opens into the layer immediately behind it.
+_Avoid_: Portal
+
+**Window**:
+A threshold, similar to a Door, that connects two adjacent layers and is authored on the front layer of the pair.
 
 **Walkway**:
 A traversable floor within a multi-deck room, above that room's ground floor.
