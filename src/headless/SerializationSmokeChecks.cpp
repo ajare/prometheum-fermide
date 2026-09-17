@@ -596,6 +596,9 @@ agents: []
 	{
 		require(isCanvasSelectableSectorType(core::SectorType::Staircase),
 			"Placed Staircases cannot be selected by the canvas hit-test");
+		require(shouldRenderStaircaseAfterSector(core::SectorType::Location)
+			&& !shouldRenderStaircaseAfterSector(core::SectorType::Staircase),
+			"Staircases are not ordered after Fore-layer Rooms and Corridors");
 		require(!shouldRenderSectorAgents(core::SectorType::Staircase, CORE_LAYER_BACK, false)
 			&& shouldRenderSectorAgents(core::SectorType::Staircase, CORE_LAYER_FORE, true),
 			"Staircase Agents do not obey corridor clipping");

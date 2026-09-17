@@ -31,6 +31,13 @@ inline bool shouldRenderLadderGeometryAfterSectorContents()
 	return false;
 }
 
+inline bool shouldRenderStaircaseAfterSector(core::SectorType sectorType)
+{
+	// The Fore-layer transit pass runs after Locations. Both Corridors and Rooms
+	// are Location sectors and may expose part of a Staircase.
+	return sectorType == core::SectorType::Location;
+}
+
 inline bool shouldRenderSectorAgents(core::SectorType sectorType, int layer, bool visibleLayer)
 {
 	if (sectorType == core::SectorType::Ladder

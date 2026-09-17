@@ -40,6 +40,12 @@ construction:
     sectorIndex: 3
     deckIndex: 1
     side: right
+  - type: staircase
+    y: 1
+    x: 11
+    cellsWide: 3
+    riseSide: right
+    speed: 0
 agents:
   - id: 1
     agent:

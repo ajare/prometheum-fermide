@@ -1530,10 +1530,10 @@ void renderSectors(shared_ptr<const core::Building> building, int layer, bool vi
 				auto staircase = static_pointer_cast<const core::StaircaseTransit>(sector);
 				for (auto const& candidate : visibleSectors)
 				{
-					auto corridor = dynamic_pointer_cast<const core::Location>(candidate);
-					if (!corridor || !corridor->isCorridor()) continue;
+					auto location = dynamic_pointer_cast<const core::Location>(candidate);
+					if (!location || !shouldRenderStaircaseAfterSector(candidate->getType())) continue;
 					core::Vector2 clip0, clip1;
-					corridor->getBounds(clip0, clip1);
+					location->getBounds(clip0, clip1);
 					transformPosition(clip0); transformPosition(clip1);
 					drawList->PushClipRect({ min(clip0.x, clip1.x), min(clip0.y, clip1.y) },
 						{ max(clip0.x, clip1.x), max(clip0.y, clip1.y) }, true);
