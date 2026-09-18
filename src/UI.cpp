@@ -973,7 +973,7 @@ namespace
 	string nextRoomName(shared_ptr<const core::Building> const& building)
 	{
 		set<string> names;
-		for (uint32_t layer = 0; layer < 2; ++layer)
+		for (uint32_t layer = 0; layer < building->getLayerCount(); ++layer)
 		{
 			for (auto const& sector : building->getSectors(layer))
 				names.insert(sector->getName());
@@ -1146,30 +1146,22 @@ namespace
 		}
 		if (best.valid && gPaint.tool == PaintTool::Lift)
 		{
+			// The shaft is painted on the drag's Layer; its landings are read from the
+			// Layer directly in front, which is where the corridor rows live.
 			uint32_t stops = 0;
-			auto fore = building->getLayer(0);
-			for (uint32_t y = best.y; y < best.y + best.height; ++y)
+			for (auto const& row : building->getLiftLandingRows(gPaint.layer, best.y, best.x,
+				best.width, best.height))
 			{
-				auto const& first = fore->getCellDefinition(best.x, y);
-				if (first.sectorIndex == ~0u) continue;
-				auto sector = building->getSector(first.sectorIndex);
-				auto location = dynamic_pointer_cast<const core::Location>(sector);
-				if (!location || !location->isCorridor()) continue;
-				bool complete = true;
-				for (uint32_t x = best.x; x < best.x + best.width; ++x)
-				{
-					auto const& cell = fore->getCellDefinition(x, y);
-					complete = complete && cell.sectorIndex == first.sectorIndex
-						&& cell.isTraversableOnFoot() && !cell.hasObject() && cell.markers.empty();
-				}
-				if (complete && best.x == location->getCellX0()
-					&& best.x + best.width - 1 == location->getCellX1())
+				if (!row.location || !row.fullyOverlapping || row.obstructed
+					|| !row.location->isCorridor())
+					continue;
+				if (!row.callButtonSpace)
 				{
 					best.valid = false;
 					best.diagnostic = "There is no corridor space for a Lift call button";
 					return best;
 				}
-				stops += complete;
+				++stops;
 			}
 			if (stops < 2)
 			{
@@ -1460,10 +1452,11 @@ namespace
 
 		if (gPaint.dragging && gPaint.layer != (uint32_t)gUISettings.visibleLayer)
 			resetPaint(false);
-		if ((gPaint.tool == PaintTool::Corridor && gUISettings.visibleLayer == 1)
-			|| ((gPaint.tool == PaintTool::Ladder || gPaint.tool == PaintTool::Stairwell
-				|| gPaint.tool == PaintTool::Lift || gPaint.tool == PaintTool::Shuttle)
-				&& gUISettings.visibleLayer == 0))
+		// A Corridor is a Location and may be painted on any Layer; Transits need a
+		// Layer in front to land on, so they cannot be painted on the front-most one.
+		if ((gPaint.tool == PaintTool::Ladder || gPaint.tool == PaintTool::Stairwell
+			|| gPaint.tool == PaintTool::Lift || gPaint.tool == PaintTool::Shuttle)
+			&& gUISettings.visibleLayer == 0)
 			resetPaint();
 
 		if (gPegman.phase == PalettePhase::Falling)
@@ -1523,7 +1516,6 @@ namespace
 		bool liftHovered = gWorldHovered && pointInRect(io.MousePos, liftMin, liftMax);
 		bool shuttleHovered = gWorldHovered && pointInRect(io.MousePos, shuttleMin, shuttleMax);
 		bool staircaseHovered = gWorldHovered && pointInRect(io.MousePos, staircaseMin, staircaseMax);
-		bool corridorDisabled = gUISettings.visibleLayer == 1;
 		bool backOnlyDisabled = gUISettings.visibleLayer == 0;
 		if (overTray) paletteConsumedMouse = true;
 
@@ -1544,9 +1536,7 @@ namespace
 		{
 			paletteConsumedMouse = true;
 			ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-			if (corridorHovered && corridorDisabled)
-				ImGui::SetTooltip("Corridors can only be painted on the Fore Layer");
-			else if (ladderHovered && backOnlyDisabled)
+			if (ladderHovered && backOnlyDisabled)
 				ImGui::SetTooltip("Ladders can only be painted on the Back Layer");
 			else if ((stairwellHovered || staircaseHovered || liftHovered || shuttleHovered) && backOnlyDisabled)
 				ImGui::SetTooltip("Stairwells, Staircases, Lifts, and Shuttles can only be painted on the Back Layer");
@@ -1555,7 +1545,7 @@ namespace
 					: ladderHovered ? "Paint Ladder" : stairwellHovered ? "Paint Stairwell"
 					: staircaseHovered ? "Paint Staircase" : liftHovered ? "Paint Lift" : "Paint Shuttle");
 
-			if (io.MouseClicked[0] && !(corridorHovered && corridorDisabled)
+			if (io.MouseClicked[0]
 				&& !((ladderHovered || stairwellHovered || staircaseHovered || liftHovered || shuttleHovered)
 					&& backOnlyDisabled))
 			{
@@ -1578,7 +1568,7 @@ namespace
 
 		drawPaintButton(roomMin, roomMax, "Room", PaintTool::Room, roomHovered, false);
 		drawPaintButton(corridorMin, corridorMax, "Corridor", PaintTool::Corridor,
-			corridorHovered, corridorDisabled);
+			corridorHovered, false);
 		drawPaintButton(ladderMin, ladderMax, "Ladder", PaintTool::Ladder,
 			ladderHovered, backOnlyDisabled);
 		drawPaintButton(stairwellMin, stairwellMax, "Stairwell", PaintTool::Stairwell,
@@ -2881,7 +2871,11 @@ namespace
 					}
 					ImGui::SameLine();
 					uint32_t coverage = 0;
-					auto fore = static_cast<core::Building const&>(*building).getLayer(0);
+					// The track is drafted on the visible Layer; its carriage doors land
+					// on the Layer directly in front.  Candidates are never offered on the
+					// front-most Layer, so a landing Layer always exists here.
+					auto const landing = static_cast<core::Building const&>(*building)
+						.getLayer(core::layerInFront(gUISettings.visibleLayer));
 					uint32_t selectedDoors = 0;
 					for (int cell = 0; cell < draft.carWidth; ++cell)
 						selectedDoors += (draft.doorMask & (1u << cell)) != 0;
@@ -2890,7 +2884,7 @@ namespace
 						{
 							if ((draft.doorMask & (1u << doorOffset)) == 0) continue;
 							auto doorX = draft.x + offset + car * (draft.carWidth + 1) + doorOffset;
-							coverage += fore->getCellDefinition(doorX, draft.y).sectorIndex != ~0u;
+							coverage += landing->getCellDefinition(doorX, draft.y).sectorIndex != ~0u;
 						}
 					ImGui::Text("offset %u (global x %u, %u/%u door landings)",
 						offset, draft.x + offset, coverage,
@@ -3230,11 +3224,12 @@ namespace
 		{
 			auto window = static_pointer_cast<const core::WindowSectorObject>(gSelectedSectorObject)->getWindow();
 			core::Building::CreateWindowOptions options;
-			bool found = false;
-			for (uint32_t layer = 0; layer < 2 && !found; ++layer)
-				found = building->getSectorWindowOptions(layer, gSelectedSectorObject->getCellY(),
-					gSelectedSectorObject->getCellX(), window->getCellsWide(), window->getDecksHigh(), options);
-			if (!found) throw runtime_error("The selected Window has no authored definition");
+			// A Window is authored on the front Layer of the pair it crosses, which is
+			// the Layer its definition is recorded against.
+			if (!building->getSectorWindowOptions(window->getFrontLayer(),
+				gSelectedSectorObject->getCellY(), gSelectedSectorObject->getCellX(),
+				window->getCellsWide(), window->getDecksHigh(), options))
+				throw runtime_error("The selected Window has no authored definition");
 			output << YAML::Key << "type" << YAML::Value << "Window"
 				<< YAML::Key << "object" << YAML::Value << YAML::BeginMap
 				<< YAML::Key << "width" << YAML::Value << window->getCellsWide()
@@ -5610,7 +5605,7 @@ void renderAgentView(shared_ptr<const core::Building> building)
 
 		core::Agent* newSelectedAgent{ gSelectedAgent };
 
-		for (int l = 0; l < 2; ++l)
+		for (uint32_t l = 0; l < building->getLayerCount(); ++l)
 		{
 			auto sectors = building->getSectors(l);
 

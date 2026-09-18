@@ -1727,6 +1727,48 @@ namespace core
 		return sectorIndex;
 	}
 
+	std::vector<Building::LiftLandingRow> Building::getLiftLandingRows(uint32_t layerIndex,
+		uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t decksHigh) const
+	{
+		vector<LiftLandingRow> rows;
+		if (layerIndex >= mLayers.size() || cellsWide == 0 || decksHigh == 0)
+			return rows;
+		// A Transit lands on the Layer directly in front of the Layer it occupies, so
+		// the front-most Layer - which has nothing in front of it - has no landings.
+		if (isFrontMostLayer(layerIndex)) return rows;
+		if (x >= mCellsWide || y >= mDecksHigh || cellsWide > mCellsWide - x
+			|| decksHigh > mDecksHigh - y) return rows;
+
+		auto const& landing = mLayers[layerInFront(layerIndex)];
+		for (uint32_t iy = y; iy < y + decksHigh; ++iy)
+		{
+			LiftLandingRow row;
+			row.offset = iy - y;
+			auto const& firstCell = landing->getCellDefinition(x, iy);
+			if (firstCell.sectorIndex != ~0u)
+				row.location = dynamic_pointer_cast<const Location>(mSectors[firstCell.sectorIndex]);
+			if (!row.location)
+			{
+				rows.push_back(row);
+				continue;
+			}
+			bool complete = true;
+			for (uint32_t ix = x; ix < x + cellsWide; ++ix)
+			{
+				auto const& cell = landing->getCellDefinition(ix, iy);
+				complete = complete && cell.sectorIndex == firstCell.sectorIndex
+					&& cell.isTraversableOnFoot();
+				row.obstructed = row.obstructed || cell.hasObject() || !cell.markers.empty();
+			}
+			row.fullyOverlapping = complete;
+			if (row.fullyOverlapping)
+				row.callButtonSpace = !(x == row.location->getCellX0()
+					&& x + cellsWide - 1 == row.location->getCellX1());
+			rows.push_back(row);
+		}
+		return rows;
+	}
+
 	Building::CreateLiftResult Building::addLift(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide,
 		uint32_t decksHigh)
 	{
@@ -1738,29 +1780,12 @@ namespace core
 		validateLayer(format("Building::addLift({}, ...)", layerIndex), layerIndex);
 		if (isFrontMostLayer(layerIndex))
 			throw BuildingException(this, "A Lift cannot be placed on the front-most Layer, because it has no Layer in front to land on");
-		auto const& landing = mLayers[layerInFront(layerIndex)];
-		if (x < mCellsWide && y < mDecksHigh && cellsWide <= mCellsWide - x
-			&& decksHigh <= mDecksHigh - y)
+		for (auto const& row : getLiftLandingRows(layerIndex, y, x, cellsWide, decksHigh))
 		{
-			for (uint32_t iy = y; iy < y + decksHigh; ++iy)
-			{
-				auto const& firstCell = landing->getCellDefinition(x, iy);
-				if (firstCell.sectorIndex == ~0u) continue;
-				auto location = dynamic_pointer_cast<const Location>(mSectors[firstCell.sectorIndex]);
-				if (!location) continue;
-				bool complete = true;
-				bool obstructed = false;
-				for (uint32_t ix = x; ix < x + cellsWide; ++ix)
-				{
-					auto const& cell = landing->getCellDefinition(ix, iy);
-					complete = complete && cell.sectorIndex == firstCell.sectorIndex
-						&& cell.isTraversableOnFoot();
-					obstructed = obstructed || cell.hasObject() || !cell.markers.empty();
-				}
-				if (complete && obstructed)
-					throw BuildingException(this, format("An object blocks the Lift landing at floor {}", iy));
-				if (complete) options.stopOffsets.push_back(iy - y);
-			}
+			if (!row.fullyOverlapping) continue;
+			if (row.obstructed)
+				throw BuildingException(this, format("An object blocks the Lift landing at floor {}", y + row.offset));
+			options.stopOffsets.push_back(row.offset);
 		}
 		return addLift(layerIndex, y, x, options);
 	}

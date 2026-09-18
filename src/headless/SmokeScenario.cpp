@@ -44,6 +44,7 @@
 
 void runSerializationSmokeChecks();
 void runRenderOrderSmokeChecks();
+void runEditorLayerSmokeChecks();
 
 static_assert(!std::is_convertible_v<core::AgentId, core::InteractionPointId>);
 static_assert(!std::is_convertible_v<core::DeviceOperationId, core::TraversalResourceId>);
@@ -4335,6 +4336,7 @@ int main()
 	{
 		runSerializationSmokeChecks();
 		runRenderOrderSmokeChecks();
+		runEditorLayerSmokeChecks();
 
 		auto const deepJourney = runThreeLayerTransitJourney();
 		if (!deepJourney.pathShapeValid)

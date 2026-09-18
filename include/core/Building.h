@@ -944,6 +944,34 @@ namespace core
 
 		CreateLiftResult addLift(uint32_t layerIndex, uint32_t y, uint32_t x, CreateLiftOptions const& options);
 
+		// One landing row of an enclosed Lift shaft: the row of cells on the Layer
+		// directly in front of the shaft's own Layer that the shaft overlaps at one
+		// deck offset.
+		struct LiftLandingRow
+		{
+			uint32_t offset{ 0 };
+			// The Location the shaft overlaps on the landing Layer; null over a gap.
+			std::shared_ptr<const Location> location;
+			// A single Location fills the shaft width and every cell is walkable.
+			bool fullyOverlapping{ false };
+			// An Object or Marker blocks the row.
+			bool obstructed{ false };
+			// The shaft leaves Location width beside it for the stop's call control.
+			bool callButtonSpace{ true };
+
+			// A row the shaft can serve as a stop.
+			bool usableForStop() const
+			{
+				return fullyOverlapping && !obstructed && callButtonSpace;
+			}
+		};
+
+		// The landing rows of a cellsWide-by-decksHigh shaft at (y, x) on layerIndex.
+		// Rows are always read from the Layer directly in front of layerIndex; the
+		// front-most Layer has nothing in front of it and yields no rows.
+		std::vector<LiftLandingRow> getLiftLandingRows(uint32_t layerIndex, uint32_t y, uint32_t x,
+			uint32_t cellsWide, uint32_t decksHigh) const;
+
 		// Derives stops from every fully overlapping landing-layer corridor row.
 		CreateLiftResult addLift(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t decksHigh);
 
