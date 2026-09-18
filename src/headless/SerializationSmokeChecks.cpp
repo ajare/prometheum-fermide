@@ -199,7 +199,7 @@ namespace
 		original.serialize(*writer, workData);
 		writer->serialize();
 		auto const yaml = writer->getSerializedString();
-		require(yaml.find("version: 4") != std::string::npos
+		require(yaml.find("version: 5") != std::string::npos
 			&& yaml.find("layers: 2") != std::string::npos
 			&& yaml.find("layerNames:") != std::string::npos
 			&& yaml.find("- Layer 0") != std::string::npos
@@ -321,6 +321,51 @@ agents: []
 			"version 3 Building YAML loaded with wrong layer defaults");
 	}
 
+	// The version 5 writer must not strand the version 4 files already on disk.
+	void version4BuildingYamlStillLoads()
+	{
+		auto const yaml = R"yaml(version: 4
+name: Legacy v4
+cellsWide: 6
+decksHigh: 2
+layers: 3
+layerNames:
+  - Ground
+  - Mezzanine
+  - Sublevel
+construction:
+  - type: room
+    name: Ground room
+    layer: 0
+    y: 0
+    x: 0
+    cellsWide: 3
+    decksHigh: 1
+    topDeckHeight: 0.9
+  - type: room
+    name: Deep room
+    layer: 2
+    y: 0
+    x: 3
+    cellsWide: 3
+    decksHigh: 1
+    topDeckHeight: 0.9
+agents: []
+)yaml";
+		core::Building loaded("placeholder", 1, 1);
+		core::SerializationWorkData workData;
+		auto reader = core::YamlSerializer::fromString(yaml);
+		reader->deserialize();
+		require(loaded.deserialize(*reader, workData), "version 4 Building YAML no longer loads");
+		core::Building const& loadedRef = loaded;
+		require(loaded.getName() == "Legacy v4"
+			&& loaded.getLayerCount() == 3
+			&& loadedRef.getNumSectors() == 2
+			&& loadedRef.getSector(0)->getLayerIndex() == 0
+			&& loadedRef.getSector(1)->getLayerIndex() == 2,
+			"version 4 Building YAML did not load into the same shape");
+	}
+
 	void buildingLayerNamesRoundTrip()
 	{
 		core::Building original("Named layers", 4, 2);
@@ -351,7 +396,7 @@ agents: []
 
 	void layerFieldsAcceptLegacyNamesAndIndices()
 	{
-		auto const yaml = R"yaml(version: 4
+		auto const yaml = R"yaml(version: 5
 name: Mixed layer spellings
 cellsWide: 6
 decksHigh: 2
@@ -2333,6 +2378,7 @@ void runSerializationSmokeChecks()
 	platformLiftStopDurationRoundTrips();
 	legacyBuildingYamlStillLoads();
 	legacyVersion3BuildingYamlStillLoadsWithDefaultLayers();
+	version4BuildingYamlStillLoads();
 	layerFieldsAcceptLegacyNamesAndIndices();
 	buildingLayerNamesRoundTrip();
 	addedLayersAppendToTheBackAndRoundTrip();

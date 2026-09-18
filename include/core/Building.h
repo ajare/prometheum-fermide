@@ -9,6 +9,7 @@
 
 
 #include "core/Defines.h"
+#include "core/Background.h"
 #include "core/Layer.h"
 #include "core/Location.h"
 #include "core/SectorType.h"
@@ -352,6 +353,7 @@ namespace core
 			uint32_t layerCountAfter{ 0 };
 			uint32_t locationsRemoved{ 0 };
 			uint32_t transitsRemoved{ 0 };
+			uint32_t backgroundsRemoved{ 0 };
 			uint32_t doorsRemoved{ 0 };
 			uint32_t windowsRemoved{ 0 };
 			// Windows which never crossed the deleted Layer, but are deleted because the
@@ -461,7 +463,10 @@ namespace core
 			Marker,
 			RemoveWall,
 			RemoveMarker,
-			ObjectTombstone
+			ObjectTombstone,
+			// Appended last: version 1 stored the record kind numerically, so every
+			// earlier value has to keep its number.
+			Background
 		};
 
 		// Compact tagged command storage. Field meanings are determined by type and
@@ -523,6 +528,11 @@ namespace core
 
 		static ConstructionType constructionTypeFromName(std::string const& name);
 
+		// A record which creates a Sector. A producing record's position among the
+		// producers is its live Sector index, so every record-to-Sector mapping has to
+		// agree on exactly this set.
+		static bool constructionTypeCreatesSector(ConstructionType type);
+
 		void serializeConstructionRecord(Serializer& serializer, ConstructionRecord const& record) const;
 
 		ConstructionRecord deserializeConstructionRecord(Serializer& serializer, uint32_t version) const;
@@ -574,6 +584,7 @@ namespace core
 			std::vector<bool> sectorRemoved;
 			uint32_t locationsRemoved{ 0 };
 			uint32_t transitsRemoved{ 0 };
+			uint32_t backgroundsRemoved{ 0 };
 			uint32_t doorsRemoved{ 0 };
 			uint32_t windowsRemoved{ 0 };
 			// Windows which do not cross the deleted Layer but would compact onto the new
@@ -925,6 +936,17 @@ namespace core
 			uint32_t decksHigh = 1);
 
 		uint32_t addRoom(std::string const& name, uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t decksHigh, float topDeckHeight = CORE_ROOM_MAX_HEIGHT);
+
+		// A Background is a non-occupiable Sector: it takes space on its own Layer and
+		// nothing else. It may sit on any Layer, front-most and back-most included; a
+		// "back layers only" rule would re-introduce the Fore/Back special-casing that
+		// ADR 0002 removed. Adjacent Backgrounds are allowed and never merge: each
+		// keeps its own colour.
+		uint32_t addBackground(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide,
+			uint32_t decksHigh, BackgroundColour const& colour = {});
+
+		bool canAddBackground(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide,
+			uint32_t decksHigh, std::string* diagnostic = nullptr) const;
 	
 		// A Transit is authored on layerIndex, the Layer it occupies, and lands on the
 		// Layer directly in front of it.  The front-most Layer can carry no Transit.

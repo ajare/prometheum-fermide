@@ -1,12 +1,11 @@
 // Background Sector type checks, for ticket #29.
 //
 // A Background is a non-occupiable Sector that exists only to be seen through
-// apertures from the Layer in front. This ticket lands it dormant: the type, the
-// class, its colour, and a render-safe path exist, but Building offers no way to
-// create one, so no Building can ever contain one and no traversal, query or
-// render pass can observe it. These checks exercise the Background directly
-// rather than through a Building, which is exactly the point - the construction
-// path is what arrives later (#30).
+// apertures from the Layer in front. This ticket landed it dormant: the type, the
+// class, its colour, and a render-safe path. Ticket #30 added the creation path
+// (Building::addBackground) and the version 5 persistence form, so the dormancy
+// check that used to close this file has gone; placement and round-trip coverage
+// lives in BackgroundPlacementSmokeChecks.
 
 #include <array>
 #include <cstdint>
@@ -180,25 +179,6 @@ namespace
 		require(!cell.isTraversableOnFoot(),
 			"A Background cell is traversable on foot");
 	}
-
-	// Dormancy: Building has no path to a Background, so a built Building holds
-	// none. This stops down when #30 lands addBackground, deliberately.
-	void noBuildingHoldsABackgroundYet()
-	{
-		core::Building building("Dormant", 8, 3);
-		building.addRoom("Room 0", 0, 0, 0, 4, 1);
-		building.addRoom("Room 1", 1, 0, 0, 4, 1);
-		building.finishBuild();
-
-		for (uint32_t layer = 0; layer < building.getLayerCount(); ++layer)
-		{
-			for (auto const& sector : building.getSectors(layer))
-			{
-				require(sector && sector->getType() != core::SectorType::Background,
-					"A Building produced a Background before one can be authored");
-			}
-		}
-	}
 }
 
 void runBackgroundSectorSmokeChecks()
@@ -210,5 +190,4 @@ void runBackgroundSectorSmokeChecks()
 	aBackgroundIsLookTargetForAWindowOnly();
 	theDeckGeometryIsFixed();
 	aBackgroundOwnsNoWalkableFloor();
-	noBuildingHoldsABackgroundYet();
 }

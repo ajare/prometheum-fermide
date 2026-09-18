@@ -29,6 +29,21 @@ namespace core
 		mColour = colour;
 	}
 
+	uint32_t packBackgroundColour(BackgroundColour const& colour)
+	{
+		return (uint32_t(colour.r) << 16) | (uint32_t(colour.g) << 8) | uint32_t(colour.b);
+	}
+
+	BackgroundColour unpackBackgroundColour(uint32_t packed)
+	{
+		return BackgroundColour
+		{
+			(uint8_t)((packed >> 16) & 0xFFu),
+			(uint8_t)((packed >> 8) & 0xFFu),
+			(uint8_t)(packed & 0xFFu)
+		};
+	}
+
 	string Background::getDescription() const
 	{
 		return format("Background at {},{} on Layer {}", getCellX(), getCellY(), getLayerIndex());

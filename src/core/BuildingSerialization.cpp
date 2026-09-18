@@ -10,6 +10,7 @@
 #include "core/StairwellTransit.h"
 #include "core/StaircaseTransit.h"
 #include "core/Location.h"
+#include "core/Background.h"
 #include "core/DoorSectorObject.h"
 #include "core/BulkheadDoorSectorObject.h"
 #include "core/MarkerSectorObject.h"
@@ -81,18 +82,37 @@ namespace core
 		case ConstructionType::RemoveWall: return "removeWall";
 		case ConstructionType::RemoveMarker: return "removeMarker";
 		case ConstructionType::ObjectTombstone: return "objectTombstone";
+		case ConstructionType::Background: return "background";
 		}
 		throw SerializationException("Unknown Building construction record type");
 	}
 
 	Building::ConstructionType Building::constructionTypeFromName(string const& name)
 	{
-		for (uint32_t value = 0; value <= static_cast<uint32_t>(ConstructionType::ObjectTombstone); ++value)
+		for (uint32_t value = 0; value <= static_cast<uint32_t>(ConstructionType::Background); ++value)
 		{
 			auto const type = static_cast<ConstructionType>(value);
 			if (constructionTypeName(type) == name) return type;
 		}
 		throw SerializationException(format("Unknown Building construction record type: {}", name));
+	}
+
+	bool Building::constructionTypeCreatesSector(ConstructionType type)
+	{
+		switch (type)
+		{
+		case ConstructionType::Corridor:
+		case ConstructionType::Room:
+		case ConstructionType::Background:
+		case ConstructionType::Ladder:
+		case ConstructionType::Stairwell:
+		case ConstructionType::Staircase:
+		case ConstructionType::Lift:
+		case ConstructionType::Shuttle:
+			return true;
+		default:
+			return false;
+		}
 	}
 
 	void Building::serializeConstructionRecord(Serializer& serializer, ConstructionRecord const& record) const
@@ -222,13 +242,20 @@ namespace core
 			serializer.writeUint32("sectorIndex", record.a); serializer.writeUint32("objectIndex", record.b); break;
 		case ConstructionType::ObjectTombstone:
 			serializer.writeUint32("sectorIndex", record.a); break;
+		case ConstructionType::Background:
+			serializer.writeUint32("layer", record.layer);
+			serializer.writeUint32("y", record.a); serializer.writeUint32("x", record.b);
+			serializer.writeUint32("cellsWide", record.c); serializer.writeUint32("decksHigh", record.d);
+			// The colour is the packed 0xRRGGBB integer, which keeps the record to
+			// existing integer fields.
+			serializer.writeUint32("colour", record.f); break;
 		}
 	}
 
 	void Building::serializeImpl(Serializer& serializer, SerializationWorkData& workData) const
 	{
 		serializer.beginMap("building");
-		serializer.writeUint32("version", 4);
+		serializer.writeUint32("version", 5);
 		serializer.writeString("name", mName);
 		serializer.writeUint32("cellsWide", mCellsWide);
 		serializer.writeUint32("decksHigh", mDecksHigh);
@@ -462,6 +489,14 @@ namespace core
 			record.a = serializer.readUint32("sectorIndex"); record.b = serializer.readUint32("objectIndex"); break;
 		case ConstructionType::ObjectTombstone:
 			record.a = serializer.readUint32("sectorIndex"); break;
+		case ConstructionType::Background:
+			record.layer = readLayer("layer");
+			record.a = serializer.readUint32("y"); record.b = serializer.readUint32("x");
+			record.c = serializer.readUint32("cellsWide"); record.d = serializer.readUint32("decksHigh");
+			// A hand-authored record may leave the colour out and take the default.
+			record.f = serializer.readUint32("colour", true,
+				packBackgroundColour(BackgroundColour{}));
+			break;
 		}
 		return record;
 	}
@@ -470,7 +505,7 @@ namespace core
 	{
 		serializer.beginMap("building");
 		auto const version = serializer.readUint32("version");
-		if (version < 1 || version > 4)
+		if (version < 1 || version > 5)
 		{
 			throw SerializationException("Unsupported Building serialization version");
 		}
@@ -774,6 +809,10 @@ namespace core
 		case ConstructionType::ObjectTombstone:
 			_getSector(record.a)->addSectorObject(nullptr);
 			break;
+		case ConstructionType::Background:
+			addBackground(record.layer == ~0u ? 0u : record.layer, record.a, record.b,
+				record.c, record.d, unpackBackgroundColour(record.f));
+			break;
 		}
 	}
 
@@ -782,13 +821,17 @@ namespace core
 	{
 		auto createsSector = [](ConstructionType type)
 		{
-			return type == ConstructionType::Corridor || type == ConstructionType::Room
-				|| type == ConstructionType::Ladder || type == ConstructionType::Stairwell || type == ConstructionType::Staircase
-				|| type == ConstructionType::Lift || type == ConstructionType::Shuttle;
+			return constructionTypeCreatesSector(type);
 		};
 		auto isLocation = [](ConstructionType type)
 		{
 			return type == ConstructionType::Corridor || type == ConstructionType::Room;
+		};
+		// A Background claims space the way a Location does and depends on nothing, so
+		// it replays with the space producers rather than with the Transits.
+		auto isBackground = [](ConstructionType type)
+		{
+			return type == ConstructionType::Background;
 		};
 		auto referencesSector = [](ConstructionType type)
 		{
@@ -812,7 +855,8 @@ namespace core
 		{
 			bool const producer = createsSector(record.type);
 			Item item{ std::move(record), producer ? oldSector++ : ~0u };
-			if (isLocation(item.record.type) || isLocationPrerequisite(item.record.type))
+			if (isLocation(item.record.type) || isBackground(item.record.type)
+				|| isLocationPrerequisite(item.record.type))
 				locations.push_back(std::move(item));
 			else if (createsSector(item.record.type)) transits.push_back(std::move(item));
 			else other.push_back(std::move(item));
@@ -845,9 +889,7 @@ namespace core
 		auto found = records.end();
 		for (auto it = records.begin(); it != records.end(); ++it)
 		{
-			bool producer = it->type == ConstructionType::Corridor || it->type == ConstructionType::Room
-				|| it->type == ConstructionType::Ladder || it->type == ConstructionType::Stairwell || it->type == ConstructionType::Staircase
-				|| it->type == ConstructionType::Lift || it->type == ConstructionType::Shuttle;
+			bool producer = constructionTypeCreatesSector(it->type);
 			if (!producer) continue;
 			if (producerIndex++ == plan.sectorIndex) { found = it; break; }
 		}
@@ -1037,6 +1079,7 @@ namespace core
 			{
 			case ConstructionType::Corridor:
 			case ConstructionType::Room:
+			case ConstructionType::Background:
 			case ConstructionType::Ladder:
 			case ConstructionType::Stairwell:
 			case ConstructionType::Staircase:
@@ -1051,6 +1094,7 @@ namespace core
 					impact.sectorRemoved[producerIndex] = !keep;
 				if (keep) sectorMap[producerIndex] = nextSector++;
 				else if (transit) ++impact.transitsRemoved;
+				else if (record.type == ConstructionType::Background) ++impact.backgroundsRemoved;
 				else ++impact.locationsRemoved;
 				++producerIndex;
 				break;
@@ -1108,6 +1152,7 @@ namespace core
 				if (record.a > layerIndex) record.a -= 1;
 				break;
 			case ConstructionType::Corridor:
+			case ConstructionType::Background:
 			case ConstructionType::Ladder:
 			case ConstructionType::Stairwell:
 			case ConstructionType::Staircase:
@@ -1182,6 +1227,7 @@ namespace core
 
 		plan.locationsRemoved = impact.locationsRemoved;
 		plan.transitsRemoved = impact.transitsRemoved;
+		plan.backgroundsRemoved = impact.backgroundsRemoved;
 		plan.doorsRemoved = impact.doorsRemoved;
 		plan.windowsRemoved = impact.windowsRemoved;
 		plan.windowsStranded = impact.windowsStranded;
@@ -1197,6 +1243,9 @@ namespace core
 			plan.consequences.push_back(format("Delete {} Transit{} on {}",
 				plan.transitsRemoved, plan.transitsRemoved == 1 ? "" : "s", targets));
 		}
+		if (plan.backgroundsRemoved > 0)
+			plan.consequences.push_back(format("Delete {} Background{} on {}",
+				plan.backgroundsRemoved, plan.backgroundsRemoved == 1 ? "" : "s", plan.layerName));
 		if (plan.doorsRemoved > 0)
 			plan.consequences.push_back(format("Delete {} Door{} crossing {}",
 				plan.doorsRemoved, plan.doorsRemoved == 1 ? "" : "s", plan.layerName));
@@ -1470,9 +1519,7 @@ namespace core
 		auto found = records.end();
 		for (auto it = records.begin(); it != records.end(); ++it)
 		{
-			bool producer = it->type == ConstructionType::Corridor || it->type == ConstructionType::Room
-				|| it->type == ConstructionType::Ladder || it->type == ConstructionType::Stairwell || it->type == ConstructionType::Staircase
-				|| it->type == ConstructionType::Lift || it->type == ConstructionType::Shuttle;
+			bool producer = constructionTypeCreatesSector(it->type);
 			if (!producer) continue;
 			if (producerIndex++ == plan.sectorIndex) { found = it; break; }
 		}
@@ -1559,9 +1606,7 @@ namespace core
 		uint32_t producerIndex = 0;
 		for (auto const& record : mConstructionRecords)
 		{
-			bool producer = record.type == ConstructionType::Corridor || record.type == ConstructionType::Room
-				|| record.type == ConstructionType::Ladder || record.type == ConstructionType::Stairwell || record.type == ConstructionType::Staircase
-				|| record.type == ConstructionType::Lift || record.type == ConstructionType::Shuttle;
+			bool producer = constructionTypeCreatesSector(record.type);
 			if (!producer) continue;
 			if (producerIndex++ == sectorIndex) { authored = &record; break; }
 		}
@@ -1770,9 +1815,7 @@ namespace core
 		uint32_t producerIndex = 0;
 		for (auto const& record : mConstructionRecords)
 		{
-			bool producer = record.type == ConstructionType::Corridor || record.type == ConstructionType::Room
-				|| record.type == ConstructionType::Ladder || record.type == ConstructionType::Stairwell || record.type == ConstructionType::Staircase
-				|| record.type == ConstructionType::Lift || record.type == ConstructionType::Shuttle;
+			bool producer = constructionTypeCreatesSector(record.type);
 			if (!producer) continue;
 			if (producerIndex++ != sectorIndex) continue;
 			if (record.type != ConstructionType::Ladder) return false;
@@ -1787,9 +1830,7 @@ namespace core
 	{
 		auto createsSector = [](ConstructionType type)
 		{
-			return type == ConstructionType::Corridor || type == ConstructionType::Room
-				|| type == ConstructionType::Ladder || type == ConstructionType::Stairwell || type == ConstructionType::Staircase
-				|| type == ConstructionType::Lift || type == ConstructionType::Shuttle;
+			return constructionTypeCreatesSector(type);
 		};
 		auto referencesSector = [](ConstructionType type)
 		{
@@ -1978,9 +2019,7 @@ namespace core
 		uint32_t producerIndex = 0;
 		for (auto const& record : mConstructionRecords)
 		{
-			bool producer = record.type == ConstructionType::Corridor || record.type == ConstructionType::Room
-				|| record.type == ConstructionType::Ladder || record.type == ConstructionType::Stairwell || record.type == ConstructionType::Staircase
-				|| record.type == ConstructionType::Lift || record.type == ConstructionType::Shuttle;
+			bool producer = constructionTypeCreatesSector(record.type);
 			if (!producer) continue;
 			if (producerIndex++ != sectorIndex) continue;
 			if (record.type != ConstructionType::Stairwell) return false;
@@ -1995,10 +2034,7 @@ namespace core
 		uint32_t producerIndex = 0;
 		for (auto const& record : mConstructionRecords)
 		{
-			bool producer = record.type == ConstructionType::Corridor || record.type == ConstructionType::Room
-				|| record.type == ConstructionType::Ladder || record.type == ConstructionType::Stairwell
-				|| record.type == ConstructionType::Staircase || record.type == ConstructionType::Lift
-				|| record.type == ConstructionType::Shuttle;
+			bool producer = constructionTypeCreatesSector(record.type);
 			if (!producer) continue;
 			if (producerIndex++ != sectorIndex) continue;
 			if (record.type != ConstructionType::Staircase) return false;
@@ -2064,10 +2100,7 @@ namespace core
 		if (!plan.valid) throw BuildingException(this, plan.diagnostic);
 		auto createsSector = [](ConstructionType type)
 		{
-			return type == ConstructionType::Corridor || type == ConstructionType::Room
-				|| type == ConstructionType::Ladder || type == ConstructionType::Stairwell
-				|| type == ConstructionType::Staircase || type == ConstructionType::Lift
-				|| type == ConstructionType::Shuttle;
+			return constructionTypeCreatesSector(type);
 		};
 		auto referencesSector = [](ConstructionType type)
 		{
@@ -2116,9 +2149,7 @@ namespace core
 	{
 		auto createsSector = [](ConstructionType type)
 		{
-			return type == ConstructionType::Corridor || type == ConstructionType::Room
-				|| type == ConstructionType::Ladder || type == ConstructionType::Stairwell || type == ConstructionType::Staircase
-				|| type == ConstructionType::Lift || type == ConstructionType::Shuttle;
+			return constructionTypeCreatesSector(type);
 		};
 		auto referencesSector = [](ConstructionType type)
 		{
@@ -2307,9 +2338,7 @@ namespace core
 	{
 		auto createsSector = [](ConstructionType type)
 		{
-			return type == ConstructionType::Corridor || type == ConstructionType::Room
-				|| type == ConstructionType::Ladder || type == ConstructionType::Stairwell || type == ConstructionType::Staircase
-				|| type == ConstructionType::Lift || type == ConstructionType::Shuttle;
+			return constructionTypeCreatesSector(type);
 		};
 		auto referencesSector = [](ConstructionType type)
 		{

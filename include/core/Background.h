@@ -24,15 +24,23 @@ namespace core
 	};
 
 
+	// The persistence form of a BackgroundColour: one 0xRRGGBB integer, so a
+	// single ConstructionRecord field can carry a Background's whole appearance.
+	uint32_t packBackgroundColour(BackgroundColour const& colour);
+
+	// Inverse of packBackgroundColour(). Bits above 0xFFFFFF are ignored: a
+	// packed colour carries no alpha, so there is nothing to recover from them.
+	BackgroundColour unpackBackgroundColour(uint32_t packed);
+
+
 	// A Background is a non-occupiable Sector that exists only to be seen: the
 	// backdrop behind Windows and other apertures from the Layer in front. It
 	// hosts no objects, owns no walkable floor, and is wholly absent from the
 	// Graph.
 	//
-	// Dormant: nothing constructs one yet. Building creation, placement rules
-	// and serialisation arrive in later tickets (#30 onwards); until then a
-	// Background cannot appear in any Building, so no query, switch or render
-	// pass can ever see one.
+	// Building::addBackground() is the creation path: a Background is placed on
+	// any one Layer over a block of free cells, and is persisted as a
+	// ConstructionType::Background record carrying its packed colour.
 	class Background : public Sector
 	{
 		BackgroundColour mColour;

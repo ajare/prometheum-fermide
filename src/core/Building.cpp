@@ -9,6 +9,7 @@
 
 #include "core/Defines.h"
 #include "core/Building.h"
+#include "core/Background.h"
 #include "core/Location.h"
 #include "core/SectorType.h"
 #include "core/SectorObjectType.h"
@@ -1314,6 +1315,84 @@ namespace core
 		record.x = topDeckHeight;
 		recordConstruction(std::move(record));
 		return result;
+	}
+
+	bool Building::canAddBackground(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide,
+		uint32_t decksHigh, string* diagnostic) const
+	{
+		if (diagnostic) diagnostic->clear();
+
+		string caller = format("Building::addBackground({}, {}, {}, {}, {})",
+			layerIndex, y, x, cellsWide, decksHigh);
+
+		try
+		{
+			validateLayer(caller, layerIndex);
+
+			// Minimum (1,1). A zero-sized block would pass the bounds checks by covering
+			// nothing, which is not a Background worth authoring.
+			if (cellsWide == 0)
+				throw BuildingException(this, format("{} - a Background must be at least one cell wide", caller));
+			if (decksHigh == 0)
+				throw BuildingException(this, format("{} - a Background must be at least one deck high", caller));
+
+			validateBounds(caller, x, y, cellsWide, decksHigh);
+
+			// Every cell must be unoccupied on the Background's own Layer, which is the
+			// same rule a Location plays by. Any Layer is legal, front-most and back-most
+			// included: a "back layers only" rule would re-introduce exactly the
+			// Fore/Back special-casing that ADR 0002 removed.
+			validateLayerSpace(caller, layerIndex, x, y, cellsWide, decksHigh);
+		}
+		catch (Exception const& error)
+		{
+			if (diagnostic) *diagnostic = error.getMessage();
+			return false;
+		}
+		catch (exception const& error)
+		{
+			if (diagnostic) *diagnostic = error.what();
+			return false;
+		}
+		return true;
+	}
+
+	uint32_t Building::addBackground(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide,
+		uint32_t decksHigh, BackgroundColour const& colour)
+	{
+		string diagnostic;
+		if (!canAddBackground(layerIndex, y, x, cellsWide, decksHigh, &diagnostic))
+			throw BuildingException(this, diagnostic);
+
+		beginStructuralEdit("addBackground");
+
+		auto sectorIndex = (uint32_t)mSectors.size();
+		mSectors.push_back(make_shared<Background>("Background", layerIndex, sectorIndex,
+			x, y, cellsWide, decksHigh, colour));
+
+		auto layer = getLayer(layerIndex);
+		for (uint32_t iy = y; iy < y + decksHigh; ++iy)
+		{
+			for (uint32_t ix = x; ix < x + cellsWide; ++ix)
+			{
+				auto& cellDef = layer->getCellDefinition(ix, iy);
+				cellDef.sectorIndex = sectorIndex;
+				// A Background owns no walkable floor and hosts no object, so its cells
+				// carry no floor and no SectorObject.
+				cellDef.floorType = Background::cellFloorType();
+				cellDef.sectorObjectType = SectorObjectType::None;
+			}
+		}
+
+		ConstructionRecord record{ ConstructionType::Background };
+		record.layer = layerIndex;
+		record.a = y; record.b = x; record.c = cellsWide; record.d = decksHigh;
+		// The whole Background appearance fits one integer, so no new record field is
+		// needed to persist its colour.
+		record.f = packBackgroundColour(colour);
+		recordConstruction(std::move(record));
+
+		return sectorIndex;
 	}
 
 	bool Building::canAddLadder(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t decksHigh,
@@ -4763,6 +4842,11 @@ namespace core
 		}
 
 		auto sector = _getSector(sectorId);
+		if (sector->getType() == SectorType::Background)
+		{
+			throw BuildingException(this,
+				"An Agent cannot occupy a Background: it owns no walkable floor and takes no part in traversal");
+		}
 		auto rawAgent = agent.get();
 		rawAgent->attachToBuilding(this);
 		sector->enterAgent(rawAgent, deckOffset, xOffset);
@@ -4790,6 +4874,11 @@ namespace core
 		}
 
 		auto sector = _getSector(sectorId);
+		if (sector->getType() == SectorType::Background)
+		{
+			throw BuildingException(this,
+				"An Agent cannot occupy a Background: it owns no walkable floor and takes no part in traversal");
+		}
 		auto rawAgent = agent.get();
 		rawAgent->attachToBuilding(this);
 		sector->enterAgent(rawAgent);

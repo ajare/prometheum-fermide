@@ -47,6 +47,7 @@ void runRenderOrderSmokeChecks();
 void runEditorLayerSmokeChecks();
 void runWindowLayerSmokeChecks();
 void runBackgroundSectorSmokeChecks();
+void runBackgroundPlacementSmokeChecks();
 
 static_assert(!std::is_convertible_v<core::AgentId, core::InteractionPointId>);
 static_assert(!std::is_convertible_v<core::DeviceOperationId, core::TraversalResourceId>);
@@ -4341,6 +4342,7 @@ int main()
 		runEditorLayerSmokeChecks();
 		runWindowLayerSmokeChecks();
 		runBackgroundSectorSmokeChecks();
+		runBackgroundPlacementSmokeChecks();
 
 		auto const deepJourney = runThreeLayerTransitJourney();
 		if (!deepJourney.pathShapeValid)
