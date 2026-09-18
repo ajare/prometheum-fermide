@@ -22,43 +22,80 @@
 #define RENDER_INTER_LAYER_EDGE_SIZE			11
 
 //
-// How a Sector is drawn while a given Layer is selected in the viewport.
+// How a Sector is drawn by one pass of the viewport.
 //
-// The selected Layer is drawn solid and the Layer directly behind it is drawn as a
-// wireframe overlay. Every other Layer is hidden: nothing in front of the
-// selection, and nothing more than one Layer behind it.
+// The selected Layer is drawn solid and whole. The Layer directly behind it is
+// drawn by two passes: solid, clipped to the apertures the selected Layer gives
+// it, and - while the wireframe overlay is on - outlined over the selection.
+// Every other Layer is hidden: nothing in front of the selection, and nothing
+// more than one Layer behind it.
 //
 enum class LayerRenderStyle
 {
 	Hidden,		// The Layer is not drawn at all.
-	Solid,		// The selected Layer.
-	Wireframe,	// The Layer directly behind the selected Layer.
-	Aperture	// The Layer behind, seen through an aperture in the selected Layer.
+	Solid,		// The selected Layer, drawn whole.
+	Wireframe,	// The Layer directly behind the selected Layer, outlined over the selection.
+	Aperture	// The Layer behind, drawn solid through an aperture in the selected Layer.
 };
 
-inline LayerRenderStyle layerRenderStyle(uint32_t layer, uint32_t viewLayer, uint32_t layerCount)
+//
+// One pass of the viewport: the Layer it draws and the style it draws it with.
+//
+struct RenderPass
+{
+	uint32_t layer;
+	LayerRenderStyle style;
+};
+
+//
+// The passes the viewport runs for one selected Layer, in draw order:
+//
+//   1. the selected Layer, drawn solid and whole;
+//   2. the Transits of the Layer directly behind, drawn solid through the
+//      apertures the selected Layer's Locations give them;
+//   3. while the wireframe overlay is on, the whole Layer directly behind,
+//      outlined over the selection.
+//
+// Pass 2 runs whether or not the overlay is on. The overlay contributes the
+// Layer behind's outlines; it is not what makes that Layer visible.
+//
+inline std::vector<RenderPass> renderPasses(uint32_t viewLayer, uint32_t layerCount,
+	bool wireframeOverlay)
+{
+	std::vector<RenderPass> passes;
+
+	if (viewLayer >= layerCount)
+	{
+		return passes;
+	}
+
+	passes.push_back({ viewLayer, LayerRenderStyle::Solid });
+
+	if (viewLayer + 1 < layerCount)
+	{
+		auto const behind = core::layerBehind(viewLayer);
+
+		passes.push_back({ behind, LayerRenderStyle::Aperture });
+
+		if (wireframeOverlay)
+		{
+			passes.push_back({ behind, LayerRenderStyle::Wireframe });
+		}
+	}
+
+	return passes;
+}
+
+// True while the Layer reaches the screen at all: the selected Layer, or the Layer
+// directly behind it.
+inline bool isLayerDrawn(uint32_t layer, uint32_t viewLayer, uint32_t layerCount)
 {
 	if (layer >= layerCount || viewLayer >= layerCount)
 	{
-		return LayerRenderStyle::Hidden;
+		return false;
 	}
 
-	if (layer == viewLayer)
-	{
-		return LayerRenderStyle::Solid;
-	}
-
-	if (viewLayer + 1 < layerCount && layer == core::layerBehind(viewLayer))
-	{
-		return LayerRenderStyle::Wireframe;
-	}
-
-	return LayerRenderStyle::Hidden;
-}
-
-inline bool isLayerDrawn(uint32_t layer, uint32_t viewLayer, uint32_t layerCount)
-{
-	return layerRenderStyle(layer, viewLayer, layerCount) != LayerRenderStyle::Hidden;
+	return layer == viewLayer || layer == viewLayer + 1;
 }
 
 // Filled rather than outlined. Both the selected Layer and the Layer seen through
@@ -80,9 +117,11 @@ inline bool shouldRenderLadderGeometry(LayerRenderStyle style)
 // The world-space rectangle through which one Transit on the Layer behind the
 // selection may be drawn.
 //
-// A Transit never draws itself across the selected Layer. It is visible only
-// where the selected Layer's Locations open onto it, which is the clipping the
-// two-layer Fore/Back renderer already applied to Back-layer Transits.
+// A Transit never fills the selected Layer. Its solid body is visible only where
+// the selected Layer's Locations open onto it, which is the clipping the
+// two-layer Fore/Back renderer already applied to Back-layer Transits. The
+// wireframe overlay outlines the Transit's whole footprint over the selection;
+// clipping governs the fill, not the overlay.
 //
 struct TransitAperture
 {
@@ -94,13 +133,13 @@ struct TransitAperture
 	std::shared_ptr<const core::Sector> location;
 };
 
-// True while Transit geometry must be clipped to its apertures. Only the selected
-// Layer draws its own Transits unclipped; the Layer directly behind is drawn
-// either solid through an aperture or as a wireframe overlay, and both are
-// clipped.
-inline bool shouldClipTransitToApertures(LayerRenderStyle style)
+// True while a Transit drawn in this style must be clipped to its apertures. Only
+// the aperture pass clips: the selected Layer draws its own Transits whole, and
+// the wireframe overlay outlines the whole Layer behind over the selection,
+// which is the point of an x-ray overlay.
+inline constexpr bool shouldClipTransitToApertures(LayerRenderStyle style)
 {
-	return style == LayerRenderStyle::Aperture || style == LayerRenderStyle::Wireframe;
+	return style == LayerRenderStyle::Aperture;
 }
 
 inline bool shouldRenderStairwellGeometry(LayerRenderStyle style)

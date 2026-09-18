@@ -71,7 +71,7 @@ void renderSector(shared_ptr<const core::Sector> sector, uint32_t layer, LayerRe
 void renderSectorAgents(shared_ptr<const core::Sector> sector, ImDrawList* drawList);
 
 void renderTransitThroughApertures(shared_ptr<const core::Sector> const& transit, uint32_t behindLayer,
-	LayerRenderStyle style, std::vector<TransitAperture> const& apertures, ImDrawList* drawList);
+	std::vector<TransitAperture> const& apertures, ImDrawList* drawList);
 
 void renderStaircase(shared_ptr<const core::Staircase> staircase, ImDrawList* drawList);
 
@@ -1059,9 +1059,36 @@ void renderSectorObjects(shared_ptr<const core::Sector> sector, uint32_t layer, 
 }
 
 
-void renderControlsAndAgentsAboveTransit(vector<shared_ptr<const core::Sector>> const& sectors,
+//
+// Clipped transits from the Layer behind draw over the selected Layer's Locations.
+// Redraw what the selected Layer owns and must keep in front of them: its own
+// thresholds first, so a closed Door still occludes the Transit standing behind
+// it; then its physical controls; then its Agents, so no control can be painted
+// in front of an Agent.
+//
+void renderThresholdsControlsAndAgentsAboveTransit(vector<shared_ptr<const core::Sector>> const& sectors,
 	uint32_t layer, ImDrawList* drawList)
 {
+	for (auto const& sector : sectors)
+	{
+		for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
+		{
+			auto object = sector->getObject(i);
+			if (!object || object->getObjectType() != core::SectorObjectType::Door)
+				continue;
+
+			// Only a Door authored on this Layer opens into the Layer behind, and so
+			// covers something that Layer draws. The same Door object registered on the
+			// Sector behind is seen from the other side and is not occluder here.
+			auto door = static_pointer_cast<const core::DoorSectorObject>(object)->getDoor();
+			if (door->getFrontSector() != sector)
+				continue;
+
+			renderDoor(door, layer, LayerRenderStyle::Solid,
+				object == gSelectedSectorObject, drawList);
+		}
+	}
+
 	for (auto const& sector : sectors)
 	{
 		for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
@@ -1322,49 +1349,50 @@ void renderLocationContentAboveTransit(shared_ptr<const core::Sector> const& loc
 
 //
 // Draws one Transit inside a single aperture of the selected Layer. Everything the
-// Transit contributes - Sector fill or outline, geometry, thresholds, and its own
-// Agents - is clipped to that aperture by the caller, so a Transit on the Layer
-// behind never paints over the Layer in front of it.
+// Transit contributes - Sector fill, geometry, and its own Agents - is clipped to
+// that aperture by the caller, so a Transit on the Layer behind never fills over
+// the Layer in front of it.
 //
 void renderTransitInAperture(shared_ptr<const core::Sector> const& transit, uint32_t behindLayer,
-	LayerRenderStyle style, TransitAperture const& aperture, ImDrawList* drawList)
+	TransitAperture const& aperture, ImDrawList* drawList)
 {
-	auto const colour = style == LayerRenderStyle::Solid ? ForeLocationColour : BackLocationColour;
+	// An aperture always looks through to the Layer behind the selection, so it
+	// always carries the back-Layer colour.
+	auto const colour = BackLocationColour;
 
-	// A Staircase is drawn as its own polyline across the Location it crosses rather
-	// than as a filled Sector, so it never contributes a Sector fill through an
-	// aperture. The wireframe overlay still outlines its footprint.
-	if (transit->getType() == core::SectorType::Staircase && style != LayerRenderStyle::Wireframe)
+	// A Staircase is drawn as its own polyline across the Location it crosses
+	// rather than as a filled Sector, so it never contributes a Sector fill
+	// through an aperture.
+	if (transit->getType() == core::SectorType::Staircase)
 	{
-		if (isDrawnSolid(style))
-		{
-			renderStaircase(
-				static_pointer_cast<const core::StaircaseTransit>(transit)->getStaircase(), drawList);
-			renderSectorAgents(transit, drawList);
-		}
+		renderStaircase(
+			static_pointer_cast<const core::StaircaseTransit>(transit)->getStaircase(), drawList);
+		renderSectorAgents(transit, drawList);
 		return;
 	}
 
-	renderSector(transit, behindLayer, style, false, colour, drawList);
+	renderSector(transit, behindLayer, LayerRenderStyle::Aperture, false, colour, drawList);
 
 	// A Ladder sits behind the contents of the Location it lands in, so those
 	// contents are redrawn inside the same aperture.
 	if (aperture.location && shouldRenderForeContentAfterTransit(transit->getType()))
 	{
 		renderLocationContentAboveTransit(aperture.location, aperture.location->getLayerIndex(),
-			style, drawList);
+			LayerRenderStyle::Aperture, drawList);
 	}
 }
 
 //
-// Draws one Transit of the Layer behind the selection through each of the
+// Draws one Transit of the Layer behind the selection, solid, through each of the
 // apertures the selected Layer gives it. A Transit with no aperture is not drawn.
 //
 void renderTransitThroughApertures(shared_ptr<const core::Sector> const& transit,
-	uint32_t behindLayer, LayerRenderStyle style,
-	std::vector<TransitAperture> const& apertures, ImDrawList* drawList)
+	uint32_t behindLayer, std::vector<TransitAperture> const& apertures, ImDrawList* drawList)
 {
-	if (!transit || !shouldClipTransitToApertures(style))
+	static_assert(shouldClipTransitToApertures(LayerRenderStyle::Aperture),
+		"this is the clipped pass, so it must only draw a style which clips to apertures");
+
+	if (!transit)
 	{
 		return;
 	}
@@ -1382,7 +1410,7 @@ void renderTransitThroughApertures(shared_ptr<const core::Sector> const& transit
 		drawList->PushClipRect({ min(bounds0.x, bounds1.x), min(bounds0.y, bounds1.y) },
 			{ max(bounds0.x, bounds1.x), max(bounds0.y, bounds1.y) }, true);
 
-		renderTransitInAperture(transit, behindLayer, style, aperture, drawList);
+		renderTransitInAperture(transit, behindLayer, aperture, drawList);
 
 		drawList->PopClipRect();
 		drawList->AddDrawCmd();
@@ -1390,62 +1418,51 @@ void renderTransitThroughApertures(shared_ptr<const core::Sector> const& transit
 }
 
 
+//
+// Draws every Sector one Layer contributes, in the given style.
+//
 void renderSectors(shared_ptr<const core::Building> building, uint32_t layer, LayerRenderStyle style,
-	uint32_t viewLayer, ImDrawList* drawList)
+	ImDrawList* drawList)
 {
 	if (style == LayerRenderStyle::Hidden)
 	{
 		return;
 	}
 
-	auto sectors = building->getSectorsInBounds(layer, -gUISettings.xOffset, 0,
+	auto const sectors = building->getSectorsInBounds(layer, -gUISettings.xOffset, 0,
 		gUISettings.worldViewportWidth, gUISettings.worldViewportHeight);
 
 	auto const colour = style == LayerRenderStyle::Solid ? ForeLocationColour : BackLocationColour;
 
 	for (auto sector : sectors)
 	{
-		// A Transit never draws itself while its Layer is only the overlay: it is
-		// visible solely through the apertures of the Layer in front, which that
-		// Layer's pass draws. The selected Layer draws its own Transits unclipped.
-		if (shouldClipTransitToApertures(style) && sector->getType() != core::SectorType::Location)
-		{
-			continue;
-		}
-
 		renderSector(sector, layer, style, true, colour, drawList);
 	}
+}
 
-	if (layer + 1 >= building->getLayerCount())
-	{
-		return;
-	}
 
-	// The selected Layer's Locations are the apertures onto the Transits on the
-	// Layer directly behind. The selected Layer draws them solid through those
-	// apertures; the overlay outlines them through the same ones. Either way a
-	// Transit is never drawn outside an aperture, and a Transit with a Door in
-	// front of it is already drawn by that Door's own aperture.
-	auto const behindLayer = core::layerBehind(layer);
-	auto const viewSectors = viewLayer == layer
-		? sectors
-		: building->getSectorsInBounds(viewLayer, -gUISettings.xOffset, 0,
-			gUISettings.worldViewportWidth, gUISettings.worldViewportHeight);
+//
+// Draws the Transits of the Layer directly behind the selection, solid, clipped to
+// the apertures the selected Layer gives them. The selected Layer's Locations are
+// the apertures onto the Layer behind, so a Transit never fills over ground the
+// Layer in front of it does not open up. A Transit with a Door or clear Window in
+// front of it is drawn by that threshold's own aperture as well.
+//
+// This pass runs whether or not the wireframe overlay is on: the overlay adds the
+// Layer behind's outlines, it is not what makes that Layer visible.
+//
+void renderBehindLayerTransits(shared_ptr<const core::Building> building, uint32_t behindLayer,
+	std::vector<std::shared_ptr<const core::Sector>> const& viewSectors, ImDrawList* drawList)
+{
+	auto const viewLayer = core::layerInFront(behindLayer);
 
 	auto const transits = building->getSectorsInBounds(behindLayer, -gUISettings.xOffset, 0,
 		gUISettings.worldViewportWidth, gUISettings.worldViewportHeight);
 
 	for (auto const& transit : transits)
 	{
-		renderTransitThroughApertures(transit, behindLayer, style,
+		renderTransitThroughApertures(transit, behindLayer,
 			transitApertures(transit, viewLayer, viewSectors), drawList);
-	}
-
-	// Clipped transits intentionally draw over the selected Layer's Locations.
-	// Redraw controls above those transits, then Agents above the controls.
-	if (style == LayerRenderStyle::Solid)
-	{
-		renderControlsAndAgentsAboveTransit(sectors, layer, drawList);
 	}
 }
 
@@ -1458,17 +1475,47 @@ void renderBuilding(shared_ptr<const core::Building> building)
 	auto const viewLayer = static_cast<uint32_t>(clamp(gUISettings.visibleLayer, 0,
 		static_cast<int>(layerCount) - 1));
 
-	// The selected Layer, drawn solid.
-	renderSectors(building, viewLayer, LayerRenderStyle::Solid, viewLayer, drawList);
+	// The selected Layer's Sectors are both the apertures onto the Layer directly
+	// behind and the Sectors whose controls are redrawn above clipped transits.
+	std::vector<std::shared_ptr<const core::Sector>> viewSectors;
 
-	// The Layer directly behind, drawn as a wireframe overlay. Every other Layer -
-	// those in front of the selection and those more than one Layer behind it - is
-	// not drawn at all. Its Transits are clipped through the selected Layer's
-	// Location apertures rather than drawn over it.
-	if (gUISettings.renderNextLayerWireframe && viewLayer + 1 < layerCount)
+	if (viewLayer + 1 < layerCount)
 	{
-		renderSectors(building, core::layerBehind(viewLayer), LayerRenderStyle::Wireframe,
-			viewLayer, drawList);
+		viewSectors = building->getSectorsInBounds(viewLayer, -gUISettings.xOffset, 0,
+			gUISettings.worldViewportWidth, gUISettings.worldViewportHeight);
+	}
+
+	for (auto const& pass : renderPasses(viewLayer, layerCount, gUISettings.renderNextLayerWireframe))
+	{
+		switch (pass.style)
+		{
+		case LayerRenderStyle::Solid:
+			// The selected Layer, drawn whole.
+			renderSectors(building, pass.layer, pass.style, drawList);
+			break;
+
+		case LayerRenderStyle::Aperture:
+			// The Layer directly behind, drawn solid through the apertures the
+			// selected Layer gives it.
+			renderBehindLayerTransits(building, pass.layer, viewSectors, drawList);
+
+			// Clipped transits intentionally draw over the selected Layer's
+			// Locations. Redraw the selected Layer's thresholds, then its controls,
+			// then its Agents above those transits.
+			renderThresholdsControlsAndAgentsAboveTransit(viewSectors, viewLayer, drawList);
+			break;
+
+		case LayerRenderStyle::Wireframe:
+			// The wireframe overlay x-rays the Layer directly behind: its whole
+			// footprint is outlined over the selection. Outlines only - never a
+			// fill, Transit geometry, or the Agents inside them.
+			renderSectors(building, pass.layer, pass.style, drawList);
+			break;
+
+		case LayerRenderStyle::Hidden:
+		default:
+			break;
+		}
 	}
 
 	// Queue diagnostics are selection overlays and should remain visible above

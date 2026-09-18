@@ -1255,8 +1255,8 @@ agents: []
 			"The selected Layer clips its own Transits to apertures");
 		require(shouldClipTransitToApertures(LayerRenderStyle::Aperture),
 			"A Transit seen through an aperture is drawn unclipped");
-		require(shouldClipTransitToApertures(LayerRenderStyle::Wireframe),
-			"The wireframe overlay draws the Layer behind's Transits unclipped");
+		require(!shouldClipTransitToApertures(LayerRenderStyle::Wireframe),
+			"The wireframe overlay clips its Transits instead of outlining the whole Layer behind");
 		require(!shouldClipTransitToApertures(LayerRenderStyle::Hidden),
 			"A hidden Layer is clipped instead of not drawn");
 
@@ -1563,38 +1563,57 @@ void layerHelperApiIsConsistentWithLayerCount()
 	require(CORE_MAX_LAYERS == 256, "CORE_MAX_LAYERS is not 256");
 }
 
-// The viewport draws the selected Layer solid and the Layer directly behind it as
-// a wireframe overlay. Every other Layer - in front of the selection, or more than
-// one Layer behind it - is hidden.
+// The viewport draws the selected Layer solid and whole, then the Layer directly
+// behind it: solid through the apertures the selected Layer gives it, and outlined
+// over the selection while the wireframe overlay is on. Every other Layer - in
+// front of the selection, or more than one Layer behind it - is hidden.
 void onlyTheSelectedLayerAndTheLayerBehindAreDrawn()
 {
-	require(layerRenderStyle(0, 0, 2) == LayerRenderStyle::Solid,
-		"The selected Layer is not drawn solid");
-	require(layerRenderStyle(1, 0, 2) == LayerRenderStyle::Wireframe,
-		"The Layer directly behind the selection is not drawn as a wireframe overlay");
+	require(isLayerDrawn(0, 0, 2), "The selected Layer is not drawn");
+	require(isLayerDrawn(1, 0, 2),
+		"The Layer directly behind the selection is not drawn");
 
-	require(layerRenderStyle(0, 1, 2) == LayerRenderStyle::Hidden
-		&& layerRenderStyle(1, 1, 2) == LayerRenderStyle::Solid,
-		"A Layer in front of the selection is still drawn");
 	require(!isLayerDrawn(0, 1, 2),
-		"The front-most Layer is drawn while the Layer behind it is selected");
+		"A Layer in front of the selection is still drawn");
 
-	require(layerRenderStyle(1, 1, 3) == LayerRenderStyle::Solid
-		&& layerRenderStyle(2, 1, 3) == LayerRenderStyle::Wireframe
-		&& layerRenderStyle(0, 1, 3) == LayerRenderStyle::Hidden,
-		"A middle Layer does not draw itself solid and the Layer behind it as wireframe");
+	require(isLayerDrawn(1, 1, 3) && isLayerDrawn(2, 1, 3) && !isLayerDrawn(0, 1, 3),
+		"A middle Layer does not draw itself and the Layer directly behind it");
 
-	require(layerRenderStyle(0, 0, 3) == LayerRenderStyle::Solid
-		&& layerRenderStyle(1, 0, 3) == LayerRenderStyle::Wireframe
-		&& layerRenderStyle(2, 0, 3) == LayerRenderStyle::Hidden,
+	require(isLayerDrawn(0, 0, 3) && isLayerDrawn(1, 0, 3) && !isLayerDrawn(2, 0, 3),
 		"More than one Layer behind the selection is drawn");
 
-	require(layerRenderStyle(2, 2, 3) == LayerRenderStyle::Solid
-		&& !isLayerDrawn(0, 2, 3) && !isLayerDrawn(1, 2, 3),
-		"The back-most Layer does not draw itself solid, or leaves other Layers drawn");
+	require(isLayerDrawn(2, 2, 3) && !isLayerDrawn(0, 2, 3) && !isLayerDrawn(1, 2, 3),
+		"The back-most Layer does not draw itself, or leaves other Layers drawn");
 
 	require(!isLayerDrawn(3, 0, 3) && !isLayerDrawn(0, 3, 3),
 		"A Layer index outside the Building's Layers is drawn");
+
+	// The selected Layer is drawn first and whole, the Layer directly behind it
+	// next through the selected Layer's apertures, and finally outlined over the
+	// selection while the overlay is on.
+	{
+		auto const passes = renderPasses(0, 3, true);
+		require(passes.size() == 3
+				&& passes[0].layer == 0 && passes[0].style == LayerRenderStyle::Solid
+				&& passes[1].layer == 1 && passes[1].style == LayerRenderStyle::Aperture
+				&& passes[2].layer == 1 && passes[2].style == LayerRenderStyle::Wireframe,
+			"The render passes are not the selected Layer, the Layer behind drawn solid through "
+			"its apertures, and one overlay");
+	}
+
+	// Turning the overlay off takes the outline away only: the Layer behind is
+	// still drawn solid through its apertures.
+	{
+		auto const passes = renderPasses(0, 3, false);
+		require(passes.size() == 2 && passes[1].style == LayerRenderStyle::Aperture,
+			"Disabling the wireframe overlay removed more than the overlay pass");
+	}
+
+	{
+		auto const passes = renderPasses(2, 3, true);
+		require(passes.size() == 1 && passes[0].style == LayerRenderStyle::Solid,
+			"The back-most Layer has no Layer behind it but produced more than its own pass");
+	}
 
 	// The same policy against a live Building: whatever the Layer count, exactly the
 	// selected Layer and the Layer directly behind it are drawn.
@@ -1609,10 +1628,9 @@ void onlyTheSelectedLayerAndTheLayerBehindAreDrawn()
 		uint32_t drawn{ 0 };
 		for (uint32_t layer = 0; layer < building.getLayerCount(); ++layer)
 		{
-			auto const style = layerRenderStyle(layer, view, building.getLayerCount());
-			if (style == LayerRenderStyle::Hidden) continue;
+			if (!isLayerDrawn(layer, view, building.getLayerCount())) continue;
 			++drawn;
-			require(style == (layer == view ? LayerRenderStyle::Solid : LayerRenderStyle::Wireframe),
+			require(layer == view || layer == view + 1,
 				"A drawn Layer is neither the selected Layer nor the Layer directly behind it");
 		}
 		auto const expected = view + 1 < building.getLayerCount() ? 2u : 1u;
