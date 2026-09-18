@@ -2171,7 +2171,11 @@ namespace core
 					auto globalX = x + options.stopOffsets[stop]
 						+ car * (options.carWidth + 1) + doorOffsets[door];
 					auto const& cell = foreLayer->getCellDefinition(globalX, y);
-					bool supported = cell.sectorIndex != ~0u;
+					// Same rule as the validation pass above: only a Location landing is
+					// supported. A Background behind a carriage door is omitted, never
+					// built into a threshold that touches it.
+					bool supported = cell.sectorIndex != ~0u
+						&& getSector(cell.sectorIndex)->getType() == SectorType::Location;
 					if (supported)
 						shuttleRes.doors[doorResultIndex(stop, car, door)] = _addSectorDoor(layerInFront(layerIndex), y, globalX,
 							{ 1, { true, false }, DoorActivationMode::Unavailable }, true);
@@ -3239,6 +3243,26 @@ namespace core
 		string diagnostic;
 		if (!canAddSectorWindow(layerIndex, y, x, cellsWide, decksHigh, &diagnostic))
 			throw BuildingException(this, diagnostic);
+		if (options.traversable)
+		{
+			// A Window may look into a Background, but a traversable Window would admit
+			// Agents into the Sector behind it, and a Background is seen through, never
+			// entered: it owns no walkable floor and takes no part in traversal.
+			if (layerIndex + 1 < getLayerCount())
+			{
+				auto const backLayer = layerBehind(layerIndex);
+				for (uint32_t iy = y; iy < y + decksHigh; ++iy)
+					for (uint32_t ix = x; ix < x + cellsWide; ++ix)
+					{
+						auto const& backCell = mLayers[backLayer]->getCellDefinition(ix, iy);
+						if (backCell.sectorIndex != ~0u
+							&& mSectors[backCell.sectorIndex]->getType() == SectorType::Background)
+							throw BuildingException(this, format(
+								"A traversable Window cannot cross into the Background at {},{}: a Background can be looked into, but never entered",
+								ix, iy));
+					}
+			}
+		}
 		beginStructuralEdit("addSectorWindow");
 		auto layer = getLayer(layerIndex);
 
