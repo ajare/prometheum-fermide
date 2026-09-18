@@ -1293,14 +1293,17 @@ void renderSector(shared_ptr<const core::Sector> sector, uint32_t layer, LayerRe
 		// A Background has no geometry of its own: its fill is its own opaque
 		// colour. Solid and Aperture fill - the latter already clipped to the
 		// Window by the caller. The wireframe overlay contributes the outline
-		// only, never a fill (ADR 0002). Hidden returned at the top.
+		// only, never a fill (ADR 0002), and that outline is the narrowing #35
+		// records against the umbrella's "no per-sector border": without it a
+		// Background outside an aperture would say nothing about the extent of
+		// the Layer behind. Hidden returned at the top.
 		{
 			auto const surface = static_pointer_cast<const core::Background>(sector)->getColour();
 			auto const fill = ImColor(surface.r, surface.g, surface.b, 255);
 
-			if (isDrawnSolid(style))
+			if (shouldFillBackground(style))
 				drawList->AddRectFilled({ bounds0.x, bounds0.y }, { bounds1.x, bounds1.y }, fill);
-			else
+			else if (shouldOutlineBackground(style))
 				drawList->AddRect({ bounds0.x, bounds0.y }, { bounds1.x, bounds1.y }, fill);
 		}
 		break;
@@ -1365,9 +1368,11 @@ void renderSector(shared_ptr<const core::Sector> sector, uint32_t layer, LayerRe
 
 	// Selection is an editor overlay. Emit it last so sector-specific fills,
 	// passengers, objects, floors, and walls cannot paint over the yellow border.
-	if (gUISettings.selectionMode == UISettings::SelectionMode::Sector
-		&& sector == gSelectedSector && style == LayerRenderStyle::Solid
-		&& sector->getLayerIndex() == layer)
+	// The rule is type-agnostic: a selected Background takes the highlight exactly
+	// as a Location does (#35).
+	if (sector == gSelectedSector && shouldHighlightSelectedSector(style,
+		sector->getLayerIndex(), layer,
+		gUISettings.selectionMode == UISettings::SelectionMode::Sector))
 	{
 		ImVec2 topLeft{ min(bounds0.x, bounds1.x), min(bounds0.y, bounds1.y) };
 		ImVec2 bottomRight{ max(bounds0.x, bounds1.x), max(bounds0.y, bounds1.y) };

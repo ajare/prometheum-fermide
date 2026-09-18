@@ -24,9 +24,14 @@
 //
 // The paint model below emits the same passes, in the same order, as
 // renderBuilding() does, and drives them through the very policy helpers the
-// renderer calls - renderPasses, shouldClipTransitToApertures, transitApertures
-// and shouldRenderSectorAgents - so a change to that policy shows up here rather
-// than only on a screen.
+// renderer calls - renderPasses, shouldClipTransitToApertures, transitApertures,
+// shouldRenderSectorAgents, shouldFillBackground and shouldOutlineBackground -
+// so a change to that policy shows up here rather than only on a screen.
+//
+// The Background checks (#35) ride the same model with a two-Layer backdrop of
+// their own: a Background fills whenever its Layer is drawn solid, is outlined by
+// the wireframe overlay alone, and meets its same-colour neighbour with no border
+// drawn across the seam.
 
 #include <algorithm>
 #include <bit>
@@ -253,6 +258,15 @@ namespace
 		return *sector;
 	}
 
+	// Backgrounds are all named "Background", so the checks which pair a Sector
+	// across two snapshots - overlay on against overlay off - pair them by index.
+	PaintedSector const* findPaintedByIndex(LayerView const& view, uint32_t index)
+	{
+		for (auto const& sector : view.sectors)
+			if (sector.index == index) return &sector;
+		return nullptr;
+	}
+
 	std::vector<std::shared_ptr<const core::Sector>> locationsOn(
 		core::Building const& building, uint32_t layer)
 	{
@@ -310,12 +324,15 @@ namespace
 				if (sector.layer != pass.layer) continue;
 
 				auto const isLocation = sector.sectorType == core::SectorType::Location;
+				auto const isBackground = sector.sectorType == core::SectorType::Background;
 
 				if (pass.style == LayerRenderStyle::Aperture)
 				{
 					// Only a Transit is drawn through an aperture by this pass; a
-					// Location reaches the screen through a threshold instead.
-					if (isLocation) continue;
+					// Location reaches the screen through a threshold instead, and a
+					// Background through the Window looking into it - neither of which
+					// this model tracks.
+					if (isLocation || isBackground) continue;
 
 					for (auto const& aperture : transitApertures(building.getSector(index),
 						viewLayer, viewLocations))
@@ -326,6 +343,16 @@ namespace
 							sector.strokes.push_back({ piece, true });
 						}
 					}
+				}
+				else if (isBackground)
+				{
+					// Mirrors renderSector(): filling and outlining are two separate
+					// questions for a Background, so a policy which drew a border
+					// over its own fill shows up here as the seam it really is.
+					if (shouldFillBackground(pass.style))
+						sector.strokes.push_back({ sector.footprint, true });
+					if (shouldOutlineBackground(pass.style))
+						sector.strokes.push_back({ sector.footprint, false });
 				}
 				else if (pass.style == LayerRenderStyle::Wireframe)
 				{
@@ -1250,6 +1277,192 @@ namespace
 	}
 
 	//
+	// A two-Layer backdrop for the Background outline rules: one Room across the
+	// left of the front Layer with ground left empty on the right, and two
+	// adjacent same-colour Backgrounds spanning the Layer behind. They meet at
+	// x = 6, which is the seam, and the empty ground past the Room's wall at
+	// x = 8 is ground no aperture reaches.
+	//
+	struct BackdropLayout
+	{
+		uint32_t leftIndex{ 0 };
+		uint32_t rightIndex{ 0 };
+	};
+
+	BackdropLayout authorBackgroundBackdrop(core::Building& building)
+	{
+		while (building.getLayerCount() < 2) building.addLayer();
+		building.addRoom("Front", 0, 0, 0, 8, 1);
+
+		BackdropLayout layout;
+		layout.leftIndex = building.addBackground(1, 0, 0, 6, 1, { 200, 60, 40 });
+		layout.rightIndex = building.addBackground(1, 0, 6, 6, 1, { 200, 60, 40 });
+		building.finishBuild();
+		return layout;
+	}
+
+	//
+	// Per LayerRenderStyle: a Background fills exactly when its Layer is drawn
+	// solid, is outlined by the wireframe overlay alone, and never does both in
+	// one pass. This is #35's narrowing of the umbrella's "no per-sector border"
+	// written down as one rule which the renderer and these checks read together.
+	//
+	void aBackgroundFillsSolidAndIsOutlinedOnlyByTheOverlay()
+	{
+		std::vector<LayerRenderStyle> const styles{
+			LayerRenderStyle::Hidden, LayerRenderStyle::Solid,
+			LayerRenderStyle::Wireframe, LayerRenderStyle::Aperture };
+
+		for (auto const style : styles)
+		{
+			require(shouldFillBackground(style) == isDrawnSolid(style),
+				"a Background does not fill exactly when its Layer is drawn solid");
+			require(shouldOutlineBackground(style) == (style == LayerRenderStyle::Wireframe),
+				"a Background is not outlined by the wireframe overlay alone");
+			// A border drawn over a Background's own fill is exactly the seam the
+			// Solid pass must not show between adjacent same-colour Backgrounds.
+			require(!(shouldFillBackground(style) && shouldOutlineBackground(style)),
+				"one pass both fills a Background and borders it");
+		}
+
+		require(!shouldFillBackground(LayerRenderStyle::Hidden)
+				&& !shouldOutlineBackground(LayerRenderStyle::Hidden),
+			"the Hidden style paints a Background at all");
+	}
+
+	//
+	// The same rule over a live picture: a Background on the Layer behind is
+	// outlined whole over the selection - including the ground in front which no
+	// aperture reaches - and fills nothing. With the overlay off it contributes
+	// no outline whatsoever, which is the imgui manual test read headlessly.
+	//
+	void aBackgroundBehindTheSelectionIsOutlinedWholeByTheOverlay()
+	{
+		core::Building building("Backdrop render order", 12, 2);
+		auto const layout = authorBackgroundBackdrop(building);
+		require(building.isTraversalTopologyValid(),
+			("the backdrop Building's traversal topology is invalid: "
+				+ building.getTopologyDiagnostic()).c_str());
+
+		constexpr uint32_t viewLayer{ 0 };
+		auto const with = snapshotView(building, viewLayer, locationsOn(building, viewLayer), true);
+		auto const without = snapshotView(building, viewLayer, locationsOn(building, viewLayer), false);
+
+		uint32_t behind{ 0 };
+		for (auto const& sector : with.sectors)
+		{
+			if (sector.sectorType != core::SectorType::Background || sector.layer != viewLayer + 1)
+			{
+				continue;
+			}
+			auto const where = " Background at index " + std::to_string(sector.index);
+			++behind;
+
+			require(sector.drawn, ("a Background on the Layer behind is not drawn at all" + where).c_str());
+			require(std::abs(sector.outlineArea() - sector.footprint.area()) <= kAreaEpsilon,
+				("the overlay does not outline a Background whole:" + where).c_str());
+			require(sector.solidArea() <= kAreaEpsilon,
+				("the overlay filled a Background over the selection:" + where).c_str());
+
+			auto const* plain = findPaintedByIndex(without, sector.index);
+			require(plain != nullptr, ("a Background vanished with the overlay off" + where).c_str());
+			require(plain->outlineArea() <= kAreaEpsilon,
+				("a Background is outlined with the overlay off:" + where).c_str());
+		}
+		require(behind == 2, "the backdrop does not carry two Backgrounds on the Layer behind");
+
+		// The overlay is not clipped to the apertures the selected Layer has: the
+		// front Room stops at its own wall while the Backgrounds run on past it,
+		// and that ground is still outlined.
+		auto const front = rectOf(*sectorByName(building, "Front"));
+		auto const right = rectOf(*building.getSector(layout.rightIndex));
+		Rect const noAperture{ front.maxX, right.minY, right.maxX, right.maxY };
+		require(noAperture.area() > kAreaEpsilon,
+			("the backdrop no longer leaves Background ground with no Location in front of it: "
+				+ describeRect(noAperture)).c_str());
+
+		double outlined{ 0.0 };
+		for (auto const& sector : with.sectors)
+		{
+			if (sector.sectorType != core::SectorType::Background) continue;
+			outlined += unionAreaClippedTo(sector.rectsOf(false), { noAperture });
+		}
+		require(std::abs(outlined - noAperture.area()) <= kAreaEpsilon,
+			("the overlay does not outline the Background over ground the selected Layer does not open: "
+				+ describe(outlined) + " against " + describe(noAperture.area())).c_str());
+	}
+
+	//
+	// The other half of the narrowing: with the Backgrounds on the selected
+	// Layer, the Solid pass fills them and draws no border of any kind, so two
+	// adjacent same-colour Backgrounds meet with no visible seam. A band across
+	// their shared edge is filled, and nothing is drawn over it.
+	//
+	void adjacentBackgroundsMeetWithoutASeam()
+	{
+		core::Building building("Backdrop render order", 12, 2);
+		auto const layout = authorBackgroundBackdrop(building);
+
+		constexpr uint32_t viewLayer{ 1 };
+		auto const view = snapshotView(building, viewLayer, locationsOn(building, viewLayer), false);
+
+		uint32_t count{ 0 };
+		std::vector<Rect> fills;
+		std::vector<Rect> borders;
+		for (auto const& sector : view.sectors)
+		{
+			if (sector.sectorType != core::SectorType::Background || sector.layer != viewLayer)
+			{
+				continue;
+			}
+			auto const where = " Background at index " + std::to_string(sector.index);
+			++count;
+
+			require(std::abs(sector.solidArea() - sector.footprint.area()) <= kAreaEpsilon,
+				("the selected Layer does not fill one of its Backgrounds whole:" + where).c_str());
+			require(sector.rectsOf(false).empty(),
+				("the Solid pass draws a border around a Background:" + where).c_str());
+
+			for (auto const& rect : sector.rectsOf(true)) fills.push_back(rect);
+			for (auto const& rect : sector.rectsOf(false)) borders.push_back(rect);
+		}
+		require(count == 2, "the backdrop does not carry two Backgrounds on the selected Layer");
+
+		auto const left = rectOf(*building.getSector(layout.leftIndex));
+		auto const right = rectOf(*building.getSector(layout.rightIndex));
+		require(std::abs(left.maxX - right.minX) <= kAreaEpsilon,
+			("the two Backgrounds no longer share an edge: " + describeRect(left) + " against "
+				+ describeRect(right)).c_str());
+
+		Rect const seam{ left.maxX - 0.5, left.minY, right.minX + 0.5, left.maxY };
+		require(std::abs(unionAreaClippedTo(fills, { seam }) - seam.area()) <= kAreaEpsilon,
+			("the two Backgrounds do not fill the ground where they meet: " + describeRect(seam)).c_str());
+		require(unionArea(borders) <= kAreaEpsilon,
+			"a border is drawn across the seam between two adjacent Backgrounds");
+	}
+
+	//
+	// The narrowing leaves selection alone: a selected Background still takes the
+	// highlight exactly as a Location does, and no other pass, Layer, or
+	// selection mode draws one.
+	//
+	void aSelectedBackgroundStillTakesTheSelectionHighlight()
+	{
+		require(shouldHighlightSelectedSector(LayerRenderStyle::Solid, 1u, 1u, true),
+			"a selected Background on the selected Layer loses its selection highlight");
+		require(shouldHighlightSelectedSector(LayerRenderStyle::Solid, 0u, 0u, true),
+			"the highlight no longer follows a Location too, so it is not type-agnostic");
+		require(!shouldHighlightSelectedSector(LayerRenderStyle::Wireframe, 1u, 0u, true),
+			"the overlay highlights a Background of the Layer behind");
+		require(!shouldHighlightSelectedSector(LayerRenderStyle::Aperture, 1u, 0u, true),
+			"an aperture pass highlights the Background it shows");
+		require(!shouldHighlightSelectedSector(LayerRenderStyle::Solid, 1u, 0u, true),
+			"a Sector is highlighted while it is not on the selected Layer");
+		require(!shouldHighlightSelectedSector(LayerRenderStyle::Solid, 1u, 1u, false),
+			"a highlight is drawn outside Sector selection mode");
+	}
+
+	//
 	// The same Depot paints the same picture every time it is built.
 	//
 	void theRenderSnapshotIsDeterministic()
@@ -1280,5 +1493,9 @@ void runRenderOrderSmokeChecks()
 	theOverlayOutlinesTheWholeLayerBehind();
 	theRenderPassOrderDrawsTheSelectedLayerFirst();
 	aClearWindowShowsItsBackgroundsOwnColour();
+	aBackgroundFillsSolidAndIsOutlinedOnlyByTheOverlay();
+	aBackgroundBehindTheSelectionIsOutlinedWholeByTheOverlay();
+	adjacentBackgroundsMeetWithoutASeam();
+	aSelectedBackgroundStillTakesTheSelectionHighlight();
 	theRenderSnapshotIsDeterministic();
 }

@@ -130,6 +130,54 @@ inline std::optional<core::BackgroundColour> apertureFillColour(core::Sector con
 	return static_cast<core::Background const&>(backSector).getColour();
 }
 
+//
+// Whether a Background is filled in this style.
+//
+// The selected Layer fills it with its own raw colour, and so does the view
+// through an aperture - the latter already clipped to the Window by the caller.
+//
+inline bool shouldFillBackground(LayerRenderStyle style)
+{
+	return isDrawnSolid(style);
+}
+
+//
+// Whether a Background contributes its outline in this style.
+//
+// This is the narrowing ticket #35 records. The umbrella spec (#27) said "no
+// per-sector border - the selection highlight is the only time an individual
+// Background's outline is drawn", which collides with ADR 0002: the wireframe
+// overlay exists to convey the shape of the Layer behind, so a Background that
+// contributed nothing there would leave no cue at all that the Layer behind has
+// extent whenever it is not behind an aperture.
+//
+// The rule keeps its shape and loses its blanket:
+//
+//   * the Solid pass still draws no border, so adjacent same-colour Backgrounds
+//     meet seamlessly;
+//   * the overlay keeps the outline;
+//   * selection is untouched - shouldHighlightSelectedSector() still fires for a
+//     selected Background.
+//
+// One pass never both fills and outlines a Background: a border drawn over its
+// own fill is exactly the seam the Solid pass must not show.
+//
+inline bool shouldOutlineBackground(LayerRenderStyle style)
+{
+	return style == LayerRenderStyle::Wireframe;
+}
+
+//
+// The selection highlight is an editor overlay drawn over the selected Sector on
+// the selected Layer. It is deliberately type-agnostic: a Background takes it
+// exactly as a Location does, which is why nothing in this rule names one.
+//
+inline bool shouldHighlightSelectedSector(LayerRenderStyle style, uint32_t sectorLayer,
+	uint32_t viewLayer, bool sectorSelectionMode)
+{
+	return sectorSelectionMode && style == LayerRenderStyle::Solid && sectorLayer == viewLayer;
+}
+
 // Transit geometry is drawn by the selected Layer's passes. The wireframe overlay
 // contributes outlines, never the Transit's own filled geometry, which would
 // otherwise paint over the selected Layer.
