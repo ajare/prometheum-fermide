@@ -3907,6 +3907,16 @@ void handleShortcuts(shared_ptr<core::Building>& building)
 					}
 					catch (std::exception const& error) { core::addLogMessage("Staircase editor", 0, core::LogLevel::Error, error.what()); }
 				}
+				else if (gSelectedSector->getType() == core::SectorType::Background)
+				{
+					// A Background exists to be looked into, so deleting it takes the
+					// Windows looking into it with it.  The plan names them and the shared
+					// confirmation popup spells the cascade out before anything is applied.
+					auto plan = building->planRemoveBackground(gSelectedSector->getIndex());
+					if (!plan.valid)
+						core::addLogMessage("Background editor", 0, core::LogLevel::Error, plan.diagnostic);
+					else queueLocationEdit(building, plan);
+				}
 				else
 				{
 					auto plan = building->planRemoveLocation(gSelectedSector->getIndex());
@@ -6769,6 +6779,7 @@ namespace
 	ResizeEdge hoveredResizeEdge(shared_ptr<const core::Sector> const& sector, ImVec2 mouse)
 	{
 		if (!sector || (sector->getType() != core::SectorType::Location
+			&& sector->getType() != core::SectorType::Background
 			&& sector->getType() != core::SectorType::Lift
 			&& sector->getType() != core::SectorType::Shuttle
 			&& sector->getType() != core::SectorType::Ladder
@@ -7001,6 +7012,18 @@ namespace
 			return;
 		}
 
+		// A Background takes the same rectangle gesture as a Location, but its plan
+		// has to come from the Background editor so the Windows which lose it are
+		// named in the consequences rather than silently dropped by the replay.
+		auto const background = gSelectedSector->getType() == core::SectorType::Background;
+		auto previewRectangle = [&building, background](uint32_t sectorIndex,
+			uint32_t left, uint32_t bottom, uint32_t width, uint32_t height)
+		{
+			return background
+				? building->planResizeBackground(sectorIndex, left, bottom, width, height)
+				: building->planResizeLocation(sectorIndex, left, bottom, width, height);
+		};
+
 		auto hoverEdge = gSectorResize.dragging ? gSectorResize.edge
 			: gHoveredSector == gSelectedSector
 				? hoveredResizeEdge(gSelectedSector, io.MousePos) : ResizeEdge::None;
@@ -7059,7 +7082,7 @@ namespace
 					gSectorResize.originalY, options);
 			}
 			else
-				gSectorResize.preview = building->planResizeLocation(gSelectedSector->getIndex(),
+				gSectorResize.preview = previewRectangle(gSelectedSector->getIndex(),
 					gSectorResize.originalX, gSectorResize.originalY,
 					gSectorResize.originalWidth, gSectorResize.originalHeight);
 		}
@@ -7172,7 +7195,7 @@ namespace
 			|| gSectorResize.preview.cellsWide != (uint32_t)(right - left)
 			|| gSectorResize.preview.decksHigh != (uint32_t)(top - bottom))
 		{
-			gSectorResize.preview = building->planResizeLocation(gSelectedSector->getIndex(),
+			gSectorResize.preview = previewRectangle(gSelectedSector->getIndex(),
 				(uint32_t)left, (uint32_t)bottom, (uint32_t)(right - left), (uint32_t)(top - bottom));
 		}
 

@@ -15,6 +15,7 @@
 #include "core/SectorType.h"
 #include "core/Door.h"
 #include "core/Window.h"
+#include "core/WindowSectorObject.h"
 #include "core/Button.h"
 #include "core/Graph.h"
 #include "core/Log.h"
@@ -244,6 +245,11 @@ namespace core
 			[[nodiscard]] bool requiresConfirmation() const { return !consequences.empty(); }
 		};
 
+		// A rectangular edit to a Sector's footprint: remove it, move it, or resize
+		// it in place.  Rooms and Corridors are the primary subject, and a Background
+		// shares the shape because it is edited the same way and needs the same
+		// consequence list: taking a Background away from the Windows looking into it
+		// takes those Windows with it.
 		struct LocationEditPlan
 		{
 			bool valid{ false };
@@ -342,8 +348,9 @@ namespace core
 		// are removed, thresholds which cross the deleted Layer are removed, and
 		// Agents in removed Sectors are removed.  A Window which the compaction would
 		// leave on the back-most Layer is removed too, since a Window needs a Layer
-		// behind it.  Layers behind the deleted Layer compact forward by one, keeping
-		// their names.
+		// behind it.  The Windows on the Layer in front which looked into the deleted
+		// Layer go with it, and each one is named in the consequence list.  Layers
+		// behind the deleted Layer compact forward by one, keeping their names.
 		struct LayerDeletePlan
 		{
 			bool valid{ false };
@@ -595,6 +602,35 @@ namespace core
 		// Layers of the live Sectors which hold the threshold object authored at a
 		// cell.  A threshold is shared by the Sectors on both sides of it.
 		std::set<uint32_t> thresholdLayers(SectorObjectType type, uint32_t x, uint32_t y) const;
+
+		// Every distinct Window the Building holds, as it is registered in a Sector.
+		// A Window carries no cell position of its own - the cell it sits on belongs
+		// to its SectorObject - so the two travel together.  A Window's SectorObject
+		// is registered in both of the Sectors it joins, so the same Window is seen
+		// twice while scanning and is reported once.
+		std::vector<std::shared_ptr<const WindowSectorObject>> allWindowObjects() const;
+
+		// The Windows which look into `background` and stop looking at it once the
+		// Background occupies the given footprint.  A Background which is removed
+		// covers nothing, so every Window looking into it is uncovered; a moved or
+		// shrunk one uncovers only the cells it lets go of.  A Window looks straight
+		// behind itself, so its back cells are its own rectangle on the Layer behind.
+		std::vector<std::shared_ptr<const WindowSectorObject>> windowsUncoveredByBackground(
+			std::shared_ptr<const Sector> const& background, bool covered,
+			uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh) const;
+
+		// The consequence lines naming every Window which loses the Background the
+		// plan edits, so the confirmation popup spells out the cascade rather than
+		// only counting it.
+		void addUncoveredWindowConsequences(LocationEditPlan& plan) const;
+
+		// Authored construction records rewritten for a Background removal, move, or
+		// resize: the Background record follows the plan, the records of the Windows
+		// which lose it are dropped, and every remaining Sector index is re-pointed
+		// against the compacted Building.
+		bool prepareBackgroundEdit(LocationEditPlan const& plan,
+			std::vector<ConstructionRecord>& records, uint32_t& newSectorIndex,
+			std::string& diagnostic) const;
 
 		// Authored construction records rewritten for a Layer deletion: casualties
 		// are dropped and every remaining Layer index compacts forward by one.
@@ -1197,6 +1233,19 @@ namespace core
 		LocationEditPlan planRemoveLocation(uint32_t sectorIndex) const;
 
 		uint32_t applyLocationEdit(LocationEditPlan const& plan);
+
+		// A Background exists only to be looked into, so taking it away takes the
+		// Windows looking into it with it.  Deleting a Background, moving it, or
+		// resizing it all uncover whatever back cells the new footprint no longer
+		// covers, and every Window which loses what it looks into is named in the
+		// plan's consequences before anything is applied.  A plan which uncovers
+		// nothing needs no confirmation and applies silently.
+		LocationEditPlan planRemoveBackground(uint32_t sectorIndex) const;
+
+		LocationEditPlan planResizeBackground(uint32_t sectorIndex, uint32_t x, uint32_t y,
+			uint32_t cellsWide, uint32_t decksHigh) const;
+
+		uint32_t applyBackgroundEdit(LocationEditPlan const& plan);
 
 		LiftEditPlan planResizeLift(uint32_t sectorIndex, uint32_t x, uint32_t y,
 			uint32_t cellsWide, uint32_t decksHigh) const;

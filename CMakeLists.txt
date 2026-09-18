@@ -138,6 +138,7 @@ set_target_properties(prometheum-fermide-core PROPERTIES
 
 add_executable(prometheum-fermide-headless
     src/headless/BackgroundPlacementSmokeChecks.cpp
+    src/headless/BackgroundCascadeDeleteSmokeChecks.cpp
     src/headless/BackgroundSectorSmokeChecks.cpp
     src/headless/EditorLayerSmokeChecks.cpp
     src/headless/InteractionApiCompileCheck.cpp

@@ -1028,6 +1028,46 @@ namespace core
 		return layers;
 	}
 
+	vector<shared_ptr<const WindowSectorObject>> Building::allWindowObjects() const
+	{
+		vector<shared_ptr<const WindowSectorObject>> found;
+		set<WindowSectorObject const*> seen;
+		for (auto const& sector : mSectors)
+		{
+			if (!sector) continue;
+			for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
+			{
+				auto windowObject = dynamic_pointer_cast<const WindowSectorObject>(sector->getObject(i));
+				if (!windowObject || !windowObject->getWindow()) continue;
+				if (seen.insert(windowObject.get()).second) found.push_back(windowObject);
+			}
+		}
+		return found;
+	}
+
+	vector<shared_ptr<const WindowSectorObject>> Building::windowsUncoveredByBackground(
+		shared_ptr<const Sector> const& background, bool covered,
+		uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh) const
+	{
+		vector<shared_ptr<const WindowSectorObject>> uncovered;
+		if (!background) return uncovered;
+		for (auto const& windowObject : allWindowObjects())
+		{
+			auto const window = windowObject->getWindow();
+			if (window->getBackSector() != background) continue;
+			// A Window which keeps the whole of its back rectangle inside the Background's
+			// new footprint still looks into it; anything else has been left looking at
+			// nothing, and a Window with nothing behind it cannot exist.
+			if (covered
+				&& windowObject->getCellX() >= x && windowObject->getCellY() >= y
+				&& windowObject->getCellX() + window->getCellsWide() <= x + cellsWide
+				&& windowObject->getCellY() + window->getDecksHigh() <= y + decksHigh)
+				continue;
+			uncovered.push_back(windowObject);
+		}
+		return uncovered;
+	}
+
 	vector<Building::ConstructionRecord> Building::recordsWithoutLayer(uint32_t layerIndex,
 		LayerDeleteImpact& impact) const
 	{
@@ -1255,6 +1295,21 @@ namespace core
 		if (plan.windowsStranded > 0)
 			plan.consequences.push_back(format("Delete {} Window{} left on the back-most Layer with nothing behind it",
 				plan.windowsStranded, plan.windowsStranded == 1 ? "" : "s"));
+		// The Windows on the Layer in front are not on the deleted Layer, but they look
+		// into it.  What they look into goes, and they go with it; each is named so the
+		// confirmation spells out the cascade rather than only counting it.
+		if (layerIndex > 0)
+		{
+			for (auto const& windowObject : allWindowObjects())
+			{
+				auto const window = windowObject->getWindow();
+				if (window->getBackLayer() != layerIndex) continue;
+				plan.consequences.push_back(format(
+					"Delete Window at {},{} on {} which looks into {}",
+					windowObject->getCellX(), windowObject->getCellY(),
+					mLayerNames[layerIndex - 1], plan.layerName));
+			}
+		}
 		if (plan.agentsRemoved > 0)
 			plan.consequences.push_back(format("Remove {} Agent{} in the deleted Sectors",
 				plan.agentsRemoved, plan.agentsRemoved == 1 ? "" : "s"));
@@ -4450,6 +4505,13 @@ namespace core
 
 	uint32_t Building::applyLocationEdit(LocationEditPlan const& requested)
 	{
+		// A Background edit is carried in the same plan shape but reconstructs itself
+		// through the Background path, which knows what taking a Background away costs
+		// the Windows looking into it.
+		if (requested.sectorIndex < mSectors.size() && mSectors[requested.sectorIndex]
+			&& mSectors[requested.sectorIndex]->getType() == SectorType::Background)
+			return applyBackgroundEdit(requested);
+
 		LocationEditPlan plan = requested.remove
 			? planRemoveLocation(requested.sectorIndex)
 			: planResizeLocation(requested.sectorIndex, requested.x, requested.y,
@@ -4495,6 +4557,236 @@ namespace core
 			mDeserializingConstruction = false;
 			throw;
 		}
+		mDeserializingConstruction = false;
+		mConstructionRecords = std::move(records);
+		mSimulationPaused = true;
+		modify();
+
+		for (auto const& saved : agents)
+		{
+			auto sector = getSectorAtPosition(saved.layer, saved.position.x, saved.position.y);
+			if (!sector) continue;
+			auto cellX = (uint32_t)floor(saved.position.x);
+			auto cellY = (uint32_t)floor(saved.position.y);
+			if (cellX >= mCellsWide || cellY >= mDecksHigh) continue;
+			if (sector->getType() == SectorType::Location
+				&& !mLayers[saved.layer]->getCellDefinition(cellX, cellY).isTraversableOnFoot()) continue;
+			auto agent = make_unique<Agent>(saved.name);
+			agent->setFlags(saved.flags);
+			auto* raw = agent.get();
+			raw->attachToBuilding(this);
+			raw->mPosition = SectorPosition(sector.get(), saved.position - sector->getPosition());
+			_getSector(sector->getIndex())->mAgents.insert(raw);
+			mAgents.restore(saved.id, std::move(agent));
+			mAgentIds.emplace(raw, saved.id);
+		}
+		return newSectorIndex;
+	}
+
+	void Building::addUncoveredWindowConsequences(LocationEditPlan& plan) const
+	{
+		if (plan.sectorIndex >= mSectors.size() || !mSectors[plan.sectorIndex]) return;
+		auto const background = mSectors[plan.sectorIndex];
+		for (auto const& windowObject : windowsUncoveredByBackground(background, !plan.remove,
+			plan.x, plan.y, plan.cellsWide, plan.decksHigh))
+		{
+			auto const front = windowObject->getWindow()->getFrontLayer();
+			auto const frontName = front < mLayerNames.size()
+				? mLayerNames[front] : string("the Layer in front");
+			plan.consequences.push_back(format(
+				"Delete Window at {},{} on {} looking into this Background",
+				windowObject->getCellX(), windowObject->getCellY(), frontName));
+		}
+	}
+
+	bool Building::prepareBackgroundEdit(LocationEditPlan const& plan,
+		vector<ConstructionRecord>& records, uint32_t& newSectorIndex,
+		string& diagnostic) const
+	{
+		auto referencesSector = [](ConstructionType type)
+		{
+			return type == ConstructionType::LightSwitch || type == ConstructionType::ForceBridge
+				|| type == ConstructionType::SectorLadder || type == ConstructionType::PlatformLift
+				|| type == ConstructionType::Walkway || type == ConstructionType::Marker
+				|| type == ConstructionType::RemoveWall || type == ConstructionType::RemoveMarker
+				|| type == ConstructionType::ObjectTombstone;
+		};
+
+		records.clear();
+		newSectorIndex = ~0u;
+
+		if (plan.sectorIndex >= mSectors.size() || !mSectors[plan.sectorIndex]
+			|| mSectors[plan.sectorIndex]->getType() != SectorType::Background)
+		{
+			diagnostic = "Only a Background can be edited through the Background editor";
+			return false;
+		}
+		auto const background = mSectors[plan.sectorIndex];
+
+		// The Windows which lose the Background under this edit.  Their records go
+		// with it, so the replay is never asked to rebuild a Window with nothing
+		// behind it.
+		auto const uncovered = windowsUncoveredByBackground(background, !plan.remove,
+			plan.x, plan.y, plan.cellsWide, plan.decksHigh);
+		auto losesItsBackground = [&](ConstructionRecord const& record)
+		{
+			if (record.type != ConstructionType::Window) return false;
+			for (auto const& windowObject : uncovered)
+				if (record.a == windowObject->getWindow()->getFrontLayer()
+					&& record.b == windowObject->getCellY()
+					&& record.c == windowObject->getCellX()) return true;
+			return false;
+		};
+
+		auto candidate = makeCandidateBuilding();
+		candidate->mDeserializingConstruction = true;
+		vector<uint32_t> sectorMap(mSectors.size(), ~0u);
+		uint32_t oldSectorIndex = 0;
+
+		try
+		{
+			for (auto source : mConstructionRecords)
+			{
+				auto const producer = constructionTypeCreatesSector(source.type);
+				auto const sourceSectorIndex = producer ? oldSectorIndex++ : ~0u;
+				if (producer && sourceSectorIndex == plan.sectorIndex)
+				{
+					if (source.type != ConstructionType::Background)
+					{
+						diagnostic = "Only a Background can be edited through the Background editor";
+						return false;
+					}
+					if (plan.remove) continue;
+					source.a = plan.y; source.b = plan.x;
+					source.c = plan.cellsWide; source.d = plan.decksHigh;
+				}
+
+				if (losesItsBackground(source)) continue;
+
+				// A Background hosts nothing, but deleting one shifts every Sector index
+				// behind it, so records pointing at a Sector follow the compacted
+				// numbering rather than the number they were authored with.
+				if (referencesSector(source.type))
+				{
+					if (source.a >= sectorMap.size() || sectorMap[source.a] == ~0u) continue;
+					source.a = sectorMap[source.a];
+				}
+
+				auto const before = (uint32_t)candidate->mSectors.size();
+				candidate->applyConstructionRecord(source);
+				if (producer)
+				{
+					sectorMap[sourceSectorIndex] = before;
+					if (sourceSectorIndex == plan.sectorIndex) newSectorIndex = before;
+				}
+				records.push_back(std::move(source));
+			}
+			candidate->finishBuild();
+		}
+		catch (Exception const& error) { diagnostic = error.getMessage(); return false; }
+		catch (exception const& error) { diagnostic = error.what(); return false; }
+		return true;
+	}
+
+	Building::LocationEditPlan Building::planRemoveBackground(uint32_t sectorIndex) const
+	{
+		LocationEditPlan plan;
+		plan.remove = true;
+		plan.sectorIndex = sectorIndex;
+		if (sectorIndex >= mSectors.size() || !mSectors[sectorIndex]
+			|| mSectors[sectorIndex]->getType() != SectorType::Background)
+		{
+			plan.diagnostic = "Only Backgrounds can be deleted here";
+			return plan;
+		}
+		auto const sector = mSectors[sectorIndex];
+		plan.x = sector->getCellX(); plan.y = sector->getCellY();
+		plan.cellsWide = sector->getCellsWide(); plan.decksHigh = sector->getDecksHigh();
+		addUncoveredWindowConsequences(plan);
+		vector<ConstructionRecord> records;
+		uint32_t ignored;
+		plan.valid = prepareBackgroundEdit(plan, records, ignored, plan.diagnostic);
+		return plan;
+	}
+
+	Building::LocationEditPlan Building::planResizeBackground(uint32_t sectorIndex,
+		uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh) const
+	{
+		LocationEditPlan plan;
+		plan.sectorIndex = sectorIndex;
+		plan.x = x; plan.y = y; plan.cellsWide = cellsWide; plan.decksHigh = decksHigh;
+		if (sectorIndex >= mSectors.size() || !mSectors[sectorIndex]
+			|| mSectors[sectorIndex]->getType() != SectorType::Background)
+		{
+			plan.diagnostic = "Only Backgrounds can be resized";
+			return plan;
+		}
+		auto const sector = mSectors[sectorIndex];
+		plan.move = (x != sector->getCellX() || y != sector->getCellY())
+			&& cellsWide == sector->getCellsWide() && decksHigh == sector->getDecksHigh();
+		if (cellsWide == 0 || decksHigh == 0 || x + cellsWide > mCellsWide || y + decksHigh > mDecksHigh)
+		{
+			plan.diagnostic = "The resized Background is outside the Building bounds";
+			return plan;
+		}
+		auto const layer = mLayers[sector->getLayerIndex()];
+		for (uint32_t iy = y; iy < y + decksHigh; ++iy)
+			for (uint32_t ix = x; ix < x + cellsWide; ++ix)
+			{
+				auto occupant = layer->getCellDefinition(ix, iy).sectorIndex;
+				if (occupant != ~0u && occupant != sectorIndex)
+				{
+					plan.diagnostic = format("Sector at {},{} blocks the Background resize", ix, iy);
+					return plan;
+				}
+			}
+		addUncoveredWindowConsequences(plan);
+		vector<ConstructionRecord> records;
+		uint32_t ignored;
+		plan.valid = prepareBackgroundEdit(plan, records, ignored, plan.diagnostic);
+		return plan;
+	}
+
+	uint32_t Building::applyBackgroundEdit(LocationEditPlan const& requested)
+	{
+		LocationEditPlan plan = requested.remove
+			? planRemoveBackground(requested.sectorIndex)
+			: planResizeBackground(requested.sectorIndex, requested.x, requested.y,
+				requested.cellsWide, requested.decksHigh);
+		if (!plan.valid) throw BuildingException(this, plan.diagnostic);
+
+		vector<ConstructionRecord> records;
+		uint32_t newSectorIndex;
+		string diagnostic;
+		if (!prepareBackgroundEdit(plan, records, newSectorIndex, diagnostic))
+			throw BuildingException(this, diagnostic);
+
+		// Nothing walks a Background, but every other Agent in the Building is
+		// rebuilt with it and has to come back to the same place.
+		struct SavedAgent
+		{
+			AgentId id;
+			string name;
+			uint32_t flags;
+			uint32_t layer;
+			Vector2 position;
+		};
+		vector<SavedAgent> agents;
+		for (auto const& [id, agent] : mAgents.entries())
+		{
+			if (!agent->getSector()) continue;
+			agents.push_back({ id, agent->getName(), agent->getFlags(),
+				agent->getSector()->getLayerIndex(), agent->getGlobalPosition() });
+		}
+
+		resetForDeserialization(mName, mCellsWide, mDecksHigh);
+		mDeserializingConstruction = true;
+		try
+		{
+			for (auto const& record : records) applyConstructionRecord(record);
+			finishBuild();
+		}
+		catch (...) { mDeserializingConstruction = false; throw; }
 		mDeserializingConstruction = false;
 		mConstructionRecords = std::move(records);
 		mSimulationPaused = true;
