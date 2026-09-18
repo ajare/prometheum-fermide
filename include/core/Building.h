@@ -339,8 +339,10 @@ namespace core
 		// user confirms them.  Every Sector on the deleted Layer is removed, Transits
 		// on that Layer and on the Layer directly behind it lose their landings and
 		// are removed, thresholds which cross the deleted Layer are removed, and
-		// Agents in removed Sectors are removed.  Layers behind the deleted Layer
-		// compact forward by one, keeping their names.
+		// Agents in removed Sectors are removed.  A Window which the compaction would
+		// leave on the back-most Layer is removed too, since a Window needs a Layer
+		// behind it.  Layers behind the deleted Layer compact forward by one, keeping
+		// their names.
 		struct LayerDeletePlan
 		{
 			bool valid{ false };
@@ -352,6 +354,9 @@ namespace core
 			uint32_t transitsRemoved{ 0 };
 			uint32_t doorsRemoved{ 0 };
 			uint32_t windowsRemoved{ 0 };
+			// Windows which never crossed the deleted Layer, but are deleted because the
+			// compaction leaves them on the back-most Layer with nothing behind them.
+			uint32_t windowsStranded{ 0 };
 			uint32_t agentsRemoved{ 0 };
 			std::string diagnostic;
 			std::vector<std::string> consequences;
@@ -571,6 +576,9 @@ namespace core
 			uint32_t transitsRemoved{ 0 };
 			uint32_t doorsRemoved{ 0 };
 			uint32_t windowsRemoved{ 0 };
+			// Windows which do not cross the deleted Layer but would compact onto the new
+			// back-most Layer, and so lose the Layer behind them.
+			uint32_t windowsStranded{ 0 };
 		};
 
 		// Layers of the live Sectors which hold the threshold object authored at a
@@ -1030,6 +1038,8 @@ namespace core
 
 		bool removeSectorDoor(uint32_t sectorIndex, uint32_t objectIndex);
 
+		// A Window needs the Layer directly behind the Layer it is authored on, so the
+		// back-most Layer can never take a new one.
 		bool canAddSectorWindow(uint32_t layerIndex, uint32_t y, uint32_t x,
 			uint32_t cellsWide = 1, uint32_t decksHigh = 1,
 			std::string* diagnostic = nullptr) const;

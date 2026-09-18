@@ -997,6 +997,12 @@ namespace core
 		// still asserts the two-Layer back boundary, so the neighbour is derived here.
 		auto const behind = layerIndex + 1;
 
+		// The Layer which will be back-most once the deletion is applied.  A Window
+		// which compacts into that Layer has nothing left behind it to look through,
+		// so it is deleted rather than stranded there.
+		auto const backMostLayerAfter = mLayers.size() > 1
+			? static_cast<uint32_t>(mLayers.size()) - 2 : 0u;
+
 		auto isTransitRecord = [](ConstructionType type)
 		{
 			return type == ConstructionType::Ladder || type == ConstructionType::Stairwell
@@ -1057,11 +1063,19 @@ namespace core
 				if (!keep) ++impact.doorsRemoved;
 				break;
 			case ConstructionType::Window:
-				keep = record.a != layerIndex
-					&& thresholdLayers(SectorObjectType::Window, record.c, record.b)
-						.count(layerIndex) == 0;
-				if (!keep) ++impact.windowsRemoved;
+			{
+				// A Window keeps the Layer it was authored on, pulled forward with every
+				// other Layer behind the deletion.  It goes if it crossed the deleted
+				// Layer, and also if compaction leaves it on the new back-most Layer.
+				auto const shifted = record.a > layerIndex ? record.a - 1 : record.a;
+				auto const crossed = record.a == layerIndex
+					|| thresholdLayers(SectorObjectType::Window, record.c, record.b).count(layerIndex) != 0;
+				auto const stranded = !crossed && shifted >= backMostLayerAfter;
+				keep = !crossed && !stranded;
+				if (crossed) ++impact.windowsRemoved;
+				else if (stranded) ++impact.windowsStranded;
 				break;
+			}
 			case ConstructionType::BulkheadDoor:
 				// A Bulkhead Door joins two Locations on its own Layer.
 				keep = record.a != layerIndex;
@@ -1170,6 +1184,7 @@ namespace core
 		plan.transitsRemoved = impact.transitsRemoved;
 		plan.doorsRemoved = impact.doorsRemoved;
 		plan.windowsRemoved = impact.windowsRemoved;
+		plan.windowsStranded = impact.windowsStranded;
 
 		if (plan.locationsRemoved > 0)
 			plan.consequences.push_back(format("Delete {} Sector{} on {}",
@@ -1188,6 +1203,9 @@ namespace core
 		if (plan.windowsRemoved > 0)
 			plan.consequences.push_back(format("Delete {} Window{} crossing {}",
 				plan.windowsRemoved, plan.windowsRemoved == 1 ? "" : "s", plan.layerName));
+		if (plan.windowsStranded > 0)
+			plan.consequences.push_back(format("Delete {} Window{} left on the back-most Layer with nothing behind it",
+				plan.windowsStranded, plan.windowsStranded == 1 ? "" : "s"));
 		if (plan.agentsRemoved > 0)
 			plan.consequences.push_back(format("Remove {} Agent{} in the deleted Sectors",
 				plan.agentsRemoved, plan.agentsRemoved == 1 ? "" : "s"));

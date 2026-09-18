@@ -73,7 +73,7 @@ A threshold that connects two adjacent layers. It is authored on the front layer
 _Avoid_: Portal
 
 **Window**:
-A threshold, similar to a Door, that connects two adjacent layers and is authored on the front layer of the pair.
+A threshold, similar to a Door, that connects two adjacent layers and is authored on the front layer of the pair. It always looks into the layer directly behind it, so it can never sit on the back-most layer.
 
 **Walkway**:
 A traversable floor within a multi-deck room, above that room's ground floor.

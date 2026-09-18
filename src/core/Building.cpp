@@ -733,7 +733,9 @@ namespace core
 		string caller = format("Building::createWindow({}, {}, {}, {}, {})", layerIndex, x, y, cellsWide, decksHigh);
 
 		// A Window is authored on the front Layer of the pair it crosses.  The Layer
-		// behind only exists to be joined when the Building has one.
+		// behind it is only absent when a map written before the back-most Layer rule
+		// is replayed: authoring such a Window is refused by canAddSectorWindow(), and a
+		// Layer deletion removes one it would strand there.
 		bool const hasBack = layerIndex + 1 < getLayerCount();
 
 		validateCellOccupied(caller, layerIndex, x, y);
@@ -3088,9 +3090,15 @@ namespace core
 			validateLayer(caller, layerIndex);
 			validateBounds(caller, x, y, cellsWide, decksHigh);
 
-			// A Window joins its own Layer to the Layer directly behind it.  A Window on
-			// the back-most Layer has nothing behind it and belongs only to its own
-			// Location, exactly as a back-layer Window did in a two-Layer Building.
+			// A Window joins its own Layer to the Layer directly behind it.  The back-most
+			// Layer has nothing behind it, so a Window there would cross no threshold and
+			// could never take part in the Graph.  Maps written before the rule can still
+			// replay one from that Layer - see createWindow() - but none may be authored.
+			if (!mDeserializingConstruction && isBackMostLayer(layerIndex, getLayerCount()))
+				throw BuildingException(this, format(
+					"{} - a Window needs a Layer behind it, and Layer {} is the back-most Layer",
+					caller, layerIndex));
+
 			vector<uint32_t> requiredLayers{ layerIndex };
 			if (layerIndex + 1 < getLayerCount()) requiredLayers.push_back(layerBehind(layerIndex));
 

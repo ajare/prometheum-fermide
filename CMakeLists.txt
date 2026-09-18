@@ -142,6 +142,7 @@ add_executable(prometheum-fermide-headless
     src/headless/RenderOrderSmokeChecks.cpp
     src/headless/SerializationSmokeChecks.cpp
     src/headless/SmokeScenario.cpp
+    src/headless/WindowLayerSmokeChecks.cpp
 )
 target_compile_features(prometheum-fermide-headless PRIVATE cxx_std_20)
 target_compile_definitions(prometheum-fermide-headless PRIVATE _CONSOLE)

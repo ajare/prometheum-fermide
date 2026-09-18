@@ -70,8 +70,9 @@ namespace core
 
 		// A Window joins exactly one adjacent Layer pair.  The index is the side of that
 		// pair, not an absolute Layer index: 0 is the front Layer the Window is authored
-		// on, 1 is the Layer directly behind it.  A Window on the back-most Layer has
-		// no back Sector.
+		// on, 1 is the Layer directly behind it.  A Window always has both sides; one
+		// with no back Sector only survives from a map saved before the back-most Layer
+		// was ruled out, and a Layer deletion removes it.
 		[[nodiscard]] std::shared_ptr<const Sector> getSector(uint32_t pairSide) const;
 		[[nodiscard]] std::shared_ptr<const Sector> getFrontSector() const { return mSectors[0]; }
 		[[nodiscard]] std::shared_ptr<const Sector> getBackSector() const { return mSectors[1]; }
