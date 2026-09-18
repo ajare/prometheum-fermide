@@ -975,7 +975,7 @@ namespace core
 
 		std::vector<uint32_t> getValidShuttleStopOffsets(uint32_t layerIndex, uint32_t y, uint32_t x,
 			uint32_t cellsWide, uint32_t numCars, uint32_t carWidth,
-			bool allowPartialLandings, uint32_t doorMask = 1u << 1) const;
+			bool allowPartialLandings, uint32_t doorMask) const;
 
 		bool getShuttleOptions(Shuttle const* shuttle, CreateShuttleOptions& options) const;
 

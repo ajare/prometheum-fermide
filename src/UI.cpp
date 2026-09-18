@@ -988,7 +988,8 @@ namespace
 		ShuttleDraft const& draft)
 	{
 		if (draft.numCars <= 0 || draft.carWidth < 3 || draft.carWidth > 5) return {};
-		return building->getValidShuttleStopOffsets(draft.y, draft.x, draft.cellsWide,
+		return building->getValidShuttleStopOffsets((uint32_t)gUISettings.visibleLayer,
+			draft.y, draft.x, draft.cellsWide,
 			(uint32_t)draft.numCars, (uint32_t)draft.carWidth, draft.allowPartialLandings,
 			draft.doorMask);
 	}
