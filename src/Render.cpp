@@ -66,7 +66,9 @@ using namespace std;
 
 ImColor ForeLocationColour = ImColor(192, 192, 255);
 ImColor BackLocationColour = ImColor(224, 224, 255);
-ImColor LightsOffColour = ImColor(48, 48, 48);
+// The value lives in Render.h as LightsOffTint so the headless checks can read
+// the same colour the viewport paints with.
+ImColor LightsOffColour = ImColor(LightsOffTint.r, LightsOffTint.g, LightsOffTint.b);
 ImColor LadderColour = ImColor(128, 128, 192);
 ImColor LiftColour = ImColor(128, 128, 192);
 ImColor ShuttleColour = ImColor(128, 128, 192);
@@ -1274,10 +1276,9 @@ void renderSector(shared_ptr<const core::Sector> sector, uint32_t layer, LayerRe
 	// Background, its lights-off state still means what it means for the
 	// agents and objects inside it.
 	auto const sectorType = sector->getType();
-	auto const ownColour = sectorType == core::SectorType::Background
-		|| sectorType == core::SectorType::Facade;
+	auto const ownColour = rendersAsFlatColour(sectorType);
 
-	if (!ownColour && !sector->areLightsOn())
+	if (!bypassesLightsOffTint(sectorType) && !sector->areLightsOn())
 	{
 		colour = LightsOffColour;
 	}
@@ -1362,10 +1363,9 @@ void renderSector(shared_ptr<const core::Sector> sector, uint32_t layer, LayerRe
 		// the Layer behind. Hidden returned at the top. A Facade is drawn the
 		// same flat way (ADR 0003); its walkability is invisible in the fill.
 		{
-			auto const surface = sectorType == core::SectorType::Background
-				? static_pointer_cast<const core::Background>(sector)->getColour()
-				: static_pointer_cast<const core::Facade>(sector)->getColour();
-			auto const fill = ImColor(surface.r, surface.g, surface.b, 255);
+			auto const surface = flatSurfaceColour(*sector);
+			assert(surface.has_value());
+			auto const fill = ImColor(surface->r, surface->g, surface->b, 255);
 
 			if (shouldFillBackground(style))
 				drawList->AddRectFilled({ bounds0.x, bounds0.y }, { bounds1.x, bounds1.y }, fill);

@@ -144,6 +144,7 @@ add_executable(prometheum-fermide-headless
     src/headless/BackgroundSectorSmokeChecks.cpp
     src/headless/EditorLayerSmokeChecks.cpp
     src/headless/FacadeSmokeChecks.cpp
+    src/headless/FacadeRenderSmokeChecks.cpp
     src/headless/InteractionApiCompileCheck.cpp
     src/headless/RenderOrderSmokeChecks.cpp
     src/headless/SerializationSmokeChecks.cpp

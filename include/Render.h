@@ -9,6 +9,7 @@
 
 #include "core/Background.h"
 #include "core/Building.h"
+#include "core/Facade.h"
 #include "core/Defines.h"
 #include "core/Door.h"
 #include "core/DoorSectorObject.h"
@@ -113,23 +114,73 @@ inline bool isDrawnSolid(LayerRenderStyle style)
 }
 
 //
+// The tint a Sector takes when its lights are off.
+//
+// A flat-colour Sector bypasses this entirely (see bypassesLightsOffTint());
+// every other Sector wears it in place of its Layer's colour.
+//
+inline constexpr core::BackgroundColour LightsOffTint{ 48, 48, 48 };
+
+//
+// Whether a Sector is rendered as its own flat, opaque colour.
+//
+// A Background has always been drawn this way: its colour is its whole surface.
+// A Facade follows the same rendering rule (ADR 0003) - the user-authored
+// colour is the surface, the generic Layer fill is skipped so nothing paints
+// twice, and the lights-off tint never applies.
+//
+inline bool rendersAsFlatColour(core::SectorType type)
+{
+	return type == core::SectorType::Background || type == core::SectorType::Facade;
+}
+
+//
+// The flat surface colour a Sector carries of its own, if it carries one.
+//
+inline std::optional<core::BackgroundColour> flatSurfaceColour(core::Sector const& sector)
+{
+	if (sector.getType() == core::SectorType::Background)
+	{
+		return static_cast<core::Background const&>(sector).getColour();
+	}
+
+	if (sector.getType() == core::SectorType::Facade)
+	{
+		return static_cast<core::Facade const&>(sector).getColour();
+	}
+
+	return std::nullopt;
+}
+
+//
+// Whether the lights-off tint skips a Sector type.
+//
+// A flat-colour Sector's colour is user-authored; tinting it when the lights
+// are off would silently override the picker. A Background has no lights to
+// switch at all. A Facade does: its light switch keeps meaning exactly what it
+// meant for the agents and objects inside - only the fill refuses to follow it
+// (ADR 0003).
+//
+inline bool bypassesLightsOffTint(core::SectorType type)
+{
+	return rendersAsFlatColour(type);
+}
+
+//
 // The colour a clear Window's Aperture pass fills the Sector behind it with.
 //
 // A Background is seen in its own colour: the glass shows what is actually
 // behind it, so the pass is handed the Background's own colour rather than the
-// generic back-layer tint. Any other back Sector carries no colour of its own
-// and yields std::nullopt, leaving the caller's generic tint in place. Where a
+// generic back-layer tint. A Facade behind glass does the same - it renders as
+// a solid colour exactly like a Background, so its user-authored colour is
+// what the glass shows. Any other back Sector carries no colour of its own and
+// yields std::nullopt, leaving the caller's generic tint in place. Where a
 // Window faces several Backgrounds at once, backgroundApertureRegions() below
 // answers this once per Background in the composite.
 //
 inline std::optional<core::BackgroundColour> apertureFillColour(core::Sector const& backSector)
 {
-	if (backSector.getType() != core::SectorType::Background)
-	{
-		return std::nullopt;
-	}
-
-	return static_cast<core::Background const&>(backSector).getColour();
+	return flatSurfaceColour(backSector);
 }
 
 //
