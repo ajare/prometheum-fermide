@@ -982,8 +982,12 @@ namespace core
 
 		bool getShuttleOptions(Shuttle const* shuttle, CreateShuttleOptions& options) const;
 
+		// Stop alignments a Door dropped at doorX could open onto.  The Layer searched
+		// is the Shuttle Transit's own Layer, not the Layer the Door is authored on;
+		// a caller placing a Door on Layer L passes layerBehind(L), matching
+		// getLiftLandingGeometry.  A Shuttle on any other Layer is never returned.
 		std::vector<ShuttleStopCandidate> getShuttleStopCandidatesForDoor(
-			uint32_t layerIndex, uint32_t y, uint32_t doorX) const;
+			uint32_t shuttleLayer, uint32_t y, uint32_t doorX) const;
 
 		bool getSectorDoorOptions(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t width,
 			CreateDoorOptions& options) const;

@@ -2590,7 +2590,7 @@ namespace core
 	}
 
 	vector<Building::ShuttleStopCandidate> Building::getShuttleStopCandidatesForDoor(
-		uint32_t layerIndex, uint32_t y, uint32_t doorX) const
+		uint32_t shuttleLayer, uint32_t y, uint32_t doorX) const
 	{
 		vector<ShuttleStopCandidate> result;
 		uint32_t sectorIndex = 0;
@@ -2600,8 +2600,8 @@ namespace core
 				|| record.type == ConstructionType::Ladder || record.type == ConstructionType::Stairwell || record.type == ConstructionType::Staircase
 				|| record.type == ConstructionType::Lift || record.type == ConstructionType::Shuttle;
 			if (!producer) continue;
-			// Only a Shuttle on the requested Layer can serve a door on that pair.
-			if (record.type == ConstructionType::Shuttle && record.layer == layerIndex && record.a == y)
+			// Only a Shuttle on the requested Layer can serve a Door on that pair.
+			if (record.type == ConstructionType::Shuttle && record.layer == shuttleLayer && record.a == y)
 			{
 				auto doorMask = record.h ? record.h : (1u << 1);
 				auto doorOffsets = shuttleDoorOffsets(record.e, doorMask);

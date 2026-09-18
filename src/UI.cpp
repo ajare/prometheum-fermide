@@ -527,7 +527,9 @@ namespace
 			target.cellX = landingX;
 		target.sector = building->getSectorAtPosition(gUISettings.visibleLayer,
 			(float)target.cellX, world.y);
-		auto shuttleStops = building->getShuttleStopCandidatesForDoor(gUISettings.visibleLayer, target.cellY, target.cellX);
+		// A Shuttle serves the Door pair from the Layer directly behind the Layer the
+		// Door is authored on, so query the Layer behind the visible one.
+		auto shuttleStops = building->getShuttleStopCandidatesForDoor(gUISettings.visibleLayer + 1, target.cellY, target.cellX);
 		if (!shuttleStops.empty()) target.diagnostic.clear();
 		else building->canAddCorridorDoor(gUISettings.visibleLayer, target.cellY, target.cellX, &target.diagnostic);
 		return target;
@@ -1242,7 +1244,8 @@ namespace
 
 	void placeDoor(shared_ptr<core::Building> const& building, PegmanTarget const& target)
 	{
-		gShuttleDoorCandidates = building->getShuttleStopCandidatesForDoor(gUISettings.visibleLayer, target.cellY, target.cellX);
+		// The Shuttle sits one Layer behind the Layer the Door is authored on.
+		gShuttleDoorCandidates = building->getShuttleStopCandidatesForDoor(gUISettings.visibleLayer + 1, target.cellY, target.cellX);
 		if (!gShuttleDoorCandidates.empty())
 		{
 			gSelectedShuttleDoorCandidate = 0;

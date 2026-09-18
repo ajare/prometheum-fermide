@@ -1898,6 +1898,44 @@ void doorAndWindowRemovalWorksOnDeepLayerPairs()
 		"Window on a three-layer Building could not be removed");
 }
 
+void shuttleDoorCandidatesAreFoundOnTheShuttleLayer()
+{
+	// Regression for ticket #22: the editor passed the Layer a Door is authored
+	// on to getShuttleStopCandidatesForDoor, which matches the Shuttle Transit's
+	// own Layer - one behind.  Dropping a Door onto a Shuttle stop column found no
+	// candidate, so the Add Shuttle stop popup never appeared.
+	auto const probe = [](uint32_t shuttleLayer)
+	{
+		core::Building building("Shuttle door candidate layers", 32, 2);
+		while (building.getLayerCount() <= shuttleLayer) building.addLayer();
+		for (uint32_t layer = 0; layer < shuttleLayer; ++layer)
+			building.addCorridor(layer, 0, 0, 31, 1);
+		core::Building::CreateShuttleOptions options{ 2, 3, { 0, 18 }, 0 };
+		options.doorMask = 0b101;
+		auto const created = building.addShuttle(shuttleLayer, 0, 0, 27, options);
+		building.finishBuild();
+		auto const shuttle = std::dynamic_pointer_cast<const core::ShuttleTransit>(
+			created.shuttle.sector);
+		require(shuttle && shuttle->getLayerIndex() == shuttleLayer,
+			"The Shuttle was not authored on the probed Layer");
+
+		// A new stop at offset 9 lines carriage 0's first door up with column 9 of
+		// the landing Layer directly in front of the Shuttle.
+		auto const found = building.getShuttleStopCandidatesForDoor(shuttleLayer, 0, 9);
+		require(any_of(found.begin(), found.end(), [&](auto const& candidate)
+			{
+				return candidate.sectorIndex == shuttle->getIndex() && candidate.stopOffset == 9;
+			}),
+			"No Shuttle stop candidate was offered for a Door over a Shuttle door");
+		// The Layer the Door is authored on holds no Shuttle, so querying it as a
+		// Shuttle Layer must find nothing.
+		require(building.getShuttleStopCandidatesForDoor(shuttleLayer - 1, 0, 9).empty(),
+			"A Door Layer was treated as a Shuttle Layer");
+	};
+	probe(1);
+	probe(2);
+}
+
 void candidateReplayIncludesAllLayers()
 {
 	// Regression for ticket #17: validation candidates were constructed with the
@@ -1955,4 +1993,5 @@ void runSerializationSmokeChecks()
 	serializableTracksModificationState();
 	doorAndWindowRemovalWorksOnDeepLayerPairs();
 	candidateReplayIncludesAllLayers();
+	shuttleDoorCandidatesAreFoundOnTheShuttleLayer();
 }
