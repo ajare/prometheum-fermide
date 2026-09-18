@@ -2,8 +2,10 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <vector>
 
+#include "core/Background.h"
 #include "core/Building.h"
 #include "core/Defines.h"
 #include "core/Door.h"
@@ -106,6 +108,26 @@ inline bool isLayerDrawn(uint32_t layer, uint32_t viewLayer, uint32_t layerCount
 inline bool isDrawnSolid(LayerRenderStyle style)
 {
 	return style == LayerRenderStyle::Solid || style == LayerRenderStyle::Aperture;
+}
+
+//
+// The colour a clear Window's Aperture pass fills the Sector behind it with.
+//
+// A Background is seen in its own colour: the glass shows what is actually
+// behind it, so the pass is handed the Background's own colour rather than the
+// generic back-layer tint. Any other back Sector carries no colour of its own
+// and yields std::nullopt, leaving the caller's generic tint in place. Where a
+// Window faces several Backgrounds at once, compositing them is a later ticket;
+// a single Background behind the Window is all this answers.
+//
+inline std::optional<core::BackgroundColour> apertureFillColour(core::Sector const& backSector)
+{
+	if (backSector.getType() != core::SectorType::Background)
+	{
+		return std::nullopt;
+	}
+
+	return static_cast<core::Background const&>(backSector).getColour();
 }
 
 // Transit geometry is drawn by the selected Layer's passes. The wireframe overlay

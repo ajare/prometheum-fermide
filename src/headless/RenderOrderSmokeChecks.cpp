@@ -41,6 +41,7 @@
 #include <vector>
 
 #include "Render.h"
+#include "core/Background.h"
 #include "core/Building.h"
 #include "core/Defines.h"
 #include "core/Door.h"
@@ -51,6 +52,8 @@
 #include "core/SectorType.h"
 #include "core/Transit.h"
 #include "core/Vector2.h"
+#include "core/Window.h"
+#include "core/WindowSectorObject.h"
 
 namespace
 {
@@ -1175,6 +1178,78 @@ namespace
 	}
 
 	//
+	// A clear Window's Aperture pass is handed the Background's own colour, not
+	// the generic back-layer tint: the glass shows what is actually behind it.
+	// The pass that receives that colour is the Aperture pass renderPasses()
+	// orders for the Layer directly behind the selection, and the colour follows
+	// the Background - re-colour it and the glass follows. A Window looking into
+	// anything other than a Background still takes the generic tint, so the
+	// arrangement that must not move is measured too.
+	//
+	void aClearWindowShowsItsBackgroundsOwnColour()
+	{
+		core::Building building("Backdrop render order", 12, 2);
+		while (building.getLayerCount() < 2) building.addLayer();
+		building.addRoom("Front", 0, 0, 0, 12, 1);
+		auto const backdropIndex = building.addBackground(1, 0, 0, 6, 1, { 255, 128, 0 });
+		building.addRoom("Behind", 1, 0, 6, 6, 1);
+
+		auto const looking = building.addSectorWindow(0, 0, 1, 2, 1,
+			{ false, core::Window::State::Closed, core::Window::Style::Clear });
+		auto const tinted = building.addSectorWindow(0, 0, 7, 2, 1,
+			{ false, core::Window::State::Closed, core::Window::Style::Clear });
+		building.finishBuild();
+
+		require(looking.object != nullptr && tinted.object != nullptr,
+			"a clear Window was not created");
+		require(looking.object->getStyle() == core::Window::Style::Clear
+			&& tinted.object->getStyle() == core::Window::Style::Clear,
+			"a Window under test is not a clear Window");
+
+		// The Aperture pass for the Layer behind the selection is the pass that
+		// receives the fill colour; renderPasses() is the renderer's own order.
+		auto const passes = renderPasses(0, building.getLayerCount(), false);
+		bool hasAperturePass{ false };
+		for (auto const& pass : passes)
+		{
+			hasAperturePass = hasAperturePass
+				|| (pass.layer == 1 && pass.style == LayerRenderStyle::Aperture);
+		}
+		require(hasAperturePass,
+			"the Layer behind the selection is not drawn through apertures, so no fill colour is handed down");
+
+		// The Window over the backdrop really looks into the Background.
+		auto const back = looking.object->getBackSector();
+		require(back != nullptr && back->getType() == core::SectorType::Background,
+			"the Window over the backdrop does not look into a Background");
+		require(back->getIndex() == backdropIndex, "the Window looks into the wrong Background");
+
+		// The Aperture pass is handed the Background's own colour.
+		auto const fill = apertureFillColour(*back);
+		require(fill.has_value(), "a Background back Sector offers no aperture fill colour");
+		require(*fill == core::BackgroundColour{ 255, 128, 0 },
+			"the aperture fill colour is not the Background's own colour");
+
+		// The glass follows the Background: re-colour it and the fill follows,
+		// which is the headless half of the hand-edited-YAML manual test.
+		auto const recolourable = std::make_shared<core::Background>(
+			"Backdrop", 1u, backdropIndex, 0u, 0u, 6u, 1u, core::BackgroundColour{ 255, 128, 0 });
+		require(apertureFillColour(*recolourable) == core::BackgroundColour{ 255, 128, 0 },
+			"a freshly built Background does not offer its own colour");
+		recolourable->setColour({ 12, 34, 56 });
+		require(apertureFillColour(*recolourable) == core::BackgroundColour{ 12, 34, 56 },
+			"the aperture fill colour did not follow the Background's recolour");
+
+		// The control: a clear Window looking into a Room carries no colour of
+		// its own, so the caller keeps the generic back-layer tint.
+		auto const tintedBack = tinted.object->getBackSector();
+		require(tintedBack != nullptr && tintedBack->getType() != core::SectorType::Background,
+			"the control Window is not looking into something other than a Background");
+		require(!apertureFillColour(*tintedBack).has_value(),
+			"a non-Background back Sector claims a fill colour of its own; the tint would be overridden");
+	}
+
+	//
 	// The same Depot paints the same picture every time it is built.
 	//
 	void theRenderSnapshotIsDeterministic()
@@ -1204,5 +1279,6 @@ void runRenderOrderSmokeChecks()
 	theSelectedLayerPaintsItselfWhole();
 	theOverlayOutlinesTheWholeLayerBehind();
 	theRenderPassOrderDrawsTheSelectedLayerFirst();
+	aClearWindowShowsItsBackgroundsOwnColour();
 	theRenderSnapshotIsDeterministic();
 }

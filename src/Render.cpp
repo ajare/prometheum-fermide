@@ -607,8 +607,16 @@ void renderWindowClear(shared_ptr<const core::Window> window, uint32_t layer, La
 
 	if (backSector)
 	{
+		// The glass shows the Background's own colour, not the generic
+		// back-layer tint (#34). A back Sector that carries no colour of its
+		// own keeps the tint.
+		auto const ownColour = apertureFillColour(*backSector);
+		auto const apertureColour = ownColour
+			? ImColor(ownColour->r, ownColour->g, ownColour->b, 255)
+			: BackLocationColour;
+
 		renderSector(backSector, core::layerBehind(layer), LayerRenderStyle::Aperture, false,
-			BackLocationColour, drawList);
+			apertureColour, drawList);
 	}
 	else
 	{
