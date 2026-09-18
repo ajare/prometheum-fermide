@@ -1,4 +1,4 @@
-// Tickets #16 and #25: rendering order for multi-layer Buildings.
+// Tickets #16, #25 and #26: rendering order for multi-layer Buildings.
 //
 // The viewport paints the selected Layer solid and whole. The Layer directly
 // behind it is painted by two passes: solid, clipped to the apertures the
@@ -666,6 +666,92 @@ namespace
 	}
 
 	//
+	// A Shuttle's apertures are the thresholds it actually owns. Every Door on the
+	// selected Layer which opens onto the Shuttle is an aperture at its own
+	// rectangle, and every aperture is such a Door - so a carriage with several
+	// doors opens several doorways rather than one per landing, and nothing is
+	// painted solid where the player can see no doorway. The stop's origin cell,
+	// which the aperture used to be derived from, opens onto nothing.
+	//
+	void aShuttleOpensThroughItsOwnCarriageDoors()
+	{
+		core::Building building("Render order depot", 16, 4);
+		authorRenderOrderDepot(building);
+
+		constexpr uint32_t viewLayer{ 2 };	// the Depot's Shuttle sits on Layer 3
+		auto const transit = sectorByName(building, "Shuttle");
+		require(transit != nullptr, "the Depot has no Shuttle");
+		auto const shuttle = std::dynamic_pointer_cast<const core::ShuttleTransit>(transit);
+		require(shuttle != nullptr, "the Depot's Shuttle is not a ShuttleTransit");
+
+		std::vector<std::shared_ptr<const core::Door>> owned;
+		for (auto const& location : locationsOn(building, viewLayer))
+			for (uint32_t i = 0; i < location->getNumObjects(); ++i)
+			{
+				auto const object = location->getObject(i);
+				if (!object || object->getObjectType() != core::SectorObjectType::Door) continue;
+				auto const door = std::static_pointer_cast<const core::DoorSectorObject>(
+					object)->getDoor();
+				if (door && door->getBackSector() == transit) owned.push_back(door);
+			}
+
+		// The Depot's Shuttle is two carriages at two stops, one door each.
+		require(owned.size() == 4, "the Depot's Shuttle does not own four carriage Doors");
+
+		auto const apertures = transitApertures(transit, viewLayer, locationsOn(building, viewLayer));
+		require(apertures.size() == owned.size(),
+			"the Shuttle does not open one aperture per carriage Door it owns");
+
+		for (auto const& aperture : apertures)
+		{
+			require(aperture.location != nullptr, "a Shuttle doorway aperture opens through nothing");
+
+			// The aperture is exactly one owned doorway: neither wider than its
+			// threshold nor shared with a Door belonging to something else.
+			uint32_t covering{ 0 };
+			for (auto const& door : owned)
+			{
+				core::Vector2 lo, hi;
+				door->getFullShape(lo, hi);
+				Rect const shape{ std::min(lo.x, hi.x), std::min(lo.y, hi.y),
+					std::max(lo.x, hi.x), std::max(lo.y, hi.y) };
+				if (std::abs(shape.minX - aperture.min.x) <= kAreaEpsilon
+					&& std::abs(shape.maxX - aperture.max.x) <= kAreaEpsilon)
+				{
+					++covering;
+				}
+			}
+			require(covering == 1,
+				("a Shuttle aperture is not exactly one of its own carriage doorways at "
+					+ describeRect(rectOf(aperture))).c_str());
+
+			auto const door = thresholdCovering(*aperture.location, aperture);
+			require(door != nullptr,
+				("no Door is authored over the Shuttle doorway at "
+					+ describeRect(rectOf(aperture))).c_str());
+			require(door->getFrontSector() == aperture.location,
+				"the Door over a Shuttle doorway is not authored on the selected Layer, so it would not occlude");
+			require(door->getBackSector() == transit,
+				"the Door over a Shuttle doorway does not open onto the Shuttle it covers");
+		}
+
+		// None of the apertures sits at a stop's origin cell, which is where the
+		// aperture used to be and where no doorway is.
+		for (uint32_t stop = 0; stop < shuttle->getNumStops(); ++stop)
+		{
+			auto const& landing = shuttle->getStop(stop);
+			auto const stopOrigin = (float)((int)landing.sector->getCellX() + landing.sectorOffsetX);
+			for (auto const& aperture : apertures)
+			{
+				Rect const stopCell{ stopOrigin, aperture.min.y, stopOrigin + 1.0f, aperture.max.y };
+				require(intersect(stopCell, rectOf(aperture)).area() <= kAreaEpsilon,
+					("a Shuttle aperture opens at stop " + std::to_string(stop)
+						+ "'s origin cell, where there is no doorway").c_str());
+			}
+		}
+	}
+
+	//
 	// Only the selected Layer and the one directly behind it reach the screen. A
 	// Transit two Layers back, or one in front of the selection, is not painted at
 	// all, however much its footprint would overlap what the viewer can see.
@@ -1112,6 +1198,7 @@ void runRenderOrderSmokeChecks()
 	onlyALandingLocationOpensOntoATransit();
 	aTransitOnlyOpensOntoTheLayerInFrontOfIt();
 	aLiftLandingDoorwayIsItsOwnThreshold();
+	aShuttleOpensThroughItsOwnCarriageDoors();
 	aStaircaseIsPaintedAcrossTheLocationsInView();
 	theOverlayNeverLeaksSolidGeometryOrAgents();
 	theSelectedLayerPaintsItselfWhole();

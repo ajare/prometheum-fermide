@@ -6,11 +6,14 @@
 
 #include "core/Building.h"
 #include "core/Defines.h"
+#include "core/Door.h"
+#include "core/DoorSectorObject.h"
 #include "core/Graph.h"
 #include "core/LadderTransit.h"
 #include "core/LiftTransit.h"
 #include "core/Location.h"
 #include "core/Sector.h"
+#include "core/SectorObjectType.h"
 #include "core/SectorType.h"
 #include "core/ShuttleTransit.h"
 #include "core/StaircaseTransit.h"
@@ -169,7 +172,8 @@ inline bool shouldRenderStaircaseAfterSector(core::SectorType sectorType)
 //
 //   Ladder     the bounds of each landing Location
 //   Lift       the doorway rectangle at each landing
-//   Shuttle    the doorway rectangle at each landing
+//   Shuttle    the rectangle of each Door on the selected Layer which opens
+//              onto it, so the aperture is the doorway the player can see
 //   Stairwell  the doorway rectangle of each deck
 //   Staircase  the bounds of every Location on the selected Layer
 //
@@ -256,21 +260,39 @@ inline std::vector<TransitAperture> transitApertures(
 		break;
 
 	case core::SectorType::Shuttle:
-		if (auto const* shuttle = dynamic_cast<core::ShuttleTransit const*>(transit.get()))
+		// A Shuttle is seen through the thresholds it actually owns: the Doors
+		// authored on the selected Layer which open onto it. Deriving the aperture
+		// from the stop's origin cell instead put it one cell in front of the
+		// carriage's first door and missed every other door on that carriage, so
+		// the solid pass painted carriage over floor with no doorway in front of
+		// it. A carriage may have any number of doors, and each is its own
+		// aperture.
+		for (auto const& location : viewLocations)
 		{
-			for (uint32_t stop = 0; stop < shuttle->getNumStops(); ++stop)
+			if (!landsOnViewLayer(location)
+				|| !std::dynamic_pointer_cast<const core::Location>(location))
 			{
-				auto const& landing = shuttle->getStop(stop);
-				if (!landsOnViewLayer(landing.sector))
+				continue;
+			}
+
+			for (uint32_t index = 0; index < location->getNumObjects(); ++index)
+			{
+				auto const object = location->getObject(index);
+				if (!object || object->getObjectType() != core::SectorObjectType::Door)
 				{
 					continue;
 				}
 
-				auto const cellX = (float)((int)landing.sector->getCellX() + landing.sectorOffsetX);
-				auto const cellY = (float)((int)landing.sector->getCellY() + landing.sectorOffsetY);
+				auto const door = std::static_pointer_cast<const core::DoorSectorObject>(
+					object)->getDoor();
+				if (!door || door->getBackSector() != transit)
+				{
+					continue;
+				}
 
-				addDoorwayAperture(landing.sector, cellX + 0.5f, cellY,
-					1.0f - CORE_SHUTTLE_DOORWAY_BORDER * 2.0f, CORE_SHUTTLE_DOORWAY_HEIGHT);
+				core::Vector2 lo, hi;
+				door->getFullShape(lo, hi);
+				apertures.push_back({ { lo.x, lo.y }, { hi.x, hi.y }, location });
 			}
 		}
 		break;

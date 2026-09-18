@@ -16,6 +16,8 @@
 #include "core/Building.h"
 #include "core/BulkheadDoorSectorObject.h"
 #include "core/Defines.h"
+#include "core/Door.h"
+#include "core/DoorSectorObject.h"
 #include "core/Serializable.h"
 #include "core/SerializationException.h"
 #include "core/LadderTransit.h"
@@ -1303,31 +1305,79 @@ agents: []
 				"A Lift exposes apertures on a Layer it is not directly behind");
 		}
 
-		// A Shuttle opens one doorway per landing, one cell wide.
+		// A Shuttle opens one doorway per carriage door it actually owns, at that
+		// Door's own rectangle - not one per landing at the stop's origin cell.
 		{
 			core::Building building("Shuttle apertures", 32, 3);
 			building.addCorridor(0, 0, 31);
 			building.addCorridor(1, 0, 31);
 			core::Building::CreateShuttleOptions options{ 2, 3, { 0, 18 }, 0 };
 			options.capacity = 2;
-			options.doorMask = 0b101;
+			// Doors on carriage cells 1 and 2, so no doorway sits at a stop's origin
+			// cell and the old stop-derived aperture is distinguishable from a real one.
+			options.doorMask = 0b110;
 			auto created = building.addShuttle(1, 0, 0, 27, options);
 			building.finishBuild();
 
 			auto const transit = created.shuttle.sector;
 			auto const apertures = transitApertures(transit, 0, building.getSectors(0));
-			require(apertures.size() == 2,
-				"A two-stop Shuttle does not expose one aperture per landing");
+
+			// Two stops x two carriages x two doors each. The stop's origin cell is
+			// not a doorway, so deriving apertures from stops rather than from the
+			// thresholds leaves the count wrong as well as the placement.
+			require(apertures.size() == 8,
+				"A Shuttle does not expose one aperture per carriage doorway it owns");
+
+			// The apertures are exactly the Doors the Shuttle owns on the Layer in
+			// front of it, rectangle for rectangle.
+			std::vector<std::pair<float, float>> ownedDoorways;
+			for (auto const& sector : building.getSectors(0))
+				for (uint32_t index = 0; index < sector->getNumObjects(); ++index)
+				{
+					auto const object = sector->getObject(index);
+					if (!object || object->getObjectType() != core::SectorObjectType::Door)
+						continue;
+					auto const door = std::static_pointer_cast<const core::DoorSectorObject>(
+						object)->getDoor();
+					if (!door || door->getBackSector() != transit)
+						continue;
+					core::Vector2 lo, hi;
+					door->getFullShape(lo, hi);
+					ownedDoorways.push_back({ lo.x, hi.x });
+				}
+			std::sort(ownedDoorways.begin(), ownedDoorways.end());
+
+			std::vector<std::pair<float, float>> openedDoorways;
 			for (auto const& aperture : apertures)
 			{
 				require(std::abs((aperture.max.x - aperture.min.x)
 						- (1.0f - CORE_SHUTTLE_DOORWAY_BORDER * 2.0f)) < 0.0001f
 						&& std::abs((aperture.max.y - aperture.min.y)
 							- CORE_SHUTTLE_DOORWAY_HEIGHT) < 0.0001f,
-					"A Shuttle aperture is not its landing doorway");
+					"A Shuttle aperture is not its carriage doorway");
 				require(opensInsideLanding(aperture),
 					"A Shuttle aperture opens outside the Location it lands in");
+				openedDoorways.push_back({ aperture.min.x, aperture.max.x });
 			}
+			std::sort(openedDoorways.begin(), openedDoorways.end());
+
+			require(openedDoorways == ownedDoorways,
+				"A Shuttle's apertures are not the carriage doorways it owns");
+
+			// None of them overlaps a stop's origin cell, which is where the old
+			// stop-derived aperture was and where this Shuttle has no doorway.
+			constexpr float shuttleX{ 0.0f };
+			for (auto const stopOffset : options.stopOffsets)
+			{
+				auto const cell0 = shuttleX + (float)stopOffset;
+				auto const cell1 = cell0 + 1.0f;
+				for (auto const& aperture : apertures)
+					require(aperture.max.x <= cell0 + 0.0001f || aperture.min.x >= cell1 - 0.0001f,
+						"A Shuttle aperture sits at its stop's origin cell rather than at its carriage door");
+			}
+
+			require(transitApertures(transit, 1, building.getSectors(1)).empty(),
+				"A Shuttle exposes apertures on a Layer it is not directly behind");
 		}
 
 		// A Ladder opens the whole of each Location it lands in.
