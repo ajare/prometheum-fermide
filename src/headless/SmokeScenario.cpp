@@ -3950,6 +3950,337 @@ namespace
 		return result;
 	}
 
+	// Ticket #15: pulling a middle Layer out of a four-Layer Building while Agents
+	// are still using it.  The plan the editor would confirm has to name every
+	// casualty: the Locations on the deleted Layer, the Transit on that Layer, the
+	// Lift one Layer behind which loses its landings, the Door crossing it, and
+	// the Agents standing in each doomed Sector.  Applying the plan must then
+	// leave a compacted Building whose surviving Layers are still valid and
+	// walkable, with the deeper Ladder and its landing pair moved forward intact.
+	struct MiddleLayerDeletionResult
+	{
+		bool planValid{ false };
+		bool planCountsValid{ false };
+		bool casualtiesRemoved{ false };
+		bool layersCompacted{ false };
+		bool survivorsTraversable{ false };
+		std::string diagnostic;
+		ScenarioResult run;
+	};
+
+	// Authored Sector handles, recorded before a deletion renumbers them.
+	struct MiddleLayerLayout
+	{
+		uint32_t entry{ 0 };
+		uint32_t lobby{ 0 };
+		uint32_t lowerLobby{ 0 };
+		uint32_t middleDeck{ 0 };
+		uint32_t middleStore{ 0 };
+		uint32_t doomedLadder{ 0 };
+		uint32_t deepStore{ 0 };
+		uint32_t deepCorridor{ 0 };
+		uint32_t deepYard{ 0 };
+		uint32_t doomedLift{ 0 };
+		uint32_t annexe{ 0 };
+		uint32_t keptLadder{ 0 };
+	};
+
+	// Layer 0 is the entry Layer, Layer 1 the Layer under test, and Layers 2 and 3
+	// the deeper Layers which must survive.  Every Location is one deck high so a
+	// Ladder can land on two stacked Locations, and the two Doors are authored at
+	// different cells so the deletion counts the Door it really crosses rather
+	// than one which merely shares a cell.
+	MiddleLayerLayout authorMiddleLayerDeletionBuilding(core::Building& building)
+	{
+		while (building.getLayerCount() < 4) building.addLayer();
+		building.setLayerName(1, "Middle");
+		building.setLayerName(2, "Deep");
+		building.setLayerName(3, "Attic");
+
+		MiddleLayerLayout layout;
+		layout.entry = building.addCorridor(0, 0, 0, 12, 1);
+		layout.lobby = building.addRoom("Lobby", 0, 1, 0, 12, 1);
+		layout.lowerLobby = building.addRoom("Lower Lobby", 0, 2, 0, 12, 1);
+		layout.middleDeck = building.addRoom("Middle Deck", 1, 0, 0, 12, 1);
+		layout.middleStore = building.addRoom("Middle Store", 1, 2, 0, 11, 1);
+		layout.doomedLadder = building.addLadder(1, 1, 11, { 2, false, true })
+			.ladder.sector->getIndex();
+		layout.deepStore = building.addRoom("Deep Store", 2, 0, 0, 10, 1);
+		layout.deepCorridor = building.addRoom("Deep Corridor", 2, 1, 0, 10, 1);
+		layout.deepYard = building.addRoom("Deep Yard", 2, 2, 0, 10, 1);
+
+		core::Building::CreateLiftOptions liftOptions;
+		liftOptions.cellsWide = 1;
+		liftOptions.stopOffsets = { 0, 2 };
+		layout.doomedLift = building.addLift(2, 0, 10, liftOptions).lift.sector->getIndex();
+
+		layout.annexe = building.addRoom("Annexe", 3, 0, 0, 10, 1);
+		layout.keptLadder = building.addLadder(3, 1, 9, { 2, false, true })
+			.ladder.sector->getIndex();
+
+		// A Door is authored on the front Layer of the pair it crosses.
+		building.addSectorDoor(0, 0, 4);
+		building.addSectorDoor(2, 0, 6);
+		building.addSectorMarker(layout.deepStore, 0, 1.5f, nullptr);
+		building.addSectorMarker(layout.annexe, 0, 8.5f, nullptr);
+		building.finishBuild();
+		return layout;
+	}
+
+	std::shared_ptr<const core::Sector> sectorByName(core::Building const& building, std::string const& name)
+	{
+		for (uint32_t i = 0; i < building.getNumSectors(); ++i)
+			if (building.getSector(i)->getName() == name) return building.getSector(i);
+		return nullptr;
+	}
+
+	MiddleLayerDeletionResult runMiddleLayerDeletion()
+	{
+		MiddleLayerDeletionResult result;
+		core::Building building("Layer deletion smoke building", 12, 4);
+		auto const layout = authorMiddleLayerDeletionBuilding(building);
+		if (!building.isTraversalTopologyValid())
+		{
+			result.diagnostic = "authored Building is invalid: " + building.getTopologyDiagnostic();
+			return result;
+		}
+
+		// The doomed Lift lands on the Layer under test, and the doomed Ladder sits
+		// on it, so both are casualties of the deletion even though only one of
+		// them is actually on it.
+		auto const doomedLift = std::dynamic_pointer_cast<const core::Transit>(
+			building.getSector(layout.doomedLift));
+		auto const doomedLadder = std::dynamic_pointer_cast<const core::Transit>(
+			building.getSector(layout.doomedLadder));
+		if (!doomedLift || doomedLift->getLayerIndex() != 2 || doomedLift->getNumStops() != 2)
+		{
+			result.diagnostic = "the authored Lift does not sit on Layer 2 with two stops";
+			return result;
+		}
+		if (!doomedLadder || doomedLadder->getLayerIndex() != 1 || doomedLadder->getNumStops() != 2)
+		{
+			result.diagnostic = "the authored Ladder does not sit on Layer 1 with two stops";
+			return result;
+		}
+		for (uint32_t stop = 0; stop < doomedLift->getNumStops(); ++stop)
+			if (doomedLift->getStop(stop).sector->getLayerIndex() != 1)
+			{
+				result.diagnostic = "the doomed Lift does not land on Layer 1";
+				return result;
+			}
+
+		// One Agent stands in every kind of Sector the deletion touches, and two of
+		// them are mid-journey when the Layer is pulled out from under them.
+		auto const entryAgentId = building.createAgent("Entry walker", layout.entry, 0, 0.5f);
+		auto const sitterAgentId = building.createAgent("Middle sitter", layout.middleDeck, 0, 0.5f);
+		auto const climberAgentId = building.createAgent("Doomed climber", layout.doomedLadder, 0, 0.5f);
+		auto const riderAgentId = building.createAgent("Doomed rider", layout.doomedLift, 0, 0.5f);
+		auto const deepAgentId = building.createAgent("Deep traveller", layout.deepStore, 0, 0.5f);
+		auto const yardAgentId = building.createAgent("Yard keeper", layout.deepYard, 0, 0.5f);
+
+		auto const annexeBefore = building.getSector(layout.annexe).get();
+		auto const annexeTarget = building.getGraph()->getClosestVertexInSector(annexeBefore, { 8.5f, 0.0f });
+		if (!annexeTarget
+			|| annexeTarget->getPosition().distanceTo({ 8.5f, 0.0f }) > 0.001f)
+		{
+			result.diagnostic = "the Annexe destination Marker is not where the scenario authors it";
+			return result;
+		}
+		auto const traveller = building.lookupAgent(deepAgentId).entity;
+		if (!traveller)
+		{
+			result.diagnostic = "the traveller Agent was not created";
+			return result;
+		}
+		auto const outbound = building.getGraph()->calculatePath(traveller, annexeTarget);
+		if (!outbound)
+		{
+			result.diagnostic = "the authored Building has no route from the Deep Store to the Annexe";
+			return result;
+		}
+		traveller->setPath(outbound, true);
+		for (uint64_t tick = 0; tick < 60; ++tick) building.advanceTick();
+		if (traveller->getState() == core::Agent::State::Idle)
+		{
+			result.diagnostic = "the traveller finished before the deletion could catch it mid-journey";
+			return result;
+		}
+
+		building.pauseSimulation();
+		auto const plan = building.planDeleteLayer(1);
+		result.planValid = plan.valid;
+		if (!plan.valid)
+		{
+			result.diagnostic = plan.diagnostic;
+			return result;
+		}
+
+		result.planCountsValid = plan.layerCountBefore == 4 && plan.layerCountAfter == 3
+			&& plan.locationsRemoved == 2 && plan.transitsRemoved == 2
+			&& plan.doorsRemoved == 1 && plan.agentsRemoved == 3
+			&& plan.requiresConfirmation();
+		if (!result.planCountsValid)
+		{
+			std::ostringstream detail;
+			detail << "layers " << plan.layerCountBefore << "->" << plan.layerCountAfter
+				<< ", locations=" << plan.locationsRemoved
+				<< ", transits=" << plan.transitsRemoved
+				<< ", doors=" << plan.doorsRemoved
+				<< ", agents=" << plan.agentsRemoved;
+			result.diagnostic = detail.str();
+			return result;
+		}
+
+		building.applyDeleteLayer(plan);
+
+		// Every casualty is gone: the two Locations and the Ladder on the deleted
+		// Layer, the Lift which lost its landings, and the three Agents which were
+		// standing in them.  The deeper Ladder survives because its landing pair
+		// was never touched.
+		uint32_t lifts{ 0 };
+		std::shared_ptr<const core::Sector> survivingLadder;
+		for (uint32_t i = 0; i < building.getNumSectors(); ++i)
+		{
+			auto const sector = building.getSector(i);
+			if (!sector) continue;
+			if (sector->getName() == "Middle Deck" || sector->getName() == "Middle Store")
+			{
+				result.diagnostic = "a Location survived on the deleted Layer";
+				return result;
+			}
+			if (sector->getType() == core::SectorType::Lift) ++lifts;
+			if (sector->getType() == core::SectorType::Ladder) survivingLadder = sector;
+		}
+		result.casualtiesRemoved = building.getNumSectors() == 8 && lifts == 0 && survivingLadder != nullptr
+			&& building.lookupAgent(sitterAgentId).entity == nullptr
+			&& building.lookupAgent(climberAgentId).entity == nullptr
+			&& building.lookupAgent(riderAgentId).entity == nullptr;
+		result.casualtiesRemoved = result.casualtiesRemoved
+			&& building.isSimulationPaused() && building.isTraversalTopologyValid();
+		if (!result.casualtiesRemoved)
+		{
+			std::ostringstream detail;
+			detail << "sectors=" << building.getNumSectors() << ", lifts=" << lifts
+				<< ", topology=" << (building.isTraversalTopologyValid() ? "valid" : building.getTopologyDiagnostic());
+			result.diagnostic = detail.str();
+			return result;
+		}
+
+		// The Layers behind the deletion moved forward one, names and all, and the
+		// Sectors on them moved with their Layers.
+		result.layersCompacted = building.getLayerCount() == 3
+			&& building.getLayerName(1) == "Deep" && building.getLayerName(2) == "Attic";
+		for (auto const* name : { "Deep Store", "Deep Corridor", "Deep Yard" })
+		{
+			auto const sector = sectorByName(building, name);
+			if (!sector || sector->getLayerIndex() != 1) result.layersCompacted = false;
+		}
+		auto const annexe = sectorByName(building, "Annexe");
+		auto const survivingTransit = std::dynamic_pointer_cast<const core::Transit>(survivingLadder);
+		if (!annexe || annexe->getLayerIndex() != 2) result.layersCompacted = false;
+		if (!survivingTransit || survivingTransit->getLayerIndex() != 2
+			|| survivingTransit->getNumStops() != 2)
+			result.layersCompacted = false;
+		else
+			for (uint32_t stop = 0; stop < survivingTransit->getNumStops(); ++stop)
+				if (survivingTransit->getStop(stop).sector->getLayerIndex() != 1)
+					result.layersCompacted = false;
+
+		// The Door which crossed the deleted Layer is gone; the one behind it now
+		// crosses the compacted pair.
+		uint32_t deletedCrossing{ 0 }, compactedCrossing{ 0 };
+		for (auto const& edge : building.getGraph()->getEdges())
+		{
+			if (!edge || edge->getType() != core::EdgeType::Door) continue;
+			auto const a = edge->getVertex(0)->getSector()->getLayerIndex();
+			auto const b = edge->getVertex(1)->getSector()->getLayerIndex();
+			if ((a == 0 && b == 1) || (a == 1 && b == 0)) ++deletedCrossing;
+			if ((a == 1 && b == 2) || (a == 2 && b == 1)) ++compactedCrossing;
+		}
+		result.layersCompacted = result.layersCompacted && deletedCrossing == 0 && compactedCrossing == 1;
+		if (!result.layersCompacted)
+		{
+			std::ostringstream detail;
+			detail << "layers=" << building.getLayerCount() << ", door crossings into the deleted pair="
+				<< deletedCrossing << ", door crossings over the compacted pair=" << compactedCrossing;
+			result.diagnostic = detail.str();
+			return result;
+		}
+
+		// The Agents which were not in a doomed Sector are still there, resting on
+		// the Layer their Sector compacted to.
+		if (building.lookupAgent(entryAgentId).entity == nullptr
+			|| building.lookupAgent(deepAgentId).entity == nullptr
+			|| building.lookupAgent(yardAgentId).entity == nullptr)
+		{
+			result.diagnostic = "a surviving Agent was removed by the deletion";
+			return result;
+		}
+		auto const entry = building.lookupAgent(entryAgentId).entity;
+		auto const deep = building.lookupAgent(deepAgentId).entity;
+		auto const yard = building.lookupAgent(yardAgentId).entity;
+		if (entry->getSector()->getLayerIndex() != 0
+			|| deep->getSector()->getName() != "Deep Store"
+			|| deep->getSector()->getLayerIndex() != 1
+			|| yard->getSector()->getName() != "Deep Yard"
+			|| yard->getSector()->getLayerIndex() != 1)
+		{
+			result.diagnostic = "a surviving Agent was not re-placed on its compacted Layer";
+			return result;
+		}
+
+		// And the compacted Building still works: one Agent crosses the surviving
+		// Door into the compacted back Layer, and the other rides the compacted
+		// Ladder between the two Locations which were never in danger.
+		building.resumeSimulation();
+		auto const annexeVertex = building.getGraph()->getClosestVertexInSector(annexe.get(), { 8.5f, 0.0f });
+		auto const corridorVertex = building.getGraph()->getClosestVertexInSector(
+			sectorByName(building, "Deep Corridor").get(), { 1.5f, 1.5f });
+		// The destination Marker has to have followed its Sector through the record
+		// rewrite rather than landing on a renumbered neighbour.
+		if (!annexeVertex || annexeVertex->getPosition().distanceTo({ 8.5f, 0.0f }) > 0.001f
+			|| !corridorVertex)
+		{
+			result.diagnostic = "a Marker did not follow its Sector through the compaction";
+			return result;
+		}
+		auto const deepPath = building.getGraph()->calculatePath(deep, annexeVertex);
+		auto const yardPath = building.getGraph()->calculatePath(yard, corridorVertex);
+		if (!deepPath || !yardPath)
+		{
+			result.diagnostic = "the compacted Building has no route for a surviving Agent";
+			return result;
+		}
+
+		bool rodeLadder{ false };
+		for (auto const& node : yardPath->nodes)
+			if (node.edge && node.edge->getType() == core::EdgeType::Ladder) rodeLadder = true;
+		if (!rodeLadder)
+		{
+			result.diagnostic = "the compacted Ladder is no longer part of the Yard keeper's route";
+			return result;
+		}
+
+		deep->setPath(deepPath, true);
+		yard->setPath(yardPath, true);
+		while ((deep->getState() != core::Agent::State::Idle || yard->getState() != core::Agent::State::Idle)
+			&& building.getSimulationTick() < MaximumSimulationTicks * 4)
+		{
+			building.advanceTick();
+		}
+
+		result.survivorsTraversable = deep->getState() == core::Agent::State::Idle
+			&& deep->getSector() == annexe.get()
+			&& deep->getGlobalPosition().distanceTo(annexeVertex->getPosition()) < 0.001f
+			&& yard->getState() == core::Agent::State::Idle
+			&& yard->getSector() == sectorByName(building, "Deep Corridor").get()
+			&& yard->getGlobalPosition().distanceTo(corridorVertex->getPosition()) < 0.001f;
+
+		result.run.snapshot = building.getSimulationSnapshot();
+		result.run.events = building.consumeSimulationEvents();
+		return result;
+	}
+
 	ScenarioResult runOrdinaryPathScenario()
 	{
 		core::Building building("Headless smoke building", 7, 2);
@@ -4018,6 +4349,42 @@ int main()
 		if (canonicalResult(deepJourney.run) != canonicalResult(deepRepeat.run))
 		{
 			std::cerr << "FAIL: three-layer Transit traversal was not deterministic\n";
+			return 1;
+		}
+
+		auto const deletion = runMiddleLayerDeletion();
+		if (!deletion.planValid)
+		{
+			std::cerr << "FAIL: middle Layer deletion was rejected: " << deletion.diagnostic << "\n";
+			return 1;
+		}
+		if (!deletion.planCountsValid)
+		{
+			std::cerr << "FAIL: middle Layer deletion did not report its casualties: "
+				<< deletion.diagnostic << "\n";
+			return 1;
+		}
+		if (!deletion.casualtiesRemoved)
+		{
+			std::cerr << "FAIL: middle Layer deletion left Sectors, Transits, or Agents behind: "
+				<< deletion.diagnostic << "\n";
+			return 1;
+		}
+		if (!deletion.layersCompacted)
+		{
+			std::cerr << "FAIL: Layers behind the deleted Layer did not compact correctly: "
+				<< deletion.diagnostic << "\n";
+			return 1;
+		}
+		if (!deletion.survivorsTraversable)
+		{
+			std::cerr << "FAIL: surviving Agents could not travel the compacted Building\n";
+			return 1;
+		}
+		auto const deletionRepeat = runMiddleLayerDeletion();
+		if (canonicalResult(deletion.run) != canonicalResult(deletionRepeat.run))
+		{
+			std::cerr << "FAIL: Layer deletion and compaction was not deterministic\n";
 			return 1;
 		}
 
