@@ -16,7 +16,10 @@ inline bool isCanvasSelectableSectorType(core::SectorType type)
 		|| type == core::SectorType::Shuttle
 		|| type == core::SectorType::Ladder
 		|| type == core::SectorType::Stairwell
-		|| type == core::SectorType::Staircase;
+		|| type == core::SectorType::Staircase
+		// A Background is selected to be inspected and recoloured, and to be deleted
+		// through its cascade. It is never entered, so selection asks nothing of it.
+		|| type == core::SectorType::Background;
 }
 
 inline bool shouldDrawCanvasSectorEditOverlay(uint32_t sectorLayer,

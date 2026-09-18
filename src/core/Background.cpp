@@ -1,3 +1,4 @@
+#include <cmath>
 #include <format>
 
 #include "core/Background.h"
@@ -42,6 +43,25 @@ namespace core
 			(uint8_t)((packed >> 8) & 0xFFu),
 			(uint8_t)(packed & 0xFFu)
 		};
+	}
+
+	void backgroundColourToFloats(BackgroundColour const& colour, float out[3])
+	{
+		out[0] = (float)colour.r / 255.0f;
+		out[1] = (float)colour.g / 255.0f;
+		out[2] = (float)colour.b / 255.0f;
+	}
+
+	BackgroundColour backgroundColourFromFloats(float const in[3])
+	{
+		auto toByte = [](float value) -> uint8_t
+		{
+			// Written so a NaN fails low rather than escaping as an arbitrary byte.
+			if (!(value > 0.0f)) return 0;
+			if (value > 1.0f) return 255;
+			return (uint8_t)std::lround(value * 255.0f);
+		};
+		return BackgroundColour{ toByte(in[0]), toByte(in[1]), toByte(in[2]) };
 	}
 
 	string Background::getDescription() const

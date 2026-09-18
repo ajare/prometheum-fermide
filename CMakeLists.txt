@@ -140,6 +140,7 @@ add_executable(prometheum-fermide-headless
     src/headless/BackgroundPaintSmokeChecks.cpp
     src/headless/BackgroundPlacementSmokeChecks.cpp
     src/headless/BackgroundCascadeDeleteSmokeChecks.cpp
+    src/headless/BackgroundSelectionPanelSmokeChecks.cpp
     src/headless/BackgroundSectorSmokeChecks.cpp
     src/headless/EditorLayerSmokeChecks.cpp
     src/headless/InteractionApiCompileCheck.cpp

@@ -1254,6 +1254,14 @@ namespace core
 
 		uint32_t applyBackgroundEdit(LocationEditPlan const& plan);
 
+		// Recolour a Background in place. Colour is the only thing a Background owns,
+		// so the live Sector and its authored ConstructionType::Background record are
+		// patched together: no rebuild, no cascade, and nothing else in the Building
+		// reads a Background's colour. Returns false, with a diagnostic when one is
+		// asked for, if the Sector is not a Background or has no authored record.
+		bool setBackgroundColour(uint32_t sectorIndex, BackgroundColour const& colour,
+			std::string* diagnostic = nullptr);
+
 		LiftEditPlan planResizeLift(uint32_t sectorIndex, uint32_t x, uint32_t y,
 			uint32_t cellsWide, uint32_t decksHigh) const;
 

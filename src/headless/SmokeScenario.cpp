@@ -50,6 +50,7 @@ void runBackgroundSectorSmokeChecks();
 void runBackgroundPaintSmokeChecks();
 void runBackgroundPlacementSmokeChecks();
 void runBackgroundCascadeDeleteSmokeChecks();
+void runBackgroundSelectionPanelSmokeChecks();
 void runThresholdRefusalSmokeChecks();
 void runWindowIntoBackgroundSmokeChecks();
 void runWindowMultiBackgroundSmokeChecks();
@@ -4350,6 +4351,7 @@ int main()
 		runBackgroundPaintSmokeChecks();
 		runBackgroundPlacementSmokeChecks();
 		runBackgroundCascadeDeleteSmokeChecks();
+		runBackgroundSelectionPanelSmokeChecks();
 		runThresholdRefusalSmokeChecks();
 		runWindowIntoBackgroundSmokeChecks();
 		runWindowMultiBackgroundSmokeChecks();

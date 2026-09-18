@@ -35,6 +35,7 @@
 #endif
 
 #include "core/Vector2.h"
+#include "core/Background.h"
 #include "core/Button.h"
 #include "core/Door.h"
 #include "core/BulkheadDoor.h"
@@ -4771,6 +4772,118 @@ void renderWindowPanel(shared_ptr<const core::Building> const& building,
 }
 
 
+// The Selection panel's Background branch, for ticket #39.
+//
+// A Background owns exactly one editable property: its colour. The panel reports
+// what it is and where it is, offers a ColorEdit3 with no alpha control - a
+// Background is always fully opaque - and a Delete which fires the cascade from
+// #33 through the shared confirmation popup.
+//
+// There is deliberately no "Agents:" line. A Background hosts no agent, and a
+// permanently-zero readout reads as a broken panel rather than an empty one. No
+// wall editor, no capacity, no lights: none of those mean anything here.
+void renderBackgroundPanel(shared_ptr<core::Building> const& building,
+	shared_ptr<const core::Sector> const& sector)
+{
+	auto const background = dynamic_pointer_cast<const core::Background>(sector);
+	if (!background) return;
+
+	ImGui::Text("Background: %s", background->getName().c_str());
+	ImGui::Text("Sector index: %u", background->getIndex());
+	ImGui::Text("Layer: %s", layerLabel(building, background->getLayerIndex()).c_str());
+	ImGui::Text("Position: %u, %u", background->getCellX(), background->getCellY());
+	ImGui::Text("Size: %u x %u cells", background->getCellsWide(), background->getDecksHigh());
+
+	ImGui::Separator();
+
+	// The colour lives on the Background; the float triple is the widget's working
+	// copy, re-synced whenever the selection changes so a live drag never fights
+	// the value it is driving.
+	static core::Building const* editedBuilding = nullptr;
+	static core::Sector const* editedSector = nullptr;
+	static float rgb[3] = { 0.0f, 0.0f, 0.0f };
+	static optional<core::BackgroundColour> colourBeforeEdit;
+	static optional<DocumentSnapshot> pendingColourUndo;
+	static bool colourEditInFlight = false;
+
+	if (editedBuilding != building.get() || editedSector != sector.get())
+	{
+		editedBuilding = building.get();
+		editedSector = sector.get();
+		// Any half-finished edit belongs to whatever was selected before, not to
+		// this Background, so it is dropped rather than carried across.
+		colourBeforeEdit.reset();
+		pendingColourUndo.reset();
+		colourEditInFlight = false;
+		core::backgroundColourToFloats(background->getColour(), rgb);
+	}
+
+	auto applyColour = [&](core::BackgroundColour const& colour)
+	{
+		string diagnostic;
+		if (building->setBackgroundColour(sector->getIndex(), colour, &diagnostic)) return true;
+		core::addLogMessage("Background editor", 0, core::LogLevel::Error, diagnostic);
+		editedSector = nullptr;
+		return false;
+	};
+
+	// No alpha control: the widget is told so explicitly rather than left to the
+	// default, because a Background which could be translucent would be a
+	// different domain object, not a recolour of this one.
+	bool const changed = ImGui::ColorEdit3("Colour", rgb, ImGuiColorEditFlags_NoAlpha);
+	bool const finished = ImGui::IsItemDeactivatedAfterEdit();
+	bool const cancelled = ImGui::IsItemDeactivated() && !finished;
+
+	if (changed)
+	{
+		// The undo snapshot is taken before the first live change so the entry
+		// restores the colour the panel was opened with, and is committed only when
+		// the edit finishes: one undo per recolour, not one per frame.
+		if (!colourEditInFlight)
+		{
+			colourEditInFlight = true;
+			colourBeforeEdit = background->getColour();
+			pendingColourUndo = captureDocumentSnapshot(building);
+		}
+		applyColour(core::backgroundColourFromFloats(rgb));
+	}
+	if (finished)
+	{
+		if (pendingColourUndo) commitDocumentEdit(std::move(pendingColourUndo));
+		pendingColourUndo.reset();
+		colourBeforeEdit.reset();
+		colourEditInFlight = false;
+	}
+	else if (cancelled)
+	{
+		// Escape puts the widget back where it started; the Building follows it and
+		// the half-finished undo entry is dropped.
+		if (colourBeforeEdit) applyColour(*colourBeforeEdit);
+		colourBeforeEdit.reset();
+		colourEditInFlight = false;
+	}
+
+	ImGui::Separator();
+	if (ImGui::Button("Delete Background"))
+	{
+		// Deleting a Background takes every Window looking into it with it. The plan
+		// names them and the shared "Confirm sector edit" popup spells the cascade out
+		// before anything is applied.
+		auto plan = building->planRemoveBackground(sector->getIndex());
+		if (!plan.valid)
+			core::addLogMessage("Background editor", 0, core::LogLevel::Error, plan.diagnostic);
+		else
+		{
+			// The Sector this panel has been driving may not survive the confirmation.
+			editedSector = nullptr;
+			queueLocationEdit(building, plan);
+		}
+	}
+	ImGui::SameLine();
+	ImGui::TextDisabled("Delete key");
+}
+
+
 void renderBulkheadDoorPanel(shared_ptr<core::Building> const& building,
 	shared_ptr<const core::SectorObject> object)
 {
@@ -5791,7 +5904,8 @@ void renderObjectView(shared_ptr<const core::Building> building)
 						|| sector->getType() == core::SectorType::Shuttle
 						|| sector->getType() == core::SectorType::Ladder
 						|| sector->getType() == core::SectorType::Stairwell
-						|| sector->getType() == core::SectorType::Staircase;
+						|| sector->getType() == core::SectorType::Staircase
+						|| sector->getType() == core::SectorType::Background;
 					setSelectionMode(sectorSelection
 						? UISettings::SelectionMode::Sector : UISettings::SelectionMode::Object);
 					gSelectedAgent = nullptr;
@@ -5911,6 +6025,14 @@ void renderSelectedObjectPanel(shared_ptr<core::Building> const& building)
 
 	if (gSelectedSector)
 	{
+		// A Background is not a place an agent can be, so it gets its own minimal
+		// panel rather than the generic Sector readout with its "Agents:" line.
+		if (gSelectedSector->getType() == core::SectorType::Background)
+		{
+			renderBackgroundPanel(building, gSelectedSector);
+			return;
+		}
+
 		const char* type = "Sector";
 		switch (gSelectedSector->getType())
 		{

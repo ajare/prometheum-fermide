@@ -32,6 +32,18 @@ namespace core
 	// packed colour carries no alpha, so there is nothing to recover from them.
 	BackgroundColour unpackBackgroundColour(uint32_t packed);
 
+	// The 0..1 float triple a colour widget edits. A BackgroundColour has no alpha
+	// channel, so exactly three floats cross this boundary in either direction -
+	// there is no fourth slot an editor could fill in and nothing would ever read.
+	// The conversions live in core so the editor and the headless checks round-trip
+	// the same arithmetic rather than each inventing their own.
+	void backgroundColourToFloats(BackgroundColour const& colour, float out[3]);
+
+	// Inverse of backgroundColourToFloats(). Out-of-range floats clamp and NaN
+	// collapses to 0, so a widget mid-drag can never produce a colour the record
+	// cannot carry.
+	BackgroundColour backgroundColourFromFloats(float const in[3]);
+
 
 	// A Background is a non-occupiable Sector that exists only to be seen: the
 	// backdrop behind Windows and other apertures from the Layer in front. It

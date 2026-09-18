@@ -4812,4 +4812,38 @@ namespace core
 		}
 		return newSectorIndex;
 	}
+
+	bool Building::setBackgroundColour(uint32_t sectorIndex, BackgroundColour const& colour,
+		std::string* diagnostic)
+	{
+		if (sectorIndex >= mSectors.size() || !mSectors[sectorIndex]
+			|| mSectors[sectorIndex]->getType() != SectorType::Background)
+		{
+			if (diagnostic) *diagnostic = "Only a Background can be recoloured";
+			return false;
+		}
+
+		// The authored record is the persistence boundary, so the record's packed colour
+		// is patched alongside the live Sector: a save writes the new colour and a reload
+		// replays it. A Background's colour feeds nothing but its own rendering, so
+		// unlike a move or a resize this needs no plan and no cascade.
+		ConstructionRecord* authored = nullptr;
+		uint32_t producerIndex = 0;
+		for (auto& record : mConstructionRecords)
+		{
+			if (!constructionTypeCreatesSector(record.type)) continue;
+			if (producerIndex++ == sectorIndex) { authored = &record; break; }
+		}
+		if (!authored || authored->type != ConstructionType::Background)
+		{
+			if (diagnostic)
+				*diagnostic = "The selected Background no longer has an authored definition";
+			return false;
+		}
+
+		authored->f = packBackgroundColour(colour);
+		static_pointer_cast<Background>(mSectors[sectorIndex])->setColour(colour);
+		modify();
+		return true;
+	}
 }
