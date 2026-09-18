@@ -244,6 +244,7 @@ namespace
 		None,
 		Room,
 		Corridor,
+		Background,
 		Ladder,
 		Stairwell,
 		Staircase,
@@ -1101,6 +1102,23 @@ namespace
 				&result.diagnostic);
 			return result;
 		}
+		if (gPaint.tool == PaintTool::Background)
+		{
+			// Unlike a Room, a Background does not shrink to the largest free block:
+			// the full dragged rectangle is the request, and any occupied cell inside
+			// it refuses the paint. canAddBackground() owns the rule and the
+			// diagnostic, so the preview turns red where the refusal lands.
+			int endX = clamp((int)floor(world.x), 0, (int)building->getCellsWide() - 1);
+			int endY = clamp((int)floor(world.y), 0, (int)building->getDecksHigh() - 1);
+			int x = min(gPaint.anchorX, endX);
+			int y = min(gPaint.anchorY, endY);
+			PaintRectangle result{ false, (uint32_t)x, (uint32_t)y,
+				(uint32_t)(abs(endX - gPaint.anchorX) + 1),
+				(uint32_t)(abs(endY - gPaint.anchorY) + 1), {} };
+			result.valid = building->canAddBackground(gPaint.layer, result.y, result.x,
+				result.width, result.height, &result.diagnostic);
+			return result;
+		}
 		if (layer->getCellDefinition(gPaint.anchorX, gPaint.anchorY).occupied()) return {};
 
 		int endX = clamp((int)floor(world.x), 0, (int)building->getCellsWide() - 1);
@@ -1475,7 +1493,8 @@ namespace
 		auto trayTopLeft = trayBottomRight - traySize;
 		auto roomMin = trayTopLeft + ImVec2(PalettePadding, PalettePadding);
 		auto corridorMin = roomMin + ImVec2(PaletteSlotWidth + PaletteGap, 0.0f);
-		auto ladderMin = corridorMin + ImVec2(PaletteSlotWidth + PaletteGap, 0.0f);
+		auto backgroundMin = corridorMin + ImVec2(PaletteSlotWidth + PaletteGap, 0.0f);
+		auto ladderMin = backgroundMin + ImVec2(PaletteSlotWidth + PaletteGap, 0.0f);
 		auto stairwellMin = ladderMin + ImVec2(PaletteSlotWidth + PaletteGap, 0.0f);
 		auto liftMin = stairwellMin + ImVec2(PaletteSlotWidth + PaletteGap, 0.0f);
 		auto shuttleMin = liftMin + ImVec2(PaletteSlotWidth + PaletteGap, 0.0f);
@@ -1491,6 +1510,7 @@ namespace
 		auto platformLiftMin = roomLadderMin + ImVec2(PaletteSlotWidth + PaletteGap, 0.0f);
 		auto roomMax = roomMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
 		auto corridorMax = corridorMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
+		auto backgroundMax = backgroundMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
 		auto ladderMax = ladderMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
 		auto stairwellMax = stairwellMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
 		auto liftMax = liftMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
@@ -1511,6 +1531,7 @@ namespace
 		bool overTray = gWorldHovered && pointInRect(io.MousePos, trayTopLeft, trayBottomRight);
 		bool roomHovered = gWorldHovered && pointInRect(io.MousePos, roomMin, roomMax);
 		bool corridorHovered = gWorldHovered && pointInRect(io.MousePos, corridorMin, corridorMax);
+		bool backgroundHovered = gWorldHovered && pointInRect(io.MousePos, backgroundMin, backgroundMax);
 		bool ladderHovered = gWorldHovered && pointInRect(io.MousePos, ladderMin, ladderMax);
 		bool stairwellHovered = gWorldHovered && pointInRect(io.MousePos, stairwellMin, stairwellMax);
 		bool liftHovered = gWorldHovered && pointInRect(io.MousePos, liftMin, liftMax);
@@ -1531,8 +1552,8 @@ namespace
 		};
 
 		if (gPegman.phase == PalettePhase::Home
-			&& (roomHovered || corridorHovered || ladderHovered || stairwellHovered
-				|| staircaseHovered || liftHovered || shuttleHovered))
+			&& (roomHovered || corridorHovered || backgroundHovered || ladderHovered
+				|| stairwellHovered || staircaseHovered || liftHovered || shuttleHovered))
 		{
 			paletteConsumedMouse = true;
 			ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
@@ -1542,8 +1563,9 @@ namespace
 				ImGui::SetTooltip("Stairwells, Staircases, Lifts, and Shuttles can only be painted on the Back Layer");
 			else
 				ImGui::SetTooltip(roomHovered ? "Paint Room" : corridorHovered ? "Paint Corridor"
-					: ladderHovered ? "Paint Ladder" : stairwellHovered ? "Paint Stairwell"
-					: staircaseHovered ? "Paint Staircase" : liftHovered ? "Paint Lift" : "Paint Shuttle");
+					: backgroundHovered ? "Paint Background" : ladderHovered ? "Paint Ladder"
+					: stairwellHovered ? "Paint Stairwell" : staircaseHovered ? "Paint Staircase"
+					: liftHovered ? "Paint Lift" : "Paint Shuttle");
 
 			if (io.MouseClicked[0]
 				&& !((ladderHovered || stairwellHovered || staircaseHovered || liftHovered || shuttleHovered)
@@ -1551,6 +1573,7 @@ namespace
 			{
 				auto clickedTool = roomHovered ? PaintTool::Room
 					: corridorHovered ? PaintTool::Corridor
+					: backgroundHovered ? PaintTool::Background
 					: ladderHovered ? PaintTool::Ladder
 					: stairwellHovered ? PaintTool::Stairwell
 					: staircaseHovered ? PaintTool::Staircase
@@ -1569,6 +1592,8 @@ namespace
 		drawPaintButton(roomMin, roomMax, "Room", PaintTool::Room, roomHovered, false);
 		drawPaintButton(corridorMin, corridorMax, "Corridor", PaintTool::Corridor,
 			corridorHovered, false);
+		drawPaintButton(backgroundMin, backgroundMax, "Background", PaintTool::Background,
+			backgroundHovered, false);
 		drawPaintButton(ladderMin, ladderMax, "Ladder", PaintTool::Ladder,
 			ladderHovered, backOnlyDisabled);
 		drawPaintButton(stairwellMin, stairwellMax, "Stairwell", PaintTool::Stairwell,
@@ -1660,6 +1685,15 @@ namespace
 						else if (tool == PaintTool::Corridor)
 							building->addCorridor(gPaint.layer, paintRectangle.y, paintRectangle.x,
 								paintRectangle.width, 1);
+						else if (tool == PaintTool::Background)
+						{
+							// Painted on the drag's Layer. A Background is legal on any
+							// Layer, so it never takes the transit front-layer gate.
+							auto const index = building->addBackground(gPaint.layer, paintRectangle.y,
+								paintRectangle.x, paintRectangle.width, paintRectangle.height);
+							setSelectionMode(UISettings::SelectionMode::Sector);
+							gSelectedSector = building->getSector(index);
+						}
 						else if (tool == PaintTool::Ladder)
 							building->addLadder(gUISettings.visibleLayer, paintRectangle.y, paintRectangle.x,
 								{ paintRectangle.height, false, true });

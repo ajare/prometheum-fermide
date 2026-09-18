@@ -137,6 +137,7 @@ set_target_properties(prometheum-fermide-core PROPERTIES
 )
 
 add_executable(prometheum-fermide-headless
+    src/headless/BackgroundPaintSmokeChecks.cpp
     src/headless/BackgroundPlacementSmokeChecks.cpp
     src/headless/BackgroundCascadeDeleteSmokeChecks.cpp
     src/headless/BackgroundSectorSmokeChecks.cpp

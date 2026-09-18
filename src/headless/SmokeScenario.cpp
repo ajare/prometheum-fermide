@@ -47,6 +47,7 @@ void runRenderOrderSmokeChecks();
 void runEditorLayerSmokeChecks();
 void runWindowLayerSmokeChecks();
 void runBackgroundSectorSmokeChecks();
+void runBackgroundPaintSmokeChecks();
 void runBackgroundPlacementSmokeChecks();
 void runBackgroundCascadeDeleteSmokeChecks();
 void runThresholdRefusalSmokeChecks();
@@ -4346,6 +4347,7 @@ int main()
 		runEditorLayerSmokeChecks();
 		runWindowLayerSmokeChecks();
 		runBackgroundSectorSmokeChecks();
+		runBackgroundPaintSmokeChecks();
 		runBackgroundPlacementSmokeChecks();
 		runBackgroundCascadeDeleteSmokeChecks();
 		runThresholdRefusalSmokeChecks();
