@@ -425,6 +425,10 @@ namespace core
 		switch (sector->getType())
 		{
 		case SectorType::Location:
+		// A Facade is a Location in every traversal respect, so a Door that has
+		// one as its back Sector builds its Vertex exactly as it would for a
+		// Room.
+		case SectorType::Facade:
 			vertex = doorObject->createVertex(doorObject, sector);
 
 			vertexIdentifier = doorObject->getVertexIdentifier();
@@ -910,7 +914,17 @@ namespace core
 			? nextSector->getEndType(y - nextSector->getCellY(), CORE_SIDE_LEFT)
 			: prevSector->getEndType(y - prevSector->getCellY(), CORE_SIDE_RIGHT);
 
-		bool endTypeIsWall = endType == SectorEndType::Wall;
+		// A wall on either side of the boundary blocks it. Location-to-Location
+		// walls are always paired, so this reads the same as checking the next
+		// Sector alone; a Facade is where the two sides differ - its own end is
+		// open by construction - so the previous Sector's half has to be
+		// consulted too, or a Room would merge into a Facade straight through
+		// its own standing wall (ADR 0003).
+		auto const prevEndType = prevSector
+			? prevSector->getEndType(y - prevSector->getCellY(), CORE_SIDE_RIGHT)
+			: endType;
+
+		bool endTypeIsWall = endType == SectorEndType::Wall || prevEndType == SectorEndType::Wall;
 
 		return nextSector && !endTypeIsWall;
 	}

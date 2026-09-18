@@ -83,13 +83,14 @@ namespace core
 		case ConstructionType::RemoveMarker: return "removeMarker";
 		case ConstructionType::ObjectTombstone: return "objectTombstone";
 		case ConstructionType::Background: return "background";
+		case ConstructionType::Facade: return "facade";
 		}
 		throw SerializationException("Unknown Building construction record type");
 	}
 
 	Building::ConstructionType Building::constructionTypeFromName(string const& name)
 	{
-		for (uint32_t value = 0; value <= static_cast<uint32_t>(ConstructionType::Background); ++value)
+		for (uint32_t value = 0; value <= static_cast<uint32_t>(ConstructionType::Facade); ++value)
 		{
 			auto const type = static_cast<ConstructionType>(value);
 			if (constructionTypeName(type) == name) return type;
@@ -104,6 +105,7 @@ namespace core
 		case ConstructionType::Corridor:
 		case ConstructionType::Room:
 		case ConstructionType::Background:
+		case ConstructionType::Facade:
 		case ConstructionType::Ladder:
 		case ConstructionType::Stairwell:
 		case ConstructionType::Staircase:
@@ -249,13 +251,20 @@ namespace core
 			// The colour is the packed 0xRRGGBB integer, which keeps the record to
 			// existing integer fields.
 			serializer.writeUint32("colour", record.f); break;
+		case ConstructionType::Facade:
+			serializer.writeUint32("layer", record.layer);
+			serializer.writeUint32("y", record.a); serializer.writeUint32("x", record.b);
+			serializer.writeUint32("cellsWide", record.c); serializer.writeUint32("decksHigh", record.d);
+			serializer.writeFloat("topDeckHeight", record.x);
+			// The Facade reuses Background's packed 0xRRGGBB colour form.
+			serializer.writeUint32("colour", record.f); break;
 		}
 	}
 
 	void Building::serializeImpl(Serializer& serializer, SerializationWorkData& workData) const
 	{
 		serializer.beginMap("building");
-		serializer.writeUint32("version", 5);
+		serializer.writeUint32("version", 6);
 		serializer.writeString("name", mName);
 		serializer.writeUint32("cellsWide", mCellsWide);
 		serializer.writeUint32("decksHigh", mDecksHigh);
@@ -497,6 +506,16 @@ namespace core
 			record.f = serializer.readUint32("colour", true,
 				packBackgroundColour(BackgroundColour{}));
 			break;
+		case ConstructionType::Facade:
+			record.layer = readLayer("layer");
+			record.a = serializer.readUint32("y"); record.b = serializer.readUint32("x");
+			record.c = serializer.readUint32("cellsWide"); record.d = serializer.readUint32("decksHigh");
+			record.x = serializer.readFloat("topDeckHeight", true, CORE_ROOM_MAX_HEIGHT);
+			// A hand-authored record may leave the colour out and take the Facade
+			// default, not the Background's.
+			record.f = serializer.readUint32("colour", true,
+				packBackgroundColour(Facade::defaultColour()));
+			break;
 		}
 		return record;
 	}
@@ -505,7 +524,7 @@ namespace core
 	{
 		serializer.beginMap("building");
 		auto const version = serializer.readUint32("version");
-		if (version < 1 || version > 5)
+		if (version < 1 || version > 6)
 		{
 			throw SerializationException("Unsupported Building serialization version");
 		}
@@ -813,6 +832,10 @@ namespace core
 			addBackground(record.layer == ~0u ? 0u : record.layer, record.a, record.b,
 				record.c, record.d, unpackBackgroundColour(record.f));
 			break;
+		case ConstructionType::Facade:
+			addFacade(record.layer == ~0u ? 0u : record.layer, record.a, record.b,
+				record.c, record.d, record.x, unpackBackgroundColour(record.f));
+			break;
 		}
 	}
 
@@ -825,7 +848,8 @@ namespace core
 		};
 		auto isLocation = [](ConstructionType type)
 		{
-			return type == ConstructionType::Corridor || type == ConstructionType::Room;
+			return type == ConstructionType::Corridor || type == ConstructionType::Room
+				|| type == ConstructionType::Facade;
 		};
 		// A Background claims space the way a Location does and depends on nothing, so
 		// it replays with the space producers rather than with the Transits.
@@ -1120,6 +1144,7 @@ namespace core
 			case ConstructionType::Corridor:
 			case ConstructionType::Room:
 			case ConstructionType::Background:
+			case ConstructionType::Facade:
 			case ConstructionType::Ladder:
 			case ConstructionType::Stairwell:
 			case ConstructionType::Staircase:
@@ -1193,6 +1218,7 @@ namespace core
 				break;
 			case ConstructionType::Corridor:
 			case ConstructionType::Background:
+			case ConstructionType::Facade:
 			case ConstructionType::Ladder:
 			case ConstructionType::Stairwell:
 			case ConstructionType::Staircase:

@@ -1,0 +1,16 @@
+# Facade: an open-perimeter Location rendered as a flat colour
+
+A Facade is a new Sector type that behaves as a Room in every traversal and placement respect — occupiable, hosts every object type a Room hosts, owns walkable floor, takes part in the Graph — but has every perimeter wall open by construction and is rendered as a solid opaque colour, exactly like a Background. Despite the Background-style rendering, Facade subclasses Location rather than Background, because its defining property is "a Room with no walls", not "a backdrop you can walk on": inheriting from Location keeps object placement, capacity, lights, and pathing rules identical to a Room by construction instead of by duplication, while rendering and colour are the only overridden behaviour. Its "all walls open" property is a type invariant enforced by refusal — wall add/remove commands and bulkhead doors reject a Facade — rather than an initial state the editor can later change; a Facade with a wall is semantically a Room, so allowing the edit would make the type meaningless and force every wall-related check to keep re-deriving intent. It persists as its own ConstructionType appended after Background (the version-1 numeric-record slot discipline), whose replay constructs all ends open intrinsically, so no RemoveWall records are ever emitted for it. Its lights-off state bypasses the fill tint, as Background does: the user-picked colour is authoritative, though light switch semantics for agents and objects are unchanged.
+
+## Considered options
+
+- **Subclass Background and add occupancy.** Rejected: Background's identity is "non-occupiable, absent from the Graph, hosts nothing"; bolting walkable floor, capacity, and object hosting onto it would duplicate Location's rules and leave two divergent implementations of "Room behaviour".
+- **A flag on Location (like isCorridor) instead of a new SectorType.** Rejected: a Room that silently opens all its walls is not invariant-safe; persistence, adjacency checks, and wall-edit validation would all have to reason about a combinatorial state rather than a type, and the record-replay index mapping expects producing records to map cleanly to sector kinds.
+- **Create it as a Room record plus RemoveWall records for every end.** Rejected: cellsWide × decksHigh × 2 records of noise per Facade, order-dependent replay, and no single place that states "this sector has no walls".
+- **Tint the fill when the Facade's lights are off.** Rejected: the colour is user-authored; tinting would silently override the picker, the same argument ADR-level reasoning already applied to Background.
+
+## Consequences
+
+- Type checks that admit only SectorType::Location for horizontal adjacency (graph cross-sector vertex creation, canRemoveLocationWall, floor-level matching) must be widened to admit Facade, or a Facade would path-merge outward while neighbours could not merge inward.
+- Facade carries a user-editable BackgroundColour reusing Background's packing/conversion helpers, so the editor and headless checks round-trip the same arithmetic; its default is chosen to be distinct from Background, Fore/Back Location colours, and the lights-off tint.
+- Old builds reading a map containing a Facade record fail loudly (unknown construction type) rather than silently dropping the sector.

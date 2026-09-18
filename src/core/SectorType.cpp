@@ -17,6 +17,9 @@ namespace core
 		case SectorType::Background:
 			return "Background";
 
+		case SectorType::Facade:
+			return "Facade";
+
 		case SectorType::Ladder:
 			return "Ladder";
 

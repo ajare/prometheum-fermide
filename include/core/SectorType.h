@@ -10,6 +10,7 @@ namespace core
 	{
 		Location,
 		Background,
+		Facade,
 		Ladder,
 		Lift,
 		Shuttle,

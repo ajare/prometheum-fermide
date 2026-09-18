@@ -19,6 +19,7 @@
 
 #include "core/Defines.h"
 #include "core/Background.h"
+#include "core/Facade.h"
 #include "core/Building.h"
 #include "core/Location.h"
 #include "core/LadderTransit.h"
@@ -1268,10 +1269,15 @@ void renderSector(shared_ptr<const core::Sector> sector, uint32_t layer, LayerRe
 	// A Background is drawn with its own raw colour. The lights-off tint is
 	// bypassed: a Background has no lights to switch, and tinting it would
 	// silently override the colour the user picked and make the picker
-	// untrustworthy.
-	auto const isBackground = sector->getType() == core::SectorType::Background;
+	// untrustworthy. A Facade follows the same rendering rule (ADR 0003):
+	// its user-picked colour is authoritative even though, unlike a
+	// Background, its lights-off state still means what it means for the
+	// agents and objects inside it.
+	auto const sectorType = sector->getType();
+	auto const ownColour = sectorType == core::SectorType::Background
+		|| sectorType == core::SectorType::Facade;
 
-	if (!isBackground && !sector->areLightsOn())
+	if (!ownColour && !sector->areLightsOn())
 	{
 		colour = LightsOffColour;
 	}
@@ -1286,8 +1292,8 @@ void renderSector(shared_ptr<const core::Sector> sector, uint32_t layer, LayerRe
 
 	// The generic fill below uses the Layer's colour. A Background fills with its
 	// own colour in the type switch, so it is skipped here rather than being
-	// painted twice.
-	if (!isBackground)
+	// painted twice. A Facade does the same: its colour is its whole surface.
+	if (!ownColour)
 	{
 		if (style == LayerRenderStyle::Wireframe)
 		{
@@ -1346,15 +1352,19 @@ void renderSector(shared_ptr<const core::Sector> sector, uint32_t layer, LayerRe
 		break;
 
 	case core::SectorType::Background:
+	case core::SectorType::Facade:
 		// A Background has no geometry of its own: its fill is its own opaque
 		// colour. Solid and Aperture fill - the latter already clipped to the
 		// Window by the caller. The wireframe overlay contributes the outline
 		// only, never a fill (ADR 0002), and that outline is the narrowing #35
 		// records against the umbrella's "no per-sector border": without it a
 		// Background outside an aperture would say nothing about the extent of
-		// the Layer behind. Hidden returned at the top.
+		// the Layer behind. Hidden returned at the top. A Facade is drawn the
+		// same flat way (ADR 0003); its walkability is invisible in the fill.
 		{
-			auto const surface = static_pointer_cast<const core::Background>(sector)->getColour();
+			auto const surface = sectorType == core::SectorType::Background
+				? static_pointer_cast<const core::Background>(sector)->getColour()
+				: static_pointer_cast<const core::Facade>(sector)->getColour();
 			auto const fill = ImColor(surface.r, surface.g, surface.b, 255);
 
 			if (shouldFillBackground(style))
@@ -1383,8 +1393,10 @@ void renderSector(shared_ptr<const core::Sector> sector, uint32_t layer, LayerRe
 	// Render ceiling
 	// A Background has no floor, ceiling or walls - its colour is the whole
 	// surface, and a per-sector black border would break the seamless surface
-	// adjacent Backgrounds are meant to form.
-	if (renderEdges && !isBackground)
+	// adjacent Backgrounds are meant to form. A Facade skips them for the
+	// same flat-surface reason: its perimeter is open, so there are no walls
+	// to draw, and the flat colour carries its extent (ADR 0003).
+	if (renderEdges && !ownColour)
 	{
 		drawList->AddLine({ bounds0.x, bounds1.y }, { bounds1.x, bounds1.y }, ImColor(0, 0, 0), 2.0f);
 

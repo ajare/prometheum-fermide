@@ -199,7 +199,7 @@ namespace
 		original.serialize(*writer, workData);
 		writer->serialize();
 		auto const yaml = writer->getSerializedString();
-		require(yaml.find("version: 5") != std::string::npos
+		require(yaml.find("version: 6") != std::string::npos
 			&& yaml.find("layers: 2") != std::string::npos
 			&& yaml.find("layerNames:") != std::string::npos
 			&& yaml.find("- Layer 0") != std::string::npos

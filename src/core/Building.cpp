@@ -1425,6 +1425,81 @@ namespace core
 		return sectorIndex;
 	}
 
+	bool Building::canAddFacade(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide,
+		uint32_t decksHigh, float topDeckHeight, string* diagnostic) const
+	{
+		if (diagnostic) diagnostic->clear();
+
+		string caller = format("Building::addFacade({}, {}, {}, {}, {})",
+			layerIndex, y, x, cellsWide, decksHigh);
+
+		try
+		{
+			validateLayer(caller, layerIndex);
+
+			// A Facade is placed exactly as a Room is: minimum (1,1), inside the
+			// Building bounds, and on cells unoccupied on its own Layer.
+			if (cellsWide == 0)
+				throw BuildingException(this, format("{} - a Facade must be at least one cell wide", caller));
+			if (decksHigh == 0)
+				throw BuildingException(this, format("{} - a Facade must be at least one deck high", caller));
+			if (topDeckHeight < CORE_ROOM_MIN_HEIGHT || topDeckHeight > CORE_ROOM_MAX_HEIGHT)
+				throw BuildingException(this, format("{} - topDeckHeight={} is out of range", caller, topDeckHeight));
+
+			validateBounds(caller, x, y, cellsWide, decksHigh);
+			validateLayerSpace(caller, layerIndex, x, y, cellsWide, decksHigh);
+		}
+		catch (Exception const& error)
+		{
+			if (diagnostic) *diagnostic = error.getMessage();
+			return false;
+		}
+		catch (exception const& error)
+		{
+			if (diagnostic) *diagnostic = error.what();
+			return false;
+		}
+		return true;
+	}
+
+	uint32_t Building::addFacade(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide,
+		uint32_t decksHigh, float topDeckHeight, BackgroundColour const& colour)
+	{
+		string diagnostic;
+		if (!canAddFacade(layerIndex, y, x, cellsWide, decksHigh, topDeckHeight, &diagnostic))
+			throw BuildingException(this, diagnostic);
+
+		beginStructuralEdit("addFacade");
+
+		auto sectorIndex = (uint32_t)mSectors.size();
+		mSectors.push_back(make_shared<Facade>("Facade", layerIndex, sectorIndex,
+			x, y, cellsWide, decksHigh, topDeckHeight, colour));
+
+		auto layer = getLayer(layerIndex);
+		for (uint32_t iy = y; iy < y + decksHigh; ++iy)
+		{
+			for (uint32_t ix = x; ix < x + cellsWide; ++ix)
+			{
+				auto& cellDef = layer->getCellDefinition(ix, iy);
+				cellDef.sectorIndex = sectorIndex;
+				// A Facade owns walkable floor exactly as a Location does: ground
+				// on the bottom deck, upper decks reached by Walkways.
+				cellDef.floorType = iy == y ? CellFloorType::Ground : CellFloorType::None;
+			}
+		}
+
+		ConstructionRecord record{ ConstructionType::Facade };
+		record.layer = layerIndex;
+		record.a = y; record.b = x; record.c = cellsWide; record.d = decksHigh;
+		record.x = topDeckHeight;
+		// The Facade reuses Background's colour packing, so the editor and the
+		// headless checks round-trip the same arithmetic (ADR 0003).
+		record.f = packBackgroundColour(colour);
+		recordConstruction(std::move(record));
+
+		return sectorIndex;
+	}
+
 	bool Building::canAddLadder(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t decksHigh,
 		string* diagnostic) const
 	{
@@ -2348,14 +2423,27 @@ namespace core
 		if (neighbourCell.sectorIndex == ~0u || neighbourCell.sectorIndex == sectorIndex)
 			return reject("No adjacent Room or Corridor shares this wall");
 		auto neighbour = mSectors[neighbourCell.sectorIndex];
-		if (neighbour->getType() != SectorType::Location)
+		// A Facade may share a boundary with a Room whose wall is being opened:
+		// the Facade's half is open by construction, and refusing the Room's
+		// half would let a Facade merge outward while its neighbour could not
+		// merge inward. A Facade itself never has a wall to remove, so the
+		// sector-side type check above still refuses it.
+		if (neighbour->getType() != SectorType::Location && neighbour->getType() != SectorType::Facade)
 			return reject("The adjacent sector is not a Room or Corridor");
 		if (globalY < neighbour->getCellY()
 			|| globalY >= neighbour->getCellY() + neighbour->getDecksHigh())
 			return reject("The adjacent Location does not occupy this deck");
 		auto const neighbourDeck = globalY - neighbour->getCellY();
-		if (sector->getEndType(deckIndex, side) != SectorEndType::Wall
-			|| neighbour->getEndType(neighbourDeck, 1 - side) != SectorEndType::Wall)
+		if (neighbour->getType() == SectorType::Facade)
+		{
+			// The Facade's half of the boundary is open by construction; only
+			// the Room's own wall stands in the way.
+			if (neighbour->getEndType(neighbourDeck, 1 - side) != SectorEndType::None)
+				return reject("The Facade side of the boundary is not open");
+		}
+		else if (neighbour->getEndType(neighbourDeck, 1 - side) != SectorEndType::Wall)
+			return reject("The shared boundary is not a pair of walls");
+		if (sector->getEndType(deckIndex, side) != SectorEndType::Wall)
 			return reject("The shared boundary is not a pair of walls");
 		if (diagnostic) diagnostic->clear();
 		return true;
@@ -3407,6 +3495,11 @@ namespace core
 			if (!dynamic_pointer_cast<const Location>(mSectors[left.sectorIndex])
 				|| !dynamic_pointer_cast<const Location>(mSectors[right.sectorIndex]))
 				return reject("Bulkhead Doors can only connect Locations");
+			// A Bulkhead Door is set into a pair of wall ends. A Facade has no
+			// wall ends, so there is nowhere for one to go (ADR 0003).
+			if (mSectors[left.sectorIndex]->getType() == SectorType::Facade
+				|| mSectors[right.sectorIndex]->getType() == SectorType::Facade)
+				return reject("A Bulkhead Door cannot connect a Facade: a Facade has no wall ends");
 			if (!left.isTraversableOnFoot() || !right.isTraversableOnFoot())
 				return reject("Bulkhead Door placement requires a traversable floor on both sides");
 			if (left.bulkheadIndices[CORE_SIDE_RIGHT] != ~0u

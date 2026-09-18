@@ -10,6 +10,7 @@
 
 #include "core/Defines.h"
 #include "core/Background.h"
+#include "core/Facade.h"
 #include "core/Layer.h"
 #include "core/Location.h"
 #include "core/SectorType.h"
@@ -473,7 +474,11 @@ namespace core
 			ObjectTombstone,
 			// Appended last: version 1 stored the record kind numerically, so every
 			// earlier value has to keep its number.
-			Background
+			Background,
+			// Appended after Background for the same reason: a Facade is its own
+			// producing record, replayed with all wall ends open intrinsically
+			// (ADR 0003).
+			Facade
 		};
 
 		// Compact tagged command storage. Field meanings are determined by type and
@@ -990,6 +995,17 @@ namespace core
 
 		bool canAddBackground(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide,
 			uint32_t decksHigh, std::string* diagnostic = nullptr) const;
+
+		// A Facade is an occupiable Location with its perimeter walls all open by
+		// construction: it hosts objects and agents exactly as a Room does and is
+		// rendered as a solid opaque colour (ADR 0003). Placement follows the
+		// Room rule - the same Layer, bounds, free-space, and height validation.
+		uint32_t addFacade(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide,
+			uint32_t decksHigh, float topDeckHeight = CORE_ROOM_MAX_HEIGHT,
+			BackgroundColour const& colour = Facade::defaultColour());
+
+		bool canAddFacade(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide,
+			uint32_t decksHigh, float topDeckHeight, std::string* diagnostic = nullptr) const;
 	
 		// A Transit is authored on layerIndex, the Layer it occupies, and lands on the
 		// Layer directly in front of it.  The front-most Layer can carry no Transit.
