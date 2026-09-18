@@ -630,6 +630,8 @@ namespace core
 
 		void validateObjectAllowedInSector(std::string const& caller, SectorObjectType type, uint32_t sectorIndex) const;
 
+		void validateObjectAllowedInSectorAsLookTarget(std::string const& caller, SectorObjectType type, uint32_t sectorIndex) const;
+
 		void validateSpaceOnlyInOneSector(std::string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh) const;
 
 		void validateSectorDoorOptions(std::string const& caller, CreateDoorOptions const& options) const;

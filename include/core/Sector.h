@@ -153,6 +153,11 @@ namespace core
 
 		[[nodiscard]] virtual bool sectorSupportsObjectType(SectorObjectType type) const = 0;
 
+		// Whether this sector may act as the back side of a look-through (a Window on the
+		// Layer in front may look into it). Distinct from hosting: a Background may host
+		// nothing yet still be looked into. Defaults to the hosting rule.
+		[[nodiscard]] virtual bool sectorSupportsObjectAsLookTarget(SectorObjectType type) const;
+
 		[[nodiscard]] bool areLightsOn() const;
 
 		[[nodiscard]] std::set<Agent*> const& getAgents() const;

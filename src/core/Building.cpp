@@ -378,6 +378,16 @@ namespace core
 		}
 	}
 
+	void Building::validateObjectAllowedInSectorAsLookTarget(string const& caller, SectorObjectType type, uint32_t sectorIndex) const
+	{
+		auto sector = getSector(sectorIndex);
+
+		if (!sector->sectorSupportsObjectAsLookTarget(type))
+		{
+			throw BuildingException(this, format("{} - Sector type '{}' does not support SectorObject type '{}'", caller, getSectorTypeString(sector->getType()), getSectorObjectTypeString(type)));
+		}
+	}
+
 	void Building::validateSpaceOnlyInOneSector(string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh) const
 	{
 		auto layer = getLayer(layerIndex);
@@ -3115,7 +3125,10 @@ namespace core
 						if (cellDef.sectorIndex == ~0u)
 							throw BuildingException(this, format("{} - Layer {} cell at {},{} is not occupied.",
 								caller, requiredLayer, ix, iy));
-						validateObjectAllowedInSector(caller, SectorObjectType::Window, cellDef.sectorIndex);
+						if (requiredLayer == layerIndex)
+							validateObjectAllowedInSector(caller, SectorObjectType::Window, cellDef.sectorIndex);
+						else
+							validateObjectAllowedInSectorAsLookTarget(caller, SectorObjectType::Window, cellDef.sectorIndex);
 						if (cellDef.hasObject() || !cellDef.markers.empty())
 							throw BuildingException(this, format("{} - another object occupies cell at {},{}",
 								caller, ix, iy));

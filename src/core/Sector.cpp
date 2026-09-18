@@ -121,6 +121,13 @@ namespace core
 		return mEnds[deckIndex].end[side];
 	}
 
+	bool Sector::sectorSupportsObjectAsLookTarget(SectorObjectType type) const
+	{
+		// Default: a sector that can host an object type can be looked into as that type.
+		// Subclasses that host nothing (e.g. a Background) may still allow look-through.
+		return sectorSupportsObjectType(type);
+	}
+
 	uint32_t Sector::addSectorObject(shared_ptr<SectorObject> object)
 	{
 		auto index = (uint32_t)mObjects.size();
