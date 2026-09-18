@@ -1898,6 +1898,27 @@ void doorAndWindowRemovalWorksOnDeepLayerPairs()
 		"Window on a three-layer Building could not be removed");
 }
 
+void candidateReplayIncludesAllLayers()
+{
+	// Regression for ticket #17: validation candidates were constructed with the
+	// default two Layers, so any construction record on Layer >= 2 threw an out-of-
+	// bounds error and every rebuild-based edit was reported as invalid.
+	core::Building building("Deep candidate replay", 8, 3);
+	building.addLayer();
+	auto const fore = building.addCorridor(0, 0, 8);
+	building.addRoom("Deep room", 2, 0, 0, 8, 1);
+	building.finishBuild();
+
+	auto resize = building.planResizeLocation(fore, 0, 0, 4, 1);
+	require(resize.valid,
+		("Layer-0 Location edit was rejected on a three-layer Building: " + resize.diagnostic).c_str());
+
+	building.pauseSimulation();
+	auto const resized = building.applyLocationEdit(resize);
+	require(building.getSector(resized) && building.getSector(resized)->getCellsWide() == 4,
+		"Layer-0 Location edit was not applied on a three-layer Building");
+}
+
 void runSerializationSmokeChecks()
 {
 	layerHelperApiIsConsistentWithLayerCount();
@@ -1933,4 +1954,5 @@ void runSerializationSmokeChecks()
 	recentFilesPersistAcrossStartup();
 	serializableTracksModificationState();
 	doorAndWindowRemovalWorksOnDeepLayerPairs();
+	candidateReplayIncludesAllLayers();
 }

@@ -680,6 +680,16 @@ namespace core
 		mBuildLog.clear();
 	}
 
+	std::unique_ptr<Building> Building::makeCandidateBuilding() const
+	{
+		auto candidate = std::make_unique<Building>(mName, mCellsWide, mDecksHigh);
+		while (candidate->getLayerCount() < getLayerCount())
+			candidate->addLayer();
+		for (uint32_t layer = 2; layer < getLayerCount(); ++layer)
+			candidate->setLayerName(layer, mLayerNames[layer]);
+		return candidate;
+	}
+
 	void Building::applyConstructionRecord(ConstructionRecord const& record)
 	{
 		// A record written before Transits and Doors carried a Layer replayed against
@@ -869,10 +879,10 @@ namespace core
 		records = canonicalConstructionRecords(std::move(records));
 		try
 		{
-			Building candidate(mName, mCellsWide, mDecksHigh);
-			candidate.mDeserializingConstruction = true;
-			for (auto const& record : records) candidate.applyConstructionRecord(record);
-			candidate.finishBuild();
+			auto candidate = makeCandidateBuilding();
+			candidate->mDeserializingConstruction = true;
+			for (auto const& record : records) candidate->applyConstructionRecord(record);
+			candidate->finishBuild();
 		}
 		catch (Exception const& error) { diagnostic = error.getMessage(); return false; }
 		catch (exception const& error) { diagnostic = error.what(); return false; }
@@ -914,10 +924,10 @@ namespace core
 		// makes dependent Walkway/Ladder edits transactional.
 		try
 		{
-			Building candidate(mName, mCellsWide, mDecksHigh);
-			candidate.mDeserializingConstruction = true;
-			for (auto const& record : records) candidate.applyConstructionRecord(record);
-			candidate.finishBuild();
+			auto candidate = makeCandidateBuilding();
+			candidate->mDeserializingConstruction = true;
+			for (auto const& record : records) candidate->applyConstructionRecord(record);
+			candidate->finishBuild();
 		}
 		catch (Exception const&) { throw; }
 		catch (exception const& error) { throw BuildingException(this, error.what()); }
@@ -1148,11 +1158,10 @@ namespace core
 		// consequences can be offered to the user as a confirmed edit.
 		try
 		{
-			Building candidate(mName, mCellsWide, mDecksHigh);
-			while (candidate.getLayerCount() < plan.layerCountAfter) candidate.addLayer();
-			candidate.mDeserializingConstruction = true;
-			for (auto const& record : records) candidate.applyConstructionRecord(record);
-			candidate.finishBuild();
+			auto candidate = makeCandidateBuilding();
+			candidate->mDeserializingConstruction = true;
+			for (auto const& record : records) candidate->applyConstructionRecord(record);
+			candidate->finishBuild();
 		}
 		catch (Exception const& error) { plan.diagnostic = error.getMessage(); return plan; }
 		catch (exception const& error) { plan.diagnostic = error.what(); return plan; }
@@ -1487,10 +1496,10 @@ namespace core
 		records = canonicalConstructionRecords(std::move(records));
 		try
 		{
-			Building candidate(mName, mCellsWide, mDecksHigh);
-			candidate.mDeserializingConstruction = true;
-			for (auto const& record : records) candidate.applyConstructionRecord(record);
-			candidate.finishBuild();
+			auto candidate = makeCandidateBuilding();
+			candidate->mDeserializingConstruction = true;
+			for (auto const& record : records) candidate->applyConstructionRecord(record);
+			candidate->finishBuild();
 		}
 		catch (Exception const& error) { diagnostic = error.getMessage(); return false; }
 		catch (exception const& error) { diagnostic = error.what(); return false; }
@@ -1785,15 +1794,15 @@ namespace core
 
 		try
 		{
-			Building candidate(mName, mCellsWide, mDecksHigh);
-			candidate.mDeserializingConstruction = true;
+			auto candidate = makeCandidateBuilding();
+			candidate->mDeserializingConstruction = true;
 			vector<ConstructionRecord> viable;
 			viable.reserve(records.size());
 			for (auto const& record : records)
 			{
 				try
 				{
-					candidate.applyConstructionRecord(record);
+					candidate->applyConstructionRecord(record);
 					viable.push_back(record);
 				}
 				catch (Exception const& error)
@@ -1805,7 +1814,7 @@ namespace core
 					}
 				}
 			}
-			candidate.finishBuild();
+			candidate->finishBuild();
 			records = std::move(viable);
 		}
 		catch (Exception const& error) { diagnostic = error.getMessage(); return false; }
@@ -2104,15 +2113,15 @@ namespace core
 
 		try
 		{
-			Building candidate(mName, mCellsWide, mDecksHigh);
-			candidate.mDeserializingConstruction = true;
+			auto candidate = makeCandidateBuilding();
+			candidate->mDeserializingConstruction = true;
 			vector<ConstructionRecord> viable;
 			viable.reserve(records.size());
 			for (auto const& record : records)
 			{
 				try
 				{
-					candidate.applyConstructionRecord(record);
+					candidate->applyConstructionRecord(record);
 					viable.push_back(record);
 				}
 				catch (Exception const& error)
@@ -2126,7 +2135,7 @@ namespace core
 					// intentionally removed as part of the confirmed cascade.
 				}
 			}
-			candidate.finishBuild();
+			candidate->finishBuild();
 			records = std::move(viable);
 		}
 		catch (Exception const& error) { diagnostic = error.getMessage(); return false; }
@@ -2257,17 +2266,17 @@ namespace core
 
 		records.clear();
 		newSectorIndex = ~0u;
-		Building candidate(mName, mCellsWide, mDecksHigh);
-		candidate.mDeserializingConstruction = true;
+		auto candidate = makeCandidateBuilding();
+		candidate->mDeserializingConstruction = true;
 		vector<uint32_t> sectorMap(mSectors.size(), ~0u);
 		uint32_t oldSectorIndex = 0;
 
 		auto locationAt = [&](uint32_t x, uint32_t y) -> shared_ptr<const Sector>
 		{
-			if (x >= candidate.mCellsWide || y >= candidate.mDecksHigh) return nullptr;
-			auto const& cell = candidate.mLayers[0]->getCellDefinition(x, y);
+			if (x >= candidate->mCellsWide || y >= candidate->mDecksHigh) return nullptr;
+			auto const& cell = candidate->mLayers[0]->getCellDefinition(x, y);
 			if (cell.sectorIndex == ~0u) return nullptr;
-			auto sector = candidate.getSector(cell.sectorIndex);
+			auto sector = candidate->getSector(cell.sectorIndex);
 			return sector && sector->getType() == SectorType::Location ? sector : nullptr;
 		};
 
@@ -2398,8 +2407,8 @@ namespace core
 				{
 					auto originalStops = source.values;
 					vector<uint32_t> supported{ 0 };
-					auto room = source.a < candidate.mSectors.size()
-						? dynamic_pointer_cast<const Location>(candidate.mSectors[source.a]) : nullptr;
+					auto room = source.a < candidate->mSectors.size()
+						? dynamic_pointer_cast<const Location>(candidate->mSectors[source.a]) : nullptr;
 					if (room && !room->isCorridor() && source.b == 0 && source.c < room->getCellsWide())
 					{
 						for (size_t stop = 1; stop < originalStops.size(); ++stop)
@@ -2417,7 +2426,7 @@ namespace core
 						{
 							ConstructionRecord tombstone{ ConstructionType::ObjectTombstone };
 							tombstone.a = source.a;
-							candidate.applyConstructionRecord(tombstone);
+							candidate->applyConstructionRecord(tombstone);
 							records.push_back(std::move(tombstone));
 						}
 						continue;
@@ -2448,10 +2457,10 @@ namespace core
 					source.c = (uint32_t)supported.size();
 				}
 
-				auto const before = (uint32_t)candidate.mSectors.size();
+				auto const before = (uint32_t)candidate->mSectors.size();
 				try
 				{
-					candidate.applyConstructionRecord(source);
+					candidate->applyConstructionRecord(source);
 				}
 				catch (Exception const& error)
 				{
@@ -2469,7 +2478,7 @@ namespace core
 						// accidentally target a different object after this one is cropped.
 						ConstructionRecord tombstone{ ConstructionType::ObjectTombstone };
 						tombstone.a = source.a;
-						candidate.applyConstructionRecord(tombstone);
+						candidate->applyConstructionRecord(tombstone);
 						records.push_back(std::move(tombstone));
 					}
 					continue; // An object made invalid by the edit is part of the cascade.
@@ -2481,7 +2490,7 @@ namespace core
 				}
 				records.push_back(std::move(source));
 			}
-			candidate.finishBuild();
+			candidate->finishBuild();
 		}
 		catch (Exception const& error)
 		{
@@ -2792,9 +2801,9 @@ namespace core
 				&& layer->getCellDefinition(plan.x - 1, plan.y).isTraversableOnFoot();
 			bool groundRight = plan.x + 1 < room->getCellX1()
 				&& layer->getCellDefinition(plan.x + 1, plan.y).isTraversableOnFoot();
-			for (auto const& candidate : candidates)
-				if ((groundLeft && candidate.leftButton) || (groundRight && candidate.rightButton))
-				{ lowest = candidate.deckOffset; break; }
+			for (auto const& stop : candidates)
+				if ((groundLeft && stop.leftButton) || (groundRight && stop.rightButton))
+				{ lowest = stop.deckOffset; break; }
 			if (lowest == ~0u)
 			{
 				diagnostic = "No eligible Walkway exists above this PlatformLift position";
@@ -3010,18 +3019,18 @@ namespace core
 
 		if (!normalizeRoomLadderRecords(records, diagnostic)) return false;
 
-		Building candidate(mName, mCellsWide, mDecksHigh);
-		candidate.mDeserializingConstruction = true;
+		auto candidate = makeCandidateBuilding();
+		candidate->mDeserializingConstruction = true;
 		try
 		{
 			for (auto const& record : records)
 			{
-				auto before = newSectorIndex < candidate.mSectors.size()
-					? candidate.mSectors[newSectorIndex]->getNumObjects() : 0;
-				candidate.applyConstructionRecord(record);
+				auto before = newSectorIndex < candidate->mSectors.size()
+					? candidate->mSectors[newSectorIndex]->getNumObjects() : 0;
+				candidate->applyConstructionRecord(record);
 				if (&record == &*found) newObjectIndex = before;
 			}
-			candidate.finishBuild();
+			candidate->finishBuild();
 		}
 		catch (Exception const& error)
 		{
@@ -3571,10 +3580,10 @@ namespace core
 		}
 		try
 		{
-			Building candidate(mName, mCellsWide, mDecksHigh);
-			candidate.mDeserializingConstruction = true;
-			for (auto const& record : records) candidate.applyConstructionRecord(record);
-			candidate.finishBuild();
+			auto candidate = makeCandidateBuilding();
+			candidate->mDeserializingConstruction = true;
+			for (auto const& record : records) candidate->applyConstructionRecord(record);
+			candidate->finishBuild();
 		}
 		catch (Exception const& error) { diagnostic = error.getMessage(); return false; }
 		catch (exception const& error) { diagnostic = error.what(); return false; }
@@ -4230,9 +4239,9 @@ namespace core
 			for (auto stop : affectedStops)
 				plan.consequences.push_back(format("Reconcile Shuttle stop {} carriage landings", stop));
 		}
-		for (auto const& candidate : mSectors)
+		for (auto const& candidateSector : mSectors)
 		{
-			auto transit = dynamic_pointer_cast<Transit const>(candidate);
+			auto transit = dynamic_pointer_cast<Transit const>(candidateSector);
 			if (!transit) continue;
 			for (uint32_t stop = 0; stop < transit->getNumStops(); ++stop)
 			{
@@ -4331,9 +4340,9 @@ namespace core
 			for (auto stop : affectedStops)
 				plan.consequences.push_back(format("Remove Shuttle stop {} carriage landing", stop));
 		}
-		for (auto const& candidate : mSectors)
+		for (auto const& candidateSector : mSectors)
 		{
-			auto transit = dynamic_pointer_cast<Transit const>(candidate);
+			auto transit = dynamic_pointer_cast<Transit const>(candidateSector);
 			if (!transit) continue;
 			for (uint32_t stop = 0; stop < transit->getNumStops(); ++stop)
 				if (transit->getStop(stop).sector == sector)

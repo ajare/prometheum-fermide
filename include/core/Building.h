@@ -584,6 +584,9 @@ namespace core
 
 		void resetForDeserialization(std::string name, uint32_t cellsWide, uint32_t decksHigh);
 
+		// Constructs a validation candidate with the same dimensions and layer count as this Building.
+		std::unique_ptr<Building> makeCandidateBuilding() const;
+
 		void validateCellOccupied(std::string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y) const;
 
 		void validateCellUnoccupied(std::string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y) const;
