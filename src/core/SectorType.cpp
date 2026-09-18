@@ -40,4 +40,12 @@ namespace core
 		}
 	}
 
+	bool isLocationLike(SectorType type)
+	{
+		// A Room, a Corridor (a Location), or a Facade: every Sector that is a
+		// Location in the traversal sense.  See the header note for which checks
+		// may use this and which must stay Location-only.
+		return type == SectorType::Location || type == SectorType::Facade;
+	}
+
 } // core

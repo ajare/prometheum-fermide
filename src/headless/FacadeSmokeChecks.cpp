@@ -1,4 +1,4 @@
-// Facade checks, for ticket #43.
+// Facade checks, for tickets #43 and #45.
 //
 // A Facade is an occupiable Location whose perimeter walls are all open by
 // construction: it hosts objects and agents exactly as a Room does, owns
@@ -6,8 +6,12 @@
 // deck is open intrinsically and it is rendered as a solid opaque colour
 // (ADR 0003). These checks cover creation and placement validation, the
 // open-end invariant, agent placement, object-placement parity with a Room,
-// Bulkhead Door refusal, wall-command refusal, and persistence of the
-// ConstructionType::Facade record and its packed colour.
+// Bulkhead Door refusal, wall-command refusal, persistence of the
+// ConstructionType::Facade record and its packed colour, and - from #45 -
+// horizontal-adjacency merging: a Facade between two floor-aligned Rooms
+// is one continuous floor, a mismatched-floor neighbour does not merge,
+// wall removal accepts a Facade neighbour on either side of the boundary,
+// and a Background stays out of the pathing world entirely.
 
 #include <array>
 #include <cstdint>
@@ -23,7 +27,9 @@
 #include "core/Facade.h"
 #include "core/Graph.h"
 #include "core/Location.h"
+#include "core/Path.h"
 #include "core/Sector.h"
+#include "core/SectorEdge.h"
 #include "core/SectorObjectType.h"
 #include "core/SectorType.h"
 #include "core/Transit.h"
@@ -558,6 +564,176 @@ agents: []
 		require(building.getSector(0)->getType() == core::SectorType::Location,
 			"The surviving Sector is not the front Room");
 	}
+
+	bool hasPath(core::Building const& building, uint32_t fromIdentifier,
+		uint32_t toIdentifier)
+	{
+		auto const source = building.getGraph()->getVertexByIdentifier(fromIdentifier);
+		auto const target = building.getGraph()->getVertexByIdentifier(toIdentifier);
+		if (!source || !target) return false;
+		auto const path = building.getGraph()->calculatePath(nullptr, source, target);
+		return path && !path->nodes.empty();
+	}
+
+	// Ticket #45: a Facade placed between two floor-aligned Rooms, each Room
+	// opening its own wall into the Facade's already-open half, is one
+	// continuous floor. The Graph merges the three Sectors across both
+	// boundaries, and the Room-to-Room route runs through the Facade on
+	// ordinary Sector Edges - no threshold of any kind joins them.
+	void facadeBetweenTwoAlignedRoomsIsOneContinuousFloor()
+	{
+		core::Building building("Three in a row", 16, 3);
+		auto const roomA = building.addRoom("Room A", 0, 0, 0, 4, 1);
+		auto const facade = building.addFacade(0, 0, 4, 4, 1);
+		auto const roomB = building.addRoom("Room B", 0, 0, 8, 4, 1);
+		uint32_t markerA = 0;
+		uint32_t markerF = 0;
+		uint32_t markerB = 0;
+		building.addSectorMarker(roomA, 0, 1.0f, &markerA);
+		building.addSectorMarker(facade, 0, 2.0f, &markerF);
+		building.addSectorMarker(roomB, 0, 1.0f, &markerB);
+		building.pauseSimulation();
+		building.removeLocationWall(roomA, 0, CORE_SIDE_RIGHT);
+		building.removeLocationWall(roomB, 0, CORE_SIDE_LEFT);
+		building.finishBuild();
+
+		auto const graph = building.getGraph();
+		auto const source = graph->getVertexByIdentifier(markerA);
+		auto const target = graph->getVertexByIdentifier(markerB);
+		require(source != nullptr && target != nullptr,
+			"A Marker in the three-Sector run has no Graph vertex");
+		auto const path = graph->calculatePath(nullptr, source, target);
+		// Source Vertex plus one hop per boundary crossed: A -> Facade -> B.
+		require(path && path->nodes.size() == 3,
+			"The Room-to-Room route is not one continuous run through the Facade");
+
+		bool throughFacade = false;
+		for (auto const& node : path->nodes)
+		{
+			require(node.targetVertex != nullptr, "A path node carries no Vertex");
+			if (node.targetVertex->getSector()->getIndex() == facade) throughFacade = true;
+			// The first node is the source itself and carries no Edge; every
+			// hop that follows is plain floor adjacency.
+			if (!node.edge) continue;
+			require(std::dynamic_pointer_cast<const core::SectorEdge>(node.edge) != nullptr,
+				"The continuous floor was joined by something other than a Sector Edge");
+		}
+		require(throughFacade,
+			"The Room-to-Room path did not cross the Facade");
+		require(hasPath(building, markerA, markerF) && hasPath(building, markerF, markerB),
+			"The merged run is not walkable in both directions through the Facade");
+	}
+
+	// Ticket #45: floors must still match at the boundary. A Facade beside a
+	// Room one deck higher does not merge - no route crosses, and the
+	// wall-removal command refuses the boundary exactly as it does between
+	// mismatched-floor Rooms - while the same pair sharing a deck does merge
+	// once the Room opens its wall, so the refusal is the mismatch and not
+	// the Facade.
+	void facadeBesideHigherFloorDoesNotMerge()
+	{
+		std::string diagnostic;
+
+		// Facade floor: row 0. Room floors: rows 1-2, one deck higher at the
+		// boundary.
+		core::Building mismatched("Mismatched", 12, 3);
+		auto const facade = mismatched.addFacade(0, 0, 0, 4, 1);
+		auto const room = mismatched.addRoom("Higher", 0, 1, 4, 2, 1);
+		uint32_t facadeMarker = 0;
+		uint32_t roomMarker = 0;
+		mismatched.addSectorMarker(facade, 0, 2.0f, &facadeMarker);
+		mismatched.addSectorMarker(room, 0, 1.0f, &roomMarker);
+		mismatched.finishBuild();
+
+		require(!hasPath(mismatched, facadeMarker, roomMarker),
+			"A Facade merged with a Room one deck higher at the boundary");
+		require(!mismatched.canRemoveLocationWall(room, 0, CORE_SIDE_LEFT, &diagnostic),
+			"A wall removal was accepted against a Facade that does not share the deck");
+
+		// Control: the same pair sharing row 0 merges once the Room opens its
+		// wall into the Facade's open half.
+		core::Building aligned("Aligned", 12, 3);
+		auto const facade2 = aligned.addFacade(0, 0, 0, 1, 1);
+		auto const room2 = aligned.addRoom("Sharing", 0, 0, 1, 2, 1);
+		uint32_t facadeMarker2 = 0;
+		uint32_t roomMarker2 = 0;
+		aligned.addSectorMarker(facade2, 0, 0.5f, &facadeMarker2);
+		aligned.addSectorMarker(room2, 0, 1.0f, &roomMarker2);
+		aligned.pauseSimulation();
+		require(aligned.canRemoveLocationWall(room2, 0, CORE_SIDE_LEFT, &diagnostic),
+			("A Room could not open its wall into a Facade sharing its deck: " + diagnostic).c_str());
+		aligned.removeLocationWall(room2, 0, CORE_SIDE_LEFT);
+		aligned.finishBuild();
+		require(hasPath(aligned, facadeMarker2, roomMarker2),
+			"Floor-aligned Facade and Room did not merge across the opened boundary");
+	}
+
+	// Ticket #45: the wall-removal command accepts a Facade neighbour on
+	// either side of the boundary - the Room opens its own wall into the
+	// Facade's already-open half - while the Facade's own perimeter stays
+	// uneditable. (The Facade-side refusal is the ADR 0003 invariant; the
+	// neighbour-side acceptance is the widening.)
+	void wallRemovalAcceptsFacadeNeighboursBothWays()
+	{
+		core::Building building("Both ways", 16, 3);
+		auto const facade = building.addFacade(0, 0, 4, 4, 1);
+		auto const roomLeft = building.addRoom("Left", 0, 0, 0, 4, 1);
+		auto const roomRight = building.addRoom("Right", 0, 0, 8, 4, 1);
+		building.finishBuild();
+		building.pauseSimulation();
+
+		std::string diagnostic;
+		require(building.canRemoveLocationWall(roomLeft, 0, CORE_SIDE_RIGHT, &diagnostic),
+			("A Room could not open its wall toward a Facade on its right: " + diagnostic).c_str());
+		require(building.canRemoveLocationWall(roomRight, 0, CORE_SIDE_LEFT, &diagnostic),
+			("A Room could not open its wall toward a Facade on its left: " + diagnostic).c_str());
+		require(!building.canRemoveLocationWall(facade, 0, CORE_SIDE_LEFT, &diagnostic),
+			"A wall removal was accepted on a Facade (left side)");
+		require(!building.canRemoveLocationWall(facade, 0, CORE_SIDE_RIGHT, &diagnostic),
+			"A wall removal was accepted on a Facade (right side)");
+
+		building.removeLocationWall(roomLeft, 0, CORE_SIDE_RIGHT);
+		building.removeLocationWall(roomRight, 0, CORE_SIDE_LEFT);
+		require(building.getSector(roomLeft)->getEndType(0, CORE_SIDE_RIGHT) == core::SectorEndType::None
+			&& building.getSector(roomRight)->getEndType(0, CORE_SIDE_LEFT) == core::SectorEndType::None,
+			"An opened Room wall did not open toward the Facade");
+		everyEndIsOpen(*facadeIn(building, facade));
+	}
+
+	// Ticket #45: a Facade beside a Background has no pathing interaction in
+	// either direction. The Background contributes no Vertices, and the
+	// Facade grows nothing toward it: the only Vertex in the Building is the
+	// Facade's own Marker.
+	void facadeBesideBackgroundHasNoPathingInteraction()
+	{
+		auto const check = [](uint32_t facadeX, uint32_t backgroundX, char const* what)
+		{
+			core::Building building("Facade beside Background", 12, 3);
+			auto const facade = building.addFacade(0, 0, facadeX, 3, 1);
+			auto const background = building.addBackground(0, 0, backgroundX, 3, 1);
+			uint32_t marker = 0;
+			building.addSectorMarker(facade, 0, 1.0f, &marker);
+			building.finishBuild();
+
+			auto const graph = building.getGraph();
+			require(graph->getVertexByIdentifier(marker) != nullptr,
+				(std::string(what) + ": the Facade Marker lost its Vertex").c_str());
+			for (auto const& vertex : graph->getVertices())
+			{
+				require(vertex->getSector()->getType() != core::SectorType::Background,
+					(std::string(what) + ": the Background contributed a Graph Vertex").c_str());
+				require(vertex->getSector()->getIndex() == facade,
+					(std::string(what) + ": an unexpected Sector reached the Graph").c_str());
+			}
+			require(graph->getVertices().size() == 1,
+				(std::string(what) + ": the Facade grew Vertices toward the Background").c_str());
+			require(building.getSector(background)->getType() == core::SectorType::Background,
+				(std::string(what) + ": the Background Sector went missing").c_str());
+		};
+
+		check(0, 3, "Facade left of Background");
+		check(3, 0, "Background left of Facade");
+	}
 }
 
 void runFacadeSmokeChecks()
@@ -575,4 +751,8 @@ void runFacadeSmokeChecks()
 	aHandAuthoredFacadeRecordLoads();
 	theFacadeTakesPartInTheGraph();
 	layerDeletionHandlesFacadeRecords();
+	facadeBetweenTwoAlignedRoomsIsOneContinuousFloor();
+	facadeBesideHigherFloorDoesNotMerge();
+	wallRemovalAcceptsFacadeNeighboursBothWays();
+	facadeBesideBackgroundHasNoPathingInteraction();
 }

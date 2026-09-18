@@ -2423,13 +2423,14 @@ namespace core
 		if (neighbourCell.sectorIndex == ~0u || neighbourCell.sectorIndex == sectorIndex)
 			return reject("No adjacent Room or Corridor shares this wall");
 		auto neighbour = mSectors[neighbourCell.sectorIndex];
-		// A Facade may share a boundary with a Room whose wall is being opened:
-		// the Facade's half is open by construction, and refusing the Room's
-		// half would let a Facade merge outward while its neighbour could not
-		// merge inward. A Facade itself never has a wall to remove, so the
-		// sector-side type check above still refuses it.
-		if (neighbour->getType() != SectorType::Location && neighbour->getType() != SectorType::Facade)
-			return reject("The adjacent sector is not a Room or Corridor");
+		// A Facade may share a boundary with a Room whose wall is being opened,
+		// and vice versa: the Facade's half is open by construction, and
+		// refusing the Room's half would let a Facade merge outward while its
+		// neighbour could not merge inward.  The shared location-like rule
+		// (ticket #45) admits both here; a Facade itself never has a wall to
+		// remove, so the sector-side type check above still refuses it.
+		if (!isLocationLike(neighbour->getType()))
+			return reject("The adjacent sector is not a Room, Corridor or Facade");
 		if (globalY < neighbour->getCellY()
 			|| globalY >= neighbour->getCellY() + neighbour->getDecksHigh())
 			return reject("The adjacent Location does not occupy this deck");
