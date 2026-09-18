@@ -2,6 +2,7 @@
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -9,6 +10,8 @@
 #include "RecentFiles.h"
 #include "Render.h"
 #include "UI.h"
+
+#include "core/Graph.h"
 #include "core/Building.h"
 #include "core/BulkheadDoorSectorObject.h"
 #include "core/Defines.h"
@@ -1585,10 +1588,76 @@ void onlyTheSelectedLayerAndTheLayerBehindAreDrawn()
 	}
 }
 
+// Graph construction walks every adjacent Layer pair of the Building - 0<->1, 1<->2,
+// and so on - rather than one hard-coded Fore/Back pass.  Every Layer therefore
+// contributes Vertices, and each pair keeps its own inter-layer lookup so that a
+// threshold is only ever joined to the pair it was authored on.
+void graphConstructionWalksEveryAdjacentLayerPair()
+{
+	char const* roomNames[] = { "Corridor", "Basement", "Deep Cellar", "Catacomb" };
+
+	for (uint32_t layerCount = 2; layerCount <= 5; ++layerCount)
+	{
+		core::Building building("Adjacent Pairs", 8, 2);
+		while (building.getLayerCount() < layerCount) building.addLayer();
+
+		std::vector<uint32_t> rooms;
+		for (uint32_t layer = 0; layer < layerCount; ++layer)
+		{
+			rooms.push_back(building.addRoom(roomNames[layer], layer, 0, 0, 8, 1));
+		}
+
+		// One Marker per Layer gives every Layer a Vertex of its own, so the scan
+		// coverage of each Layer can be observed directly.
+		for (uint32_t layer = 0; layer < layerCount; ++layer)
+		{
+			building.addSectorMarker(rooms[layer], 0, 3.0f);
+		}
+
+		building.addSectorDoor(0, 5);
+		building.finishBuild();
+
+		core::Graph graph(&building);
+		graph.build();
+
+		std::vector<uint32_t> verticesPerLayer(layerCount, 0);
+		for (auto const& vertex : graph.getVertices())
+		{
+			auto const layer = vertex->getSector()->getLayerIndex();
+			require(layer < layerCount, "A Vertex belongs to a Layer the Building does not have");
+			++verticesPerLayer[layer];
+		}
+
+		for (uint32_t layer = 0; layer < layerCount; ++layer)
+		{
+			require(verticesPerLayer[layer] > 0,
+				"A Layer deeper than the front pair contributed no Vertices to the Graph");
+		}
+
+		// The Door authored on the front pair joins that pair alone.
+		uint32_t doorEdges{ 0 };
+		for (auto const& edge : graph.getEdges())
+		{
+			if (edge->getType() != core::EdgeType::Door) continue;
+
+			++doorEdges;
+
+			auto const front = edge->getVertex(0)->getSector()->getLayerIndex();
+			auto const back = edge->getVertex(1)->getSector()->getLayerIndex();
+
+			require((front == 0 && back == 1) || (front == 1 && back == 0),
+				"A Door Edge joined Layers outside the front adjacent pair");
+		}
+
+		require(doorEdges == 1, "The authored Door did not produce exactly one Edge");
+	}
+}
+
 void runSerializationSmokeChecks()
 {
 	layerHelperApiIsConsistentWithTwoLayerConstants();
 	onlyTheSelectedLayerAndTheLayerBehindAreDrawn();
+	graphConstructionWalksEveryAdjacentLayerPair();
 	transitsOnTheLayerBehindAreOnlyDrawnThroughApertures();
 	stringYamlRoundTripsPrimitiveValues();
 	fileYamlRoundTrips();

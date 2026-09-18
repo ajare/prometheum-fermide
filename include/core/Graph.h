@@ -20,6 +20,15 @@ namespace core
 {
 	class Building;
 
+	// Which side of an adjacent Layer pair a threshold or Transit is being processed
+	// as.  A pair is always processed front-first, so the front Vertex of a pairing
+	// is recorded before the back Vertex tries to join it.
+	enum struct LayerPairRole
+	{
+		Front,
+		Back
+	};
+
 	class Graph
 	{
 		struct ObjectData
@@ -27,11 +36,52 @@ namespace core
 			uint32_t index;
 			uint32_t layerIndex;
 			uint32_t x, y;
-			std::shared_ptr<Sector> sectors[2];
+
+			// Sector occupying the cell on the Layer being processed.
+			std::shared_ptr<Sector> sector;
+
+			// Bulkhead Doors span two Locations side by side, so they need both.
+			std::shared_ptr<Sector> adjacent[CORE_NUM_SIDES];
 		};
 
 		typedef std::map<std::pair<uint32_t, uint32_t>, std::shared_ptr<Vertex>> PositionVertexMap;
 		typedef std::vector<std::shared_ptr<Vertex>> VertexList;
+		typedef std::map<std::shared_ptr<VerticalEdgeCreator>, VertexList> CrossDeckVertexMap;
+
+		// A Vertex waiting in a Layer row, tagged with the cell and the scan slot that
+		// produced it.  A row is connected in (cell, slot) order, which keeps the scan
+		// order deterministic now that several passes feed the same row.
+		struct RowVertex
+		{
+			uint32_t x;
+			uint32_t slot;
+
+			// A standalone Vertex belongs to the row's ordering but takes no part in
+			// connecting it.
+			bool standalone{ false };
+
+			std::shared_ptr<Vertex> vertex;
+		};
+
+		// One row of one Layer, split into the Segments that are flushed
+		// independently as the row crosses a Sector boundary.
+		struct RowVertices
+		{
+			uint32_t layerIndex{ 0 };
+			uint32_t y{ 0 };
+
+			// Segment each cell of the row belongs to.
+			std::vector<uint32_t> segmentOfCell;
+
+			// Sector reported when the matching Segment is flushed.
+			std::vector<uint32_t> flushSector;
+
+			// Vertices collected per Segment.
+			std::vector<std::vector<RowVertex>> segments;
+		};
+
+		// Every row of every Layer, indexed [layerIndex][deck].
+		typedef std::vector<std::vector<RowVertices>> LayerRows;
 
 	private:
 
@@ -60,41 +110,76 @@ namespace core
 
 		void processSectorVertices(VertexList& vertices, std::shared_ptr<const Sector> prevSector, uint32_t layerIndex, uint32_t y);
 
-		void processMarker(ObjectData const& obj, VertexList& workVertices);
+		void processMarker(ObjectData const& obj, RowVertices& row);
 
-		void processDoor(ObjectData const& obj, PositionVertexMap& interLayerVertexLookup, VertexList& workVertices, std::map<std::shared_ptr<VerticalEdgeCreator>, VertexList>& crossDeckVertices);
+		void processDoor(ObjectData const& obj, LayerPairRole role, PositionVertexMap& interLayerVertexLookup, RowVertices& row, CrossDeckVertexMap& crossDeckVertices);
 
-		void processWindow(ObjectData const& obj, PositionVertexMap& interLayerVertexLookup, VertexList& workVertices);
+		void processWindow(ObjectData const& obj, PositionVertexMap& interLayerVertexLookup, RowVertices& row);
 
-		void processInteractionPoint(ObjectData const& obj, VertexList& workVertices);
+		void processInteractionPoint(ObjectData const& obj, RowVertices& row);
 
-		void processBulkheadDoor(ObjectData const& obj, PositionVertexMap& interLayerVertexLookup, VertexList& workVertices);
+		void processBulkheadDoor(ObjectData const& obj, RowVertices& row);
 
-		void processWalkway(ObjectData const& obj, PositionVertexMap& interLayerVertexLookup, VertexList& workVertices);
+		void processWalkway(ObjectData const& obj, RowVertices& row);
 
-		void processForceBridge(ObjectData const& obj, PositionVertexMap& interLayerVertexLookup, VertexList& workVertices);
+		void processForceBridge(ObjectData const& obj, RowVertices& row);
 
-		void processLadderObject(ObjectData const& obj, PositionVertexMap& interLayerVertexLookup, VertexList& workVertices, std::map<std::shared_ptr<VerticalEdgeCreator>, VertexList>& crossDeckVertices, int level);
+		void processLadderObject(ObjectData const& obj, RowVertices& row, CrossDeckVertexMap& crossDeckVertices, int level);
 
-		void processLiftObject(ObjectData const& obj, PositionVertexMap& interLayerVertexLookup, VertexList& workVertices, std::map<std::shared_ptr<VerticalEdgeCreator>, VertexList>& crossDeckVertices, uint32_t stopOffset);
+		void processLiftObject(ObjectData const& obj, RowVertices& row, CrossDeckVertexMap& crossDeckVertices, uint32_t stopOffset);
 
-		void processLadderTransit(int layerIndex, uint32_t curSectorIndex, uint32_t x, uint32_t y, int level, PositionVertexMap& interLayerVertexLookup, VertexList& workVertices, std::map<std::shared_ptr<VerticalEdgeCreator>, VertexList>& crossDeckVertices);
+		void processLadderTransit(LayerPairRole role, uint32_t curSectorIndex, uint32_t x, uint32_t y, int level, PositionVertexMap& interLayerVertexLookup, RowVertices& row, CrossDeckVertexMap& crossDeckVertices);
 
-		void processStairwellTransit(int layerIndex, uint32_t curSectorIndex, uint32_t backSectorIndex, uint32_t x, uint32_t y, uint32_t deckOffset, PositionVertexMap& interLayerVertexLookup, VertexList& workVertices, std::map<std::shared_ptr<VerticalEdgeCreator>, VertexList>& crossDeckVertices);
+		void processStairwellTransit(LayerPairRole role, uint32_t curSectorIndex, uint32_t backSectorIndex, uint32_t x, uint32_t y, uint32_t deckOffset, PositionVertexMap& interLayerVertexLookup, RowVertices& row, CrossDeckVertexMap& crossDeckVertices);
 
-		void processStaircaseTransit(int layerIndex, uint32_t curSectorIndex, uint32_t backSectorIndex,
-			uint32_t x, uint32_t y, PositionVertexMap& interLayerVertexLookup, VertexList& workVertices,
-			std::map<std::shared_ptr<VerticalEdgeCreator>, VertexList>& crossDeckVertices);
+		void processStaircaseTransit(LayerPairRole role, uint32_t curSectorIndex, uint32_t backSectorIndex,
+			uint32_t x, uint32_t y, PositionVertexMap& interLayerVertexLookup, RowVertices& row,
+			CrossDeckVertexMap& crossDeckVertices);
 
-		std::shared_ptr<Vertex> createLiftTransitVertex(std::shared_ptr<LiftTransit> liftTransit, uint32_t x, uint32_t y, std::map<std::shared_ptr<VerticalEdgeCreator>, VertexList>& crossDeckVertices);
+		std::shared_ptr<Vertex> createLiftTransitVertex(std::shared_ptr<LiftTransit> liftTransit, uint32_t x, uint32_t y, CrossDeckVertexMap& crossDeckVertices);
 
-		std::shared_ptr<Vertex> createShuttleTransitVertex(std::shared_ptr<ShuttleTransit> shuttleTransit, uint32_t x, uint32_t y, std::map<std::shared_ptr<VerticalEdgeCreator>, VertexList>& crossDeckVertices);
+		std::shared_ptr<Vertex> createShuttleTransitVertex(std::shared_ptr<ShuttleTransit> shuttleTransit, uint32_t x, uint32_t y, CrossDeckVertexMap& crossDeckVertices);
 
 		void addEdge(std::shared_ptr<Edge> edge, std::shared_ptr<Vertex> vertex0, std::shared_ptr<Vertex> vertex1, bool connectZ);
 
-		void addCrossDeckVertex(std::shared_ptr<VerticalEdgeCreator> edgeCreator, std::shared_ptr<Vertex> vertex, std::map<std::shared_ptr<VerticalEdgeCreator>, VertexList>& crossDeckVertices);
+		void addCrossDeckVertex(std::shared_ptr<VerticalEdgeCreator> edgeCreator, std::shared_ptr<Vertex> vertex, CrossDeckVertexMap& crossDeckVertices);
 
-		void processCrossDeckVertices(std::map<std::shared_ptr<VerticalEdgeCreator>, VertexList> const& crossDeckVertices);
+		void processCrossDeckVertices(CrossDeckVertexMap const& crossDeckVertices);
+
+		// A cell is scanned when it is occupied and has a floor to walk on.  The one
+		// exception is the open Location cell beside the top of a Staircase transit
+		// on the Layer directly behind, which is that flight's landing.
+		bool cellIsProcessable(uint32_t layerIndex, uint32_t x, uint32_t y) const;
+
+		// A wide SectorObject is scanned once, from its left-most cell.
+		bool isLeftMostObjectCell(uint32_t layerIndex, uint32_t x, uint32_t y, CellDefinition const& cellDef) const;
+
+		// Splits every Layer row into the Segments that are flushed independently.
+		LayerRows buildLayerRows() const;
+
+		void appendRowVertex(RowVertices& row, uint32_t x, uint32_t slot, std::shared_ptr<Vertex> vertex) const;
+
+		void appendStandaloneRowVertex(RowVertices& row, uint32_t x, uint32_t slot, std::shared_ptr<Vertex> vertex) const;
+
+		void flushRowVertices(RowVertices& row);
+
+		// Scans one Layer row for the content that belongs to that Layer alone.
+		void processLayerRow(uint32_t layerIndex, uint32_t y, RowVertices& row, CrossDeckVertexMap& crossDeckVertices);
+
+		// A threshold records its SectorObject against the Sector that owns the cell.
+		// Authoring a threshold on a Layer whose pair the Building cannot yet express
+		// leaves an index that belongs to a different Sector, so resolve it defensively
+		// rather than trusting it.
+		std::shared_ptr<SectorObject> resolveSectorObject(std::shared_ptr<Sector> sector, uint32_t index,
+			char const* what, uint32_t x, uint32_t y);
+
+		// Scans one adjacent Layer pair for the thresholds and Transits that join the
+		// front Layer of the pair to the Layer directly behind it.
+		void processLayerPair(uint32_t frontLayer, uint32_t backLayer, LayerRows& rows, CrossDeckVertexMap& crossDeckVertices);
+
+		void processPairCell(uint32_t frontLayer, uint32_t backLayer, uint32_t x, uint32_t y,
+			PositionVertexMap& interLayerVertexLookup, LayerRows& rows,
+			CrossDeckVertexMap& crossDeckVertices);
 
 	public:
 
