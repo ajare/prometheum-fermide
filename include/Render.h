@@ -1,5 +1,7 @@
 #pragma once
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -117,8 +119,8 @@ inline bool isDrawnSolid(LayerRenderStyle style)
 // behind it, so the pass is handed the Background's own colour rather than the
 // generic back-layer tint. Any other back Sector carries no colour of its own
 // and yields std::nullopt, leaving the caller's generic tint in place. Where a
-// Window faces several Backgrounds at once, compositing them is a later ticket;
-// a single Background behind the Window is all this answers.
+// Window faces several Backgrounds at once, backgroundApertureRegions() below
+// answers this once per Background in the composite.
 //
 inline std::optional<core::BackgroundColour> apertureFillColour(core::Sector const& backSector)
 {
@@ -128,6 +130,110 @@ inline std::optional<core::BackgroundColour> apertureFillColour(core::Sector con
 	}
 
 	return static_cast<core::Background const&>(backSector).getColour();
+}
+
+//
+// One piece of a multi-Background aperture composite: the Background the glass
+// shows through one stretch of the aperture, and the world-space (cell-unit)
+// rectangle that Background is clipped to while being drawn.
+//
+struct BackgroundApertureRegion
+{
+	std::shared_ptr<const core::Background> background;
+	core::Vector2 min;
+	core::Vector2 max;
+};
+
+//
+// The regions through which one aperture (a clear Window's rect on the Layer
+// in front) sees the Layer behind it, derived from that Layer's cell grid.
+//
+// The Window's single back Sector is not consulted: #36 made it
+// non-authoritative for a span of several Backgrounds - it names only the
+// Sector behind the Window's first cell. The cell grid is what the aperture
+// actually looks into, so each Background occupying cells under the aperture
+// becomes one region, clipped to the intersection of the aperture rect and
+// that Background's own rect. Two Backgrounds side by side therefore meet
+// exactly on the cell boundary between them: neither bleeds past it, and no
+// seam line is drawn across it.
+//
+// Regions are ordered by the grid's left-to-right, top-to-bottom sweep of
+// first appearance, so the composite is deterministic. Cells holding no
+// Background - empty space, or a non-Background Sector - contribute no
+// region. An aperture which sees no Background at all (an ordinary Window
+// into a Room, or an empty span) yields no regions, and the caller keeps
+// its single-sector path. Because the rects are world-space, the composite
+// is pinned to the world: scrolling the viewport moves the seam with the
+// Backgrounds, never with the screen.
+//
+inline std::vector<BackgroundApertureRegion> backgroundApertureRegions(
+	core::Building const& building,
+	uint32_t backLayerIndex,
+	core::Vector2 const& apertureMin,
+	core::Vector2 const& apertureMax)
+{
+	std::vector<BackgroundApertureRegion> regions;
+
+	if (backLayerIndex >= building.getLayerCount())
+	{
+		return regions;
+	}
+
+	int const x0 = std::max(static_cast<int>(std::floor(apertureMin.x)), 0);
+	int const y0 = std::max(static_cast<int>(std::floor(apertureMin.y)), 0);
+	int const x1 = std::min(static_cast<int>(std::ceil(apertureMax.x)) - 1,
+		static_cast<int>(building.getCellsWide()) - 1);
+	int const y1 = std::min(static_cast<int>(std::ceil(apertureMax.y)) - 1,
+		static_cast<int>(building.getDecksHigh()) - 1);
+
+	for (int y = y0; y <= y1; ++y)
+	{
+		for (int x = x0; x <= x1; ++x)
+		{
+			auto const sector = building.getSectorAtPosition(backLayerIndex,
+				static_cast<float>(x) + 0.5f, static_cast<float>(y) + 0.5f);
+
+			if (!sector || sector->getType() != core::SectorType::Background)
+			{
+				continue;
+			}
+
+			auto const background = std::static_pointer_cast<const core::Background>(sector);
+
+			// A Background is rectangular, so it enters the aperture once; the
+			// grid may revisit it from every cell it covers under the aperture.
+			bool alreadySeen = false;
+			for (auto const& region : regions)
+			{
+				if (region.background == background)
+				{
+					alreadySeen = true;
+					break;
+				}
+			}
+			if (alreadySeen)
+			{
+				continue;
+			}
+
+			core::Vector2 bgMin, bgMax;
+			background->getBounds(bgMin, bgMax);
+
+			BackgroundApertureRegion region;
+			region.background = background;
+			region.min = { std::max(bgMin.x, apertureMin.x), std::max(bgMin.y, apertureMin.y) };
+			region.max = { std::min(bgMax.x, apertureMax.x), std::min(bgMax.y, apertureMax.y) };
+
+			if (region.max.x - region.min.x <= 0.0f || region.max.y - region.min.y <= 0.0f)
+			{
+				continue;
+			}
+
+			regions.push_back(region);
+		}
+	}
+
+	return regions;
 }
 
 //

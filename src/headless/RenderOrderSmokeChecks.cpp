@@ -31,7 +31,9 @@
 // The Background checks (#35) ride the same model with a two-Layer backdrop of
 // their own: a Background fills whenever its Layer is drawn solid, is outlined by
 // the wireframe overlay alone, and meets its same-colour neighbour with no border
-// drawn across the seam.
+// drawn across the seam. The multi-Background aperture checks (#37) read the
+// very backgroundApertureRegions() the renderer composites from, asserting each
+// region's fill colour and clip bounds against the back Layer's cell grid.
 
 #include <algorithm>
 #include <bit>
@@ -104,6 +106,18 @@ namespace
 	{
 		return { static_cast<double>(aperture.min.x), static_cast<double>(aperture.min.y),
 			static_cast<double>(aperture.max.x), static_cast<double>(aperture.max.y) };
+	}
+
+	Rect rectOf(BackgroundApertureRegion const& region)
+	{
+		return { static_cast<double>(region.min.x), static_cast<double>(region.min.y),
+			static_cast<double>(region.max.x), static_cast<double>(region.max.y) };
+	}
+
+	Rect rectOf(core::Vector2 const& lo, core::Vector2 const& hi)
+	{
+		return { static_cast<double>(lo.x), static_cast<double>(lo.y),
+			static_cast<double>(hi.x), static_cast<double>(hi.y) };
 	}
 
 	Rect intersect(Rect const& a, Rect const& b)
@@ -1463,6 +1477,205 @@ namespace
 	}
 
 	//
+	// Ticket #37: a Window spanning several Backgrounds composites them.
+	//
+	// The visible regions are derived from the back Layer's cell grid, not
+	// from the Window's single back Sector, which #36 made non-authoritative
+	// for such a span. Each region carries the Background it shows and the
+	// exact world-space rectangle it is clipped to: the intersection of the
+	// Window rect and that Background's own rect. The seam between two
+	// Backgrounds therefore lands exactly on the cell boundary between them
+	// - no bleed past it, no gap before it, no seam line across it - and the
+	// rects are world-space, so the composite is pinned to the world rather
+	// than to whatever the viewport happens to show.
+	//
+	void aMultiBackgroundApertureCompositesEachBackgroundClipped()
+	{
+		// Sky blue and car-park grey, side by side behind one 4-wide Window -
+		// the imgui manual test of the ticket body, authored headlessly.
+		constexpr core::BackgroundColour kSky{ 96, 128, 160 };
+		constexpr core::BackgroundColour kCarPark{ 112, 112, 112 };
+
+		core::Building building("Multi-background aperture", 12, 2);
+		while (building.getLayerCount() < 2) building.addLayer();
+		building.addRoom("Front", 0, 0, 0, 8, 1);
+		auto const skyIndex = building.addBackground(1, 0, 0, 6, 1, kSky);
+		auto const carIndex = building.addBackground(1, 0, 6, 6, 1, kCarPark);
+
+		auto const spanning = building.addSectorWindow(0, 0, 4, 4, 1,
+			{ false, core::Window::State::Closed, core::Window::Style::Clear });
+		building.finishBuild();
+
+		require(spanning.object != nullptr, "the spanning Window was not created");
+
+		// The Window's single back Sector is the first Background in the span.
+		// A renderer that trusted it would paint the whole glass sky blue and
+		// the car park would be invisible through its half of the Window.
+		auto const back = spanning.object->getBackSector();
+		require(back != nullptr && back->getType() == core::SectorType::Background
+				&& back->getIndex() == skyIndex,
+			"expected the spanning Window's back Sector to be the first Background, not the whole truth");
+
+		core::Vector2 wLo, wHi;
+		spanning.object->getFullShape(wLo, wHi);
+		// The glass is inset from the cell grid (CORE_WINDOW_X_INSET), so the
+		// aperture's own edges are not cell edges; the seam between the two
+		// Backgrounds still lands exactly on the cell boundary at x = 6.
+		require(wLo.x > 4.0f && wHi.x < 8.0f && wLo.y > 0.0f && wHi.y < 1.0f,
+			"the spanning Window is not where it was authored");
+
+		auto const regions = backgroundApertureRegions(building, 1, wLo, wHi);
+		require(regions.size() == 2,
+			"a Window over two Backgrounds did not composite two regions");
+
+		// Ordered by the cell grid's left-to-right sweep of first appearance.
+		require(regions[0].background->getIndex() == skyIndex
+				&& regions[1].background->getIndex() == carIndex,
+			"the composite regions are not ordered by the cell grid sweep");
+
+		// Clip bounds: each region is the Window rect clipped to its own
+		// Background, so the split lands exactly on the cell boundary at x = 6.
+		require(regions[0].min.x == wLo.x && regions[0].min.y == wLo.y
+				&& regions[0].max.x == 6.0f && regions[0].max.y == wHi.y,
+			"the sky Background is not clipped to the Window's left half up to the seam");
+		require(regions[1].min.x == 6.0f && regions[1].min.y == wLo.y
+				&& regions[1].max.x == wHi.x && regions[1].max.y == wHi.y,
+			"the car-park Background is not clipped to the Window's right half from the seam");
+
+		// No bleed and no gap: the two regions share the seam edge exactly, do
+		// not overlap, and together cover the aperture whole.
+		require(regions[0].max.x == regions[1].min.x,
+			"the two regions do not meet exactly on the cell boundary");
+		auto const overlap = intersect(rectOf(regions[0]), rectOf(regions[1]));
+		require(overlap.area() <= kAreaEpsilon, "the two composite regions overlap - one bleeds past the seam");
+		auto const aperture = rectOf(wLo, wHi);
+		require(std::abs(rectOf(regions[0]).area() + rectOf(regions[1]).area() - aperture.area()) <= kAreaEpsilon,
+			"the composite does not cover the aperture - a gap stands behind the glass");
+
+		// Each region fills with its own Background's colour, not a shared tint:
+		// the #34 rule read once per region of the composite.
+		auto const skyFill = apertureFillColour(*regions[0].background);
+		auto const carFill = apertureFillColour(*regions[1].background);
+		require(skyFill.has_value() && *skyFill == kSky,
+			"the sky region does not fill with the sky Background's own colour");
+		require(carFill.has_value() && *carFill == kCarPark,
+			"the car-park region does not fill with the car-park Background's own colour");
+
+		// The composite is world-space: the helper reads the cell grid, not the
+		// viewport, so scrolling can only ever move the seam with the
+		// Backgrounds, never with the screen. Any sub-rect of the aperture sees
+		// the same seam at the same world x.
+		for (auto const& region : regions)
+		{
+			core::Vector2 bgLo, bgHi;
+			region.background->getBounds(bgLo, bgHi);
+			require(region.min.x == std::max(bgLo.x, wLo.x) && region.max.x == std::min(bgHi.x, wHi.x),
+				"a composite region is not the world-space intersection of aperture and Background");
+		}
+
+		// A Window wholly inside one Background yields one region clipped to
+		// the Window itself - the seam next door changes nothing. And a Window
+		// whose glass stops short of the seam takes no sliver of the
+		// neighbour: the clip ends at the Window's own edge, inside the sky
+		// Background, and the car park contributes nothing.
+		core::Building near("Near-seam apertures", 12, 2);
+		while (near.getLayerCount() < 2) near.addLayer();
+		near.addRoom("Front", 0, 0, 0, 8, 1);
+		near.addBackground(1, 0, 0, 6, 1, kSky);
+		near.addBackground(1, 0, 6, 6, 1, kCarPark);
+		auto const single = near.addSectorWindow(0, 0, 1, 1, 1,
+			{ false, core::Window::State::Closed, core::Window::Style::Clear });
+		auto const abutting = near.addSectorWindow(0, 0, 2, 4, 1,
+			{ false, core::Window::State::Closed, core::Window::Style::Clear });
+		near.finishBuild();
+
+		require(single.object != nullptr, "the single-Background Window was not created");
+		core::Vector2 sLo, sHi;
+		single.object->getFullShape(sLo, sHi);
+		auto const singleRegions = backgroundApertureRegions(building, 1, sLo, sHi);
+		require(singleRegions.size() == 1
+				&& singleRegions[0].background->getIndex() == skyIndex,
+			"a Window wholly over one Background did not yield exactly that Background's region");
+		require(singleRegions[0].min.x == sLo.x && singleRegions[0].max.x == sHi.x,
+			"the single region is not clipped to the Window itself");
+
+		// A Window whose glass stops short of the seam takes no sliver of the
+		// neighbour: the clip ends at the Window's own edge, inside the sky
+		// Background, and the car park contributes nothing.
+		require(abutting.object != nullptr, "the seam-abutting Window was not created");
+		core::Vector2 aLo, aHi;
+		abutting.object->getFullShape(aLo, aHi);
+		require(aHi.x < 6.0f, "the abutting Window's glass does not stop short of the seam");
+		auto const abuttingRegions = backgroundApertureRegions(building, 1, aLo, aHi);
+		require(abuttingRegions.size() == 1
+				&& abuttingRegions[0].background->getIndex() == skyIndex
+				&& abuttingRegions[0].max.x == aHi.x,
+			"a Window stopping short of the seam bleeds a region of the neighbour in");
+
+		// The order is deterministic: the same Building swept twice gives the
+		// same composite, which is what keeps the two-pass renderer stable.
+		auto const again = backgroundApertureRegions(building, 1, wLo, wHi);
+		require(again.size() == regions.size()
+				&& again[0].background->getIndex() == regions[0].background->getIndex()
+				&& again[1].background->getIndex() == regions[1].background->getIndex(),
+			"the composite order is not deterministic across sweeps");
+	}
+
+	//
+	// The composite spans however many Backgrounds the aperture crosses, and
+	// yields nothing at all when the aperture looks into no Background - an
+	// ordinary Window into a Room keeps the caller's single-sector tint path.
+	//
+	void aMultiBackgroundApertureSpansEveryBackgroundAndSkipsNone()
+	{
+		core::Building building("Three-background aperture", 12, 2);
+		while (building.getLayerCount() < 2) building.addLayer();
+		building.addRoom("Front", 0, 0, 0, 12, 1);
+		auto const firstIndex = building.addBackground(1, 0, 0, 4, 1, { 10, 20, 30 });
+		auto const secondIndex = building.addBackground(1, 0, 4, 4, 1, { 40, 50, 60 });
+		auto const thirdIndex = building.addBackground(1, 0, 8, 4, 1, { 70, 80, 90 });
+
+		// A 6-wide Window from x = 3 crosses both seams at x = 4 and x = 8.
+		auto const spanning = building.addSectorWindow(0, 0, 3, 6, 1,
+			{ false, core::Window::State::Closed, core::Window::Style::Clear });
+		building.finishBuild();
+		require(spanning.object != nullptr, "the three-Background spanning Window was not created");
+
+		core::Vector2 wLo, wHi;
+		spanning.object->getFullShape(wLo, wHi);
+		auto const regions = backgroundApertureRegions(building, 1, wLo, wHi);
+		require(regions.size() == 3, "a Window over three Backgrounds did not composite three regions");
+		require(regions[0].background->getIndex() == firstIndex
+				&& regions[1].background->getIndex() == secondIndex
+				&& regions[2].background->getIndex() == thirdIndex,
+			"the three regions are not in cell-grid order");
+		require(regions[0].max.x == 4.0f && regions[1].min.x == 4.0f
+				&& regions[1].max.x == 8.0f && regions[2].min.x == 8.0f,
+			"the three regions do not meet exactly on the two cell boundaries");
+
+		double covered{ 0.0 };
+		for (auto const& region : regions) covered += rectOf(region).area();
+		require(std::abs(covered - rectOf(wLo, wHi).area()) <= kAreaEpsilon,
+			"the three-region composite does not cover the aperture exactly");
+
+		// The control: a Window looking into a Room, not a Background, yields
+		// no regions, so the caller keeps its single-sector path and the
+		// generic back-layer tint.
+		core::Building rooms("Room-only aperture", 12, 2);
+		while (rooms.getLayerCount() < 2) rooms.addLayer();
+		rooms.addRoom("Front", 0, 0, 0, 6, 1);
+		rooms.addRoom("Behind", 1, 0, 0, 6, 1);
+		auto const intoRoom = rooms.addSectorWindow(0, 0, 1, 2, 1,
+			{ false, core::Window::State::Closed, core::Window::Style::Clear });
+		rooms.finishBuild();
+		require(intoRoom.object != nullptr, "the Window into a Room was not created");
+		core::Vector2 rLo, rHi;
+		intoRoom.object->getFullShape(rLo, rHi);
+		require(backgroundApertureRegions(rooms, 1, rLo, rHi).empty(),
+			"a Window into a Room yielded Background regions; the tint path would be overridden");
+	}
+
+	//
 	// The same Depot paints the same picture every time it is built.
 	//
 	void theRenderSnapshotIsDeterministic()
@@ -1497,5 +1710,7 @@ void runRenderOrderSmokeChecks()
 	aBackgroundBehindTheSelectionIsOutlinedWholeByTheOverlay();
 	adjacentBackgroundsMeetWithoutASeam();
 	aSelectedBackgroundStillTakesTheSelectionHighlight();
+	aMultiBackgroundApertureCompositesEachBackgroundClipped();
+	aMultiBackgroundApertureSpansEveryBackgroundAndSkipsNone();
 	theRenderSnapshotIsDeterministic();
 }

@@ -49,6 +49,16 @@ extern std::shared_ptr<const core::Vertex> gSelectedVertex;
 extern std::shared_ptr<const core::Sector> gSelectedSector;
 extern std::shared_ptr<const core::SectorObject> gHoveredSectorObject, gSelectedSectorObject;
 
+//
+// The Building currently being rendered. A clear Window composites the
+// Backgrounds behind it from the back Layer's cell grid (#37, and #36 made
+// the Window's single back Sector non-authoritative for such a span), and
+// the renderSector -> renderSectorObjects -> renderWindow chain which
+// reaches renderWindowClear carries no Building pointer. renderBuilding()
+// sets this on entry; every render entry point goes through it.
+//
+static std::shared_ptr<const core::Building> gRenderBuilding;
+
 extern ImFont* gAgentIconFont;
 
 using namespace std;
@@ -599,13 +609,59 @@ void renderWindowClear(shared_ptr<const core::Window> window, uint32_t layer, La
 	// A Window is authored on the front Layer of its pair, so index 1 is the
 	// Sector on the Layer directly behind.
 	auto backSector = window->getBackSector();
+	auto const backLayer = core::layerBehind(layer);
+
+	// The aperture's rect in world (cell) units, before the screen transform.
+	core::Vector2 worldMin, worldMax;
+	window->getFullShape(worldMin, worldMax);
 
 	drawList->AddDrawCmd();
 
 	// ImGui clipping expects ascending Y coordinates, but we have flipped them for rendering.
 	drawList->PushClipRect({ bounds0.x, bounds1.y }, { bounds1.x, bounds0.y }, true);
 
-	if (backSector)
+	// What the glass shows is derived from the back Layer's cell grid, not from
+	// the Window's single back Sector (#36 made that reference
+	// non-authoritative). Each Background the aperture looks into is drawn
+	// clipped to the intersection of the Window rect and that Background's own
+	// rect, so the seam between two Backgrounds lands exactly on the cell
+	// boundary between them - no bleed past it, no seam line across it - and
+	// stays pinned to the world as the viewport scrolls.
+	auto const regions = gRenderBuilding
+		? backgroundApertureRegions(*gRenderBuilding, backLayer, worldMin, worldMax)
+		: std::vector<BackgroundApertureRegion>{};
+
+	if (!regions.empty())
+	{
+		// Cells the span looks through which hold no Background contribute no
+		// region; black stands in behind the glass there, as it does for a
+		// Window with no back Sector at all. The opaque fills below cover it
+		// wherever a Background is present.
+		drawList->AddRectFilled({ bounds0.x, bounds0.y }, { bounds1.x, bounds1.y }, ImColor(0, 0, 0));
+
+		for (auto const& region : regions)
+		{
+			auto clip0 = region.min;
+			auto clip1 = region.max;
+			transformPosition(clip0);
+			transformPosition(clip1);
+
+			drawList->AddDrawCmd();
+			drawList->PushClipRect(
+				{ min(clip0.x, clip1.x), min(clip0.y, clip1.y) },
+				{ max(clip0.x, clip1.x), max(clip0.y, clip1.y) }, true);
+
+			// The Background fills with its own colour (apertureFillColour,
+			// #34); the region clip trims that fill to this stretch of the
+			// aperture.
+			renderSector(region.background, backLayer, LayerRenderStyle::Aperture, false,
+				BackLocationColour, drawList);
+
+			drawList->PopClipRect();
+			drawList->AddDrawCmd();
+		}
+	}
+	else if (backSector)
 	{
 		// The glass shows the Background's own colour, not the generic
 		// back-layer tint (#34). A back Sector that carries no colour of its
@@ -1514,6 +1570,10 @@ void renderBehindLayerTransits(shared_ptr<const core::Building> building, uint32
 
 void renderBuilding(shared_ptr<const core::Building> building)
 {
+	// The cell-grid lookup a multi-Background aperture composites from (#37)
+	// needs the Building; the sector-rendering chain does not carry one.
+	gRenderBuilding = building;
+
 	auto drawList = ImGui::GetWindowDrawList();
 
 	auto const layerCount = building->getLayerCount();
