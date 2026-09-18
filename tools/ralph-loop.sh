@@ -397,7 +397,11 @@ session_usage() {
 }
 
 show_ticket_summary() {
-    local number=$1 started=$2 ended=$3 usage=${4:-} duration=$((ended-started))
+    local number=$1 started=$2 ended=$3 usage=${4:-}
+    # Separate statement: bash expands every word of a `local` command before assigning
+    # any of them, so computing duration in the same statement reads `ended` while it
+    # is still unset and trips `set -u`.
+    local duration=$((ended-started))
     echo "Ticket #$number summary"
     echo "  Started: $(date -d "@$started" --iso-8601=seconds)"
     echo "  Ended: $(date -d "@$ended" --iso-8601=seconds)"
