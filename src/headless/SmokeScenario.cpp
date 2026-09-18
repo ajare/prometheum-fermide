@@ -51,6 +51,7 @@ void runBackgroundPlacementSmokeChecks();
 void runBackgroundCascadeDeleteSmokeChecks();
 void runThresholdRefusalSmokeChecks();
 void runWindowIntoBackgroundSmokeChecks();
+void runWindowMultiBackgroundSmokeChecks();
 
 static_assert(!std::is_convertible_v<core::AgentId, core::InteractionPointId>);
 static_assert(!std::is_convertible_v<core::DeviceOperationId, core::TraversalResourceId>);
@@ -4349,6 +4350,7 @@ int main()
 		runBackgroundCascadeDeleteSmokeChecks();
 		runThresholdRefusalSmokeChecks();
 		runWindowIntoBackgroundSmokeChecks();
+		runWindowMultiBackgroundSmokeChecks();
 
 		auto const deepJourney = runThreeLayerTransitJourney();
 		if (!deepJourney.pathShapeValid)

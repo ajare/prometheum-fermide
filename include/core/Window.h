@@ -75,6 +75,11 @@ namespace core
 		// was ruled out, and a Layer deletion removes it.
 		[[nodiscard]] std::shared_ptr<const Sector> getSector(uint32_t pairSide) const;
 		[[nodiscard]] std::shared_ptr<const Sector> getFrontSector() const { return mSectors[0]; }
+		// The Window's back Sector is the Sector behind its first cell.  A Window may
+		// span several Backgrounds behind it (#36), so for such a Window this field
+		// is the first Background in the span and is non-authoritative: nothing may
+		// traverse into a Background anyway, and the renderer derives what lies
+		// behind the whole aperture from the cell grid.
 		[[nodiscard]] std::shared_ptr<const Sector> getBackSector() const { return mSectors[1]; }
 		// The absolute Layers the Window crosses.  ~0u when a side has no Sector.
 		[[nodiscard]] uint32_t getFrontLayer() const;

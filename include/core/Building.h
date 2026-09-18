@@ -679,7 +679,14 @@ namespace core
 
 		void validateObjectAllowedInSectorAsLookTarget(std::string const& caller, SectorObjectType type, uint32_t sectorIndex) const;
 
-		void validateSpaceOnlyInOneSector(std::string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh) const;
+		// The span must fall inside a single Sector, because crossing a Sector boundary
+		// breaks the traversal geometry the caller is about to build. The one
+		// relaxation is allowAllBackgroundSpan, used for the Layer behind a Window:
+		// there a span of nothing but Backgrounds may cover several Background
+		// Sectors, since a Background takes no part in traversal and what lies behind
+		// an aperture is read from the cell grid. A span that mixes a Background with
+		// any other Sector is still refused.
+		void validateSpaceOnlyInOneSector(std::string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh, bool allowAllBackgroundSpan = false) const;
 
 		void validateSectorDoorOptions(std::string const& caller, CreateDoorOptions const& options) const;
 

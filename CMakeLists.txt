@@ -148,6 +148,7 @@ add_executable(prometheum-fermide-headless
     src/headless/ThresholdRefusalSmokeChecks.cpp
     src/headless/WindowLayerSmokeChecks.cpp
     src/headless/WindowIntoBackgroundSmokeChecks.cpp
+    src/headless/WindowMultiBackgroundSmokeChecks.cpp
 )
 target_compile_features(prometheum-fermide-headless PRIVATE cxx_std_20)
 target_compile_definitions(prometheum-fermide-headless PRIVATE _CONSOLE)

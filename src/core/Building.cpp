@@ -389,9 +389,35 @@ namespace core
 		}
 	}
 
-	void Building::validateSpaceOnlyInOneSector(string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh) const
+	void Building::validateSpaceOnlyInOneSector(string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh, bool allowAllBackgroundSpan) const
 	{
 		auto layer = getLayer(layerIndex);
+
+		// A Window's back Layer is the one place where several Sectors behind one
+		// aperture make sense: Backgrounds are seen, never entered, so a wide Window
+		// looking across the seam between two of them still sees an unbroken view.
+		// Half room-interior and half sky is a different matter - there should be a
+		// wall where the room ends - so a mixed span is refused outright.
+		if (allowAllBackgroundSpan)
+		{
+			bool seesBackground = false;
+			bool seesOccupiedOther = false;
+			for (uint32_t iy = y; iy < y + decksHigh; ++iy)
+				for (uint32_t ix = x; ix < x + cellsWide; ++ix)
+				{
+					auto const& cellDef = layer->getCellDefinition(ix, iy);
+					if (cellDef.sectorIndex == ~0u) continue;
+					if (mSectors[cellDef.sectorIndex]->getType() == SectorType::Background)
+						seesBackground = true;
+					else
+						seesOccupiedOther = true;
+				}
+			if (seesBackground && !seesOccupiedOther) return;
+			if (seesBackground && seesOccupiedOther)
+				throw BuildingException(this, format(
+					"{} - bounds {},{} -> {},{} mix a Background with a Location or Transit on Layer {}; a Window cannot look half into a room and half into a Background, since there should be a wall where the room ends",
+					caller, x, y, x + cellsWide, y + decksHigh, layerIndex));
+		}
 
 		auto sectorIndex = layer->getCellDefinition(x, y).sectorIndex;
 
@@ -762,6 +788,10 @@ namespace core
 		{
 			auto const& cellDef1 = mLayers[layerBehind(layerIndex)]->getCellDefinition(x, y);
 
+			// The back Sector is the Sector behind the Window's first cell.  A Window
+			// may span several Backgrounds (#36), so for such a Window this is the
+			// first Background in the span and is non-authoritative; the cell grid
+			// holds the truth about what the whole aperture looks into.
 			backSector = cellDef1.sectorIndex != ~0u ? _getSector(cellDef1.sectorIndex) : nullptr;
 		}
 
@@ -3195,8 +3225,12 @@ namespace core
 			vector<uint32_t> requiredLayers{ layerIndex };
 			if (layerIndex + 1 < getLayerCount()) requiredLayers.push_back(layerBehind(layerIndex));
 
+			// The front Layer of the pair keeps the strict one-Sector rule: a Window
+			// whose own wall straddles two Sectors has no coherent frame.  The Layer
+			// behind may span several Backgrounds, but may not mix one with a Room.
 			for (auto requiredLayer : requiredLayers)
-				validateSpaceOnlyInOneSector(caller, requiredLayer, x, y, cellsWide, decksHigh);
+				validateSpaceOnlyInOneSector(caller, requiredLayer, x, y, cellsWide, decksHigh,
+					requiredLayer != layerIndex);
 
 			for (auto requiredLayer : requiredLayers)
 			{
