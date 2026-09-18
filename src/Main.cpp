@@ -460,9 +460,9 @@ std::shared_ptr<core::Building> createTestBuilding()
 
 		building->addRoom("Fuel Cells", 1, ReactorDeck, 5, 3, 1);
 		
-		building->addSectorDoor(ReactorDeck, 6);
+		building->addSectorDoor(0, ReactorDeck, 6);
 		
-		building->addSectorDoor(ReactorDeck, 2);
+		building->addSectorDoor(0, ReactorDeck, 2);
 		/*
 		building->addSectorWindow(0, ReactorDeck, 7, 1, 1);
 		

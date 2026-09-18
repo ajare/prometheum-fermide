@@ -93,11 +93,21 @@ namespace core
 
 	Get the Location, for the given Layer.
 	*/
-	shared_ptr<const Sector> Window::getSector(uint32_t layerIndex) const
+	shared_ptr<const Sector> Window::getSector(uint32_t pairSide) const
 	{
-		ASSERT_LAYER_OK(layerIndex);
+		ASSERT_PAIR_SIDE_OK(pairSide);
 
-		return mSectors[layerIndex];
+		return mSectors[pairSide];
+	}
+
+	uint32_t Window::getFrontLayer() const
+	{
+		return mSectors[0] ? mSectors[0]->getLayerIndex() : ~0u;
+	}
+
+	uint32_t Window::getBackLayer() const
+	{
+		return mSectors[1] ? mSectors[1]->getLayerIndex() : ~0u;
 	}
 
 	void Window::setState(State state, Style style)

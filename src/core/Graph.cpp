@@ -960,8 +960,16 @@ namespace core
 
 	bool Graph::isLeftMostObjectCell(uint32_t layerIndex, uint32_t x, uint32_t y, CellDefinition const& cellDef) const
 	{
-		return x == 0
-			|| mwBuilding->getLayer(layerIndex)->getCellDefinition(x - 1, y).sectorObjectIndex != cellDef.sectorObjectIndex;
+		if (x == 0) return true;
+
+		auto const& left = mwBuilding->getLayer(layerIndex)->getCellDefinition(x - 1, y);
+
+		// Object indices are per-Sector, so the neighbouring cell only suppresses this
+		// one when it is the same object in the same Sector.  Comparing the index alone
+		// would hide a left-most object sitting next to an unrelated Sector that happens
+		// to use the same index.
+		return left.sectorObjectIndex != cellDef.sectorObjectIndex
+			|| left.sectorIndex != cellDef.sectorIndex;
 	}
 
 	Graph::LayerRows Graph::buildLayerRows() const
@@ -1228,6 +1236,38 @@ namespace core
 		}
 	}
 
+	// The Layer a threshold actually crosses, read from the threshold itself rather than
+	// from whichever Layer happens to hold a reference to it.  A shared threshold
+	// SectorObject is visible from both of its Sectors, so a neighbouring Layer pair can
+	// stumble across it; only the pair it was authored on may pair it.
+	bool Graph::thresholdBelongsToPair(std::shared_ptr<Sector> sector, uint32_t index,
+		SectorObjectType type, uint32_t frontLayer, uint32_t backLayer)
+	{
+		if (!sector || index >= sector->getNumObjects()) return false;
+
+		auto const object = sector->_getObject(index);
+
+		if (!object) return false;
+
+		if (type == SectorObjectType::Door)
+		{
+			auto const doorObject = dynamic_pointer_cast<DoorSectorObject>(object);
+			if (!doorObject) return false;
+			auto const door = doorObject->getDoor();
+			return door && door->getFrontLayer() == frontLayer && door->getBackLayer() == backLayer;
+		}
+
+		if (type == SectorObjectType::Window)
+		{
+			auto const windowObject = dynamic_pointer_cast<WindowSectorObject>(object);
+			if (!windowObject) return false;
+			auto const window = windowObject->getWindow();
+			return window && window->getFrontLayer() == frontLayer && window->getBackLayer() == backLayer;
+		}
+
+		return false;
+	}
+
 	void Graph::processPairCell(uint32_t frontLayer, uint32_t backLayer, uint32_t x, uint32_t y,
 		PositionVertexMap& interLayerVertexLookup, LayerRows& rows,
 		CrossDeckVertexMap& crossDeckVertices)
@@ -1243,9 +1283,13 @@ namespace core
 
 		// Thresholds are authored on the front Layer of the pair and open into the
 		// Layer directly behind it.  The front Vertex is recorded first, then joined
-		// when the back Layer's copy of the same cell is reached.
+		// when the back Layer's copy of the same cell is reached.  A threshold only
+		// ever pairs on the pair it belongs to, so a Layer that merely holds a
+		// reference to a neighbouring pair's threshold contributes nothing.
 		if (frontProcessable && frontCell.sectorObjectType == SectorObjectType::Door
-			&& isLeftMostObjectCell(frontLayer, x, y, frontCell))
+			&& isLeftMostObjectCell(frontLayer, x, y, frontCell)
+			&& thresholdBelongsToPair(mwBuilding->_getSector(frontCell.sectorIndex),
+				frontCell.sectorObjectIndex, SectorObjectType::Door, frontLayer, backLayer))
 		{
 			ObjectData obj = { frontCell.sectorObjectIndex, frontLayer, x, y,
 				mwBuilding->_getSector(frontCell.sectorIndex), {} };
@@ -1254,7 +1298,9 @@ namespace core
 		}
 
 		if (frontProcessable && frontCell.sectorObjectType == SectorObjectType::Window
-			&& isLeftMostObjectCell(frontLayer, x, y, frontCell))
+			&& isLeftMostObjectCell(frontLayer, x, y, frontCell)
+			&& thresholdBelongsToPair(mwBuilding->_getSector(frontCell.sectorIndex),
+				frontCell.sectorObjectIndex, SectorObjectType::Window, frontLayer, backLayer))
 		{
 			ObjectData obj = { frontCell.sectorObjectIndex, frontLayer, x, y,
 				mwBuilding->_getSector(frontCell.sectorIndex), {} };
@@ -1263,7 +1309,9 @@ namespace core
 		}
 
 		if (backProcessable && backCell.sectorObjectType == SectorObjectType::Door
-			&& isLeftMostObjectCell(backLayer, x, y, backCell))
+			&& isLeftMostObjectCell(backLayer, x, y, backCell)
+			&& thresholdBelongsToPair(mwBuilding->_getSector(backCell.sectorIndex),
+				backCell.sectorObjectIndex, SectorObjectType::Door, frontLayer, backLayer))
 		{
 			ObjectData obj = { backCell.sectorObjectIndex, backLayer, x, y,
 				mwBuilding->_getSector(backCell.sectorIndex), {} };
@@ -1272,7 +1320,9 @@ namespace core
 		}
 
 		if (backProcessable && backCell.sectorObjectType == SectorObjectType::Window
-			&& isLeftMostObjectCell(backLayer, x, y, backCell))
+			&& isLeftMostObjectCell(backLayer, x, y, backCell)
+			&& thresholdBelongsToPair(mwBuilding->_getSector(backCell.sectorIndex),
+				backCell.sectorObjectIndex, SectorObjectType::Window, frontLayer, backLayer))
 		{
 			ObjectData obj = { backCell.sectorObjectIndex, backLayer, x, y,
 				mwBuilding->_getSector(backCell.sectorIndex), {} };

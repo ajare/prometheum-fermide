@@ -18,7 +18,7 @@ namespace core
 
 	public:
 
-		LadderTransit(uint32_t index, uint32_t cellX, uint32_t cellY, uint32_t decksHigh, std::vector<TransitStop> const& stops, bool extensible, bool startExtended);
+		LadderTransit(uint32_t index, uint32_t layerIndex, uint32_t cellX, uint32_t cellY, uint32_t decksHigh, std::vector<TransitStop> const& stops, bool extensible, bool startExtended);
 
 		~LadderTransit() = default;
 

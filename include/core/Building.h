@@ -465,6 +465,13 @@ namespace core
 		{
 			ConstructionType type{};
 			std::string name{};
+
+			// The Layer the record's object is authored on.  For a Transit this is the
+			// Layer it sits on; for a threshold it is the front Layer of its pair.
+			// Records written before Transits and Doors carried a Layer leave this unset
+			// and replay against the front pair, which is where every legacy object lived.
+			uint32_t layer{ ~0u };
+
 			uint32_t a{ 0 }, b{ 0 }, c{ 0 }, d{ 0 }, e{ 0 }, f{ 0 }, g{ 0 }, h{ 0 };
 			int32_t i{ 0 }, j{ 0 };
 			float x{ 0.0f }, y{ 0.0f }, z{ 0.0f };
@@ -593,7 +600,7 @@ namespace core
 
 		void validateCellHasNoDoor(std::string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y) const;
 
-		bool validateStaircaseEndpoint(uint32_t x, uint32_t y, bool upperEndpoint,
+		bool validateStaircaseEndpoint(uint32_t layerIndex, uint32_t x, uint32_t y, bool upperEndpoint,
 			int riseSide, std::string& diagnostic) const;
 
 		void validateCellHasPhysicalControl(std::string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y, int side) const;
@@ -640,19 +647,23 @@ namespace core
 
 		uint32_t createLocation(std::string const& name, SectorType type, uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh, float topDeckHeight, bool isCorridor);
 
-		uint32_t createLadder(uint32_t x, uint32_t y, CreateLadderOptions const& options);
+		// A Transit is created on layerIndex and lands on the Layer directly in front of
+		// it, so every landing cell is read from layerInFront(layerIndex).
+		uint32_t createLadder(uint32_t layerIndex, uint32_t x, uint32_t y, CreateLadderOptions const& options);
 
-		uint32_t createStairwell(uint32_t x, uint32_t y, uint32_t decksHigh, int mountSide);
+		uint32_t createStairwell(uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t decksHigh, int mountSide);
 
-		uint32_t createStaircase(uint32_t x, uint32_t y, uint32_t cellsWide,
+		uint32_t createStaircase(uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide,
 			int riseSide, float speed);
 
-		CreateObjectResult createLift(uint32_t x, uint32_t y, uint32_t cellsWide,
+		CreateObjectResult createLift(uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide,
 			uint32_t decksHigh, std::vector<uint32_t> const& stopOffsets);
 
-		CreateObjectResult createShuttle(uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t numCars, uint32_t carWidth, std::vector<uint32_t> const& stopOffsets);
+		CreateObjectResult createShuttle(uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t numCars, uint32_t carWidth, std::vector<uint32_t> const& stopOffsets);
 
-		CreateObjectResult createDoor(uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t* vertexIdentifier = nullptr);
+		// A Door is authored on the front Layer of its pair and opens into the Layer
+		// directly behind it.
+		CreateObjectResult createDoor(uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t* vertexIdentifier = nullptr);
 
 		CreateObjectResult createWindow(uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh, uint32_t* vertexIdentifier = nullptr);
 
@@ -677,7 +688,7 @@ namespace core
 
 		CreateObjectResult createPlatformLiftSectorObject(uint32_t layerIndex, uint32_t x, uint32_t y, CreateLiftOptions const& options, uint32_t* vertexIdentifier = nullptr);
 
-		CreateDoorResult _addSectorDoor(uint32_t y, uint32_t x, CreateDoorOptions const& options,
+		CreateDoorResult _addSectorDoor(uint32_t layerIndex, uint32_t y, uint32_t x, CreateDoorOptions const& options,
 			bool controlsAreExternallyBound = false);
 
 		CreateObjectResult _createSectorButton(std::string const& name, std::shared_ptr<const Sector> sector, uint32_t x, uint32_t y, uint32_t flags, uint32_t* index = nullptr);
@@ -894,51 +905,59 @@ namespace core
 		Log const& getBuildLog() const;
 
 		// Sector types
+		// A Corridor is a Location, so it may sit on any Layer.  The Layer-less form
+		// keeps the front-most Layer as its default.
 		uint32_t addCorridor(uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t decksHigh = 1);
+		uint32_t addCorridor(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide,
+			uint32_t decksHigh = 1);
 
 		uint32_t addRoom(std::string const& name, uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t decksHigh, float topDeckHeight = CORE_ROOM_MAX_HEIGHT);
 	
-		CreateLadderResult addLadder(uint32_t y, uint32_t x, CreateLadderOptions const& options);
+		// A Transit is authored on layerIndex, the Layer it occupies, and lands on the
+		// Layer directly in front of it.  The front-most Layer can carry no Transit.
+		CreateLadderResult addLadder(uint32_t layerIndex, uint32_t y, uint32_t x, CreateLadderOptions const& options);
 
-		bool canAddLadder(uint32_t y, uint32_t x, uint32_t decksHigh,
+		bool canAddLadder(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t decksHigh,
 			std::string* diagnostic = nullptr) const;
 
 		bool getLadderOptions(uint32_t sectorIndex, CreateLadderOptions& options) const;
 
-		uint32_t addStairwell(uint32_t y, uint32_t x, uint32_t decksHigh, int mountSide);
+		uint32_t addStairwell(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t decksHigh, int mountSide);
 
-		CreateStairwellResult addStairwell(uint32_t y, uint32_t x,
+		CreateStairwellResult addStairwell(uint32_t layerIndex, uint32_t y, uint32_t x,
 			CreateStairwellOptions const& options);
 
-		bool canAddStairwell(uint32_t y, uint32_t x, uint32_t decksHigh,
+		bool canAddStairwell(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t decksHigh,
 			std::string* diagnostic = nullptr) const;
 
 		bool getStairwellOptions(uint32_t sectorIndex, CreateStairwellOptions& options) const;
 
-		uint32_t addStaircase(uint32_t y, uint32_t x, uint32_t cellsWide, int riseSide,
+		uint32_t addStaircase(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide, int riseSide,
 			float speed = 0.0f);
-		uint32_t addStaircase(uint32_t y, uint32_t x, CreateStaircaseOptions const& options);
-		bool canAddStaircase(uint32_t y, uint32_t x, uint32_t cellsWide, int riseSide,
+		uint32_t addStaircase(uint32_t layerIndex, uint32_t y, uint32_t x, CreateStaircaseOptions const& options);
+		bool canAddStaircase(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide, int riseSide,
 			std::string* diagnostic = nullptr) const;
 		bool getStaircaseOptions(uint32_t sectorIndex, CreateStaircaseOptions& options) const;
 
-		CreateLiftResult addLift(uint32_t y, uint32_t x, CreateLiftOptions const& options);
+		CreateLiftResult addLift(uint32_t layerIndex, uint32_t y, uint32_t x, CreateLiftOptions const& options);
 
-		// Derives stops from every fully overlapping Fore-layer corridor row.
-		CreateLiftResult addLift(uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t decksHigh);
+		// Derives stops from every fully overlapping landing-layer corridor row.
+		CreateLiftResult addLift(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t decksHigh);
 
-		CreateShuttleResult addShuttle(uint32_t y, uint32_t x, uint32_t cellsWide, CreateShuttleOptions const& options);
+		CreateShuttleResult addShuttle(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide, CreateShuttleOptions const& options);
 
 		// Sector object types
 		// Corridor doors are the constrained authoring form exposed by the object palette.
-		bool canAddCorridorDoor(uint32_t y, uint32_t x,
+		// A Door is authored on the front Layer of the pair it crosses.
+		bool canAddCorridorDoor(uint32_t layerIndex, uint32_t y, uint32_t x,
 			std::string* diagnostic = nullptr) const;
 
-		bool canAddCorridorDoor(uint32_t y, uint32_t x, CreateDoorOptions const& options,
+		bool canAddCorridorDoor(uint32_t layerIndex, uint32_t y, uint32_t x, CreateDoorOptions const& options,
 			std::string* diagnostic = nullptr) const;
 
-		// Resolves a cell over a lift to its complete landing-door footprint.
-		bool getLiftLandingGeometry(uint32_t y, uint32_t x,
+		// Resolves a cell over a lift to its complete landing-door footprint.  The
+		// Layer searched is the Transit's own Layer, not the landing Layer.
+		bool getLiftLandingGeometry(uint32_t layerIndex, uint32_t y, uint32_t x,
 			uint32_t& landingX, uint32_t& landingWidth) const;
 
 		bool isLiftOwnedDoor(std::shared_ptr<const SectorObject> const& object,
@@ -954,21 +973,21 @@ namespace core
 		bool isShuttleOwnedControl(std::shared_ptr<const SectorObject> const& object,
 			uint32_t* shuttleSectorIndex = nullptr, uint32_t* stopIndex = nullptr) const;
 
-		std::vector<uint32_t> getValidShuttleStopOffsets(uint32_t y, uint32_t x,
+		std::vector<uint32_t> getValidShuttleStopOffsets(uint32_t layerIndex, uint32_t y, uint32_t x,
 			uint32_t cellsWide, uint32_t numCars, uint32_t carWidth,
 			bool allowPartialLandings, uint32_t doorMask = 1u << 1) const;
 
 		bool getShuttleOptions(Shuttle const* shuttle, CreateShuttleOptions& options) const;
 
 		std::vector<ShuttleStopCandidate> getShuttleStopCandidatesForDoor(
-			uint32_t y, uint32_t doorX) const;
+			uint32_t layerIndex, uint32_t y, uint32_t doorX) const;
 
-		bool getSectorDoorOptions(uint32_t y, uint32_t x, uint32_t width,
+		bool getSectorDoorOptions(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t width,
 			CreateDoorOptions& options) const;
 
-		CreateDoorResult addSectorDoor(uint32_t y, uint32_t x);
+		CreateDoorResult addSectorDoor(uint32_t layerIndex, uint32_t y, uint32_t x);
 
-		CreateDoorResult addSectorDoor(uint32_t y, uint32_t x, CreateDoorOptions const& options);
+		CreateDoorResult addSectorDoor(uint32_t layerIndex, uint32_t y, uint32_t x, CreateDoorOptions const& options);
 
 		// Adds a physical open control in the selected Door's owning Location.
 		// Placement against the left or right edge is derived from the Door and Location geometry.

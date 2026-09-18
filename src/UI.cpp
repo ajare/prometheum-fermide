@@ -523,13 +523,13 @@ namespace
 		target.cellX = (uint32_t)floor(world.x);
 		target.cellY = (uint32_t)floor(world.y);
 		uint32_t landingX, landingWidth;
-		if (building->getLiftLandingGeometry(target.cellY, target.cellX, landingX, landingWidth))
+		if (building->getLiftLandingGeometry(gUISettings.visibleLayer + 1, target.cellY, target.cellX, landingX, landingWidth))
 			target.cellX = landingX;
 		target.sector = building->getSectorAtPosition(gUISettings.visibleLayer,
 			(float)target.cellX, world.y);
-		auto shuttleStops = building->getShuttleStopCandidatesForDoor(target.cellY, target.cellX);
+		auto shuttleStops = building->getShuttleStopCandidatesForDoor(gUISettings.visibleLayer, target.cellY, target.cellX);
 		if (!shuttleStops.empty()) target.diagnostic.clear();
-		else building->canAddCorridorDoor(target.cellY, target.cellX, &target.diagnostic);
+		else building->canAddCorridorDoor(gUISettings.visibleLayer, target.cellY, target.cellX, &target.diagnostic);
 		return target;
 	}
 
@@ -1067,7 +1067,7 @@ namespace
 			{
 				int lowerX = gPaint.anchorY == y ? gPaint.anchorX : endX;
 				int riseSide = lowerX == x ? CORE_SIDE_RIGHT : CORE_SIDE_LEFT;
-				result.valid = building->canAddStaircase(result.y, result.x, result.width,
+				result.valid = building->canAddStaircase(gUISettings.visibleLayer, result.y, result.x, result.width,
 					riseSide, &result.diagnostic);
 			}
 			return result;
@@ -1084,7 +1084,7 @@ namespace
 			if (x < 0 || x + 2 > (int)building->getCellsWide())
 				result.diagnostic = "The Stairwell is outside the Building bounds";
 			else
-				result.valid = building->canAddStairwell(result.y, result.x, result.height,
+				result.valid = building->canAddStairwell(gUISettings.visibleLayer, result.y, result.x, result.height,
 					&result.diagnostic);
 			return result;
 		}
@@ -1094,7 +1094,7 @@ namespace
 			int y = min(gPaint.anchorY, endY);
 			uint32_t height = (uint32_t)(abs(endY - gPaint.anchorY) + 1);
 			PaintRectangle result{ false, (uint32_t)gPaint.anchorX, (uint32_t)y, 1, height, {} };
-			result.valid = building->canAddLadder(result.y, result.x, result.height,
+			result.valid = building->canAddLadder(gUISettings.visibleLayer, result.y, result.x, result.height,
 				&result.diagnostic);
 			return result;
 		}
@@ -1241,7 +1241,7 @@ namespace
 
 	void placeDoor(shared_ptr<core::Building> const& building, PegmanTarget const& target)
 	{
-		gShuttleDoorCandidates = building->getShuttleStopCandidatesForDoor(target.cellY, target.cellX);
+		gShuttleDoorCandidates = building->getShuttleStopCandidatesForDoor(gUISettings.visibleLayer, target.cellY, target.cellX);
 		if (!gShuttleDoorCandidates.empty())
 		{
 			gSelectedShuttleDoorCandidate = 0;
@@ -1251,7 +1251,7 @@ namespace
 		auto undo = captureDocumentSnapshot(building);
 		try
 		{
-			auto created = building->addSectorDoor(target.cellY, target.cellX);
+			auto created = building->addSectorDoor(gUISettings.visibleLayer, target.cellY, target.cellX);
 			building->finishBuild();
 			setSelectionMode(UISettings::SelectionMode::Object);
 			gSelectedAgent = nullptr;
@@ -1664,16 +1664,16 @@ namespace
 								paintRectangle.y, paintRectangle.x, paintRectangle.width,
 								paintRectangle.height, CORE_ROOM_MAX_HEIGHT);
 						else if (tool == PaintTool::Corridor)
-							building->addCorridor(paintRectangle.y, paintRectangle.x,
+							building->addCorridor(gPaint.layer, paintRectangle.y, paintRectangle.x,
 								paintRectangle.width, 1);
 						else if (tool == PaintTool::Ladder)
-							building->addLadder(paintRectangle.y, paintRectangle.x,
+							building->addLadder(gUISettings.visibleLayer, paintRectangle.y, paintRectangle.x,
 								{ paintRectangle.height, false, true });
 						else if (tool == PaintTool::Stairwell)
 						{
 							int mountSide = paintRectangle.x < (uint32_t)gPaint.anchorX
 								? CORE_SIDE_RIGHT : CORE_SIDE_LEFT;
-							building->addStairwell(paintRectangle.y, paintRectangle.x,
+							building->addStairwell(gUISettings.visibleLayer, paintRectangle.y, paintRectangle.x,
 								{ paintRectangle.height, mountSide });
 						}
 						else if (tool == PaintTool::Staircase)
@@ -1684,10 +1684,10 @@ namespace
 									? (int)(paintRectangle.x + paintRectangle.width - 1) : (int)paintRectangle.x);
 							int riseSide = lowerX == (int)paintRectangle.x
 								? CORE_SIDE_RIGHT : CORE_SIDE_LEFT;
-							building->addStaircase(paintRectangle.y, paintRectangle.x,
+							building->addStaircase(gUISettings.visibleLayer, paintRectangle.y, paintRectangle.x,
 								paintRectangle.width, riseSide);
 						}
-						else building->addLift(paintRectangle.y, paintRectangle.x,
+						else building->addLift(gUISettings.visibleLayer, paintRectangle.y, paintRectangle.x,
 							paintRectangle.width, paintRectangle.height);
 						building->finishBuild();
 						commitDocumentEdit(std::move(undo));
@@ -2921,7 +2921,7 @@ namespace
 							(uint32_t)draft.initialStop, (uint32_t)draft.capacity,
 							draft.minimumDwellSeconds, draft.maximumBoardingSeconds,
 							draft.allowPartialLandings, draft.doorMask };
-						auto created = building->addShuttle(draft.y, draft.x, draft.cellsWide, options);
+						auto created = building->addShuttle(gUISettings.visibleLayer, draft.y, draft.x, draft.cellsWide, options);
 						building->finishBuild();
 						setSelectionMode(UISettings::SelectionMode::Sector);
 						gSelectedSector = created.shuttle.sector;
@@ -3190,8 +3190,9 @@ namespace
 		{
 			auto door = static_pointer_cast<const core::DoorSectorObject>(gSelectedSectorObject)->getDoor();
 			core::Building::CreateDoorOptions options;
-			if (!building->getSectorDoorOptions(gSelectedSectorObject->getCellY(),
-				gSelectedSectorObject->getCellX(), door->getCellsWide(), options))
+			if (!building->getSectorDoorOptions(door->getFrontSector()->getLayerIndex(),
+				gSelectedSectorObject->getCellY(), gSelectedSectorObject->getCellX(),
+				door->getCellsWide(), options))
 				throw runtime_error("The selected Door has no authored definition");
 			output << YAML::Key << "type" << YAML::Value << "Door"
 				<< YAML::Key << "object" << YAML::Value << YAML::BeginMap
@@ -3643,13 +3644,13 @@ namespace
 			if (definition.type == ClipboardObjectType::Door)
 			{
 				uint32_t landingX, landingWidth;
-				if (building->getLiftLandingGeometry(y, x, landingX, landingWidth))
+				if (building->getLiftLandingGeometry(gUISettings.visibleLayer + 1, y, x, landingX, landingWidth))
 				{
 					x = landingX;
 					definition.door = {};
 					definition.door.width = landingWidth;
 				}
-				if (!building->canAddCorridorDoor(y, x, definition.door, &diagnostic))
+				if (!building->canAddCorridorDoor(gUISettings.visibleLayer, y, x, definition.door, &diagnostic))
 					throw runtime_error(diagnostic);
 			}
 			else if (definition.type == ClipboardObjectType::BulkheadDoor)
@@ -3730,7 +3731,7 @@ namespace
 				shared_ptr<const core::SectorObject> created;
 				if (definition.type == ClipboardObjectType::Door)
 				{
-					auto result = building->addSectorDoor(y, x, definition.door);
+					auto result = building->addSectorDoor(gUISettings.visibleLayer, y, x, definition.door);
 					created = result.door.sector->getObject(result.door.index);
 				}
 				else if (definition.type == ClipboardObjectType::BulkheadDoor)
@@ -4721,8 +4722,8 @@ void renderWindowPanel(shared_ptr<const core::Building> const& building,
 	auto owner = object->getSector();
 	ImGui::Text("Layer: %s", layerLabel(building, owner->getLayerIndex()).c_str());
 	ImGui::Text("Sector: %s", owner->getDescription().c_str());
-	for (uint32_t layer = 0; layer < 2; ++layer)
-		if (auto sector = window->getSector(layer); sector && sector != owner)
+	for (uint32_t pairSide = 0; pairSide < 2; ++pairSide)
+		if (auto sector = window->getSector(pairSide); sector && sector != owner)
 			ImGui::Text("Connected sector: %s", sector->getDescription().c_str());
 }
 
@@ -4916,8 +4917,8 @@ void renderDoorPanel(shared_ptr<core::Building> const& building,
 	ImGui::Text("Open wait time: %3.2fs", door->getOpenWaitTime());
 	
 	// Sectors
-	ImGui::Text("From: %s", door->getSector(0)->getDescription().c_str());
-	ImGui::Text("To: %s", door->getSector(1)->getDescription().c_str());
+	ImGui::Text("From: %s", door->getFrontSector()->getDescription().c_str());
+	ImGui::Text("To: %s", door->getBackSector()->getDescription().c_str());
 
 	uint32_t liftSector, stopIndex, carriageIndex;
 	bool const liftOwned = building->isLiftOwnedDoor(object, &liftSector, &stopIndex);
@@ -6905,8 +6906,10 @@ namespace
 		{
 			auto window = static_pointer_cast<const core::WindowSectorObject>(
 				gSelectedSectorObject)->getWindow();
+			// A Window is reachable from either Layer of the pair it crosses.
 			objectOnVisibleLayer = objectOnVisibleLayer
-				|| window->getSector(gUISettings.visibleLayer) != nullptr;
+				|| window->getFrontLayer() == (uint32_t)gUISettings.visibleLayer
+				|| window->getBackLayer() == (uint32_t)gUISettings.visibleLayer;
 		}
 		if (gUISettings.selectionMode != UISettings::SelectionMode::Object
 			|| !gSelectedSectorObject || !objectOnVisibleLayer)

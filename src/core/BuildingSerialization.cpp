@@ -125,6 +125,7 @@ namespace core
 		switch (record.type)
 		{
 		case ConstructionType::Corridor:
+			serializer.writeUint32("layer", record.layer);
 			serializer.writeUint32("y", record.a); serializer.writeUint32("x", record.b);
 			serializer.writeUint32("cellsWide", record.c); serializer.writeUint32("decksHigh", record.d); break;
 		case ConstructionType::Room:
@@ -134,20 +135,24 @@ namespace core
 			serializer.writeUint32("cellsWide", record.d); serializer.writeUint32("decksHigh", record.e);
 			serializer.writeFloat("topDeckHeight", record.x); break;
 		case ConstructionType::Ladder:
+			serializer.writeUint32("layer", record.layer);
 			serializer.writeUint32("y", record.a); serializer.writeUint32("x", record.b);
 			serializer.writeUint32("decksHigh", record.c); serializer.writeBool("extensible", record.p);
 			serializer.writeBool("startExtended", record.q);
 			serializer.writeUint32("directionalBatchLimit", record.d); break;
 		case ConstructionType::Stairwell:
+			serializer.writeUint32("layer", record.layer);
 			serializer.writeUint32("y", record.a); serializer.writeUint32("x", record.b);
 			serializer.writeUint32("decksHigh", record.c); serializer.writeString("mountSide", sideName(record.i));
 			serializer.writeUint32("directionalCapacity", record.d);
 			serializer.writeUint32("directionalBatchLimit", record.e); break;
 		case ConstructionType::Staircase:
+			serializer.writeUint32("layer", record.layer);
 			serializer.writeUint32("y", record.a); serializer.writeUint32("x", record.b);
 			serializer.writeUint32("cellsWide", record.c); serializer.writeString("riseSide", sideName(record.i));
 			serializer.writeFloat("speed", record.x); break;
 		case ConstructionType::Lift:
+			serializer.writeUint32("layer", record.layer);
 			serializer.writeUint32("y", record.a); serializer.writeUint32("x", record.b);
 			serializer.writeUint32("cellsWide", record.c); serializer.writeUint32("decksHigh", record.e);
 			writeStops(); serializer.writeUint32("capacity", record.d);
@@ -155,6 +160,7 @@ namespace core
 			serializer.writeFloat("maximumBoardingSeconds", record.y);
 			serializer.writeUint32("initialStop", record.g); break;
 		case ConstructionType::Shuttle:
+			serializer.writeUint32("layer", record.layer);
 			serializer.writeUint32("y", record.a); serializer.writeUint32("x", record.b);
 			serializer.writeUint32("cellsWide", record.c); serializer.writeUint32("numCars", record.d);
 			serializer.writeUint32("carWidth", record.e); writeStops();
@@ -164,6 +170,7 @@ namespace core
 			serializer.writeFloat("maximumBoardingSeconds", record.y);
 			serializer.writeBool("allowPartialLandings", record.p); break;
 		case ConstructionType::Door:
+			serializer.writeUint32("layer", record.layer);
 			serializer.writeUint32("y", record.a); serializer.writeUint32("x", record.b);
 			serializer.writeUint32("width", record.c); serializer.writeBool("foreControl", record.p);
 			serializer.writeBool("backControl", record.q); serializer.writeString("activationMode", activationName(record.i));
@@ -316,6 +323,13 @@ namespace core
 			}
 			return layer;
 		};
+		auto readLayerOr = [&](char const* field, uint32_t fallback) -> uint32_t
+		{
+			// Transits and Doors only began recording their own Layer with this ticket.
+			// An older record replays against the fallback Layer it was written on.
+			if (!serializer.hasField(field)) return fallback;
+			return readLayer(field);
+		};
 		auto readSide = [&](char const* field)
 		{
 			auto const value = serializer.readString(field);
@@ -343,6 +357,7 @@ namespace core
 		switch (record.type)
 		{
 		case ConstructionType::Corridor:
+			record.layer = readLayerOr("layer", 0u);
 			record.a = serializer.readUint32("y"); record.b = serializer.readUint32("x");
 			record.c = serializer.readUint32("cellsWide"); record.d = serializer.readUint32("decksHigh"); break;
 		case ConstructionType::Room:
@@ -351,21 +366,25 @@ namespace core
 			record.d = serializer.readUint32("cellsWide"); record.e = serializer.readUint32("decksHigh");
 			record.x = serializer.readFloat("topDeckHeight"); break;
 		case ConstructionType::Ladder:
+			record.layer = readLayerOr("layer", layerBehind(0));
 			record.a = serializer.readUint32("y"); record.b = serializer.readUint32("x");
 			record.c = serializer.readUint32("decksHigh"); record.p = serializer.readBool("extensible");
 			record.q = serializer.readBool("startExtended");
 			(void)serializer.readFloat("agentSpacing", true, CORE_LADDER_AGENT_SPACING);
 			record.d = serializer.readUint32("directionalBatchLimit"); break;
 		case ConstructionType::Stairwell:
+			record.layer = readLayerOr("layer", layerBehind(0));
 			record.a = serializer.readUint32("y"); record.b = serializer.readUint32("x");
 			record.c = serializer.readUint32("decksHigh"); record.i = readSide("mountSide");
 			record.d = serializer.readUint32("directionalCapacity");
 			record.e = serializer.readUint32("directionalBatchLimit"); break;
 		case ConstructionType::Staircase:
+			record.layer = readLayerOr("layer", layerBehind(0));
 			record.a = serializer.readUint32("y"); record.b = serializer.readUint32("x");
 			record.c = serializer.readUint32("cellsWide"); record.i = readSide("riseSide");
 			record.x = serializer.readFloat("speed", true, 0.0f); break;
 		case ConstructionType::Lift:
+			record.layer = readLayerOr("layer", layerBehind(0));
 			record.a = serializer.readUint32("y"); record.b = serializer.readUint32("x");
 			record.c = serializer.readUint32("cellsWide"); record.e = serializer.readUint32("decksHigh");
 			readStops(); record.d = serializer.readUint32("capacity");
@@ -373,6 +392,7 @@ namespace core
 			record.y = serializer.readFloat("maximumBoardingSeconds");
 			record.g = serializer.readUint32("initialStop"); break;
 		case ConstructionType::Shuttle:
+			record.layer = readLayerOr("layer", layerBehind(0));
 			record.a = serializer.readUint32("y"); record.b = serializer.readUint32("x");
 			record.c = serializer.readUint32("cellsWide"); record.d = serializer.readUint32("numCars");
 			record.e = serializer.readUint32("carWidth"); readStops();
@@ -382,6 +402,7 @@ namespace core
 			record.y = serializer.readFloat("maximumBoardingSeconds");
 			record.p = serializer.readBool("allowPartialLandings"); break;
 		case ConstructionType::Door:
+			record.layer = readLayerOr("layer", 0u);
 			record.a = serializer.readUint32("y"); record.b = serializer.readUint32("x");
 			record.c = serializer.readUint32("width"); record.p = serializer.readBool("foreControl");
 			record.q = serializer.readBool("backControl"); record.i = readActivation("activationMode");
@@ -661,36 +682,47 @@ namespace core
 
 	void Building::applyConstructionRecord(ConstructionRecord const& record)
 	{
+		// A record written before Transits and Doors carried a Layer replayed against
+		// the front pair, which is the only pair a two-Layer Building could express.
+		auto const transitLayer = [](ConstructionRecord const& r) -> uint32_t
+		{
+			return r.layer == ~0u ? layerBehind(0) : r.layer;
+		};
+		auto const doorLayer = [](ConstructionRecord const& r) -> uint32_t
+		{
+			return r.layer == ~0u ? 0u : r.layer;
+		};
+
 		switch (record.type)
 		{
 		case ConstructionType::Corridor:
-			addCorridor(record.a, record.b, record.c, record.d);
+			addCorridor(record.layer == ~0u ? 0u : record.layer, record.a, record.b, record.c, record.d);
 			break;
 		case ConstructionType::Room:
 			addRoom(record.name, record.a, record.b, record.c, record.d, record.e, record.x);
 			break;
 		case ConstructionType::Ladder:
-			addLadder(record.a, record.b,
+			addLadder(transitLayer(record), record.a, record.b,
 				{ record.c, record.p, record.q, record.d });
 			break;
 		case ConstructionType::Stairwell:
-			addStairwell(record.a, record.b,
+			addStairwell(transitLayer(record), record.a, record.b,
 				{ record.c, record.i, record.d, record.e });
 			break;
 		case ConstructionType::Staircase:
-			addStaircase(record.a, record.b, { record.c, record.i, record.x });
+			addStaircase(transitLayer(record), record.a, record.b, { record.c, record.i, record.x });
 			break;
 		case ConstructionType::Lift:
-			addLift(record.a, record.b,
+			addLift(transitLayer(record), record.a, record.b,
 				{ record.c, record.values, record.d, record.x, record.y, record.g, record.e });
 			break;
 		case ConstructionType::Shuttle:
-			addShuttle(record.a, record.b, record.c,
+			addShuttle(transitLayer(record), record.a, record.b, record.c,
 				{ record.d, record.e, record.values, record.f, record.g, record.x, record.y,
 					record.p, record.h ? record.h : (1u << 1) });
 			break;
 		case ConstructionType::Door:
-			addSectorDoor(record.a, record.b,
+			addSectorDoor(doorLayer(record), record.a, record.b,
 				{ record.c, { record.p, record.q }, static_cast<DoorActivationMode>(record.i), record.x, record.d });
 			break;
 		case ConstructionType::Window:
@@ -1050,6 +1082,17 @@ namespace core
 			case ConstructionType::Window:
 			case ConstructionType::BulkheadDoor:
 				if (record.a > layerIndex) record.a -= 1;
+				break;
+			case ConstructionType::Corridor:
+			case ConstructionType::Ladder:
+			case ConstructionType::Stairwell:
+			case ConstructionType::Staircase:
+			case ConstructionType::Lift:
+			case ConstructionType::Shuttle:
+			case ConstructionType::Door:
+				// These records carry the Layer they are authored on, so a deletion in
+				// front of them has to pull that Layer forward with every other one.
+				if (record.layer != ~0u && record.layer > layerIndex) record.layer -= 1;
 				break;
 			default:
 				if (isSectorReference(record.type) && record.a < sectorMap.size())
@@ -1925,17 +1968,20 @@ namespace core
 			{ plan.diagnostic = "A Staircase must be at least two cells wide"; return plan; }
 		if (x >= mCellsWide || y >= mDecksHigh || options.cellsWide > mCellsWide - x || y + 1 >= mDecksHigh)
 			{ plan.diagnostic = "The Staircase is outside the Building bounds"; return plan; }
+		// The edited Staircase keeps the Layer it already sits on.
+		auto const transitLayer = mSectors[sectorIndex]->getLayerIndex();
+		auto const landingLayer = layerInFront(transitLayer);
 		for (uint32_t iy = y; iy <= y + 1; ++iy)
 			for (uint32_t ix = x; ix < x + options.cellsWide; ++ix)
 			{
-				auto occupant = mLayers[layerBehind(0)]->getCellDefinition(ix, iy).sectorIndex;
+				auto occupant = mLayers[transitLayer]->getCellDefinition(ix, iy).sectorIndex;
 				if (occupant != ~0u && occupant != sectorIndex)
-					{ plan.diagnostic = format("A Back-layer Sector at {},{} blocks the Staircase", ix, iy); return plan; }
+					{ plan.diagnostic = format("A Sector at {},{} blocks the Staircase", ix, iy); return plan; }
 			}
 		uint32_t lowerX = options.riseSide == CORE_SIDE_RIGHT ? x : x + options.cellsWide - 1;
 		uint32_t upperX = options.riseSide == CORE_SIDE_RIGHT ? x + options.cellsWide - 1 : x;
-		if (!validateStaircaseEndpoint(lowerX, y, false, options.riseSide, plan.diagnostic)
-			|| !validateStaircaseEndpoint(upperX, y + 1, true, options.riseSide, plan.diagnostic))
+		if (!validateStaircaseEndpoint(landingLayer, lowerX, y, false, options.riseSide, plan.diagnostic)
+			|| !validateStaircaseEndpoint(landingLayer, upperX, y + 1, true, options.riseSide, plan.diagnostic))
 			return plan;
 		auto old = dynamic_pointer_cast<const StaircaseTransit>(mSectors[sectorIndex]);
 		plan.move = old->getCellX() != x || old->getCellY() != y;

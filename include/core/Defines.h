@@ -34,9 +34,9 @@ namespace core
 		return layer == 0;
 	}
 
-	inline bool isBackMostLayer(uint32_t layer)
+	inline bool isBackMostLayer(uint32_t layer, uint32_t layerCount)
 	{
-		return layer == 1;
+		return layer + 1 == layerCount;
 	}
 
 	inline uint32_t layerInFront(uint32_t layer)
@@ -159,7 +159,8 @@ namespace core
 // Macros
 //
 #define ASSERT_INDEX_OK(index)				assert(index != ~0u && "Index is -1");
-#define ASSERT_LAYER_OK(layer)					assert((layer == 0 || layer == 1) && "Invalid layer")
+#define ASSERT_LAYER_OK(layer)					assert(layer < CORE_MAX_LAYERS && "Invalid layer")
+#define ASSERT_PAIR_SIDE_OK(side)					assert((side) < 2 && "Invalid threshold pair side")
 #define ASSERT_DIM_OK(dim)						assert((dim == CORE_DIM_X || dim == CORE_DIM_Y) && "Invalid dimension")
 #define ASSERT_SIDE_OK(side)					assert((side == CORE_SIDE_LEFT || side == CORE_SIDE_RIGHT) && "Invalid side")
 #define ASSERT_LEVEL_OK(level)					assert((level == CORE_LEVEL_LOW || level == CORE_LEVEL_HIGH) && "Invalid level");

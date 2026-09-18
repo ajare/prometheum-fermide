@@ -475,7 +475,7 @@ void renderDoorVertFromFloor(shared_ptr<const core::Door> door, uint32_t layer, 
 
 		// A Door is authored on the front Layer of its pair, so index 1 is the
 		// Sector on the Layer directly behind.
-		auto backSector = door->getSector(1);
+		auto backSector = door->getBackSector();
 		if (backSector)
 		{
 			renderSector(backSector, core::layerBehind(layer), LayerRenderStyle::Aperture, false,
@@ -597,7 +597,7 @@ void renderWindowClear(shared_ptr<const core::Window> window, uint32_t layer, La
 
 	// A Window is authored on the front Layer of its pair, so index 1 is the
 	// Sector on the Layer directly behind.
-	auto backSector = window->getSector(1);
+	auto backSector = window->getBackSector();
 
 	drawList->AddDrawCmd();
 
@@ -995,7 +995,7 @@ void renderSectorObjects(shared_ptr<const core::Sector> sector, uint32_t layer, 
 			if (flags & RENDER_SECTOR_OBJECTS_BEHIND)
 			{
 				auto door = static_pointer_cast<const core::DoorSectorObject>(object)->getDoor();
-				renderDoor(door, layer, thresholdStyle(door->getSector(0)), selected, drawList);
+				renderDoor(door, layer, thresholdStyle(door->getFrontSector()), selected, drawList);
 			}
 			break;
 
@@ -1048,7 +1048,7 @@ void renderSectorObjects(shared_ptr<const core::Sector> sector, uint32_t layer, 
 			if (flags & RENDER_SECTOR_OBJECTS_BEHIND)
 			{
 				auto window = static_pointer_cast<const core::WindowSectorObject>(object)->getWindow();
-				renderWindow(window, layer, thresholdStyle(window->getSector(0)), selected, drawList);
+				renderWindow(window, layer, thresholdStyle(window->getFrontSector()), selected, drawList);
 			}
 			break;
 

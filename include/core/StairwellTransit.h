@@ -17,7 +17,7 @@ namespace core
 
 	public:
 
-		StairwellTransit(uint32_t index, uint32_t cellX, uint32_t cellY, uint32_t decksHigh, int mountSide, std::vector<TransitStop> const& stops);
+		StairwellTransit(uint32_t index, uint32_t layerIndex, uint32_t cellX, uint32_t cellY, uint32_t decksHigh, int mountSide, std::vector<TransitStop> const& stops);
 
 		~StairwellTransit() = default;
 

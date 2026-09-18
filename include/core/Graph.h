@@ -173,6 +173,13 @@ namespace core
 		std::shared_ptr<SectorObject> resolveSectorObject(std::shared_ptr<Sector> sector, uint32_t index,
 			char const* what, uint32_t x, uint32_t y);
 
+		// The Layers a threshold actually crosses, read from the threshold itself rather
+		// than from whichever Layer happens to hold a reference to it.  A shared
+		// threshold SectorObject is visible from both of its Sectors, so a neighbouring
+		// Layer pair can stumble across it; only the pair it was authored on may pair it.
+		static bool thresholdBelongsToPair(std::shared_ptr<Sector> sector, uint32_t index,
+			SectorObjectType type, uint32_t frontLayer, uint32_t backLayer);
+
 		// Scans one adjacent Layer pair for the thresholds and Transits that join the
 		// front Layer of the pair to the Layer directly behind it.
 		void processLayerPair(uint32_t frontLayer, uint32_t backLayer, LayerRows& rows, CrossDeckVertexMap& crossDeckVertices);

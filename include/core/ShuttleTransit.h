@@ -20,7 +20,7 @@ namespace core
 
 	public:
 
-		ShuttleTransit(uint32_t index, uint32_t cellX, uint32_t cellY, uint32_t cellsWide, uint32_t numCars, uint32_t carWidth, std::vector<TransitStop> const& stops);
+		ShuttleTransit(uint32_t index, uint32_t layerIndex, uint32_t cellX, uint32_t cellY, uint32_t cellsWide, uint32_t numCars, uint32_t carWidth, std::vector<TransitStop> const& stops);
 
 		~ShuttleTransit() = default;
 

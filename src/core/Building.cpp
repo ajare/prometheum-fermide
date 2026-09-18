@@ -516,14 +516,16 @@ namespace core
 		return sectorIndex;
 	}
 
-	uint32_t Building::createLadder(uint32_t x, uint32_t y, CreateLadderOptions const& options)
+	uint32_t Building::createLadder(uint32_t layerIndex, uint32_t x, uint32_t y, CreateLadderOptions const& options)
 	{
 		auto y0 = y;
 		auto y1 = y + options.decksHigh - 1;
 
-		// Get Locations this Ladder connects.
-		auto const& cellDef0 = mLayers[0]->getCellDefinition(x, y0);
-		auto const& cellDef1 = mLayers[0]->getCellDefinition(x, y1);
+		// Get Locations this Ladder connects.  A Transit on layerIndex lands on the
+		// Layer directly in front of it, never on a Layer of its own choosing.
+		auto const& landing = mLayers[layerInFront(layerIndex)];
+		auto const& cellDef0 = landing->getCellDefinition(x, y0);
+		auto const& cellDef1 = landing->getCellDefinition(x, y1);
 		
 		shared_ptr<const Sector> sectors[2] = {
 			getSector(cellDef0.sectorIndex),
@@ -537,23 +539,25 @@ namespace core
 		};
 
 		auto sectorIndex = (uint32_t)mSectors.size();
-		auto ladder = make_shared<LadderTransit>(sectorIndex, x, y, options.decksHigh, stops, options.extensible, options.startExtended);
+		auto ladder = make_shared<LadderTransit>(sectorIndex, layerIndex, x, y, options.decksHigh, stops, options.extensible, options.startExtended);
 
 		mSectors.push_back(ladder);
 		return sectorIndex;
 	}
 
-	uint32_t Building::createStairwell(uint32_t x, uint32_t y, uint32_t decksHigh, int mountSide)
+	uint32_t Building::createStairwell(uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t decksHigh, int mountSide)
 	{
 		ASSERT_SIDE_OK(mountSide);
 
 		// Get Locations this Stairwell connects.  Because a Stairwell is two cells wide, we
-		// just check the first horizontal cell, ie xOffset==0.
+		// just check the first horizontal cell, ie xOffset==0.  Every landing sits on the
+		// Layer directly in front of the Transit.
 		vector<TransitStop> stops;
+		auto const& landing = mLayers[layerInFront(layerIndex)];
 
 		for (uint32_t iy = y; iy < y + decksHigh; ++iy)
 		{
-			auto const& cellDef = mLayers[0]->getCellDefinition(x, iy);
+			auto const& cellDef = landing->getCellDefinition(x, iy);
 			auto sector = getSector(cellDef.sectorIndex);
 
 			stops.push_back({ 
@@ -564,20 +568,21 @@ namespace core
 		}
 
 		auto sectorIndex = (uint32_t)mSectors.size();
-		auto stairwell = make_shared<StairwellTransit>(sectorIndex, x, y, decksHigh, mountSide, stops);
+		auto stairwell = make_shared<StairwellTransit>(sectorIndex, layerIndex, x, y, decksHigh, mountSide, stops);
 
 		mSectors.push_back(stairwell);
 		return sectorIndex;
 	}
 
-	uint32_t Building::createStaircase(uint32_t x, uint32_t y, uint32_t cellsWide,
+	uint32_t Building::createStaircase(uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide,
 		int riseSide, float speed)
 	{
 		ASSERT_SIDE_OK(riseSide);
 		uint32_t const lowerX = riseSide == CORE_SIDE_RIGHT ? x : x + cellsWide - 1;
 		uint32_t const upperX = riseSide == CORE_SIDE_RIGHT ? x + cellsWide - 1 : x;
-		auto const& lowerCell = mLayers[0]->getCellDefinition(lowerX, y);
-		auto const& upperCell = mLayers[0]->getCellDefinition(upperX, y + 1);
+		auto const& landing = mLayers[layerInFront(layerIndex)];
+		auto const& lowerCell = landing->getCellDefinition(lowerX, y);
+		auto const& upperCell = landing->getCellDefinition(upperX, y + 1);
 		auto lower = getSector(lowerCell.sectorIndex);
 		auto upper = getSector(upperCell.sectorIndex);
 		vector<TransitStop> stops{
@@ -585,22 +590,23 @@ namespace core
 			{ upper, (int)upperX - (int)upper->getCellX(), (int)(y + 1) - (int)upper->getCellY() }
 		};
 		auto sectorIndex = (uint32_t)mSectors.size();
-		mSectors.push_back(make_shared<StaircaseTransit>(sectorIndex, x, y, cellsWide,
+		mSectors.push_back(make_shared<StaircaseTransit>(sectorIndex, layerIndex, x, y, cellsWide,
 			riseSide, speed, stops));
 		return sectorIndex;
 	}
 
-	Building::CreateObjectResult Building::createLift(uint32_t x, uint32_t y, uint32_t cellsWide,
+	Building::CreateObjectResult Building::createLift(uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide,
 		uint32_t decksHigh, vector<uint32_t> const& stopOffsets)
 	{
-		// Get Locations this Lift connects.
+		// Get Locations this Lift connects, all on the Layer directly in front.
 		vector<TransitStop> stops;
+		auto const& landing = mLayers[layerInFront(layerIndex)];
 
 		for (auto stopOffset : stopOffsets)
 		{
 			uint32_t iy = y + stopOffset;
 
-			auto const& cellDef = mLayers[0]->getCellDefinition(x, iy);
+			auto const& cellDef = landing->getCellDefinition(x, iy);
 			auto sector = getSector(cellDef.sectorIndex);
 
 			stops.push_back({
@@ -611,7 +617,7 @@ namespace core
 		}
 
 		auto sectorIndex = (uint32_t)mSectors.size();
-		auto lift = make_shared<LiftTransit>(sectorIndex, x, y, cellsWide, decksHigh, stops);
+		auto lift = make_shared<LiftTransit>(sectorIndex, layerIndex, x, y, cellsWide, decksHigh, stops);
 
 		mSectors.push_back(lift);
 		
@@ -622,10 +628,11 @@ namespace core
 		};
 	}
 
-	Building::CreateObjectResult Building::createShuttle(uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t numCars, uint32_t carWidth, vector<uint32_t> const& stopOffsets)
+	Building::CreateObjectResult Building::createShuttle(uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t numCars, uint32_t carWidth, vector<uint32_t> const& stopOffsets)
 	{
-		// Get Locations this Shuttle connects.
+		// Get Locations this Shuttle connects, all on the Layer directly in front.
 		vector<TransitStop> stops;
+		auto const& landing = mLayers[layerInFront(layerIndex)];
 
 		for (auto stopOffset : stopOffsets)
 		{
@@ -634,10 +641,10 @@ namespace core
 			for (uint32_t car = 0; car < numCars && !sector; ++car)
 			{
 				uint32_t cx = ix + car * (carWidth + 1) + 1;
-				auto const& cellDef = mLayers[0]->getCellDefinition(cx, y);
+				auto const& cellDef = landing->getCellDefinition(cx, y);
 				bool supported = cellDef.sectorIndex != ~0u;
 				if (supported && carWidth == 4)
-					supported = mLayers[0]->getCellDefinition(cx + 1, y).sectorIndex
+					supported = landing->getCellDefinition(cx + 1, y).sectorIndex
 						== cellDef.sectorIndex;
 				if (supported) sector = getSector(cellDef.sectorIndex);
 			}
@@ -653,7 +660,7 @@ namespace core
 
 		// Need to account for proper track dimensions, width is not necessarily
 		// the last stop offset
-		auto shuttle = make_shared<ShuttleTransit>(sectorIndex, x, y, cellsWide, numCars, carWidth, stops);
+		auto shuttle = make_shared<ShuttleTransit>(sectorIndex, layerIndex, x, y, cellsWide, numCars, carWidth, stops);
 
 		mSectors.push_back(shuttle);
 		
@@ -691,18 +698,22 @@ namespace core
 		return sectorIndex;
 	}
 
-	Building::CreateObjectResult Building::createDoor(uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t* vertexIdentifier)
+	Building::CreateObjectResult Building::createDoor(uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t* vertexIdentifier)
 	{	
-		string caller = format("Building::createDoor({}, {}, {})", x, y, cellsWide);
+		string caller = format("Building::createDoor({}, {}, {}, {})", layerIndex, x, y, cellsWide);
 
-		validateCellOccupied(caller, 0, x, y);
-		validateCellOccupied(caller, layerBehind(0), x, y);
-		validateCellHasNoDoor(caller, 0, x, y);
-		validateCellHasNoDoor(caller, layerBehind(0), x, y);
+		// A Door is authored on the front Layer of its pair and opens into the Layer
+		// directly behind it.
+		auto const backLayer = layerBehind(layerIndex);
+
+		validateCellOccupied(caller, layerIndex, x, y);
+		validateCellOccupied(caller, backLayer, x, y);
+		validateCellHasNoDoor(caller, layerIndex, x, y);
+		validateCellHasNoDoor(caller, backLayer, x, y);
 
 		// Find Sectors that the Door is connecting.
-		auto foreSector = _getSector(mLayers[0]->getCellDefinition(x, y).sectorIndex);
-		auto backSector = _getSector(mLayers[layerBehind(0)]->getCellDefinition(x, y).sectorIndex);
+		auto foreSector = _getSector(mLayers[layerIndex]->getCellDefinition(x, y).sectorIndex);
+		auto backSector = _getSector(mLayers[backLayer]->getCellDefinition(x, y).sectorIndex);
 
 		assert(foreSector->getType() == SectorType::Location);
 
@@ -721,28 +732,24 @@ namespace core
 	{
 		string caller = format("Building::createWindow({}, {}, {}, {}, {})", layerIndex, x, y, cellsWide, decksHigh);
 
-		validateCellOccupied(caller, layerBehind(0), x, y);
+		// A Window is authored on the front Layer of the pair it crosses.  The Layer
+		// behind only exists to be joined when the Building has one.
+		bool const hasBack = layerIndex + 1 < getLayerCount();
+
+		validateCellOccupied(caller, layerIndex, x, y);
+		if (hasBack)
+			validateCellOccupied(caller, layerBehind(layerIndex), x, y);
 
 		// Find sectors that the Window is connecting, if any.
 		shared_ptr<Sector> foreSector{ nullptr };
 		shared_ptr<Sector> backSector{ nullptr };
 
-		if (isFrontMostLayer(layerIndex))
+		foreSector = _getSector(mLayers[layerIndex]->getCellDefinition(x, y).sectorIndex);
+		if (hasBack)
 		{
-			validateCellOccupied(caller, 0, x, y);
+			auto const& cellDef1 = mLayers[layerBehind(layerIndex)]->getCellDefinition(x, y);
 
-			auto const& cellDef0 = mLayers[0]->getCellDefinition(x, y);
-			auto const& cellDef1 = mLayers[layerBehind(0)]->getCellDefinition(x, y);
-
-			foreSector = _getSector(cellDef0.sectorIndex);
 			backSector = cellDef1.sectorIndex != ~0u ? _getSector(cellDef1.sectorIndex) : nullptr;
-		}
-		else
-		{
-			auto const& cellDef1 = mLayers[layerBehind(0)]->getCellDefinition(x, y);
-		
-			foreSector = _getSector(cellDef1.sectorIndex);
-			backSector = nullptr;
 		}
 
 		// Create window in fore Location and add to back
@@ -1261,9 +1268,18 @@ namespace core
 
 	uint32_t Building::addCorridor(uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t decksHigh)
 	{
+		return addCorridor(0, y, x, cellsWide, decksHigh);
+	}
+
+	uint32_t Building::addCorridor(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide,
+		uint32_t decksHigh)
+	{
 		beginStructuralEdit("addCorridor");
-		auto const result = addLocation("Corridor", SectorType::Location, 0, x, y, cellsWide, decksHigh, CORE_CORRIDOR_HEIGHT, true);
+		validateLayer(format("Building::addCorridor({}, {}, {}, {}, {})", layerIndex, y, x, cellsWide, decksHigh),
+			layerIndex);
+		auto const result = addLocation("Corridor", SectorType::Location, layerIndex, x, y, cellsWide, decksHigh, CORE_CORRIDOR_HEIGHT, true);
 		ConstructionRecord record{ ConstructionType::Corridor };
+		record.layer = layerIndex;
 		record.a = y; record.b = x; record.c = cellsWide; record.d = decksHigh;
 		recordConstruction(std::move(record));
 		return result;
@@ -1288,7 +1304,7 @@ namespace core
 		return result;
 	}
 
-	bool Building::canAddLadder(uint32_t y, uint32_t x, uint32_t decksHigh,
+	bool Building::canAddLadder(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t decksHigh,
 		string* diagnostic) const
 	{
 		auto reject = [&](string message)
@@ -1297,43 +1313,54 @@ namespace core
 			return false;
 		};
 		if (diagnostic) diagnostic->clear();
+		if (layerIndex == 0 || layerIndex >= getLayerCount())
+			return reject("A Ladder must sit on a Layer that has a Layer in front of it to land on");
 		if (decksHigh < 2) return reject("A Ladder must span at least two decks");
 		if (x >= mCellsWide || y >= mDecksHigh || y + decksHigh > mDecksHigh)
 			return reject("The Ladder is outside the Building bounds");
+		auto const& transitLayer = mLayers[layerIndex];
+		auto const& landing = mLayers[layerInFront(layerIndex)];
 		for (uint32_t iy = y; iy < y + decksHigh; ++iy)
-			if (mLayers[layerBehind(0)]->getCellDefinition(x, iy).occupied())
-				return reject(format("A Back-layer Sector at {},{} blocks the Ladder", x, iy));
+			if (transitLayer->getCellDefinition(x, iy).occupied())
+				return reject(format("A Sector at {},{} blocks the Ladder", x, iy));
 
 		auto upperY = y + decksHigh - 1;
-		auto const& lower = mLayers[0]->getCellDefinition(x, y);
-		auto const& upper = mLayers[0]->getCellDefinition(x, upperY);
+		auto const& lower = landing->getCellDefinition(x, y);
+		auto const& upper = landing->getCellDefinition(x, upperY);
 		if (lower.sectorIndex == ~0u)
-			return reject(format("A Fore-layer Location is required at {},{}", x, y));
+			return reject(format("A landing Location is required at {},{}", x, y));
 		if (upper.sectorIndex == ~0u)
-			return reject(format("A Fore-layer Location is required at {},{}", x, upperY));
+			return reject(format("A landing Location is required at {},{}", x, upperY));
 		if (lower.sectorIndex == upper.sectorIndex)
-			return reject("A Ladder must connect two different Fore-layer Locations");
+			return reject("A Ladder must connect two different landing Locations");
 		auto lowerSector = mSectors[lower.sectorIndex];
 		auto upperSector = mSectors[upper.sectorIndex];
 		if (!lowerSector || lowerSector->getType() != SectorType::Location)
-			return reject(format("A Fore-layer Location is required at {},{}", x, y));
+			return reject(format("A landing Location is required at {},{}", x, y));
 		if (!upperSector || upperSector->getType() != SectorType::Location)
-			return reject(format("A Fore-layer Location is required at {},{}", x, upperY));
+			return reject(format("A landing Location is required at {},{}", x, upperY));
 		if (!lower.isTraversableOnFoot())
-			return reject(format("The Fore-layer floor at {},{} is not traversable", x, y));
+			return reject(format("The landing floor at {},{} is not traversable", x, y));
 		if (!upper.isTraversableOnFoot())
-			return reject(format("The Fore-layer floor at {},{} is not traversable", x, upperY));
+			return reject(format("The landing floor at {},{} is not traversable", x, upperY));
 		return true;
 	}
 
-	Building::CreateLadderResult Building::addLadder(uint32_t y, uint32_t x, CreateLadderOptions const& options)
+	Building::CreateLadderResult Building::addLadder(uint32_t layerIndex, uint32_t y, uint32_t x, CreateLadderOptions const& options)
 	{
 		beginStructuralEdit("addLadder");
-		auto foreLayer = getLayer(0);
-		auto backLayer = getLayer(layerBehind(0));
+		// A Ladder Transit sits on layerIndex and lands on the Layer directly in front.
+		auto const landingLayer = layerInFront(layerIndex);
+		auto transitLayer = getLayer(layerIndex);
 
 		// Checks
-		string caller = format("Building::addLadder({}, {}, {}, {})", y, x, options.decksHigh, options.startExtended);
+		string caller = format("Building::addLadder({}, {}, {}, {}, {})", layerIndex, y, x, options.decksHigh, options.startExtended);
+
+		validateLayer(caller, layerIndex);
+		if (isFrontMostLayer(layerIndex))
+		{
+			throw BuildingException(this, format("{} - a Ladder cannot be placed on the front-most Layer, because it has no Layer in front to land on", caller));
+		}
 
 		if (options.decksHigh < 2)
 		{
@@ -1341,28 +1368,28 @@ namespace core
 		}
 
 		validateBounds(caller, x, y, 1, options.decksHigh);
-		validateLayerSpace(caller, layerBehind(0), x, y, 1, options.decksHigh);
+		validateLayerSpace(caller, layerIndex, x, y, 1, options.decksHigh);
 
 		auto y0 = y;
 		auto y1 = y + options.decksHigh - 1;
 
-		// Make sure the foreground cells have a Sector
-		auto const& cellDef0 = foreLayer->getCellDefinition(x, y0);
-		auto const& cellDef1 = foreLayer->getCellDefinition(x, y1);
+		// Make sure the landing cells have a Sector
+		auto const& cellDef0 = mLayers[landingLayer]->getCellDefinition(x, y0);
+		auto const& cellDef1 = mLayers[landingLayer]->getCellDefinition(x, y1);
 		auto foreSectorIndex0 = cellDef0.sectorIndex;
 		auto foreSectorIndex1 = cellDef1.sectorIndex;
 
 		if (foreSectorIndex0 == ~0u)
 		{
-			throw BuildingException(this, format("{} - foreground cell at {},{} is not occupied, which blocks ladder being placed", caller, x, y0));
+			throw BuildingException(this, format("{} - landing cell at {},{} is not occupied, which blocks ladder being placed", caller, x, y0));
 		}
 		if (foreSectorIndex1 == ~0u)
 		{
-			throw BuildingException(this, format("{} - foreground cell at {},{} is not occupied, which blocks ladder being placed", caller, x, y1));
+			throw BuildingException(this, format("{} - landing cell at {},{} is not occupied, which blocks ladder being placed", caller, x, y1));
 		}
 		if (foreSectorIndex0 == foreSectorIndex1)
 		{
-			throw BuildingException(this, format("{} - foreground cells from {},{} to {},{} are the same sector, which blocks ladder being placed", caller, x, y0, x, y1));
+			throw BuildingException(this, format("{} - landing cells from {},{} to {},{} are the same sector, which blocks ladder being placed", caller, x, y0, x, y1));
 		}
 
 		// Ladders can only connect Locations
@@ -1371,26 +1398,26 @@ namespace core
 
 		if (foreSector0->getType() != SectorType::Location)
 		{
-			throw BuildingException(this, format("{} - foreground cell at {},{} is not a Location, which blocks ladder being placed", caller, x, y0));
+			throw BuildingException(this, format("{} - landing cell at {},{} is not a Location, which blocks ladder being placed", caller, x, y0));
 		}
 		if (foreSector1->getType() != SectorType::Location)
 		{
-			throw BuildingException(this, format("{} - foreground cell at {},{} is not a Location, which blocks ladder being placed", caller, x, y1));
+			throw BuildingException(this, format("{} - landing cell at {},{} is not a Location, which blocks ladder being placed", caller, x, y1));
 		}
 
 		// Ladders ends must not be in the air
-		validateCellTraversableOnFoot(caller, "Ladder", 0, x, y0);
-		validateCellTraversableOnFoot(caller, "Ladder", 0, x, y1);
+		validateCellTraversableOnFoot(caller, "Ladder", landingLayer, x, y0);
+		validateCellTraversableOnFoot(caller, "Ladder", landingLayer, x, y1);
 
 		validateSectorLadderOptions(caller, options);
 
 		// Create ladder
-		auto sectorIndex = createLadder(x, y, options);
+		auto sectorIndex = createLadder(layerIndex, x, y, options);
 
 		// Set layers
 		for (uint32_t iy = y; iy < y + options.decksHigh; ++iy)
 		{
-			auto& cellDef = backLayer->getCellDefinition(x, iy);
+			auto& cellDef = transitLayer->getCellDefinition(x, iy);
 
 			cellDef.sectorIndex = sectorIndex;
 		}
@@ -1441,13 +1468,14 @@ namespace core
 			traversalResource
 		};
 		ConstructionRecord record{ ConstructionType::Ladder };
+		record.layer = layerIndex;
 		record.a = y; record.b = x; record.c = options.decksHigh; record.d = options.directionalBatchLimit;
 		record.p = options.extensible; record.q = options.startExtended;
 		recordConstruction(std::move(record));
 		return result;
 	}
 
-	bool Building::canAddStairwell(uint32_t y, uint32_t x, uint32_t decksHigh,
+	bool Building::canAddStairwell(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t decksHigh,
 		string* diagnostic) const
 	{
 		auto reject = [&](string message)
@@ -1456,40 +1484,44 @@ namespace core
 			return false;
 		};
 		if (diagnostic) diagnostic->clear();
+		if (layerIndex == 0 || layerIndex >= getLayerCount())
+			return reject("A Stairwell must sit on a Layer that has a Layer in front of it to land on");
 		if (decksHigh < 2) return reject("A Stairwell must span at least two decks");
 		if (x >= mCellsWide || y >= mDecksHigh || x + 2 > mCellsWide
 			|| y + decksHigh > mDecksHigh)
 			return reject("The Stairwell is outside the Building bounds");
+		auto const& transitLayer = mLayers[layerIndex];
+		auto const& landing = mLayers[layerInFront(layerIndex)];
 		for (uint32_t iy = y; iy < y + decksHigh; ++iy)
 		{
-			auto const& first = mLayers[0]->getCellDefinition(x, iy);
+			auto const& first = landing->getCellDefinition(x, iy);
 			if (first.sectorIndex == ~0u)
-				return reject(format("A Fore-layer Location is required at {},{}", x, iy));
+				return reject(format("A landing Location is required at {},{}", x, iy));
 			auto sector = mSectors[first.sectorIndex];
 			if (!sector || sector->getType() != SectorType::Location)
-				return reject(format("A Fore-layer Location is required at {},{}", x, iy));
+				return reject(format("A landing Location is required at {},{}", x, iy));
 			for (uint32_t ix = x; ix < x + 2; ++ix)
 			{
-				auto const& fore = mLayers[0]->getCellDefinition(ix, iy);
+				auto const& fore = landing->getCellDefinition(ix, iy);
 				if (fore.sectorIndex != first.sectorIndex)
-					return reject(format("The Stairwell spans different Fore-layer Locations at deck {}", iy));
+					return reject(format("The Stairwell spans different landing Locations at deck {}", iy));
 				if (!fore.isTraversableOnFoot())
-					return reject(format("The Fore-layer floor at {},{} is not traversable", ix, iy));
-				auto const occupant = mLayers[layerBehind(0)]->getCellDefinition(ix, iy).sectorIndex;
+					return reject(format("The landing floor at {},{} is not traversable", ix, iy));
+				auto const occupant = transitLayer->getCellDefinition(ix, iy).sectorIndex;
 				if (occupant != ~0u)
-					return reject(format("A Back-layer Sector at {},{} blocks the Stairwell", ix, iy));
+					return reject(format("A Sector at {},{} blocks the Stairwell", ix, iy));
 			}
 		}
 		return true;
 	}
 
-	uint32_t Building::addStairwell(uint32_t y, uint32_t x, uint32_t decksHigh, int mountSide)
+	uint32_t Building::addStairwell(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t decksHigh, int mountSide)
 	{
 		beginStructuralEdit("addStairwell");
-		return addStairwell(y, x, CreateStairwellOptions{ decksHigh, mountSide }).sectorIndex;
+		return addStairwell(layerIndex, y, x, CreateStairwellOptions{ decksHigh, mountSide }).sectorIndex;
 	}
 
-	Building::CreateStairwellResult Building::addStairwell(uint32_t y, uint32_t x,
+	Building::CreateStairwellResult Building::addStairwell(uint32_t layerIndex, uint32_t y, uint32_t x,
 		CreateStairwellOptions const& options)
 	{
 		beginStructuralEdit("addStairwell");
@@ -1497,12 +1529,19 @@ namespace core
 		auto mountSide = options.mountSide;
 		ASSERT_SIDE_OK(mountSide);
 
-		auto foreLayer = getLayer(0);
-		auto backLayer = getLayer(layerBehind(0));
+		// A Stairwell Transit sits on layerIndex and lands on the Layer directly in front.
+		auto const landingLayer = layerInFront(layerIndex);
+		auto transitLayer = getLayer(layerIndex);
 		const uint32_t cellsWide = 2;
 
 		// Checks
-		string caller = format("Building::addStairwell({}, {}, {}, {})", y, x, decksHigh, mountSide);
+		string caller = format("Building::addStairwell({}, {}, {}, {}, {})", layerIndex, y, x, decksHigh, mountSide);
+
+		validateLayer(caller, layerIndex);
+		if (isFrontMostLayer(layerIndex))
+		{
+			throw BuildingException(this, format("{} - a Stairwell cannot be placed on the front-most Layer, because it has no Layer in front to land on", caller));
+		}
 
 		if (decksHigh < 2)
 		{
@@ -1510,29 +1549,29 @@ namespace core
 		}
 
 		validateBounds(caller, x, y, cellsWide, decksHigh);
-		validateLayerSpace(caller, layerBehind(0), x, y, cellsWide, decksHigh);
+		validateLayerSpace(caller, layerIndex, x, y, cellsWide, decksHigh);
 
 		for (uint32_t iy = y; iy < y + decksHigh; ++iy)
 		{
-			auto const& cellDef0 = foreLayer->getCellDefinition(x, iy);
+			auto const& cellDef0 = mLayers[landingLayer]->getCellDefinition(x, iy);
 			auto deckSectorIndex = cellDef0.sectorIndex;
 
 			for (uint32_t ix = x; ix < x + cellsWide; ++ix)
 			{
-				auto const& cellDef = foreLayer->getCellDefinition(ix, iy);
+				auto const& cellDef = mLayers[landingLayer]->getCellDefinition(ix, iy);
 				auto foreSectorIndex = cellDef.sectorIndex;
 
-				// Make sure the foreground cells have a Sector, and that the horizontal Sectors are not different:
+				// Make sure the landing cells have a Sector, and that the horizontal Sectors are not different:
 				// Stairwells cannot span different Sectors horizontally, due to placement of the door leading to them.
 				if (foreSectorIndex != deckSectorIndex)
 				{
-					throw BuildingException(this, format("{} - the stairwell horizontally spans different foreground Sectors between {},{} and {},{}, which is not allowed", caller, x, iy, x + 1, iy));
+					throw BuildingException(this, format("{} - the stairwell horizontally spans different landing Sectors between {},{} and {},{}, which is not allowed", caller, x, iy, x + 1, iy));
 				}
 
-				// Fore Sector can't be empty
+				// Landing Sector can't be empty
 				if (foreSectorIndex == ~0u)
 				{
-					throw BuildingException(this, format("{} - foreground cell at {},{} is not occupied, which blocks stairwell being placed", caller, ix, iy));
+					throw BuildingException(this, format("{} - landing cell at {},{} is not occupied, which blocks stairwell being placed", caller, ix, iy));
 				}
 
 				// Stairwells can only connect Locations
@@ -1540,11 +1579,11 @@ namespace core
 
 				if (foreSector->getType() != SectorType::Location)
 				{
-					throw BuildingException(this, format("{} - foreground cell at {},{} is not a Location, which blocks stairwell being placed", caller, ix, iy));
+					throw BuildingException(this, format("{} - landing cell at {},{} is not a Location, which blocks stairwell being placed", caller, ix, iy));
 				}
 
 				// Stairwells must not be in the air
-				validateCellTraversableOnFoot(caller, "Stairwell", 0, ix, iy);
+				validateCellTraversableOnFoot(caller, "Stairwell", landingLayer, ix, iy);
 			}
 		}
 
@@ -1554,14 +1593,14 @@ namespace core
 		}
 
 		// Create stairwell
-		auto sectorIndex = createStairwell(x, y, decksHigh, mountSide);
+		auto sectorIndex = createStairwell(layerIndex, x, y, decksHigh, mountSide);
 
 		// Set layers
 		for (uint32_t iy = y; iy < y + decksHigh; ++iy)
 		{
 			for (uint32_t ix = x; ix < x + cellsWide; ++ix)
 			{
-				auto& cellDef = backLayer->getCellDefinition(ix, iy);
+				auto& cellDef = transitLayer->getCellDefinition(ix, iy);
 
 				cellDef.sectorIndex = sectorIndex;
 			}
@@ -1579,25 +1618,26 @@ namespace core
 		}
 
 		ConstructionRecord record{ ConstructionType::Stairwell };
+		record.layer = layerIndex;
 		record.a = y; record.b = x; record.c = options.decksHigh;
 		record.i = options.mountSide; record.d = options.directionalCapacity; record.e = options.directionalBatchLimit;
 		recordConstruction(std::move(record));
 		return { sectorIndex, traversalResource };
 	}
 
-	bool Building::validateStaircaseEndpoint(uint32_t x, uint32_t y, bool upperEndpoint,
+	bool Building::validateStaircaseEndpoint(uint32_t layerIndex, uint32_t x, uint32_t y, bool upperEndpoint,
 		int /*riseSide*/, string& diagnostic) const
 	{
-		auto const& cell = mLayers[0]->getCellDefinition(x, y);
+		auto const& cell = mLayers[layerIndex]->getCellDefinition(x, y);
 		if (!cell.occupied())
 		{
-			diagnostic = format("A Fore-layer Location is required at {},{}", x, y);
+			diagnostic = format("A landing Location is required at {},{}", x, y);
 			return false;
 		}
 		auto location = dynamic_pointer_cast<const Location>(mSectors[cell.sectorIndex]);
 		if (!location)
 		{
-			diagnostic = format("A Fore-layer Location is required at {},{}", x, y);
+			diagnostic = format("A landing Location is required at {},{}", x, y);
 			return false;
 		}
 		// Lower landings and Corridor landings require ordinary walkable floor.
@@ -1606,7 +1646,7 @@ namespace core
 		if (!upperEndpoint || location->isCorridor())
 		{
 			if (cell.isTraversableOnFoot()) return true;
-			diagnostic = format("Traversable Fore-layer floor is required at {},{}", x, y);
+			diagnostic = format("Traversable landing floor is required at {},{}", x, y);
 			return false;
 		}
 
@@ -1619,7 +1659,7 @@ namespace core
 				return false;
 			int const adjacentX = wallSide == CORE_SIDE_LEFT ? (int)x - 1 : (int)x + 1;
 			if (adjacentX < 0 || adjacentX >= (int)mCellsWide) return false;
-			auto const& adjacent = mLayers[0]
+			auto const& adjacent = mLayers[layerIndex]
 				->getCellDefinition((uint32_t)adjacentX, y);
 			if (!adjacent.occupied() || !adjacent.isTraversableOnFoot()) return false;
 			auto adjacentLocation = dynamic_pointer_cast<const Location>(mSectors[adjacent.sectorIndex]);
@@ -1633,11 +1673,13 @@ namespace core
 		return false;
 	}
 
-	bool Building::canAddStaircase(uint32_t y, uint32_t x, uint32_t cellsWide,
+	bool Building::canAddStaircase(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide,
 		int riseSide, string* diagnostic) const
 	{
 		auto reject = [&](string message) { if (diagnostic) *diagnostic = std::move(message); return false; };
 		if (diagnostic) diagnostic->clear();
+		if (layerIndex == 0 || layerIndex >= getLayerCount())
+			return reject("A Staircase must sit on a Layer that has a Layer in front of it to land on");
 		if (riseSide != CORE_SIDE_LEFT && riseSide != CORE_SIDE_RIGHT)
 			return reject("The Staircase rise direction is invalid");
 		if (cellsWide < 2) return reject("A Staircase must be at least two cells wide");
@@ -1645,45 +1687,47 @@ namespace core
 			return reject("The Staircase is outside the Building bounds");
 		for (uint32_t iy = y; iy <= y + 1; ++iy)
 			for (uint32_t ix = x; ix < x + cellsWide; ++ix)
-				if (mLayers[layerBehind(0)]->getCellDefinition(ix, iy).occupied())
-					return reject(format("A Back-layer Sector at {},{} blocks the Staircase", ix, iy));
+				if (mLayers[layerIndex]->getCellDefinition(ix, iy).occupied())
+					return reject(format("A Sector at {},{} blocks the Staircase", ix, iy));
 
+		auto const landingLayer = layerInFront(layerIndex);
 		uint32_t const lowerX = riseSide == CORE_SIDE_RIGHT ? x : x + cellsWide - 1;
 		uint32_t const upperX = riseSide == CORE_SIDE_RIGHT ? x + cellsWide - 1 : x;
 		string endpointDiagnostic;
-		if (!validateStaircaseEndpoint(lowerX, y, false, riseSide, endpointDiagnostic)
-			|| !validateStaircaseEndpoint(upperX, y + 1, true, riseSide, endpointDiagnostic))
+		if (!validateStaircaseEndpoint(landingLayer, lowerX, y, false, riseSide, endpointDiagnostic)
+			|| !validateStaircaseEndpoint(landingLayer, upperX, y + 1, true, riseSide, endpointDiagnostic))
 			return reject(std::move(endpointDiagnostic));
 		return true;
 	}
 
-	uint32_t Building::addStaircase(uint32_t y, uint32_t x, uint32_t cellsWide,
+	uint32_t Building::addStaircase(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide,
 		int riseSide, float speed)
 	{
-		return addStaircase(y, x, CreateStaircaseOptions{ cellsWide, riseSide, speed });
+		return addStaircase(layerIndex, y, x, CreateStaircaseOptions{ cellsWide, riseSide, speed });
 	}
 
-	uint32_t Building::addStaircase(uint32_t y, uint32_t x, CreateStaircaseOptions const& options)
+	uint32_t Building::addStaircase(uint32_t layerIndex, uint32_t y, uint32_t x, CreateStaircaseOptions const& options)
 	{
 		beginStructuralEdit("addStaircase");
 		string diagnostic;
 		if (!isfinite(options.speed))
 			throw BuildingException(this, "A Staircase speed must be finite");
-		if (!canAddStaircase(y, x, options.cellsWide, options.riseSide, &diagnostic))
-			throw BuildingException(this, format("Building::addStaircase({}, {}) - {}", y, x, diagnostic));
-		auto sectorIndex = createStaircase(x, y, options.cellsWide, options.riseSide, options.speed);
-		auto back = getLayer(layerBehind(0));
+		if (!canAddStaircase(layerIndex, y, x, options.cellsWide, options.riseSide, &diagnostic))
+			throw BuildingException(this, format("Building::addStaircase({}, {}, {}, {}) - {}", layerIndex, y, x, options.cellsWide, diagnostic));
+		auto sectorIndex = createStaircase(layerIndex, x, y, options.cellsWide, options.riseSide, options.speed);
+		auto transitLayer = getLayer(layerIndex);
 		for (uint32_t iy = y; iy <= y + 1; ++iy)
 			for (uint32_t ix = x; ix < x + options.cellsWide; ++ix)
-				back->getCellDefinition(ix, iy).sectorIndex = sectorIndex;
+				transitLayer->getCellDefinition(ix, iy).sectorIndex = sectorIndex;
 		ConstructionRecord record{ ConstructionType::Staircase };
+		record.layer = layerIndex;
 		record.a = y; record.b = x; record.c = options.cellsWide; record.i = options.riseSide;
 		record.x = options.speed;
 		recordConstruction(std::move(record));
 		return sectorIndex;
 	}
 
-	Building::CreateLiftResult Building::addLift(uint32_t y, uint32_t x, uint32_t cellsWide,
+	Building::CreateLiftResult Building::addLift(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide,
 		uint32_t decksHigh)
 	{
 		CreateLiftOptions options;
@@ -1691,12 +1735,13 @@ namespace core
 		options.decksHigh = decksHigh;
 		if (cellsWide == 0 || cellsWide > 2 || decksHigh == 0)
 			throw BuildingException(this, "Editor lifts must be one or two cells wide and at least one deck high");
+		auto const& landing = mLayers[layerInFront(layerIndex)];
 		if (x < mCellsWide && y < mDecksHigh && cellsWide <= mCellsWide - x
 			&& decksHigh <= mDecksHigh - y)
 		{
 			for (uint32_t iy = y; iy < y + decksHigh; ++iy)
 			{
-				auto const& firstCell = mLayers[0]->getCellDefinition(x, iy);
+				auto const& firstCell = landing->getCellDefinition(x, iy);
 				if (firstCell.sectorIndex == ~0u) continue;
 				auto location = dynamic_pointer_cast<const Location>(mSectors[firstCell.sectorIndex]);
 				if (!location) continue;
@@ -1704,7 +1749,7 @@ namespace core
 				bool obstructed = false;
 				for (uint32_t ix = x; ix < x + cellsWide; ++ix)
 				{
-					auto const& cell = mLayers[0]->getCellDefinition(ix, iy);
+					auto const& cell = landing->getCellDefinition(ix, iy);
 					complete = complete && cell.sectorIndex == firstCell.sectorIndex
 						&& cell.isTraversableOnFoot();
 					obstructed = obstructed || cell.hasObject() || !cell.markers.empty();
@@ -1714,17 +1759,22 @@ namespace core
 				if (complete) options.stopOffsets.push_back(iy - y);
 			}
 		}
-		return addLift(y, x, options);
+		return addLift(layerIndex, y, x, options);
 	}
 
-	Building::CreateLiftResult Building::addLift(uint32_t y, uint32_t x, CreateLiftOptions const& options)
+	Building::CreateLiftResult Building::addLift(uint32_t layerIndex, uint32_t y, uint32_t x, CreateLiftOptions const& options)
 	{
 		beginStructuralEdit("addLift");
-		auto foreLayer = getLayer(0);
-		auto backLayer = getLayer(layerBehind(0));
+		// The Lift Transit occupies layerIndex; its landings are the fore Layer of the
+		// pair it forms, which is the Layer directly in front.
+		validateLayer(format("Building::addLift({}, ...)", layerIndex), layerIndex);
+		if (isFrontMostLayer(layerIndex))
+			throw BuildingException(this, "A Lift cannot be placed on the front-most Layer, because it has no Layer in front to land on");
+		auto foreLayer = getLayer(layerInFront(layerIndex));
+		auto backLayer = getLayer(layerIndex);
 
 		// Checks
-		string caller = format("Building::addLift({}, {}, {}, <stopOffsts>)", y, x, options.cellsWide);
+		string caller = format("Building::addLift({}, {}, {}, {}, <stopOffsts>)", layerIndex, y, x, options.cellsWide);
 
 		validateLiftOptions(caller, options);
 		if (options.cellsWide > 2)
@@ -1735,7 +1785,7 @@ namespace core
 			throw BuildingException(this, format("{} - Lift stop is outside the shaft bounds.", caller));
 
 		validateBounds(caller, x, y, options.cellsWide, decksHigh);
-		validateLayerSpace(caller, layerBehind(0), x, y, options.cellsWide, decksHigh);
+		validateLayerSpace(caller, layerIndex, x, y, options.cellsWide, decksHigh);
 
 		for (auto stopOffset : options.stopOffsets)
 		{
@@ -1772,7 +1822,7 @@ namespace core
 				}
 
 				// Lifts must not be in the air and every intersecting landing must be clear.
-				validateCellTraversableOnFoot(caller, "Lift", 0, ix, iy);
+				validateCellTraversableOnFoot(caller, "Lift", layerInFront(layerIndex), ix, iy);
 				if (cellDef.hasObject() || !cellDef.markers.empty())
 					throw BuildingException(this, format("{} - an object blocks the Lift landing at {},{}", caller, ix, iy));
 			}
@@ -1782,7 +1832,7 @@ namespace core
 		}
 
 		// Create lift
-		auto liftObject = createLift(x, y, options.cellsWide, decksHigh, options.stopOffsets);
+		auto liftObject = createLift(layerIndex, x, y, options.cellsWide, decksHigh, options.stopOffsets);
 
 		auto liftTransit = dynamic_pointer_cast<LiftTransit>(liftObject.sector);
 		auto lift = liftTransit->getLift();
@@ -1806,7 +1856,7 @@ namespace core
 		// scheduling, door interlocks, and operation completion.
 		for (auto stopOffset : options.stopOffsets)
 		{
-			auto doorRes = _addSectorDoor(y + stopOffset, x,
+			auto doorRes = _addSectorDoor(layerInFront(layerIndex), y + stopOffset, x,
 				{ options.cellsWide, { true, false }, DoorActivationMode::Unavailable }, true);
 			liftRes.doors.push_back(doorRes);
 		}
@@ -1816,7 +1866,7 @@ namespace core
 		vector<LiftStop> liftStops;
 		for (uint32_t i = 0; i < options.stopOffsets.size(); ++i)
 		{
-			auto location = getSector(getLayer(0)->getCellDefinition(x, y + options.stopOffsets[i]).sectorIndex);
+			auto location = getSector(foreLayer->getCellDefinition(x, y + options.stopOffsets[i]).sectorIndex);
 			liftStops.push_back({ SectorId{ (uint64_t)location->getIndex() + 1 },
 				(float)(y + options.stopOffsets[i]), liftRes.doors[i].traversalResource, {} });
 		}
@@ -1884,6 +1934,7 @@ namespace core
 		liftResource->mLiftSelector = liftRes.interiorSelector;
 
 		ConstructionRecord record{ ConstructionType::Lift };
+		record.layer = layerIndex;
 		record.a = y; record.b = x; record.c = options.cellsWide; record.d = options.capacity;
 		record.e = decksHigh; record.g = options.initialStop;
 		record.x = options.minimumDwellSeconds; record.y = options.maximumBoardingSeconds;
@@ -1892,16 +1943,21 @@ namespace core
 		return liftRes;
 	}
 
-	Building::CreateShuttleResult Building::addShuttle(uint32_t y, uint32_t x, uint32_t cellsWide, CreateShuttleOptions const& options)
+	Building::CreateShuttleResult Building::addShuttle(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide, CreateShuttleOptions const& options)
 	{
 		beginStructuralEdit("addShuttle");
-		auto foreLayer = getLayer(0);
-		auto backLayer = getLayer(layerBehind(0));
+		// The Shuttle Transit occupies layerIndex; its landings are the fore Layer of
+		// the pair it forms, which is the Layer directly in front.
+		validateLayer(format("Building::addShuttle({}, ...)", layerIndex), layerIndex);
+		if (isFrontMostLayer(layerIndex))
+			throw BuildingException(this, "A Shuttle cannot be placed on the front-most Layer, because it has no Layer in front to land on");
+		auto foreLayer = getLayer(layerInFront(layerIndex));
+		auto backLayer = getLayer(layerIndex);
 
 		// Checks
-		string caller = format("Building::addShuttle({}, {}, {}, <options>)", y, x, cellsWide);
+		string caller = format("Building::addShuttle({}, {}, {}, {}, <options>)", layerIndex, y, x, cellsWide);
 
-		// Bear in mind that we may have to allow extra space on the back layer beyond the x/x+cellsWide
+		// Bear in mind that we may have to allow extra space on the transit layer beyond the x/x+cellsWide
 		// extents.  Eg, for where a=x and b=x+cellsWide, and s=stop offsets:
 		//       a        b
 		//        s      s 
@@ -1911,7 +1967,7 @@ namespace core
 
 		validateShuttleOptions(caller, options);
 		validateBounds(caller, x, y, cellsWide, 1);
-		validateLayerSpace(caller, layerBehind(0), x, y, cellsWide, 1);
+		validateLayerSpace(caller, layerIndex, x, y, cellsWide, 1);
 
 		auto shuttleWidth = options.carWidth * options.numCars + (options.numCars - 1);
 
@@ -1964,7 +2020,7 @@ namespace core
 		}
 
 		// Create shuttle
-		auto shuttleObject = createShuttle(x, y, cellsWide, options.numCars, options.carWidth, options.stopOffsets);
+		auto shuttleObject = createShuttle(layerIndex, x, y, cellsWide, options.numCars, options.carWidth, options.stopOffsets);
 
 		auto shuttleTransit = dynamic_pointer_cast<ShuttleTransit>(shuttleObject.sector);
 		auto shuttle = shuttleTransit->getShuttle();
@@ -1998,7 +2054,7 @@ namespace core
 					auto const& cell = foreLayer->getCellDefinition(globalX, y);
 					bool supported = cell.sectorIndex != ~0u;
 					if (supported)
-						shuttleRes.doors[doorResultIndex(stop, car, door)] = _addSectorDoor(y, globalX,
+						shuttleRes.doors[doorResultIndex(stop, car, door)] = _addSectorDoor(layerInFront(layerIndex), y, globalX,
 							{ 1, { true, false }, DoorActivationMode::Unavailable }, true);
 				}
 
@@ -2102,6 +2158,7 @@ namespace core
 		shuttleResource->mLiftSelector = shuttleRes.interiorSelector;
 
 		ConstructionRecord record{ ConstructionType::Shuttle };
+		record.layer = layerIndex;
 		record.a = y; record.b = x; record.c = cellsWide; record.d = options.numCars;
 		record.e = options.carWidth; record.f = options.initialStop; record.g = options.capacity;
 		record.h = options.doorMask; record.p = options.allowPartialLandings;
@@ -2378,11 +2435,12 @@ namespace core
 		return obj;
 	}
 
-	bool Building::getLiftLandingGeometry(uint32_t y, uint32_t x,
+	bool Building::getLiftLandingGeometry(uint32_t layerIndex, uint32_t y, uint32_t x,
 		uint32_t& landingX, uint32_t& landingWidth) const
 	{
+		if (layerIndex >= getLayerCount()) return false;
 		if (x >= mCellsWide || y >= mDecksHigh) return false;
-		auto const& cell = mLayers[layerBehind(0)]->getCellDefinition(x, y);
+		auto const& cell = mLayers[layerIndex]->getCellDefinition(x, y);
 		if (cell.sectorIndex == ~0u) return false;
 		auto lift = dynamic_pointer_cast<const LiftTransit>(mSectors[cell.sectorIndex]);
 		if (!lift) return false;
@@ -2464,15 +2522,17 @@ namespace core
 		return false;
 	}
 
-	vector<uint32_t> Building::getValidShuttleStopOffsets(uint32_t y, uint32_t x,
+	vector<uint32_t> Building::getValidShuttleStopOffsets(uint32_t layerIndex, uint32_t y, uint32_t x,
 		uint32_t cellsWide, uint32_t numCars, uint32_t carWidth,
 		bool allowPartialLandings, uint32_t doorMask) const
 	{
 		vector<uint32_t> result;
+		if (layerIndex == 0 || layerIndex >= getLayerCount()) return result;
 		if (y >= mDecksHigh || x >= mCellsWide || cellsWide > mCellsWide - x
 			|| numCars == 0 || carWidth < 3 || carWidth > 5
 			|| doorMask == 0 || (doorMask >> carWidth) != 0
 			|| numCars > (cellsWide + 1) / (carWidth + 1)) return result;
+		auto const& landing = mLayers[layerInFront(layerIndex)];
 		auto shuttleWidth = numCars * carWidth + numCars - 1;
 		auto doorOffsets = shuttleDoorOffsets(carWidth, doorMask);
 		if (shuttleWidth > cellsWide) return result;
@@ -2483,7 +2543,7 @@ namespace core
 				for (auto doorOffset : doorOffsets)
 				{
 					auto doorX = x + offset + car * (carWidth + 1) + doorOffset;
-					auto const& first = mLayers[0]->getCellDefinition(doorX, y);
+					auto const& first = landing->getCellDefinition(doorX, y);
 					bool supported = first.sectorIndex != ~0u
 						&& mSectors[first.sectorIndex]->getType() == SectorType::Location;
 					supported = supported && first.isTraversableOnFoot()
@@ -2527,7 +2587,7 @@ namespace core
 	}
 
 	vector<Building::ShuttleStopCandidate> Building::getShuttleStopCandidatesForDoor(
-		uint32_t y, uint32_t doorX) const
+		uint32_t layerIndex, uint32_t y, uint32_t doorX) const
 	{
 		vector<ShuttleStopCandidate> result;
 		uint32_t sectorIndex = 0;
@@ -2537,11 +2597,12 @@ namespace core
 				|| record.type == ConstructionType::Ladder || record.type == ConstructionType::Stairwell || record.type == ConstructionType::Staircase
 				|| record.type == ConstructionType::Lift || record.type == ConstructionType::Shuttle;
 			if (!producer) continue;
-			if (record.type == ConstructionType::Shuttle && record.a == y)
+			// Only a Shuttle on the requested Layer can serve a door on that pair.
+			if (record.type == ConstructionType::Shuttle && record.layer == layerIndex && record.a == y)
 			{
 				auto doorMask = record.h ? record.h : (1u << 1);
 				auto doorOffsets = shuttleDoorOffsets(record.e, doorMask);
-				for (auto offset : getValidShuttleStopOffsets(record.a, record.b, record.c,
+				for (auto offset : getValidShuttleStopOffsets(record.layer, record.a, record.b, record.c,
 					record.d, record.e, record.p, doorMask))
 				{
 					if (find(record.values.begin(), record.values.end(), offset) != record.values.end()) continue;
@@ -2561,19 +2622,19 @@ namespace core
 		return result;
 	}
 
-	bool Building::canAddCorridorDoor(uint32_t y, uint32_t x, string* diagnostic) const
+	bool Building::canAddCorridorDoor(uint32_t layerIndex, uint32_t y, uint32_t x, string* diagnostic) const
 	{
 		uint32_t liftX, liftWidth;
-		if (getLiftLandingGeometry(y, x, liftX, liftWidth))
+		if (getLiftLandingGeometry(layerBehind(layerIndex), y, x, liftX, liftWidth))
 		{
 			CreateDoorOptions options;
 			options.width = liftWidth;
-			return canAddCorridorDoor(y, liftX, options, diagnostic);
+			return canAddCorridorDoor(layerIndex, y, liftX, options, diagnostic);
 		}
-		return canAddCorridorDoor(y, x, CreateDoorOptions{}, diagnostic);
+		return canAddCorridorDoor(layerIndex, y, x, CreateDoorOptions{}, diagnostic);
 	}
 
-	bool Building::canAddCorridorDoor(uint32_t y, uint32_t x,
+	bool Building::canAddCorridorDoor(uint32_t layerIndex, uint32_t y, uint32_t x,
 		CreateDoorOptions const& options, string* diagnostic) const
 	{
 		auto reject = [diagnostic](string reason)
@@ -2581,6 +2642,10 @@ namespace core
 			if (diagnostic) *diagnostic = std::move(reason);
 			return false;
 		};
+		// A Door is authored on the front Layer of the pair it crosses.
+		if (layerIndex + 1 >= getLayerCount())
+			return reject("A Door needs a Layer directly behind the Layer it is authored on");
+		auto const backLayer = layerBehind(layerIndex);
 		// Door authoring reserves the final column as the building boundary.
 		if (options.width == 0 || x >= mCellsWide || options.width > mCellsWide - x
 			|| x + options.width >= mCellsWide || y >= mDecksHigh)
@@ -2590,33 +2655,33 @@ namespace core
 			string const caller = "Building::canAddCorridorDoor";
 			validateSectorDoorOptions(caller, options);
 			uint32_t liftX, liftWidth;
-			bool const liftLanding = getLiftLandingGeometry(y, x, liftX, liftWidth);
+			bool const liftLanding = getLiftLandingGeometry(backLayer, y, x, liftX, liftWidth);
 			if (liftLanding && (x != liftX || options.width != liftWidth))
 				return reject(format("Lift landing doors must start at {} and be {} cells wide", liftX, liftWidth));
 			if (options.activationMode != DoorActivationMode::RemoteControlled
 				&& (options.controls[0] || options.controls[1]))
 				return reject("Physical controls require a remote-controlled Door");
 			validateBounds(caller, x, y, options.width, 1);
-			validateSpaceOnlyInOneSector(caller, 0, x, y, options.width, 1);
-			validateSpaceOnlyInOneSector(caller, layerBehind(0), x, y, options.width, 1);
+			validateSpaceOnlyInOneSector(caller, layerIndex, x, y, options.width, 1);
+			validateSpaceOnlyInOneSector(caller, backLayer, x, y, options.width, 1);
 			shared_ptr<const Sector> sectors[2];
 			for (uint32_t ix = x; ix < x + options.width; ++ix)
 			{
-				auto const& foreCell = mLayers[0]->getCellDefinition(ix, y);
-				auto const& backCell = mLayers[layerBehind(0)]->getCellDefinition(ix, y);
-				if (!foreCell.occupied()) return reject("Doors must be placed on a Fore Layer corridor");
-				if (!backCell.occupied()) return reject("A Back Layer Room or Lift is required here");
+				auto const& foreCell = mLayers[layerIndex]->getCellDefinition(ix, y);
+				auto const& backCell = mLayers[backLayer]->getCellDefinition(ix, y);
+				if (!foreCell.occupied()) return reject("Doors must be placed on a corridor on the Layer they are authored on");
+				if (!backCell.occupied()) return reject("A Room or Lift on the Layer behind is required here");
 				sectors[0] = mSectors[foreCell.sectorIndex];
 				sectors[1] = mSectors[backCell.sectorIndex];
 				auto fore = dynamic_pointer_cast<const Location>(sectors[0]);
 				auto back = dynamic_pointer_cast<const Location>(sectors[1]);
-				if (!fore || !fore->isCorridor()) return reject("Doors must be placed on a Fore Layer corridor");
+				if (!fore || !fore->isCorridor()) return reject("Doors must be placed on a corridor on the Layer they are authored on");
 				if (liftLanding)
 				{
 					if (sectors[1]->getType() != SectorType::Lift)
 						return reject("The complete lift width must overlap one corridor");
 				}
-				else if (!back || back->isCorridor()) return reject("A Back Layer Room is required here");
+				else if (!back || back->isCorridor()) return reject("A Room on the Layer behind is required here");
 				if (foreCell.hasObject() || backCell.hasObject()
 					|| !foreCell.markers.empty() || !backCell.markers.empty())
 					return reject("Another object blocks Door placement");
@@ -2650,13 +2715,14 @@ namespace core
 		return true;
 	}
 
-	bool Building::getSectorDoorOptions(uint32_t y, uint32_t x, uint32_t width,
+	bool Building::getSectorDoorOptions(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t width,
 		CreateDoorOptions& options) const
 	{
 		auto found = find_if(mConstructionRecords.rbegin(), mConstructionRecords.rend(),
 			[&](ConstructionRecord const& record)
 			{
 				return record.type == ConstructionType::Door
+					&& record.layer == layerIndex
 					&& record.a == y && record.b == x && record.c == width;
 			});
 		if (found == mConstructionRecords.rend()) return false;
@@ -2669,23 +2735,23 @@ namespace core
 		return true;
 	}
 
-	Building::CreateDoorResult Building::addSectorDoor(uint32_t y, uint32_t x)
+	Building::CreateDoorResult Building::addSectorDoor(uint32_t layerIndex, uint32_t y, uint32_t x)
 	{
-		return addSectorDoor(y, x, CreateDoorOptions{});
+		return addSectorDoor(layerIndex, y, x, CreateDoorOptions{});
 	}
 
-	Building::CreateDoorResult Building::addSectorDoor(uint32_t y, uint32_t x, CreateDoorOptions const& options)
+	Building::CreateDoorResult Building::addSectorDoor(uint32_t layerIndex, uint32_t y, uint32_t x, CreateDoorOptions const& options)
 	{
 		beginStructuralEdit("addSectorDoor");
 		uint32_t liftX, liftWidth;
-		if (getLiftLandingGeometry(y, x, liftX, liftWidth))
+		if (getLiftLandingGeometry(layerBehind(layerIndex), y, x, liftX, liftWidth))
 		{
 			string diagnostic;
 			CreateDoorOptions normalized;
 			normalized.width = liftWidth;
-			if (!canAddCorridorDoor(y, liftX, normalized, &diagnostic))
+			if (!canAddCorridorDoor(layerIndex, y, liftX, normalized, &diagnostic))
 				throw BuildingException(this, diagnostic);
-			auto const liftIndex = mLayers[layerBehind(0)]->getCellDefinition(liftX, y).sectorIndex;
+			auto const liftIndex = mLayers[layerBehind(layerIndex)]->getCellDefinition(liftX, y).sectorIndex;
 			auto lift = dynamic_pointer_cast<LiftTransit>(_getSector(liftIndex));
 			auto idlePlan = planResizeLift(liftIndex, lift->getCellX(), lift->getCellY(),
 				lift->getCellsWide(), lift->getDecksHigh());
@@ -2702,14 +2768,15 @@ namespace core
 			vector<ConstructionRecord> records;
 			if (!prepareLiftEdit(idlePlan, records, diagnostic)) throw BuildingException(this, diagnostic);
 			rebuildFromConstructionRecords(std::move(records));
-			auto const& cell = mLayers[0]->getCellDefinition(liftX, y);
+			auto const& cell = mLayers[layerIndex]->getCellDefinition(liftX, y);
 			auto sector = _getSector(cell.sectorIndex);
 			CreateObjectResult doorResult{ cell.sectorObjectIndex, SectorObjectType::Door, sector };
 			auto doorObject = dynamic_pointer_cast<DoorSectorObject>(sector->_getObject(cell.sectorObjectIndex));
 			return { doorResult, {}, doorObject->getDoor()->getTraversalResourceId() };
 		}
-		auto result = _addSectorDoor(y, x, options);
+		auto result = _addSectorDoor(layerIndex, y, x, options);
 		ConstructionRecord record{ ConstructionType::Door };
+		record.layer = layerIndex;
 		record.a = y; record.b = x; record.c = options.width; record.d = options.crossingLanes;
 		record.p = options.controls[0]; record.q = options.controls[1];
 		record.i = static_cast<int32_t>(options.activationMode); record.x = options.holdOpenSeconds;
@@ -2737,20 +2804,20 @@ namespace core
 		}
 		auto door = doorObject->getDoor();
 		auto sector = mSectors[sectorIndex];
-		uint32_t layerIndex{ static_cast<uint32_t>(mLayers.size()) };
-		for (uint32_t layer = 0; layer < mLayers.size(); ++layer)
-		{
-			if (door->getSector(layer) == sector) layerIndex = layer;
-		}
-		if (layerIndex == static_cast<uint32_t>(mLayers.size()))
+		// A Door owns one Sector in each Layer of the pair it crosses.  Which side of
+		// that pair the selected Sector sits on decides which control flag is free.
+		bool const isFrontSide = door->getFrontSector() == sector;
+		if (!isFrontSide && door->getBackSector() != sector)
 		{
 			throw BuildingException(this, "The selected Door does not belong to this Sector");
 		}
+		auto const doorLayer = isFrontSide ? sector->getLayerIndex() : sector->getLayerIndex() - 1;
 
 		auto source = find_if(mConstructionRecords.begin(), mConstructionRecords.end(),
 			[&](ConstructionRecord const& record)
 			{
 				return record.type == ConstructionType::Door
+					&& record.layer == doorLayer
 					&& record.a == doorObject->getCellY()
 					&& record.b == doorObject->getCellX()
 					&& record.c == door->getCellsWide();
@@ -2759,7 +2826,7 @@ namespace core
 		{
 			throw BuildingException(this, "This Door does not support an added Door Button");
 		}
-		bool const alreadyHasButton = isFrontMostLayer(layerIndex) ? source->p : source->q;
+		bool const alreadyHasButton = isFrontSide ? source->p : source->q;
 		if (alreadyHasButton)
 		{
 			throw BuildingException(this, "This side of the Door already has a Door Button");
@@ -2790,17 +2857,26 @@ namespace core
 		door->configureTraversal(DoorActivationMode::RemoteControlled,
 			door->getTraversalResourceId(), door->mHoldOpenTime);
 		source->i = static_cast<int32_t>(DoorActivationMode::RemoteControlled);
-		if (isFrontMostLayer(layerIndex)) source->p = true;
+		if (isFrontSide) source->p = true;
 		else source->q = true;
 		return control;
 	}
 
-	Building::CreateDoorResult Building::_addSectorDoor(uint32_t y, uint32_t x,
+	Building::CreateDoorResult Building::_addSectorDoor(uint32_t layerIndex, uint32_t y, uint32_t x,
 		CreateDoorOptions const& options, bool controlsAreExternallyBound)
 	{
-		string caller = format("Building::addSectorDoor({}, {}, {})", y, x, options.width);
+		string caller = format("Building::addSectorDoor({}, {}, {}, {})", layerIndex, y, x, options.width);
 
 		auto cellsWide = options.width;
+
+		// A Door is authored on the front Layer of the pair it crosses.
+		validateLayer(caller, layerIndex);
+		if (layerIndex + 1 >= getLayerCount())
+		{
+			throw BuildingException(this,
+				format("{} - a Door needs a Layer directly behind the Layer it is authored on", caller));
+		}
+		auto const backLayer = layerBehind(layerIndex);
 
 		validateSectorDoorOptions(caller, options);
 		if (!controlsAreExternallyBound && options.activationMode != DoorActivationMode::RemoteControlled
@@ -2810,31 +2886,31 @@ namespace core
 				format("{} - physical controls require remote-controlled activation", caller));
 		}
 		validateBounds(caller, x, y, cellsWide, 1);
-		validateSpaceOnlyInOneSector(caller, 0, x, y, cellsWide, 1);
-		validateSpaceOnlyInOneSector(caller, layerBehind(0), x, y, cellsWide, 1);
+		validateSpaceOnlyInOneSector(caller, layerIndex, x, y, cellsWide, 1);
+		validateSpaceOnlyInOneSector(caller, backLayer, x, y, cellsWide, 1);
 
-		auto layer0 = getLayer(0);
-		auto layer1 = getLayer(layerBehind(0));
+		auto frontLayer = getLayer(layerIndex);
+		auto behindLayer = getLayer(backLayer);
 
 		shared_ptr<Sector> sectors[2];
 		for (uint32_t ix = x; ix < x + cellsWide; ++ix)
 		{
-			auto& cellDef0 = layer0->getCellDefinition(ix, y);
-			auto& cellDef1 = layer1->getCellDefinition(ix, y);
+			auto& cellDef0 = frontLayer->getCellDefinition(ix, y);
+			auto& cellDef1 = behindLayer->getCellDefinition(ix, y);
 
 			if (cellDef0.sectorIndex == ~0u)
 			{
-				throw BuildingException(this, format("{} - foreground cell at {},{} is not occupied.", caller, ix, y));
+				throw BuildingException(this, format("{} - front Layer cell at {},{} is not occupied.", caller, ix, y));
 			}
 
 			sectors[0] = _getSector(cellDef0.sectorIndex);
 
 			if (cellDef1.sectorIndex == ~0u)
 			{
-				throw BuildingException(this, format("{} - background cell at {},{} is not occupied.", caller, ix, y));
+				throw BuildingException(this, format("{} - back Layer cell at {},{} is not occupied.", caller, ix, y));
 			}
 
-			sectors[layerBehind(0)] = _getSector(cellDef1.sectorIndex);
+			sectors[1] = _getSector(cellDef1.sectorIndex);
 
 			if (cellDef0.sectorObjectType == SectorObjectType::Door)
 			{
@@ -2848,7 +2924,7 @@ namespace core
 		// Create door, making sure we add it to the other Location as well
 		// If there is a button, then a stateful button will control a stateless door - the state
 		// can only be in one object.
-		auto doorObject = createDoor(x, y, cellsWide);
+		auto doorObject = createDoor(layerIndex, x, y, cellsWide);
 		auto doorSectorObject = dynamic_pointer_cast<DoorSectorObject>(doorObject.sector->_getObject(doorObject.index));
 		auto door = doorSectorObject->getDoor();
 		auto traversalResource = createDoorTraversalResource(
@@ -2917,22 +2993,22 @@ namespace core
 
 		// The shared Door can have different local object indices in its two Sectors.
 		uint32_t backDoorIndex = ~0u;
-		for (uint32_t i = 0; i < sectors[layerBehind(0)]->getNumObjects(); ++i)
+		for (uint32_t i = 0; i < sectors[1]->getNumObjects(); ++i)
 		{
-			if (sectors[layerBehind(0)]->getObject(i) == doorSectorObject)
+			if (sectors[1]->getObject(i) == doorSectorObject)
 			{
 				backDoorIndex = i;
 				break;
 			}
 		}
 		if (backDoorIndex == ~0u)
-			throw BuildingException(this, format("{} - could not locate Door in its Back-layer Sector", caller));
+			throw BuildingException(this, format("{} - could not locate Door in its back-layer Sector", caller));
 
 		// Set layers
 		for (uint32_t ix = x; ix < x + cellsWide; ++ix)
 		{
-			auto& cellDef0 = layer0->getCellDefinition(ix, y);
-			auto& cellDef1 = layer1->getCellDefinition(ix, y);
+			auto& cellDef0 = frontLayer->getCellDefinition(ix, y);
+			auto& cellDef1 = behindLayer->getCellDefinition(ix, y);
 
 			cellDef0.sectorObjectIndex = doorObject.index;
 			cellDef0.sectorObjectType = doorObject.type;
@@ -2983,16 +3059,17 @@ namespace core
 		{
 			validateLayer(caller, layerIndex);
 			validateBounds(caller, x, y, cellsWide, decksHigh);
-			if (isFrontMostLayer(layerIndex))
-				validateSpaceOnlyInOneSector(caller, 0, x, y, cellsWide, decksHigh);
-			validateSpaceOnlyInOneSector(caller, layerBehind(0), x, y, cellsWide, decksHigh);
 
-			// A foreground Window joins both layers; a background Window belongs
-			// only to its background Location.
-			uint32_t firstRequiredLayer = isFrontMostLayer(layerIndex)
-				? 0 : layerBehind(0);
-			for (uint32_t requiredLayer = firstRequiredLayer;
-				requiredLayer <= layerBehind(0); ++requiredLayer)
+			// A Window joins its own Layer to the Layer directly behind it.  A Window on
+			// the back-most Layer has nothing behind it and belongs only to its own
+			// Location, exactly as a back-layer Window did in a two-Layer Building.
+			vector<uint32_t> requiredLayers{ layerIndex };
+			if (layerIndex + 1 < getLayerCount()) requiredLayers.push_back(layerBehind(layerIndex));
+
+			for (auto requiredLayer : requiredLayers)
+				validateSpaceOnlyInOneSector(caller, requiredLayer, x, y, cellsWide, decksHigh);
+
+			for (auto requiredLayer : requiredLayers)
 			{
 				auto layer = getLayer(requiredLayer);
 				for (uint32_t iy = y; iy < y + decksHigh; ++iy)
@@ -3000,8 +3077,8 @@ namespace core
 					{
 						auto const& cellDef = layer->getCellDefinition(ix, iy);
 						if (cellDef.sectorIndex == ~0u)
-							throw BuildingException(this, format("{} - {} cell at {},{} is not occupied.",
-								caller, requiredLayer ? "background" : "foreground", ix, iy));
+							throw BuildingException(this, format("{} - Layer {} cell at {},{} is not occupied.",
+								caller, requiredLayer, ix, iy));
 						validateObjectAllowedInSector(caller, SectorObjectType::Window, cellDef.sectorIndex);
 						if (cellDef.hasObject() || !cellDef.markers.empty())
 							throw BuildingException(this, format("{} - another object occupies cell at {},{}",
@@ -3046,8 +3123,7 @@ namespace core
 		auto window = windowObject->getWindow();
 		window->setState(options.initialState, options.style);
 		TraversalResourceId traversalResource;
-		if (options.traversable && window->getSector(0)
-			&& window->getSector(layerBehind(0)))
+		if (options.traversable && window->getFrontSector() && window->getBackSector())
 		{
 			traversalResource = createWindowTraversalResource(format("Window at {},{}", x, y), window);
 			window->configureTraversal(true, traversalResource);
@@ -3055,7 +3131,7 @@ namespace core
 			// A traversable threshold must be discovered while scanning both layers.
 			// The shared SectorObject may have a different vector index in its second
 			// sector, so recover that index rather than copying the foreground value.
-			auto backSector = const_pointer_cast<Sector>(window->getSector(layerBehind(0)));
+			auto backSector = const_pointer_cast<Sector>(window->getBackSector());
 			uint32_t backObjectIndex = ~0u;
 			for (uint32_t i = 0; i < backSector->getNumObjects(); ++i)
 			{
@@ -3064,7 +3140,7 @@ namespace core
 			if (backObjectIndex == ~0u) throw BuildingException(this, "Traversable window is missing its back-sector object");
 			for (uint32_t ix = x; ix < x + cellsWide; ++ix)
 			{
-				auto& backCell = mLayers[layerBehind(0)]->getCellDefinition(ix, y);
+				auto& backCell = mLayers[layerBehind(layerIndex)]->getCellDefinition(ix, y);
 				backCell.sectorObjectIndex = backObjectIndex;
 				backCell.sectorObjectType = SectorObjectType::Window;
 			}

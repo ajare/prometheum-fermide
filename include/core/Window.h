@@ -68,7 +68,16 @@ namespace core
 
 		[[nodiscard]] Style getStyle() const;
 
-		[[nodiscard]] std::shared_ptr<const Sector> getSector(uint32_t layerIndex) const;
+		// A Window joins exactly one adjacent Layer pair.  The index is the side of that
+		// pair, not an absolute Layer index: 0 is the front Layer the Window is authored
+		// on, 1 is the Layer directly behind it.  A Window on the back-most Layer has
+		// no back Sector.
+		[[nodiscard]] std::shared_ptr<const Sector> getSector(uint32_t pairSide) const;
+		[[nodiscard]] std::shared_ptr<const Sector> getFrontSector() const { return mSectors[0]; }
+		[[nodiscard]] std::shared_ptr<const Sector> getBackSector() const { return mSectors[1]; }
+		// The absolute Layers the Window crosses.  ~0u when a side has no Sector.
+		[[nodiscard]] uint32_t getFrontLayer() const;
+		[[nodiscard]] uint32_t getBackLayer() const;
 
 		// Window animation is not yet device-driven; this explicit state seam lets
 		// world logic configure/test the threshold without treating broken glass as

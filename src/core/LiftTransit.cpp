@@ -20,9 +20,9 @@ namespace core
 		return vector<elem_t>{ r.begin(), r.end() };
 	}
 
-	LiftTransit::LiftTransit(uint32_t index, uint32_t cellX, uint32_t cellY, uint32_t cellsWide,
+	LiftTransit::LiftTransit(uint32_t index, uint32_t layerIndex, uint32_t cellX, uint32_t cellY, uint32_t cellsWide,
 		uint32_t decksHigh, vector<TransitStop> const& stops)
-		: Transit(SectorType::Lift, "Lift", layerBehind(0), index,
+		: Transit(SectorType::Lift, "Lift", layerIndex, index,
 			cellX, cellY,
 			0.0f, 0.0f,
 			(float)cellsWide, (float)decksHigh,

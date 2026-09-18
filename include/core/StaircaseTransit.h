@@ -14,12 +14,12 @@ namespace core
 		std::shared_ptr<Staircase> mStaircase;
 
 	public:
-		StaircaseTransit(uint32_t index, uint32_t cellX, uint32_t cellY,
+		StaircaseTransit(uint32_t index, uint32_t layerIndex, uint32_t cellX, uint32_t cellY,
 			uint32_t cellsWide, int riseSide, float speed,
 			std::vector<TransitStop> const& stops);
-		StaircaseTransit(uint32_t index, uint32_t cellX, uint32_t cellY,
+		StaircaseTransit(uint32_t index, uint32_t layerIndex, uint32_t cellX, uint32_t cellY,
 			uint32_t cellsWide, int riseSide, std::vector<TransitStop> const& stops)
-			: StaircaseTransit(index, cellX, cellY, cellsWide, riseSide, 0.0f, stops) {}
+			: StaircaseTransit(index, layerIndex, cellX, cellY, cellsWide, riseSide, 0.0f, stops) {}
 		~StaircaseTransit() = default;
 
 		[[nodiscard]] std::shared_ptr<Staircase> getStaircase() const { return mStaircase; }

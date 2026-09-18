@@ -22,10 +22,20 @@ namespace core
 	uint32_t Door::getCellsWide() const { return mCellsWide; }
 	Door::OpenStyle Door::getOpenStyle() const { return mOpenStyle; }
 
-	std::shared_ptr<const Sector> Door::getSector(uint32_t layerIndex) const
+	std::shared_ptr<const Sector> Door::getSector(uint32_t pairSide) const
 	{
-		ASSERT_LAYER_OK(layerIndex);
-		return mSectors[layerIndex];
+		ASSERT_PAIR_SIDE_OK(pairSide);
+		return mSectors[pairSide];
+	}
+
+	uint32_t Door::getFrontLayer() const
+	{
+		return mSectors[0] ? mSectors[0]->getLayerIndex() : ~0u;
+	}
+
+	uint32_t Door::getBackLayer() const
+	{
+		return mSectors[1] ? mSectors[1]->getLayerIndex() : ~0u;
 	}
 
 	void Door::configureTraversal(DoorActivationMode mode, TraversalResourceId resource,

@@ -11,8 +11,8 @@ namespace core
 
 	using namespace std;
 
-	LadderTransit::LadderTransit(uint32_t index, uint32_t cellX, uint32_t cellY, uint32_t decksHigh, vector<TransitStop> const& stops, bool extensible, bool startExtended)
-		: Transit(SectorType::Ladder, "Ladder", layerBehind(0), index,
+	LadderTransit::LadderTransit(uint32_t index, uint32_t layerIndex, uint32_t cellX, uint32_t cellY, uint32_t decksHigh, vector<TransitStop> const& stops, bool extensible, bool startExtended)
+		: Transit(SectorType::Ladder, "Ladder", layerIndex, index,
 			cellX, cellY,
 			0.0f, 0.0f,
 			1.0f, (float)decksHigh,

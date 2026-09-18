@@ -278,24 +278,24 @@ namespace
 		building.addCorridor(2, 0, 4);
 
 		std::string diagnostic;
-		if (!building.canAddCorridorDoor(0, 2, &diagnostic)
-			|| building.canAddCorridorDoor(0, 7, &diagnostic)
+		if (!building.canAddCorridorDoor(0, 0, 2, &diagnostic)
+			|| building.canAddCorridorDoor(0, 0, 7, &diagnostic)
 			|| diagnostic.find("corridor") == std::string::npos
-			|| building.canAddCorridorDoor(1, 1, &diagnostic)
+			|| building.canAddCorridorDoor(0, 1, 1, &diagnostic)
 			|| diagnostic.find("corridor") == std::string::npos
-			|| building.canAddCorridorDoor(2, 1, &diagnostic)
-			|| diagnostic.find("Back Layer Room") == std::string::npos)
+			|| building.canAddCorridorDoor(0, 2, 1, &diagnostic)
+			|| diagnostic.find("Layer behind") == std::string::npos)
 			return false;
 
 		building.addSectorMarker(corridor, 0, 4.5f);
 		building.addSectorMarker(backRoom, 0, 0.5f);
-		if (building.canAddCorridorDoor(0, 4, &diagnostic)
+		if (building.canAddCorridorDoor(0, 0, 4, &diagnostic)
 			|| diagnostic.find("blocks") == std::string::npos) return false;
 
-		auto door = building.addSectorDoor(0, 2);
+		auto door = building.addSectorDoor(0, 0, 2);
 		building.finishBuild();
 		return door.door.type == core::SectorObjectType::Door
-			&& !building.canAddCorridorDoor(0, 2, &diagnostic)
+			&& !building.canAddCorridorDoor(0, 0, 2, &diagnostic)
 			&& diagnostic.find("blocks") != std::string::npos
 			&& building.isTraversalTopologyValid();
 	}
@@ -309,7 +309,7 @@ namespace
 		doorOptions.controls[0] = true;
 		doorOptions.controls[1] = true;
 		doorOptions.activationMode = core::DoorActivationMode::RemoteControlled;
-		auto created = building.addSectorDoor(0, 1, doorOptions);
+		auto created = building.addSectorDoor(0, 0, 1, doorOptions);
 		building.addSectorMarker(corridor, 0, 5.5f);
 		building.finishBuild();
 		building.pauseSimulation();
@@ -372,7 +372,7 @@ namespace
 		auto right = pasteMoveBuilding.addCorridor(0, 6, 4);
 		pasteMoveBuilding.addRoom("Left back", 1, 0, 0, 4, 1);
 		pasteMoveBuilding.addRoom("Right back", 1, 0, 6, 4, 1);
-		auto crossSectorDoor = pasteMoveBuilding.addSectorDoor(0, 1);
+		auto crossSectorDoor = pasteMoveBuilding.addSectorDoor(0, 0, 1);
 		pasteMoveBuilding.finishBuild();
 		pasteMoveBuilding.pauseSimulation();
 		auto doorPlan = pasteMoveBuilding.planMoveSectorObject(
@@ -414,10 +414,10 @@ namespace
 		auto room = building.addRoom("Upper room", 0, 1, 7, 3, 1);
 
 		std::string diagnostic;
-		if (building.canAddStaircase(0, 5, 3, CORE_SIDE_RIGHT, &diagnostic)) return false;
+		if (building.canAddStaircase(1, 0, 5, 3, CORE_SIDE_RIGHT, &diagnostic)) return false;
 		building.removeLocationWall(room, 0, CORE_SIDE_LEFT);
-		if (!building.canAddStaircase(0, 5, 3, CORE_SIDE_RIGHT, &diagnostic)) return false;
-		auto staircase = building.addStaircase(0, 5,
+		if (!building.canAddStaircase(1, 0, 5, 3, CORE_SIDE_RIGHT, &diagnostic)) return false;
+		auto staircase = building.addStaircase(1, 0, 5,
 			core::Building::CreateStaircaseOptions{ 3, CORE_SIDE_RIGHT, 0.0f });
 		building.finishBuild();
 		if (staircase == ~0u || !building.isTraversalTopologyValid()) return false;
@@ -432,9 +432,9 @@ namespace
 		core::Building lowerRoomBuilding("Lower Room staircase endpoint", 8, 3);
 		lowerRoomBuilding.addRoom("Lower room", 0, 0, 0, 3, 1);
 		lowerRoomBuilding.addCorridor(1, 4, 4);
-		if (!lowerRoomBuilding.canAddStaircase(0, 2, 3, CORE_SIDE_RIGHT, &diagnostic))
+		if (!lowerRoomBuilding.canAddStaircase(1, 0, 2, 3, CORE_SIDE_RIGHT, &diagnostic))
 			return false;
-		lowerRoomBuilding.addStaircase(0, 2,
+		lowerRoomBuilding.addStaircase(1, 0, 2,
 			core::Building::CreateStaircaseOptions{ 3, CORE_SIDE_RIGHT, 0.0f });
 		lowerRoomBuilding.finishBuild();
 		if (!lowerRoomBuilding.isTraversalTopologyValid()) return false;
@@ -445,9 +445,9 @@ namespace
 		mapBuilding.addRoom("Room 1", 0, 1, 10, 4, 2);
 		mapBuilding.addCorridor(2, 14, 2);
 		mapBuilding.removeLocationWall(0, 1, CORE_SIDE_RIGHT);
-		if (!mapBuilding.canAddStaircase(1, 11, 3, CORE_SIDE_RIGHT, &diagnostic))
+		if (!mapBuilding.canAddStaircase(1, 1, 11, 3, CORE_SIDE_RIGHT, &diagnostic))
 			return false;
-		mapBuilding.addStaircase(1, 11,
+		mapBuilding.addStaircase(1, 1, 11,
 			core::Building::CreateStaircaseOptions{ 3, CORE_SIDE_RIGHT, 0.4f });
 		mapBuilding.finishBuild();
 		return mapBuilding.isTraversalTopologyValid();
@@ -754,7 +754,7 @@ namespace
 		core::Building::CreateObjectResult walkways[4];
 		for (uint32_t x = 0; x < 4; ++x)
 			walkways[x] = building.addSectorWalkway(room, 1, x);
-		building.addSectorDoor(4, 12);
+		building.addSectorDoor(0, 4, 12);
 		building.finishBuild();
 		building.pauseSimulation();
 
@@ -976,7 +976,7 @@ namespace
 		core::Building::CreateDoorOptions options;
 		options.activationMode = mode;
 		options.holdOpenSeconds = core::Building::getFixedTimestep() * 8.0f;
-		auto created = building.addSectorDoor(0, 2, options);
+		auto created = building.addSectorDoor(0, 0, 2, options);
 		building.finishBuild();
 
 		auto edgeIt = std::find_if(building.getGraph()->getEdges().begin(), building.getGraph()->getEdges().end(),
@@ -1133,7 +1133,7 @@ namespace
 		core::Building::CreateDoorOptions options;
 		options.activationMode = core::DoorActivationMode::Manual;
 		options.holdOpenSeconds = core::Building::getFixedTimestep() * 8.0f;
-		auto door = building.addSectorDoor(0, 3, options);
+		auto door = building.addSectorDoor(0, 0, 3, options);
 		building.finishBuild();
 		auto generation = building.getTopologyGeneration();
 		auto oldGraph = building.getGraph();
@@ -1186,7 +1186,7 @@ namespace
 		core::Building invalid("Invalid paused rebuild", 6, 2);
 		invalid.addRoom("Fore", 0, 0, 0, 5, 1);
 		invalid.addRoom("Back", 1, 0, 0, 5, 1);
-		auto invalidDoor = invalid.addSectorDoor(0, 2);
+		auto invalidDoor = invalid.addSectorDoor(0, 0, 2);
 		invalid.finishBuild();
 		auto previousGraph = invalid.getGraph();
 		invalid.pauseSimulation();
@@ -1213,8 +1213,8 @@ namespace
 		core::Building::CreateDoorOptions remote;
 		remote.activationMode = core::DoorActivationMode::RemoteControlled;
 		remote.controls[0] = true;
-		auto created = building.addSectorDoor(0, 1, remote);
-		building.addSectorDoor(0, 5);
+		auto created = building.addSectorDoor(0, 0, 1, remote);
+		building.addSectorDoor(0, 0, 5);
 		building.finishBuild();
 
 		auto target = building.getGraph()->getVertexByIdentifier(markerId);
@@ -1274,7 +1274,7 @@ namespace
 		options.activationMode = core::DoorActivationMode::RemoteControlled;
 		options.controls[0] = true;
 		options.controls[1] = true;
-		auto created = building.addSectorDoor(0, 3, options);
+		auto created = building.addSectorDoor(0, 0, 3, options);
 		building.finishBuild();
 
 		for (auto const& control : created.controls)
@@ -1337,7 +1337,7 @@ namespace
 		options.activationMode = core::DoorActivationMode::RemoteControlled;
 		options.controls[0] = false;
 		options.controls[1] = false;
-		auto created = building.addSectorDoor(0, 2, options);
+		auto created = building.addSectorDoor(0, 0, 2, options);
 		building.finishBuild();
 		auto edge = *std::find_if(building.getGraph()->getEdges().begin(), building.getGraph()->getEdges().end(),
 			[](auto const& candidate) { return candidate->getType() == core::EdgeType::Door; });
@@ -1361,7 +1361,7 @@ namespace
 		auto back = building.addRoom("Back queue", 1, 0, 0, 7, 1);
 		core::Building::CreateDoorOptions options;
 		options.activationMode = core::DoorActivationMode::Manual;
-		auto created = building.addSectorDoor(0, 3, options);
+		auto created = building.addSectorDoor(0, 0, 3, options);
 		building.finishBuild();
 		auto edge = *std::find_if(building.getGraph()->getEdges().begin(), building.getGraph()->getEdges().end(),
 			[](auto const& candidate) { return candidate->getType() == core::EdgeType::Door; });
@@ -1433,7 +1433,7 @@ namespace
 		core::Building building("Nearest queue position", 8, 2);
 		auto fore = building.addRoom("Queue room", 0, 0, 0, 7, 1);
 		building.addRoom("Destination", 1, 0, 0, 7, 1);
-		building.addSectorDoor(0, 3);
+		building.addSectorDoor(0, 0, 3);
 		building.finishBuild();
 		auto edge = *std::find_if(building.getGraph()->getEdges().begin(), building.getGraph()->getEdges().end(),
 			[](auto const& candidate) { return candidate->getType() == core::EdgeType::Door; });
@@ -1487,7 +1487,7 @@ namespace
 		building.addRoom("Destination", 1, 0, 0, 7, 1);
 		core::Building::CreateDoorOptions options;
 		options.activationMode = core::DoorActivationMode::Automatic;
-		auto created = building.addSectorDoor(0, 3, options);
+		auto created = building.addSectorDoor(0, 0, 3, options);
 		uint32_t approachId;
 		building.addSectorMarker(fore, 0, 2.75f, &approachId);
 		building.finishBuild();
@@ -1534,7 +1534,7 @@ namespace
 		core::Building building("Queue cancellation", 8, 2);
 		auto fore = building.addRoom("Queue room", 0, 0, 0, 7, 1);
 		building.addRoom("Destination", 1, 0, 0, 7, 1);
-		auto created = building.addSectorDoor(0, 3);
+		auto created = building.addSectorDoor(0, 0, 3);
 		building.finishBuild();
 		auto edge = *std::find_if(building.getGraph()->getEdges().begin(), building.getGraph()->getEdges().end(),
 			[](auto const& candidate) { return candidate->getType() == core::EdgeType::Door; });
@@ -1580,7 +1580,7 @@ namespace
 		core::Building building("Resilient door waiting", 8, 2);
 		auto fore = building.addRoom("Waiting side", 0, 0, 0, 7, 1);
 		building.addRoom("Destination side", 1, 0, 0, 7, 1);
-		auto created = building.addSectorDoor(0, 3);
+		auto created = building.addSectorDoor(0, 0, 3);
 		building.finishBuild();
 		auto initialEdge = *std::find_if(building.getGraph()->getEdges().begin(), building.getGraph()->getEdges().end(),
 			[](auto const& candidate) { return candidate->getType() == core::EdgeType::Door; });
@@ -1693,7 +1693,7 @@ namespace
 		options.width = 2;
 		options.crossingLanes = 2;
 		options.activationMode = core::DoorActivationMode::Manual;
-		auto created = building.addSectorDoor(0, 3, options);
+		auto created = building.addSectorDoor(0, 0, 3, options);
 		building.finishBuild();
 		auto edge = *std::find_if(building.getGraph()->getEdges().begin(), building.getGraph()->getEdges().end(),
 			[](auto const& candidate) { return candidate->getType() == core::EdgeType::Door; });
@@ -1748,7 +1748,7 @@ namespace
 		core::Building::CreateDoorOptions options;
 		options.activationMode = core::DoorActivationMode::Automatic;
 		options.holdOpenSeconds = core::Building::getFixedTimestep() * 2.0f;
-		auto created = building.addSectorDoor(0, 3, options);
+		auto created = building.addSectorDoor(0, 0, 3, options);
 		building.finishBuild();
 		auto sensor = core::DoorSensorId{ 1 };
 		if (!building.setDoorSensorObservation(created.traversalResource, sensor,
@@ -1793,7 +1793,7 @@ namespace
 		auto lower = building.addCorridor(0, 0, 3);
 		auto upper = building.addCorridor(1, 0, 3);
 		core::Building::CreateLadderOptions options{ 2, false, true };
-		auto created = building.addLadder(0, 1, options);
+		auto created = building.addLadder(1, 0, 1, options);
 		building.finishBuild();
 		if (!created.traversalResource) return false;
 
@@ -1879,7 +1879,7 @@ namespace
 		auto lower = building.addCorridor(0, 0, 7);
 		auto upper = building.addCorridor(1, 0, 7);
 		core::Building::CreateLadderOptions options{ 2, false, true };
-		auto created = building.addLadder(0, 3, options);
+		auto created = building.addLadder(1, 0, 3, options);
 		uint32_t lowerApproachId, upperApproachId;
 		building.addSectorMarker(lower, 0, 1.0f, &lowerApproachId);
 		building.addSectorMarker(upper, 0, 6.0f, &upperApproachId);
@@ -2050,7 +2050,7 @@ namespace
 		auto upper = building.addCorridor(4, 0, 16);
 		core::Building::CreateLadderOptions options{ 4, false, true };
 		options.directionalBatchLimit = 4;
-		auto created = building.addLadder(1, 8, options);
+		auto created = building.addLadder(1, 1, 8, options);
 		building.finishBuild();
 		if (!created.traversalResource || !created.ladder.sector) return false;
 
@@ -2121,7 +2121,7 @@ namespace
 		auto lower = building.addCorridor(0, 0, 3);
 		auto upper = building.addCorridor(2, 0, 3);
 		core::Building::CreateLadderOptions options{ 3, true, false };
-		auto created = building.addLadder(0, 1, options);
+		auto created = building.addLadder(1, 0, 1, options);
 		building.finishBuild();
 
 		auto target = building.getGraph()->getClosestVertexInSector(
@@ -2171,7 +2171,7 @@ namespace
 		auto upper = building.addCorridor(3, 0, 3);
 		core::Building::CreateLadderOptions options{ 4, false, true };
 		options.directionalBatchLimit = 4;
-		auto created = building.addLadder(0, 1, options);
+		auto created = building.addLadder(1, 0, 1, options);
 		building.finishBuild();
 
 		auto graph = building.getGraph();
@@ -2252,7 +2252,7 @@ namespace
 		core::Building ordinary("Ordinary stairwell", 5, 3);
 		ordinary.addCorridor(0, 0, 4);
 		ordinary.addCorridor(1, 0, 4);
-		ordinary.addStairwell(0, 1, 2, CORE_SIDE_LEFT);
+		ordinary.addStairwell(1, 0, 1, 2, CORE_SIDE_LEFT);
 		ordinary.finishBuild();
 		if (!ordinary.getSimulationSnapshot().traversalResources.empty()) return false;
 
@@ -2262,7 +2262,7 @@ namespace
 		core::Building::CreateStairwellOptions options{ 2, CORE_SIDE_LEFT };
 		options.directionalCapacity = 1;
 		options.directionalBatchLimit = 3;
-		auto created = narrow.addStairwell(0, 1, options);
+		auto created = narrow.addStairwell(1, 0, 1, options);
 		narrow.finishBuild();
 		auto snapshot = narrow.getSimulationSnapshot();
 		if (!created.traversalResource || snapshot.traversalResources.size() != 1
@@ -2566,7 +2566,7 @@ namespace
 		core::Building::CreateLiftOptions options;
 		options.cellsWide = 1;
 		options.stopOffsets = { 0, 2 };
-		auto created = building.addLift(0, 2, options);
+		auto created = building.addLift(1, 0, 2, options);
 		building.finishBuild();
 		if (!created.traversalResource || created.doors.size() != 2 || !created.interiorSelector)
 			return false;
@@ -2670,7 +2670,7 @@ namespace
 		options.cellsWide = 1;
 		options.stopOffsets = { 0, 2 };
 		options.capacity = 1;
-		auto created = building.addLift(0, 3, options);
+		auto created = building.addLift(1, 0, 3, options);
 		uint32_t approachId;
 		building.addSectorMarker(lower, 0, 2.75f, &approachId);
 		building.finishBuild();
@@ -2772,7 +2772,7 @@ namespace
 		options.capacity = 2;
 		options.minimumDwellSeconds = 0.75f;
 		options.maximumBoardingSeconds = 5.0f;
-		building.addLift(0, 8, options);
+		building.addLift(1, 0, 8, options);
 		uint32_t bottomTargetId, middleTargetId, topTargetId;
 		building.addSectorMarker(bottom, 0, 0.5f, &bottomTargetId);
 		building.addSectorMarker(middle, 0, 0.5f, &middleTargetId);
@@ -2830,7 +2830,7 @@ namespace
 		options.capacity = 2;
 		options.minimumDwellSeconds = 0.1f;
 		options.maximumBoardingSeconds = 0.5f;
-		auto created = building.addLift(0, 2, options);
+		auto created = building.addLift(1, 0, 2, options);
 		building.finishBuild();
 
 		auto lowerTarget = building.getGraph()->getClosestVertexInSector(
@@ -2897,7 +2897,7 @@ namespace
 		options.capacity = 2;
 		options.minimumDwellSeconds = 0.1f;
 		options.maximumBoardingSeconds = 0.5f;
-		auto created = building.addLift(0, 2, options);
+		auto created = building.addLift(1, 0, 2, options);
 		building.finishBuild();
 		auto initial = building.getSimulationSnapshot();
 		for (auto const& door : created.doors)
@@ -3007,7 +3007,7 @@ namespace
 		options.capacity = 2;
 		options.minimumDwellSeconds = 0.1f;
 		options.maximumBoardingSeconds = 3.0f;
-		auto created = building.addLift(0, 2, options);
+		auto created = building.addLift(1, 0, 2, options);
 		building.finishBuild();
 
 		auto graph = building.getGraph();
@@ -3079,7 +3079,7 @@ namespace
 		options.doorMask = 0b0001;
 		options.minimumDwellSeconds = 0.0f;
 		options.maximumBoardingSeconds = 0.1f;
-		auto created = building.addShuttle(0, 0, 15, options);
+		auto created = building.addShuttle(1, 0, 0, 15, options);
 		building.finishBuild();
 
 		auto target = building.getGraph()->getClosestVertexInSector(
@@ -3145,7 +3145,7 @@ namespace
 		options.capacity = 2;
 		options.minimumDwellSeconds = 0.1f;
 		options.maximumBoardingSeconds = 0.5f;
-		auto created = building.addShuttle(0, 0, 11, options);
+		auto created = building.addShuttle(1, 0, 0, 11, options);
 		building.finishBuild();
 		if (!created.traversalResource || !created.interiorSelector || created.doors.size() != 2)
 			return false;
@@ -3267,7 +3267,7 @@ namespace
 		options.doorMask = 0b101;
 		options.minimumDwellSeconds = 0.75f;
 		options.maximumBoardingSeconds = 5.0f;
-		auto created = building.addShuttle(1, 3, 16, options);
+		auto created = building.addShuttle(1, 1, 3, 16, options);
 		building.finishBuild();
 
 		auto target = building.getGraph()->getClosestVertexInSector(
@@ -3363,7 +3363,7 @@ namespace
 		options.capacity = 1;
 		options.minimumDwellSeconds = 0.1f;
 		options.maximumBoardingSeconds = 2.0f;
-		auto created = building.addShuttle(0, 0, 19, options);
+		auto created = building.addShuttle(1, 0, 0, 19, options);
 		building.finishBuild();
 		if (!created.traversalResource || created.doors.size() != 4) return false;
 
@@ -3436,7 +3436,7 @@ namespace
 			auto upper = building.addCorridor(2, 0, 5);
 			core::Building::CreateLiftOptions options;
 			options.stopOffsets = { 0, 2 };
-			auto created = building.addLift(0, 2, options);
+			auto created = building.addLift(1, 0, 2, options);
 			building.finishBuild();
 			auto target = building.getGraph()->getClosestVertexInSector(
 				building.getSector(upper).get(), { 2.5f, 2.0f });
@@ -3481,7 +3481,7 @@ namespace
 			auto upper = building.addCorridor(2, 0, 5);
 			core::Building::CreateLiftOptions options;
 			options.stopOffsets = { 0, 2 };
-			auto created = building.addLift(0, 2, options);
+			auto created = building.addLift(1, 0, 2, options);
 			building.finishBuild();
 			auto target = building.getGraph()->getClosestVertexInSector(
 				building.getSector(upper).get(), { 2.5f, 2.0f });
@@ -3520,7 +3520,7 @@ namespace
 		core::Building building("Editor lift authoring", 10, 8);
 		building.addCorridor(1, 0, 8);
 		building.addCorridor(4, 0, 8);
-		auto created = building.addLift(0, 2, 2, 6);
+		auto created = building.addLift(1, 0, 2, 2, 6);
 		building.finishBuild();
 		auto lift = std::dynamic_pointer_cast<const core::LiftTransit>(created.lift.sector);
 		if (!lift || lift->getCellsWide() != 2 || lift->getDecksHigh() != 6
@@ -3535,9 +3535,9 @@ namespace
 			building.getSectorAtPosition(1, 2.0f, 0.0f));
 		if (!lift || lift->getNumStops() != 2) return false; // Corridors do not create stops.
 		uint32_t landingX = 0, landingWidth = 0;
-		if (!building.getLiftLandingGeometry(3, 3, landingX, landingWidth)
+		if (!building.getLiftLandingGeometry(1, 3, 3, landingX, landingWidth)
 			|| landingX != 2 || landingWidth != 2) return false;
-		auto added = building.addSectorDoor(3, 3);
+		auto added = building.addSectorDoor(0, 3, 3);
 		if (!building.isLiftOwnedDoor(added.door.sector->getObject(added.door.index))) return false;
 		lift = std::dynamic_pointer_cast<const core::LiftTransit>(
 			building.getSectorAtPosition(1, 2.0f, 0.0f));
@@ -3576,10 +3576,10 @@ namespace
 		building.addCorridor(1, 0, 31);
 		core::Building::CreateShuttleOptions options{ 2, 3, { 0, 18 }, 0 };
 		options.doorMask = 0b101;
-		auto candidates = building.getValidShuttleStopOffsets(0, 0, 27, 2, 3, false, 2);
+		auto candidates = building.getValidShuttleStopOffsets(1, 0, 0, 27, 2, 3, false, 2);
 		if (find(candidates.begin(), candidates.end(), 0) == candidates.end()
 			|| find(candidates.begin(), candidates.end(), 18) == candidates.end()) return false;
-		auto created = building.addShuttle(0, 0, 27, options);
+		auto created = building.addShuttle(1, 0, 0, 27, options);
 		building.finishBuild();
 		auto shuttle = dynamic_pointer_cast<const core::ShuttleTransit>(created.shuttle.sector);
 		if (!shuttle || shuttle->getNumStops() != 2 || created.doors.size() != 8) return false;
@@ -3590,7 +3590,7 @@ namespace
 				&owner, &stop, &carriage) || owner != shuttle->getIndex()
 				|| stop >= 2 || carriage >= 2) return false;
 		}
-		auto doorCandidates = building.getShuttleStopCandidatesForDoor(0, 9);
+		auto doorCandidates = building.getShuttleStopCandidatesForDoor(1, 0, 9);
 		if (none_of(doorCandidates.begin(), doorCandidates.end(), [&](auto const& candidate)
 			{ return candidate.sectorIndex == shuttle->getIndex() && candidate.stopOffset == 9; })) return false;
 
@@ -3627,10 +3627,10 @@ namespace
 		manyDoors.addCorridor(0, 0, 23);
 		core::Building::CreateShuttleOptions manyDoorOptions{ 1, 4, { 0, 10 }, 0 };
 		manyDoorOptions.doorMask = 0b1111;
-		auto manyDoorResult = manyDoors.addShuttle(0, 0, 20, manyDoorOptions);
+		auto manyDoorResult = manyDoors.addShuttle(1, 0, 0, 20, manyDoorOptions);
 		manyDoors.finishBuild();
 		if (manyDoorResult.doors.size() != 8
-			|| !manyDoors.getValidShuttleStopOffsets(0, 0, 20, 1, 4, false, 1u << 4).empty()) return false;
+			|| !manyDoors.getValidShuttleStopOffsets(1, 0, 0, 20, 1, 4, false, 1u << 4).empty()) return false;
 		for (uint32_t door = 0; door < 4; ++door)
 			if (manyDoorResult.doors[door].door.sector->getObject(
 				manyDoorResult.doors[door].door.index)->getCellX() != door) return false;
@@ -3641,7 +3641,7 @@ namespace
 		core::Building::CreateShuttleOptions partialOptions{ 2, 3, { 0, 10 }, 0 };
 		partialOptions.allowPartialLandings = true;
 		partialOptions.doorMask = 0b101;
-		auto partialCreated = partial.addShuttle(0, 0, 20, partialOptions);
+		auto partialCreated = partial.addShuttle(1, 0, 0, 20, partialOptions);
 		partial.finishBuild();
 		return partialCreated.doors.size() == 8
 			&& partialCreated.doors[0].traversalResource
@@ -3661,7 +3661,7 @@ namespace
 		building.addRoom("Back", 1, 0, 0, 5, 1);
 		core::Building::CreateDoorOptions options;
 		options.activationMode = core::DoorActivationMode::Unavailable;
-		building.addSectorDoor(0, 2, options);
+		building.addSectorDoor(0, 0, 2, options);
 		building.finishBuild();
 		auto edge = *std::find_if(building.getGraph()->getEdges().begin(), building.getGraph()->getEdges().end(),
 			[](auto const& candidate) { return candidate->getType() == core::EdgeType::Door; });

@@ -174,7 +174,7 @@ namespace
 		doorOptions.controls[0] = true;
 		doorOptions.controls[1] = true;
 		doorOptions.crossingLanes = 2;
-		original.addSectorDoor(0, 3, doorOptions);
+		original.addSectorDoor(0, 0, 3, doorOptions);
 		auto const removedMarker = original.addSectorMarker(fore, 0, 1.5f);
 		uint32_t destinationIdentifier{ 0x53455231u };
 		original.addSectorMarker(fore, 0, 2.5f, &destinationIdentifier);
@@ -459,8 +459,10 @@ agents: []
 		building.addRoom("Basement", 1, 0, 0, 8, 1);
 		building.addRoom("Cellar", 2, 0, 0, 8, 1);
 		building.setLayerName(2, "Deep Cellar");
-		building.addSectorDoor(0, 2);
-		building.addSectorWindow(2, 0, 5, 1, 1);
+		building.addSectorDoor(0, 0, 2);
+		// Authored on the front Layer of the 1<->2 pair, so it crosses the Layer the
+		// test deletes.
+		building.addSectorWindow(1, 0, 5, 1, 1);
 		building.finishBuild();
 		auto const survivor = building.createAgent("Walker", 0, 0, 1.0f);
 		auto const buried = building.createAgent("Buried", 1, 0, 1.0f);
@@ -515,7 +517,7 @@ agents: []
 		building.addCorridor(0, 0, 8);
 		building.addCorridor(2, 0, 8);
 		building.addRoom("Deep", 2, 0, 0, 8, 3);
-		building.addLadder(0, 3, { 3, false, true });
+		building.addLadder(1, 0, 3, { 3, false, true });
 		building.finishBuild();
 		auto const climber = building.createAgent("Climber", 3, 0, 0.5f);
 
@@ -545,11 +547,11 @@ agents: []
 		building.addLayer();
 		building.addCorridor(0, 0, 7);
 		building.addCorridor(1, 3, 7);
-		building.addStaircase(0, 4, { 4, CORE_SIDE_RIGHT, 0.4f });
+		building.addStaircase(1, 0, 4, { 4, CORE_SIDE_RIGHT, 0.4f });
 		building.addRoom("Room 1", 0, 1, 10, 4, 2);
 		building.addCorridor(2, 14, 2);
 		building.removeLocationWall(3, 1, CORE_SIDE_RIGHT);
-		building.addStaircase(1, 11, { 3, CORE_SIDE_RIGHT, 0.0f });
+		building.addStaircase(1, 1, 11, { 3, CORE_SIDE_RIGHT, 0.0f });
 		building.finishBuild();
 		building.pauseSimulation();
 
@@ -574,11 +576,11 @@ agents: []
 		untouched.addLayer();
 		untouched.addCorridor(0, 0, 7);
 		untouched.addCorridor(1, 3, 7);
-		untouched.addStaircase(0, 4, { 4, CORE_SIDE_RIGHT, 0.4f });
+		untouched.addStaircase(1, 0, 4, { 4, CORE_SIDE_RIGHT, 0.4f });
 		untouched.addRoom("Room 1", 0, 1, 10, 4, 2);
 		untouched.addCorridor(2, 14, 2);
 		untouched.removeLocationWall(3, 1, CORE_SIDE_RIGHT);
-		untouched.addStaircase(1, 11, { 3, CORE_SIDE_RIGHT, 0.0f });
+		untouched.addStaircase(1, 1, 11, { 3, CORE_SIDE_RIGHT, 0.0f });
 		untouched.finishBuild();
 		untouched.pauseSimulation();
 		auto const back = untouched.planDeleteLayer(2);
@@ -724,7 +726,7 @@ agents: []
 		options.doorMask = 0b101;
 		options.minimumDwellSeconds = 1.25f;
 		options.maximumBoardingSeconds = 4.5f;
-		auto created = building.addShuttle(0, 0, 27, options);
+		auto created = building.addShuttle(1, 0, 0, 27, options);
 		building.finishBuild();
 		building.pauseSimulation();
 		auto move = building.planResizeShuttle(created.shuttle.sector->getIndex(), 1, 1, 27);
@@ -785,8 +787,8 @@ agents: []
 		options.activationMode = core::DoorActivationMode::RemoteControlled;
 		options.controls[1] = true;
 
-		auto first = building.addSectorDoor(0, 5, options);
-		auto second = building.addSectorDoor(0, 6, options);
+		auto first = building.addSectorDoor(0, 0, 5, options);
+		auto second = building.addSectorDoor(0, 0, 6, options);
 		require(std::abs(controlCenterX(first.controls[1]) - 5.0f) < 0.0001f
 			&& std::abs(controlCenterX(second.controls[1]) - 6.0f) < 0.0001f,
 			"Adjacent Citadel-style Door controls did not choose distinct X positions");
@@ -838,8 +840,8 @@ agents: []
 		core::Building fallback("Control fallback", 4, 2);
 		fallback.addCorridor(0, 0, 2);
 		fallback.addRoom("Narrow back room", 1, 0, 0, 2, 1);
-		auto left = fallback.addSectorDoor(0, 0, options);
-		auto right = fallback.addSectorDoor(0, 1, options);
+		auto left = fallback.addSectorDoor(0, 0, 0, options);
+		auto right = fallback.addSectorDoor(0, 0, 1, options);
 		require(std::abs(controlCenterX(left.controls[1])
 				- controlCenterX(right.controls[1])) < 0.0001f
 			&& std::abs(controlCenterY(left.controls[1])
@@ -900,7 +902,7 @@ agents: []
 		options.cellsWide = 1;
 		options.decksHigh = 3;
 		options.stopOffsets = { 0, 1, 2 };
-		auto created = building.addLift(0, 8, options);
+		auto created = building.addLift(1, 0, 8, options);
 		building.addSectorMarker(room, 1, 0.5f);
 		building.addSectorMarker(room, 2, 15.5f);
 		building.finishBuild();
@@ -980,11 +982,11 @@ agents: []
 		building.addCorridor(1, 0, 1);
 		building.addCorridor(1, 3, 1);
 		std::string diagnostic;
-		require(!building.canAddStaircase(0, 0, 1, CORE_SIDE_RIGHT, &diagnostic),
+		require(!building.canAddStaircase(1, 0, 0, 1, CORE_SIDE_RIGHT, &diagnostic),
 			"A one-cell Staircase was accepted");
-		require(building.canAddStaircase(0, 0, 4, CORE_SIDE_RIGHT, &diagnostic),
+		require(building.canAddStaircase(1, 0, 0, 4, CORE_SIDE_RIGHT, &diagnostic),
 			"A valid Staircase between endpoint Corridors was rejected");
-		auto index = building.addStaircase(0, 0, 4, CORE_SIDE_RIGHT, 1.25f);
+		auto index = building.addStaircase(1, 0, 0, 4, CORE_SIDE_RIGHT, 1.25f);
 		building.finishBuild();
 		auto transit = std::dynamic_pointer_cast<const core::StaircaseTransit>(building.getSector(index));
 		require(transit && transit->getCellsWide() == 4 && transit->getDecksHigh() == 2,
@@ -1073,9 +1075,9 @@ agents: []
 		core::Building edgeBuilding("Edge Ladder controls", 5, 3);
 		edgeBuilding.addCorridor(0, 0, 5);
 		edgeBuilding.addCorridor(2, 0, 5);
-		auto edgeLadder = edgeBuilding.addLadder(0, 4, { 3, true, true });
-		auto interiorLadder = edgeBuilding.addLadder(0, 0, { 3, true, true });
-		auto retractedLadder = edgeBuilding.addLadder(0, 2, { 3, true, false });
+		auto edgeLadder = edgeBuilding.addLadder(1, 0, 4, { 3, true, true });
+		auto interiorLadder = edgeBuilding.addLadder(1, 0, 0, { 3, true, true });
+		auto retractedLadder = edgeBuilding.addLadder(1, 0, 2, { 3, true, false });
 		core::Vector2 retractedMin, retractedMax;
 		std::static_pointer_cast<const core::LadderTransit>(retractedLadder.ladder.sector)
 			->getLadder()->getCurrentShape(retractedMin, retractedMax);
@@ -1092,12 +1094,12 @@ agents: []
 		std::vector<uint32_t> corridors;
 		for (uint32_t y = 0; y < 5; ++y) corridors.push_back(building.addCorridor(y, 0, 10));
 		std::string diagnostic;
-		require(!building.canAddLadder(0, 1, 1, &diagnostic)
+		require(!building.canAddLadder(1, 0, 1, 1, &diagnostic)
 			&& diagnostic.find("at least two") != std::string::npos,
 			"Ladder placement accepted a one-deck footprint");
-		require(building.canAddLadder(0, 1, 3, &diagnostic),
+		require(building.canAddLadder(1, 0, 1, 3, &diagnostic),
 			"Valid Ladder placement was rejected");
-		auto created = building.addLadder(0, 1, { 3, false, true });
+		auto created = building.addLadder(1, 0, 1, { 3, false, true });
 		building.finishBuild();
 		building.pauseSimulation();
 		auto agentId = building.createAgent("Ladder user", created.ladder.sector->getIndex(), 1, 0.5f);
@@ -1153,12 +1155,12 @@ agents: []
 		core::Building building("Stairwell editing", 10, 5);
 		for (uint32_t y = 0; y < 5; ++y) building.addCorridor(y, 0, 10);
 		std::string diagnostic;
-		require(!building.canAddStairwell(0, 1, 1, &diagnostic)
+		require(!building.canAddStairwell(1, 0, 1, 1, &diagnostic)
 			&& diagnostic.find("at least two") != std::string::npos,
 			"Stairwell placement accepted a one-deck footprint");
-		require(building.canAddStairwell(0, 1, 3, &diagnostic),
+		require(building.canAddStairwell(1, 0, 1, 3, &diagnostic),
 			"Valid Stairwell placement was rejected");
-		auto created = building.addStairwell(0, 1,
+		auto created = building.addStairwell(1, 0, 1,
 			core::Building::CreateStairwellOptions{ 3, CORE_SIDE_LEFT });
 		building.finishBuild();
 		building.pauseSimulation();
@@ -1249,7 +1251,7 @@ agents: []
 			options.cellsWide = 1;
 			options.decksHigh = 3;
 			options.stopOffsets = { 0, 1, 2 };
-			auto created = building.addLift(0, 8, options);
+			auto created = building.addLift(1, 0, 8, options);
 			building.finishBuild();
 
 			auto const transit = created.lift.sector;
@@ -1280,7 +1282,7 @@ agents: []
 			core::Building::CreateShuttleOptions options{ 2, 3, { 0, 18 }, 0 };
 			options.capacity = 2;
 			options.doorMask = 0b101;
-			auto created = building.addShuttle(0, 0, 27, options);
+			auto created = building.addShuttle(1, 0, 0, 27, options);
 			building.finishBuild();
 
 			auto const transit = created.shuttle.sector;
@@ -1303,7 +1305,7 @@ agents: []
 		{
 			core::Building building("Ladder apertures", 10, 5);
 			for (uint32_t y = 0; y < 5; ++y) building.addCorridor(y, 0, 10);
-			auto created = building.addLadder(0, 1, { 3, false, true });
+			auto created = building.addLadder(1, 0, 1, { 3, false, true });
 			building.finishBuild();
 
 			auto const transit = created.ladder.sector;
@@ -1328,7 +1330,7 @@ agents: []
 		{
 			core::Building building("Stairwell apertures", 10, 5);
 			for (uint32_t y = 0; y < 5; ++y) building.addCorridor(y, 0, 10);
-			auto created = building.addStairwell(0, 1,
+			auto created = building.addStairwell(1, 0, 1,
 				core::Building::CreateStairwellOptions{ 3, CORE_SIDE_LEFT });
 			building.finishBuild();
 
@@ -1354,7 +1356,7 @@ agents: []
 			building.addCorridor(0, 3, 1);
 			building.addCorridor(1, 0, 1);
 			building.addCorridor(1, 3, 1);
-			auto const index = building.addStaircase(0, 0, 4, CORE_SIDE_RIGHT, 1.25f);
+			auto const index = building.addStaircase(1, 0, 0, 4, CORE_SIDE_RIGHT, 1.25f);
 			building.finishBuild();
 
 			auto const viewSectors = building.getSectors(0);
@@ -1519,12 +1521,14 @@ agents: []
 	}
 }
 
-void layerHelperApiIsConsistentWithTwoLayerConstants()
+void layerHelperApiIsConsistentWithLayerCount()
 {
 	require(core::isFrontMostLayer(0), "fore layer is not reported as front-most");
 	require(!core::isFrontMostLayer(1), "back layer reported as front-most");
-	require(core::isBackMostLayer(1), "back layer is not reported as back-most");
-	require(!core::isBackMostLayer(0), "fore layer reported as back-most");
+	require(core::isBackMostLayer(1, 2), "back layer is not reported as back-most");
+	require(!core::isBackMostLayer(0, 2), "fore layer reported as back-most");
+	require(core::isBackMostLayer(2, 3) && !core::isBackMostLayer(1, 3),
+		"isBackMostLayer does not follow the Building's Layer count");
 	require(core::layerInFront(1) == 0, "layerInFront(back) did not return fore");
 	require(core::layerBehind(0) == 1, "layerBehind(fore) did not return back");
 	require(CORE_MAX_LAYERS == 256, "CORE_MAX_LAYERS is not 256");
@@ -1614,7 +1618,7 @@ void graphConstructionWalksEveryAdjacentLayerPair()
 			building.addSectorMarker(rooms[layer], 0, 3.0f);
 		}
 
-		building.addSectorDoor(0, 5);
+		building.addSectorDoor(0, 0, 5);
 		building.finishBuild();
 
 		core::Graph graph(&building);
@@ -1653,11 +1657,202 @@ void graphConstructionWalksEveryAdjacentLayerPair()
 	}
 }
 
+// Every threshold and Transit type pairs its inter-layer Vertices against the
+// adjacent Layer pair it was authored on, not just the front pair.  A four-Layer
+// Building carries one of each across three different pairs; the Graph must join
+// every one of them to the Layer directly in front, and never skip a Layer.
+void thresholdsAndTransitsPairTheirOwnAdjacentLayerPair()
+{
+	core::Building building("Deep Pairing", 40, 2);
+	while (building.getLayerCount() < 4) building.addLayer();
+
+	// Layer 0 - front-most.  Two stacked Corridors give the Layer 1 Ladder two
+	// distinct landing Locations.
+	building.addCorridor(0, 0, 0, 4, 1);
+	building.addCorridor(0, 1, 0, 4, 1);
+
+	// Layer 1 - back of pair 0<->1, landing Layer for the Layer 2 Transits, and
+	// front of pair 1<->2.
+	building.addRoom("Store", 1, 0, 0, 2, 1);
+	building.addCorridor(1, 0, 8, 8, 1);
+	building.addCorridor(1, 1, 8, 8, 1);
+	building.addCorridor(1, 1, 30, 8, 1);   // Shuttle landing run
+
+	// Layer 2 - back of pair 1<->2, landing Layer for the Layer 3 Transits, and
+	// front of pair 2<->3.
+	building.addRoom("Deep Store", 2, 0, 8, 2, 1);
+	building.addRoom("Annexe", 2, 0, 11, 1, 1);
+	building.addCorridor(2, 0, 16, 8, 1);
+	building.addCorridor(2, 1, 16, 8, 1);
+	building.addCorridor(2, 0, 24, 2, 1);
+	building.addCorridor(2, 1, 24, 2, 1);
+	building.addRoom("Stair Hall Lower", 2, 0, 28, 2, 1);
+	building.addRoom("Bulkhead Left", 2, 0, 30, 2, 1);
+	building.addRoom("Bulkhead Right", 2, 0, 32, 2, 1);
+	building.addRoom("Stair Hall Upper", 2, 1, 28, 2, 1);
+
+	// Layer 3 - back-most.
+	building.addRoom("Deep Room", 3, 0, 16, 2, 1);
+	building.addRoom("Deep Annexe", 3, 0, 19, 1, 1);
+
+	// One of every threshold and Transit, each on a different adjacent Layer pair.
+	// Pair 0<->1.
+	building.addSectorDoor(0, 0, 1);
+	building.addLadder(1, 0, 2, { 2, false, false });
+	// Pair 1<->2.
+	building.addSectorDoor(1, 0, 9);
+	building.addSectorWindow(1, 0, 11, 1, 1, { true });
+	building.addLadder(2, 0, 10, { 2, false, false });
+	building.addLift(2, 0, 12, 1, 2);
+	building.addShuttle(2, 1, 30, 8, { 1, 3, { 0, 5 }, 0 });
+	// Pair 2<->3.
+	building.addSectorDoor(2, 0, 17);
+	building.addSectorWindow(2, 0, 19, 1, 1, { true });
+	building.addLadder(3, 0, 18, { 2, false, false });
+	building.addStairwell(3, 0, 28, 2, CORE_SIDE_LEFT);
+	building.addStaircase(3, 0, 24, 2, CORE_SIDE_RIGHT);
+	// A Bulkhead Door joins two Locations on its own Layer, so it pairs nothing.
+	building.addSectorBulkheadDoor(2, 0, 32, CORE_SIDE_LEFT);
+
+	building.finishBuild();
+
+	core::Graph graph(&building);
+	graph.build();
+
+	// Nothing may reach across a Layer it did not pair with.
+	for (auto const& edge : graph.getEdges())
+	{
+		auto const a = edge->getVertex(0)->getSector()->getLayerIndex();
+		auto const b = edge->getVertex(1)->getSector()->getLayerIndex();
+		require(a == b || a + 1 == b || b + 1 == a,
+			"An Edge joined Layers that are not adjacent");
+	}
+
+	// Every Layer contributes Vertices.
+	std::vector<uint32_t> verticesPerLayer(building.getLayerCount(), 0);
+	for (auto const& vertex : graph.getVertices())
+		++verticesPerLayer[vertex->getSector()->getLayerIndex()];
+	for (uint32_t layer = 0; layer < building.getLayerCount(); ++layer)
+		require(verticesPerLayer[layer] > 0, "A Layer contributed no Vertices to the Graph");
+
+	auto countEdgesAcross = [&](core::EdgeType type, uint32_t front, uint32_t back)
+	{
+		uint32_t count{ 0 };
+		for (auto const& edge : graph.getEdges())
+		{
+			if (edge->getType() != type) continue;
+			auto const a = edge->getVertex(0)->getSector()->getLayerIndex();
+			auto const b = edge->getVertex(1)->getSector()->getLayerIndex();
+			if ((a == front && b == back) || (a == back && b == front)) ++count;
+		}
+		return count;
+	};
+
+	// Each authored threshold produced exactly one Edge across its own pair, and no
+	// threshold paired a pair it was never authored on.
+	// Pair 0<->1 holds only the one explicitly authored Door.  Pair 1<->2 holds the
+	// explicit Door, the two landing Doors the Lift creates for its stops, and the two
+	// Doors the Shuttle creates for its stops.  Pair 2<->3 again holds only the
+	// explicit Door.  No threshold reaches any other pair.
+	require(countEdgesAcross(core::EdgeType::Door, 0, 1) == 1,
+		"Pair 0<->1 should hold exactly the one authored Door");
+	require(countEdgesAcross(core::EdgeType::Door, 1, 2) == 5,
+		"Pair 1<->2 should hold the authored Door plus the Lift and Shuttle landing Doors");
+	require(countEdgesAcross(core::EdgeType::Door, 2, 3) == 1,
+		"Pair 2<->3 should hold exactly the one authored Door");
+	require(countEdgesAcross(core::EdgeType::Window, 1, 2) == 1,
+		"The Window authored on pair 1<->2 did not pair there");
+	require(countEdgesAcross(core::EdgeType::Window, 2, 3) == 1,
+		"The Window authored on pair 2<->3 did not pair there");
+	require(countEdgesAcross(core::EdgeType::Window, 0, 1) == 0,
+		"A Window paired a Layer pair it was never authored on");
+	require(countEdgesAcross(core::EdgeType::Door, 0, 2) == 0
+		&& countEdgesAcross(core::EdgeType::Door, 1, 3) == 0,
+		"A Door skipped a Layer");
+
+	uint32_t bulkheadEdges{ 0 };
+	for (auto const& edge : graph.getEdges())
+	{
+		if (edge->getType() != core::EdgeType::BulkheadDoor) continue;
+		require(edge->getVertex(0)->getSector()->getLayerIndex()
+			== edge->getVertex(1)->getSector()->getLayerIndex(),
+			"A Bulkhead Door Edge crossed Layers");
+		++bulkheadEdges;
+	}
+	require(bulkheadEdges == 1, "The Bulkhead Door did not produce one same-Layer Edge");
+
+	// Every Transit sits on the Layer it was authored on, and mounts onto the Layer
+	// directly in front of it - never any other.
+	struct TransitExpectation
+	{
+		core::SectorType sectorType;
+		core::EdgeType mountType;
+		uint32_t layer;
+	};
+
+	// Enclosed Lifts and Shuttles reach their landing Layer through the landing
+	// Doors authored in front of them rather than through mount edges, so they are
+	// covered by the Door counts above instead of by a mount expectation here.
+	std::vector<TransitExpectation> const expected{
+		{ core::SectorType::Ladder, core::EdgeType::LadderMount, 1 },
+		{ core::SectorType::Ladder, core::EdgeType::LadderMount, 2 },
+		{ core::SectorType::Ladder, core::EdgeType::LadderMount, 3 },
+		{ core::SectorType::Stairwell, core::EdgeType::StairwellMount, 3 },
+		{ core::SectorType::Staircase, core::EdgeType::StaircaseMount, 3 },
+	};
+
+	for (auto const& want : expected)
+	{
+		uint32_t mounts{ 0 };
+		uint32_t strays{ 0 };
+		for (auto const& edge : graph.getEdges())
+		{
+			if (edge->getType() != want.mountType) continue;
+			auto const a = edge->getVertex(0)->getSector();
+			auto const b = edge->getVertex(1)->getSector();
+			auto const transit = a->getType() == want.sectorType ? a : b;
+			auto const other = transit == a ? b : a;
+			if (transit->getType() != want.sectorType) continue;
+			// Only this expectation's own Transit; other Layers are checked separately.
+			if (transit->getLayerIndex() != want.layer) continue;
+			if (other->getLayerIndex() + 1 == transit->getLayerIndex()) ++mounts;
+			else ++strays;
+		}
+		require(mounts > 0, "A Transit never mounted onto the Layer directly in front of it");
+		require(strays == 0, "A Transit mounted onto a Layer other than the one in front of it");
+	}
+
+	// The authored pairings survive a save and reload unchanged.
+	core::SerializationWorkData workData;
+	auto writer = core::YamlSerializer::toString();
+	building.serialize(*writer, workData);
+	writer->serialize();
+	auto reader = core::YamlSerializer::fromString(writer->getSerializedString());
+	reader->deserialize();
+	core::Building reloaded("placeholder", 1, 1);
+	require(reloaded.deserialize(*reader, workData), "A deep Building did not round-trip");
+	require(reloaded.getLayerCount() == building.getLayerCount(),
+		"Round-tripping changed the Layer count");
+
+	core::Graph reloadedGraph(&reloaded);
+	reloadedGraph.build();
+	uint32_t deepDoors{ 0 };
+	for (auto const& edge : reloadedGraph.getEdges())
+	{
+		if (edge->getType() != core::EdgeType::Door) continue;
+		auto const a = edge->getVertex(0)->getSector()->getLayerIndex();
+		auto const b = edge->getVertex(1)->getSector()->getLayerIndex();
+		if ((a == 2 && b == 3) || (a == 3 && b == 2)) ++deepDoors;
+	}
+	require(deepDoors == 1, "The reloaded Building lost its deep Door pairing");
+}
+
 void runSerializationSmokeChecks()
 {
-	layerHelperApiIsConsistentWithTwoLayerConstants();
+	layerHelperApiIsConsistentWithLayerCount();
 	onlyTheSelectedLayerAndTheLayerBehindAreDrawn();
 	graphConstructionWalksEveryAdjacentLayerPair();
+	thresholdsAndTransitsPairTheirOwnAdjacentLayerPair();
 	transitsOnTheLayerBehindAreOnlyDrawnThroughApertures();
 	stringYamlRoundTripsPrimitiveValues();
 	fileYamlRoundTrips();

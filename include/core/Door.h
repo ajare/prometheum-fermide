@@ -37,7 +37,16 @@ namespace core
 
 		uint32_t getCellsWide() const;
 		OpenStyle getOpenStyle() const;
-		std::shared_ptr<const Sector> getSector(uint32_t layerIndex) const;
+
+		// A Door joins exactly one adjacent Layer pair.  The index is the side of that
+		// pair, not an absolute Layer index: 0 is the front Layer the Door is authored
+		// on, 1 is the Layer directly behind it.
+		std::shared_ptr<const Sector> getSector(uint32_t pairSide) const;
+		std::shared_ptr<const Sector> getFrontSector() const { return mSectors[0]; }
+		std::shared_ptr<const Sector> getBackSector() const { return mSectors[1]; }
+		// The absolute Layers the Door crosses.  ~0u when a side has no Sector.
+		uint32_t getFrontLayer() const;
+		uint32_t getBackLayer() const;
 		DoorActivationMode getActivationMode() const { return mActivationMode; }
 		TraversalResourceId getTraversalResourceId() const { return mTraversalResource; }
 		void configureTraversal(DoorActivationMode mode, TraversalResourceId resource, float holdOpenTime);
