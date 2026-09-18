@@ -11,6 +11,7 @@ Options:
   --model MODEL                     Agent model (default: Sol for pi, opus for claude)
   --effort LEVEL                    off|minimal|low|medium|high|xhigh|max
   --adaptive-model-and-effort       Select model/effort from difficulty label
+                                    (cannot be combined with --model or --effort)
   --repo OWNER/NAME                 Repository (inferred when omitted)
   --ready-label LABEL               Eligibility label (default: ready-for-agent)
   --labels LABEL[,LABEL...]         Additional required labels; may be repeated
@@ -19,7 +20,10 @@ Options:
   --max-retry-interval-seconds N     (default: 900)
   --usage-poll-seconds N             (default: 600)
   --once                            Process at most one ticket
-  --dry-run                         Print selection without claiming/running
+  --dry-run                         List every eligible ticket in the order the loop
+                                    would process them, with difficulty, priority
+                                    and the model/effort that would be chosen.
+                                    Claims and runs nothing.
   --quiet                           Suppress routine and agent output
   --verbose                         Enable loop and agent diagnostics
   --help
@@ -34,13 +38,16 @@ require_value() { [[ $# -ge 2 ]] || { echo "error: $1 requires a value" >&2; exi
 
 agent="" model="" effort="medium" repo="" ready_label="ready-for-agent" use_branch=""
 adaptive=0 once=0 dry_run=0 quiet=0 verbose=0
+# Track explicit --model/--effort separately: `effort` has a default, so its value
+# alone cannot tell "user asked for medium" from "nobody said".
+model_set=0 effort_set=0
 initial_retry=30 max_retry=900 usage_poll=600
 labels=()
 while (($#)); do
     case "$1" in
         --agent) require_value "$@"; agent=$2; shift 2 ;;
-        --model) require_value "$@"; model=$2; shift 2 ;;
-        --effort) require_value "$@"; effort=$2; shift 2 ;;
+        --model) require_value "$@"; model=$2; model_set=1; shift 2 ;;
+        --effort) require_value "$@"; effort=$2; effort_set=1; shift 2 ;;
         --repo) require_value "$@"; repo=$2; shift 2 ;;
         --ready-label) require_value "$@"; ready_label=$2; shift 2 ;;
         --labels)
@@ -63,6 +70,15 @@ while (($#)); do
 done
 
 [[ "$agent" == pi || "$agent" == claude ]] || { echo "error: --agent must be pi or claude" >&2; exit 2; }
+if ((adaptive)) && ((model_set || effort_set)); then
+    conflicting=()
+    ((model_set)) && conflicting+=("--model")
+    ((effort_set)) && conflicting+=("--effort")
+    conflict_list=${conflicting[*]}
+    ((${#conflicting[@]} == 2)) && conflict_list="${conflicting[0]} and ${conflicting[1]}"
+    echo "error: ${conflict_list} cannot be used with --adaptive-model-and-effort, which picks both from each ticket's difficulty label. Drop --adaptive-model-and-effort to pin them, or drop ${conflict_list} to let the loop choose." >&2
+    exit 2
+fi
 [[ "$effort" =~ ^(off|minimal|low|medium|high|xhigh|max)$ ]] || { echo "error: unsupported --effort '$effort'" >&2; exit 2; }
 [[ "$initial_retry" =~ ^[0-9]+$ && "$max_retry" =~ ^[0-9]+$ && "$usage_poll" =~ ^[0-9]+$ ]] || die "Retry intervals must be integers."
 ((initial_retry >= 1 && max_retry >= initial_retry)) || die "Retry intervals must be positive and max must be at least initial."
@@ -80,18 +96,22 @@ if [[ -z "$model" ]]; then
 fi
 repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || die "Run this script from inside a Git repository."
 cd "$repo_root" || exit 1
-[[ -z "$(git status --porcelain --untracked-files=no)" ]] \
-    || die "The tracked worktree is not clean. Commit or restore tracked changes before starting the loop."
+# A dry run reads only, so it is not held to the clean-worktree / branch rules that
+# protect a real run from clobbering in-flight work.
+if ((dry_run == 0)); then
+    [[ -z "$(git status --porcelain --untracked-files=no)" ]] \
+        || die "The tracked worktree is not clean. Commit or restore tracked changes before starting the loop."
 
-if [[ -n "$use_branch" && "$(git rev-parse --abbrev-ref HEAD)" != "$use_branch" ]]; then
-    if git show-ref --verify --quiet "refs/heads/$use_branch"; then
-        git checkout "$use_branch" >/dev/null 2>&1
-    elif git ls-remote --exit-code --heads origin "$use_branch" >/dev/null 2>&1; then
-        git checkout -b "$use_branch" --track "origin/$use_branch" >/dev/null 2>&1
-    else
-        git checkout -b "$use_branch" >/dev/null 2>&1
-    fi || die "Failed to check out branch '$use_branch'."
-    status "Switched to branch '$use_branch'."
+    if [[ -n "$use_branch" && "$(git rev-parse --abbrev-ref HEAD)" != "$use_branch" ]]; then
+        if git show-ref --verify --quiet "refs/heads/$use_branch"; then
+            git checkout "$use_branch" >/dev/null 2>&1
+        elif git ls-remote --exit-code --heads origin "$use_branch" >/dev/null 2>&1; then
+            git checkout -b "$use_branch" --track "origin/$use_branch" >/dev/null 2>&1
+        else
+            git checkout -b "$use_branch" >/dev/null 2>&1
+        fi || die "Failed to check out branch '$use_branch'."
+        status "Switched to branch '$use_branch'."
+    fi
 fi
 
 [[ -n "$repo" ]] || repo=$(gh repo view --json nameWithOwner --jq .nameWithOwner) || exit 1
@@ -134,21 +154,187 @@ get_next_ticket() {
     printf '%s\n' "$best"
 }
 
-select_adaptive() {
-    local issue=$1 difficulty count
-    mapfile -t difficulties < <(jq -r '.labels[].name | ascii_downcase | capture("^difficulty[:/]\\s*(?<d>trivial|small|low|medium|large|high|hard)$").d' <<<"$issue" | sort -u)
-    count=${#difficulties[@]}
-    ((count > 0)) || die "Adaptive model and effort requires one supported difficulty label."
-    ((count == 1)) || die "Adaptive model and effort found conflicting difficulty labels: ${difficulties[*]}."
-    difficulty=${difficulties[0]}
+# The single source of truth for the difficulty -> model/effort ladder. Shared by the
+# live loop (select_adaptive) and --dry-run so the two can never drift apart.
+# Echoes "<model>|<effort>"; returns non-zero for an unsupported difficulty.
+adaptive_mapping() {
+    local difficulty=$1 small large
     if [[ "$agent" == pi ]]; then small="openai-codex/gpt-5.6-terra"; large="openai-codex/gpt-5.6-sol"; else small=sonnet; large=opus; fi
     case "$difficulty" in
-        trivial) ticket_model=$small; ticket_effort=medium ;;
-        small|low) ticket_model=$small; ticket_effort=high ;;
-        medium) ticket_model=$large; ticket_effort=medium ;;
-        large|high|hard) ticket_model=$large; ticket_effort=high ;;
+        trivial) echo "$small|medium" ;;
+        easy|small|low) echo "$small|high" ;;
+        medium) echo "$large|medium" ;;
+        large|high|hard) echo "$large|high" ;;
+        *) return 1 ;;
     esac
-    selection_source="adaptive difficulty:$difficulty"
+}
+
+# Comma-joined unique difficulties found on an issue JSON ("" when none).
+difficulty_of() {
+    jq -r '[.labels[].name | ascii_downcase
+        | capture("^difficulty[:/]\\s*(?<d>trivial|easy|small|low|medium|large|high|hard)$")? | .d]
+        | unique | join(",")' <<<"$1"
+}
+
+# Human-readable priority label ("—" when none).
+priority_label_of() {
+    jq -r '[.labels[].name | ascii_downcase
+        | capture("^priority[:/]\\s*(?<p>critical|urgent|p0|high|p1|medium|normal|p2|low|p3)$")? | .p]
+        | first // "—"' <<<"$1"
+}
+
+select_adaptive() {
+    local issue=$1 difficulties mapping
+    IFS=',' read -ra difficulties <<<"$(difficulty_of "$issue")"
+    case ${#difficulties[@]} in
+        0) die "Adaptive model and effort requires one supported difficulty label." ;;
+        1) : ;;
+        *) die "Adaptive model and effort found conflicting difficulty labels: ${difficulties[*]}." ;;
+    esac
+    mapping=$(adaptive_mapping "${difficulties[0]}") || die "Unsupported difficulty '${difficulties[0]}'."
+    ticket_model=${mapping%%|*}
+    ticket_effort=${mapping##*|}
+    selection_source="adaptive difficulty:${difficulties[0]}"
+}
+
+# One GraphQL call returns every candidate with its real blocker numbers, so the dry
+# run can simulate the loop's ordering instead of only showing the next pick.
+# Uses `search` rather than `repository.issues(labels:)` because the latter is OR,
+# whereas gh issue list --label (and the live loop) is AND. Search matches the live
+# semantics.
+DRY_RUN_QUERY='query($q: String!) {
+  search(query: $q, type: ISSUE, first: 100) {
+    nodes {
+      ... on Issue {
+        number
+        title
+        url
+        labels(first: 20) { nodes { name } }
+        assignees(first: 10) { nodes { login } }
+        blockedBy(first: 50) { nodes { number } }
+      }
+    }
+  }
+}'
+
+# Resolve the model/effort a ticket would get, without dying. Mirrors the live path.
+dry_run_selection() {
+    local issue=$1
+    ticket_model=$model; ticket_effort=$effort; selection_source="command line/default"
+    ((adaptive)) || return 0
+    local diffs mapping
+    diffs=$(difficulty_of "$issue")
+    if [[ -z "$diffs" ]]; then
+        ticket_model="(unresolved)"; ticket_effort="(unresolved)"; selection_source="adaptive: no difficulty label"
+    elif [[ "$diffs" == *,* ]]; then
+        ticket_model="(conflict)"; ticket_effort="(conflict)"; selection_source="adaptive: conflicting labels [$diffs]"
+    elif mapping=$(adaptive_mapping "$diffs"); then
+        ticket_model=${mapping%%|*}; ticket_effort=${mapping##*|}; selection_source="adaptive difficulty:$diffs"
+    else
+        ticket_model="(unsupported)"; ticket_effort="(unsupported)"; selection_source="adaptive: unsupported difficulty '$diffs'"
+    fi
+}
+
+run_dry_run() {
+    local search_query="repo:${repo} is:issue is:open" l payload data total
+    for l in "$ready_label" ${labels[@]+"${labels[@]}"}; do
+        [[ -n "$l" ]] && search_query+=" label:\"${l//\"/}\""
+    done
+    payload=$(jq -nc --arg q "$search_query" --arg query "$DRY_RUN_QUERY" '{query: $query, variables: {q: $q}}')
+    data=$(printf '%s' "$payload" | gh api graphql --input - 2>&1) \
+        || die "Failed to query candidate tickets: $(head -c 300 <<<"$data")"
+
+    total=$(jq '.data.search.nodes | length' <<<"$data")
+    if ((total == 0)); then
+        echo "No open tickets match: $search_query"
+        return 0
+    fi
+
+    declare -A node_of blockers_of completed_of
+    local node n
+    while IFS= read -r node; do
+        n=$(jq -r .number <<<"$node")
+        # Flatten the GraphQL connections into the shape `gh issue list --json` uses,
+        # so priority_of / difficulty_of work here unchanged.
+        node_of[$n]=$(jq -c '{number, title, url,
+            labels: (.labels.nodes // []),
+            assignees: (.assignees.nodes // [])}' <<<"$node")
+        blockers_of[$n]=$(jq -r '[.blockedBy.nodes[].number] | map(tostring) | join(" ")' <<<"$node")
+    done < <(jq -c '.data.search.nodes[]' <<<"$data")
+
+    echo "Dry run - $agent, filter: $search_query"
+    if ((adaptive)); then
+        echo "Model/effort: adaptive from the difficulty label."
+    else
+        echo "Model/effort: fixed at '$model' / '$effort' (pass --adaptive-model-and-effort to vary by difficulty)."
+    fi
+    echo
+    printf '%-6s %-8s %-11s %-10s %-28s %-8s %s\n' \
+        "Order" "Ticket" "Difficulty" "Priority" "Model" "Effort" "Selection source"
+
+    # Simulate the loop: repeatedly take the best unblocked ticket and mark it done,
+    # which is what unblocks its dependents. Same ranking key as get_next_ticket.
+    local processed=0
+    while :; do
+        local best="" best_key=""
+        for n in "${!node_of[@]}"; do
+            [[ -n "${completed_of[$n]:-}" ]] && continue
+            local issue="${node_of[$n]}" assignee_count assigned
+            assignee_count=$(jq '.assignees | length' <<<"$issue")
+            assigned=$(jq -r --arg user "$current_user" '[.assignees[].login] | index($user) != null' <<<"$issue")
+            [[ "$assignee_count" -eq 0 || "$assigned" == true ]] || continue
+            local b unmet=""
+            for b in ${blockers_of[$n]}; do
+                [[ -n "${completed_of[$b]:-}" ]] || unmet="$unmet$b"
+            done
+            [[ -z "$unmet" ]] || continue
+            local rank priority key
+            [[ "$assigned" == true ]] && rank=0 || rank=1
+            priority=$(priority_of <<<"$issue")
+            printf -v key '%d:%010d:%010d' "$rank" "$priority" "$n"
+            if [[ -z "$best_key" || "$key" < "$best_key" ]]; then best_key=$key; best=$n; fi
+        done
+        [[ -n "$best" ]] || break
+        ((++processed))
+        completed_of[$best]=1
+        dry_run_selection "${node_of[$best]}"
+        printf '%-6s %-8s %-11s %-10s %-28s %-8s %s\n' \
+            "$processed" "#$best" "$(difficulty_of "${node_of[$best]}")" \
+            "$(priority_label_of "${node_of[$best]}")" "$ticket_model" "$ticket_effort" "$selection_source"
+    done
+
+    # Anything never reached: owned by someone else, or blocked by something that
+    # this loop will never complete (possibly a cycle).
+    local -a stranded=()
+    for n in "${!node_of[@]}"; do
+        [[ -z "${completed_of[$n]:-}" ]] && stranded+=("$n")
+    done
+    if ((${#stranded[@]} == 0)); then
+        echo
+        echo "All $total eligible tickets are runnable. Nothing stranded."
+        return 0
+    fi
+
+    echo
+    echo "Not runnable by this loop (${#stranded[@]} of $total):"
+    local -a sorted_stranded
+    mapfile -t sorted_stranded < <(printf '%s\n' "${stranded[@]}" | sort -n)
+    for n in "${sorted_stranded[@]}"; do
+        local issue="${node_of[$n]}" reason="" b unmet=()
+        local assignee_count assigned
+        assignee_count=$(jq '.assignees | length' <<<"$issue")
+        assigned=$(jq -r --arg user "$current_user" '[.assignees[].login] | index($user) != null' <<<"$issue")
+        if ((assignee_count > 0)) && [[ "$assigned" != true ]]; then
+            reason="assigned to $(jq -r '[.assignees[].login] | join(", ")' <<<"$issue"), not $current_user"
+        fi
+        for b in ${blockers_of[$n]}; do
+            [[ -n "${completed_of[$b]:-}" ]] && continue
+            if [[ -n "${node_of[$b]:-}" ]]; then unmet+=("#$b"); else unmet+=("#$b (outside label filter)"); fi
+        done
+        ((${#unmet[@]} > 0)) && reason="${reason:+$reason; }blocked by ${unmet[*]}"
+        [[ -z "$reason" ]] && reason="not reached"
+        printf '  #%-7s %s\n' "$n" "$reason"
+    done
 }
 
 get_ticket_prompt() {
@@ -162,6 +348,8 @@ $(jq -r .url <<<"$issue")
 You are running non-interactively. Work autonomously through implementation; do not stop at a plan and do not ask the user questions. Read and follow the repository instructions and domain documentation. Inspect the current worktree first because this may be a retry after a provider failure.
 
 Only implement this ticket, not its parent or blocked follow-up tickets. Use the ticket's acceptance criteria as the contract. Run focused tests while developing, then the relevant builds, formatting checks, and tests before completion. Preserve unrelated and pre-existing untracked files.
+
+Ensure that all tests are headless and there are no dialog boxes or anything that may block non-interactive automation.
 
 When the ticket is fully implemented and verified:
 1. Commit all tracked changes on the current branch with a message referencing #$(jq -r .number <<<"$issue").
@@ -271,6 +459,8 @@ show_provider_usage() {
 usage_error_re='usage limit|usage_limit_reached|usage cap|quota exceeded|insufficient_quota|out of credits|credit balance|billing limit|subscription limit|weekly limit|monthly limit|weighted tokens|token limit.*reset|rate limit.*reset|limit resets? at'
 server_error_re='HTTP[[:space:]]*(408|409|425|429|5[0-9][0-9])|status[[:space:]]*(408|409|425|429|5[0-9][0-9])|server error|internal server error|service unavailable|bad gateway|gateway timeout|overloaded|temporarily unavailable|request timeout|timed out|ECONNRESET|ECONNREFUSED|ENETUNREACH|EAI_AGAIN|socket hang up|connection reset|connection closed|fetch failed|network error|server_error|stream.*(closed|terminated)'
 
+if ((dry_run)); then run_dry_run; exit 0; fi
+
 while true; do
     ticket=$(get_next_ticket); ticket_result=$?
     ((ticket_result != 2)) || die "Failed to query eligible tickets."
@@ -280,7 +470,6 @@ while true; do
     ticket_model=$model; ticket_effort=$effort; selection_source="command line/default"
     ((adaptive)) && select_adaptive "$ticket"
     echo "Ticket #$number model: $ticket_model; effort: $ticket_effort ($selection_source)."
-    if ((dry_run)); then status "Dry run: would start $agent with model '$ticket_model' and effort '$ticket_effort'."; break; fi
 
     if [[ $(jq '.assignees|length' <<<"$ticket") -eq 0 ]]; then
         gh issue edit "$number" --repo "$repo" --add-assignee @me >/dev/null || exit 1
