@@ -1000,6 +1000,13 @@ namespace core
 		// construction: it hosts objects and agents exactly as a Room does and is
 		// rendered as a solid opaque colour (ADR 0003). Placement follows the
 		// Room rule - the same Layer, bounds, free-space, and height validation.
+		// The named form is the persistence form: the record carries the Facade's
+		// name alongside its footprint and packed colour. The unnamed form keeps
+		// the generic "Facade" name.
+		uint32_t addFacade(std::string const& name, uint32_t layerIndex, uint32_t y, uint32_t x,
+			uint32_t cellsWide, uint32_t decksHigh, float topDeckHeight = CORE_ROOM_MAX_HEIGHT,
+			BackgroundColour const& colour = Facade::defaultColour());
+
 		uint32_t addFacade(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide,
 			uint32_t decksHigh, float topDeckHeight = CORE_ROOM_MAX_HEIGHT,
 			BackgroundColour const& colour = Facade::defaultColour());

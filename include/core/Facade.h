@@ -25,12 +25,17 @@ namespace core
 	// Building::addFacade() is the creation path: a Facade is placed on any
 	// one Layer over a block of free cells with the same placement validation
 	// a Room plays by, and is persisted as a ConstructionType::Facade record
-	// carrying its packed colour.
+	// carrying its name, footprint, and packed colour.
 	class Facade : public Location
 	{
 		BackgroundColour mColour;
 
 	public:
+
+		// The name a Facade carries when nothing authors one. Persistence keeps
+		// it explicit in the record, so a hand-authored record that leaves the
+		// name out and an unnamed addFacade() call land on the same Sector.
+		static std::string defaultName();
 
 		// A muted sand colour, chosen to be distinct from the Background
 		// (96,128,160), the Fore (192,192,255) and Back (224,224,255)

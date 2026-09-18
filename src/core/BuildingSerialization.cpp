@@ -252,6 +252,7 @@ namespace core
 			// existing integer fields.
 			serializer.writeUint32("colour", record.f); break;
 		case ConstructionType::Facade:
+			serializer.writeString("name", record.name);
 			serializer.writeUint32("layer", record.layer);
 			serializer.writeUint32("y", record.a); serializer.writeUint32("x", record.b);
 			serializer.writeUint32("cellsWide", record.c); serializer.writeUint32("decksHigh", record.d);
@@ -507,6 +508,10 @@ namespace core
 				packBackgroundColour(BackgroundColour{}));
 			break;
 		case ConstructionType::Facade:
+			// A hand-authored record may leave the name out and take the Facade
+			// default, so an unnamed record replays as the same Sector an
+			// unnamed addFacade() call produces.
+			record.name = serializer.readString("name", true, Facade::defaultName());
 			record.layer = readLayer("layer");
 			record.a = serializer.readUint32("y"); record.b = serializer.readUint32("x");
 			record.c = serializer.readUint32("cellsWide"); record.d = serializer.readUint32("decksHigh");
@@ -833,7 +838,10 @@ namespace core
 				record.c, record.d, unpackBackgroundColour(record.f));
 			break;
 		case ConstructionType::Facade:
-			addFacade(record.layer == ~0u ? 0u : record.layer, record.a, record.b,
+			// A record with no name at all - an empty string as well as a missing
+			// field - replays as the generic Facade rather than a nameless Sector.
+			addFacade(record.name.empty() ? Facade::defaultName() : record.name,
+				record.layer == ~0u ? 0u : record.layer, record.a, record.b,
 				record.c, record.d, record.x, unpackBackgroundColour(record.f));
 			break;
 		}

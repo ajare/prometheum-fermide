@@ -1465,6 +1465,13 @@ namespace core
 	uint32_t Building::addFacade(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide,
 		uint32_t decksHigh, float topDeckHeight, BackgroundColour const& colour)
 	{
+		return addFacade(Facade::defaultName(), layerIndex, y, x, cellsWide, decksHigh,
+			topDeckHeight, colour);
+	}
+
+	uint32_t Building::addFacade(std::string const& name, uint32_t layerIndex, uint32_t y, uint32_t x,
+		uint32_t cellsWide, uint32_t decksHigh, float topDeckHeight, BackgroundColour const& colour)
+	{
 		string diagnostic;
 		if (!canAddFacade(layerIndex, y, x, cellsWide, decksHigh, topDeckHeight, &diagnostic))
 			throw BuildingException(this, diagnostic);
@@ -1472,7 +1479,7 @@ namespace core
 		beginStructuralEdit("addFacade");
 
 		auto sectorIndex = (uint32_t)mSectors.size();
-		mSectors.push_back(make_shared<Facade>("Facade", layerIndex, sectorIndex,
+		mSectors.push_back(make_shared<Facade>(name, layerIndex, sectorIndex,
 			x, y, cellsWide, decksHigh, topDeckHeight, colour));
 
 		auto layer = getLayer(layerIndex);
@@ -1489,6 +1496,7 @@ namespace core
 		}
 
 		ConstructionRecord record{ ConstructionType::Facade };
+		record.name = name;
 		record.layer = layerIndex;
 		record.a = y; record.b = x; record.c = cellsWide; record.d = decksHigh;
 		record.x = topDeckHeight;

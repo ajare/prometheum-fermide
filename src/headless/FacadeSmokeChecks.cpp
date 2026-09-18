@@ -1,4 +1,4 @@
-// Facade checks, for tickets #43 and #45.
+// Facade checks, for tickets #43, #44 and #45.
 //
 // A Facade is an occupiable Location whose perimeter walls are all open by
 // construction: it hosts objects and agents exactly as a Room does, owns
@@ -7,7 +7,9 @@
 // (ADR 0003). These checks cover creation and placement validation, the
 // open-end invariant, agent placement, object-placement parity with a Room,
 // Bulkhead Door refusal, wall-command refusal, persistence of the
-// ConstructionType::Facade record and its packed colour, and - from #45 -
+// ConstructionType::Facade record - its name, footprint and packed colour,
+// the sector index mapping across a canonical replay, and the rejection a
+// Facade map gets from a pre-Facade reader - and - from #45 -
 // horizontal-adjacency merging: a Facade between two floor-aligned Rooms
 // is one continuous floor, a mismatched-floor neighbour does not merge,
 // wall removal accepts a Facade neighbour on either side of the boundary,
@@ -17,6 +19,7 @@
 #include <cstdint>
 #include <format>
 #include <functional>
+#include <set>
 #include <stdexcept>
 #include <string>
 
@@ -32,6 +35,7 @@
 #include "core/SectorEdge.h"
 #include "core/SectorObjectType.h"
 #include "core/SectorType.h"
+#include "core/SerializationException.h"
 #include "core/Transit.h"
 #include "core/YamlSerializer.h"
 
@@ -133,9 +137,10 @@ namespace
 		{
 			auto const sector = building.getSector(index);
 			require(sector != nullptr, "Building reported a null Sector while signing");
-			signature += std::format("{}:{}@{},{},{}x{}", index,
+			signature += std::format("{}:{}@{},{},{}x{} name={}", index,
 				core::getSectorTypeString(sector->getType()), sector->getLayerIndex(),
-				sector->getCellX(), sector->getCellY(), sector->getCellsWide(), sector->getDecksHigh());
+				sector->getCellX(), sector->getCellY(), sector->getCellsWide(), sector->getDecksHigh(),
+				sector->getName());
 			if (sector->getType() == core::SectorType::Facade)
 			{
 				auto const facade = std::dynamic_pointer_cast<const core::Facade>(sector);
@@ -160,6 +165,95 @@ namespace
 					std::format("A Facade end is not open: deck {}, side {}", deck, side).c_str());
 			}
 		}
+	}
+
+	// How many times a needle appears in a haystack. Used to count record kinds
+	// in a saved file without going through the parser.
+	int countOccurrences(std::string const& haystack, std::string const& needle)
+	{
+		int count = 0;
+		for (auto pos = haystack.find(needle); pos != std::string::npos;
+			pos = haystack.find(needle, pos + needle.size()))
+			++count;
+		return count;
+	}
+
+	// Per-Sector object inventory. Sector-referencing records - Markers, Light
+	// Switches, Transit landings - are authored against a Sector index, so a
+	// replay that remapped indices wrongly would show up here as an object
+	// changing Sector rather than as a load failure.
+	std::string objectSignature(core::Building const& building)
+	{
+		std::string signature;
+		for (uint32_t index = 0; index < building.getNumSectors(); ++index)
+		{
+			auto const sector = building.getSector(index);
+			require(sector != nullptr, "Building reported a null Sector while signing objects");
+			signature += std::format("{}[{}]:", index, core::getSectorTypeString(sector->getType()));
+			for (uint32_t object = 0; object < sector->getNumObjects(); ++object)
+			{
+				auto const item = sector->getObject(object);
+				if (!item)
+				{
+					signature += "Tombstone; ";
+					continue;
+				}
+				signature += std::format("{}@{},{}; ", nameOf(item->getObjectType()),
+						item->getCellX(), item->getCellY());
+			}
+			signature += "\n";
+		}
+		return signature;
+	}
+
+	// Whether a Sector currently carries an object of the given type. Used to
+	// follow a sector-referencing record through a replay or a remapping edit.
+	bool sectorHasObject(core::Building const& building, uint32_t sectorIndex,
+		core::SectorObjectType type)
+	{
+		auto const sector = building.getSector(sectorIndex);
+		if (!sector) return false;
+		for (uint32_t object = 0; object < sector->getNumObjects(); ++object)
+		{
+			auto const item = sector->getObject(object);
+			if (item && item->getObjectType() == type) return true;
+		}
+		return false;
+	}
+
+	// The construction record names a build from before Facades existed: the
+	// version 5 writer's whole vocabulary. "facade" is not among them.
+	std::set<std::string> const PreFacadeRecordNames{
+		"corridor", "room", "ladder", "stairwell", "staircase", "lift", "shuttle", "door",
+		"window", "bulkheadDoor", "lightSwitch", "forceBridge", "sectorLadder", "platformLift",
+		"walkway", "marker", "removeWall", "removeMarker", "objectTombstone", "background" };
+
+	uint32_t const PreFacadeVersionCeiling{ 5 };
+
+	// A stand-in for a pre-Facade build's reader: the version ceiling that
+	// build accepted, and its record-name table, failing on an unknown name
+	// the same loud way the old parser did. A Facade map has to be refused
+	// here rather than have its Facades quietly dropped.
+	void preFacadeReaderReads(std::string const& yaml)
+	{
+		auto reader = core::YamlSerializer::fromString(yaml);
+		reader->deserialize();
+		reader->beginMap("building");
+		auto const version = reader->readUint32("version");
+		if (version > PreFacadeVersionCeiling)
+			throw core::SerializationException("Unsupported Building serialization version");
+		reader->beginArray("construction");
+		while (reader->nextArrayItem())
+		{
+			reader->beginMap("");
+			auto const type = reader->readString("type");
+			if (PreFacadeRecordNames.find(type) == PreFacadeRecordNames.end())
+				throw core::SerializationException(
+					std::format("Unknown Building construction record type: {}", type));
+			reader->endMap();
+		}
+		reader->endArray();
+		reader->endMap();
 	}
 
 	// The type is named, and a Facade is a Location - not a Background, not a
@@ -504,6 +598,322 @@ agents: []
 		everyEndIsOpen(*second);
 	}
 
+	// ---- Ticket #44: save, load, and replay ----
+
+	// The Facade record carries the Facade's own name alongside its footprint
+	// and packed colour, so a named Facade survives the round-trip; the
+	// unnamed creation path keeps the generic name.
+	void theFacadeRecordCarriesItsName()
+	{
+		core::Building building("Named frontage", 12, 3);
+		auto const named = building.addFacade("Shopfront", 0, 0, 0, 3, 1);
+		auto const plain = building.addFacade(0, 0, 4, 3, 1);
+		building.finishBuild();
+
+		require(building.getSector(named)->getName() == "Shopfront",
+			"addFacade() did not give the Sector the name it was handed");
+
+		auto const yaml = serializeBuilding(building);
+		require(yaml.find("name: Shopfront") != std::string::npos,
+			"The Facade record did not carry its name");
+
+		core::Building loaded("placeholder", 1, 1);
+		loadInto(loaded, yaml);
+		require(loaded.getSector(named)->getName() == "Shopfront",
+			"The Facade name was lost in the round-trip");
+		require(loaded.getSector(plain)->getName() == core::Facade::defaultName(),
+			"An unnamed Facade did not keep the generic Facade name");
+	}
+
+	// A hand-authored record that leaves the name out lands on the same Sector
+	// an unnamed addFacade() call produces - the default is one rule, not two.
+	void aHandAuthoredFacadeWithoutANameTakesTheDefaultName()
+	{
+		auto const yaml = R"yaml(version: 6
+name: Unnamed frontage
+cellsWide: 12
+decksHigh: 3
+layers: 2
+layerNames:
+  - Layer 0
+  - Layer 1
+construction:
+  - type: facade
+    layer: 0
+    y: 0
+    x: 0
+    cellsWide: 2
+    decksHigh: 1
+    topDeckHeight: 0.9
+    colour: 11261568
+agents: []
+)yaml";
+
+		core::Building loaded("placeholder", 1, 1);
+		loadInto(loaded, yaml);
+		require(loaded.getNumSectors() == 1, "The nameless hand-authored Facade did not replay");
+		require(loaded.getSector(0)->getName() == core::Facade::defaultName(),
+			"A Facade record without a name did not take the Facade default name");
+		everyEndIsOpen(*facadeIn(loaded, 0));
+	}
+
+	// Acceptance #44: the save/load round-trip preserves the Facade's colour,
+	// its open ends, and the record-to-sector index mapping. The Building is
+	// authored with a Ladder Transit written between sector producers, so
+	// canonical replay reorders the records - the exact case a Facade record
+	// left out of the sector-producing set would shift out of place.
+	void saveLoadPreservesColourOpenEndsAndSectorIndexMapping()
+	{
+		core::Building building("Index mapping", 12, 3);
+		auto const room = building.addRoom("Room A", 0, 0, 0, 6, 2);
+		auto const facade = building.addFacade("Frontage", 0, 0, 6, 3, 3,
+			CORE_ROOM_MAX_HEIGHT, { 210, 20, 130 });
+		uint32_t facadeMarker = 0;
+		building.addSectorMarker(facade, 0, 1.25f, &facadeMarker);
+		building.addSectorLightSwitch(room, 2);
+		// The Corridor behind the Room gives the Ladder its second landing, and
+		// is authored after the objects that reference the first two Sectors.
+		auto const backCorridor = building.addCorridor(0, 2, 0, 6, 1);
+		// A reference to a Sector that comes after the Facade in the producer
+		// order: this is the reference a mis-counted Facade would shift.
+		uint32_t backCorridorMarker = 0;
+		building.addSectorMarker(backCorridor, 0, 1.0f, &backCorridorMarker);
+		auto const ladder = building.addLadder(1, 0, 3, { 3, false, true }).ladder.sector->getIndex();
+		auto const background = building.addBackground(1, 0, 0, 3, 1);
+		auto const corridor = building.addCorridor(1, 2, 4, 4, 1);
+		building.finishBuild();
+
+		// Authored order: Room 0, Facade 1, Corridor 2, Ladder 3, Background 4,
+		// Corridor 5. Canonical replay moves the Transit behind the space
+		// producers, so the Sector indices only line up if the Facade counts as
+		// a producer in the same pass as the Rooms.
+		require(room == 0 && facade == 1 && backCorridor == 2 && ladder == 3
+			&& background == 4 && corridor == 5,
+			"The authored Sector indices are not the shape this check replays against");
+
+		auto const yaml = serializeBuilding(building);
+		core::Building loaded("placeholder", 1, 1);
+		loadInto(loaded, yaml);
+
+		require(loaded.getNumSectors() == building.getNumSectors(),
+			"The round-trip changed the Sector count");
+		require(sectorSignature(loaded) == sectorSignature(building),
+			("The round-trip changed a Sector\nexpected:\n" + sectorSignature(building)
+				+ "actual:\n" + sectorSignature(loaded)).c_str());
+		require(objectSignature(loaded) == objectSignature(building),
+			("The round-trip moved a SectorObject between Sectors\nexpected:\n"
+				+ objectSignature(building) + "actual:\n" + objectSignature(loaded)).c_str());
+
+		// Spelled out for the Facade itself: same index, same name, same
+		// colour, and still every end open.
+		auto const replayed = facadeIn(loaded, facade);
+		require(replayed->getName() == "Frontage",
+			"The Facade lost its name across the canonical replay");
+		require(replayed->getColour() == core::BackgroundColour(210, 20, 130),
+			"The Facade lost its colour across the canonical replay");
+		everyEndIsOpen(*replayed);
+
+		// The Marker authored inside the Facade is still inside it, and the
+		// Light Switch authored in the Room is still in the Room.
+		require(sectorHasObject(loaded, facade, core::SectorObjectType::Marker),
+			"The Marker authored in the Facade replayed into another Sector");
+		require(sectorHasObject(loaded, room, core::SectorObjectType::InteractionPoint),
+			"The Light Switch authored in the Room replayed into another Sector");
+		require(sectorHasObject(loaded, backCorridor, core::SectorObjectType::Marker),
+			"The Marker authored in the back Corridor replayed into another Sector");
+
+		// Re-saving the replayed Building writes the same records: the
+		// canonical form is a fixed point, so the Facade does not drift.
+		require(serializeBuilding(loaded) == yaml,
+			"Re-saving a replayed Facade Building changed its authored records");
+
+		// The producer-set membership shows up again wherever records are
+		// addressed by Sector index: resizing a Sector authored after the
+		// Facade has to find that Sector's own record, not the one the Facade
+		// would have skipped over, and has to leave the Marker inside it alone.
+		loaded.pauseSimulation();
+		auto const resize = loaded.planResizeLocation(backCorridor, 0, 2, 5, 1);
+		require(resize.valid, ("Resizing a Sector authored after the Facade was refused: "
+			+ resize.diagnostic).c_str());
+		loaded.applyLocationEdit(resize);
+		require(loaded.getSector(backCorridor)->getCellsWide() == 5,
+			"The resized Sector is not the one the edit changed");
+		require(sectorHasObject(loaded, backCorridor, core::SectorObjectType::Marker),
+			"The back Corridor Marker was lost by the remapping edit");
+		require(loaded.getSector(facade)->getType() == core::SectorType::Facade
+			&& loaded.getSector(facade)->getName() == "Frontage",
+			"The Facade was remapped out of its Sector index by the edit");
+		everyEndIsOpen(*facadeIn(loaded, facade));
+	}
+
+	// Acceptance #44: a Facade never writes wall-removal records. Its open
+	// perimeter is a type property rather than an edit, so however many decks
+	// it spans the whole Facade is one record and zero RemoveWall records,
+	// and the replay needs no wall edits to leave every end open.
+	void aFacadeNeverWritesWallRemovalRecords()
+	{
+		core::Building building("No walls to remove", 12, 3);
+		building.addFacade("Tall frontage", 0, 0, 0, 4, 3);
+		building.addFacade(1, 0, 6, 2, 2);
+		building.finishBuild();
+
+		auto const yaml = serializeBuilding(building);
+		require(countOccurrences(yaml, "removeWall") == 0,
+			"A saved Facade wrote a wall-removal record");
+		require(countOccurrences(yaml, "type: facade") == 2,
+			"A Facade is not carried by exactly one construction record");
+		require(countOccurrences(yaml, "type: ") == 2,
+			"A Facade-only Building wrote records beyond its own");
+
+		core::Building loaded("placeholder", 1, 1);
+		loadInto(loaded, yaml);
+		require(loaded.getNumSectors() == 2, "The Facade records did not replay into two Sectors");
+		everyEndIsOpen(*facadeIn(loaded, 0));
+		everyEndIsOpen(*facadeIn(loaded, 1));
+	}
+
+	// No order dependence: a Facade record replays with every end open
+	// wherever it sits in the construction array, since it needs no follow-up
+	// wall edits to reach that state.
+	void facadeRecordsReplayInAnyOrder()
+	{
+		auto const check = [](std::string const& facadeRecord, std::string const& otherRecords,
+			char const* what)
+		{
+			auto const yaml = std::string("version: 6\nname: Order test\ncellsWide: 12\ndecksHigh: 3\n"
+				"layers: 2\nlayerNames:\n  - Layer 0\n  - Layer 1\nconstruction:\n")
+				+ facadeRecord + otherRecords + "agents: []\n";
+
+			core::Building loaded("placeholder", 1, 1);
+			loadInto(loaded, yaml);
+			require(loaded.getNumSectors() == 2,
+				(std::string(what) + ": the Facade and Room did not both replay").c_str());
+			require(countOccurrences(serializeBuilding(loaded), "removeWall") == 0,
+				(std::string(what) + ": replaying the Facade produced a wall-removal record").c_str());
+			for (uint32_t index = 0; index < loaded.getNumSectors(); ++index)
+			{
+				if (loaded.getSector(index)->getType() == core::SectorType::Facade)
+					everyEndIsOpen(*loaded.getSector(index));
+			}
+		};
+
+		auto const facadeRecord = std::string("  - type: facade\n    layer: 0\n    y: 0\n    x: 0\n"
+			"    cellsWide: 3\n    decksHigh: 2\n    topDeckHeight: 0.9\n    colour: 11261568\n");
+		auto const roomRecord = std::string("  - type: room\n    name: Room A\n    layer: 0\n    y: 0\n"
+			"    x: 4\n    cellsWide: 3\n    decksHigh: 2\n    topDeckHeight: 0.9\n");
+
+		check(facadeRecord, roomRecord, "Facade record first");
+		check(roomRecord, facadeRecord, "Facade record last");
+	}
+
+	// Acceptance #44: a Facade map opened by pre-Facade code is rejected,
+	// not silently misread. The current writer bumps the version above the
+	// pre-Facade ceiling so the old reader refuses the whole file; and a
+	// facade record reaching the old name table fails as an unknown
+	// construction type rather than being dropped on the floor.
+	void aFacadeMapIsRejectedByPreFacadeCode()
+	{
+		core::Building building("Facade map", 12, 3);
+		building.addRoom("Room A", 0, 0, 0, 3, 1);
+		building.addFacade("Frontage", 0, 0, 3, 3, 1);
+		building.finishBuild();
+
+		auto const yaml = serializeBuilding(building);
+		require(yaml.find("version: 6") != std::string::npos,
+			"The Facade writer did not raise the version above the pre-Facade ceiling");
+
+		bool refusedVersion = false;
+		try
+		{
+			preFacadeReaderReads(yaml);
+		}
+		catch (core::SerializationException const& error)
+		{
+			refusedVersion = true;
+			require(std::string(error.what()).find("version") != std::string::npos,
+				("A pre-Facade reader failed for a reason other than the version: "
+					+ std::string(error.what())).c_str());
+		}
+		require(refusedVersion, "A pre-Facade reader accepted a Facade map");
+
+		// And a facade record reaching the old record-name table - the shape an
+		// un-versioned Facade write would leave behind - fails loudly as an
+		// unknown construction type instead of vanishing.
+		auto const legacyFacadeMap = R"yaml(version: 5
+name: Legacy facade
+cellsWide: 12
+decksHigh: 3
+layers: 2
+layerNames:
+  - Layer 0
+  - Layer 1
+construction:
+  - type: room
+    name: Room A
+    layer: 0
+    y: 0
+    x: 0
+    cellsWide: 3
+    decksHigh: 1
+    topDeckHeight: 0.9
+  - type: facade
+    name: Frontage
+    layer: 0
+    y: 0
+    x: 3
+    cellsWide: 3
+    decksHigh: 1
+    topDeckHeight: 0.9
+    colour: 11261568
+agents: []
+)yaml";
+
+		bool refusedType = false;
+		try
+		{
+			preFacadeReaderReads(legacyFacadeMap);
+		}
+		catch (core::SerializationException const& error)
+		{
+			refusedType = true;
+			require(std::string(error.what()).find("facade") != std::string::npos,
+				("The pre-Facade unknown-record error did not name the type: "
+					+ std::string(error.what())).c_str());
+		}
+		require(refusedType, "A pre-Facade reader silently accepted a 'facade' record");
+
+		// Control: the same reader is content with the version 5 map it was
+		// written for, so the refusals above are the Facade and not the harness.
+		auto const legacyPlainMap = R"yaml(version: 5
+name: Legacy plain
+cellsWide: 12
+decksHigh: 3
+layers: 2
+layerNames:
+  - Layer 0
+  - Layer 1
+construction:
+  - type: room
+    name: Room A
+    layer: 0
+    y: 0
+    x: 0
+    cellsWide: 3
+    decksHigh: 1
+    topDeckHeight: 0.9
+  - type: background
+    layer: 1
+    y: 0
+    x: 0
+    cellsWide: 3
+    decksHigh: 1
+    colour: 6340864
+agents: []
+)yaml";
+		require(!throws([&] { preFacadeReaderReads(legacyPlainMap); }),
+			"The pre-Facade reader harness refused a map it should accept");
+	}
+
 	// The Facade takes part in the Graph: with the shared wall opened, a
 	// Marker inside the Facade is reachable from the neighbouring Room's
 	// side of the row, and with the Room's wall left standing there is no
@@ -749,6 +1159,12 @@ void runFacadeSmokeChecks()
 	wallCommandsRefuseTheFacadeButNotTowardIt();
 	theFacadeRecordRoundTrips();
 	aHandAuthoredFacadeRecordLoads();
+	theFacadeRecordCarriesItsName();
+	aHandAuthoredFacadeWithoutANameTakesTheDefaultName();
+	saveLoadPreservesColourOpenEndsAndSectorIndexMapping();
+	aFacadeNeverWritesWallRemovalRecords();
+	facadeRecordsReplayInAnyOrder();
+	aFacadeMapIsRejectedByPreFacadeCode();
 	theFacadeTakesPartInTheGraph();
 	layerDeletionHandlesFacadeRecords();
 	facadeBetweenTwoAlignedRoomsIsOneContinuousFloor();

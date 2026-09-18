@@ -9,6 +9,14 @@ namespace core
 
 	using namespace std;
 
+	// The name a Facade carries when nothing authors one. Persistence keeps it
+	// explicit in the record, so a hand-authored record that leaves the name out
+	// and an unnamed addFacade() call land on the same Sector.
+	std::string Facade::defaultName()
+	{
+		return "Facade";
+	}
+
 	BackgroundColour Facade::defaultColour()
 	{
 		return BackgroundColour{ 176, 160, 128 };
