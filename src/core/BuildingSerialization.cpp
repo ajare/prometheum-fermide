@@ -2917,15 +2917,15 @@ namespace core
 			if (type == SectorObjectType::Door)
 			{
 				auto door = static_pointer_cast<DoorSectorObject>(object)->getDoor();
-				for (uint32_t layer = 0; layer < mLayers.size(); ++layer)
+				for (uint32_t side = 0; side < 2; ++side)
 				{
-					auto sector = door->getSector(layer);
+					auto sector = door->getSector(side);
 					if (!sector) continue;
 					owners.insert(sector->getIndex());
 					ConstructionRecord tombstone{ ConstructionType::ObjectTombstone };
 					tombstone.a = sector->getIndex();
 					tombstones.push_back(tombstone);
-					bool hasControl = isFrontMostLayer(layer) ? moved.p : moved.q;
+					bool hasControl = side == 0 ? moved.p : moved.q;
 					if (hasControl) tombstones.push_back(tombstone);
 				}
 			}
@@ -2945,8 +2945,8 @@ namespace core
 			else if (type == SectorObjectType::Window)
 			{
 				auto window = static_pointer_cast<WindowSectorObject>(object)->getWindow();
-				for (uint32_t layer = 0; layer < mLayers.size(); ++layer)
-					if (auto sector = window->getSector(layer)) owners.insert(sector->getIndex());
+				for (uint32_t side = 0; side < 2; ++side)
+					if (auto sector = window->getSector(side)) owners.insert(sector->getIndex());
 				for (auto index : owners)
 				{
 					ConstructionRecord tombstone{ ConstructionType::ObjectTombstone };
@@ -3100,14 +3100,14 @@ namespace core
 			}
 			// The Door is shared by both Locations and may also have added one
 			// control to either Location. Preserve each Sector's authored indices.
-			for (uint32_t layer = 0; layer < mLayers.size(); ++layer)
+			for (uint32_t side = 0; side < 2; ++side)
 			{
-				auto sector = door->getSector(layer);
+				auto sector = door->getSector(side);
 				if (!sector) continue;
 				ConstructionRecord doorTombstone{ ConstructionType::ObjectTombstone };
 				doorTombstone.a = sector->getIndex();
 				records.push_back(std::move(doorTombstone));
-				bool hadControl = isFrontMostLayer(layer) ? source->p : source->q;
+				bool hadControl = side == 0 ? source->p : source->q;
 				if (hadControl)
 				{
 					ConstructionRecord controlTombstone{ ConstructionType::ObjectTombstone };
@@ -3913,8 +3913,8 @@ namespace core
 			// Keep later authored object indices stable in every Sector that shared
 			// the Window, while omitting the Window and its traversal resource.
 			set<uint32_t> sectorIndices;
-			for (uint32_t layer = 0; layer < mLayers.size(); ++layer)
-				if (auto sector = window->getSector(layer)) sectorIndices.insert(sector->getIndex());
+			for (uint32_t side = 0; side < 2; ++side)
+				if (auto sector = window->getSector(side)) sectorIndices.insert(sector->getIndex());
 			for (auto index : sectorIndices)
 			{
 				ConstructionRecord tombstone{ ConstructionType::ObjectTombstone };

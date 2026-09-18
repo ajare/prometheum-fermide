@@ -1847,6 +1847,28 @@ void thresholdsAndTransitsPairTheirOwnAdjacentLayerPair()
 	require(deepDoors == 1, "The reloaded Building lost its deep Door pairing");
 }
 
+void doorAndWindowRemovalWorksOnDeepLayerPairs()
+{
+	// Regression for ticket #19: removeSectorDoor/Window looped over absolute
+	// Layer indices and passed them to Door/Window::getSector(), which expects a
+	// pair side (0 or 1). With three Layers, getSector(2) asserted or read past
+	// the end of mSectors.
+	core::Building building("Deep pair removal", 8, 3);
+	building.addLayer();
+	building.addCorridor(0, 0, 8);
+	building.addRoom("Basement", 1, 0, 0, 8, 1);
+	building.addRoom("Cellar", 2, 0, 0, 8, 1);
+
+	auto const door = building.addSectorDoor(0, 0, 3);
+	auto const window = building.addSectorWindow(1, 0, 5, 1, 1, { true });
+
+	building.pauseSimulation();
+	require(building.removeSectorDoor(door.door.sector->getIndex(), door.door.index),
+		"Door on a three-layer Building could not be removed");
+	require(building.removeSectorWindow(window.window.sector->getIndex(), window.window.index),
+		"Window on a three-layer Building could not be removed");
+}
+
 void runSerializationSmokeChecks()
 {
 	layerHelperApiIsConsistentWithLayerCount();
@@ -1880,4 +1902,5 @@ void runSerializationSmokeChecks()
 	bulkheadDoorsSupportIndependentObjectEditing();
 	recentFilesPersistAcrossStartup();
 	serializableTracksModificationState();
+	doorAndWindowRemovalWorksOnDeepLayerPairs();
 }
