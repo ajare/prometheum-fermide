@@ -2025,6 +2025,300 @@ void candidateReplayIncludesAllLayers()
 		"Layer-0 Location edit was not applied on a three-layer Building");
 }
 
+// Regression for ticket #18: the Transit edit planners read blockers from Layer 1
+// and landings from Layer 0 whatever Layer the Transit was authored on.  A Transit
+// on Layer 2 or deeper therefore always failed to plan - its own landing Locations
+// were misread as blockers - and the apply functions handed back the Sector found
+// on Layer 1 instead of the edited Transit.  Each Transit type is probed on Layer 1,
+// where the old constants happened to be right, and on Layer 2, where they were not.
+void liftEditsUseTheLiftsOwnLayer()
+{
+	auto const probe = [](uint32_t transitLayer)
+	{
+		core::Building building("Deep Lift edit", 12, 3);
+		while (building.getLayerCount() <= transitLayer) building.addLayer();
+		building.addRoom("Landing A", transitLayer - 1, 0, 0, 12, 1);
+		building.addRoom("Landing B", transitLayer - 1, 1, 0, 12, 1);
+		building.addRoom("Landing C", transitLayer - 1, 2, 0, 12, 1);
+		// A neighbour on the Lift's own Layer, to prove the blocker scan still runs
+		// against that Layer rather than being skipped.
+		building.addRoom("Shaft neighbour", transitLayer, 1, 8, 1, 1);
+		auto const created = building.addLift(transitLayer, 0, 2, 1, 3);
+		building.finishBuild();
+		building.pauseSimulation();
+		auto const index = created.lift.sector->getIndex();
+		require(created.lift.sector->getLayerIndex() == transitLayer,
+			"The Lift was not authored on the probed Layer");
+
+		auto const blocked = building.planResizeLift(index, 8, 0, 1, 3);
+		require(!blocked.valid
+			&& blocked.diagnostic.find("8,1 blocks the Lift") != std::string::npos,
+			("A Lift move into a Sector on its own Layer was not blocked: "
+				+ blocked.diagnostic).c_str());
+
+		auto const plan = building.planResizeLift(index, 5, 0, 1, 3);
+		require(plan.valid && plan.move,
+			("A Lift move on Layer " + std::to_string(transitLayer)
+				+ " was rejected: " + plan.diagnostic).c_str());
+		require(plan.stopOffsets == std::vector<uint32_t>{ 0, 1, 2 },
+			"The Lift stops were not derived from the Layer in front of the Lift");
+		auto const moved = building.applyLiftEdit(plan);
+		require(moved == index,
+			"applyLiftEdit returned a Sector from the wrong Layer");
+		auto const lift = std::dynamic_pointer_cast<const core::LiftTransit>(
+			building.getSector(moved));
+		require(lift && lift->getCellX() == 5 && lift->getLayerIndex() == transitLayer
+			&& lift->getNumStops() == 3,
+			"The Lift was not moved on its own Layer");
+
+		auto const stopRemoval = building.planRemoveLiftStop(moved, 1);
+		require(stopRemoval.valid,
+			("Deleting a Lift stop on Layer " + std::to_string(transitLayer)
+				+ " was rejected: " + stopRemoval.diagnostic).c_str());
+		auto const trimmed = building.applyLiftEdit(stopRemoval);
+		auto const trimmedLift = std::dynamic_pointer_cast<const core::LiftTransit>(
+			building.getSector(trimmed));
+		require(trimmedLift && trimmedLift->getNumStops() == 2
+			&& trimmedLift->getLayerIndex() == transitLayer,
+			"The deep Lift did not lose its deleted stop");
+
+		auto const removal = building.planRemoveLift(trimmed);
+		require(removal.valid,
+			("A Lift deletion on Layer " + std::to_string(transitLayer)
+				+ " was rejected: " + removal.diagnostic).c_str());
+		require(building.applyLiftEdit(removal) == ~0u,
+			"Deleting a deep Lift did not return the removed-sector sentinel");
+	};
+	probe(1);
+	probe(2);
+}
+
+void shuttleEditsUseTheShuttlesOwnLayer()
+{
+	auto const probe = [](uint32_t transitLayer)
+	{
+		core::Building building("Deep Shuttle edit", 32, 2);
+		while (building.getLayerCount() <= transitLayer) building.addLayer();
+		building.addCorridor(transitLayer - 1, 0, 0, 31, 1);
+		core::Building::CreateShuttleOptions options{ 2, 3, { 0, 18 }, 0 };
+		options.capacity = 2;
+		options.doorMask = 0b101;
+		// A neighbour on the Shuttle's own Layer keeps the blocker scan honest.
+		building.addRoom("Track neighbour", transitLayer, 0, 29, 1, 1);
+		auto const created = building.addShuttle(transitLayer, 0, 0, 27, options);
+		building.finishBuild();
+		building.pauseSimulation();
+		auto const index = created.shuttle.sector->getIndex();
+		require(created.shuttle.sector->getLayerIndex() == transitLayer,
+			"The Shuttle was not authored on the probed Layer");
+
+		auto const plan = building.planResizeShuttle(index, 2, 0, 27);
+		require(plan.valid && plan.move,
+			("A Shuttle move on Layer " + std::to_string(transitLayer)
+				+ " was rejected: " + plan.diagnostic).c_str());
+		auto const moved = building.applyShuttleEdit(plan);
+		require(moved == index,
+			"applyShuttleEdit returned a Sector from the wrong Layer");
+		auto const shuttle = std::dynamic_pointer_cast<const core::ShuttleTransit>(
+			building.getSector(moved));
+		require(shuttle && shuttle->getCellX() == 2 && shuttle->getLayerIndex() == transitLayer
+			&& shuttle->getNumStops() == 2,
+			"The Shuttle was not moved on its own Layer");
+
+		auto const blocked = building.planResizeShuttle(moved, 3, 0, 27);
+		require(!blocked.valid
+			&& blocked.diagnostic.find("29,0 blocks the Shuttle") != std::string::npos,
+			("A Shuttle track grown into a Sector on its own Layer was not blocked: "
+				+ blocked.diagnostic).c_str());
+		auto const addStop = building.planAddShuttleStop(moved, 9);
+		require(addStop.valid,
+			("Adding a Shuttle stop on Layer " + std::to_string(transitLayer)
+				+ " was rejected: " + addStop.diagnostic).c_str());
+		auto const widened = building.applyShuttleEdit(addStop);
+		auto const widenedShuttle = std::dynamic_pointer_cast<const core::ShuttleTransit>(
+			building.getSector(widened));
+		require(widenedShuttle && widenedShuttle->getNumStops() == 3
+			&& widenedShuttle->getLayerIndex() == transitLayer,
+			"The deep Shuttle did not gain its new stop");
+		auto const removeStop = building.planRemoveShuttleStop(widened, 1);
+		require(removeStop.valid,
+			("Deleting a Shuttle stop on Layer " + std::to_string(transitLayer)
+				+ " was rejected: " + removeStop.diagnostic).c_str());
+		auto const narrowed = building.applyShuttleEdit(removeStop);
+		auto const narrowedShuttle = std::dynamic_pointer_cast<const core::ShuttleTransit>(
+			building.getSector(narrowed));
+		require(narrowedShuttle && narrowedShuttle->getNumStops() == 2,
+			"The deep Shuttle did not lose its deleted stop");
+
+		auto const removal = building.planRemoveShuttle(narrowed);
+		require(removal.valid,
+			("A Shuttle deletion on Layer " + std::to_string(transitLayer)
+				+ " was rejected: " + removal.diagnostic).c_str());
+		require(building.applyShuttleEdit(removal) == ~0u,
+			"Deleting a deep Shuttle did not return the removed-sector sentinel");
+	};
+	probe(1);
+	probe(2);
+}
+
+void shuttleDeletionRemovesWindowsOverTheShuttleItself()
+{
+	// A Window looks into the Layer directly behind the Layer it is authored on, so
+	// a Window resting on a Shuttle depends on that Shuttle's cells on the Shuttle's
+	// own Layer.  Deleting the Shuttle must take the dependent Window with it.
+	auto const probe = [](uint32_t transitLayer)
+	{
+		core::Building building("Deep Shuttle Window dependency", 32, 2);
+		while (building.getLayerCount() <= transitLayer) building.addLayer();
+		building.addCorridor(transitLayer - 1, 0, 0, 31, 1);
+		core::Building::CreateShuttleOptions options{ 2, 3, { 0, 18 }, 0 };
+		options.doorMask = 0b101;
+		auto const created = building.addShuttle(transitLayer, 0, 0, 27, options);
+		// Columns 8 and 9 carry no carriage door, so the Window lands on bare Shuttle.
+		building.addSectorWindow(transitLayer - 1, 0, 8, 2, 1);
+		building.finishBuild();
+		building.pauseSimulation();
+		auto const shuttleIndex = created.shuttle.sector->getIndex();
+		auto const shuttle = std::dynamic_pointer_cast<const core::ShuttleTransit>(
+			building.getSector(shuttleIndex));
+		require(shuttle && shuttle->getLayerIndex() == transitLayer,
+			"The Shuttle was not authored on the probed Layer");
+
+		auto const plan = building.planRemoveShuttle(shuttleIndex);
+		require(plan.valid,
+			("Deleting a Shuttle with a dependent Window on Layer "
+				+ std::to_string(transitLayer) + " was rejected: " + plan.diagnostic).c_str());
+		require(any_of(plan.consequences.begin(), plan.consequences.end(),
+			[](std::string const& consequence)
+			{
+				return consequence.find("dependent Window") != std::string::npos;
+			}),
+			"The dependent Window was not reported as a consequence of Shuttle deletion");
+		require(building.applyShuttleEdit(plan) == ~0u,
+			"Deleting a deep Shuttle with a dependent Window failed");
+		require(!static_cast<core::Building const&>(building).getLayer(transitLayer)
+			->getCellDefinition(8, 0).occupied(),
+			"The deleted Shuttle still occupies its own Layer");
+	};
+	probe(1);
+	probe(2);
+}
+
+void ladderEditsUseTheLaddersOwnLayer()
+{
+	auto const probe = [](uint32_t transitLayer)
+	{
+		core::Building building("Deep Ladder edit", 10, 5);
+		while (building.getLayerCount() <= transitLayer) building.addLayer();
+		for (uint32_t y = 0; y < 5; ++y) building.addCorridor(transitLayer - 1, y, 0, 10, 1);
+		auto const created = building.addLadder(transitLayer, 0, 1, { 3, false, true });
+		building.finishBuild();
+		building.pauseSimulation();
+		auto const index = created.ladder.sector->getIndex();
+		require(created.ladder.sector->getLayerIndex() == transitLayer,
+			"The Ladder was not authored on the probed Layer");
+
+		core::Building::CreateLadderOptions edited{ 3, true, false, 3 };
+		auto const plan = building.planResizeLadder(index, 4, 1, edited);
+		require(plan.valid && plan.move,
+			("A Ladder move on Layer " + std::to_string(transitLayer)
+				+ " was rejected: " + plan.diagnostic).c_str());
+		auto const moved = building.applyLadderEdit(plan);
+		require(moved == index,
+			"applyLadderEdit returned a Sector from the wrong Layer");
+		auto const ladder = std::dynamic_pointer_cast<const core::LadderTransit>(
+			building.getSector(moved));
+		require(ladder && ladder->getCellX() == 4 && ladder->getLayerIndex() == transitLayer
+			&& ladder->getDecksHigh() == 3,
+			"The Ladder was not moved on its own Layer");
+
+		auto const removal = building.planRemoveLadder(moved);
+		require(removal.valid,
+			("A Ladder deletion on Layer " + std::to_string(transitLayer)
+				+ " was rejected: " + removal.diagnostic).c_str());
+		require(building.applyLadderEdit(removal) == ~0u,
+			"Deleting a deep Ladder did not return the removed-sector sentinel");
+	};
+	probe(1);
+	probe(2);
+}
+
+void stairwellEditsUseTheStairwellsOwnLayer()
+{
+	auto const probe = [](uint32_t transitLayer)
+	{
+		core::Building building("Deep Stairwell edit", 10, 5);
+		while (building.getLayerCount() <= transitLayer) building.addLayer();
+		for (uint32_t y = 0; y < 5; ++y) building.addCorridor(transitLayer - 1, y, 0, 10, 1);
+		auto const created = building.addStairwell(transitLayer, 0, 1,
+			core::Building::CreateStairwellOptions{ 3, CORE_SIDE_LEFT });
+		building.finishBuild();
+		building.pauseSimulation();
+		auto const index = created.sectorIndex;
+		require(building.getSector(index)->getLayerIndex() == transitLayer,
+			"The Stairwell was not authored on the probed Layer");
+
+		core::Building::CreateStairwellOptions edited{ 3, CORE_SIDE_RIGHT, 2, 3 };
+		auto const plan = building.planResizeStairwell(index, 4, 1, edited);
+		require(plan.valid && plan.move,
+			("A Stairwell move on Layer " + std::to_string(transitLayer)
+				+ " was rejected: " + plan.diagnostic).c_str());
+		auto const moved = building.applyStairwellEdit(plan);
+		require(moved == index,
+			"applyStairwellEdit returned a Sector from the wrong Layer");
+		auto const stairwell = std::dynamic_pointer_cast<const core::StairwellTransit>(
+			building.getSector(moved));
+		require(stairwell && stairwell->getCellX() == 4
+			&& stairwell->getLayerIndex() == transitLayer && stairwell->getDecksHigh() == 3,
+			"The Stairwell was not moved on its own Layer");
+
+		auto const removal = building.planRemoveStairwell(moved);
+		require(removal.valid,
+			("A Stairwell deletion on Layer " + std::to_string(transitLayer)
+				+ " was rejected: " + removal.diagnostic).c_str());
+		require(building.applyStairwellEdit(removal) == ~0u,
+			"Deleting a deep Stairwell did not return the removed-sector sentinel");
+	};
+	probe(1);
+	probe(2);
+}
+
+void staircaseEditsReturnTheStaircaseOwnLayer()
+{
+	// planResizeStaircase already derives its Layers from the Staircase itself, but
+	// applyStaircaseEdit still read its return value from Layer 1.
+	auto const probe = [](uint32_t transitLayer)
+	{
+		core::Building building("Deep Staircase edit", 6, 3);
+		while (building.getLayerCount() <= transitLayer) building.addLayer();
+		building.addCorridor(transitLayer - 1, 0, 0, 1, 1);
+		building.addCorridor(transitLayer - 1, 0, 3, 1, 1);
+		building.addCorridor(transitLayer - 1, 1, 0, 1, 1);
+		building.addCorridor(transitLayer - 1, 1, 3, 1, 1);
+		auto const index = building.addStaircase(transitLayer, 0, 0, 4, CORE_SIDE_RIGHT, 1.25f);
+		building.finishBuild();
+		building.pauseSimulation();
+		require(building.getSector(index)->getLayerIndex() == transitLayer,
+			"The Staircase was not authored on the probed Layer");
+
+		auto const plan = building.planResizeStaircase(index, 0, 0,
+			{ 4, CORE_SIDE_LEFT, -0.75f });
+		require(plan.valid,
+			("A Staircase flip on Layer " + std::to_string(transitLayer)
+				+ " was rejected: " + plan.diagnostic).c_str());
+		auto const flipped = building.applyStaircaseEdit(plan);
+		require(flipped == index,
+			"applyStaircaseEdit returned a Sector from the wrong Layer");
+		auto const transit = std::dynamic_pointer_cast<const core::StaircaseTransit>(
+			building.getSector(flipped));
+		require(transit && transit->getLayerIndex() == transitLayer
+			&& transit->getRiseSide() == CORE_SIDE_LEFT,
+			"The Staircase was not edited on its own Layer");
+	};
+	probe(1);
+	probe(2);
+}
+
 void runSerializationSmokeChecks()
 {
 	layerHelperApiIsConsistentWithLayerCount();
@@ -2062,4 +2356,10 @@ void runSerializationSmokeChecks()
 	doorAndWindowRemovalWorksOnDeepLayerPairs();
 	candidateReplayIncludesAllLayers();
 	shuttleDoorCandidatesAreFoundOnTheShuttleLayer();
+	liftEditsUseTheLiftsOwnLayer();
+	shuttleEditsUseTheShuttlesOwnLayer();
+	shuttleDeletionRemovesWindowsOverTheShuttleItself();
+	ladderEditsUseTheLaddersOwnLayer();
+	stairwellEditsUseTheStairwellsOwnLayer();
+	staircaseEditsReturnTheStaircaseOwnLayer();
 }

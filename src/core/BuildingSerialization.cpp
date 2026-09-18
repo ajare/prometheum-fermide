@@ -1298,6 +1298,10 @@ namespace core
 		if (sectorIndex >= mSectors.size() || !dynamic_pointer_cast<const LiftTransit>(mSectors[sectorIndex]))
 		{ plan.diagnostic = "Only enclosed Lifts can be resized"; return plan; }
 		auto lift = dynamic_pointer_cast<const LiftTransit>(mSectors[sectorIndex]);
+		// The shaft keeps the Layer it is authored on; its landings live on the Layer
+		// directly in front, never on a hard-coded Fore/Back pair.
+		auto const transitLayer = lift->getLayerIndex();
+		auto const landingLayer = layerInFront(transitLayer);
 		plan.move = x != lift->getCellX() || y != lift->getCellY();
 		if (cellsWide < 1 || cellsWide > 2)
 		{ plan.diagnostic = "A Lift must be one or two cells wide"; return plan; }
@@ -1328,20 +1332,20 @@ namespace core
 		for (uint32_t iy = y; iy < y + decksHigh; ++iy)
 			for (uint32_t ix = x; ix < x + cellsWide; ++ix)
 			{
-				auto occupant = mLayers[layerBehind(0)]->getCellDefinition(ix, iy).sectorIndex;
+				auto occupant = mLayers[transitLayer]->getCellDefinition(ix, iy).sectorIndex;
 				if (occupant != ~0u && occupant != sectorIndex)
 				{ plan.diagnostic = format("Sector at {},{} blocks the Lift", ix, iy); return plan; }
 			}
 		for (uint32_t iy = y; iy < y + decksHigh; ++iy)
 		{
-			auto const& first = mLayers[0]->getCellDefinition(x, iy);
+			auto const& first = mLayers[landingLayer]->getCellDefinition(x, iy);
 			if (first.sectorIndex == ~0u) continue;
 			auto location = dynamic_pointer_cast<const Location>(mSectors[first.sectorIndex]);
 			if (!location) continue;
 			bool complete = true;
 			for (uint32_t ix = x; ix < x + cellsWide; ++ix)
 			{
-				auto const& cell = mLayers[0]->getCellDefinition(ix, iy);
+				auto const& cell = mLayers[landingLayer]->getCellDefinition(ix, iy);
 				complete = complete && cell.sectorIndex == first.sectorIndex && cell.isTraversableOnFoot();
 				if (cell.hasObject())
 				{
@@ -1354,7 +1358,7 @@ namespace core
 			if (complete) plan.stopOffsets.push_back(iy - y);
 		}
 		if (plan.stopOffsets.size() < 2)
-		{ plan.diagnostic = "The Lift requires at least two fully overlapping Fore-layer Location floors"; return plan; }
+		{ plan.diagnostic = "The Lift requires at least two fully overlapping Location floors on the Layer in front"; return plan; }
 		vector<uint32_t> oldStops;
 		for (uint32_t i = 0; i < lift->getNumStops(); ++i)
 			oldStops.push_back((uint32_t)((int)lift->getStop(i).sector->getCellY() + lift->getStop(i).sectorOffsetY));
@@ -1447,11 +1451,14 @@ namespace core
 				throw BuildingException(this, plan.diagnostic);
 		}
 		if (!plan.valid) throw BuildingException(this, plan.diagnostic);
+		// The rebuilt Lift keeps the Layer it was authored on; read the answer back
+		// from there rather than from a fixed Back Layer.
+		auto const transitLayer = mSectors[plan.sectorIndex]->getLayerIndex();
 		vector<ConstructionRecord> records; string diagnostic;
 		if (!prepareLiftEdit(plan, records, diagnostic)) throw BuildingException(this, diagnostic);
 		rebuildFromConstructionRecords(std::move(records));
 		if (plan.remove) return ~0u;
-		auto const& cell = mLayers[layerBehind(0)]->getCellDefinition(plan.x, plan.y);
+		auto const& cell = mLayers[transitLayer]->getCellDefinition(plan.x, plan.y);
 		return cell.sectorIndex;
 	}
 
@@ -1474,18 +1481,22 @@ namespace core
 			diagnostic = "The selected Shuttle no longer has an authored definition";
 			return false;
 		}
+		// A Window looks into the Layer directly behind the Layer it is authored on,
+		// so the Shuttle a Window rests on is always read from the Shuttle's own
+		// Layer, not from a fixed Back Layer.
+		auto const transitLayer = mSectors[plan.sectorIndex]->getLayerIndex();
 		if (plan.remove)
 		{
 			records.erase(found);
 			// Windows require occupied geometry on both layers. Any Window touching
-			// this Shuttle would become unreplayable once its Back-layer sector is
+			// this Shuttle would become unreplayable once the Shuttle's sector is
 			// removed, so delete that dependent authored object in the same edit.
 			records.erase(remove_if(records.begin(), records.end(), [&](ConstructionRecord const& record)
 			{
 				if (record.type != ConstructionType::Window) return false;
 				for (uint32_t iy = record.b; iy < record.b + record.e && iy < mDecksHigh; ++iy)
 					for (uint32_t ix = record.c; ix < record.c + record.d && ix < mCellsWide; ++ix)
-						if (mLayers[layerBehind(0)]->getCellDefinition(ix, iy).sectorIndex
+						if (mLayers[transitLayer]->getCellDefinition(ix, iy).sectorIndex
 							== plan.sectorIndex) return true;
 				return false;
 			}), records.end());
@@ -1533,6 +1544,10 @@ namespace core
 		{ plan.diagnostic = "Only Shuttles can be resized"; return plan; }
 		auto shuttleTransit = dynamic_pointer_cast<const ShuttleTransit>(mSectors[sectorIndex]);
 		auto shuttle = shuttleTransit->getShuttle();
+		// The track keeps the Layer it is authored on; its platforms live on the
+		// Layer directly in front.
+		auto const transitLayer = shuttleTransit->getLayerIndex();
+		auto const landingLayer = layerInFront(transitLayer);
 		plan.move = cellsWide == shuttleTransit->getCellsWide()
 			&& (x != shuttleTransit->getCellX() || y != shuttleTransit->getCellY());
 		if (cellsWide == 0 || x + cellsWide > mCellsWide || y >= mDecksHigh)
@@ -1578,7 +1593,7 @@ namespace core
 		}
 		for (uint32_t ix = x; ix < x + cellsWide; ++ix)
 		{
-			auto occupant = mLayers[layerBehind(0)]->getCellDefinition(ix, y).sectorIndex;
+			auto occupant = mLayers[transitLayer]->getCellDefinition(ix, y).sectorIndex;
 			if (occupant != ~0u && occupant != sectorIndex)
 			{ plan.diagnostic = format("Sector at {},{} blocks the Shuttle", ix, y); return plan; }
 		}
@@ -1593,7 +1608,7 @@ namespace core
 				{
 					if ((doorMask & (1u << doorOffset)) == 0) continue;
 					auto doorX = x + offset + car * (authored->e + 1) + doorOffset;
-					auto const& cell = mLayers[0]->getCellDefinition(doorX, y);
+					auto const& cell = mLayers[landingLayer]->getCellDefinition(doorX, y);
 					bool valid = cell.sectorIndex != ~0u
 						&& mSectors[cell.sectorIndex]->getType() == SectorType::Location
 						&& cell.isTraversableOnFoot() && cell.markers.empty();
@@ -1660,6 +1675,9 @@ namespace core
 		auto plan = planResizeShuttle(sectorIndex, transit->getCellX(), transit->getCellY(), transit->getCellsWide());
 		if (!plan.valid) return plan;
 		plan.remove = true; plan.consequences.clear();
+		// A Window resting on this Shuttle is authored on the Layer in front and is
+		// found on the Shuttle's own Layer.
+		auto const transitLayer = transit->getLayerIndex();
 		for (uint32_t stop = 0; stop < transit->getNumStops(); ++stop)
 			plan.consequences.push_back(format("Delete Shuttle stop {} and all carriage landings", stop));
 		for (auto const& record : mConstructionRecords)
@@ -1668,7 +1686,7 @@ namespace core
 			bool dependent = false;
 			for (uint32_t iy = record.b; !dependent && iy < record.b + record.e && iy < mDecksHigh; ++iy)
 				for (uint32_t ix = record.c; ix < record.c + record.d && ix < mCellsWide; ++ix)
-					if (mLayers[layerBehind(0)]->getCellDefinition(ix, iy).sectorIndex == sectorIndex)
+					if (mLayers[transitLayer]->getCellDefinition(ix, iy).sectorIndex == sectorIndex)
 					{ dependent = true; break; }
 			if (dependent) plan.consequences.push_back(format(
 				"Delete dependent Window at {},{} ({} x {} cells)", record.c, record.b, record.d, record.e));
@@ -1728,6 +1746,9 @@ namespace core
 		auto plan = requested.remove ? planRemoveShuttle(requested.sectorIndex)
 			: planResizeShuttle(requested.sectorIndex, requested.x, requested.y, requested.cellsWide);
 		if (!plan.valid) throw BuildingException(this, plan.diagnostic);
+		// The rebuilt Shuttle keeps the Layer it was authored on; read the answer back
+		// from there rather than from a fixed Back Layer.
+		auto const transitLayer = mSectors[plan.sectorIndex]->getLayerIndex();
 		if (!requested.remove && requested.stopOffsets.size() >= 2
 			&& requested.stopOffsets != plan.stopOffsets)
 		{
@@ -1741,7 +1762,7 @@ namespace core
 		if (!prepareShuttleEdit(plan, records, diagnostic)) throw BuildingException(this, diagnostic);
 		rebuildFromConstructionRecords(std::move(records));
 		if (plan.remove) return ~0u;
-		return mLayers[layerBehind(0)]->getCellDefinition(plan.x, plan.y).sectorIndex;
+		return mLayers[transitLayer]->getCellDefinition(plan.x, plan.y).sectorIndex;
 	}
 
 	bool Building::getLadderOptions(uint32_t sectorIndex, CreateLadderOptions& options) const
@@ -1849,6 +1870,10 @@ namespace core
 		if (sectorIndex >= mSectors.size() || !dynamic_pointer_cast<const LadderTransit>(mSectors[sectorIndex]))
 		{ plan.diagnostic = "Only Ladders can be edited"; return plan; }
 		auto ladder = dynamic_pointer_cast<const LadderTransit>(mSectors[sectorIndex]);
+		// The Ladder keeps the Layer it is authored on; its landings live on the
+		// Layer directly in front.
+		auto const transitLayer = ladder->getLayerIndex();
+		auto const landingLayer = layerInFront(transitLayer);
 		plan.move = options.decksHigh == ladder->getDecksHigh()
 			&& (x != ladder->getCellX() || y != ladder->getCellY());
 		if (options.decksHigh < 2)
@@ -1859,25 +1884,25 @@ namespace core
 		{ plan.diagnostic = "The Ladder is outside the Building bounds"; return plan; }
 		for (uint32_t iy = y; iy < y + options.decksHigh; ++iy)
 		{
-			auto occupant = mLayers[layerBehind(0)]->getCellDefinition(x, iy).sectorIndex;
+			auto occupant = mLayers[transitLayer]->getCellDefinition(x, iy).sectorIndex;
 			if (occupant != ~0u && occupant != sectorIndex)
-			{ plan.diagnostic = format("A Back-layer Sector at {},{} blocks the Ladder", x, iy); return plan; }
+			{ plan.diagnostic = format("A Sector at {},{} on the Layer behind blocks the Ladder", x, iy); return plan; }
 		}
 		auto upperY = y + options.decksHigh - 1;
-		auto const& lower = mLayers[0]->getCellDefinition(x, y);
-		auto const& upper = mLayers[0]->getCellDefinition(x, upperY);
+		auto const& lower = mLayers[landingLayer]->getCellDefinition(x, y);
+		auto const& upper = mLayers[landingLayer]->getCellDefinition(x, upperY);
 		if (lower.sectorIndex == ~0u || !mSectors[lower.sectorIndex]
 			|| mSectors[lower.sectorIndex]->getType() != SectorType::Location)
-		{ plan.diagnostic = format("A Fore-layer Location is required at {},{}", x, y); return plan; }
+		{ plan.diagnostic = format("A Location on the Layer in front is required at {},{}", x, y); return plan; }
 		if (upper.sectorIndex == ~0u || !mSectors[upper.sectorIndex]
 			|| mSectors[upper.sectorIndex]->getType() != SectorType::Location)
-		{ plan.diagnostic = format("A Fore-layer Location is required at {},{}", x, upperY); return plan; }
+		{ plan.diagnostic = format("A Location on the Layer in front is required at {},{}", x, upperY); return plan; }
 		if (lower.sectorIndex == upper.sectorIndex)
-		{ plan.diagnostic = "A Ladder must connect two different Fore-layer Locations"; return plan; }
+		{ plan.diagnostic = "A Ladder must connect two different Locations on the Layer in front"; return plan; }
 		if (!lower.isTraversableOnFoot())
-		{ plan.diagnostic = format("The Fore-layer floor at {},{} is not traversable", x, y); return plan; }
+		{ plan.diagnostic = format("The floor at {},{} on the Layer in front is not traversable", x, y); return plan; }
 		if (!upper.isTraversableOnFoot())
-		{ plan.diagnostic = format("The Fore-layer floor at {},{} is not traversable", x, upperY); return plan; }
+		{ plan.diagnostic = format("The floor at {},{} on the Layer in front is not traversable", x, upperY); return plan; }
 		auto crossedFloors = (float)(options.decksHigh - 1);
 		auto agentSpacing = CORE_LADDER_AGENT_SPACING / CORE_CELL_YX_RENDER_RATIO;
 		auto capacity = max(1u, (uint32_t)floor(crossedFloors / agentSpacing));
@@ -1937,12 +1962,15 @@ namespace core
 		string diagnostic;
 		if (!prepareLadderEdit(plan, records, diagnostic)) throw BuildingException(this, diagnostic);
 		auto old = mSectors[plan.sectorIndex];
+		// The rebuilt Ladder keeps the Layer it was authored on; read the answer back
+		// from there rather than from a fixed Back Layer.
+		auto const transitLayer = old->getLayerIndex();
 		int deltaX = plan.move ? (int)plan.x - (int)old->getCellX() : 0;
 		int deltaY = plan.move ? (int)plan.y - (int)old->getCellY() : 0;
 		rebuildFromConstructionRecords(std::move(records),
 			plan.remove ? ~0u : plan.sectorIndex, deltaX, deltaY);
 		if (plan.remove) return ~0u;
-		return mLayers[layerBehind(0)]->getCellDefinition(plan.x, plan.y).sectorIndex;
+		return mLayers[transitLayer]->getCellDefinition(plan.x, plan.y).sectorIndex;
 	}
 
 	bool Building::getStairwellOptions(uint32_t sectorIndex, CreateStairwellOptions& options) const
@@ -2073,11 +2101,14 @@ namespace core
 			found->x = plan.options.speed;
 		}
 		auto old = mSectors[plan.sectorIndex];
+		// The rebuilt Staircase keeps the Layer it was authored on; read the answer
+		// back from there rather than from a fixed Back Layer.
+		auto const transitLayer = old->getLayerIndex();
 		int deltaX = plan.move ? (int)plan.x - (int)old->getCellX() : 0;
 		int deltaY = plan.move ? (int)plan.y - (int)old->getCellY() : 0;
 		rebuildFromConstructionRecords(std::move(records), plan.remove ? ~0u : plan.sectorIndex, deltaX, deltaY);
 		if (plan.remove) return ~0u;
-		return mLayers[layerBehind(0)]->getCellDefinition(plan.x, plan.y).sectorIndex;
+		return mLayers[transitLayer]->getCellDefinition(plan.x, plan.y).sectorIndex;
 	}
 
 	bool Building::prepareStairwellEdit(StairwellEditPlan const& plan,
@@ -2170,6 +2201,10 @@ namespace core
 		if (sectorIndex >= mSectors.size() || !dynamic_pointer_cast<const StairwellTransit>(mSectors[sectorIndex]))
 		{ plan.diagnostic = "Only Stairwells can be edited"; return plan; }
 		auto stairwell = dynamic_pointer_cast<const StairwellTransit>(mSectors[sectorIndex]);
+		// The Stairwell keeps the Layer it is authored on; its landings live on the
+		// Layer directly in front.
+		auto const transitLayer = stairwell->getLayerIndex();
+		auto const landingLayer = layerInFront(transitLayer);
 		plan.move = x != stairwell->getCellX() || y != stairwell->getCellY();
 		if (options.mountSide != CORE_SIDE_LEFT && options.mountSide != CORE_SIDE_RIGHT)
 		{ plan.diagnostic = "The Stairwell mounting side is invalid"; return plan; }
@@ -2185,20 +2220,20 @@ namespace core
 		{ plan.diagnostic = "The Stairwell is outside the Building bounds"; return plan; }
 		for (uint32_t iy = y; iy < y + options.decksHigh; ++iy)
 		{
-			auto const& first = mLayers[0]->getCellDefinition(x, iy);
+			auto const& first = mLayers[landingLayer]->getCellDefinition(x, iy);
 			if (first.sectorIndex == ~0u || !mSectors[first.sectorIndex]
 				|| mSectors[first.sectorIndex]->getType() != SectorType::Location)
-			{ plan.diagnostic = format("A Fore-layer Location is required at {},{}", x, iy); return plan; }
+			{ plan.diagnostic = format("A Location on the Layer in front is required at {},{}", x, iy); return plan; }
 			for (uint32_t ix = x; ix < x + 2; ++ix)
 			{
-				auto const& fore = mLayers[0]->getCellDefinition(ix, iy);
+				auto const& fore = mLayers[landingLayer]->getCellDefinition(ix, iy);
 				if (fore.sectorIndex != first.sectorIndex)
-				{ plan.diagnostic = format("The Stairwell spans different Fore-layer Locations at deck {}", iy); return plan; }
+				{ plan.diagnostic = format("The Stairwell spans different Locations on the Layer in front at deck {}", iy); return plan; }
 				if (!fore.isTraversableOnFoot())
-				{ plan.diagnostic = format("The Fore-layer floor at {},{} is not traversable", ix, iy); return plan; }
-				auto occupant = mLayers[layerBehind(0)]->getCellDefinition(ix, iy).sectorIndex;
+				{ plan.diagnostic = format("The floor at {},{} on the Layer in front is not traversable", ix, iy); return plan; }
+				auto occupant = mLayers[transitLayer]->getCellDefinition(ix, iy).sectorIndex;
 				if (occupant != ~0u && occupant != sectorIndex)
-				{ plan.diagnostic = format("A Back-layer Sector at {},{} blocks the Stairwell", ix, iy); return plan; }
+				{ plan.diagnostic = format("A Sector at {},{} on the Layer behind blocks the Stairwell", ix, iy); return plan; }
 			}
 		}
 
@@ -2255,12 +2290,15 @@ namespace core
 		string diagnostic;
 		if (!prepareStairwellEdit(plan, records, diagnostic)) throw BuildingException(this, diagnostic);
 		auto old = mSectors[plan.sectorIndex];
+		// The rebuilt Stairwell keeps the Layer it was authored on; read the answer
+		// back from there rather than from a fixed Back Layer.
+		auto const transitLayer = old->getLayerIndex();
 		int deltaX = plan.remove ? 0 : (int)plan.x - (int)old->getCellX();
 		int deltaY = plan.remove ? 0 : (int)plan.y - (int)old->getCellY();
 		rebuildFromConstructionRecords(std::move(records),
 			plan.remove ? ~0u : plan.sectorIndex, deltaX, deltaY);
 		if (plan.remove) return ~0u;
-		return mLayers[layerBehind(0)]->getCellDefinition(plan.x, plan.y).sectorIndex;
+		return mLayers[transitLayer]->getCellDefinition(plan.x, plan.y).sectorIndex;
 	}
 
 	bool Building::prepareLocationEdit(LocationEditPlan const& plan,
