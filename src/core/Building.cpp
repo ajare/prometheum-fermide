@@ -1735,6 +1735,9 @@ namespace core
 		options.decksHigh = decksHigh;
 		if (cellsWide == 0 || cellsWide > 2 || decksHigh == 0)
 			throw BuildingException(this, "Editor lifts must be one or two cells wide and at least one deck high");
+		validateLayer(format("Building::addLift({}, ...)", layerIndex), layerIndex);
+		if (isFrontMostLayer(layerIndex))
+			throw BuildingException(this, "A Lift cannot be placed on the front-most Layer, because it has no Layer in front to land on");
 		auto const& landing = mLayers[layerInFront(layerIndex)];
 		if (x < mCellsWide && y < mDecksHigh && cellsWide <= mCellsWide - x
 			&& decksHigh <= mDecksHigh - y)

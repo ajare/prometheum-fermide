@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "RecentFiles.h"
+#include "core/Exceptions.h"
 #include "Render.h"
 #include "UI.h"
 
@@ -910,6 +911,34 @@ agents: []
 		auto lift = std::dynamic_pointer_cast<const core::LiftTransit>(created.lift.sector);
 		require(lift && lift->getNumStops() == 3 && created.doors.size() == 3,
 			"An enclosed Lift could not connect Ground and Walkways in one Fore-layer Room");
+	}
+
+	void stopDerivingAddLiftRejectsInvalidLayerIndex()
+	{
+		core::Building building("Lift layer validation", 8, 2);
+
+		bool rejected = false;
+		try
+		{
+			// Layer 0 is the front-most Layer: it has no Layer in front for the landings.
+			building.addLift(0, 0, 2, 1, 1);
+		}
+		catch (core::BuildingException const&)
+		{
+			rejected = true;
+		}
+		require(rejected, "The stop-deriving addLift() did not reject the front-most Layer");
+
+		rejected = false;
+		try
+		{
+			building.addLift(2, 0, 2, 1, 1);
+		}
+		catch (core::BuildingException const&)
+		{
+			rejected = true;
+		}
+		require(rejected, "The stop-deriving addLift() did not reject a Layer past the layer count");
 	}
 
 	void stairwellSectorsAreCanvasSelectable()
@@ -1894,6 +1923,7 @@ void runSerializationSmokeChecks()
 	locationEditsArePlannedAndAppliedAtomically();
 	editedShuttleRoundTripsWithoutSchemaChanges();
 	enclosedLiftsSupportMultiDeckRooms();
+	stopDerivingAddLiftRejectsInvalidLayerIndex();
 	stairwellSectorsAreCanvasSelectable();
 	staircasesConnectAdjacentCorridorsAndRoundTrip();
 	laddersCanBeValidatedEditedAndDeleted();
