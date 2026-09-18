@@ -18,6 +18,7 @@
 #include "imgui/IconsFontAwesome5.h"
 
 #include "core/Defines.h"
+#include "core/Background.h"
 #include "core/Building.h"
 #include "core/Location.h"
 #include "core/LadderTransit.h"
@@ -1200,7 +1201,13 @@ void renderSector(shared_ptr<const core::Sector> sector, uint32_t layer, LayerRe
 		return;
 	}
 
-	if (!sector->areLightsOn())
+	// A Background is drawn with its own raw colour. The lights-off tint is
+	// bypassed: a Background has no lights to switch, and tinting it would
+	// silently override the colour the user picked and make the picker
+	// untrustworthy.
+	auto const isBackground = sector->getType() == core::SectorType::Background;
+
+	if (!isBackground && !sector->areLightsOn())
 	{
 		colour = LightsOffColour;
 	}
@@ -1213,13 +1220,19 @@ void renderSector(shared_ptr<const core::Sector> sector, uint32_t layer, LayerRe
 	transformPosition(bounds0);
 	transformPosition(bounds1);
 
-	if (style == LayerRenderStyle::Wireframe)
+	// The generic fill below uses the Layer's colour. A Background fills with its
+	// own colour in the type switch, so it is skipped here rather than being
+	// painted twice.
+	if (!isBackground)
 	{
-		drawList->AddRect({ bounds0.x, bounds0.y }, { bounds1.x, bounds1.y }, colour);
-	}
-	else
-	{
-		drawList->AddRectFilled({ bounds0.x, bounds0.y }, { bounds1.x, bounds1.y }, colour);
+		if (style == LayerRenderStyle::Wireframe)
+		{
+			drawList->AddRect({ bounds0.x, bounds0.y }, { bounds1.x, bounds1.y }, colour);
+		}
+		else
+		{
+			drawList->AddRectFilled({ bounds0.x, bounds0.y }, { bounds1.x, bounds1.y }, colour);
+		}
 	}
 
 	// Thresholds are drawn before the sector-specific stuff so their apertures are
@@ -1268,6 +1281,22 @@ void renderSector(shared_ptr<const core::Sector> sector, uint32_t layer, LayerRe
 			renderStaircase(static_pointer_cast<const core::StaircaseTransit>(sector)->getStaircase(), drawList);
 		break;
 
+	case core::SectorType::Background:
+		// A Background has no geometry of its own: its fill is its own opaque
+		// colour. Solid and Aperture fill - the latter already clipped to the
+		// Window by the caller. The wireframe overlay contributes the outline
+		// only, never a fill (ADR 0002). Hidden returned at the top.
+		{
+			auto const surface = static_pointer_cast<const core::Background>(sector)->getColour();
+			auto const fill = ImColor(surface.r, surface.g, surface.b, 255);
+
+			if (isDrawnSolid(style))
+				drawList->AddRectFilled({ bounds0.x, bounds0.y }, { bounds1.x, bounds1.y }, fill);
+			else
+				drawList->AddRect({ bounds0.x, bounds0.y }, { bounds1.x, bounds1.y }, fill);
+		}
+		break;
+
 	default:
 		break;
 	}
@@ -1285,7 +1314,10 @@ void renderSector(shared_ptr<const core::Sector> sector, uint32_t layer, LayerRe
 		renderSectorAgents(sector, drawList);
 
 	// Render ceiling
-	if (renderEdges)
+	// A Background has no floor, ceiling or walls - its colour is the whole
+	// surface, and a per-sector black border would break the seamless surface
+	// adjacent Backgrounds are meant to form.
+	if (renderEdges && !isBackground)
 	{
 		drawList->AddLine({ bounds0.x, bounds1.y }, { bounds1.x, bounds1.y }, ImColor(0, 0, 0), 2.0f);
 

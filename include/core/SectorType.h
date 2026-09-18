@@ -9,6 +9,7 @@ namespace core
 	enum struct SectorType
 	{
 		Location,
+		Background,
 		Ladder,
 		Lift,
 		Shuttle,

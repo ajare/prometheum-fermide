@@ -11,7 +11,7 @@ The complete simulated world, including its spatial structure, movement network,
 One of the ordered spatial planes used to represent depth in the two-dimensional world. Layers are numbered from front (0) to back. A Building may have between 2 and 256 layers.
 
 **Sector**:
-An occupancy region to which an agent belongs at a point in time. A sector is either a stationary location or a transit region.
+A region of a Layer in the world's spatial structure. A sector is either a Location, a Transit, or a Background; an agent belongs to a Location or a Transit, never to a Background.
 
 **Location**:
 A stationary sector such as a room or corridor.
@@ -22,6 +22,9 @@ A named location that may occupy any layer.
 
 **Corridor**:
 A location that may occupy any layer.
+
+**Background**:
+A non-occupiable Sector that exists only to be seen through Windows and other apertures from the Layer in front. It carries one opaque colour, hosts no objects, owns no walkable floor, and takes no part in traversal. Where a Window looks into a sector, that sector is its Background - no separate domain noun is minted for it.
 
 **Transit**:
 A static sector that connects locations through one or more stops, such as a lift shaft, shuttle route, ladder, or stairwell. A transit is placed on layer L and its landing locations are on layer L-1. Within a lift or shuttle transit, an agent may also occupy a specific transport vehicle or carriage.
