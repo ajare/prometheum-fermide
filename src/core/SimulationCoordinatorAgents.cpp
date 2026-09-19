@@ -22,10 +22,11 @@ namespace core
 	// Agent lifecycle moved out of Building (ADR 0004 stage 1). The behaviour is
 	// unchanged: the coordinator works on Building's registries through
 	// friendship, and calls back through the Building facade for the machinery
-	// which has not moved out of Building yet - snapshots, traversal
-	// cancellation and release, interaction cancellation, and device-operation
-	// cancellation and removal. The stop requests it drops for a departing
-	// passenger go to the coordinator's own lift scheduling helpers.
+	// which has not moved out of Building yet - snapshots, the modified-state
+	// marker, interaction cancellation, and device-operation cancellation and
+	// removal. The stop requests it drops for a departing passenger go to the
+	// coordinator's own lift scheduling helpers, and traversal cancellation and
+	// release to the transaction lifecycle which joined it in stage 4.
 
 	AgentId SimulationCoordinator::addOwnedAgentToSector(unique_ptr<Agent> agent, uint32_t sectorId, uint32_t deckOffset, float xOffset)
 	{
@@ -210,8 +211,8 @@ namespace core
 			auto request = mBuilding.mTraversalRequests.find(requestId);
 			if (!request) continue;
 			auto const permitId = request->mPermit;
-			mBuilding.cancelTraversal(requestId, permitId, false);
-			mBuilding.releaseTraversal(requestId, permitId);
+			cancelTraversal(requestId, permitId, false);
+			releaseTraversal(requestId, permitId);
 		}
 
 		// A permit whose request has already gone is still the Agent's handle.
@@ -222,7 +223,7 @@ namespace core
 		{
 			auto permit = mBuilding.mTraversalPermits.find(permitId);
 			if (!permit) continue;
-			mBuilding.releaseTraversal(permit->mRequest, permitId);
+			releaseTraversal(permit->mRequest, permitId);
 		}
 
 		// Finally the claims keyed by Agent itself, which survive every request having

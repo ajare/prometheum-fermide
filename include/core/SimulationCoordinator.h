@@ -13,6 +13,8 @@ namespace core
 {
 	class Building;
 	class Agent;
+	class Edge;
+	class Vertex;
 	struct Path;
 
 	// Runs the simulation on behalf of the Building that owns it.
@@ -391,6 +393,141 @@ namespace core
 		// passenger's assigned carriage.
 		bool assignShuttleDisembarkDoor(TraversalRequestId requestId,
 			TraversalResource& coordinator, uint32_t stop);
+
+		// ------------------------------------------------------------------
+		// Queue and admission core (ADR 0004 stage 4)
+		//
+		// Traversal-request creation, queue tickets, queue positions and their
+		// refresh, the door queue grant and release, the ladder admission family
+		// with its entry-spacing rule, traversal progress and timeouts, permit
+		// expiry, and the grant / allocate / deny / commit / cancel / release
+		// transaction lifecycle all live here. Creating and configuring a
+		// traversal resource stays with Building as entity ownership (ADR 0001);
+		// the coordinator operates on the resources it is given. Building forwards
+		// the entry points which still have a caller outside itself, and no caller
+		// outside Building names the coordinator.
+		// ------------------------------------------------------------------
+
+		// Opening a traversal transaction. The request records the edge, the two
+		// sectors and endpoints, and where its holder will select a queue position
+		// from, then takes whatever waiting ownership that resource admits this
+		// way - a door queue ticket, a ladder admission place, an extension lease -
+		// before the request is allocated.
+		TraversalRequestId createTraversalRequest(Agent const& agent,
+			std::shared_ptr<const Edge> const& edge,
+			std::shared_ptr<const Vertex> const& source,
+			std::shared_ptr<const Vertex> const& destination);
+
+		// Queue tickets. A ticket is the request's logical place in the line,
+		// independent of where its Agent stands; it is bound to the approach lane
+		// of the request's source sector nearest the endpoint it is arriving at,
+		// and the lane's physical positions are refreshed to match.
+		void attachQueueTicket(TraversalRequestId requestId, TraversalResource& resource);
+
+		// Whether an Agent walking towards a threshold should stop at the queue
+		// instead: the queue is already formed, or admission cannot be immediate,
+		// and the nearest free position lies within the step it is about to take.
+		// The Agent's early approach direction is set so it is steered there.
+		bool stopForAvailableQueuePosition(Agent& agent,
+			std::shared_ptr<const Edge> const& edge, Vector2 const& endpoint,
+			float movementDistance);
+
+		// Re-assign every lane's physical waiting positions. Proximity to the
+		// resource endpoint wins, then proximity to the waiting Agent. A request
+		// which is preparing, or whose last position timed out, keeps its logical
+		// place while releasing the scarce physical one.
+		void refreshQueuePositions(TraversalResource& resource);
+
+		// The per-tick progress pass. A permit whose Agent stops closing on its
+		// destination expires; a waiting Agent which stops reaching its assigned
+		// position loses that position, retries for another, and is denied as
+		// locally unreachable once its retries run out.
+		void updateTraversalProgressAndTimeouts();
+
+		// Permit expiry. The request returns to Pending behind its own ticket with
+		// its crossing authority downgraded to a preparation lease, so the door it
+		// was granted stays open only for the wait, not for a crossing it never made.
+		void expireTraversalPermit(TraversalPermitId permitId);
+
+		// The door queue grant. Each free crossing lane goes to the queued request
+		// with the oldest ticket whose Agent has actually arrived at its assigned
+		// position, ties broken by Agent so equal ticks stay deterministic.
+		void tryGrantDoorQueue(TraversalResource& resource);
+
+		// Surrender a request's place in every queue lane, its crossing lane, its
+		// physical position and its role as the resource's preparation operator.
+		void releaseDoorQueueOwnership(TraversalRequestId requestId, TraversalResource& resource);
+
+		// Whether a request against a ladder or stairwell is admission-controlled.
+		// Only the edge which claims climbing capacity is; a mount or dismount edge
+		// which puts no new climber on the span must stay immediately traversable
+		// or one Agent could reserve capacity twice.
+		bool isLadderAdmission(TraversalRequest const& request,
+			TraversalResource const& resource) const;
+
+		// Put a request into the resource's admission queue, fixing its travel
+		// direction on the way in - from the cross-deck edge, or from which side of
+		// the physical midpoint the Agent approaches - and taking it a queue ticket
+		// where the ladder has one.
+		void attachLadderAdmissionRequest(TraversalRequestId requestId,
+			TraversalResource& resource);
+
+		// Whether every in-flight climber has cleared the entry altitude by a full
+		// spacing. Climbers share one climb speed, so the separation established on
+		// mounting persists; admitting before that clears would overlap the span.
+		bool ladderEntryHasClearedSpacing(TraversalResource const& resource) const;
+
+		// The ladder admission grant. The active direction keeps the span until its
+		// demand is drained or its batch limit is reached, then reverses; every
+		// physically available slot is filled, but only with a request in the
+		// active direction whose Agent has reached the head of its queue.
+		void tryGrantLadderAdmissions(TraversalResource& resource);
+
+		// Surrender every form of waiting ownership - admission queue place, queue
+		// ticket, capacity reservation - so cancellation, denial or completion
+		// leaves nothing behind to hold the span closed.
+		void releaseLadderAdmission(TraversalRequestId requestId,
+			TraversalResource& resource);
+
+		// Free an Agent's occupancy of the climbing span. Occupancy lasts until the
+		// Agent leaves the span, not until its entry permit commits, and releasing it
+		// is what makes room for the next climber.
+		void releaseLadderOccupancy(AgentId agentId, TraversalResource& resource);
+
+		// Grant a pending request: issue its permit, and for a door exchange the
+		// preparation lease for the crossing lease so the door stays open under the
+		// authority which now owns the crossing.
+		TraversalPermitId grantTraversalRequest(TraversalRequestId requestId);
+
+		// Allocate one pending request against the resource it was made on: the
+		// lift-family dispatch, extensible preparation, the force-bridge and ladder
+		// admission paths, window policy, the door preparation-and-queue path, and
+		// the ordinary edge fall-through which grants or asks the edge to prepare.
+		void allocateTraversalRequest(TraversalRequestId requestId,
+			std::shared_ptr<const Edge> const& edge,
+			std::shared_ptr<const Vertex> const& destination);
+
+		// Deny a pending request for a typed reason, surrendering the queues,
+		// positions, reservations and leases it held on its resource.
+		void denyTraversalRequest(TraversalRequestId requestId,
+			TraversalFailureReason reason = TraversalFailureReason::None);
+
+		// Commit a granted traversal at its destination endpoint. Sector
+		// membership transfers here and only here, a capacity reservation converts
+		// into occupancy, and both permit and request end Committed. A request,
+		// permit and Agent which do not agree commit nothing and return false.
+		bool commitTraversal(Agent& agent, TraversalRequestId requestId, TraversalPermitId permitId,
+			std::shared_ptr<const Vertex> const& destination);
+
+		// Cancel a traversal: the rider may be asked for a safe transport exit, the
+		// request surrenders its queues, reservations and leases, and the pending
+		// interactions its preparation needed go with it.
+		void cancelTraversal(TraversalRequestId requestId, TraversalPermitId permitId,
+			bool requestSafeTransportExit = true);
+
+		// Release the request and permit records once the Agent is finished with
+		// them, surrendering any ownership still held and removing both entities.
+		void releaseTraversal(TraversalRequestId requestId, TraversalPermitId permitId);
 
 	private:
 

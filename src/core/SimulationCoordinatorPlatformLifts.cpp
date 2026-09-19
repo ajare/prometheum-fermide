@@ -48,14 +48,14 @@ namespace core
 		// grant immediately and cannot independently admit a passenger.
 		if (request->mEdgeType != EdgeType::Lift)
 		{
-			mBuilding.grantTraversalRequest(requestId);
+			grantTraversalRequest(requestId);
 			return;
 		}
 		if (!resource.mEnabled
 			&& find(resource.mOccupants.begin(), resource.mOccupants.end(), request->mOwner)
 				== resource.mOccupants.end())
 		{
-			mBuilding.denyTraversalRequest(requestId, TraversalFailureReason::ResourceDisabled);
+			denyTraversalRequest(requestId, TraversalFailureReason::ResourceDisabled);
 			return;
 		}
 		auto origin = findLiftStop(resource, request->mSourceEndpoint);
@@ -71,7 +71,7 @@ namespace core
 		if (origin >= resource.mLiftStops.size() || destination >= resource.mLiftStops.size()
 			|| origin == destination)
 		{
-			mBuilding.denyTraversalRequest(requestId);
+			denyTraversalRequest(requestId);
 			return;
 		}
 		auto occupant = find(resource.mOccupants.begin(), resource.mOccupants.end(), request->mOwner);
@@ -87,7 +87,7 @@ namespace core
 			if (!request->mPreparationRequested)
 			{
 				auto control = resource.mLiftStops[origin].callControl;
-				if (!control) { mBuilding.denyTraversalRequest(requestId, TraversalFailureReason::NoReachableControl); return; }
+				if (!control) { denyTraversalRequest(requestId, TraversalFailureReason::NoReachableControl); return; }
 				auto interactionId = requestInteractionForTraversal(control, request->mOwner);
 				if (!interactionId) return;
 				auto interaction = mBuilding.mInteractionRequests.find(interactionId);
@@ -100,12 +100,12 @@ namespace core
 			if (!operation || operation->mState == DeviceOperationState::Pending
 				|| operation->mState == DeviceOperationState::Running) return;
 			if (operation->mState != DeviceOperationState::Succeeded)
-			{ mBuilding.denyTraversalRequest(requestId, TraversalFailureReason::PreparationFailed); return; }
+			{ denyTraversalRequest(requestId, TraversalFailureReason::PreparationFailed); return; }
 
 			// Calling the platform establishes logical priority; after the physical
 			// interaction completes, join this stop's ordinary reserved-position lane.
 			auto actor = mBuilding.mAgents.find(request->mOwner);
-			if (request->mQueueApproach == ~0u) mBuilding.attachQueueTicket(requestId, resource);
+			if (request->mQueueApproach == ~0u) attachQueueTicket(requestId, resource);
 			if (request->mQueueApproach >= resource.mQueueLanes.size()
 				|| request->mQueuePosition == ~0u) return;
 			auto const& queueLane = resource.mQueueLanes[request->mQueueApproach];
@@ -160,7 +160,7 @@ namespace core
 			auto target = location->getPosition() + resource.mCapacityPositions[capacityPosition];
 			target.y = resource.mLiftPosition;
 			actor->mTraversalLocalGoal = target;
-			mBuilding.refreshQueuePositions(resource);
+			refreshQueuePositions(resource);
 			return;
 		}
 
@@ -168,7 +168,7 @@ namespace core
 		{
 			if (!request->mPreparationRequested)
 			{
-				if (destination >= resource.mControls.size()) { mBuilding.denyTraversalRequest(requestId); return; }
+				if (destination >= resource.mControls.size()) { denyTraversalRequest(requestId); return; }
 				resource.mLiftSelector = resource.mControls[destination];
 				if (auto selector = mBuilding.mInteractionPoints.find(resource.mLiftSelector))
 					if (auto actor = mBuilding.mAgents.find(request->mOwner)) selector->mPosition = actor->getGlobalPosition();
@@ -188,7 +188,7 @@ namespace core
 				if (request->mPreparationAttempts++ < mBuilding.mTraversalWaitingPolicy.maximumDestinationRetries)
 				{ request->mPreparationRequested = false; request->mPreparationOperation = {}; return; }
 				requestLiftPassengerSafeExit(request->mOwner, TraversalFailureReason::PreparationFailed);
-				mBuilding.denyTraversalRequest(requestId, TraversalFailureReason::PreparationFailed);
+				denyTraversalRequest(requestId, TraversalFailureReason::PreparationFailed);
 				return;
 			}
 			resource.mLiftPassengerDestinations[request->mOwner] = destination;
@@ -204,7 +204,7 @@ namespace core
 		resource.mLiftStopPhase = LiftStopPhase::Disembarking;
 		if (!resource.mVirtualBoundaryOwners.front())
 			resource.mVirtualBoundaryOwners.front() = requestId;
-		if (resource.mVirtualBoundaryOwners.front() == requestId) mBuilding.grantTraversalRequest(requestId);
+		if (resource.mVirtualBoundaryOwners.front() == requestId) grantTraversalRequest(requestId);
 	}
 
 } // core

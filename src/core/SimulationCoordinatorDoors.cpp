@@ -14,9 +14,9 @@ namespace core
 	// Door and extensible traversal preparation moved out of Building
 	// (ADR 0004 stage 3). The behaviour is unchanged: the coordinator works on
 	// Building's traversal-request, interaction and device-operation registries
-	// through friendship, and calls back through the Building facade for the
-	// machinery which has not moved out of Building yet - denial and queue
-	// handling, ladder admission, and grants.
+	// through friendship and calls its own queue refresh, ladder admission,
+	// grant and denial machinery directly - that queue and admission core joined
+	// the coordinator in stage 4, so no facade callback is left in this seam.
 
 	void SimulationCoordinator::allocateRemoteDoorPreparation(TraversalRequestId requestId, TraversalResource& resource)
 	{
@@ -44,7 +44,7 @@ namespace core
 
 		if (!applicableControl(*request))
 		{
-			mBuilding.denyTraversalRequest(requestId, TraversalFailureReason::NoReachableControl);
+			denyTraversalRequest(requestId, TraversalFailureReason::NoReachableControl);
 			return;
 		}
 		// An opportunistic press may already have started opening the Door. Wait for
@@ -82,8 +82,8 @@ namespace core
 					resource.mActivePreparation = {};
 					resource.mPreparationOperator = {};
 					resource.mSharedPreparationOperation = {};
-					mBuilding.refreshQueuePositions(resource);
-					mBuilding.tryGrantDoorQueue(resource);
+					refreshQueuePositions(resource);
+					tryGrantDoorQueue(resource);
 				}
 				return;
 			}
@@ -93,7 +93,7 @@ namespace core
 				resource.mActivePreparation = {};
 				resource.mPreparationOperator = {};
 				resource.mSharedPreparationOperation = {};
-				mBuilding.denyTraversalRequest(requestId, TraversalFailureReason::ControlRejected);
+				denyTraversalRequest(requestId, TraversalFailureReason::ControlRejected);
 				return;
 			}
 			if (active && (active->mResult == InteractionResult::Succeeded
@@ -111,19 +111,19 @@ namespace core
 			resource.mActivePreparation = {};
 			resource.mPreparationOperator = {};
 			resource.mSharedPreparationOperation = {};
-			mBuilding.refreshQueuePositions(resource);
+			refreshQueuePositions(resource);
 		}
 
 		if (resource.mDoor->isOpen() && !failedPreparation
 			&& (resource.mPreparationAttempts == 0 || completedPreparation))
 		{
-			mBuilding.tryGrantDoorQueue(resource);
+			tryGrantDoorQueue(resource);
 			return;
 		}
 
 		if (resource.mPreparationAttempts >= MaximumPreparationAttempts)
 		{
-			mBuilding.denyTraversalRequest(requestId, TraversalFailureReason::PreparationFailed);
+			denyTraversalRequest(requestId, TraversalFailureReason::PreparationFailed);
 			return;
 		}
 		if (mBuilding.mSimulationTick < resource.mNextPreparationTick)
@@ -163,13 +163,13 @@ namespace core
 		auto interaction = mBuilding.mInteractionRequests.find(interactionId);
 		if (!interaction || interaction->mOperations.empty())
 		{
-			mBuilding.denyTraversalRequest(requestId, TraversalFailureReason::ControlRejected);
+			denyTraversalRequest(requestId, TraversalFailureReason::ControlRejected);
 			return;
 		}
 
 		resource.mActivePreparation = interactionId;
 		resource.mPreparationOperator = requestId;
-		mBuilding.refreshQueuePositions(resource);
+		refreshQueuePositions(resource);
 		resource.mSharedPreparationOperation = interaction->mOperations.front().first;
 		for (auto const& [candidateId, candidate] : mBuilding.mTraversalRequests.entries())
 		{
@@ -198,7 +198,7 @@ namespace core
 		if (!request || request->mState != TraversalRequestState::Pending) return;
 		if (!resource.mEnabled)
 		{
-			mBuilding.denyTraversalRequest(requestId, TraversalFailureReason::ResourceDisabled);
+			denyTraversalRequest(requestId, TraversalFailureReason::ResourceDisabled);
 			return;
 		}
 		if (resource.mExtensible->isExtended())
@@ -208,19 +208,19 @@ namespace core
 				resource.mActivePreparation = {};
 				resource.mPreparationOperator = {};
 				resource.mSharedPreparationOperation = {};
-				mBuilding.refreshQueuePositions(resource);
-				mBuilding.attachLadderAdmissionRequest(requestId, resource);
-				mBuilding.tryGrantLadderAdmissions(resource);
+				refreshQueuePositions(resource);
+				attachLadderAdmissionRequest(requestId, resource);
+				tryGrantLadderAdmissions(resource);
 			}
 			else if (resource.mForceBridge)
 			{
 				resource.mActivePreparation = {};
 				resource.mPreparationOperator = {};
 				resource.mSharedPreparationOperation = {};
-				mBuilding.refreshQueuePositions(resource);
-				mBuilding.tryGrantDoorQueue(resource);
+				refreshQueuePositions(resource);
+				tryGrantDoorQueue(resource);
 			}
-			else mBuilding.grantTraversalRequest(requestId);
+			else grantTraversalRequest(requestId);
 			return;
 		}
 
@@ -233,7 +233,7 @@ namespace core
 		};
 		if (!controlFor(*request))
 		{
-			mBuilding.denyTraversalRequest(requestId, TraversalFailureReason::NoReachableControl);
+			denyTraversalRequest(requestId, TraversalFailureReason::NoReachableControl);
 			return;
 		}
 
@@ -255,19 +255,19 @@ namespace core
 			if (active && (active->mResult == InteractionResult::Failed
 				|| active->mResult == InteractionResult::Rejected))
 			{
-				mBuilding.denyTraversalRequest(requestId, active->mResult == InteractionResult::Rejected
+				denyTraversalRequest(requestId, active->mResult == InteractionResult::Rejected
 					? TraversalFailureReason::ControlRejected : TraversalFailureReason::PreparationFailed);
 			}
 			resource.mActivePreparation = {};
 			resource.mPreparationOperator = {};
 			resource.mSharedPreparationOperation = {};
-			if (resource.mLadder || resource.mForceBridge) mBuilding.refreshQueuePositions(resource);
+			if (resource.mLadder || resource.mForceBridge) refreshQueuePositions(resource);
 			if (request->mState != TraversalRequestState::Pending) return;
 			if (resource.mExtensible->isExtended())
 			{
-				if (resource.mLadder) { mBuilding.attachLadderAdmissionRequest(requestId, resource); mBuilding.tryGrantLadderAdmissions(resource); }
-				else if (resource.mForceBridge) mBuilding.tryGrantDoorQueue(resource);
-				else mBuilding.grantTraversalRequest(requestId);
+				if (resource.mLadder) { attachLadderAdmissionRequest(requestId, resource); tryGrantLadderAdmissions(resource); }
+				else if (resource.mForceBridge) tryGrantDoorQueue(resource);
+				else grantTraversalRequest(requestId);
 				return;
 			}
 		}
@@ -283,13 +283,13 @@ namespace core
 		auto interaction = mBuilding.mInteractionRequests.find(interactionId);
 		if (!interaction || interaction->mOperations.empty())
 		{
-			mBuilding.denyTraversalRequest(requestId, TraversalFailureReason::ControlRejected);
+			denyTraversalRequest(requestId, TraversalFailureReason::ControlRejected);
 			return;
 		}
 		resource.mActivePreparation = interactionId;
 		resource.mPreparationOperator = requestId;
 		resource.mSharedPreparationOperation = interaction->mOperations.front().first;
-		if (resource.mLadder || resource.mForceBridge) mBuilding.refreshQueuePositions(resource);
+		if (resource.mLadder || resource.mForceBridge) refreshQueuePositions(resource);
 		request->mPreparationRequested = true;
 		request->mPreparationOperation = resource.mSharedPreparationOperation;
 	}

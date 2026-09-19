@@ -89,7 +89,7 @@ namespace core
 
 		if (request->mShuttleDoor && request->mShuttleDoor != door.landingResource)
 			if (auto previous = mBuilding.mTraversalResources.find(request->mShuttleDoor))
-				mBuilding.releaseDoorQueueOwnership(requestId, *previous);
+				releaseDoorQueueOwnership(requestId, *previous);
 		request->mResource = door.landingResource;
 		request->mSourceEndpoint = selectedSource->getPosition();
 		request->mDestinationEndpoint = selectedDestination->getPosition();
@@ -202,7 +202,7 @@ namespace core
 				auto rhs = mBuilding.mTraversalRequests.find(right);
 				return lhs && rhs ? lhs->mQueueTicket < rhs->mQueueTicket : left < right;
 			});
-			mBuilding.refreshQueuePositions(*landing);
+			refreshQueuePositions(*landing);
 			break;
 		}
 		return true;

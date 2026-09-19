@@ -833,14 +833,17 @@ namespace core
 
 		InteractionRequestId requestInteractionWhilePassing(InteractionPointId point, AgentId actor);
 
-		// Remote-door and extensible traversal preparation lives in
-		// SimulationCoordinator (ADR 0004); these forward.
-		void allocateRemoteDoorPreparation(TraversalRequestId requestId, TraversalResource& resource);
-
-		void allocateExtensiblePreparation(TraversalRequestId requestId, TraversalResource& resource);
-
-		void attachQueueTicket(TraversalRequestId requestId, TraversalResource& resource);
-
+		// Remote-door and extensible traversal preparation, and the queue and
+		// admission core - traversal-request creation, queue tickets, queue
+		// positions and their refresh, the door queue grant and release, the
+		// ladder admission family with its entry-spacing rule, traversal progress
+		// and timeouts, permit expiry, and the grant / allocate / deny / commit /
+		// cancel / release transaction lifecycle - all live in
+		// SimulationCoordinator (ADR 0004). Building keeps the entry points which
+		// still have a caller outside Building and forwards them; the helpers
+		// reached only from inside the coordinator keep no forward. Configuring a
+		// traversal resource's queue lanes stays with Building: that is entity
+		// ownership (ADR 0001), not coordination.
 		void refreshQueuePositions(TraversalResource& resource);
 
 		bool stopForAvailableQueuePosition(Agent& agent,
@@ -856,22 +859,6 @@ namespace core
 
 		void updateTraversalProgressAndTimeouts();
 
-		void expireTraversalPermit(TraversalPermitId permitId);
-
-		void tryGrantDoorQueue(TraversalResource& resource);
-
-		bool isLadderAdmission(TraversalRequest const& request, TraversalResource const& resource) const;
-
-		void attachLadderAdmissionRequest(TraversalRequestId requestId, TraversalResource& resource);
-
-		bool ladderEntryHasClearedSpacing(TraversalResource const& resource) const;
-
-		void tryGrantLadderAdmissions(TraversalResource& resource);
-
-		void releaseLadderAdmission(TraversalRequestId requestId, TraversalResource& resource);
-
-		void releaseLadderOccupancy(AgentId agentId, TraversalResource& resource);
-
 		// Door open lease acquisition and release live in SimulationCoordinator
 		// (ADR 0004); these forward.
 		DoorOpenLeaseId acquireDoorOpenLease(TraversalResource& resource,
@@ -883,13 +870,11 @@ namespace core
 
 		void advanceLiftResources();
 
-		// The lift allocation dispatcher - the platform lift dispatch, the journey
-		// resource and stop resolution, the enabled check and the boarding /
-		// disembarking / riding classification - lives in SimulationCoordinator
-		// (ADR 0004); this forwards. The open platform lift allocation it dispatches
-		// to is reached only from inside the coordinator now, so no forward is left
-		// for it.
-		void allocateLiftTraversal(TraversalRequestId requestId, TraversalResource& resource);
+		// The lift allocation dispatcher and its branches - the platform lift
+		// dispatch, the journey resource and stop resolution, the enabled check
+		// and the boarding / riding / disembarking classification - live in
+		// SimulationCoordinator (ADR 0004), reached only from the coordinator's
+		// own traversal-request allocation, so no forward is left for them.
 
 		uint32_t findLiftStop(TraversalResource const& resource, Vector2 const& endpoint) const;
 
@@ -920,18 +905,18 @@ namespace core
 		bool replaceOnboardLiftDestination(Agent& agent, std::shared_ptr<Path> const& path,
 			uint32_t& sourceNode);
 
-		void releaseDoorQueueOwnership(TraversalRequestId requestId, TraversalResource& resource);
-
 		TraversalResourceSnapshot makeTraversalResourceSnapshot(TraversalResourceId id, TraversalResource const& resource) const;
 
 		TraversalRequestSnapshot makeTraversalRequestSnapshot(TraversalRequestId id, TraversalRequest const& request) const;
 
 		TraversalPermitSnapshot makeTraversalPermitSnapshot(TraversalPermitId id, TraversalPermit const& permit) const;
 
+		// The traversal transaction lifecycle below - request creation, allocation,
+		// denial, commit, cancel and release - also lives in SimulationCoordinator
+		// (ADR 0004); these forward. The grant is reached only from inside the
+		// coordinator, so no forward is left for it.
 		TraversalRequestId createTraversalRequest(Agent const& agent, std::shared_ptr<const Edge> const& edge,
 			std::shared_ptr<const Vertex> const& source, std::shared_ptr<const Vertex> const& destination);
-
-		TraversalPermitId grantTraversalRequest(TraversalRequestId requestId);
 
 		void allocateTraversalRequest(TraversalRequestId requestId,
 			std::shared_ptr<const Edge> const& edge, std::shared_ptr<const Vertex> const& destination);
