@@ -17,11 +17,11 @@
 #include "core/Door.h"
 #include "core/Window.h"
 #include "core/WindowSectorObject.h"
-#include "core/Button.h"
 #include "core/Graph.h"
 #include "core/Log.h"
 #include "core/Simulation.h"
 #include "core/Coordination.h"
+#include "core/SimulationCoordinator.h"
 #include "core/EntityRegistry.h"
 #include "core/Serializable.h"
 
@@ -33,6 +33,9 @@ namespace core
 	{
 		friend class Agent;
 		friend class Graph;
+		// The coordinator owns no entities; it drives the registries below and
+		// the private machinery beside them on the Building's behalf (ADR 0004).
+		friend class SimulationCoordinator;
 
 	public:
 
@@ -209,10 +212,8 @@ namespace core
 			// Preview dimensions may differ from the source object (Room Ladders
 			// and PlatformLifts recalculate their height at the destination).
 			uint32_t previewWidth{ 0 }, previewHeight{ 0 };
-			bool windowResize{ false };
-			// A Door resizes horizontally only; the preview width is the new cell
-			// width while the authored Layer pair and deck are kept.
-			bool doorResize{ false };
+			// True when the plan resizes the object instead of only moving it.
+			bool resizeRequested{ false };
 			std::string diagnostic;
 			std::vector<std::string> consequences;
 
@@ -397,6 +398,12 @@ namespace core
 
 
 		std::shared_ptr<Graph> mGraph;
+
+		// Simulation behaviour belongs to the coordinator (ADR 0004). Building
+		// owns it and stays the facade (design pattern) through which every
+		// caller, Agent included, reaches it; the coordinator owns no entities
+		// and reaches the registries below through this Building.
+		SimulationCoordinator mSimulationCoordinator;
 
 		EntityRegistry<AgentId, Agent> mAgents;
 
@@ -663,24 +670,14 @@ namespace core
 
 		void validateCellIsInSector(std::string const& caller, uint32_t x, uint32_t y, std::shared_ptr<const Sector> sector) const;
 
-		void validateCellHasObject(std::string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y) const;
-
 		void validateCellHasNoObject(std::string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y) const;
-
-		void validateCellIsType(std::string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y, SectorType sectorType) const;
-
-		void validateCellHasDoor(std::string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y) const;
 
 		void validateCellHasNoDoor(std::string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y) const;
 
 		bool validateStaircaseEndpoint(uint32_t layerIndex, uint32_t x, uint32_t y, bool upperEndpoint,
 			int riseSide, std::string& diagnostic) const;
 
-		void validateCellHasPhysicalControl(std::string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y, int side) const;
-
 		void validateCellHasNoPhysicalControl(std::string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y, int side) const;
-
-		void validateCellHasNoFloorType(std::string const& caller, std::string const& desiredObject, uint32_t layerIndex, uint32_t x, uint32_t y) const;
 
 		void validateCellTraversableOnFoot(std::string const& caller, std::string const& desiredObject, uint32_t layerIndex, uint32_t x, uint32_t y) const;
 
@@ -715,13 +712,14 @@ namespace core
 
 		void beginStructuralEdit(std::string const& operation);
 
-		void cancelTraversalForTopologyRebuild(Agent& agent);
+		// The simulation-side work of a topology rebuild - taking every live
+		// traversal apart, remembering the route each Agent was working to,
+		// restoring those routes onto the rebuilt graph, and publishing the
+		// boundary events - lives in SimulationCoordinator (ADR 0004 stage 5).
+		// pauseSimulation and resumeSimulation stay here, on the structural-edit
+		// side of the edit/simulation boundary, and call it.
 
 		void validateTraversalTopology(Graph const& graph) const;
-
-		void restorePausedPathIntents();
-
-		void publishTopologyEvent(SimulationEventType type, std::string diagnostic = {});
 
 		std::shared_ptr<Sector> _getSector(uint32_t index);
 
@@ -791,18 +789,23 @@ namespace core
 
 		void buildGraph();
 
+		// Forwards to SimulationCoordinator, which owns Agent placement (ADR 0004).
 		AgentId addOwnedAgentToSector(std::unique_ptr<Agent> agent, uint32_t sectorId, uint32_t deckOffset, float xOffset);
 
 		AgentId addOwnedAgentToSector(std::unique_ptr<Agent> agent, uint32_t sectorId);
 
-		AgentSnapshot makeAgentSnapshot(Agent const* agent) const;
+		// Snapshot building - every per-entity projection and the whole-world
+		// SimulationSnapshot - lives in SimulationCoordinator (ADR 0004 stage 5).
+		// Building keeps the whole-world forward in the public section below, plus
+		// one private forward: creating and removing a traversal resource is entity
+		// ownership which stays with Building (ADR 0001), and the lifecycle events
+		// those paths publish carry the resource snapshot the coordinator builds.
+		TraversalResourceSnapshot makeTraversalResourceSnapshot(TraversalResourceId id,
+			TraversalResource const& resource) const;
 
-		InteractionPointSnapshot makeInteractionPointSnapshot(InteractionPointId id, InteractionPoint const& point) const;
-
-		InteractionRequestSnapshot makeInteractionRequestSnapshot(InteractionRequestId id, InteractionRequest const& request) const;
-
-		DeviceOperationSnapshot makeDeviceOperationSnapshot(DeviceOperationId id, DeviceOperation const& operation) const;
-
+		// Interaction and device-operation orchestration lives in
+		// SimulationCoordinator (ADR 0004); each entry point below - public or
+		// private - forwards to it.
 		DeviceOperationId findOrCreateDeviceOperation(DeviceCommand const& command, AgentId requester);
 
 		void advanceDeviceOperations();
@@ -818,18 +821,21 @@ namespace core
 
 		void updateInteractionResults();
 
-		void detachInteractionRequester(InteractionRequest& request);
-
 		InteractionRequestId requestInteractionForTraversal(InteractionPointId point, AgentId actor);
 
 		InteractionRequestId requestInteractionWhilePassing(InteractionPointId point, AgentId actor);
 
-		void allocateRemoteDoorPreparation(TraversalRequestId requestId, TraversalResource& resource);
-
-		void allocateExtensiblePreparation(TraversalRequestId requestId, TraversalResource& resource);
-
-		void attachQueueTicket(TraversalRequestId requestId, TraversalResource& resource);
-
+		// Remote-door and extensible traversal preparation, and the queue and
+		// admission core - traversal-request creation, queue tickets, queue
+		// positions and their refresh, the door queue grant and release, the
+		// ladder admission family with its entry-spacing rule, traversal progress
+		// and timeouts, permit expiry, and the grant / allocate / deny / commit /
+		// cancel / release transaction lifecycle - all live in
+		// SimulationCoordinator (ADR 0004). Building keeps the entry points which
+		// still have a caller outside Building and forwards them; the helpers
+		// reached only from inside the coordinator keep no forward. Configuring a
+		// traversal resource's queue lanes stays with Building: that is entity
+		// ownership (ADR 0001), not coordination.
 		void refreshQueuePositions(TraversalResource& resource);
 
 		bool stopForAvailableQueuePosition(Agent& agent,
@@ -845,34 +851,18 @@ namespace core
 
 		void updateTraversalProgressAndTimeouts();
 
-		void expireTraversalPermit(TraversalPermitId permitId);
-
-		void tryGrantDoorQueue(TraversalResource& resource);
-
-		bool isLadderAdmission(TraversalRequest const& request, TraversalResource const& resource) const;
-
-		void attachLadderAdmissionRequest(TraversalRequestId requestId, TraversalResource& resource);
-
-		bool ladderEntryHasClearedSpacing(TraversalResource const& resource) const;
-
-		void tryGrantLadderAdmissions(TraversalResource& resource);
-
-		void releaseLadderAdmission(TraversalRequestId requestId, TraversalResource& resource);
-
-		void releaseLadderOccupancy(AgentId agentId, TraversalResource& resource);
-
+		// Door open lease acquisition and release live in SimulationCoordinator
+		// (ADR 0004); these forward.
 		DoorOpenLeaseId acquireDoorOpenLease(TraversalResource& resource,
 			DoorOpenLeaseKind kind, TraversalRequestId request = {});
 
 		bool releaseDoorOpenLease(TraversalResource& resource, DoorOpenLeaseId lease);
 
-		void advanceDoorResources();
-
-		void advanceLiftResources();
-
-		void allocateLiftTraversal(TraversalRequestId requestId, TraversalResource& resource);
-
-		void allocateOpenPlatformLiftTraversal(TraversalRequestId requestId, TraversalResource& resource);
+		// The lift allocation dispatcher and its branches - the platform lift
+		// dispatch, the journey resource and stop resolution, the enabled check
+		// and the boarding / riding / disembarking classification - live in
+		// SimulationCoordinator (ADR 0004), reached only from the coordinator's
+		// own traversal-request allocation, so no forward is left for them.
 
 		uint32_t findLiftStop(TraversalResource const& resource, Vector2 const& endpoint) const;
 
@@ -891,17 +881,10 @@ namespace core
 
 		void releaseLiftAdmission(TraversalRequestId requestId, TraversalResource& resource);
 
-		bool retargetShuttleDoorTraversal(TraversalRequestId requestId,
-			TraversalResource& coordinator, ShuttleDoor const& door);
-
-		bool assignShuttleBoardingDoor(TraversalRequestId requestId,
-			TraversalResource& coordinator, uint32_t stop);
-
-		bool assignShuttleDisembarkDoor(TraversalRequestId requestId,
-			TraversalResource& coordinator, uint32_t stop);
-
-		uint32_t findShuttlePassengerCarriage(TraversalResource const& resource,
-			AgentId passenger) const;
+		// Shuttle door assignment - the passenger-carriage lookup, the boarding and
+		// disembark door selection, and the retargeting they share - lives in
+		// SimulationCoordinator (ADR 0004). Both selections are reached only from
+		// inside the coordinator now, so no forward is left for them.
 
 		void requestLiftPassengerSafeExit(AgentId passenger, TraversalFailureReason reason);
 
@@ -910,18 +893,12 @@ namespace core
 		bool replaceOnboardLiftDestination(Agent& agent, std::shared_ptr<Path> const& path,
 			uint32_t& sourceNode);
 
-		void releaseDoorQueueOwnership(TraversalRequestId requestId, TraversalResource& resource);
-
-		TraversalResourceSnapshot makeTraversalResourceSnapshot(TraversalResourceId id, TraversalResource const& resource) const;
-
-		TraversalRequestSnapshot makeTraversalRequestSnapshot(TraversalRequestId id, TraversalRequest const& request) const;
-
-		TraversalPermitSnapshot makeTraversalPermitSnapshot(TraversalPermitId id, TraversalPermit const& permit) const;
-
+		// The traversal transaction lifecycle below - request creation, allocation,
+		// denial, commit, cancel and release - also lives in SimulationCoordinator
+		// (ADR 0004); these forward. The grant is reached only from inside the
+		// coordinator, so no forward is left for it.
 		TraversalRequestId createTraversalRequest(Agent const& agent, std::shared_ptr<const Edge> const& edge,
 			std::shared_ptr<const Vertex> const& source, std::shared_ptr<const Vertex> const& destination);
-
-		TraversalPermitId grantTraversalRequest(TraversalRequestId requestId);
 
 		void allocateTraversalRequest(TraversalRequestId requestId,
 			std::shared_ptr<const Edge> const& edge, std::shared_ptr<const Vertex> const& destination);
@@ -940,14 +917,11 @@ namespace core
 		// A handle an Agent owns inside a capacity resource outlives nothing: once the
 		// Agent is gone the manifest slot can never be disembarked and the Lift, Shuttle
 		// or Ladder is permanently one place short (ticket #57). Deleting an Agent
-		// therefore surrenders every such claim before the entity is destroyed.
+		// therefore surrenders every such claim before the entity is destroyed. The
+		// release lives in SimulationCoordinator (ADR 0004); these forward.
 		bool holdsTraversalOwnership(AgentId id) const;
 		void releaseAgentFromResource(TraversalResource& resource, AgentId id);
 		void releaseTraversalOwnership(AgentId id);
-
-		void runSimulationPhase(SimulationPhase phase);
-
-		void publishTickEvents(SimulationSnapshot const& before);
 
 	public:
 
@@ -1368,9 +1342,10 @@ namespace core
 		ObjectMovePlan planResizeSectorWindow(uint32_t sectorIndex, uint32_t objectIndex,
 			uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh) const;
 
-		// Doors resize horizontally from either side edge, keeping their deck. Like
-		// Window resizing, the plan replays atomically, preserving authored options
-		// while validating the new footprint against normal Door placement rules.
+		// Regular Doors resize horizontally between one and two cells. The plan uses
+		// the same atomic replay path as movement, preserving authored options while
+		// validating the new span against normal Door placement rules. Lift and
+		// Shuttle landing doors are managed by their transport and refuse to resize.
 		ObjectMovePlan planResizeSectorDoor(uint32_t sectorIndex, uint32_t objectIndex,
 			uint32_t x, uint32_t y, uint32_t cellsWide) const;
 
@@ -1391,6 +1366,10 @@ namespace core
 		// Runtime structural editing protocol. Pausing deterministically cancels
 		// active edge transactions while retaining route destinations for the new
 		// graph. A failed rebuild is atomic at the graph boundary and cannot resume.
+		// Pause and resume are the edit/simulation boundary and live here, on the
+		// editing side of it; the simulation-side work they drive - the teardown,
+		// the paused route intents and the boundary events - lives in
+		// SimulationCoordinator (ADR 0004 stage 5).
 		void pauseSimulation();
 
 		bool rebuildTraversalTopology();
@@ -1415,6 +1394,10 @@ namespace core
 			std::shared_ptr<const SectorObject>* sectorObject = nullptr) const;
 
 		// Building-owned replacement APIs. Callers retain typed IDs, not ownership.
+		// Agent lifecycle - creation, placement, removal, lookup, id resolution,
+		// waking, and traversal-ownership release - lives in SimulationCoordinator
+		// (ADR 0004); every Agent entry point below forwards to it, as does every
+		// InteractionPoint, InteractionRequest and DeviceOperation entry point.
 		AgentId createAgent(std::string const& name, uint32_t sectorId, uint32_t deckOffset, float xOffset);
 
 		AgentId createAgent(std::string const& name, uint32_t sectorId);
@@ -1496,7 +1479,9 @@ namespace core
 		// while a crossing owns a lane.
 		bool configureDoorCrossingLanes(TraversalResourceId resource, uint32_t laneCount);
 
-		// External systems hold doors open through the same scoped safety protocol.
+		// External systems hold doors open through the same scoped safety
+		// protocol. The lease protocol lives in SimulationCoordinator (ADR 0004);
+		// these forward.
 		DoorOpenLeaseId acquireDoorOpenLease(TraversalResourceId resource,
 			DoorOpenLeaseKind kind = DoorOpenLeaseKind::ExternalHoldOpen);
 
@@ -1525,8 +1510,6 @@ namespace core
 
 		EntityLookup<TraversalRequest const> lookupTraversalRequest(TraversalRequestId id) const;
 
-		EntityLookup<TraversalPermit const> lookupTraversalPermit(TraversalPermitId id) const;
-
 		TraversalWaitingPolicy const& getTraversalWaitingPolicy() const;
 
 		void setTraversalWaitingPolicy(TraversalWaitingPolicy policy);
@@ -1534,6 +1517,8 @@ namespace core
 		// Pure route-cost query: it creates no ticket, operation, reservation, or permit.
 		float estimateTraversalDelay(TraversalResourceId resource, SectorId sourceSector) const;
 
+		// Wakes every Agent the Building owns. Forwards to SimulationCoordinator,
+		// where the Agent lifecycle lives (ADR 0004).
 		void wakeAllAgents();
 
 		// Restore authored Agent routes/positions and reconstruct all simulated
@@ -1553,6 +1538,12 @@ namespace core
 
 		// Rendering supplies elapsed wall time here.  It is accumulated and only
 		// whole fixed simulation ticks are executed.
+		//
+		// The tick pipeline itself - the accumulator, the six simulation phases,
+		// the per-phase lift, shuttle and door advancement, tick event
+		// publication, the simulation clock and event consumption, and every
+		// snapshot builder - lives in SimulationCoordinator (ADR 0004 stage 5);
+		// every entry point below forwards to it.
 		void update(float elapsedSeconds);
 
 		// Headless deterministic seam.  These methods never use render timing.

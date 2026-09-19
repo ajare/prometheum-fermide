@@ -2044,9 +2044,13 @@ void onlyTheSelectedLayerAndTheLayerBehindAreDrawn()
 // threshold is only ever joined to the pair it was authored on.
 void graphConstructionWalksEveryAdjacentLayerPair()
 {
-	char const* roomNames[] = { "Corridor", "Basement", "Deep Cellar", "Catacomb" };
+	char const* roomNames[] = { "Corridor", "Basement", "Deep Cellar", "Catacomb", "Oubliette" };
+	// One name per Layer the loop can build. Deriving the bound from the array
+	// keeps the scan from reading past the end of roomNames, which clang's
+	// Release codegen surfaced as a crash where GCC's layout happened to survive.
+	uint32_t const maxLayerCount = static_cast<uint32_t>(sizeof(roomNames) / sizeof(roomNames[0]));
 
-	for (uint32_t layerCount = 2; layerCount <= 5; ++layerCount)
+	for (uint32_t layerCount = 2; layerCount <= maxLayerCount; ++layerCount)
 	{
 		core::Building building("Adjacent Pairs", 8, 2);
 		while (building.getLayerCount() < layerCount) building.addLayer();

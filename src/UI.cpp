@@ -7244,11 +7244,11 @@ namespace
 		resetAgentMove();
 	}
 
-	ResizeEdge hoveredObjectResizeEdge(shared_ptr<const core::SectorObject> const& object,
+	// A Window resizes from any of its four edges.
+	ResizeEdge hoveredWindowResizeEdge(shared_ptr<const core::SectorObject> const& object,
 		ImVec2 mouse)
 	{
-		if (!object || (object->getObjectType() != core::SectorObjectType::Window
-			&& object->getObjectType() != core::SectorObjectType::Door))
+		if (!object || object->getObjectType() != core::SectorObjectType::Window)
 			return ResizeEdge::None;
 		auto topLeft = worldToScreen({ (float)object->getCellX(),
 			(float)object->getCellY() + object->getSize().y });
@@ -7265,12 +7265,45 @@ namespace
 			{ ResizeEdge::Top, abs(mouse.y - topLeft.y) },
 			{ ResizeEdge::Bottom, abs(mouse.y - bottomRight.y) }
 		};
-		// A Door is one deck high; only its horizontal edges resize it.
-		auto const candidateEnd = object->getObjectType() == core::SectorObjectType::Door
-			? begin(candidates) + 2 : end(candidates);
-		auto closest = min_element(begin(candidates), candidateEnd,
+		auto closest = min_element(begin(candidates), end(candidates),
 			[](auto const& left, auto const& right) { return left.distance < right.distance; });
 		return closest->distance <= handleRadius ? closest->edge : ResizeEdge::None;
+	}
+
+	// A Door resizes horizontally only: its height is one deck and its vertical
+	// extent is fixed by the doorway it occupies.
+	ResizeEdge hoveredDoorResizeEdge(shared_ptr<const core::SectorObject> const& object,
+		ImVec2 mouse)
+	{
+		if (!object || object->getObjectType() != core::SectorObjectType::Door)
+			return ResizeEdge::None;
+		auto topLeft = worldToScreen({ (float)object->getCellX(),
+			(float)object->getCellY() + object->getSize().y });
+		auto bottomRight = worldToScreen({
+			(float)object->getCellX() + object->getSize().x, (float)object->getCellY() });
+		constexpr float handleRadius = 6.0f;
+		if (mouse.x < topLeft.x - handleRadius || mouse.x > bottomRight.x + handleRadius
+			|| mouse.y < topLeft.y - handleRadius || mouse.y > bottomRight.y + handleRadius)
+			return ResizeEdge::None;
+		struct Candidate { ResizeEdge edge; float distance; };
+		Candidate candidates[] = {
+			{ ResizeEdge::Left, abs(mouse.x - topLeft.x) },
+			{ ResizeEdge::Right, abs(mouse.x - bottomRight.x) }
+		};
+		auto closest = min_element(begin(candidates), end(candidates),
+			[](auto const& left, auto const& right) { return left.distance < right.distance; });
+		return closest->distance <= handleRadius ? closest->edge : ResizeEdge::None;
+	}
+
+	ResizeEdge hoveredObjectResizeEdge(shared_ptr<const core::SectorObject> const& object,
+		ImVec2 mouse)
+	{
+		if (!object) return ResizeEdge::None;
+		if (object->getObjectType() == core::SectorObjectType::Window)
+			return hoveredWindowResizeEdge(object, mouse);
+		if (object->getObjectType() == core::SectorObjectType::Door)
+			return hoveredDoorResizeEdge(object, mouse);
+		return ResizeEdge::None;
 	}
 
 	// The cells the selection occupies when the editor can resize it by
@@ -7418,21 +7451,24 @@ namespace
 		int targetWidth = (int)gObjectMove.originalWidth;
 		int targetHeight = (int)gObjectMove.originalHeight;
 		bool const resizing = gObjectMove.edge != ResizeEdge::Move;
-		bool const resizingDoor = resizing
+		bool const doorResize = resizing
 			&& gSelectedSectorObject->getObjectType() == core::SectorObjectType::Door;
+		// A regular Door may span at most two cells; stick the drag to that limit
+		// instead of showing a wide preview that the plan would refuse anyway.
+		int const maxResizeWidth = doorResize ? 2 : (int)building->getCellsWide();
 		if (gObjectMove.edge == ResizeEdge::Left)
 		{
 			auto right = (int)gObjectMove.originalX + (int)gObjectMove.originalWidth;
-			targetX = clamp((int)gObjectMove.originalX + deltaX, 0, right - 1);
+			targetX = clamp((int)gObjectMove.originalX + deltaX,
+				max(0, right - maxResizeWidth), right - 1);
 			targetY = (int)gObjectMove.originalY;
 			targetWidth = right - targetX;
 		}
 		else if (gObjectMove.edge == ResizeEdge::Right)
 		{
-			// Door authoring reserves the final column as the building boundary.
 			auto right = clamp((int)gObjectMove.originalX + (int)gObjectMove.originalWidth
 				+ deltaX, (int)gObjectMove.originalX + 1,
-				(int)building->getCellsWide() - (resizingDoor ? 1 : 0));
+				min(maxResizeWidth + (int)gObjectMove.originalX, (int)building->getCellsWide()));
 			targetX = (int)gObjectMove.originalX;
 			targetY = (int)gObjectMove.originalY;
 			targetWidth = right - targetX;
@@ -7465,7 +7501,7 @@ namespace
 				|| gObjectMove.preview.previewHeight != (uint32_t)targetHeight))
 			|| gObjectMove.preview.diagnostic == "Drop the object inside the world")
 		{
-			gObjectMove.preview = resizingDoor
+			gObjectMove.preview = doorResize
 				? building->planResizeSectorDoor(owner->getIndex(), objectIndex,
 					(uint32_t)targetX, (uint32_t)targetY, (uint32_t)targetWidth)
 				: resizing

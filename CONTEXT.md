@@ -132,6 +132,9 @@ _Avoid_: Queue ticket, occupancy slot
 **Door activation mode**:
 The permitted way to open a door: automatically by presence, manually by the crossing agent, through a remote interaction point, or not at all.
 
+**Door opening style**:
+The visual manner in which a Door's leaf or leaves reveal its threshold: OpenUp, OpenLeft, OpenRight, or OpenApart. Opening style does not change the Door's timing, state, obstruction, or traversal behaviour.
+
 **Interaction point**:
 A place where an agent can request one or more typed device commands, usually represented by a physical button or switch.
 _Avoid_: Device controller, traversal controller

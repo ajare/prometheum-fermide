@@ -25,7 +25,6 @@
 #include <cmath>
 #include <format>
 #include <set>
-#include <stdexcept>
 #include <utility>
 
 namespace core
@@ -3020,20 +3019,21 @@ namespace core
 		}
 
 		auto const type = object->getObjectType();
-		auto const resizingObject = (type == SectorObjectType::Window && plan.windowResize)
-			|| (type == SectorObjectType::Door && plan.doorResize);
-		auto const targetWidth = resizingObject ? plan.previewWidth
-			: (uint32_t)ceil(object->getSize().x);
-		auto const targetHeight = type == SectorObjectType::Window && plan.windowResize
+		bool const resizing = plan.resizeRequested
+			&& (type == SectorObjectType::Window || type == SectorObjectType::Door);
+		auto const targetWidth = resizing
+			? plan.previewWidth : (uint32_t)ceil(object->getSize().x);
+		auto const targetHeight = resizing
 			? plan.previewHeight : (uint32_t)ceil(object->getSize().y);
 		if (type == SectorObjectType::Window && (targetWidth == 0 || targetHeight == 0))
 		{
 			diagnostic = "A Window must be at least one cell wide and one deck high";
 			return false;
 		}
-		if (type == SectorObjectType::Door && plan.doorResize && targetWidth == 0)
+		if (type == SectorObjectType::Door && resizing
+			&& (targetWidth == 0 || targetWidth > 2))
 		{
-			diagnostic = "A Door must be at least one cell wide";
+			diagnostic = "A Door must be one or two cells wide";
 			return false;
 		}
 		if (type == SectorObjectType::Walkway && (plan.x != sourceX || plan.y != sourceY)
@@ -3097,7 +3097,7 @@ namespace core
 			? (uint64_t)plan.x + 1 : (uint64_t)plan.x + targetWidth;
 		uint64_t targetTop = type == SectorObjectType::BulkheadDoor
 			? (uint64_t)plan.y + 1 : (uint64_t)plan.y + targetHeight;
-		if (type == SectorObjectType::Door && plan.doorResize)
+		if (type == SectorObjectType::Door && resizing)
 		{
 			// Door authoring reserves the final column as the building boundary.
 			if (targetRight >= mCellsWide)
@@ -3127,8 +3127,15 @@ namespace core
 						liftX, liftWidth))
 				{
 					diagnostic = "A Door cannot be resized over a Lift";
-					return false;
+						return false;
 				}
+			// Authored crossing lanes outrank a narrower Door: shrinking below
+			// them would silently drop capacity, so the plan refuses.
+			if (found->d != 0 && found->d > targetWidth)
+			{
+				diagnostic = "A Door cannot shrink below its authored crossing lanes";
+				return false;
+			}
 		}
 		if (type == SectorObjectType::Lift)
 		{
@@ -3247,7 +3254,9 @@ namespace core
 		switch (type)
 		{
 		case SectorObjectType::Door:
-			found->a = plan.y; found->b = plan.x; found->c = targetWidth; break;
+			found->a = plan.y; found->b = plan.x;
+			if (plan.resizeRequested) found->c = targetWidth;
+			break;
 		case SectorObjectType::BulkheadDoor:
 			found->a = owner->getLayerIndex(); found->b = plan.y; found->c = plan.x;
 			found->i = CORE_SIDE_LEFT; break;
@@ -4396,7 +4405,7 @@ namespace core
 		plan.y = y;
 		plan.previewWidth = cellsWide;
 		plan.previewHeight = decksHigh;
-		plan.windowResize = true;
+		plan.resizeRequested = true;
 		if (sectorIndex >= mSectors.size() || !mSectors[sectorIndex]
 			|| objectIndex >= mSectors[sectorIndex]->getNumObjects())
 		{
@@ -4425,7 +4434,7 @@ namespace core
 		plan.y = y;
 		plan.previewWidth = cellsWide;
 		plan.previewHeight = 1;
-		plan.doorResize = true;
+		plan.resizeRequested = true;
 		if (sectorIndex >= mSectors.size() || !mSectors[sectorIndex]
 			|| objectIndex >= mSectors[sectorIndex]->getNumObjects())
 		{
@@ -4438,9 +4447,11 @@ namespace core
 			plan.diagnostic = "Only Doors can be resized this way";
 			return plan;
 		}
-		// Lift and Shuttle landing Doors have no independent Door record; the
-		// record lookup below rejects them as objects which cannot be moved
-		// independently, which also keeps their widths matched to the vehicle.
+		if (isLiftOwnedDoor(object) || isShuttleOwnedDoor(object))
+		{
+			plan.diagnostic = "Lift and Shuttle landing doors are managed by their transport";
+			return plan;
+		}
 		vector<ConstructionRecord> records;
 		uint32_t ignoredSector, ignoredObject;
 		plan.valid = prepareObjectMove(plan, records, ignoredSector, ignoredObject, plan.diagnostic);

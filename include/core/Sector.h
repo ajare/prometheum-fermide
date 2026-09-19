@@ -26,6 +26,12 @@ namespace core
 	{
 		friend class Building;
 		friend class Graph;
+		// Committing a traversal transfers sector membership at the destination
+		// endpoint with an explicitly authored, non-default position, which only
+		// the private SectorPosition overload carries. The coordinator therefore
+		// shares Building's friendship here rather than widening Sector's public
+		// surface (ADR 0004).
+		friend class SimulationCoordinator;
 
 	private:
 
