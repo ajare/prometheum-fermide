@@ -25,6 +25,7 @@
 #include <cstdint>
 #include <format>
 #include <functional>
+#include <limits>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -282,8 +283,10 @@ namespace
 			"A Facade is reachable as a Background");
 		require(dynamic_cast<core::Transit const*>(&asSector) == nullptr,
 			"A Facade is reachable as a Transit");
-		require(facade.getDescription().rfind("Facade", 0) == 0,
-			("A Facade's description does not lead with its kind: "
+		// Ticket #55: the description leads with the Facade's own name, the
+		// way Location::getDescription() does, not a hardcoded type word.
+		require(facade.getDescription().rfind("Frontage", 0) == 0,
+			("A Facade's description does not lead with its name: "
 				+ facade.getDescription()).c_str());
 		require(!facade.isCorridor(), "A Facade reports itself as a corridor");
 		everyEndIsOpen(facade);
@@ -1096,6 +1099,100 @@ agents: []
 			"The surviving Sector is not the front Room");
 	}
 
+	// Ticket #55: the Agent restore loops after a Layer delete, a Location
+	// edit, and a Background edit drop Agents left standing on non-traversable
+	// cells - but the guard used to fire only for a plain Location, so an Agent
+	// saved on a Facade's upper deck with no Walkway came back standing on air.
+	// The guard follows isLocationLike(), so a Facade is held to the same floor.
+	void restoreDropsAgentsOnNonTraversableFacadeCells()
+	{
+		auto const requireRestore = [](core::Building& building,
+			core::AgentId groundId, core::AgentId airId, char const* path)
+		{
+			require(building.lookupAgent(groundId).entity != nullptr,
+				(std::string("The Agent on the Facade's walkable floor was not restored across ")
+					+ path).c_str());
+			require(building.lookupAgent(airId).entity == nullptr,
+				(std::string("The Agent on the Facade's non-traversable deck was restored across ")
+					+ path).c_str());
+		};
+
+		// Path 1: applyDeleteLayer.
+		{
+			core::Building building("Restore floor", 12, 3);
+			auto const facadeIndex = building.addFacade(1, 0, 0, 2, 2);
+			building.addLayer();
+			building.finishBuild();
+			require(!std::as_const(building).getLayer(1)->getCellDefinition(0, 1).isTraversableOnFoot(),
+				"The Facade's upper deck is unexpectedly walkable; the restore guard would be vacuous");
+			auto const groundId = building.createAgent("Grounded", facadeIndex, 0, 0.5f);
+			auto const airId = building.createAgent("On air", facadeIndex, 1, 0.5f);
+			auto const plan = building.planDeleteLayer(0);
+			require(plan.valid, ("The front Layer delete plan was refused: " + plan.diagnostic).c_str());
+			require(building.applyDeleteLayer(plan), "The Layer delete did not apply");
+			requireRestore(building, groundId, airId, "a Layer delete");
+		}
+
+		// Path 2: applyLocationEdit (a Room resize elsewhere replays the world).
+		{
+			core::Building building("Restore edit", 12, 2);
+			auto const roomIndex = building.addRoom("Shifter", 0, 0, 0, 2, 1);
+			auto const facadeIndex = building.addFacade(0, 0, 4, 2, 2);
+			building.finishBuild();
+			auto const groundId = building.createAgent("Grounded", facadeIndex, 0, 0.5f);
+			auto const airId = building.createAgent("On air", facadeIndex, 1, 0.5f);
+			auto const plan = building.planResizeLocation(roomIndex, 0, 0, 3, 1);
+			require(plan.valid, ("The Room resize plan was refused: " + plan.diagnostic).c_str());
+			building.applyLocationEdit(plan);
+			requireRestore(building, groundId, airId, "a Location edit");
+		}
+
+		// Path 3: applyBackgroundEdit.
+		{
+			core::Building building("Restore bg edit", 12, 2);
+			auto const backgroundIndex = building.addBackground(1, 0, 0, 2, 1, { 10, 20, 30 });
+			auto const facadeIndex = building.addFacade(0, 0, 0, 2, 2);
+			building.finishBuild();
+			auto const groundId = building.createAgent("Grounded", facadeIndex, 0, 0.5f);
+			auto const airId = building.createAgent("On air", facadeIndex, 1, 0.5f);
+			auto const plan = building.planResizeBackground(backgroundIndex, 0, 0, 3, 1);
+			require(plan.valid, ("The Background resize plan was refused: " + plan.diagnostic).c_str());
+			building.applyBackgroundEdit(plan);
+			requireRestore(building, groundId, airId, "a Background edit");
+		}
+	}
+
+	// Ticket #55: a Facade describes itself by its own name, the way Location
+	// does; only an unnamed Facade reads as "Facade".
+	void theDescriptionCarriesTheFacadeName()
+	{
+		core::Building building("Naming", 12, 2);
+		auto const named = building.addFacade("Frontage", 0, 0, 0, 2, 1);
+		auto const unnamed = building.addFacade(0, 0, 2, 2, 1);
+		building.finishBuild();
+		require(facadeIn(building, named)->getDescription() == "Frontage at 0,0 on Layer 0",
+			("The named Facade describes itself as '" + facadeIn(building, named)->getDescription() + "'").c_str());
+		require(facadeIn(building, unnamed)->getDescription() == "Facade at 2,0 on Layer 0",
+			("The unnamed Facade describes itself as '" + facadeIn(building, unnamed)->getDescription() + "'").c_str());
+	}
+
+	// Ticket #55: the height range check is a negated in-range test so a NaN
+	// topDeckHeight is rejected instead of sailing through both one-sided
+	// comparisons - the same flaw the plain < / > pair had in addRoom.
+	void nanTopDeckHeightIsRejected()
+	{
+		core::Building building("NaN", 12, 2);
+		building.finishBuild();
+		float const nan = std::numeric_limits<float>::quiet_NaN();
+		std::string diagnostic;
+		require(!building.canAddFacade(0, 0, 0, 2, 1, nan, &diagnostic),
+			"canAddFacade accepted a NaN topDeckHeight");
+		require(throws([&] { building.addFacade(0, 0, 0, 2, 1, nan); }),
+			"addFacade accepted a NaN topDeckHeight");
+		require(throws([&] { building.addRoom("NaN room", 0, 0, 0, 2, 1, nan); }),
+			"addRoom accepted a NaN topDeckHeight");
+	}
+
 	bool hasPath(core::Building const& building, uint32_t fromIdentifier,
 		uint32_t toIdentifier)
 	{
@@ -1571,6 +1668,9 @@ void runFacadeSmokeChecks()
 	aFacadeMapIsRejectedByPreFacadeCode();
 	theFacadeTakesPartInTheGraph();
 	layerDeletionHandlesFacadeRecords();
+	restoreDropsAgentsOnNonTraversableFacadeCells();
+	theDescriptionCarriesTheFacadeName();
+	nanTopDeckHeightIsRejected();
 	facadeBetweenTwoAlignedRoomsIsOneContinuousFloor();
 	facadeBesideHigherFloorDoesNotMerge();
 	wallRemovalAcceptsFacadeNeighboursBothWays();

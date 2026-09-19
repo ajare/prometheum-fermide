@@ -1413,7 +1413,7 @@ namespace core
 			auto cellX = (uint32_t)floor(saved.position.x);
 			auto cellY = (uint32_t)floor(saved.position.y);
 			if (cellX >= mCellsWide || cellY >= mDecksHigh) continue;
-			if (sector->getType() == SectorType::Location
+			if (isLocationLike(sector->getType())
 				&& !mLayers[saved.layer]->getCellDefinition(cellX, cellY).isTraversableOnFoot()) continue;
 			auto agent = make_unique<Agent>(saved.name);
 			agent->setFlags(saved.flags);
@@ -4628,7 +4628,7 @@ namespace core
 			auto cellX = (uint32_t)floor(saved.position.x);
 			auto cellY = (uint32_t)floor(saved.position.y);
 			if (cellX >= mCellsWide || cellY >= mDecksHigh) continue;
-			if (sector->getType() == SectorType::Location
+			if (isLocationLike(sector->getType())
 				&& !mLayers[saved.layer]->getCellDefinition(cellX, cellY).isTraversableOnFoot()) continue;
 			auto agent = make_unique<Agent>(saved.name);
 			agent->setFlags(saved.flags);
@@ -4858,7 +4858,7 @@ namespace core
 			auto cellX = (uint32_t)floor(saved.position.x);
 			auto cellY = (uint32_t)floor(saved.position.y);
 			if (cellX >= mCellsWide || cellY >= mDecksHigh) continue;
-			if (sector->getType() == SectorType::Location
+			if (isLocationLike(sector->getType())
 				&& !mLayers[saved.layer]->getCellDefinition(cellX, cellY).isTraversableOnFoot()) continue;
 			auto agent = make_unique<Agent>(saved.name);
 			agent->setFlags(saved.flags);

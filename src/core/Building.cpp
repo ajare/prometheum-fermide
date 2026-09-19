@@ -1333,7 +1333,10 @@ namespace core
 	uint32_t Building::addRoom(string const& name, uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t decksHigh, float topDeckHeight)
 	{
 		beginStructuralEdit("addRoom");
-		if (topDeckHeight < CORE_ROOM_MIN_HEIGHT || topDeckHeight > CORE_ROOM_MAX_HEIGHT)
+		// Written as a negated in-range test so a NaN topDeckHeight is rejected
+		// too: NaN fails both comparisons, so the plain < / > pair would let it
+		// through (ticket #55).
+		if (!(topDeckHeight >= CORE_ROOM_MIN_HEIGHT && topDeckHeight <= CORE_ROOM_MAX_HEIGHT))
 		{
 			string caller = format("Building::addRoom({}, {}, {}, {}, {}, {}, {})", name, layerIndex, y, x, cellsWide, decksHigh, topDeckHeight);
 
@@ -1445,7 +1448,9 @@ namespace core
 				throw BuildingException(this, format("{} - a Facade must be at least one cell wide", caller));
 			if (decksHigh == 0)
 				throw BuildingException(this, format("{} - a Facade must be at least one deck high", caller));
-			if (topDeckHeight < CORE_ROOM_MIN_HEIGHT || topDeckHeight > CORE_ROOM_MAX_HEIGHT)
+			// Same negated in-range test as addRoom: a NaN topDeckHeight must
+			// not sail through the < / > pair (ticket #55).
+			if (!(topDeckHeight >= CORE_ROOM_MIN_HEIGHT && topDeckHeight <= CORE_ROOM_MAX_HEIGHT))
 				throw BuildingException(this, format("{} - topDeckHeight={} is out of range", caller, topDeckHeight));
 
 			validateBounds(caller, x, y, cellsWide, decksHigh);

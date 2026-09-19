@@ -373,6 +373,7 @@ namespace
 		// Agents inside the Facade reach the glass too, and the wireframe
 		// overlay still refuses to show them.
 		auto const agentId = f.building.createAgent("Frontage walker", f.facadeIndex, 0, 1.0f);
+		require(agentId != core::AgentId{}, "createAgent did not assign the Facade walker an id");
 		require(f.facade->getAgents().size() == 1,
 			"the Agent did not enter the Facade");
 		require(shouldRenderSectorAgents(core::SectorType::Facade, LayerRenderStyle::Aperture),

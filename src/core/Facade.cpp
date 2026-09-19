@@ -51,7 +51,9 @@ namespace core
 
 	string Facade::getDescription() const
 	{
-		return format("Facade at {},{} on Layer {}", getCellX(), getCellY(), getLayerIndex());
+		// Describe with the Facade's own name, the way Location does; only an
+		// unnamed Facade reads as "Facade" (ticket #55).
+		return format("{} at {},{} on Layer {}", getName(), getCellX(), getCellY(), getLayerIndex());
 	}
 
 	bool Facade::sectorSupportsObjectType(SectorObjectType type) const
