@@ -16,6 +16,9 @@ Options:
   --ready-label LABEL               Eligibility label (default: ready-for-agent)
   --labels LABEL[,LABEL...]         Additional required labels; may be repeated
   --use-branch BRANCH               Check out/create this branch
+  --bug-hunt                        Run tools/bug_hunt.sh after the main loop
+  --bug-hunt-model MODEL:EFFORT     Bug-hunt model and effort (required with
+                                    --bug-hunt)
   --initial-retry-interval-seconds N (default: 30)
   --max-retry-interval-seconds N     (default: 900)
   --usage-poll-seconds N             (default: 600)
@@ -37,7 +40,8 @@ verbose_log() { ((verbose)) && echo "verbose: $*"; return 0; }
 require_value() { [[ $# -ge 2 ]] || { echo "error: $1 requires a value" >&2; exit 2; }; }
 
 agent="" model="" effort="medium" repo="" ready_label="ready-for-agent" use_branch=""
-adaptive=0 once=0 dry_run=0 quiet=0 verbose=0
+bug_hunt_model_spec="" bug_hunt_model="" bug_hunt_effort=""
+adaptive=0 once=0 dry_run=0 quiet=0 verbose=0 bug_hunt=0
 # Track explicit --model/--effort separately: `effort` has a default, so its value
 # alone cannot tell "user asked for medium" from "nobody said".
 model_set=0 effort_set=0
@@ -56,6 +60,8 @@ while (($#)); do
             labels+=("${new_labels[@]}")
             shift 2 ;;
         --use-branch) require_value "$@"; use_branch=$2; shift 2 ;;
+        --bug-hunt) bug_hunt=1; shift ;;
+        --bug-hunt-model) require_value "$@"; bug_hunt_model_spec=$2; shift 2 ;;
         --initial-retry-interval-seconds) require_value "$@"; initial_retry=$2; shift 2 ;;
         --max-retry-interval-seconds) require_value "$@"; max_retry=$2; shift 2 ;;
         --usage-poll-seconds) require_value "$@"; usage_poll=$2; shift 2 ;;
@@ -80,12 +86,27 @@ if ((adaptive)) && ((model_set || effort_set)); then
     exit 2
 fi
 [[ "$effort" =~ ^(off|minimal|low|medium|high|xhigh|max)$ ]] || { echo "error: unsupported --effort '$effort'" >&2; exit 2; }
+if ((bug_hunt)); then
+    [[ -n "$bug_hunt_model_spec" ]] || { echo "error: --bug-hunt requires --bug-hunt-model MODEL:EFFORT" >&2; exit 2; }
+    if [[ "$bug_hunt_model_spec" =~ ^(.+):(off|minimal|low|medium|high|xhigh|max)$ ]]; then
+        bug_hunt_model=${BASH_REMATCH[1]}
+        bug_hunt_effort=${BASH_REMATCH[2]}
+    else
+        echo "error: --bug-hunt-model must be in the form MODEL:EFFORT, with a supported effort" >&2
+        exit 2
+    fi
+elif [[ -n "$bug_hunt_model_spec" ]]; then
+    echo "error: --bug-hunt-model requires --bug-hunt" >&2
+    exit 2
+fi
 [[ "$initial_retry" =~ ^[0-9]+$ && "$max_retry" =~ ^[0-9]+$ && "$usage_poll" =~ ^[0-9]+$ ]] || die "Retry intervals must be integers."
 ((initial_retry >= 1 && max_retry >= initial_retry)) || die "Retry intervals must be positive and max must be at least initial."
 ((usage_poll >= 1)) || die "Usage poll interval must be positive."
 ((quiet && verbose)) && die "--quiet and --verbose cannot be used together."
 [[ "$agent" != claude || "$effort" =~ ^(low|medium|high|xhigh|max)$ ]] \
     || die "Effort '$effort' is not supported by claude. Use low, medium, high, xhigh, or max."
+((bug_hunt == 0)) || [[ "$agent" != claude || "$bug_hunt_effort" =~ ^(low|medium|high|xhigh|max)$ ]] \
+    || die "Bug-hunt effort '$bug_hunt_effort' is not supported by claude. Use low, medium, high, xhigh, or max."
 
 for command in gh git jq perl curl "$agent"; do
     command -v "$command" >/dev/null 2>&1 || die "$command is required but was not found on PATH."
@@ -539,3 +560,15 @@ EOF
     if [[ -z "$usage" ]]; then warn "Could not read current-ticket usage from $usage_source."; else show_provider_usage "$usage"; fi
     ((once)) && break
 done
+
+if ((bug_hunt)); then
+    bug_hunt_args=(
+        --agent "$agent"
+        --model "$bug_hunt_model"
+        --effort "$bug_hunt_effort"
+        --publish tracker
+    )
+    [[ -z "$use_branch" ]] || bug_hunt_args+=(--branch-only)
+    status "Starting post-loop bug hunt with $bug_hunt_model at $bug_hunt_effort effort."
+    "$repo_root/tools/bug_hunt.sh" "${bug_hunt_args[@]}"
+fi
