@@ -320,7 +320,27 @@ namespace core
 		// and only then atomically replace the destination. A late write failure
 		// keeps the previous file intact and reports failure to the caller.
 		std::string const content = mEmitter.c_str();
-		std::filesystem::path const destination(mSource);
+
+		// #92: renaming over a symbolic link would replace the link itself with
+		// a regular file while leaving the link's target untouched. Resolve the
+		// destination first so the replacement installs over the target,
+		// matching how the pre-#62 std::ofstream save followed the link.
+		std::error_code error;
+		std::filesystem::path destination(mSource);
+		std::filesystem::path const resolvedDestination
+			= std::filesystem::weakly_canonical(destination, error);
+		if (!error)
+		{
+			destination = resolvedDestination;
+		}
+
+		// The rename installs the temporary file's inode, so an existing
+		// destination's permission mode would be replaced by the temporary
+		// file's umask-derived mode. Capture the mode now and transfer it onto
+		// the replacement before installing it (#92).
+		auto const existingStatus = std::filesystem::status(destination, error);
+		bool const preservePermissions = !error && std::filesystem::is_regular_file(existingStatus);
+
 		std::filesystem::path directory = destination.parent_path();
 		if (directory.empty())
 		{
@@ -376,11 +396,23 @@ namespace core
 			}
 		}
 
+		if (preservePermissions)
+		{
+			std::filesystem::permissions(tempPath, existingStatus.permissions(),
+				std::filesystem::perm_options::replace, error);
+			if (error)
+			{
+				removeTempFile(tempPath);
+				throw SerializationException(std::format(
+					"Could not preserve the permissions of YAML file: {} ({})",
+					mSource, error.message()));
+			}
+		}
+
 		// std::filesystem::rename is atomic within a filesystem on Linux and
 		// replaces an existing destination on Windows (MoveFileEx with
 		// REPLACE_EXISTING), and the temp file shares the destination's
 		// directory so no cross-filesystem copy is attempted.
-		std::error_code error;
 		std::filesystem::rename(tempPath, destination, error);
 		if (error)
 		{

@@ -202,6 +202,99 @@ namespace
 		require(countRegularFiles() == 1, "successful save left a temporary file behind");
 	}
 
+#if !defined(_WIN32)
+	// #92: a save addressed at a symbolic link must update the link's target and
+	// leave the link itself in place, as the pre-#62 std::ofstream save did.
+	void saveThroughSymlinkUpdatesItsTarget()
+	{
+		namespace filesystem = std::filesystem;
+		filesystem::path const directory = filesystem::temp_directory_path() / "pf-save-symlink-smoke";
+		std::error_code error;
+		filesystem::remove_all(directory, error);
+		filesystem::create_directories(directory);
+		struct DirectoryCleanup
+		{
+			filesystem::path path;
+			~DirectoryCleanup()
+			{
+				std::error_code ignored;
+				filesystem::remove_all(path, ignored);
+			}
+		} cleanup{ directory };
+		filesystem::path const target = directory / "target.yaml";
+		filesystem::path const link = directory / "save.yaml";
+		{
+			std::ofstream original(target, std::ios::binary);
+			original << "old-target\n";
+		}
+		// A relative link, as a user would typically create one.
+		filesystem::create_symlink(filesystem::path("target.yaml"), link);
+
+		auto writer = core::YamlSerializer::toFile(link.string());
+		writer->beginMap("");
+		writer->writeString("payload", std::string("via symlink"));
+		writer->endMap();
+		writer->serialize();
+
+		require(filesystem::is_symlink(filesystem::symlink_status(link)),
+			"save through a symlink destroyed the symlink");
+		require(filesystem::read_symlink(link) == filesystem::path("target.yaml"),
+			"save through a symlink repointed the symlink");
+		std::ifstream in(target, std::ios::binary);
+		std::string const contents((std::istreambuf_iterator<char>(in)),
+			std::istreambuf_iterator<char>());
+		require(contents.find("via symlink") != std::string::npos,
+			"save through a symlink did not update its target");
+		bool tempFileLeftBehind = false;
+		for (auto const& entry : filesystem::directory_iterator(directory))
+		{
+			if (entry.path().filename().string().find(".saving.tmp") != std::string::npos)
+				tempFileLeftBehind = true;
+		}
+		require(!tempFileLeftBehind, "save through a symlink left a temporary file behind");
+	}
+
+	// #92: replacing an existing save file must keep its permission mode,
+	// including a restrictive 0600, instead of resetting it to the umask mode.
+	void savePreservesExistingFilePermissions()
+	{
+		namespace filesystem = std::filesystem;
+		filesystem::path const directory = filesystem::temp_directory_path() / "pf-save-permissions-smoke";
+		std::error_code error;
+		filesystem::remove_all(directory, error);
+		filesystem::create_directories(directory);
+		struct DirectoryCleanup
+		{
+			filesystem::path path;
+			~DirectoryCleanup()
+			{
+				std::error_code ignored;
+				filesystem::remove_all(path, ignored);
+			}
+		} cleanup{ directory };
+		filesystem::path const destination = directory / "building.yaml";
+		{
+			std::ofstream original(destination, std::ios::binary);
+			original << "old\n";
+		}
+		auto const privateMode = filesystem::perms::owner_read | filesystem::perms::owner_write;
+		filesystem::permissions(destination, privateMode, filesystem::perm_options::replace);
+
+		auto writer = core::YamlSerializer::toFile(destination.string());
+		writer->beginMap("");
+		writer->writeString("payload", std::string("permissions"));
+		writer->endMap();
+		writer->serialize();
+
+		require(filesystem::status(destination).permissions() == privateMode,
+			"save reset a restrictive permission mode to the umask mode");
+		auto reader = core::YamlSerializer::fromFile(destination.string());
+		reader->deserialize();
+		require(reader->readString("payload") == "permissions",
+			"permission-preserving save did not install the new contents");
+	}
+#endif
+
 	// #63: a failed save must not clear the Building's unsaved-changes state.
 	// The clean-state transition may only happen after the file write has fully
 	// succeeded, so Save stays available and closing still prompts for unsaved
@@ -2682,6 +2775,10 @@ void runSerializationSmokeChecks()
 	stringYamlRoundTripsPrimitiveValues();
 	fileYamlRoundTrips();
 	lateWriteFailurePreservesThePreviousSaveFile();
+#if !defined(_WIN32)
+	saveThroughSymlinkUpdatesItsTarget();
+	savePreservesExistingFilePermissions();
+#endif
 	failedSavePreservesUnsavedChangesState();
 	malformedValuesAndInvalidUsageThrowUsefulErrors();
 	buildingRoundTripsAuthoredStateAndAgents();
