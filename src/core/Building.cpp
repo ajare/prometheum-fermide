@@ -2416,6 +2416,8 @@ namespace core
 			return reject("A Location wall side must be left or right");
 		if (sectorIndex >= mSectors.size()) return reject("The Location does not exist");
 		auto sector = mSectors[sectorIndex];
+		if (sector->getType() == SectorType::Facade)
+			return reject("A Facade has no walls: its perimeter is open by construction");
 		if (sector->getType() != SectorType::Location)
 			return reject("Walls can only be edited on Rooms and Corridors");
 		if (deckIndex >= sector->getDecksHigh()) return reject("The Location deck does not exist");
@@ -2470,6 +2472,8 @@ namespace core
 			return reject("A Location wall side must be left or right");
 		if (sectorIndex >= mSectors.size()) return reject("The Location does not exist");
 		auto sector = mSectors[sectorIndex];
+		if (sector->getType() == SectorType::Facade)
+			return reject("A Facade has no walls: its perimeter is open by construction");
 		if (sector->getType() != SectorType::Location)
 			return reject("Walls can only be edited on Rooms and Corridors");
 		if (deckIndex >= sector->getDecksHigh()) return reject("The Location deck does not exist");

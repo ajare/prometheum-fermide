@@ -1285,6 +1285,15 @@ namespace core
 		bool setBackgroundColour(uint32_t sectorIndex, BackgroundColour const& colour,
 			std::string* diagnostic = nullptr);
 
+		// Recolour a Facade in place, the same patch shape setBackgroundColour uses:
+		// the live Sector and its authored ConstructionType::Facade record are updated
+		// together, so a save writes the new colour and a reload replays it. A
+		// Facade's colour feeds only its own rendering, so this needs no plan and no
+		// cascade. Returns false, with a diagnostic when one is asked for, if the
+		// Sector is not a Facade or has no authored record.
+		bool setFacadeColour(uint32_t sectorIndex, BackgroundColour const& colour,
+			std::string* diagnostic = nullptr);
+
 		LiftEditPlan planResizeLift(uint32_t sectorIndex, uint32_t x, uint32_t y,
 			uint32_t cellsWide, uint32_t decksHigh) const;
 

@@ -4880,4 +4880,39 @@ namespace core
 		modify();
 		return true;
 	}
+
+	bool Building::setFacadeColour(uint32_t sectorIndex, BackgroundColour const& colour,
+		std::string* diagnostic)
+	{
+		if (sectorIndex >= mSectors.size() || !mSectors[sectorIndex]
+			|| mSectors[sectorIndex]->getType() != SectorType::Facade)
+		{
+			if (diagnostic) *diagnostic = "Only a Facade can be recoloured here";
+			return false;
+		}
+
+		// Same patch shape as a Background recolour: the authored record is the
+		// persistence boundary, so the record's packed colour and the live Facade
+		// move together. A Facade's colour feeds nothing but its own rendering -
+		// its open perimeter is a type invariant, not a colour consequence - so
+		// no plan and no cascade is involved.
+		ConstructionRecord* authored = nullptr;
+		uint32_t producerIndex = 0;
+		for (auto& record : mConstructionRecords)
+		{
+			if (!constructionTypeCreatesSector(record.type)) continue;
+			if (producerIndex++ == sectorIndex) { authored = &record; break; }
+		}
+		if (!authored || authored->type != ConstructionType::Facade)
+		{
+			if (diagnostic)
+				*diagnostic = "The selected Facade no longer has an authored definition";
+			return false;
+		}
+
+		authored->f = packBackgroundColour(colour);
+		static_pointer_cast<Facade>(mSectors[sectorIndex])->setColour(colour);
+		modify();
+		return true;
+	}
 }

@@ -244,6 +244,7 @@ namespace
 	{
 		None,
 		Room,
+		Facade,
 		Corridor,
 		Background,
 		Ladder,
@@ -988,6 +989,22 @@ namespace
 		}
 	}
 
+	string nextFacadeName(shared_ptr<const core::Building> const& building)
+	{
+		set<string> names;
+		for (uint32_t layer = 0; layer < building->getLayerCount(); ++layer)
+		{
+			for (auto const& sector : building->getSectors(layer))
+				names.insert(sector->getName());
+		}
+
+		for (uint64_t number = 1;; ++number)
+		{
+			auto name = format("Facade {}", number);
+			if (!names.contains(name)) return name;
+		}
+	}
+
 	vector<uint32_t> shuttleCandidates(shared_ptr<const core::Building> const& building,
 		ShuttleDraft const& draft)
 	{
@@ -1493,7 +1510,8 @@ namespace
 			PalettePadding * 2.0f + PaletteSlotSize * 2.0f + PaletteGap);
 		auto trayTopLeft = trayBottomRight - traySize;
 		auto roomMin = trayTopLeft + ImVec2(PalettePadding, PalettePadding);
-		auto corridorMin = roomMin + ImVec2(PaletteSlotWidth + PaletteGap, 0.0f);
+		auto facadeMin = roomMin + ImVec2(PaletteSlotWidth + PaletteGap, 0.0f);
+		auto corridorMin = facadeMin + ImVec2(PaletteSlotWidth + PaletteGap, 0.0f);
 		auto backgroundMin = corridorMin + ImVec2(PaletteSlotWidth + PaletteGap, 0.0f);
 		auto ladderMin = backgroundMin + ImVec2(PaletteSlotWidth + PaletteGap, 0.0f);
 		auto stairwellMin = ladderMin + ImVec2(PaletteSlotWidth + PaletteGap, 0.0f);
@@ -1510,6 +1528,7 @@ namespace
 		auto roomLadderMin = forceBridgeMin + ImVec2(PaletteSlotWidth + PaletteGap, 0.0f);
 		auto platformLiftMin = roomLadderMin + ImVec2(PaletteSlotWidth + PaletteGap, 0.0f);
 		auto roomMax = roomMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
+		auto facadeMax = facadeMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
 		auto corridorMax = corridorMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
 		auto backgroundMax = backgroundMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
 		auto ladderMax = ladderMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
@@ -1531,6 +1550,7 @@ namespace
 
 		bool overTray = gWorldHovered && pointInRect(io.MousePos, trayTopLeft, trayBottomRight);
 		bool roomHovered = gWorldHovered && pointInRect(io.MousePos, roomMin, roomMax);
+		bool facadeHovered = gWorldHovered && pointInRect(io.MousePos, facadeMin, facadeMax);
 		bool corridorHovered = gWorldHovered && pointInRect(io.MousePos, corridorMin, corridorMax);
 		bool backgroundHovered = gWorldHovered && pointInRect(io.MousePos, backgroundMin, backgroundMax);
 		bool ladderHovered = gWorldHovered && pointInRect(io.MousePos, ladderMin, ladderMax);
@@ -1553,7 +1573,7 @@ namespace
 		};
 
 		if (gPegman.phase == PalettePhase::Home
-			&& (roomHovered || corridorHovered || backgroundHovered || ladderHovered
+			&& (roomHovered || facadeHovered || corridorHovered || backgroundHovered || ladderHovered
 				|| stairwellHovered || staircaseHovered || liftHovered || shuttleHovered))
 		{
 			paletteConsumedMouse = true;
@@ -1563,7 +1583,8 @@ namespace
 			else if ((stairwellHovered || staircaseHovered || liftHovered || shuttleHovered) && backOnlyDisabled)
 				ImGui::SetTooltip("Stairwells, Staircases, Lifts, and Shuttles can only be painted on the Back Layer");
 			else
-				ImGui::SetTooltip(roomHovered ? "Paint Room" : corridorHovered ? "Paint Corridor"
+				ImGui::SetTooltip(roomHovered ? "Paint Room" : facadeHovered ? "Paint Facade"
+					: corridorHovered ? "Paint Corridor"
 					: backgroundHovered ? "Paint Background" : ladderHovered ? "Paint Ladder"
 					: stairwellHovered ? "Paint Stairwell" : staircaseHovered ? "Paint Staircase"
 					: liftHovered ? "Paint Lift" : "Paint Shuttle");
@@ -1573,6 +1594,7 @@ namespace
 					&& backOnlyDisabled))
 			{
 				auto clickedTool = roomHovered ? PaintTool::Room
+					: facadeHovered ? PaintTool::Facade
 					: corridorHovered ? PaintTool::Corridor
 					: backgroundHovered ? PaintTool::Background
 					: ladderHovered ? PaintTool::Ladder
@@ -1591,6 +1613,8 @@ namespace
 		}
 
 		drawPaintButton(roomMin, roomMax, "Room", PaintTool::Room, roomHovered, false);
+		drawPaintButton(facadeMin, facadeMax, "Facade", PaintTool::Facade,
+			facadeHovered, false);
 		drawPaintButton(corridorMin, corridorMax, "Corridor", PaintTool::Corridor,
 			corridorHovered, false);
 		drawPaintButton(backgroundMin, backgroundMax, "Background", PaintTool::Background,
@@ -1683,6 +1707,17 @@ namespace
 							building->addRoom(nextRoomName(building), gPaint.layer,
 								paintRectangle.y, paintRectangle.x, paintRectangle.width,
 								paintRectangle.height, CORE_ROOM_MAX_HEIGHT);
+						else if (tool == PaintTool::Facade)
+						{
+							// Placed with the Room's validation - the drag already shrank to
+							// the largest free block - and selected on release so the colour
+							// picker is one click away.
+							auto const index = building->addFacade(nextFacadeName(building),
+								gPaint.layer, paintRectangle.y, paintRectangle.x,
+								paintRectangle.width, paintRectangle.height, CORE_ROOM_MAX_HEIGHT);
+							setSelectionMode(UISettings::SelectionMode::Sector);
+							gSelectedSector = building->getSector(index);
+						}
 						else if (tool == PaintTool::Corridor)
 							building->addCorridor(gPaint.layer, paintRectangle.y, paintRectangle.x,
 								paintRectangle.width, 1);
@@ -4884,6 +4919,102 @@ void renderBackgroundPanel(shared_ptr<core::Building> const& building,
 }
 
 
+// The Selection panel's Facade branch, for ticket #47.
+//
+// A Facade reads like a Room - name, place, size, agents - but its editable
+// property set is the Room's minus the walls: the perimeter is open by type
+// invariant (ADR 0003), so there is nothing for the wall editor to offer and
+// wall commands against it refuse rather than blur the type. The colour picker
+// reuses Background's picker arithmetic wholesale: the same 0..1 float triple,
+// the same no-alpha widget, the same pack/unpack pair on the way back.
+void renderFacadePanel(shared_ptr<core::Building> const& building,
+	shared_ptr<const core::Sector> const& sector)
+{
+	auto const facade = dynamic_pointer_cast<const core::Facade>(sector);
+	if (!facade) return;
+
+	ImGui::Text("Facade: %s", facade->getName().c_str());
+	ImGui::Text("Sector index: %u", facade->getIndex());
+	ImGui::Text("Layer: %s", layerLabel(building, facade->getLayerIndex()).c_str());
+	ImGui::Text("Position: %u, %u", facade->getCellX(), facade->getCellY());
+	ImGui::Text("Size: %u x %u cells", facade->getCellsWide(), facade->getDecksHigh());
+	ImGui::Text("Agents: %u", (uint32_t)facade->getAgents().size());
+
+	ImGui::Separator();
+
+	// The colour lives on the Facade; the float triple is the widget's working
+	// copy, re-synced whenever the selection changes so a live drag never fights
+	// the value it is driving. Same shape as the Background panel's widget.
+	static core::Building const* editedBuilding = nullptr;
+	static core::Sector const* editedSector = nullptr;
+	static float rgb[3] = { 0.0f, 0.0f, 0.0f };
+	static optional<core::BackgroundColour> colourBeforeEdit;
+	static optional<DocumentSnapshot> pendingColourUndo;
+	static bool colourEditInFlight = false;
+
+	if (editedBuilding != building.get() || editedSector != sector.get())
+	{
+		editedBuilding = building.get();
+		editedSector = sector.get();
+		// Any half-finished edit belongs to whatever was selected before, not to
+		// this Facade, so it is dropped rather than carried across.
+		colourBeforeEdit.reset();
+		pendingColourUndo.reset();
+		colourEditInFlight = false;
+		core::backgroundColourToFloats(facade->getColour(), rgb);
+	}
+
+	auto applyColour = [&](core::BackgroundColour const& colour)
+	{
+		string diagnostic;
+		if (building->setFacadeColour(sector->getIndex(), colour, &diagnostic)) return true;
+		core::addLogMessage("Facade editor", 0, core::LogLevel::Error, diagnostic);
+		editedSector = nullptr;
+		return false;
+	};
+
+	// No alpha control: a Facade is rendered as a solid opaque colour, exactly
+	// like a Background, and the same NoAlpha widget serves both.
+	bool const changed = ImGui::ColorEdit3("Colour", rgb, ImGuiColorEditFlags_NoAlpha);
+	bool const finished = ImGui::IsItemDeactivatedAfterEdit();
+	bool const cancelled = ImGui::IsItemDeactivated() && !finished;
+
+	if (changed)
+	{
+		// One undo entry per recolour, taken before the first live change and
+		// committed only when the edit finishes.
+		if (!colourEditInFlight)
+		{
+			colourEditInFlight = true;
+			colourBeforeEdit = facade->getColour();
+			pendingColourUndo = captureDocumentSnapshot(building);
+		}
+		applyColour(core::backgroundColourFromFloats(rgb));
+	}
+	if (finished)
+	{
+		if (pendingColourUndo) commitDocumentEdit(std::move(pendingColourUndo));
+		pendingColourUndo.reset();
+		colourBeforeEdit.reset();
+		colourEditInFlight = false;
+	}
+	else if (cancelled)
+	{
+		// Escape puts the widget back where it started; the Building follows it and
+		// the half-finished undo entry is dropped.
+		if (colourBeforeEdit) applyColour(*colourBeforeEdit);
+		colourBeforeEdit.reset();
+		colourEditInFlight = false;
+	}
+
+	ImGui::Separator();
+	// Deliberately no wall editor here. A Facade's perimeter is open by
+	// construction, so every wall command against it refuses; showing buttons
+	// that can only ever be disabled would advertise an edit the type forbids.
+	ImGui::TextDisabled("Facades have no walls - the perimeter is open by construction.");
+}
+
+
 void renderBulkheadDoorPanel(shared_ptr<core::Building> const& building,
 	shared_ptr<const core::SectorObject> object)
 {
@@ -5905,7 +6036,8 @@ void renderObjectView(shared_ptr<const core::Building> building)
 						|| sector->getType() == core::SectorType::Ladder
 						|| sector->getType() == core::SectorType::Stairwell
 						|| sector->getType() == core::SectorType::Staircase
-						|| sector->getType() == core::SectorType::Background;
+						|| sector->getType() == core::SectorType::Background
+						|| sector->getType() == core::SectorType::Facade;
 					setSelectionMode(sectorSelection
 						? UISettings::SelectionMode::Sector : UISettings::SelectionMode::Object);
 					gSelectedAgent = nullptr;
@@ -6030,6 +6162,14 @@ void renderSelectedObjectPanel(shared_ptr<core::Building> const& building)
 		if (gSelectedSector->getType() == core::SectorType::Background)
 		{
 			renderBackgroundPanel(building, gSelectedSector);
+			return;
+		}
+
+		// A Facade reads like a Room but owns a colour instead of walls, so it
+		// takes its own panel and never reaches the wall editor below.
+		if (gSelectedSector->getType() == core::SectorType::Facade)
+		{
+			renderFacadePanel(building, gSelectedSector);
 			return;
 		}
 
