@@ -6519,20 +6519,15 @@ namespace core
 	// Shuttle door assignment - the passenger-carriage lookup, the boarding and disembark
 	// door selection, and the door-traversal retargeting they share - lives in
 	// SimulationCoordinator (ADR 0004), together with the static door-offset helper
-	// which gives the carriage/door indexing its meaning. Building keeps the entry
-	// points the lift allocation branches still call and forwards, so no caller
-	// outside Building names the coordinator.
+	// which gives the carriage/door indexing its meaning. Building keeps the boarding
+	// entry point its lift allocation branch still calls and forwards, so no caller
+	// outside Building names the coordinator; the disembark selection is reached only
+	// from the coordinator's own disembarking branch now.
 
 	bool Building::assignShuttleBoardingDoor(TraversalRequestId requestId,
 		TraversalResource& coordinator, uint32_t stop)
 	{
 		return mSimulationCoordinator.assignShuttleBoardingDoor(requestId, coordinator, stop);
-	}
-
-	bool Building::assignShuttleDisembarkDoor(TraversalRequestId requestId,
-		TraversalResource& coordinator, uint32_t stop)
-	{
-		return mSimulationCoordinator.assignShuttleDisembarkDoor(requestId, coordinator, stop);
 	}
 
 	// Passenger safe exits - the safe-exit request, the safe-exit path assignment,
@@ -6566,6 +6561,11 @@ namespace core
 	{
 		mSimulationCoordinator.allocateOpenPlatformLiftTraversal(requestId, resource);
 	}
+
+	// The lift allocation dispatcher stays here: it resolves the journey resource,
+	// the stop and the boarding / disembarking / riding classification, then hands
+	// the request to the branch which owns it. The riding and disembarking branches
+	// live in SimulationCoordinator (ADR 0004); the boarding branch follows.
 
 	void Building::allocateLiftTraversal(TraversalRequestId requestId, TraversalResource& edgeResource)
 	{
@@ -6792,45 +6792,7 @@ namespace core
 
 		if (disembarking)
 		{
-			if (find(coordinator->mOccupants.begin(), coordinator->mOccupants.end(), request->mOwner)
-				== coordinator->mOccupants.end()
-				|| coordinator->mLiftMoving || coordinator->mLiftCurrentStop != stop) return;
-			auto disembarkLanding = &edgeResource;
-			if (coordinator->mShuttle)
-			{
-				if (!assignShuttleDisembarkDoor(requestId, *coordinator, stop)) return;
-				disembarkLanding = mTraversalResources.find(request->mResource);
-				if (!disembarkLanding) return;
-
-				// Once the Shuttle has stopped, walk within the carriage to the
-				// shuttle-side node selected by the remaining path before granting the
-				// Door crossing. Preserve the passenger's standing Y coordinate.
-				auto actor = mAgents.find(request->mOwner);
-				if (!actor) return;
-				auto alignmentTarget = actor->getGlobalPosition();
-				alignmentTarget.x = request->mSourceEndpoint.x;
-				if (abs(actor->getGlobalPosition().x - alignmentTarget.x) > 0.001f)
-				{
-					actor->mTraversalLocalGoal = alignmentTarget;
-					return;
-				}
-				actor->mTraversalLocalGoal.reset();
-			}
-			coordinator->mLiftStopPhase = LiftStopPhase::Disembarking;
-			if (!request->mPreparationLease)
-				request->mPreparationLease = acquireDoorOpenLease(*disembarkLanding,
-					DoorOpenLeaseKind::Preparation, requestId);
-			if (!disembarkLanding->mDoor->isOpen())
-			{
-				if (!disembarkLanding->mDoor->isOpening()) disembarkLanding->mDoor->requestOpen();
-				return;
-			}
-			auto lane = find(disembarkLanding->mCrossingOwners.begin(), disembarkLanding->mCrossingOwners.end(), TraversalRequestId{});
-			if (lane == disembarkLanding->mCrossingOwners.end()) return;
-			request->mCrossingLane = (uint32_t)distance(disembarkLanding->mCrossingOwners.begin(), lane);
-			*lane = requestId;
-			coordinator->mLiftCarDoorOpen = true;
-			grantTraversalRequest(requestId);
+			mSimulationCoordinator.allocateLiftDisembarking(requestId, edgeResource, *coordinator, stop);
 			return;
 		}
 		denyTraversalRequest(requestId);

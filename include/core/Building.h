@@ -906,12 +906,10 @@ namespace core
 
 		// Shuttle door assignment - the passenger-carriage lookup, the boarding and
 		// disembark door selection, and the retargeting they share - lives in
-		// SimulationCoordinator (ADR 0004). These forward the entry points the lift
-		// allocation branches still call.
+		// SimulationCoordinator (ADR 0004). This forwards the boarding entry point
+		// the lift allocation branch still calls; the disembark selection is reached
+		// only from the coordinator's own disembarking branch now.
 		bool assignShuttleBoardingDoor(TraversalRequestId requestId,
-			TraversalResource& coordinator, uint32_t stop);
-
-		bool assignShuttleDisembarkDoor(TraversalRequestId requestId,
 			TraversalResource& coordinator, uint32_t stop);
 
 		void requestLiftPassengerSafeExit(AgentId passenger, TraversalFailureReason reason);

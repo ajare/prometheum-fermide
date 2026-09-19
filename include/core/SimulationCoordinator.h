@@ -282,6 +282,27 @@ namespace core
 		void allocateLiftRiding(TraversalRequestId requestId, TraversalResource& coordinator);
 
 		// ------------------------------------------------------------------
+		// Lift disembarking branch (ADR 0004 stage 3)
+		//
+		// What happens when an occupant asks to leave the car at the stop it is
+		// standing at: the shuttle disembark-door assignment and the walk within
+		// the carriage to the shuttle-side node, the disembark stop phase, the
+		// door open lease which holds the landing door open, and the crossing
+		// lane grant all live here. Building's lift allocation dispatcher
+		// forwards disembarking requests through this entry point; no caller
+		// outside Building names the coordinator.
+		// ------------------------------------------------------------------
+
+		// Allocate one pending disembarking request. `edgeResource` is the
+		// resource the request was made on - the landing a lift passenger crosses,
+		// and only the starting point for a shuttle passenger, whose landing is
+		// whichever door the disembark assignment selects. `coordinator` is the
+		// lift or shuttle journey resource which owns the stop, and `stop` the
+		// stop index the dispatcher resolved for the request.
+		void allocateLiftDisembarking(TraversalRequestId requestId, TraversalResource& edgeResource,
+			TraversalResource& coordinator, uint32_t stop);
+
+		// ------------------------------------------------------------------
 		// Open platform lift traversal allocation (ADR 0004 stage 3)
 		//
 		// Allocating an Agent's use of an open platform lift all lives here:

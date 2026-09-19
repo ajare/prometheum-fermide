@@ -14,12 +14,12 @@ namespace core
 	// SimulationCoordinatorInteractions.cpp, door and extensible traversal
 	// preparation in SimulationCoordinatorDoors.cpp, the lift scheduling helpers
 	// and passenger safe exits in SimulationCoordinatorLifts.cpp - which also
-	// holds the lift riding branch, the onboard destination selection - the open
-	// platform lift traversal allocation in
+	// holds the lift riding branch, the onboard destination selection, and the
+	// disembarking branch - the open platform lift traversal allocation in
 	// SimulationCoordinatorPlatformLifts.cpp, and the shuttle door assignment in
 	// SimulationCoordinatorShuttles.cpp; the remaining seam families - the lift
-	// boarding and disembarking branches, the queue and admission core, and the
-	// tick pipeline - follow in later stages.
+	// boarding branch, the queue and admission core, and the tick pipeline -
+	// follow in later stages.
 	SimulationCoordinator::SimulationCoordinator(Building& building)
 		: mBuilding(building)
 	{

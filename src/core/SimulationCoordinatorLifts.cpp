@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <iterator>
 #include <memory>
 #include <utility>
 
@@ -18,22 +19,22 @@ namespace core
 
 	using namespace std;
 
-	// Lift scheduling, passenger safe exits and the riding branch of lift
-	// allocation moved out of Building (ADR 0004 stage 3). The behaviour is
-	// unchanged: the coordinator works on
-	// Building's traversal-resource, traversal-request, interaction-request and
-	// agent registries through friendship, and calls back through the Building
-	// facade for the machinery which has not moved out of Building yet - queue
-	// position refresh, grants and denials. The shuttle passenger-carriage lookup
-	// these used to call back for has since moved in with the shuttle door
-	// assignment family (SimulationCoordinatorShuttles.cpp) and is called
-	// directly.
+	// Lift scheduling, passenger safe exits and the riding and disembarking branches
+	// of lift allocation moved out of Building (ADR 0004 stage 3). The behaviour is
+	// unchanged: the coordinator works on Building's traversal-resource,
+	// traversal-request, interaction-request and agent registries through
+	// friendship, and calls back through the Building facade for the machinery
+	// which has not moved out of Building yet - queue position refresh, grants and
+	// denials. The shuttle passenger-carriage lookup these used to call back for
+	// has since moved in with the shuttle door assignment family
+	// (SimulationCoordinatorShuttles.cpp) and is called directly.
 	//
 	// These were helpers with no entry points of their own until the riding branch
 	// of lift allocation joined them: every caller reaches the scheduling helpers
 	// either from inside the coordinator or through the Building facade (design
-	// pattern, not the Facade sector type), while allocateLiftRiding is reached
-	// only through that facade, from Building's lift allocation dispatcher.
+	// pattern, not the Facade sector type), while allocateLiftRiding and
+	// allocateLiftDisembarking are reached only through that facade, from
+	// Building's lift allocation dispatcher.
 
 	uint32_t SimulationCoordinator::findLiftStop(TraversalResource const& resource, Vector2 const& endpoint) const
 	{
@@ -559,6 +560,60 @@ namespace core
 		coordinator.mLiftActiveConfirmation = coordinator.mLiftConfirmationQueue.empty()
 			? TraversalRequestId{} : coordinator.mLiftConfirmationQueue.front();
 		return;
+	}
+
+	// Disembarking allocation. The Agent occupies the car and asks to leave it at
+	// the stop the car is standing at. A shuttle passenger is first assigned the
+	// disembark door which serves its assigned carriage, then walks within the
+	// carriage to the shuttle-side node the remaining path selected before the
+	// Door crossing is granted; a lift passenger crosses the landing it asked to
+	// leave through. The stop enters its Disembarking phase, a door open lease
+	// holds the landing door open for the crossing, and the grant takes the first
+	// free crossing lane on the landing resource.
+	void SimulationCoordinator::allocateLiftDisembarking(TraversalRequestId requestId,
+		TraversalResource& edgeResource, TraversalResource& coordinator, uint32_t stop)
+	{
+		auto request = mBuilding.mTraversalRequests.find(requestId);
+		if (!request || request->mState != TraversalRequestState::Pending) return;
+		if (find(coordinator.mOccupants.begin(), coordinator.mOccupants.end(), request->mOwner)
+			== coordinator.mOccupants.end()
+			|| coordinator.mLiftMoving || coordinator.mLiftCurrentStop != stop) return;
+		auto disembarkLanding = &edgeResource;
+		if (coordinator.mShuttle)
+		{
+			if (!assignShuttleDisembarkDoor(requestId, coordinator, stop)) return;
+			disembarkLanding = mBuilding.mTraversalResources.find(request->mResource);
+			if (!disembarkLanding) return;
+
+			// Once the Shuttle has stopped, walk within the carriage to the
+			// shuttle-side node selected by the remaining path before granting the
+			// Door crossing. Preserve the passenger's standing Y coordinate.
+			auto actor = mBuilding.mAgents.find(request->mOwner);
+			if (!actor) return;
+			auto alignmentTarget = actor->getGlobalPosition();
+			alignmentTarget.x = request->mSourceEndpoint.x;
+			if (abs(actor->getGlobalPosition().x - alignmentTarget.x) > 0.001f)
+			{
+				actor->mTraversalLocalGoal = alignmentTarget;
+				return;
+			}
+			actor->mTraversalLocalGoal.reset();
+		}
+		coordinator.mLiftStopPhase = LiftStopPhase::Disembarking;
+		if (!request->mPreparationLease)
+			request->mPreparationLease = acquireDoorOpenLease(*disembarkLanding,
+				DoorOpenLeaseKind::Preparation, requestId);
+		if (!disembarkLanding->mDoor->isOpen())
+		{
+			if (!disembarkLanding->mDoor->isOpening()) disembarkLanding->mDoor->requestOpen();
+			return;
+		}
+		auto lane = find(disembarkLanding->mCrossingOwners.begin(), disembarkLanding->mCrossingOwners.end(), TraversalRequestId{});
+		if (lane == disembarkLanding->mCrossingOwners.end()) return;
+		request->mCrossingLane = (uint32_t)distance(disembarkLanding->mCrossingOwners.begin(), lane);
+		*lane = requestId;
+		coordinator.mLiftCarDoorOpen = true;
+		mBuilding.grantTraversalRequest(requestId);
 	}
 
 } // core
