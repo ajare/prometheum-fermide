@@ -88,6 +88,12 @@ namespace core
 		static std::unique_ptr<YamlSerializer> fromFile(std::string const& filepath);
 		static std::unique_ptr<YamlSerializer> fromString(std::string const& text);
 
+		// Regression-test seam (#62): forces the next file write performed by
+		// serialize() to fail after the given number of bytes, simulating a
+		// late write failure such as a full disk or an exhausted quota.
+		// 0 disables the injection.
+		static void setWriteFailureAfterBytesForTesting(size_t bytes);
+
 		std::string getSerializedString() const;
 		bool hasField(std::string const& name) const override;
 		bool fieldIsMap(std::string const& name) const override;

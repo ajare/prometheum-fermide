@@ -2,6 +2,7 @@
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -126,6 +127,79 @@ namespace
 		auto reader = core::YamlSerializer::fromFile(path);
 		reader->deserialize();
 		require(reader->readString("source") == "file", "YAML file did not round-trip");
+	}
+
+	// #62: a late save write failure must report failure and leave the previous
+	// save file intact, with no temporary file left behind.
+	void lateWriteFailurePreservesThePreviousSaveFile()
+	{
+		namespace filesystem = std::filesystem;
+		filesystem::path const directory = filesystem::temp_directory_path() / "pf-save-transaction-smoke";
+		std::error_code error;
+		filesystem::remove_all(directory, error);
+		filesystem::create_directories(directory);
+		struct DirectoryCleanup
+		{
+			filesystem::path path;
+			~DirectoryCleanup()
+			{
+				std::error_code ignored;
+				filesystem::remove_all(path, ignored);
+			}
+		} cleanup{ directory };
+		filesystem::path const destination = directory / "building.yaml";
+
+		auto const originalContents = std::string("original save contents\n");
+		{
+			std::ofstream original(destination, std::ios::binary);
+			original << originalContents;
+		}
+
+		auto makeWriter = [&destination]()
+		{
+			auto writer = core::YamlSerializer::toFile(destination.string());
+			writer->beginMap("");
+			writer->writeString("payload", std::string(256 * 1024, 'x'));
+			writer->endMap();
+			return writer;
+		};
+		auto readFile = [&destination]()
+		{
+			std::ifstream in(destination, std::ios::binary);
+			return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+		};
+		auto countRegularFiles = [&directory]()
+		{
+			int count = 0;
+			for (auto const& entry : filesystem::directory_iterator(directory))
+			{
+				if (entry.is_regular_file()) ++count;
+			}
+			return count;
+		};
+
+		core::YamlSerializer::setWriteFailureAfterBytesForTesting(4096);
+		bool reportedFailure = false;
+		try
+		{
+			makeWriter()->serialize();
+		}
+		catch (core::SerializationException const&)
+		{
+			reportedFailure = true;
+		}
+		core::YamlSerializer::setWriteFailureAfterBytesForTesting(0);
+
+		require(reportedFailure, "injected late write failure did not report a save error");
+		require(readFile() == originalContents, "failed save destroyed the previous save file");
+		require(countRegularFiles() == 1, "failed save left a temporary file behind");
+
+		// A successful save installs the new contents and also leaves no
+		// temporary file behind.
+		makeWriter()->serialize();
+		require(readFile().find(std::string(1024, 'x')) != std::string::npos,
+			"successful save did not install the new contents");
+		require(countRegularFiles() == 1, "successful save left a temporary file behind");
 	}
 
 	void malformedValuesAndInvalidUsageThrowUsefulErrors()
@@ -2373,6 +2447,7 @@ void runSerializationSmokeChecks()
 	transitsOnTheLayerBehindAreOnlyDrawnThroughApertures();
 	stringYamlRoundTripsPrimitiveValues();
 	fileYamlRoundTrips();
+	lateWriteFailurePreservesThePreviousSaveFile();
 	malformedValuesAndInvalidUsageThrowUsefulErrors();
 	buildingRoundTripsAuthoredStateAndAgents();
 	platformLiftStopDurationRoundTrips();

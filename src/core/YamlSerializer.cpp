@@ -1,5 +1,7 @@
 #include "core/YamlSerializer.h"
 
+#include <algorithm>
+#include <filesystem>
 #include <fstream>
 #include <limits>
 #include <utility>
@@ -10,6 +12,17 @@ namespace core
 	namespace
 	{
 		constexpr size_t NoSequenceItem = std::numeric_limits<size_t>::max();
+
+		// Regression-test seam (#62): when non-zero, the file write performed by
+		// serialize() fails once this many bytes have been written, simulating a
+		// late write failure such as a full disk or an exhausted quota.
+		size_t gWriteFailureAfterBytes = 0;
+
+		void removeTempFile(std::filesystem::path const& tempPath)
+		{
+			std::error_code ignored;
+			std::filesystem::remove(tempPath, ignored);
+		}
 	}
 
 	YamlSerializer::YamlSerializer(bool serializing, std::string source, bool sourceIsFile)
@@ -281,6 +294,11 @@ namespace core
 		return iterator < node.size();
 	}
 
+	void YamlSerializer::setWriteFailureAfterBytesForTesting(size_t bytes)
+	{
+		gWriteFailureAfterBytes = bytes;
+	}
+
 	void YamlSerializer::serialize()
 	{
 		requireSerializing("serialize");
@@ -297,15 +315,78 @@ namespace core
 			return;
 		}
 
-		std::ofstream output(mSource, std::ios::binary | std::ios::trunc);
-		if (!output)
+		// Install the save transactionally (#62): write a temporary file in the
+		// destination directory, flush and close it with explicit error checks,
+		// and only then atomically replace the destination. A late write failure
+		// keeps the previous file intact and reports failure to the caller.
+		std::string const content = mEmitter.c_str();
+		std::filesystem::path const destination(mSource);
+		std::filesystem::path directory = destination.parent_path();
+		if (directory.empty())
 		{
-			throw SerializationException(std::format("Could not open YAML file for writing: {}", mSource));
+			directory = std::filesystem::path(".");
 		}
-		output << mEmitter.c_str();
-		if (!output)
+		std::filesystem::path const tempPath
+			= directory / (destination.filename().string() + ".saving.tmp");
+
 		{
-			throw SerializationException(std::format("Could not write YAML file: {}", mSource));
+			std::ofstream output(tempPath, std::ios::binary | std::ios::trunc);
+			if (!output)
+			{
+				throw SerializationException(std::format("Could not open temporary YAML file for writing: {}",
+					tempPath.string()));
+			}
+
+			constexpr size_t chunkSize = 64 * 1024;
+			size_t written = 0;
+			while (written < content.size())
+			{
+				auto const chunk = std::min(chunkSize, content.size() - written);
+				output.write(content.data() + written, static_cast<std::streamsize>(chunk));
+				written += chunk;
+				if (gWriteFailureAfterBytes != 0 && written >= gWriteFailureAfterBytes)
+				{
+					output.close();
+					removeTempFile(tempPath);
+					throw SerializationException(std::format(
+						"Could not write YAML file: {} (write failed after {} bytes)", mSource, written));
+				}
+				if (!output.good())
+				{
+					output.close();
+					removeTempFile(tempPath);
+					throw SerializationException(std::format("Could not write YAML file: {}", mSource));
+				}
+			}
+
+			// A buffered write can still fail here; observing flush and close is
+			// the whole point of writing through an explicit stream.
+			output.flush();
+			if (!output.good())
+			{
+				output.close();
+				removeTempFile(tempPath);
+				throw SerializationException(std::format("Could not flush YAML file: {}", mSource));
+			}
+			output.close();
+			if (!output.good())
+			{
+				removeTempFile(tempPath);
+				throw SerializationException(std::format("Could not close YAML file: {}", mSource));
+			}
+		}
+
+		// std::filesystem::rename is atomic within a filesystem on Linux and
+		// replaces an existing destination on Windows (MoveFileEx with
+		// REPLACE_EXISTING), and the temp file shares the destination's
+		// directory so no cross-filesystem copy is attempted.
+		std::error_code error;
+		std::filesystem::rename(tempPath, destination, error);
+		if (error)
+		{
+			removeTempFile(tempPath);
+			throw SerializationException(std::format("Could not replace YAML file: {} ({})",
+				mSource, error.message()));
 		}
 	}
 
