@@ -1,0 +1,316 @@
+#include <algorithm>
+#include <format>
+#include <stdexcept>
+#include <utility>
+
+#include "core/SimulationCoordinator.h"
+
+#include "core/Agent.h"
+#include "core/Building.h"
+#include "core/Coordination.h"
+#include "core/Exceptions.h"
+#include "core/ExtensibleObject.h"
+#include "core/Sector.h"
+#include "core/Simulation.h"
+
+
+namespace core
+{
+
+	using namespace std;
+
+	// Agent lifecycle moved out of Building (ADR 0004 stage 1). The behaviour is
+	// unchanged: the coordinator works on Building's registries through
+	// friendship, and calls back through the Building facade for the machinery
+	// which has not moved out of Building yet - snapshots, traversal
+	// cancellation and release, lift stop requests, interaction cancellation,
+	// and device-operation cancellation and removal.
+
+	AgentId SimulationCoordinator::addOwnedAgentToSector(unique_ptr<Agent> agent, uint32_t sectorId, uint32_t deckOffset, float xOffset)
+	{
+		if (!agent)
+		{
+			throw invalid_argument("Building cannot own a null Agent");
+		}
+		if (mBuilding.mAgentIds.contains(agent.get()))
+		{
+			throw invalid_argument("Agent is already owned by this Building");
+		}
+
+		auto sector = mBuilding._getSector(sectorId);
+		if (sector->getType() == SectorType::Background)
+		{
+			throw BuildingException(&mBuilding,
+				"An Agent cannot occupy a Background: it owns no walkable floor and takes no part in traversal");
+		}
+		auto rawAgent = agent.get();
+		rawAgent->attachToBuilding(&mBuilding);
+		sector->enterAgent(rawAgent, deckOffset, xOffset);
+		auto id = mBuilding.mAgents.add(std::move(agent));
+		mBuilding.mAgentIds.emplace(rawAgent, id);
+
+		SimulationEvent event;
+		event.sequence = mBuilding.mNextEventSequence++;
+		event.tick = mBuilding.mSimulationTick;
+		event.type = SimulationEventType::AgentAdded;
+		event.agent = mBuilding.makeAgentSnapshot(rawAgent);
+		mBuilding.mEvents.push_back(std::move(event));
+		return id;
+	}
+
+	AgentId SimulationCoordinator::addOwnedAgentToSector(unique_ptr<Agent> agent, uint32_t sectorId)
+	{
+		if (!agent)
+		{
+			throw invalid_argument("Building cannot own a null Agent");
+		}
+		if (mBuilding.mAgentIds.contains(agent.get()))
+		{
+			throw invalid_argument("Agent is already owned by this Building");
+		}
+
+		auto sector = mBuilding._getSector(sectorId);
+		if (sector->getType() == SectorType::Background)
+		{
+			throw BuildingException(&mBuilding,
+				"An Agent cannot occupy a Background: it owns no walkable floor and takes no part in traversal");
+		}
+		auto rawAgent = agent.get();
+		rawAgent->attachToBuilding(&mBuilding);
+		sector->enterAgent(rawAgent);
+		auto id = mBuilding.mAgents.add(std::move(agent));
+		mBuilding.mAgentIds.emplace(rawAgent, id);
+
+		SimulationEvent event;
+		event.sequence = mBuilding.mNextEventSequence++;
+		event.tick = mBuilding.mSimulationTick;
+		event.type = SimulationEventType::AgentAdded;
+		event.agent = mBuilding.makeAgentSnapshot(rawAgent);
+		mBuilding.mEvents.push_back(std::move(event));
+		return id;
+	}
+
+	AgentId SimulationCoordinator::createAgent(string const& name, uint32_t sectorId, uint32_t deckOffset, float xOffset)
+	{
+		return addOwnedAgentToSector(make_unique<Agent>(name), sectorId, deckOffset, xOffset);
+	}
+
+	AgentId SimulationCoordinator::createAgent(string const& name, uint32_t sectorId)
+	{
+		return addOwnedAgentToSector(make_unique<Agent>(name), sectorId);
+	}
+
+	void SimulationCoordinator::wakeAllAgents()
+	{
+		for (auto const& [id, agent] : mBuilding.mAgents.entries())
+		{
+			(void)id;
+			agent->wake();
+		}
+	}
+
+	EntityLookup<Agent> SimulationCoordinator::lookupAgent(AgentId id)
+	{
+		auto entity = mBuilding.mAgents.find(id);
+		return entity ? EntityLookup<Agent>{ entity, {} }
+			: EntityLookup<Agent>{ nullptr, format("Agent handle {} is invalid or has been removed", id.value) };
+	}
+
+	EntityLookup<Agent const> SimulationCoordinator::lookupAgent(AgentId id) const
+	{
+		auto entity = mBuilding.mAgents.find(id);
+		return entity ? EntityLookup<Agent const>{ entity, {} }
+			: EntityLookup<Agent const>{ nullptr, format("Agent handle {} is invalid or has been removed", id.value) };
+	}
+
+	AgentId SimulationCoordinator::getAgentId(Agent const* agent) const
+	{
+		auto found = mBuilding.mAgentIds.find(agent);
+		return found == mBuilding.mAgentIds.end() ? AgentId{} : found->second;
+	}
+
+	bool SimulationCoordinator::holdsTraversalOwnership(AgentId id) const
+	{
+		if (!id) return false;
+
+		for (auto const& [requestId, request] : mBuilding.mTraversalRequests.entries())
+		{
+			(void)requestId;
+			if (request->mOwner == id) return true;
+		}
+		for (auto const& [permitId, permit] : mBuilding.mTraversalPermits.entries())
+		{
+			(void)permitId;
+			if (permit->mOwner == id) return true;
+		}
+		for (auto const& [resourceId, resource] : mBuilding.mTraversalResources.entries())
+		{
+			(void)resourceId;
+			if (find(resource->mOccupants.begin(), resource->mOccupants.end(), id)
+				!= resource->mOccupants.end()) return true;
+			if (resource->mExtensionOccupantLeases.contains(id)) return true;
+			if (resource->mLiftExitAtSafeStop.contains(id)) return true;
+			if (resource->mLiftExitFailures.contains(id)) return true;
+			if (resource->mLiftPassengerDestinations.contains(id)) return true;
+			if (resource->mLiftTripIntents.contains(id)) return true;
+			if (resource->mLiftPassenger == id) return true;
+			for (auto const& owners : resource->mLiftStopRequestOwners)
+				if (owners.contains(id)) return true;
+			for (auto const& ticks : resource->mLiftStopRequestTicks)
+				if (ticks.contains(id)) return true;
+		}
+		return false;
+	}
+
+	void SimulationCoordinator::releaseAgentFromResource(TraversalResource& resource, AgentId id)
+	{
+		if (!id) return;
+
+		for (auto& occupant : resource.mOccupants)
+			if (occupant == id) occupant = {};
+
+		// An occupant lease keeps an extensible resource extended on the Agent's
+		// behalf; surrendering the slot must surrender the lease with it.
+		if (resource.mExtensionOccupantLeases.erase(id) && resource.mExtensible)
+			resource.mExtensible->releaseExtensionLease();
+
+		for (uint32_t stop = 0; stop < resource.mLiftStopRequestOwners.size(); ++stop)
+			mBuilding.removeLiftStopRequest(resource, stop, id);
+		resource.mLiftPassengerDestinations.erase(id);
+		resource.mLiftTripIntents.erase(id);
+		resource.mLiftExitAtSafeStop.erase(id);
+		resource.mLiftExitFailures.erase(id);
+
+		// The compatibility aliases mirror the manifest. Rebuild them from whatever
+		// is left rather than leave them naming a handle which can no longer ride.
+		if (resource.mLiftPassenger == id)
+		{
+			resource.mLiftPassenger = {};
+			for (auto occupant : resource.mOccupants)
+				if (occupant) { resource.mLiftPassenger = occupant; break; }
+			resource.mLiftDestinationStop = ~0u;
+		}
+	}
+
+	void SimulationCoordinator::releaseTraversalOwnership(AgentId id)
+	{
+		if (!id) return;
+
+		// Requests and permits go first. Most of a resource's claims on an Agent are
+		// keyed by request - queue lanes, admission reservations, door open leases,
+		// extension request leases - and cancelling the request surrenders them all
+		// through the same paths ordinary cancellation uses. No safe transport exit is
+		// requested: the Agent is on its way out of the Building entirely.
+		std::vector<TraversalRequestId> requests;
+		for (auto const& [requestId, request] : mBuilding.mTraversalRequests.entries())
+			if (request->mOwner == id) requests.push_back(requestId);
+		for (auto requestId : requests)
+		{
+			auto request = mBuilding.mTraversalRequests.find(requestId);
+			if (!request) continue;
+			auto const permitId = request->mPermit;
+			mBuilding.cancelTraversal(requestId, permitId, false);
+			mBuilding.releaseTraversal(requestId, permitId);
+		}
+
+		// A permit whose request has already gone is still the Agent's handle.
+		std::vector<TraversalPermitId> permits;
+		for (auto const& [permitId, permit] : mBuilding.mTraversalPermits.entries())
+			if (permit->mOwner == id) permits.push_back(permitId);
+		for (auto permitId : permits)
+		{
+			auto permit = mBuilding.mTraversalPermits.find(permitId);
+			if (!permit) continue;
+			mBuilding.releaseTraversal(permit->mRequest, permitId);
+		}
+
+		// Finally the claims keyed by Agent itself, which survive every request having
+		// been released: the manifest slot of a car the Agent boarded, its stop
+		// requests, its pending safe exit, and its occupant leases.
+		for (auto const& [resourceId, resource] : mBuilding.mTraversalResources.entries())
+		{
+			(void)resourceId;
+			releaseAgentFromResource(*resource, id);
+		}
+	}
+
+	EntityRemovalResult SimulationCoordinator::removeAgent(AgentId id)
+	{
+		auto found = lookupAgent(id);
+		if (!found)
+		{
+			return { false, found.diagnostic };
+		}
+		if (found.entity->getState() == Agent::State::WaitingForTraversal
+			&& !found.entity->getTraversalPermitId())
+		{
+			// Removing a waiter is cancellation, not an exceptional state. Its
+			// queue ticket and physical reservation are released by clearPath().
+			found.entity->clearPath();
+		}
+		if (found.entity->getState() != Agent::State::Idle)
+		{
+			return { false, format("Agent handle {} is active and cannot be removed safely", id.value) };
+		}
+
+		// Idle is not the same as unclaimed. clearPath() asks a Lift or Shuttle to let
+		// a rider off when it is next safe rather than ejecting them from a moving
+		// car, so the manifest keeps naming the Agent after its route is gone. Every
+		// one of those claims is surrendered here; a handle left behind could never
+		// disembark, and the capacity would be lost for the life of the Building.
+		found.entity->cancelTraversal();
+		releaseTraversalOwnership(id);
+		if (holdsTraversalOwnership(id))
+		{
+			return { false, format("Agent handle {} still holds a traversal resource and cannot be removed", id.value) };
+		}
+
+		vector<InteractionRequestId> ownedRequests;
+		for (auto const& [requestId, request] : mBuilding.mInteractionRequests.entries())
+		{
+			if (request->getActor() == id && request->getResult() == InteractionResult::Pending)
+			{
+				ownedRequests.push_back(requestId);
+			}
+		}
+		for (auto requestId : ownedRequests)
+		{
+			mBuilding.cancelInteraction(requestId);
+		}
+
+		vector<DeviceOperationId> ownedOperations;
+		for (auto const& [operationId, operation] : mBuilding.mDeviceOperations.entries())
+		{
+			if (operation->getRequesters().contains(id))
+			{
+				ownedOperations.push_back(operationId);
+			}
+		}
+		for (auto operationId : ownedOperations)
+		{
+			mBuilding.cancelDeviceOperation(operationId, id);
+			if (auto operation = mBuilding.mDeviceOperations.find(operationId); operation && operation->getRequesters().empty())
+			{
+				(void)mBuilding.removeDeviceOperation(operationId);
+			}
+		}
+
+		auto snapshot = mBuilding.makeAgentSnapshot(found.entity);
+		if (auto sector = const_cast<Sector*>(found.entity->getSector()))
+		{
+			sector->exitAgent(found.entity);
+		}
+		mBuilding.mAgentIds.erase(found.entity);
+		mBuilding.mAgents.remove(id);
+
+		SimulationEvent event;
+		event.sequence = mBuilding.mNextEventSequence++;
+		event.tick = mBuilding.mSimulationTick;
+		event.type = SimulationEventType::AgentRemoved;
+		event.agent = std::move(snapshot);
+		mBuilding.mEvents.push_back(std::move(event));
+		mBuilding.markModified();
+		return { true, {} };
+	}
+
+} // core

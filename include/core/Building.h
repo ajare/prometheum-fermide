@@ -34,6 +34,9 @@ namespace core
 	{
 		friend class Agent;
 		friend class Graph;
+		// The coordinator owns no entities; it drives the registries below and
+		// the private machinery beside them on the Building's behalf (ADR 0004).
+		friend class SimulationCoordinator;
 
 	public:
 
@@ -795,6 +798,7 @@ namespace core
 
 		void buildGraph();
 
+		// Forwards to SimulationCoordinator, which owns Agent placement (ADR 0004).
 		AgentId addOwnedAgentToSector(std::unique_ptr<Agent> agent, uint32_t sectorId, uint32_t deckOffset, float xOffset);
 
 		AgentId addOwnedAgentToSector(std::unique_ptr<Agent> agent, uint32_t sectorId);
@@ -944,7 +948,8 @@ namespace core
 		// A handle an Agent owns inside a capacity resource outlives nothing: once the
 		// Agent is gone the manifest slot can never be disembarked and the Lift, Shuttle
 		// or Ladder is permanently one place short (ticket #57). Deleting an Agent
-		// therefore surrenders every such claim before the entity is destroyed.
+		// therefore surrenders every such claim before the entity is destroyed. The
+		// release lives in SimulationCoordinator (ADR 0004); these forward.
 		bool holdsTraversalOwnership(AgentId id) const;
 		void releaseAgentFromResource(TraversalResource& resource, AgentId id);
 		void releaseTraversalOwnership(AgentId id);
@@ -1413,6 +1418,9 @@ namespace core
 			std::shared_ptr<const SectorObject>* sectorObject = nullptr) const;
 
 		// Building-owned replacement APIs. Callers retain typed IDs, not ownership.
+		// Agent lifecycle - creation, placement, removal, lookup, id resolution,
+		// waking, and traversal-ownership release - lives in SimulationCoordinator
+		// (ADR 0004); every Agent entry point below forwards to it.
 		AgentId createAgent(std::string const& name, uint32_t sectorId, uint32_t deckOffset, float xOffset);
 
 		AgentId createAgent(std::string const& name, uint32_t sectorId);
@@ -1532,6 +1540,8 @@ namespace core
 		// Pure route-cost query: it creates no ticket, operation, reservation, or permit.
 		float estimateTraversalDelay(TraversalResourceId resource, SectorId sourceSector) const;
 
+		// Wakes every Agent the Building owns. Forwards to SimulationCoordinator,
+		// where the Agent lifecycle lives (ADR 0004).
 		void wakeAllAgents();
 
 		// Restore authored Agent routes/positions and reconstruct all simulated
