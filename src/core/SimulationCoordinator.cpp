@@ -10,10 +10,11 @@ namespace core
 	// the implementation per seam across further SimulationCoordinator*.cpp
 	// translation units behind this single header so no translation unit
 	// recreates the size problem the refactor removes. Agent lifecycle lives in
-	// SimulationCoordinatorAgents.cpp and interactions and device operations in
-	// SimulationCoordinatorInteractions.cpp; the remaining seam families -
-	// allocation, queues and admission, the tick pipeline - follow in later
-	// stages.
+	// SimulationCoordinatorAgents.cpp, interactions and device operations in
+	// SimulationCoordinatorInteractions.cpp, and door and extensible traversal
+	// preparation in SimulationCoordinatorDoors.cpp; the remaining seam
+	// families - the lift/shuttle allocation families, the queue and admission
+	// core, and the tick pipeline - follow in later stages.
 	SimulationCoordinator::SimulationCoordinator(Building& building)
 		: mBuilding(building)
 	{

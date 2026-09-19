@@ -166,6 +166,42 @@ namespace core
 		void tryPressUpcomingDoorButton(Agent& agent, Vector2 const& movementStart,
 			Vector2 const& movementEnd);
 
+		// ------------------------------------------------------------------
+		// Door and extensible traversal preparation (ADR 0004 stage 3)
+		//
+		// Remote-door preparation, extensible preparation for force bridges and
+		// extensible ladders, and the door open lease protocol all live here.
+		// Building forwards each of these entry points; no caller outside
+		// Building names the coordinator.
+		// ------------------------------------------------------------------
+
+		// A RemoteControlled Door cannot be crossed until some Agent has reached
+		// and pressed a control applicable from the requester's sector. One
+		// preparation is shared by every pending request for the door, and a
+		// failed preparation retries on a fixed tick delay before it is refused.
+		void allocateRemoteDoorPreparation(TraversalRequestId requestId, TraversalResource& resource);
+
+		// A force bridge or extensible ladder must be extended before its
+		// threshold may be crossed. The extension is requested through a control
+		// applicable from the requester's sector; once extended, the request is
+		// handed to the ladder admission queue or the door crossing queue.
+		void allocateExtensiblePreparation(TraversalRequestId requestId, TraversalResource& resource);
+
+		// Door open leases. Every live lease holds the door open; a lease taken
+		// while the door is closing re-opens it, except a remote-controlled
+		// preparation lease, which must reach its physical control first.
+		DoorOpenLeaseId acquireDoorOpenLease(TraversalResource& resource,
+			DoorOpenLeaseKind kind, TraversalRequestId request = {});
+
+		bool releaseDoorOpenLease(TraversalResource& resource, DoorOpenLeaseId lease);
+
+		// The resource-handle form is the entry point external systems use to hold
+		// a door open through the same scoped safety protocol.
+		DoorOpenLeaseId acquireDoorOpenLease(TraversalResourceId resource,
+			DoorOpenLeaseKind kind = DoorOpenLeaseKind::ExternalHoldOpen);
+
+		bool releaseDoorOpenLease(TraversalResourceId resource, DoorOpenLeaseId lease);
+
 	private:
 
 		// Releases a cancelling Actor's claim on each operation its request

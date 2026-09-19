@@ -7629,280 +7629,18 @@ namespace core
 		denyTraversalRequest(requestId);
 	}
 
+	// Remote-door and extensible traversal preparation live in
+	// SimulationCoordinator (ADR 0004). Building keeps these entry points and
+	// forwards, so no caller outside Building names the coordinator.
+
 	void Building::allocateRemoteDoorPreparation(TraversalRequestId requestId, TraversalResource& resource)
 	{
-		constexpr uint32_t MaximumPreparationAttempts = 2;
-		constexpr uint64_t RetryDelayTicks = 3;
-
-		auto request = mTraversalRequests.find(requestId);
-		if (!request || request->mState != TraversalRequestState::Pending)
-		{
-			return;
-		}
-
-		auto applicableControl = [&](TraversalRequest const& candidate) -> InteractionPointId
-		{
-			for (auto pointId : resource.mControls)
-			{
-				auto point = mInteractionPoints.find(pointId);
-				if (point && point->mSector == candidate.mSourceSector)
-				{
-					return pointId;
-				}
-			}
-			return {};
-		};
-
-		if (!applicableControl(*request))
-		{
-			denyTraversalRequest(requestId, TraversalFailureReason::NoReachableControl);
-			return;
-		}
-		// An opportunistic press may already have started opening the Door. Wait for
-		// that idempotent command rather than assigning another physical operator.
-		if (resource.mDoor->isOpening() && !resource.mActivePreparation) return;
-
-		bool failedPreparation = false;
-		bool completedPreparation = false;
-		if (resource.mActivePreparation)
-		{
-			auto active = mInteractionRequests.find(resource.mActivePreparation);
-			if (active && active->mResult == InteractionResult::Pending)
-			{
-				bool interactionStarted = false;
-				for (auto const& [operationId, requirement] : active->mOperations)
-				{
-					(void)requirement;
-					if (auto operation = mDeviceOperations.find(operationId))
-					{
-						interactionStarted = interactionStarted || operation->mActivated;
-						operation->mRequesters.insert(request->mOwner);
-						if (!request->mPreparationOperation)
-						{
-							request->mPreparationOperation = operationId;
-						}
-					}
-				}
-				request->mPreparationRequested = true;
-
-				// If some other source achieved the desired state before the operator
-				// touched the control, release its physical reservation immediately.
-				if (resource.mDoor->isOpen() && !interactionStarted)
-				{
-					cancelInteraction(resource.mActivePreparation);
-					resource.mActivePreparation = {};
-					resource.mPreparationOperator = {};
-					resource.mSharedPreparationOperation = {};
-					refreshQueuePositions(resource);
-					tryGrantDoorQueue(resource);
-				}
-				return;
-			}
-
-			if (active && active->mResult == InteractionResult::Rejected)
-			{
-				resource.mActivePreparation = {};
-				resource.mPreparationOperator = {};
-				resource.mSharedPreparationOperation = {};
-				denyTraversalRequest(requestId, TraversalFailureReason::ControlRejected);
-				return;
-			}
-			if (active && (active->mResult == InteractionResult::Succeeded
-				|| active->mResult == InteractionResult::SucceededWithBestEffortFailure))
-			{
-				completedPreparation = true;
-				resource.mPreparationAttempts = 0;
-			}
-			if (active && active->mResult == InteractionResult::Failed)
-			{
-				failedPreparation = true;
-				++resource.mPreparationAttempts;
-				resource.mNextPreparationTick = mSimulationTick + RetryDelayTicks;
-			}
-			resource.mActivePreparation = {};
-			resource.mPreparationOperator = {};
-			resource.mSharedPreparationOperation = {};
-			refreshQueuePositions(resource);
-		}
-
-		if (resource.mDoor->isOpen() && !failedPreparation
-			&& (resource.mPreparationAttempts == 0 || completedPreparation))
-		{
-			tryGrantDoorQueue(resource);
-			return;
-		}
-
-		if (resource.mPreparationAttempts >= MaximumPreparationAttempts)
-		{
-			denyTraversalRequest(requestId, TraversalFailureReason::PreparationFailed);
-			return;
-		}
-		if (mSimulationTick < resource.mNextPreparationTick)
-		{
-			return; // A temporary block uses a stable, tick-based retry delay.
-		}
-
-		TraversalRequestId selected;
-		InteractionPointId selectedControl;
-		for (auto const& [candidateId, candidate] : mTraversalRequests.entries())
-		{
-			if (candidate->mResource != request->mResource
-				|| candidate->mState != TraversalRequestState::Pending)
-			{
-				continue;
-			}
-			auto control = applicableControl(*candidate);
-			if (control && (!selected || candidateId < selected))
-			{
-				selected = candidateId;
-				selectedControl = control;
-			}
-		}
-		if (selected != requestId)
-		{
-			return;
-		}
-
-		auto interactionId = requestInteractionForTraversal(selectedControl, request->mOwner);
-		if (!interactionId)
-		{
-			// Another locomotion/interaction task can make the control temporarily
-			// busy. Do not turn that scheduling condition into permanent rejection.
-			resource.mNextPreparationTick = mSimulationTick + RetryDelayTicks;
-			return;
-		}
-		auto interaction = mInteractionRequests.find(interactionId);
-		if (!interaction || interaction->mOperations.empty())
-		{
-			denyTraversalRequest(requestId, TraversalFailureReason::ControlRejected);
-			return;
-		}
-
-		resource.mActivePreparation = interactionId;
-		resource.mPreparationOperator = requestId;
-		refreshQueuePositions(resource);
-		resource.mSharedPreparationOperation = interaction->mOperations.front().first;
-		for (auto const& [candidateId, candidate] : mTraversalRequests.entries())
-		{
-			(void)candidateId;
-			if (candidate->mResource != request->mResource
-				|| candidate->mState != TraversalRequestState::Pending)
-			{
-				continue;
-			}
-			candidate->mPreparationRequested = true;
-			candidate->mPreparationOperation = resource.mSharedPreparationOperation;
-			for (auto const& [operationId, requirement] : interaction->mOperations)
-			{
-				(void)requirement;
-				if (auto operation = mDeviceOperations.find(operationId))
-				{
-					operation->mRequesters.insert(candidate->mOwner);
-				}
-			}
-		}
+		mSimulationCoordinator.allocateRemoteDoorPreparation(requestId, resource);
 	}
 
 	void Building::allocateExtensiblePreparation(TraversalRequestId requestId, TraversalResource& resource)
 	{
-		auto request = mTraversalRequests.find(requestId);
-		if (!request || request->mState != TraversalRequestState::Pending) return;
-		if (!resource.mEnabled)
-		{
-			denyTraversalRequest(requestId, TraversalFailureReason::ResourceDisabled);
-			return;
-		}
-		if (resource.mExtensible->isExtended())
-		{
-			if (resource.mLadder)
-			{
-				resource.mActivePreparation = {};
-				resource.mPreparationOperator = {};
-				resource.mSharedPreparationOperation = {};
-				refreshQueuePositions(resource);
-				attachLadderAdmissionRequest(requestId, resource);
-				tryGrantLadderAdmissions(resource);
-			}
-			else if (resource.mForceBridge)
-			{
-				resource.mActivePreparation = {};
-				resource.mPreparationOperator = {};
-				resource.mSharedPreparationOperation = {};
-				refreshQueuePositions(resource);
-				tryGrantDoorQueue(resource);
-			}
-			else grantTraversalRequest(requestId);
-			return;
-		}
-
-		auto controlFor = [&](TraversalRequest const& candidate)
-		{
-			for (auto pointId : resource.mControls)
-				if (auto point = mInteractionPoints.find(pointId); point && point->mSector == candidate.mSourceSector)
-					return pointId;
-			return InteractionPointId{};
-		};
-		if (!controlFor(*request))
-		{
-			denyTraversalRequest(requestId, TraversalFailureReason::NoReachableControl);
-			return;
-		}
-
-		if (resource.mActivePreparation)
-		{
-			auto active = mInteractionRequests.find(resource.mActivePreparation);
-			if (active && active->mResult == InteractionResult::Pending)
-			{
-				request->mPreparationRequested = true;
-				for (auto const& [operationId, requirement] : active->mOperations)
-				{
-					(void)requirement;
-					request->mPreparationOperation = operationId;
-					if (auto operation = mDeviceOperations.find(operationId))
-						operation->mRequesters.insert(request->mOwner);
-				}
-				return;
-			}
-			if (active && (active->mResult == InteractionResult::Failed
-				|| active->mResult == InteractionResult::Rejected))
-			{
-				denyTraversalRequest(requestId, active->mResult == InteractionResult::Rejected
-					? TraversalFailureReason::ControlRejected : TraversalFailureReason::PreparationFailed);
-			}
-			resource.mActivePreparation = {};
-			resource.mPreparationOperator = {};
-			resource.mSharedPreparationOperation = {};
-			if (resource.mLadder || resource.mForceBridge) refreshQueuePositions(resource);
-			if (request->mState != TraversalRequestState::Pending) return;
-			if (resource.mExtensible->isExtended())
-			{
-				if (resource.mLadder) { attachLadderAdmissionRequest(requestId, resource); tryGrantLadderAdmissions(resource); }
-				else if (resource.mForceBridge) tryGrantDoorQueue(resource);
-				else grantTraversalRequest(requestId);
-				return;
-			}
-		}
-
-		TraversalRequestId selected;
-		for (auto const& [candidateId, candidate] : mTraversalRequests.entries())
-			if (candidate->mResource == request->mResource
-				&& candidate->mState == TraversalRequestState::Pending && controlFor(*candidate)
-				&& (!selected || candidateId < selected)) selected = candidateId;
-		if (selected != requestId) return;
-		auto interactionId = requestInteractionForTraversal(controlFor(*request), request->mOwner);
-		if (!interactionId) return;
-		auto interaction = mInteractionRequests.find(interactionId);
-		if (!interaction || interaction->mOperations.empty())
-		{
-			denyTraversalRequest(requestId, TraversalFailureReason::ControlRejected);
-			return;
-		}
-		resource.mActivePreparation = interactionId;
-		resource.mPreparationOperator = requestId;
-		resource.mSharedPreparationOperation = interaction->mOperations.front().first;
-		if (resource.mLadder || resource.mForceBridge) refreshQueuePositions(resource);
-		request->mPreparationRequested = true;
-		request->mPreparationOperation = resource.mSharedPreparationOperation;
+		mSimulationCoordinator.allocateExtensiblePreparation(requestId, resource);
 	}
 
 	void Building::denyTraversalRequest(TraversalRequestId requestId, TraversalFailureReason reason)
@@ -8896,41 +8634,29 @@ namespace core
 		return true;
 	}
 
+	// Door open lease acquisition and release live in SimulationCoordinator
+	// (ADR 0004). Building forwards both the resource-reference form the
+	// traversal machinery uses and the handle form external holders use.
+
 	DoorOpenLeaseId Building::acquireDoorOpenLease(TraversalResource& resource,
 		DoorOpenLeaseKind kind, TraversalRequestId request)
 	{
-		auto id = DoorOpenLeaseId{ mNextDoorOpenLeaseValue++ };
-		resource.mOpenLeases.emplace(id, DoorOpenLease{ kind, request });
-		resource.mDoor->acquireOpenLease();
-		// Safety and locally activated preparation have priority over a close.
-		// Remote preparation still has to reach its configured physical control.
-		if (resource.mDoor->isClosing()
-			&& (kind != DoorOpenLeaseKind::Preparation
-				|| resource.mDoorActivationMode != DoorActivationMode::RemoteControlled))
-		{
-			resource.mDoor->requestOpen();
-		}
-		return id;
+		return mSimulationCoordinator.acquireDoorOpenLease(resource, kind, request);
 	}
 
 	bool Building::releaseDoorOpenLease(TraversalResource& resource, DoorOpenLeaseId lease)
 	{
-		if (!lease || resource.mOpenLeases.erase(lease) == 0) return false;
-		resource.mDoor->releaseOpenLease();
-		return true;
+		return mSimulationCoordinator.releaseDoorOpenLease(resource, lease);
 	}
 
-	DoorOpenLeaseId Building::acquireDoorOpenLease(TraversalResourceId resourceId, DoorOpenLeaseKind kind)
+	DoorOpenLeaseId Building::acquireDoorOpenLease(TraversalResourceId resource, DoorOpenLeaseKind kind)
 	{
-		auto resource = mTraversalResources.find(resourceId);
-		if (!resource || !resource->mDoor || !resource->mEnabled) return {};
-		return acquireDoorOpenLease(*resource, kind);
+		return mSimulationCoordinator.acquireDoorOpenLease(resource, kind);
 	}
 
-	bool Building::releaseDoorOpenLease(TraversalResourceId resourceId, DoorOpenLeaseId lease)
+	bool Building::releaseDoorOpenLease(TraversalResourceId resource, DoorOpenLeaseId lease)
 	{
-		auto resource = mTraversalResources.find(resourceId);
-		return resource && resource->mDoor && releaseDoorOpenLease(*resource, lease);
+		return mSimulationCoordinator.releaseDoorOpenLease(resource, lease);
 	}
 
 	bool Building::setDoorSensorObservation(TraversalResourceId resourceId, DoorSensorId sensor,

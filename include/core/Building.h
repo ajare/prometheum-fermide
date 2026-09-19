@@ -833,6 +833,8 @@ namespace core
 
 		InteractionRequestId requestInteractionWhilePassing(InteractionPointId point, AgentId actor);
 
+		// Remote-door and extensible traversal preparation lives in
+		// SimulationCoordinator (ADR 0004); these forward.
 		void allocateRemoteDoorPreparation(TraversalRequestId requestId, TraversalResource& resource);
 
 		void allocateExtensiblePreparation(TraversalRequestId requestId, TraversalResource& resource);
@@ -870,6 +872,8 @@ namespace core
 
 		void releaseLadderOccupancy(AgentId agentId, TraversalResource& resource);
 
+		// Door open lease acquisition and release live in SimulationCoordinator
+		// (ADR 0004); these forward.
 		DoorOpenLeaseId acquireDoorOpenLease(TraversalResource& resource,
 			DoorOpenLeaseKind kind, TraversalRequestId request = {});
 
@@ -1504,7 +1508,9 @@ namespace core
 		// while a crossing owns a lane.
 		bool configureDoorCrossingLanes(TraversalResourceId resource, uint32_t laneCount);
 
-		// External systems hold doors open through the same scoped safety protocol.
+		// External systems hold doors open through the same scoped safety
+		// protocol. The lease protocol lives in SimulationCoordinator (ADR 0004);
+		// these forward.
 		DoorOpenLeaseId acquireDoorOpenLease(TraversalResourceId resource,
 			DoorOpenLeaseKind kind = DoorOpenLeaseKind::ExternalHoldOpen);
 
