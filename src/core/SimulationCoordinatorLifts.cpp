@@ -23,8 +23,9 @@ namespace core
 	// Building's traversal-resource, traversal-request, interaction-request and
 	// agent registries through friendship, and calls back through the Building
 	// facade for the machinery which has not moved out of Building yet - queue
-	// position refresh, and the shuttle passenger-carriage lookup which travels
-	// with the shuttle door assignment family.
+	// position refresh. The shuttle passenger-carriage lookup these used to call
+	// back for has since moved in with the shuttle door assignment family
+	// (SimulationCoordinatorShuttles.cpp) and is called directly.
 	//
 	// These are helpers with no entry points of their own: every caller reaches
 	// them either from inside the coordinator or through the Building facade
@@ -323,7 +324,7 @@ namespace core
 			auto landingId = resource.mLiftStops[resource.mLiftCurrentStop].landingResource;
 			if (resource.mShuttle)
 			{
-				auto carriage = mBuilding.findShuttlePassengerCarriage(resource, passenger);
+				auto carriage = findShuttlePassengerCarriage(resource, passenger);
 				auto door = find_if(resource.mShuttleDoors.begin(), resource.mShuttleDoors.end(),
 					[&](auto const& value) { return value.stopIndex == resource.mLiftCurrentStop
 						&& value.carriageIndex == carriage; });

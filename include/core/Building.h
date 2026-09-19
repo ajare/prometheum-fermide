@@ -904,17 +904,15 @@ namespace core
 
 		void releaseLiftAdmission(TraversalRequestId requestId, TraversalResource& resource);
 
-		bool retargetShuttleDoorTraversal(TraversalRequestId requestId,
-			TraversalResource& coordinator, ShuttleDoor const& door);
-
+		// Shuttle door assignment - the passenger-carriage lookup, the boarding and
+		// disembark door selection, and the retargeting they share - lives in
+		// SimulationCoordinator (ADR 0004). These forward the entry points the lift
+		// allocation branches still call.
 		bool assignShuttleBoardingDoor(TraversalRequestId requestId,
 			TraversalResource& coordinator, uint32_t stop);
 
 		bool assignShuttleDisembarkDoor(TraversalRequestId requestId,
 			TraversalResource& coordinator, uint32_t stop);
-
-		uint32_t findShuttlePassengerCarriage(TraversalResource const& resource,
-			AgentId passenger) const;
 
 		void requestLiftPassengerSafeExit(AgentId passenger, TraversalFailureReason reason);
 

@@ -281,7 +281,46 @@ namespace core
 		void allocateOpenPlatformLiftTraversal(TraversalRequestId requestId,
 			TraversalResource& resource);
 
+		// ------------------------------------------------------------------
+		// Shuttle door assignment (ADR 0004 stage 3)
+		//
+		// Which carriage door a shuttle passenger boards and disembarks through,
+		// and the retargeting of the request and the Agent's traversal task onto
+		// that door's landing resource, all live here. Building forwards the
+		// boarding and disembark entry points its lift allocation branches still
+		// call; no caller outside Building names the coordinator.
+		// ------------------------------------------------------------------
+
+		// The cells a carriage's door mask opens onto, in carriage order. This is
+		// the indexing the shuttle's doors, carriages and capacity positions are
+		// built from, so it travels with the assignment family; Building's shuttle
+		// authoring path calls it through here.
+		static std::vector<uint32_t> shuttleDoorOffsets(uint32_t carriageWidth, uint32_t doorMask);
+
+		// Which carriage of a shuttle an occupying passenger rides in; ~0u when
+		// the resource is not a shuttle or the passenger holds no capacity slot.
+		uint32_t findShuttlePassengerCarriage(TraversalResource const& resource,
+			AgentId passenger) const;
+
+		// Pick and apply the door a waiting passenger boards at `stop`: nearest to
+		// the passenger, with capacity left, and on a carriage which also owns a
+		// door into the sector the journey leaves the shuttle through.
+		bool assignShuttleBoardingDoor(TraversalRequestId requestId,
+			TraversalResource& coordinator, uint32_t stop);
+
+		// Pick and apply the door an occupant leaves by at `stop`, keeping the
+		// door the remaining path already selected whenever it serves the
+		// passenger's assigned carriage.
+		bool assignShuttleDisembarkDoor(TraversalRequestId requestId,
+			TraversalResource& coordinator, uint32_t stop);
+
 	private:
+
+		// Move a request - and the Agent's traversal task with it - onto the
+		// selected landing Door, surrendering any queue ownership the request held
+		// on the door it was pointed at before.
+		bool retargetShuttleDoorTraversal(TraversalRequestId requestId,
+			TraversalResource& coordinator, ShuttleDoor const& door);
 
 		// Releases a cancelling Actor's claim on each operation its request
 		// needed; an operation nobody still wants is cancelled with it.
