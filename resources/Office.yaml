@@ -98,15 +98,10 @@ construction:
     decksHigh: 4
     topDeckHeight: 0.9
     colour: 11575424
-  - type: window
-    layer: 0
-    y: 0
-    x: 2
-    cellsWide: 1
-    decksHigh: 1
-    traversable: false
-    initialState: closed
-    style: clear
+  - type: objectTombstone
+    sectorIndex: 2
+  - type: objectTombstone
+    sectorIndex: 9
   - type: window
     layer: 0
     y: 0
@@ -133,5 +128,27 @@ construction:
     x: 4
     cellsWide: 8
     decksHigh: 1
+  - type: window
+    layer: 0
+    y: 0
+    x: 2
+    cellsWide: 2
+    decksHigh: 1
+    traversable: false
+    initialState: closed
+    style: clear
+  - type: objectTombstone
+    sectorIndex: 0
+  - type: objectTombstone
+    sectorIndex: 9
+  - type: window
+    layer: 0
+    y: 0
+    x: 6
+    cellsWide: 1
+    decksHigh: 2
+    traversable: false
+    initialState: closed
+    style: clear
 agents:
   []
