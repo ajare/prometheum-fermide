@@ -263,6 +263,24 @@ namespace core
 		bool replaceOnboardLiftDestination(Agent& agent, std::shared_ptr<Path> const& path,
 			uint32_t& sourceNode);
 
+		// ------------------------------------------------------------------
+		// Open platform lift traversal allocation (ADR 0004 stage 3)
+		//
+		// Allocating an Agent's use of an open platform lift all lives here:
+		// calling the platform at its landing control, boarding from the
+		// reserved queue position before the boarding cutoff, selecting an
+		// onboard destination, and disembarking through the platform's virtual
+		// crossing boundary. It sits with the lift admission release above,
+		// which undoes this allocation. Building forwards this entry point; no
+		// caller outside Building names the coordinator.
+		// ------------------------------------------------------------------
+
+		// Allocate one pending request against the platform lift resource it was
+		// made on. Co-located legacy mount edges are not admission points and
+		// grant immediately; only the journey edge drives the platform.
+		void allocateOpenPlatformLiftTraversal(TraversalRequestId requestId,
+			TraversalResource& resource);
+
 	private:
 
 		// Releases a cancelling Actor's claim on each operation its request

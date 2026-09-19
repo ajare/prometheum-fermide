@@ -1,0 +1,210 @@
+#include <algorithm>
+#include <utility>
+
+#include "core/SimulationCoordinator.h"
+
+#include "core/Agent.h"
+#include "core/Building.h"
+#include "core/Coordination.h"
+#include "core/Defines.h"
+#include "core/EdgeType.h"
+#include "core/Lift.h"
+#include "core/Sector.h"
+
+
+namespace core
+{
+
+	using namespace std;
+
+	// Open platform lift traversal allocation moved out of Building
+	// (ADR 0004 stage 3). The behaviour is unchanged: the coordinator works on
+	// Building's traversal-resource, traversal-request, interaction-request,
+	// device-operation and sector registries through friendship, calls its own
+	// lift scheduling and interaction helpers, and calls back through the
+	// Building facade for the machinery which has not moved out of Building
+	// yet - grants and denials, queue ticket attachment, and queue position
+	// refresh.
+	//
+	// An open platform lift has no landing Door resource: the journey edge's own
+	// resource is the traversal resource, and the platform is crossed through a
+	// virtual boundary. Calling the platform is a physical interaction with the
+	// landing call control; boarding happens only from the request's reserved
+	// queue position, before the boarding cutoff, in a direction the car will
+	// honour. An already-riding passenger selects an onboard destination through
+	// the in-car selector and leaves through the same virtual boundary.
+	//
+	// The admission release which undoes this allocation - the ticket #70
+	// extraction - already lives in SimulationCoordinatorLifts.cpp; the two
+	// halves of the open platform lift seam now sit on the same side of the
+	// facade.
+
+	void SimulationCoordinator::allocateOpenPlatformLiftTraversal(TraversalRequestId requestId, TraversalResource& resource)
+	{
+		auto request = mBuilding.mTraversalRequests.find(requestId);
+		if (!request || request->mState != TraversalRequestState::Pending) return;
+		// Legacy platform topology contains co-located mount edges around each
+		// stop. The virtual boundary is owned by the journey edge, so these adapters
+		// grant immediately and cannot independently admit a passenger.
+		if (request->mEdgeType != EdgeType::Lift)
+		{
+			mBuilding.grantTraversalRequest(requestId);
+			return;
+		}
+		if (!resource.mEnabled
+			&& find(resource.mOccupants.begin(), resource.mOccupants.end(), request->mOwner)
+				== resource.mOccupants.end())
+		{
+			mBuilding.denyTraversalRequest(requestId, TraversalFailureReason::ResourceDisabled);
+			return;
+		}
+		auto origin = findLiftStop(resource, request->mSourceEndpoint);
+		auto destination = findLiftStop(resource, request->mDestinationEndpoint);
+		auto existingIntent = resource.mLiftTripIntents.find(request->mOwner);
+		if (existingIntent != resource.mLiftTripIntents.end())
+			destination = existingIntent->second.destinationStop;
+		else if (auto actor = mBuilding.mAgents.find(request->mOwner))
+		{
+			auto journeyDestination = findAgentLiftDestination(*actor, resource);
+			if (journeyDestination < resource.mLiftStops.size()) destination = journeyDestination;
+		}
+		if (origin >= resource.mLiftStops.size() || destination >= resource.mLiftStops.size()
+			|| origin == destination)
+		{
+			mBuilding.denyTraversalRequest(requestId);
+			return;
+		}
+		auto occupant = find(resource.mOccupants.begin(), resource.mOccupants.end(), request->mOwner);
+		if (occupant == resource.mOccupants.end())
+		{
+			if (!request->mQueueTicket)
+			{
+				request->mQueueTicket = QueueTicketId{ mBuilding.mNextQueueTicketValue++ };
+				request->mQueuedAtTick = mBuilding.mSimulationTick;
+				resource.mAdmissionQueue.push_back(requestId);
+				resource.mLiftTripIntents[request->mOwner] = { origin, destination, mBuilding.mSimulationTick };
+			}
+			if (!request->mPreparationRequested)
+			{
+				auto control = resource.mLiftStops[origin].callControl;
+				if (!control) { mBuilding.denyTraversalRequest(requestId, TraversalFailureReason::NoReachableControl); return; }
+				auto interactionId = requestInteractionForTraversal(control, request->mOwner);
+				if (!interactionId) return;
+				auto interaction = mBuilding.mInteractionRequests.find(interactionId);
+				request->mPreparationRequested = true;
+				if (interaction && !interaction->mOperations.empty())
+					request->mPreparationOperation = interaction->mOperations.front().first;
+				return;
+			}
+			auto operation = mBuilding.mDeviceOperations.find(request->mPreparationOperation);
+			if (!operation || operation->mState == DeviceOperationState::Pending
+				|| operation->mState == DeviceOperationState::Running) return;
+			if (operation->mState != DeviceOperationState::Succeeded)
+			{ mBuilding.denyTraversalRequest(requestId, TraversalFailureReason::PreparationFailed); return; }
+
+			// Calling the platform establishes logical priority; after the physical
+			// interaction completes, join this stop's ordinary reserved-position lane.
+			auto actor = mBuilding.mAgents.find(request->mOwner);
+			if (request->mQueueApproach == ~0u) mBuilding.attachQueueTicket(requestId, resource);
+			if (request->mQueueApproach >= resource.mQueueLanes.size()
+				|| request->mQueuePosition == ~0u) return;
+			auto const& queueLane = resource.mQueueLanes[request->mQueueApproach];
+			if (request->mQueuePosition >= queueLane.positions.size() || !actor
+				|| actor->getGlobalPosition().distanceTo(
+					queueLane.positions[request->mQueuePosition]) > 0.001f) return;
+
+			// Boarding is an instantaneous boundary transfer. A passenger that has not
+			// reached its queue head by the exact cutoff remains queued for the next visit.
+			if (resource.mLiftMoving || resource.mLiftCurrentStop != origin
+				|| resource.mLiftStopPhase != LiftStopPhase::Boarding
+				|| mBuilding.mSimulationTick >= resource.mLiftBoardingCutoffTick
+				|| !isLiftBoardingDirectionCompatible(resource, origin, destination)) return;
+			auto selected = find_if(resource.mAdmissionQueue.begin(), resource.mAdmissionQueue.end(),
+				[&](TraversalRequestId candidateId)
+				{
+					auto candidate = mBuilding.mTraversalRequests.find(candidateId);
+					if (!candidate) return false;
+					auto intent = resource.mLiftTripIntents.find(candidate->mOwner);
+					if (intent == resource.mLiftTripIntents.end()
+						|| intent->second.originStop != origin) return false;
+					auto desired = resource.mLiftStops[intent->second.destinationStop].globalPosition
+						> resource.mLiftStops[origin].globalPosition
+						? TraversalDirection::Ascending : TraversalDirection::Descending;
+					return desired == resource.mLiftDirection;
+				});
+			if (selected == resource.mAdmissionQueue.end() || *selected != requestId) return;
+
+			auto position = find_if(resource.mOccupants.begin(), resource.mOccupants.end(),
+				[](AgentId value) { return !value; });
+			if (position == resource.mOccupants.end()) return;
+			auto capacityPosition = (uint32_t)distance(resource.mOccupants.begin(), position);
+			*position = request->mOwner;
+			resource.mAdmissionQueue.erase(remove(resource.mAdmissionQueue.begin(),
+				resource.mAdmissionQueue.end(), requestId), resource.mAdmissionQueue.end());
+			auto& laneQueue = resource.mQueueLanes[request->mQueueApproach].queue;
+			laneQueue.erase(remove(laneQueue.begin(), laneQueue.end(), requestId), laneQueue.end());
+			request->mQueuePosition = ~0u;
+			request->mCapacityPosition = ~0u;
+			request->mPreparationRequested = false;
+			request->mPreparationOperation = {};
+
+			auto location = mBuilding.mSectors[(size_t)resource.mLiftSector.value - 1].get();
+			auto const halfWidth = CORE_AGENT_MAX_WIDTH * 0.5f;
+			auto const platformX0 = resource.mLift->getPosition().x;
+			auto const platformX1 = platformX0 + resource.mLift->getSize().x;
+			auto entryX = queueLane.direction.x > 0.0f
+				? platformX1 - halfWidth : platformX0 + halfWidth;
+			actor->setPosition({ location,
+				{ entryX - location->getPosition().x,
+					resource.mLiftPosition - location->getPosition().y } }, false);
+			auto target = location->getPosition() + resource.mCapacityPositions[capacityPosition];
+			target.y = resource.mLiftPosition;
+			actor->mTraversalLocalGoal = target;
+			mBuilding.refreshQueuePositions(resource);
+			return;
+		}
+
+		if (!resource.mLiftPassengerDestinations.contains(request->mOwner))
+		{
+			if (!request->mPreparationRequested)
+			{
+				if (destination >= resource.mControls.size()) { mBuilding.denyTraversalRequest(requestId); return; }
+				resource.mLiftSelector = resource.mControls[destination];
+				if (auto selector = mBuilding.mInteractionPoints.find(resource.mLiftSelector))
+					if (auto actor = mBuilding.mAgents.find(request->mOwner)) selector->mPosition = actor->getGlobalPosition();
+				auto interactionId = requestInteractionForTraversal(resource.mLiftSelector, request->mOwner);
+				if (!interactionId) return;
+				auto interaction = mBuilding.mInteractionRequests.find(interactionId);
+				request->mPreparationRequested = true;
+				if (interaction && !interaction->mOperations.empty())
+					request->mPreparationOperation = interaction->mOperations.front().first;
+				return;
+			}
+			auto operation = mBuilding.mDeviceOperations.find(request->mPreparationOperation);
+			if (!operation || operation->mState == DeviceOperationState::Pending
+				|| operation->mState == DeviceOperationState::Running) return;
+			if (operation->mState != DeviceOperationState::Succeeded)
+			{
+				if (request->mPreparationAttempts++ < mBuilding.mTraversalWaitingPolicy.maximumDestinationRetries)
+				{ request->mPreparationRequested = false; request->mPreparationOperation = {}; return; }
+				requestLiftPassengerSafeExit(request->mOwner, TraversalFailureReason::PreparationFailed);
+				mBuilding.denyTraversalRequest(requestId, TraversalFailureReason::PreparationFailed);
+				return;
+			}
+			resource.mLiftPassengerDestinations[request->mOwner] = destination;
+			resource.mLiftPassenger = request->mOwner;
+			resource.mLiftDestinationStop = destination;
+			addLiftStopRequest(resource, destination, request->mOwner);
+			return;
+		}
+
+		if (resource.mLiftMoving || resource.mLiftCurrentStop != destination
+			|| (resource.mLiftStopPhase != LiftStopPhase::Disembarking
+				&& resource.mLiftStopPhase != LiftStopPhase::Boarding)) return;
+		resource.mLiftStopPhase = LiftStopPhase::Disembarking;
+		if (!resource.mVirtualBoundaryOwners.front())
+			resource.mVirtualBoundaryOwners.front() = requestId;
+		if (resource.mVirtualBoundaryOwners.front() == requestId) mBuilding.grantTraversalRequest(requestId);
+	}
+
+} // core

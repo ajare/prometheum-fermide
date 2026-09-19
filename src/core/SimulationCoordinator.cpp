@@ -12,11 +12,12 @@ namespace core
 	// recreates the size problem the refactor removes. Agent lifecycle lives in
 	// SimulationCoordinatorAgents.cpp, interactions and device operations in
 	// SimulationCoordinatorInteractions.cpp, door and extensible traversal
-	// preparation in SimulationCoordinatorDoors.cpp, and the lift scheduling
-	// helpers and passenger safe exits in SimulationCoordinatorLifts.cpp; the
-	// remaining seam families - the shuttle door assignment, the lift allocation
-	// branches, the queue and admission core, and the tick pipeline - follow in
-	// later stages.
+	// preparation in SimulationCoordinatorDoors.cpp, the lift scheduling
+	// helpers and passenger safe exits in SimulationCoordinatorLifts.cpp, and
+	// the open platform lift traversal allocation in
+	// SimulationCoordinatorPlatformLifts.cpp; the remaining seam families - the
+	// shuttle door assignment, the lift allocation branches, the queue and
+	// admission core, and the tick pipeline - follow in later stages.
 	SimulationCoordinator::SimulationCoordinator(Building& building)
 		: mBuilding(building)
 	{
