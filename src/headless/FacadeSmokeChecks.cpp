@@ -30,6 +30,7 @@
 #include <stdexcept>
 #include <string>
 
+#include "core/Agent.h"
 #include "core/Background.h"
 #include "core/Building.h"
 #include "core/Button.h"
@@ -1053,12 +1054,15 @@ agents: []
 		open.addSectorMarker(facadeIndex, 0, 1.5f, &facadeMarkerIdentifier);
 		open.removeLocationWall(roomIndex, 0, CORE_SIDE_RIGHT);
 		open.finishBuild();
+		auto const openAgentId = open.createAgent("Route checker", roomIndex, 0, 1.0f);
+		auto const openAgent = open.lookupAgent(openAgentId).entity;
+		require(openAgent != nullptr, "The open-boundary route checker was not created");
 
 		auto const source = open.getGraph()->getVertexByIdentifier(roomMarkerIdentifier);
 		auto const destination = open.getGraph()->getVertexByIdentifier(facadeMarkerIdentifier);
 		require(source != nullptr && destination != nullptr,
 			"A Marker in the Room/Facade pair has no Graph vertex");
-		auto path = open.getGraph()->calculatePath(nullptr, source, destination);
+		auto path = open.getGraph()->calculatePath(openAgent, source, destination);
 		require(path && !path->nodes.empty(),
 			"No path exists from a Room into a Facade through the opened boundary");
 
@@ -1070,8 +1074,11 @@ agents: []
 		sealed.addSectorMarker(sealedRoom, 0, 1.0f, &sealedRoomMarker);
 		sealed.addSectorMarker(sealedFacade, 0, 1.5f, &sealedFacadeMarker);
 		sealed.finishBuild();
+		auto const sealedAgentId = sealed.createAgent("Route checker", sealedRoom, 0, 1.0f);
+		auto const sealedAgent = sealed.lookupAgent(sealedAgentId).entity;
+		require(sealedAgent != nullptr, "The sealed-boundary route checker was not created");
 
-		auto const blocked = sealed.getGraph()->calculatePath(nullptr,
+		auto const blocked = sealed.getGraph()->calculatePath(sealedAgent,
 			sealed.getGraph()->getVertexByIdentifier(sealedRoomMarker),
 			sealed.getGraph()->getVertexByIdentifier(sealedFacadeMarker));
 		require(!blocked || blocked->nodes.empty(),
@@ -1193,13 +1200,13 @@ agents: []
 			"addRoom accepted a NaN topDeckHeight");
 	}
 
-	bool hasPath(core::Building const& building, uint32_t fromIdentifier,
-		uint32_t toIdentifier)
+	bool hasPath(core::Building const& building, core::Agent const* agent,
+		uint32_t fromIdentifier, uint32_t toIdentifier)
 	{
 		auto const source = building.getGraph()->getVertexByIdentifier(fromIdentifier);
 		auto const target = building.getGraph()->getVertexByIdentifier(toIdentifier);
 		if (!source || !target) return false;
-		auto const path = building.getGraph()->calculatePath(nullptr, source, target);
+		auto const path = building.getGraph()->calculatePath(agent, source, target);
 		return path && !path->nodes.empty();
 	}
 
@@ -1224,13 +1231,19 @@ agents: []
 		building.removeLocationWall(roomA, 0, CORE_SIDE_RIGHT);
 		building.removeLocationWall(roomB, 0, CORE_SIDE_LEFT);
 		building.finishBuild();
+		auto const agentAId = building.createAgent("Room A route checker", roomA, 0, 1.0f);
+		auto const agentFId = building.createAgent("Facade route checker", facade, 0, 2.0f);
+		auto const agentA = building.lookupAgent(agentAId).entity;
+		auto const agentF = building.lookupAgent(agentFId).entity;
+		require(agentA != nullptr && agentF != nullptr,
+			"The continuous-floor route checkers were not created");
 
 		auto const graph = building.getGraph();
 		auto const source = graph->getVertexByIdentifier(markerA);
 		auto const target = graph->getVertexByIdentifier(markerB);
 		require(source != nullptr && target != nullptr,
 			"A Marker in the three-Sector run has no Graph vertex");
-		auto const path = graph->calculatePath(nullptr, source, target);
+		auto const path = graph->calculatePath(agentA, source, target);
 		// Source Vertex plus one hop per boundary crossed: A -> Facade -> B.
 		require(path && path->nodes.size() == 3,
 			"The Room-to-Room route is not one continuous run through the Facade");
@@ -1248,7 +1261,8 @@ agents: []
 		}
 		require(throughFacade,
 			"The Room-to-Room path did not cross the Facade");
-		require(hasPath(building, markerA, markerF) && hasPath(building, markerF, markerB),
+		require(hasPath(building, agentA, markerA, markerF)
+			&& hasPath(building, agentF, markerF, markerB),
 			"The merged run is not walkable in both directions through the Facade");
 	}
 
@@ -1272,8 +1286,11 @@ agents: []
 		mismatched.addSectorMarker(facade, 0, 2.0f, &facadeMarker);
 		mismatched.addSectorMarker(room, 0, 1.0f, &roomMarker);
 		mismatched.finishBuild();
+		auto const mismatchedAgentId = mismatched.createAgent("Route checker", facade, 0, 2.0f);
+		auto const mismatchedAgent = mismatched.lookupAgent(mismatchedAgentId).entity;
+		require(mismatchedAgent != nullptr, "The mismatched-floor route checker was not created");
 
-		require(!hasPath(mismatched, facadeMarker, roomMarker),
+		require(!hasPath(mismatched, mismatchedAgent, facadeMarker, roomMarker),
 			"A Facade merged with a Room one deck higher at the boundary");
 		require(!mismatched.canRemoveLocationWall(room, 0, CORE_SIDE_LEFT, &diagnostic),
 			"A wall removal was accepted against a Facade that does not share the deck");
@@ -1292,7 +1309,10 @@ agents: []
 			("A Room could not open its wall into a Facade sharing its deck: " + diagnostic).c_str());
 		aligned.removeLocationWall(room2, 0, CORE_SIDE_LEFT);
 		aligned.finishBuild();
-		require(hasPath(aligned, facadeMarker2, roomMarker2),
+		auto const alignedAgentId = aligned.createAgent("Route checker", facade2, 0, 0.5f);
+		auto const alignedAgent = aligned.lookupAgent(alignedAgentId).entity;
+		require(alignedAgent != nullptr, "The aligned-floor route checker was not created");
+		require(hasPath(aligned, alignedAgent, facadeMarker2, roomMarker2),
 			"Floor-aligned Facade and Room did not merge across the opened boundary");
 	}
 
@@ -1612,10 +1632,13 @@ agents: []
 		uint32_t facadeMarker = 0;
 		uint32_t upperMarker = 0;
 		authorFacadeLandingMenagerie(building, &facadeMarker, &upperMarker);
+		auto const agentId = building.createAgent("Transit route checker", 0, 0, 0.5f);
+		auto const agent = building.lookupAgent(agentId).entity;
+		require(agent != nullptr, "The Transit route checker was not created");
 
-		require(hasPath(building, facadeMarker, upperMarker),
+		require(hasPath(building, agent, facadeMarker, upperMarker),
 			"No route from a Facade floor up the Ladder to the Room above it");
-		require(hasPath(building, upperMarker, facadeMarker),
+		require(hasPath(building, agent, upperMarker, facadeMarker),
 			"No route back down the Ladder into the Facade");
 	}
 
