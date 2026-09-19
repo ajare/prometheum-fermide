@@ -503,6 +503,101 @@ namespace
 			&& building.isSimulationPaused() && building.isTraversalTopologyValid();
 	}
 
+	bool doorResizeRespectsDoorPlacementRules()
+	{
+		core::Building building("Door resizing", 12, 2);
+		auto front = building.addRoom("Front", 0, 0, 0, 8, 1);
+		building.addRoom("Front neighbour", 0, 0, 8, 4, 1);
+		building.addRoom("Behind", 1, 0, 0, 12, 1);
+		core::Building::CreateDoorOptions options;
+		options.activationMode = core::DoorActivationMode::Automatic;
+		options.holdOpenSeconds = 4.5f;
+		// Palette placement creates a one-cell Door; resizing does the rest.
+		auto created = building.addSectorDoor(0, 0, 3, options);
+		building.finishBuild();
+		building.pauseSimulation();
+
+		auto findDoorIndex = [](std::shared_ptr<const core::Sector> const& owner,
+			std::shared_ptr<const core::SectorObject> const& object)
+		{
+			for (uint32_t i = 0; i < owner->getNumObjects(); ++i)
+				if (owner->getObject(i) == object) return i;
+			return ~0u;
+		};
+		auto resize = [&](std::shared_ptr<const core::SectorObject> const& object,
+			uint32_t x, uint32_t y, uint32_t width)
+		{
+			auto owner = object->getSector();
+			auto index = findDoorIndex(owner, object);
+			if (index == ~0u) return std::shared_ptr<const core::SectorObject>{};
+			auto plan = building.planResizeSectorDoor(owner->getIndex(), index, x, y, width);
+			return plan.valid ? building.applyObjectMove(plan)
+				: std::shared_ptr<const core::SectorObject>{};
+		};
+
+		auto resized = resize(created.door.sector->getObject(created.door.index), 2, 0, 2);
+		if (!resized || resized->getCellX() != 2
+			|| resized->getSize() != core::Vector2{ 2.0f, 1.0f }) return false;
+
+		auto owner = resized->getSector();
+		auto index = findDoorIndex(owner, resized);
+		if (index == ~0u) return false;
+		// A Door is one or two cells wide, never zero and never three.
+		if (building.planResizeSectorDoor(owner->getIndex(), index, 2, 0, 0).valid
+			|| building.planResizeSectorDoor(owner->getIndex(), index, 2, 0, 3).valid)
+			return false;
+		// The span may not cross the front Sector boundary into the neighbour.
+		if (building.planResizeSectorDoor(owner->getIndex(), index, 7, 0, 2).valid)
+			return false;
+		// Nor may it grow into a cell another object occupies.
+		building.addSectorMarker(front, 0, 4.5f);
+		if (building.planResizeSectorDoor(owner->getIndex(), index, 3, 0, 2).valid)
+			return false;
+
+		if (!building.rebuildTraversalTopology()) return false;
+		core::Building::CreateDoorOptions retained;
+		if (!building.getSectorDoorOptions(0, 0, 2, 2, retained)
+			|| retained.activationMode != core::DoorActivationMode::Automatic
+			|| retained.holdOpenSeconds != 4.5f
+			|| !building.isSimulationPaused() || !building.isTraversalTopologyValid())
+			return false;
+
+		// Authored crossing lanes outrank a narrower Door: shrinking below them
+		// would silently drop capacity, so the plan refuses.
+		core::Building laneBuilding("Lane door resizing", 8, 2);
+		laneBuilding.addRoom("Fore", 0, 0, 0, 8, 1);
+		laneBuilding.addRoom("Aft", 1, 0, 0, 8, 1);
+		core::Building::CreateDoorOptions lanes;
+		lanes.width = 2;
+		lanes.crossingLanes = 2;
+		auto laneDoor = laneBuilding.addSectorDoor(0, 0, 3, lanes);
+		laneBuilding.finishBuild();
+		laneBuilding.pauseSimulation();
+		owner = laneDoor.door.sector;
+		index = findDoorIndex(owner, laneDoor.door.sector->getObject(laneDoor.door.index));
+		if (index == ~0u
+			|| laneBuilding.planResizeSectorDoor(owner->getIndex(), index, 3, 0, 1).valid)
+			return false;
+
+		// Lift landing doors belong to the transport and refuse to resize.
+		core::Building liftBuilding("Lift door resizing", 10, 8);
+		liftBuilding.addCorridor(1, 0, 8);
+		liftBuilding.addCorridor(4, 0, 8);
+		auto lift = liftBuilding.addLift(1, 0, 2, 2, 6);
+		liftBuilding.finishBuild();
+		liftBuilding.pauseSimulation();
+		if (lift.doors.empty()) return false;
+		auto landingDoor = lift.doors[0].door.sector->getObject(lift.doors[0].door.index);
+		if (!liftBuilding.isLiftOwnedDoor(landingDoor)) return false;
+		owner = landingDoor->getSector();
+		index = findDoorIndex(owner, landingDoor);
+		if (index == ~0u
+			|| liftBuilding.planResizeSectorDoor(owner->getIndex(), index,
+				landingDoor->getCellX(), landingDoor->getCellY(), 1).valid)
+			return false;
+		return true;
+	}
+
 	bool staircasePathSpansOuterCellEdges()
 	{
 		core::Staircase risingRight(5, 0, 3, CORE_SIDE_RIGHT);
@@ -4557,6 +4652,11 @@ int main(int argc, char** argv)
 		if (!windowResizeUsesWindowPlacementRules())
 		{
 			std::cerr << "FAIL: Window resizing did not preserve options or placement rules\n";
+			return 1;
+		}
+		if (!doorResizeRespectsDoorPlacementRules())
+		{
+			std::cerr << "FAIL: Door resizing did not preserve options or placement rules\n";
 			return 1;
 		}
 		if (!staircasePathSpansOuterCellEdges())

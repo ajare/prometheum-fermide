@@ -212,7 +212,8 @@ namespace core
 			// Preview dimensions may differ from the source object (Room Ladders
 			// and PlatformLifts recalculate their height at the destination).
 			uint32_t previewWidth{ 0 }, previewHeight{ 0 };
-			bool windowResize{ false };
+			// True when the plan resizes the object instead of only moving it.
+			bool resizeRequested{ false };
 			std::string diagnostic;
 			std::vector<std::string> consequences;
 
@@ -1340,6 +1341,13 @@ namespace core
 		// new footprint against normal Window placement rules.
 		ObjectMovePlan planResizeSectorWindow(uint32_t sectorIndex, uint32_t objectIndex,
 			uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh) const;
+
+		// Regular Doors resize horizontally between one and two cells. The plan uses
+		// the same atomic replay path as movement, preserving authored options while
+		// validating the new span against normal Door placement rules. Lift and
+		// Shuttle landing doors are managed by their transport and refuse to resize.
+		ObjectMovePlan planResizeSectorDoor(uint32_t sectorIndex, uint32_t objectIndex,
+			uint32_t x, uint32_t y, uint32_t cellsWide) const;
 
 		std::shared_ptr<const SectorObject> applyObjectMove(ObjectMovePlan const& plan);
 
