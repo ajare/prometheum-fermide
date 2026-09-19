@@ -933,6 +933,14 @@ namespace core
 
 		void releaseTraversal(TraversalRequestId requestId, TraversalPermitId permitId);
 
+		// A handle an Agent owns inside a capacity resource outlives nothing: once the
+		// Agent is gone the manifest slot can never be disembarked and the Lift, Shuttle
+		// or Ladder is permanently one place short (ticket #57). Deleting an Agent
+		// therefore surrenders every such claim before the entity is destroyed.
+		bool holdsTraversalOwnership(AgentId id) const;
+		void releaseAgentFromResource(TraversalResource& resource, AgentId id);
+		void releaseTraversalOwnership(AgentId id);
+
 		void runSimulationPhase(SimulationPhase phase);
 
 		void publishTickEvents(SimulationSnapshot const& before);

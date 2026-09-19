@@ -6983,6 +6983,7 @@ namespace core
 				&& resource.mLiftStopPhase != LiftStopPhase::Disembarking
 				&& resource.mLiftStopPhase != LiftStopPhase::Boarding)) return;
 		vector<AgentId> assigned;
+		vector<AgentId> gone;
 		for (auto passenger : resource.mLiftExitAtSafeStop)
 		{
 			if (resource.mOpenPlatformLift)
@@ -7005,7 +7006,12 @@ namespace core
 			}
 			auto agent = mAgents.find(passenger);
 			if (!agent || agent->getSector() != mSectors[(size_t)resource.mLiftSector.value - 1].get())
-			{ assigned.push_back(passenger); continue; }
+			{
+				// The passenger is no longer here. Forgetting it from the pending-exit
+				// set alone would leave the manifest slot standing forever (#57).
+				gone.push_back(passenger);
+				continue;
+			}
 			auto landingId = resource.mLiftStops[resource.mLiftCurrentStop].landingResource;
 			if (resource.mShuttle)
 			{
@@ -7037,6 +7043,9 @@ namespace core
 			assigned.push_back(passenger);
 		}
 		for (auto passenger : assigned) resource.mLiftExitAtSafeStop.erase(passenger);
+		// Released outside the loop: releaseAgentFromResource() also prunes the
+		// pending-exit set, which this loop is still iterating.
+		for (auto passenger : gone) releaseAgentFromResource(resource, passenger);
 	}
 
 	bool Building::replaceOnboardLiftDestination(Agent& agent, shared_ptr<Path> const& path,
@@ -8357,6 +8366,111 @@ namespace core
 			: EntityLookup<Agent const>{ nullptr, format("Agent handle {} is invalid or has been removed", id.value) };
 	}
 
+	bool Building::holdsTraversalOwnership(AgentId id) const
+	{
+		if (!id) return false;
+
+		for (auto const& [requestId, request] : mTraversalRequests.entries())
+		{
+			(void)requestId;
+			if (request->mOwner == id) return true;
+		}
+		for (auto const& [permitId, permit] : mTraversalPermits.entries())
+		{
+			(void)permitId;
+			if (permit->mOwner == id) return true;
+		}
+		for (auto const& [resourceId, resource] : mTraversalResources.entries())
+		{
+			(void)resourceId;
+			if (find(resource->mOccupants.begin(), resource->mOccupants.end(), id)
+				!= resource->mOccupants.end()) return true;
+			if (resource->mExtensionOccupantLeases.contains(id)) return true;
+			if (resource->mLiftExitAtSafeStop.contains(id)) return true;
+			if (resource->mLiftExitFailures.contains(id)) return true;
+			if (resource->mLiftPassengerDestinations.contains(id)) return true;
+			if (resource->mLiftTripIntents.contains(id)) return true;
+			if (resource->mLiftPassenger == id) return true;
+			for (auto const& owners : resource->mLiftStopRequestOwners)
+				if (owners.contains(id)) return true;
+			for (auto const& ticks : resource->mLiftStopRequestTicks)
+				if (ticks.contains(id)) return true;
+		}
+		return false;
+	}
+
+	void Building::releaseAgentFromResource(TraversalResource& resource, AgentId id)
+	{
+		if (!id) return;
+
+		for (auto& occupant : resource.mOccupants)
+			if (occupant == id) occupant = {};
+
+		// An occupant lease keeps an extensible resource extended on the Agent's
+		// behalf; surrendering the slot must surrender the lease with it.
+		if (resource.mExtensionOccupantLeases.erase(id) && resource.mExtensible)
+			resource.mExtensible->releaseExtensionLease();
+
+		for (uint32_t stop = 0; stop < resource.mLiftStopRequestOwners.size(); ++stop)
+			removeLiftStopRequest(resource, stop, id);
+		resource.mLiftPassengerDestinations.erase(id);
+		resource.mLiftTripIntents.erase(id);
+		resource.mLiftExitAtSafeStop.erase(id);
+		resource.mLiftExitFailures.erase(id);
+
+		// The compatibility aliases mirror the manifest. Rebuild them from whatever
+		// is left rather than leave them naming a handle which can no longer ride.
+		if (resource.mLiftPassenger == id)
+		{
+			resource.mLiftPassenger = {};
+			for (auto occupant : resource.mOccupants)
+				if (occupant) { resource.mLiftPassenger = occupant; break; }
+			resource.mLiftDestinationStop = ~0u;
+		}
+	}
+
+	void Building::releaseTraversalOwnership(AgentId id)
+	{
+		if (!id) return;
+
+		// Requests and permits go first. Most of a resource's claims on an Agent are
+		// keyed by request - queue lanes, admission reservations, door open leases,
+		// extension request leases - and cancelling the request surrenders them all
+		// through the same paths ordinary cancellation uses. No safe transport exit is
+		// requested: the Agent is on its way out of the Building entirely.
+		std::vector<TraversalRequestId> requests;
+		for (auto const& [requestId, request] : mTraversalRequests.entries())
+			if (request->mOwner == id) requests.push_back(requestId);
+		for (auto requestId : requests)
+		{
+			auto request = mTraversalRequests.find(requestId);
+			if (!request) continue;
+			auto const permitId = request->mPermit;
+			cancelTraversal(requestId, permitId, false);
+			releaseTraversal(requestId, permitId);
+		}
+
+		// A permit whose request has already gone is still the Agent's handle.
+		std::vector<TraversalPermitId> permits;
+		for (auto const& [permitId, permit] : mTraversalPermits.entries())
+			if (permit->mOwner == id) permits.push_back(permitId);
+		for (auto permitId : permits)
+		{
+			auto permit = mTraversalPermits.find(permitId);
+			if (!permit) continue;
+			releaseTraversal(permit->mRequest, permitId);
+		}
+
+		// Finally the claims keyed by Agent itself, which survive every request having
+		// been released: the manifest slot of a car the Agent boarded, its stop
+		// requests, its pending safe exit, and its occupant leases.
+		for (auto const& [resourceId, resource] : mTraversalResources.entries())
+		{
+			(void)resourceId;
+			releaseAgentFromResource(*resource, id);
+		}
+	}
+
 	EntityRemovalResult Building::removeAgent(AgentId id)
 	{
 		auto found = lookupAgent(id);
@@ -8374,6 +8488,18 @@ namespace core
 		if (found.entity->getState() != Agent::State::Idle)
 		{
 			return { false, format("Agent handle {} is active and cannot be removed safely", id.value) };
+		}
+
+		// Idle is not the same as unclaimed. clearPath() asks a Lift or Shuttle to let
+		// a rider off when it is next safe rather than ejecting them from a moving
+		// car, so the manifest keeps naming the Agent after its route is gone. Every
+		// one of those claims is surrendered here; a handle left behind could never
+		// disembark, and the capacity would be lost for the life of the Building.
+		found.entity->cancelTraversal();
+		releaseTraversalOwnership(id);
+		if (holdsTraversalOwnership(id))
+		{
+			return { false, format("Agent handle {} still holds a traversal resource and cannot be removed", id.value) };
 		}
 
 		vector<InteractionRequestId> ownedRequests;

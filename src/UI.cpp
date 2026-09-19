@@ -3459,7 +3459,14 @@ namespace
 			if (!id) return false;
 			auto selected = gSelectedAgent;
 			selected->clearPath();
-			if (!building->removeAgent(id)) return false;
+			// Ticket #57: an Agent which still owns a capacity resource is refused
+			// rather than deleted with the ownership left behind. Say why.
+			auto const removal = building->removeAgent(id);
+			if (!removal.removed)
+			{
+				reportEditorError("Agent editor", removal.diagnostic);
+				return false;
+			}
 			if (gHoveredAgent == selected) gHoveredAgent = nullptr;
 			gSelectedAgent = nullptr;
 			return true;
@@ -3945,11 +3952,17 @@ void handleShortcuts(shared_ptr<core::Building>& building)
 					auto undo = captureDocumentSnapshot(building);
 					auto selected = gSelectedAgent;
 					selected->clearPath();
-					if (building->removeAgent(id))
+					auto const removal = building->removeAgent(id);
+					if (removal.removed)
 					{
 						if (gHoveredAgent == selected) gHoveredAgent = nullptr;
 						gSelectedAgent = nullptr;
 						commitDocumentEdit(std::move(undo));
+					}
+					else
+					{
+						// Ticket #57: a refusal is only useful if the user hears it.
+						reportEditorError("Agent editor", removal.diagnostic);
 					}
 				}
 			}
