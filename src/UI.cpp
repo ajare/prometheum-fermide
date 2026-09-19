@@ -7097,14 +7097,20 @@ namespace
 		return true;
 	}
 
+	// The Sector types the editor can resize by dragging one of their edges.
+	bool isSectorTypeResizable(core::SectorType type)
+	{
+		return type == core::SectorType::Location
+			|| type == core::SectorType::Background
+			|| type == core::SectorType::Lift
+			|| type == core::SectorType::Shuttle
+			|| type == core::SectorType::Ladder
+			|| type == core::SectorType::Stairwell;
+	}
+
 	ResizeEdge hoveredResizeEdge(shared_ptr<const core::Sector> const& sector, ImVec2 mouse)
 	{
-		if (!sector || (sector->getType() != core::SectorType::Location
-			&& sector->getType() != core::SectorType::Background
-			&& sector->getType() != core::SectorType::Lift
-			&& sector->getType() != core::SectorType::Shuttle
-			&& sector->getType() != core::SectorType::Ladder
-			&& sector->getType() != core::SectorType::Stairwell)) return ResizeEdge::None;
+		if (!sector || !isSectorTypeResizable(sector->getType())) return ResizeEdge::None;
 		auto topLeft = worldToScreen({ (float)sector->getCellX(),
 			(float)(sector->getCellY() + sector->getDecksHigh()) });
 		auto bottomRight = worldToScreen({ (float)(sector->getCellX() + sector->getCellsWide()),
@@ -7242,6 +7248,44 @@ namespace
 		auto closest = min_element(begin(candidates), end(candidates),
 			[](auto const& left, auto const& right) { return left.distance < right.distance; });
 		return closest->distance <= handleRadius ? closest->edge : ResizeEdge::None;
+	}
+
+	// The cells the selection occupies when the editor can resize it by
+	// dragging: a resizable Sector, or a Window SectorObject. False when the
+	// selection cannot be resized, or is not on the Layer being drawn.
+	bool selectedResizeFootprint(uint32_t& cellX, uint32_t& cellY, uint32_t& cellsWide,
+		uint32_t& decksHigh)
+	{
+		if (gUISettings.selectionMode == UISettings::SelectionMode::Sector)
+		{
+			if (!gSelectedSector
+				|| !shouldDrawCanvasSectorEditOverlay(gSelectedSector->getLayerIndex(),
+					(uint32_t)gUISettings.visibleLayer)
+				|| !isSectorTypeResizable(gSelectedSector->getType()))
+				return false;
+			cellX = gSelectedSector->getCellX();
+			cellY = gSelectedSector->getCellY();
+			cellsWide = gSelectedSector->getCellsWide();
+			decksHigh = gSelectedSector->getDecksHigh();
+			return true;
+		}
+		if (gUISettings.selectionMode != UISettings::SelectionMode::Object
+			|| !gSelectedSectorObject
+			|| gSelectedSectorObject->getObjectType() != core::SectorObjectType::Window)
+			return false;
+		auto const window = static_pointer_cast<const core::WindowSectorObject>(
+			gSelectedSectorObject)->getWindow();
+		if (!window) return false;
+		// A Window is reachable from either Layer of the pair it crosses.
+		auto const visible = (uint32_t)gUISettings.visibleLayer;
+		if (gSelectedSectorObject->getSector()->getLayerIndex() != visible
+			&& window->getFrontLayer() != visible && window->getBackLayer() != visible)
+			return false;
+		cellX = gSelectedSectorObject->getCellX();
+		cellY = gSelectedSectorObject->getCellY();
+		cellsWide = (uint32_t)ceil(gSelectedSectorObject->getSize().x);
+		decksHigh = (uint32_t)ceil(gSelectedSectorObject->getSize().y);
+		return true;
 	}
 
 	void updateObjectMove(shared_ptr<core::Building> const& building)
@@ -7665,10 +7709,32 @@ namespace
 			case ResizeEdge::Right: drawList->AddLine({ bottomRight.x, topLeft.y }, bottomRight, IM_COL32(255, 255, 0, 255), 4.0f); break;
 			case ResizeEdge::Top: drawList->AddLine(topLeft, { bottomRight.x, topLeft.y }, IM_COL32(255, 255, 0, 255), 4.0f); break;
 			case ResizeEdge::Bottom: drawList->AddLine({ topLeft.x, bottomRight.y }, bottomRight, IM_COL32(255, 255, 0, 255), 4.0f); break;
+			// The interior of a selected Sector needs no box of its own: the
+			// 1px footprint box drawn below already marks the cells a drag
+			// works on.
 			case ResizeEdge::Move:
-				drawList->AddRect(topLeft, bottomRight, IM_COL32(255, 255, 0, 255), 0.0f, 0, 3.0f);
-				break;
 			case ResizeEdge::None: break;
+			}
+		}
+
+		// The whole footprint of the selected resizable object is boxed in
+		// yellow while the cursor is inside it, showing the cells a drag works
+		// on.
+		if (gWorldHovered && !gSectorResize.dragging && !gObjectMove.dragging
+			&& !gAgentMove.dragging)
+		{
+			uint32_t cellX{ 0 }, cellY{ 0 }, cellsWide{ 0 }, decksHigh{ 0 };
+			if (selectedResizeFootprint(cellX, cellY, cellsWide, decksHigh))
+			{
+				auto const world = screenToWorld(ImGui::GetIO().MousePos);
+				auto const hoverX = (int)floor(world.x);
+				auto const hoverY = (int)floor(world.y);
+				if (hoverX >= (int)cellX && hoverX < (int)(cellX + cellsWide)
+					&& hoverY >= (int)cellY && hoverY < (int)(cellY + decksHigh))
+					drawList->AddRect(
+						worldToScreen({ (float)cellX, (float)(cellY + decksHigh) }),
+						worldToScreen({ (float)(cellX + cellsWide), (float)cellY }),
+						IM_COL32(255, 255, 0, 255), 0.0f, 0, 1.0f);
 			}
 		}
 
