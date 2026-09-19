@@ -71,11 +71,22 @@
 
 spdlog::logger* gLogger{ nullptr };
 SDL_Window* gWindow{ nullptr };
-SDL_GLContext gContext;
+SDL_GLContext gContext{ nullptr };
 UISettings gUISettings;
 
 ImFont* gAgentIconFont{ nullptr };
 std::filesystem::path gResourceDirectory;
+
+namespace
+{
+	// Tracks which subsystems actually finished initialising so shutdown can
+	// release only what exists after a partial-startup failure (#59).
+	bool gSdlInitialised{ false };
+	bool gImGuiContextCreated{ false };
+	bool gImGuiSdlBackendInitialised{ false };
+	bool gImGuiOpenGLBackendInitialised{ false };
+	bool gNfdInitialised{ false };
+}
 
 using namespace std;
 
@@ -162,9 +173,9 @@ SDL_Window* createWindow()
 {
 	if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_GAMECONTROLLER) != 0)
 	{
-		printf("Error: %s\n", SDL_GetError());
-		return nullptr;
+		throw ExitApplicationException(1, "SDL initialisation failed: " + string(SDL_GetError()));
 	}
+	gSdlInitialised = true;
 
 	// GL 3.0 + GLSL 130
 	SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, 0);
@@ -183,6 +194,10 @@ SDL_Window* createWindow()
 	SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
 	SDL_WindowFlags window_flags = (SDL_WindowFlags)(SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
 	SDL_Window* window = SDL_CreateWindow("ImGui PF Engine", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, APP_WINDOW_WIDTH, APP_WINDOW_HEIGHT, window_flags);
+	if (window == nullptr)
+	{
+		throw ExitApplicationException(1, "SDL window creation failed: " + string(SDL_GetError()));
+	}
 
 	gLogger->info("Window created");
 
@@ -192,8 +207,21 @@ SDL_Window* createWindow()
 SDL_GLContext createContext(SDL_Window* window)
 {
 	SDL_GLContext gl_context = SDL_GL_CreateContext(window);
-	SDL_GL_MakeCurrent(window, gl_context);
-	SDL_GL_SetSwapInterval(1); // Enable vsync
+	if (gl_context == nullptr)
+	{
+		throw ExitApplicationException(1, "OpenGL context creation failed: " + string(SDL_GetError()));
+	}
+
+	if (SDL_GL_MakeCurrent(window, gl_context) != 0)
+	{
+		SDL_GL_DeleteContext(gl_context);
+		throw ExitApplicationException(1, "Could not make the OpenGL context current: " + string(SDL_GetError()));
+	}
+
+	if (SDL_GL_SetSwapInterval(1) != 0) // Enable vsync
+	{
+		gLogger->warn("Could not enable vsync: " + string(SDL_GetError()));
+	}
 
 	gLogger->info("OpenGL context created");
 
@@ -204,6 +232,7 @@ void setupImGui(SDL_Window* window, SDL_GLContext context)
 {
 	IMGUI_CHECKVERSION();
 	ImGui::CreateContext();
+	gImGuiContextCreated = true;
 	ImNodes::CreateContext();
 	ImNodes::PushAttributeFlag(ImNodesAttributeFlags_EnableLinkDetachWithDragClick);
 
@@ -225,9 +254,14 @@ void setupImGui(SDL_Window* window, SDL_GLContext context)
 
 	// Setup Platform/Renderer backends
 	ImGui_ImplSDL2_InitForOpenGL(window, context);
+	gImGuiSdlBackendInitialised = true;
 
 	const char* glsl_version = "#version 130";
-	ImGui_ImplOpenGL3_Init(glsl_version);
+	if (!ImGui_ImplOpenGL3_Init(glsl_version))
+	{
+		throw ExitApplicationException(1, "ImGui OpenGL3 backend initialisation failed; the GLSL version is unsupported.");
+	}
+	gImGuiOpenGLBackendInitialised = true;
 
 	// Load Fonts
 	// - If no fonts are loaded, dear imgui will use the default font. You can also load multiple fonts and use ImGui::PushFont()/PopFont() to select them.
@@ -281,10 +315,18 @@ auto callbackSink = std::make_shared<spdlog::sinks::callback_sink_mt>([](const s
 void setupLogging()
 {
 #ifdef _DEBUG
-	auto fileSink = make_shared<spdlog::sinks::basic_file_sink_mt>("../../../logs/pf-debug.log", true);
+	filesystem::path const logPath("../../../logs/pf-debug.log");
 #else
-	auto fileSink = make_shared<spdlog::sinks::basic_file_sink_mt>("../../../logs/pf-release.log", true);
+	filesystem::path const logPath("../../../logs/pf-release.log");
 #endif
+
+	// A missing log directory must not take the whole application down before
+	// the startup handler is in place; create it if possible and let spdlog
+	// report a genuinely unwritable destination as a controlled error.
+	std::error_code ec;
+	filesystem::create_directories(logPath.parent_path(), ec);
+
+	auto fileSink = make_shared<spdlog::sinks::basic_file_sink_mt>(logPath.string(), true);
 
 #ifdef _DEBUG
 	auto consoleSink = make_shared<spdlog::sinks::stdout_color_sink_mt>();
@@ -336,7 +378,11 @@ void setup()
 	initializeRecentFiles(executableDirectory() / "recent-files.txt");
 
 	// Set up NFD (file dialogs)
-	NFD_Init();
+	if (NFD_Init() != NFD_OKAY)
+	{
+		throw ExitApplicationException(1, "Native file dialog initialisation failed: " + string(NFD_GetError()));
+	}
+	gNfdInitialised = true;
 
 	// ImGui extra twiddling
 	ImGuiIO& io = ImGui::GetIO();
@@ -384,22 +430,57 @@ void setup()
 
 void shutdown()
 {
-	gLogger->info("Shutting down");
+	if (gLogger)
+	{
+		gLogger->info("Shutting down");
+	}
+
+	// ImGui backends, newest initialised first; skip anything that never came up.
+	if (gImGuiOpenGLBackendInitialised)
+	{
+		ImGui_ImplOpenGL3_Shutdown();
+		gImGuiOpenGLBackendInitialised = false;
+	}
+
+	if (gImGuiSdlBackendInitialised)
+	{
+		ImGui_ImplSDL2_Shutdown();
+		gImGuiSdlBackendInitialised = false;
+	}
+
+	if (gImGuiContextCreated)
+	{
+		ImGui::DestroyContext();
+		gImGuiContextCreated = false;
+	}
+
+	// Platform
+	if (gContext != nullptr)
+	{
+		SDL_GL_DeleteContext(gContext);
+		gContext = nullptr;
+	}
+
+	if (gWindow != nullptr)
+	{
+		SDL_DestroyWindow(gWindow);
+		gWindow = nullptr;
+	}
+
+	if (gSdlInitialised)
+	{
+		SDL_Quit();
+		gSdlInitialised = false;
+	}
+
+	if (gNfdInitialised)
+	{
+		NFD_Quit();
+		gNfdInitialised = false;
+	}
 
 	delete gLogger;
 	gLogger = nullptr;
-
-	// ImGui
-	ImGui_ImplOpenGL3_Shutdown();
-	ImGui_ImplSDL2_Shutdown();
-	ImGui::DestroyContext();
-
-	// Platform
-	SDL_GL_DeleteContext(gContext);
-	SDL_DestroyWindow(gWindow);
-	SDL_Quit();
-
-	NFD_Quit();
 }
 
 bool processEvents(SDL_Window* window)
@@ -797,7 +878,17 @@ void outputToDebugger(std::string const& msg)
 
 void outputException(std::string const& msg)
 {
-	gLogger->critical(msg);
+	if (gLogger)
+	{
+		gLogger->critical(msg);
+	}
+	else
+	{
+		// Startup can fail before or during logging setup, so keep a fallback
+		// channel for the diagnostic.
+		fprintf(stderr, "Critical: %s\n", msg.c_str());
+	}
+
 	outputToDebugger(msg);
 }
 
@@ -809,10 +900,9 @@ int main(int, char**)
 {
 	int exitCode{ 0 };
 
-	initialise();
-
 	try
 	{
+		initialise();
 		setup();
 		run();
 	}

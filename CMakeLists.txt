@@ -155,6 +155,7 @@ add_executable(prometheum-fermide-headless
     src/headless/FacadeEditorSmokeChecks.cpp
     src/headless/FacadeRenderSmokeChecks.cpp
     src/headless/FacadeDrawOrderSmokeChecks.cpp
+    src/headless/GraphicsStartupSmokeChecks.cpp
     src/headless/InteractionApiCompileCheck.cpp
     src/headless/OnboardAgentDeletionSmokeChecks.cpp
     src/headless/PaletteTraySmokeChecks.cpp
@@ -229,4 +230,16 @@ endif()
 include(CTest)
 if(BUILD_TESTING)
     add_test(NAME headless-smoke COMMAND prometheum-fermide-headless)
+
+    if(PF_BUILD_GUI)
+        # Ticket #59: the GUI must exit with a controlled non-zero code when
+        # graphics initialisation fails, never via SIGABRT. Run from the GUI
+        # output directory so the app's relative log/resource paths resolve
+        # inside the build tree.
+        add_test(NAME graphics-startup-failure
+            COMMAND prometheum-fermide-headless --graphics-startup-smoke)
+        set_tests_properties(graphics-startup-failure PROPERTIES
+            ENVIRONMENT "PF_GUI_EXECUTABLE=$<TARGET_FILE:imgui>"
+            WORKING_DIRECTORY "$<TARGET_FILE_DIR:imgui>")
+    endif()
 endif()

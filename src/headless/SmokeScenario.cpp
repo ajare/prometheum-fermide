@@ -61,6 +61,7 @@ void runFacadeEditorSmokeChecks();
 void runPaletteTraySmokeChecks();
 void runOnboardAgentDeletionSmokeChecks();
 void runViewportCullingSmokeChecks();
+void runGraphicsStartupSmokeChecks();
 
 static_assert(!std::is_convertible_v<core::AgentId, core::InteractionPointId>);
 static_assert(!std::is_convertible_v<core::DeviceOperationId, core::TraversalResourceId>);
@@ -4346,10 +4347,19 @@ namespace
 	}
 }
 
-int main()
+int main(int argc, char** argv)
 {
+	bool const graphicsStartupOnly = argc > 1
+		&& std::string(argv[1]) == "--graphics-startup-smoke";
+
 	try
 	{
+		if (graphicsStartupOnly)
+		{
+			runGraphicsStartupSmokeChecks();
+			return 0;
+		}
+
 		runSerializationSmokeChecks();
 		runRenderOrderSmokeChecks();
 		runEditorLayerSmokeChecks();
