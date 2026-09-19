@@ -264,6 +264,28 @@ namespace core
 			uint32_t& sourceNode);
 
 		// ------------------------------------------------------------------
+		// Lift boarding branch (ADR 0004 stage 3)
+		//
+		// What happens when an Agent outside the car asks to enter it: the
+		// landing-door queue ticket and the trip intent it registers, the landing
+		// call preparation and its completion, the boarding eligibility gates, the
+		// FIFO admission-queue selection, the shuttle carriage capacity
+		// assignment, the queue-position arrival check, the door open lease and the
+		// crossing grant all live here. Building's lift allocation dispatcher
+		// forwards boarding requests through this entry point; no caller outside
+		// Building names the coordinator.
+		// ------------------------------------------------------------------
+
+		// Allocate one pending boarding request. `edgeResource` is the landing the
+		// request was made on and the door the passenger crosses to enter the car -
+		// for a shuttle, the boarding-door assignment may retarget it to another
+		// door of the same access zone without changing the ticket's priority.
+		// `coordinator` is the lift or shuttle journey resource which owns the
+		// stop, and `stop` the stop index the dispatcher resolved for the request.
+		void allocateLiftBoarding(TraversalRequestId requestId, TraversalResource& edgeResource,
+			TraversalResource& coordinator, uint32_t stop);
+
+		// ------------------------------------------------------------------
 		// Lift onboard destination selection - the riding branch (ADR 0004 stage 3)
 		//
 		// What happens when an Agent which already occupies the car asks to travel

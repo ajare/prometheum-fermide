@@ -6519,16 +6519,8 @@ namespace core
 	// Shuttle door assignment - the passenger-carriage lookup, the boarding and disembark
 	// door selection, and the door-traversal retargeting they share - lives in
 	// SimulationCoordinator (ADR 0004), together with the static door-offset helper
-	// which gives the carriage/door indexing its meaning. Building keeps the boarding
-	// entry point its lift allocation branch still calls and forwards, so no caller
-	// outside Building names the coordinator; the disembark selection is reached only
-	// from the coordinator's own disembarking branch now.
-
-	bool Building::assignShuttleBoardingDoor(TraversalRequestId requestId,
-		TraversalResource& coordinator, uint32_t stop)
-	{
-		return mSimulationCoordinator.assignShuttleBoardingDoor(requestId, coordinator, stop);
-	}
+	// which gives the carriage/door indexing its meaning. Both selections are reached
+	// only from inside the coordinator now, so no Building forward is left for them.
 
 	// Passenger safe exits - the safe-exit request, the safe-exit path assignment,
 	// and the onboard destination replacement - live in SimulationCoordinator
@@ -6564,8 +6556,8 @@ namespace core
 
 	// The lift allocation dispatcher stays here: it resolves the journey resource,
 	// the stop and the boarding / disembarking / riding classification, then hands
-	// the request to the branch which owns it. The riding and disembarking branches
-	// live in SimulationCoordinator (ADR 0004); the boarding branch follows.
+	// the request to the branch which owns it. All three branches live in
+	// SimulationCoordinator (ADR 0004).
 
 	void Building::allocateLiftTraversal(TraversalRequestId requestId, TraversalResource& edgeResource)
 	{
@@ -6605,182 +6597,7 @@ namespace core
 
 		if (boarding)
 		{
-			// Shuttle boarding cannot overlap disembarkation at the aligned stop,
-			// even if a request reaches allocation during a phase transition.
-			if (coordinator->mShuttle
-				&& (liftHasDisembarkDemand(*coordinator, stop)
-					|| !coordinator->mLiftExitAtSafeStop.empty())) return;
-			auto boardingLanding = &edgeResource;
-			auto actor = mAgents.find(request->mOwner);
-			auto desiredStop = actor ? findAgentLiftDestination(*actor, *coordinator) : ~0u;
-			if (desiredStop >= coordinator->mLiftStops.size() || desiredStop == stop)
-			{
-				denyTraversalRequest(requestId);
-				return;
-			}
-			if (!request->mQueueTicket)
-			{
-				// Lift and shuttle passengers use the same landing-door queue. Shuttle
-				// assignments may later move the ticket to another Door in the same
-				// access zone without changing its logical priority.
-				attachQueueTicket(requestId, edgeResource);
-				if (!request->mQueueTicket) return;
-				coordinator->mAdmissionQueue.push_back(requestId);
-				coordinator->mLiftTripIntents[request->mOwner] = { stop, desiredStop, mSimulationTick };
-			}
-			if (!request->mPreparationRequested)
-			{
-				if (edgeResource.mControls.empty())
-				{
-					denyTraversalRequest(requestId, TraversalFailureReason::NoReachableControl);
-					return;
-				}
-				auto interactionId = requestInteractionForTraversal(edgeResource.mControls.front(), request->mOwner);
-				if (!interactionId) return;
-				auto interaction = mInteractionRequests.find(interactionId);
-				request->mPreparationRequested = true;
-				if (interaction && !interaction->mOperations.empty())
-					request->mPreparationOperation = interaction->mOperations.front().first;
-				// A passenger physically operating the landing call cannot also walk
-				// toward a reserved queue position. Suspend that position until the
-				// button has been pressed; logical FIFO admission is retained.
-				if (!edgeResource.mPreparationOperator)
-				{
-					edgeResource.mPreparationOperator = requestId;
-					refreshQueuePositions(edgeResource);
-				}
-				return;
-			}
-			auto operation = mDeviceOperations.find(request->mPreparationOperation);
-			if (edgeResource.mPreparationOperator == requestId && operation
-				&& (operation->mActivated
-					|| (operation->mState != DeviceOperationState::Pending
-						&& operation->mState != DeviceOperationState::Running)))
-			{
-				edgeResource.mPreparationOperator = {};
-				refreshQueuePositions(edgeResource);
-			}
-			if (!operation || operation->mState == DeviceOperationState::Pending
-				|| operation->mState == DeviceOperationState::Running) return;
-			if (operation->mState != DeviceOperationState::Succeeded)
-			{
-				denyTraversalRequest(requestId, TraversalFailureReason::PreparationFailed);
-				return;
-			}
-			if (coordinator->mLiftMoving || coordinator->mLiftCurrentStop != stop
-				|| coordinator->mLiftStopPhase != LiftStopPhase::Boarding
-				|| liftHasDisembarkDemand(*coordinator, stop)) return;
-			if (!isLiftBoardingDirectionCompatible(*coordinator, stop, desiredStop)) return;
-			if (request->mCapacityPosition == ~0u)
-			{
-				if (mSimulationTick > coordinator->mLiftBoardingCutoffTick) return;
-				// Preserve FIFO among passengers eligible at this stop and in this run;
-				// requests at other stops or for the return direction do not block them.
-				auto selected = find_if(coordinator->mAdmissionQueue.begin(), coordinator->mAdmissionQueue.end(),
-					[&](TraversalRequestId candidateId)
-					{
-						auto candidate = mTraversalRequests.find(candidateId);
-						if (!candidate || (coordinator->mShuttle
-							&& candidate->mSourceSector != request->mSourceSector)) return false;
-						auto landing = mTraversalResources.find(candidate->mResource);
-						if (!landing || landing->mLiftStopIndex != stop) return false;
-						auto intent = coordinator->mLiftTripIntents.find(candidate->mOwner);
-						if (intent == coordinator->mLiftTripIntents.end()) return false;
-						auto desired = coordinator->mLiftStops[intent->second.destinationStop].globalPosition
-							> coordinator->mLiftStops[stop].globalPosition
-							? TraversalDirection::Ascending : TraversalDirection::Descending;
-						return desired == coordinator->mLiftDirection;
-					});
-				if (selected == coordinator->mAdmissionQueue.end() || *selected != requestId) return;
-				if (coordinator->mShuttle && !assignShuttleBoardingDoor(requestId, *coordinator, stop)) return;
-				boardingLanding = mTraversalResources.find(request->mResource);
-				if (!boardingLanding || request->mQueuePosition == ~0u) return;
-
-				uint32_t first = 0, count = coordinator->mCapacity;
-				if (coordinator->mShuttle)
-				{
-					if (request->mShuttleCarriage >= coordinator->mShuttleCarriages.size()) return;
-					auto const& carriage = coordinator->mShuttleCarriages[request->mShuttleCarriage];
-					first = carriage.firstCapacityPosition;
-					count = carriage.capacity;
-				}
-				uint32_t position = ~0u;
-				if (coordinator->mShuttle)
-				{
-					// Fill the carriage from its leading end. A boarding passenger
-					// chooses the furthest available spot in the direction of travel,
-					// then walks there after crossing the threshold.
-					float direction = coordinator->mLiftDirection == TraversalDirection::Descending
-						? -1.0f : 1.0f;
-					float bestProgress = -numeric_limits<float>::infinity();
-					for (uint32_t i = first; i < first + count; ++i)
-					{
-						if (coordinator->mOccupants[i] || coordinator->mAdmissionReservations[i]) continue;
-						auto globalX = coordinator->mLiftPosition
-							+ coordinator->mCapacityPositions[i].x;
-						auto progress = direction * (globalX - actor->getGlobalPosition().x);
-						if (position == ~0u || progress > bestProgress)
-						{
-							position = i;
-							bestProgress = progress;
-						}
-					}
-				}
-				else for (uint32_t i = first; i < first + count; ++i)
-					if (!coordinator->mOccupants[i] && !coordinator->mAdmissionReservations[i])
-					{ position = i; break; }
-				if (position == ~0u) return;
-				coordinator->mAdmissionReservations[position] = requestId;
-				request->mCapacityPosition = position;
-				coordinator->mAdmissionQueue.erase(selected);
-			}
-			if (coordinator->mLift)
-			{
-				boardingLanding = mTraversalResources.find(request->mResource);
-				if (!boardingLanding || request->mQueueApproach >= boardingLanding->mQueueLanes.size()
-					|| request->mQueuePosition == ~0u) return;
-				auto const& queueLane = boardingLanding->mQueueLanes[request->mQueueApproach];
-				if (request->mQueuePosition >= queueLane.positions.size()
-					|| !actor || actor->getGlobalPosition().distanceTo(
-						queueLane.positions[request->mQueuePosition]) > 0.001f) return;
-			}
-			else if (request->mQueuePosition != ~0u)
-			{
-				boardingLanding = mTraversalResources.find(request->mResource);
-				if (!boardingLanding || request->mQueueApproach >= boardingLanding->mQueueLanes.size()) return;
-				auto const& queueLane = boardingLanding->mQueueLanes[request->mQueueApproach];
-				if (request->mQueuePosition >= queueLane.positions.size()
-					|| !actor || actor->getGlobalPosition().distanceTo(
-						queueLane.positions[request->mQueuePosition]) > 0.001f) return;
-				auto& laneQueue = boardingLanding->mQueueLanes[request->mQueueApproach].queue;
-				laneQueue.erase(remove(laneQueue.begin(), laneQueue.end(), requestId), laneQueue.end());
-				request->mQueuePosition = ~0u;
-				if (actor) actor->mTraversalLocalGoal.reset();
-				refreshQueuePositions(*boardingLanding);
-			}
-			if (!request->mPreparationLease)
-				request->mPreparationLease = acquireDoorOpenLease(*boardingLanding,
-					DoorOpenLeaseKind::Preparation, requestId);
-			if (!boardingLanding->mDoor->isOpen())
-			{
-				if (!boardingLanding->mDoor->isOpening()) boardingLanding->mDoor->requestOpen();
-				return;
-			}
-			auto lane = find(boardingLanding->mCrossingOwners.begin(), boardingLanding->mCrossingOwners.end(), TraversalRequestId{});
-			if (lane == boardingLanding->mCrossingOwners.end()) return;
-			if (coordinator->mLift)
-			{
-				auto& laneQueue = boardingLanding->mQueueLanes[request->mQueueApproach].queue;
-				laneQueue.erase(remove(laneQueue.begin(), laneQueue.end(), requestId), laneQueue.end());
-				request->mQueuePosition = ~0u;
-				actor->mTraversalLocalGoal.reset();
-				refreshQueuePositions(*boardingLanding);
-			}
-			request->mCrossingLane = (uint32_t)distance(boardingLanding->mCrossingOwners.begin(), lane);
-			*lane = requestId;
-			coordinator->mLiftAdmissionReservation = requestId;
-			coordinator->mLiftCarDoorOpen = true;
-			grantTraversalRequest(requestId);
+			mSimulationCoordinator.allocateLiftBoarding(requestId, edgeResource, *coordinator, stop);
 			return;
 		}
 
