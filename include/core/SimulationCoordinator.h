@@ -13,6 +13,7 @@ namespace core
 {
 	class Building;
 	class Agent;
+	struct Path;
 
 	// Runs the simulation on behalf of the Building that owns it.
 	//
@@ -201,6 +202,66 @@ namespace core
 			DoorOpenLeaseKind kind = DoorOpenLeaseKind::ExternalHoldOpen);
 
 		bool releaseDoorOpenLease(TraversalResourceId resource, DoorOpenLeaseId lease);
+
+		// ------------------------------------------------------------------
+		// Lift scheduling and passenger safe exits (ADR 0004 stage 3)
+		//
+		// The lift scheduling queries which drive car dispatch, and the passenger
+		// safe-exit protocol which gets an Agent out of a car it can no longer
+		// ride, all live here. Building forwards each of these entry points; no
+		// caller outside Building names the coordinator.
+		// ------------------------------------------------------------------
+
+		// Stop lookup. A stop is whichever declared stop sits nearest the endpoint
+		// along the axis the resource travels - horizontal for a shuttle, vertical
+		// for a lift.
+		uint32_t findLiftStop(TraversalResource const& resource, Vector2 const& endpoint) const;
+
+		// The stop an Agent wants next, read from the first ride edge of the
+		// journey ahead of it on its current path.
+		uint32_t findAgentLiftDestination(Agent const& agent,
+			TraversalResource const& resource) const;
+
+		// Whether any occupant currently riding to `stop` needs to leave there.
+		bool liftHasDisembarkDemand(TraversalResource const& resource, uint32_t stop) const;
+
+		// Stop requests. Each request is attributed to its owning Agent so the
+		// car can drop a demand that dies with the Agent who made it, and records
+		// the tick of the oldest interest for deterministic dispatch.
+		void addLiftStopRequest(TraversalResource& resource, uint32_t stop, AgentId owner);
+
+		void removeLiftStopRequest(TraversalResource& resource, uint32_t stop, AgentId owner);
+
+		// Choosing where the car goes next: keep the current direction while
+		// compatible demand lies ahead, reverse only when it does not, and break
+		// idle ties by oldest interest, then distance, then stop id.
+		uint32_t chooseNextLiftStop(TraversalResource& resource) const;
+
+		// Whether a boarding request can be served without turning the car around
+		// while it still has demand ahead of it in the current direction.
+		bool isLiftBoardingDirectionCompatible(TraversalResource& resource,
+			uint32_t originStop, uint32_t destinationStop);
+
+		// Lift admission release. A request which will never board surrenders its
+		// admission-queue and confirmation-queue place, its reservations, and -
+		// for an open platform lift - its physical queue position as well.
+		void releaseLiftAdmission(TraversalRequestId requestId, TraversalResource& resource);
+
+		// Passenger safe exits. An Agent which cannot complete its journey while
+		// riding is asked to leave at the next stop the car can reach safely, and
+		// remembers why, so the reason survives until the exit is resolved.
+		void requestLiftPassengerSafeExit(AgentId passenger, TraversalFailureReason reason);
+
+		// Once the car is stopped and its doors are open, each pending passenger is
+		// given its landing path; a passenger which has already gone gives up its
+		// manifest slot instead of leaving it standing (#57).
+		void assignLiftSafeExitPaths(TraversalResource& resource);
+
+		// Re-riding with a new onboard destination: the Agent keeps its manifest
+		// slot, the stale destination and its obsolete selections are dropped, and
+		// the caller is told which path node the new ride starts from.
+		bool replaceOnboardLiftDestination(Agent& agent, std::shared_ptr<Path> const& path,
+			uint32_t& sourceNode);
 
 	private:
 

@@ -25,8 +25,9 @@ namespace core
 	// (ADR 0004 stage 2). The behaviour is unchanged: the coordinator works on
 	// Building's interaction and device-operation registries through friendship,
 	// and calls back through the Building facade for the machinery which has not
-	// moved out of Building yet - snapshots, the structural-edit guard, and lift
-	// stop requests.
+	// moved out of Building yet - snapshots and the structural-edit guard. The
+	// lift stop request it makes for an accepted lift call goes to the
+	// coordinator's own lift scheduling helper.
 
 	InteractionPointId SimulationCoordinator::createInteractionPoint(string const& name)
 	{
@@ -486,7 +487,7 @@ namespace core
 						// The operation may be shared by several waiting passengers. Each
 						// keeps independent ownership even though the physical call coalesces.
 						for (auto requester : operation->mRequesters)
-							mBuilding.addLiftStopRequest(*resource, operation->mCommand.stopIndex, requester);
+							addLiftStopRequest(*resource, operation->mCommand.stopIndex, requester);
 						if (resource->mLiftStopPhase == LiftStopPhase::Idle)
 							resource->mLiftStopPhase = LiftStopPhase::Closing;
 					}

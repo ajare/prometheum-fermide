@@ -23,8 +23,9 @@ namespace core
 	// unchanged: the coordinator works on Building's registries through
 	// friendship, and calls back through the Building facade for the machinery
 	// which has not moved out of Building yet - snapshots, traversal
-	// cancellation and release, lift stop requests, interaction cancellation,
-	// and device-operation cancellation and removal.
+	// cancellation and release, interaction cancellation, and device-operation
+	// cancellation and removal. The stop requests it drops for a departing
+	// passenger go to the coordinator's own lift scheduling helpers.
 
 	AgentId SimulationCoordinator::addOwnedAgentToSector(unique_ptr<Agent> agent, uint32_t sectorId, uint32_t deckOffset, float xOffset)
 	{
@@ -175,7 +176,7 @@ namespace core
 			resource.mExtensible->releaseExtensionLease();
 
 		for (uint32_t stop = 0; stop < resource.mLiftStopRequestOwners.size(); ++stop)
-			mBuilding.removeLiftStopRequest(resource, stop, id);
+			removeLiftStopRequest(resource, stop, id);
 		resource.mLiftPassengerDestinations.erase(id);
 		resource.mLiftTripIntents.erase(id);
 		resource.mLiftExitAtSafeStop.erase(id);
