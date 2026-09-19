@@ -17,7 +17,6 @@
 #include "core/Door.h"
 #include "core/Window.h"
 #include "core/WindowSectorObject.h"
-#include "core/Button.h"
 #include "core/Graph.h"
 #include "core/Log.h"
 #include "core/Simulation.h"
@@ -670,24 +669,14 @@ namespace core
 
 		void validateCellIsInSector(std::string const& caller, uint32_t x, uint32_t y, std::shared_ptr<const Sector> sector) const;
 
-		void validateCellHasObject(std::string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y) const;
-
 		void validateCellHasNoObject(std::string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y) const;
-
-		void validateCellIsType(std::string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y, SectorType sectorType) const;
-
-		void validateCellHasDoor(std::string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y) const;
 
 		void validateCellHasNoDoor(std::string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y) const;
 
 		bool validateStaircaseEndpoint(uint32_t layerIndex, uint32_t x, uint32_t y, bool upperEndpoint,
 			int riseSide, std::string& diagnostic) const;
 
-		void validateCellHasPhysicalControl(std::string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y, int side) const;
-
 		void validateCellHasNoPhysicalControl(std::string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y, int side) const;
-
-		void validateCellHasNoFloorType(std::string const& caller, std::string const& desiredObject, uint32_t layerIndex, uint32_t x, uint32_t y) const;
 
 		void validateCellTraversableOnFoot(std::string const& caller, std::string const& desiredObject, uint32_t layerIndex, uint32_t x, uint32_t y) const;
 
@@ -1512,8 +1501,6 @@ namespace core
 		EntityRemovalResult removeTraversalResource(TraversalResourceId id);
 
 		EntityLookup<TraversalRequest const> lookupTraversalRequest(TraversalRequestId id) const;
-
-		EntityLookup<TraversalPermit const> lookupTraversalPermit(TraversalPermitId id) const;
 
 		TraversalWaitingPolicy const& getTraversalWaitingPolicy() const;
 

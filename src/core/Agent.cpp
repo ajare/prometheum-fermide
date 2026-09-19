@@ -3,7 +3,6 @@
 #include "core/Edge.h"
 #include "core/Location.h"
 #include "core/Path.h"
-#include "core/Pathing.h"
 #include "core/Log.h"
 #include "core/Exceptions.h"
 

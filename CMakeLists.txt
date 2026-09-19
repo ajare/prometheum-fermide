@@ -23,6 +23,43 @@ endif()
 
 option(PF_BUILD_GUI "Build the SDL/OpenGL graphical application" ON)
 
+# High analysis settings (tickets #56, #79). The refactor of Building into
+# Building plus SimulationCoordinator was driven by a translation unit that
+# choked the compiler under elevated analysis; this option keeps that check
+# repeatable. It raises the diagnostic level for the project's own targets
+# only - vendored third-party sources keep their own warning configuration -
+# and tools/high_analysis_build.sh pairs it with a per-translation-unit
+# time/memory report so a TU that starts to choke is noticed, not tolerated.
+option(PF_HIGH_ANALYSIS "Compile project targets with elevated static-analysis diagnostics" OFF)
+
+set(PF_HIGH_ANALYSIS_WARNINGS "")
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    set(PF_HIGH_ANALYSIS_WARNINGS
+        -Wcast-align
+        -Wcast-qual
+        -Wdouble-promotion
+        -Wextra-semi
+        -Wfloat-equal
+        -Wimplicit-fallthrough
+        -Wmissing-declarations
+        -Wnon-virtual-dtor
+        -Woverloaded-virtual
+        -Wredundant-decls
+        -Wshadow
+        -Wundef
+        -Wunused-but-set-variable
+    )
+elseif(MSVC)
+    set(PF_HIGH_ANALYSIS_WARNINGS /W4 /permissive-)
+endif()
+
+# Applied to project targets only; never to FetchContent dependencies.
+function(pf_apply_high_analysis target)
+    if(PF_HIGH_ANALYSIS AND PF_HIGH_ANALYSIS_WARNINGS)
+        target_compile_options(${target} PRIVATE ${PF_HIGH_ANALYSIS_WARNINGS})
+    endif()
+endfunction()
+
 set(PF_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/include")
 set(PF_OUTPUT_DIR "${CMAKE_BINARY_DIR}/bin/x64/$<CONFIG>")
 
@@ -131,6 +168,7 @@ else()
     target_compile_options(prometheum-fermide-core PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 target_link_libraries(prometheum-fermide-core PUBLIC ${PF_YAML_TARGET})
+pf_apply_high_analysis(prometheum-fermide-core)
 set_target_properties(prometheum-fermide-core PROPERTIES
     ARCHIVE_OUTPUT_DIRECTORY "${PF_OUTPUT_DIR}"
     OUTPUT_NAME "prometheum-fermide-core"
@@ -184,6 +222,7 @@ if(MSVC)
 else()
     target_compile_options(prometheum-fermide-headless PRIVATE -Wall -Wextra -Wpedantic)
 endif()
+pf_apply_high_analysis(prometheum-fermide-headless)
 set_target_properties(prometheum-fermide-headless PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${PF_OUTPUT_DIR}"
 )
@@ -216,6 +255,7 @@ if(PF_BUILD_GUI)
     if(WIN32)
         target_link_libraries(imgui PRIVATE SDL2::SDL2main)
     endif()
+    pf_apply_high_analysis(imgui)
     set_target_properties(imgui PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${PF_OUTPUT_DIR}"
     )

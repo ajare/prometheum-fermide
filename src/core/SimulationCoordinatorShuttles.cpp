@@ -7,9 +7,6 @@
 #include "core/Building.h"
 #include "core/Coordination.h"
 #include "core/Edge.h"
-#include "core/EdgeType.h"
-#include "core/Path.h"
-#include "core/Sector.h"
 #include "core/Shuttle.h"
 #include "core/Vertex.h"
 

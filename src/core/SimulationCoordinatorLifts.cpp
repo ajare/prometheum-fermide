@@ -1,5 +1,4 @@
 #include <algorithm>
-#include <iterator>
 #include <limits>
 #include <memory>
 #include <utility>
@@ -11,7 +10,6 @@
 #include "core/Coordination.h"
 #include "core/Edge.h"
 #include "core/Path.h"
-#include "core/Sector.h"
 #include "core/Vertex.h"
 
 

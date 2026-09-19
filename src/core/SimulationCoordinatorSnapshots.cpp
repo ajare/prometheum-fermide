@@ -1,7 +1,5 @@
 #include <algorithm>
-#include <cmath>
 #include <format>
-#include <iterator>
 #include <utility>
 
 #include "core/SimulationCoordinator.h"
@@ -11,7 +9,6 @@
 #include "core/Coordination.h"
 #include "core/ExtensibleObject.h"
 #include "core/OpenableObject.h"
-#include "core/Sector.h"
 #include "core/Simulation.h"
 
 

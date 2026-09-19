@@ -8,7 +8,6 @@
 #include "core/Coordination.h"
 #include "core/Edge.h"
 #include "core/ExtensibleObject.h"
-#include "core/Path.h"
 #include "core/Sector.h"
 #include "core/Simulation.h"
 #include "core/Vertex.h"

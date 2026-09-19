@@ -7,9 +7,7 @@
 #include "core/Building.h"
 #include "core/Coordination.h"
 #include "core/Defines.h"
-#include "core/EdgeType.h"
 #include "core/Lift.h"
-#include "core/Sector.h"
 
 
 namespace core

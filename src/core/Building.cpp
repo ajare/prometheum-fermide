@@ -1,9 +1,6 @@
 #include <algorithm>
 #include <cmath>
-#include <functional>
 #include <set>
-#include <iterator>
-#include <limits>
 #include <stdexcept>
 #include <utility>
 
@@ -207,18 +204,6 @@ namespace core
 		}
 	}
 
-	void Building::validateCellHasObject(string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y) const
-	{
-		auto layer = getLayer(layerIndex);
-
-		auto const& cellDef = layer->getCellDefinition(x, y);
-
-		if (!cellDef.hasObject())
-		{
-			throw BuildingException(this, format("{} - cell at {},{} does not have an object.", caller, x, y));
-		}
-	}
-
 	void Building::validateCellHasNoObject(string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y) const
 	{
 		auto layer = getLayer(layerIndex);
@@ -228,32 +213,6 @@ namespace core
 		if (cellDef.hasObject())
 		{
 			throw BuildingException(this, format("{} - cell at {},{} has an object.", caller, x, y));
-		}
-	}
-
-	void Building::validateCellIsType(string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y, SectorType sectorType) const
-	{
-		validateCellOccupied(caller, layerIndex, x, y);
-
-		auto layer = getLayer(layerIndex);
-
-		auto const& cellDef = layer->getCellDefinition(x, y);
-		auto sector = getSector(cellDef.sectorIndex);
-
-		if (sector->getType() != sectorType)
-		{
-			throw BuildingException(this, format("{} - Sector of cell at {},{} is not type '{}'.", caller, x, y, getSectorTypeString(sectorType)));
-		}
-	}
-
-	void Building::validateCellHasDoor(string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y) const
-	{
-		auto layer = getLayer(layerIndex);
-		auto const& cellDef = layer->getCellDefinition(x, y);
-
-		if (cellDef.sectorObjectType != SectorObjectType::Door)
-		{
-			throw BuildingException(this, format("{} - cell at {},{} does not have a door.", caller, x, y));
 		}
 	}
 
@@ -268,17 +227,6 @@ namespace core
 		}
 	}
 
-	void Building::validateCellHasPhysicalControl(string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y, int side) const
-	{
-		auto layer = getLayer(layerIndex);
-		auto const& cellDef = layer->getCellDefinition(x, y);
-
-		if (cellDef.controls[side] == ~0u)
-		{
-			throw BuildingException(this, format("{} - cell at {},{} (side {}) does not have a physical control.", caller, x, y, side));
-		}
-	}
-
 	void Building::validateCellHasNoPhysicalControl(string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y, int side) const
 	{
 		auto layer = getLayer(layerIndex);
@@ -290,25 +238,6 @@ namespace core
 		}
 	}
 
-
-	void Building::validateCellHasNoFloorType(string const& caller, string const& desiredObject, uint32_t layerIndex, uint32_t x, uint32_t y) const
-	{
-		auto layer = getLayer(layerIndex);
-		auto const& cellDef = layer->getCellDefinition(x, y);
-
-		if (cellDef.floorType == CellFloorType::Ground)
-		{
-			throw BuildingException(this, format("{} - floor is ground, so cannot be {}", caller, desiredObject));
-		}
-		else if (cellDef.floorType == CellFloorType::ForceBridge)
-		{
-			throw BuildingException(this, format("{} - there is already a ForceBridge here", caller));
-		}
-		else if (cellDef.floorType == CellFloorType::Walkway)
-		{
-			throw BuildingException(this, format("{} - there is already a Walkway here", caller));
-		}
-	}
 
 	void Building::validateCellTraversableOnFoot(string const& caller, string const& desiredObject, uint32_t layerIndex, uint32_t x, uint32_t y) const
 	{
@@ -5886,13 +5815,6 @@ namespace core
 		auto entity = mTraversalRequests.find(id);
 		return entity ? EntityLookup<TraversalRequest const>{ entity, {} }
 			: EntityLookup<TraversalRequest const>{ nullptr, format("TraversalRequest handle {} is invalid or has been released", id.value) };
-	}
-
-	EntityLookup<TraversalPermit const> Building::lookupTraversalPermit(TraversalPermitId id) const
-	{
-		auto entity = mTraversalPermits.find(id);
-		return entity ? EntityLookup<TraversalPermit const>{ entity, {} }
-			: EntityLookup<TraversalPermit const>{ nullptr, format("TraversalPermit handle {} is invalid or has been released", id.value) };
 	}
 
 	TraversalWaitingPolicy const& Building::getTraversalWaitingPolicy() const

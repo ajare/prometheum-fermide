@@ -1,5 +1,4 @@
 #include <algorithm>
-#include <iterator>
 #include <limits>
 #include <utility>
 
@@ -12,7 +11,6 @@
 #include "core/ExtensibleObject.h"
 #include "core/ForceBridge.h"
 #include "core/Ladder.h"
-#include "core/Sector.h"
 #include "core/Simulation.h"
 #include "core/Vertex.h"
 

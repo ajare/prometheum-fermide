@@ -25,7 +25,6 @@
 #include <cmath>
 #include <format>
 #include <set>
-#include <stdexcept>
 #include <utility>
 
 namespace core
