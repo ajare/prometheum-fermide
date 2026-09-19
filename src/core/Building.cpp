@@ -3457,22 +3457,24 @@ namespace core
 				if (backSector->_getObject(i) == windowObject) { backObjectIndex = i; break; }
 			}
 			if (backObjectIndex == ~0u) throw BuildingException(this, "Traversable window is missing its back-sector object");
-			for (uint32_t ix = x; ix < x + cellsWide; ++ix)
-			{
-				auto& backCell = mLayers[layerBehind(layerIndex)]->getCellDefinition(ix, y);
-				backCell.sectorObjectIndex = backObjectIndex;
-				backCell.sectorObjectType = SectorObjectType::Window;
-			}
+			for (uint32_t iy = y; iy < y + decksHigh; ++iy)
+				for (uint32_t ix = x; ix < x + cellsWide; ++ix)
+				{
+					auto& backCell = mLayers[layerBehind(layerIndex)]->getCellDefinition(ix, iy);
+					backCell.sectorObjectIndex = backObjectIndex;
+					backCell.sectorObjectType = SectorObjectType::Window;
+				}
 		}
 
 		// Set layers
-		for (uint32_t ix = x; ix < x + cellsWide; ++ix)
-		{
-			auto& cellDef = layer->getCellDefinition(ix, y);
+		for (uint32_t iy = y; iy < y + decksHigh; ++iy)
+			for (uint32_t ix = x; ix < x + cellsWide; ++ix)
+			{
+				auto& cellDef = layer->getCellDefinition(ix, iy);
 
-			cellDef.sectorObjectIndex = windowIndex;
-			cellDef.sectorObjectType = SectorObjectType::Window;
-		}
+				cellDef.sectorObjectIndex = windowIndex;
+				cellDef.sectorObjectType = SectorObjectType::Window;
+			}
 
 		ConstructionRecord record{ ConstructionType::Window };
 		record.a = layerIndex; record.b = y; record.c = x; record.d = cellsWide; record.e = decksHigh;

@@ -322,8 +322,9 @@ namespace
 	struct ObjectMoveState
 	{
 		bool dragging{ false };
+		ResizeEdge edge{ ResizeEdge::Move };
 		ImVec2 pressPosition{};
-		uint32_t originalX{ 0 }, originalY{ 0 };
+		uint32_t originalX{ 0 }, originalY{ 0 }, originalWidth{ 0 }, originalHeight{ 0 };
 		core::Building::ObjectMovePlan preview;
 	};
 
@@ -356,14 +357,18 @@ namespace
 	}
 
 	void beginObjectMove(shared_ptr<const core::Building> const& building,
-		shared_ptr<const core::SectorObject> const& object, uint32_t objectIndex)
+		shared_ptr<const core::SectorObject> const& object, uint32_t objectIndex,
+		ResizeEdge edge = ResizeEdge::Move)
 	{
 		if (!building || !object || gObjectMove.dragging) return;
 		auto owner = object->getSector();
 		gObjectMove.dragging = true;
+		gObjectMove.edge = edge;
 		gObjectMove.pressPosition = ImGui::GetIO().MousePos;
 		gObjectMove.originalX = object->getCellX();
 		gObjectMove.originalY = object->getCellY();
+		gObjectMove.originalWidth = (uint32_t)ceil(object->getSize().x);
+		gObjectMove.originalHeight = (uint32_t)ceil(object->getSize().y);
 		if (object->getObjectType() == core::SectorObjectType::Marker)
 		{
 			auto marker = static_pointer_cast<const core::MarkerSectorObject>(object)->getMarker();
@@ -376,8 +381,12 @@ namespace
 			// Editor placement coordinates identify the cell to the right (offset 0.0).
 			++gObjectMove.originalX;
 		}
-		gObjectMove.preview = building->planMoveSectorObject(owner->getIndex(), objectIndex,
-			gObjectMove.originalX, gObjectMove.originalY);
+		gObjectMove.preview = edge != ResizeEdge::Move
+			? building->planResizeSectorWindow(owner->getIndex(), objectIndex,
+				gObjectMove.originalX, gObjectMove.originalY,
+				gObjectMove.originalWidth, gObjectMove.originalHeight)
+			: building->planMoveSectorObject(owner->getIndex(), objectIndex,
+				gObjectMove.originalX, gObjectMove.originalY);
 	}
 
 	void resetPaint(bool clearTool = true)
@@ -7170,6 +7179,31 @@ namespace
 		resetAgentMove();
 	}
 
+	ResizeEdge hoveredWindowResizeEdge(shared_ptr<const core::SectorObject> const& object,
+		ImVec2 mouse)
+	{
+		if (!object || object->getObjectType() != core::SectorObjectType::Window)
+			return ResizeEdge::None;
+		auto topLeft = worldToScreen({ (float)object->getCellX(),
+			(float)object->getCellY() + object->getSize().y });
+		auto bottomRight = worldToScreen({
+			(float)object->getCellX() + object->getSize().x, (float)object->getCellY() });
+		constexpr float handleRadius = 6.0f;
+		if (mouse.x < topLeft.x - handleRadius || mouse.x > bottomRight.x + handleRadius
+			|| mouse.y < topLeft.y - handleRadius || mouse.y > bottomRight.y + handleRadius)
+			return ResizeEdge::None;
+		struct Candidate { ResizeEdge edge; float distance; };
+		Candidate candidates[] = {
+			{ ResizeEdge::Left, abs(mouse.x - topLeft.x) },
+			{ ResizeEdge::Right, abs(mouse.x - bottomRight.x) },
+			{ ResizeEdge::Top, abs(mouse.y - topLeft.y) },
+			{ ResizeEdge::Bottom, abs(mouse.y - bottomRight.y) }
+		};
+		auto closest = min_element(begin(candidates), end(candidates),
+			[](auto const& left, auto const& right) { return left.distance < right.distance; });
+		return closest->distance <= handleRadius ? closest->edge : ResizeEdge::None;
+	}
+
 	void updateObjectMove(shared_ptr<core::Building> const& building)
 	{
 		auto& io = ImGui::GetIO();
@@ -7220,12 +7254,22 @@ namespace
 			return;
 		}
 
+		auto resizeEdge = gObjectMove.dragging ? gObjectMove.edge
+			: gWorldHovered ? hoveredWindowResizeEdge(gSelectedSectorObject, io.MousePos)
+				: ResizeEdge::None;
+		if (resizeEdge == ResizeEdge::Left || resizeEdge == ResizeEdge::Right)
+			ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+		else if (resizeEdge == ResizeEdge::Top || resizeEdge == ResizeEdge::Bottom)
+			ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
 		if (!gObjectMove.dragging && gWorldHovered
-			&& gHoveredSectorObject == gSelectedSectorObject && io.MouseClicked[0])
-			beginObjectMove(building, gSelectedSectorObject, objectIndex);
+			&& (gHoveredSectorObject == gSelectedSectorObject || resizeEdge != ResizeEdge::None)
+			&& io.MouseClicked[0])
+			beginObjectMove(building, gSelectedSectorObject, objectIndex,
+				resizeEdge == ResizeEdge::None ? ResizeEdge::Move : resizeEdge);
 		if (!gObjectMove.dragging) return;
 
-		ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+		if (gObjectMove.edge == ResizeEdge::Move)
+			ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
 		if (ImGui::IsKeyPressed(ImGuiKey_Escape) || io.MouseClicked[1])
 		{
 			resetObjectMove();
@@ -7236,6 +7280,39 @@ namespace
 		int deltaY = (int)round(-(io.MousePos.y - gObjectMove.pressPosition.y) / CORE_DECK_HEIGHT_PIXELS);
 		int targetX = (int)gObjectMove.originalX + deltaX;
 		int targetY = (int)gObjectMove.originalY + deltaY;
+		int targetWidth = (int)gObjectMove.originalWidth;
+		int targetHeight = (int)gObjectMove.originalHeight;
+		bool const resizingWindow = gObjectMove.edge != ResizeEdge::Move;
+		if (gObjectMove.edge == ResizeEdge::Left)
+		{
+			auto right = (int)gObjectMove.originalX + (int)gObjectMove.originalWidth;
+			targetX = clamp((int)gObjectMove.originalX + deltaX, 0, right - 1);
+			targetY = (int)gObjectMove.originalY;
+			targetWidth = right - targetX;
+		}
+		else if (gObjectMove.edge == ResizeEdge::Right)
+		{
+			auto right = clamp((int)gObjectMove.originalX + (int)gObjectMove.originalWidth
+				+ deltaX, (int)gObjectMove.originalX + 1, (int)building->getCellsWide());
+			targetX = (int)gObjectMove.originalX;
+			targetY = (int)gObjectMove.originalY;
+			targetWidth = right - targetX;
+		}
+		else if (gObjectMove.edge == ResizeEdge::Bottom)
+		{
+			auto top = (int)gObjectMove.originalY + (int)gObjectMove.originalHeight;
+			targetX = (int)gObjectMove.originalX;
+			targetY = clamp((int)gObjectMove.originalY + deltaY, 0, top - 1);
+			targetHeight = top - targetY;
+		}
+		else if (gObjectMove.edge == ResizeEdge::Top)
+		{
+			auto top = clamp((int)gObjectMove.originalY + (int)gObjectMove.originalHeight
+				+ deltaY, (int)gObjectMove.originalY + 1, (int)building->getDecksHigh());
+			targetX = (int)gObjectMove.originalX;
+			targetY = (int)gObjectMove.originalY;
+			targetHeight = top - targetY;
+		}
 		bool const targetInWorld = targetX >= 0 && targetY >= 0
 			&& targetX < (int)building->getCellsWide() && targetY < (int)building->getDecksHigh();
 		if (!targetInWorld)
@@ -7243,11 +7320,18 @@ namespace
 			gObjectMove.preview.valid = false;
 			gObjectMove.preview.diagnostic = "Drop the object inside the world";
 		}
-		else if (gObjectMove.preview.x != (uint32_t)targetX || gObjectMove.preview.y != (uint32_t)targetY
+		else if (gObjectMove.preview.x != (uint32_t)targetX
+			|| gObjectMove.preview.y != (uint32_t)targetY
+			|| (resizingWindow && (gObjectMove.preview.previewWidth != (uint32_t)targetWidth
+				|| gObjectMove.preview.previewHeight != (uint32_t)targetHeight))
 			|| gObjectMove.preview.diagnostic == "Drop the object inside the world")
 		{
-			gObjectMove.preview = building->planMoveSectorObject(owner->getIndex(), objectIndex,
-				(uint32_t)targetX, (uint32_t)targetY);
+			gObjectMove.preview = resizingWindow
+				? building->planResizeSectorWindow(owner->getIndex(), objectIndex,
+					(uint32_t)targetX, (uint32_t)targetY,
+					(uint32_t)targetWidth, (uint32_t)targetHeight)
+				: building->planMoveSectorObject(owner->getIndex(), objectIndex,
+					(uint32_t)targetX, (uint32_t)targetY);
 		}
 
 		if (io.MouseReleased[0])
@@ -7258,7 +7342,9 @@ namespace
 				return;
 			}
 			if (gObjectMove.preview.x == gObjectMove.originalX
-				&& gObjectMove.preview.y == gObjectMove.originalY)
+				&& gObjectMove.preview.y == gObjectMove.originalY
+				&& gObjectMove.preview.previewWidth == gObjectMove.originalWidth
+				&& gObjectMove.preview.previewHeight == gObjectMove.originalHeight)
 			{
 				resetObjectMove();
 				return;

@@ -421,6 +421,88 @@ namespace
 			&& movedMarker->getCellX() == 8;
 	}
 
+	bool windowResizeUsesWindowPlacementRules()
+	{
+		core::Building building("Window resizing", 12, 3);
+		auto front = building.addRoom("Front", 0, 0, 0, 8, 3);
+		building.addRoom("Front neighbour", 0, 0, 8, 4, 3);
+		building.addRoom("Behind", 1, 0, 0, 12, 3);
+		core::Building::CreateWindowOptions options;
+		options.traversable = true;
+		options.initialState = core::Window::State::Tinted;
+		options.style = core::Window::Style::Tinted;
+		// Palette placement creates a one-cell aperture; resizing does the rest.
+		auto created = building.addSectorWindow(0, 0, 3, 1, 1, options);
+		if (created.window.sector->getObject(created.window.index)->getSize()
+			!= core::Vector2{ 1.0f, 1.0f }) return false;
+		building.finishBuild();
+		building.pauseSimulation();
+
+		auto findWindowIndex = [](std::shared_ptr<const core::Sector> const& owner,
+			std::shared_ptr<const core::SectorObject> const& object)
+		{
+			for (uint32_t i = 0; i < owner->getNumObjects(); ++i)
+				if (owner->getObject(i) == object) return i;
+			return ~0u;
+		};
+		auto resize = [&](std::shared_ptr<const core::SectorObject> const& object,
+			uint32_t x, uint32_t y, uint32_t width, uint32_t height)
+		{
+			auto owner = object->getSector();
+			auto index = findWindowIndex(owner, object);
+			if (index == ~0u) return std::shared_ptr<const core::SectorObject>{};
+			auto plan = building.planResizeSectorWindow(
+				owner->getIndex(), index, x, y, width, height);
+			return plan.valid ? building.applyObjectMove(plan)
+				: std::shared_ptr<const core::SectorObject>{};
+		};
+
+		auto resized = resize(created.window.sector->getObject(created.window.index), 1, 0, 3, 1);
+		if (!resized || resized->getCellX() != 1
+			|| resized->getSize() != core::Vector2{ 3.0f, 1.0f }) return false;
+		resized = resize(resized, 1, 0, 6, 1);
+		if (!resized || resized->getSize() != core::Vector2{ 6.0f, 1.0f }) return false;
+
+		auto owner = resized->getSector();
+		auto index = findWindowIndex(owner, resized);
+		if (index == ~0u
+			|| building.planResizeSectorWindow(owner->getIndex(), index, 1, 0, 0, 1).valid
+			|| building.planResizeSectorWindow(owner->getIndex(), index, 1, 0, 6, 0).valid
+			|| building.planResizeSectorWindow(owner->getIndex(), index, 1, 0, 8, 1).valid
+			|| building.planResizeSectorWindow(owner->getIndex(), index, 1, 0, 12, 1).valid)
+			return false;
+		building.addSectorMarker(front, 0, 7.5f);
+		if (building.planResizeSectorWindow(owner->getIndex(), index, 1, 0, 7, 1).valid)
+			return false;
+
+		resized = resize(resized, 1, 0, 6, 3);
+		if (!resized || resized->getSize() != core::Vector2{ 6.0f, 3.0f }) return false;
+		std::string diagnostic;
+		if (building.canAddSectorWindow(0, 2, 2, 1, 1, &diagnostic)) return false;
+		owner = resized->getSector();
+		index = findWindowIndex(owner, resized);
+		if (index == ~0u
+			|| building.planResizeSectorWindow(owner->getIndex(), index, 1, 0, 6, 4).valid)
+			return false;
+		resized = resize(resized, 1, 1, 6, 2);
+		if (!resized || resized->getCellY() != 1
+			|| resized->getSize() != core::Vector2{ 6.0f, 2.0f }) return false;
+
+		owner = resized->getSector();
+		index = findWindowIndex(owner, resized);
+		building.addSectorMarker(front, 0, 2.5f);
+		if (index == ~0u
+			|| building.planResizeSectorWindow(owner->getIndex(), index, 1, 0, 6, 3).valid)
+			return false;
+
+		if (!building.rebuildTraversalTopology()) return false;
+		core::Building::CreateWindowOptions retained;
+		return building.getSectorWindowOptions(0, 1, 1, 6, 2, retained)
+			&& retained.traversable && retained.initialState == core::Window::State::Tinted
+			&& retained.style == core::Window::Style::Tinted
+			&& building.isSimulationPaused() && building.isTraversalTopologyValid();
+	}
+
 	bool staircasePathSpansOuterCellEdges()
 	{
 		core::Staircase risingRight(5, 0, 3, CORE_SIDE_RIGHT);
@@ -4470,6 +4552,11 @@ int main(int argc, char** argv)
 		if (!objectMoveValidatesAndRebuildsOnceCommitted())
 		{
 			std::cerr << "FAIL: Object movement did not validate and rebuild atomically\n";
+			return 1;
+		}
+		if (!windowResizeUsesWindowPlacementRules())
+		{
+			std::cerr << "FAIL: Window resizing did not preserve options or placement rules\n";
 			return 1;
 		}
 		if (!staircasePathSpansOuterCellEdges())

@@ -209,6 +209,7 @@ namespace core
 			// Preview dimensions may differ from the source object (Room Ladders
 			// and PlatformLifts recalculate their height at the destination).
 			uint32_t previewWidth{ 0 }, previewHeight{ 0 };
+			bool windowResize{ false };
 			std::string diagnostic;
 			std::vector<std::string> consequences;
 
@@ -1357,6 +1358,12 @@ namespace core
 
 		ObjectMovePlan planMoveSectorObject(uint32_t sectorIndex, uint32_t objectIndex,
 			uint32_t x, uint32_t y) const;
+
+		// Windows resize from any edge. The resulting plan uses the same atomic replay
+		// path as movement, preserving authored options while validating the complete
+		// new footprint against normal Window placement rules.
+		ObjectMovePlan planResizeSectorWindow(uint32_t sectorIndex, uint32_t objectIndex,
+			uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh) const;
 
 		std::shared_ptr<const SectorObject> applyObjectMove(ObjectMovePlan const& plan);
 

@@ -3020,6 +3020,15 @@ namespace core
 		}
 
 		auto const type = object->getObjectType();
+		auto const targetWidth = type == SectorObjectType::Window && plan.windowResize
+			? plan.previewWidth : (uint32_t)ceil(object->getSize().x);
+		auto const targetHeight = type == SectorObjectType::Window && plan.windowResize
+			? plan.previewHeight : (uint32_t)ceil(object->getSize().y);
+		if (type == SectorObjectType::Window && (targetWidth == 0 || targetHeight == 0))
+		{
+			diagnostic = "A Window must be at least one cell wide and one deck high";
+			return false;
+		}
 		if (type == SectorObjectType::Walkway && (plan.x != sourceX || plan.y != sourceY)
 			&& walkwayHasOccupant(owner, sourceX, sourceY))
 		{
@@ -3078,9 +3087,9 @@ namespace core
 			return false;
 		}
 		auto targetRight = type == SectorObjectType::BulkheadDoor
-			? (uint64_t)plan.x + 1 : (uint64_t)plan.x + (uint32_t)ceil(object->getSize().x);
+			? (uint64_t)plan.x + 1 : (uint64_t)plan.x + targetWidth;
 		uint64_t targetTop = type == SectorObjectType::BulkheadDoor
-			? (uint64_t)plan.y + 1 : (uint64_t)plan.y + (uint32_t)ceil(object->getSize().y);
+			? (uint64_t)plan.y + 1 : (uint64_t)plan.y + targetHeight;
 		if (type == SectorObjectType::Lift)
 		{
 			auto room = dynamic_pointer_cast<const Location>(owner);
@@ -3201,7 +3210,9 @@ namespace core
 		case SectorObjectType::BulkheadDoor:
 			found->a = owner->getLayerIndex(); found->b = plan.y; found->c = plan.x;
 			found->i = CORE_SIDE_LEFT; break;
-		case SectorObjectType::Window: found->b = plan.y; found->c = plan.x; break;
+		case SectorObjectType::Window:
+			found->b = plan.y; found->c = plan.x;
+			found->d = targetWidth; found->e = targetHeight; break;
 		case SectorObjectType::ForceBridge:
 		case SectorObjectType::Ladder:
 		case SectorObjectType::Lift:
@@ -4330,6 +4341,36 @@ namespace core
 				}
 			}
 		}
+		return plan;
+	}
+
+	Building::ObjectMovePlan Building::planResizeSectorWindow(uint32_t sectorIndex,
+		uint32_t objectIndex, uint32_t x, uint32_t y, uint32_t cellsWide,
+		uint32_t decksHigh) const
+	{
+		ObjectMovePlan plan;
+		plan.sectorIndex = sectorIndex;
+		plan.objectIndex = objectIndex;
+		plan.x = x;
+		plan.y = y;
+		plan.previewWidth = cellsWide;
+		plan.previewHeight = decksHigh;
+		plan.windowResize = true;
+		if (sectorIndex >= mSectors.size() || !mSectors[sectorIndex]
+			|| objectIndex >= mSectors[sectorIndex]->getNumObjects())
+		{
+			plan.diagnostic = "The selected Window no longer exists";
+			return plan;
+		}
+		auto object = mSectors[sectorIndex]->getObject(objectIndex);
+		if (!object || object->getObjectType() != SectorObjectType::Window)
+		{
+			plan.diagnostic = "Only Windows can be resized this way";
+			return plan;
+		}
+		vector<ConstructionRecord> records;
+		uint32_t ignoredSector, ignoredObject;
+		plan.valid = prepareObjectMove(plan, records, ignoredSector, ignoredObject, plan.diagnostic);
 		return plan;
 	}
 
