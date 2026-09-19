@@ -10,6 +10,7 @@
 #include "core/StairwellTransit.h"
 #include "core/StaircaseTransit.h"
 #include "core/Location.h"
+#include "core/SectorType.h"
 #include "core/Background.h"
 #include "core/DoorSectorObject.h"
 #include "core/BulkheadDoorSectorObject.h"
@@ -1743,8 +1744,10 @@ namespace core
 					if ((doorMask & (1u << doorOffset)) == 0) continue;
 					auto doorX = x + offset + car * (authored->e + 1) + doorOffset;
 					auto const& cell = mLayers[landingLayer]->getCellDefinition(doorX, y);
+					// A carriage door lands on any location-like Sector, a Facade
+					// included (ADR 0003, ticket #52).
 					bool valid = cell.sectorIndex != ~0u
-						&& mSectors[cell.sectorIndex]->getType() == SectorType::Location
+						&& isLocationLike(mSectors[cell.sectorIndex]->getType())
 						&& cell.isTraversableOnFoot() && cell.markers.empty();
 					if (valid && cell.hasObject())
 					{
@@ -2022,10 +2025,10 @@ namespace core
 		auto const& lower = mLayers[landingLayer]->getCellDefinition(x, y);
 		auto const& upper = mLayers[landingLayer]->getCellDefinition(x, upperY);
 		if (lower.sectorIndex == ~0u || !mSectors[lower.sectorIndex]
-			|| mSectors[lower.sectorIndex]->getType() != SectorType::Location)
+			|| !isLocationLike(mSectors[lower.sectorIndex]->getType()))
 		{ plan.diagnostic = format("A Location on the Layer in front is required at {},{}", x, y); return plan; }
 		if (upper.sectorIndex == ~0u || !mSectors[upper.sectorIndex]
-			|| mSectors[upper.sectorIndex]->getType() != SectorType::Location)
+			|| !isLocationLike(mSectors[upper.sectorIndex]->getType()))
 		{ plan.diagnostic = format("A Location on the Layer in front is required at {},{}", x, upperY); return plan; }
 		if (lower.sectorIndex == upper.sectorIndex)
 		{ plan.diagnostic = "A Ladder must connect two different Locations on the Layer in front"; return plan; }
@@ -2341,8 +2344,10 @@ namespace core
 		for (uint32_t iy = y; iy < y + options.decksHigh; ++iy)
 		{
 			auto const& first = mLayers[landingLayer]->getCellDefinition(x, iy);
+			// A Stairwell lands on any location-like Sector, a Facade included
+			// (ADR 0003, ticket #52).
 			if (first.sectorIndex == ~0u || !mSectors[first.sectorIndex]
-				|| mSectors[first.sectorIndex]->getType() != SectorType::Location)
+				|| !isLocationLike(mSectors[first.sectorIndex]->getType()))
 			{ plan.diagnostic = format("A Location on the Layer in front is required at {},{}", x, iy); return plan; }
 			for (uint32_t ix = x; ix < x + 2; ++ix)
 			{
@@ -2451,7 +2456,10 @@ namespace core
 			auto const& cell = candidate->mLayers[0]->getCellDefinition(x, y);
 			if (cell.sectorIndex == ~0u) return nullptr;
 			auto sector = candidate->getSector(cell.sectorIndex);
-			return sector && sector->getType() == SectorType::Location ? sector : nullptr;
+			// Transit landings survive a Location edit when the Sector behind them
+			// is location-like, a Facade included, so a Facade landing behaves
+			// exactly as a Room landing does (ADR 0003, ticket #52).
+			return sector && isLocationLike(sector->getType()) ? sector : nullptr;
 		};
 
 		try

@@ -1,4 +1,4 @@
-// Facade checks, for tickets #43, #44, #45, #48 and #51.
+// Facade checks, for tickets #43, #44, #45, #48, #51 and #52.
 //
 // A Facade is an occupiable Location whose perimeter walls are all open by
 // construction: it hosts objects and agents exactly as a Room does, owns
@@ -16,7 +16,10 @@
 // and a Background stays out of the pathing world entirely; from #48, a
 // Door accepts a Facade as its front Sector and as its back Sector; and
 // from #51, hit-testing resolves through a Facade so hosted controls
-// can be hovered and clicked.
+// can be hovered and clicked; and from #52, Transit landings: every Transit
+// type - Ladder, Stairwell, Lift, Shuttle and Staircase - lands on a Facade
+// exactly as it lands on a Room, its landing Vertex is a VertexType::Location,
+// and the whole menagerie round-trips through a canonical save/load.
 
 #include <array>
 #include <cstdint>
@@ -39,6 +42,7 @@
 #include "core/SectorEdge.h"
 #include "core/SectorObjectType.h"
 #include "core/SectorType.h"
+#include "core/VertexType.h"
 #include "core/SerializationException.h"
 #include "core/Transit.h"
 #include "core/YamlSerializer.h"
@@ -1261,6 +1265,287 @@ agents: []
 		check(0, 3, "Facade left of Background");
 		check(3, 0, "Background left of Facade");
 	}
+
+	//
+	// Ticket #52: Transit landings.
+	//
+	// Before #52 each Transit kept its own landing rule - Lift and Staircase
+	// accepted a Facade through the Location cast, Ladder, Stairwell and
+	// Shuttle refused it on a plain SectorType::Location identity test. The
+	// rule is now one rule: a Transit lands on anything isLocationLike()
+	// admits, so a Facade lands exactly as a Room does and a Background -
+	// which is not in the pathing world at all - still does not.
+	//
+	// The three Sectors a Transit can be offered on the Layer in front of it.
+	enum class LandingKind { Facade, Room, Background };
+
+	std::string nameOf(LandingKind kind)
+	{
+		switch (kind)
+		{
+		case LandingKind::Facade: return "Facade";
+		case LandingKind::Room: return "Room";
+		case LandingKind::Background: return "Background";
+		}
+		return "Unknown";
+	}
+
+	uint32_t addLanding(core::Building& building, LandingKind kind, uint32_t layer,
+		uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t decksHigh)
+	{
+		switch (kind)
+		{
+		case LandingKind::Facade:
+			return building.addFacade(layer, y, x, cellsWide, decksHigh);
+		case LandingKind::Room:
+			return building.addRoom("Landing", layer, y, x, cellsWide, decksHigh);
+		case LandingKind::Background:
+			return building.addBackground(layer, y, x, cellsWide, decksHigh);
+		}
+		throw std::runtime_error("Unknown landing kind");
+	}
+
+	// What the add itself says about a landing, so a refusal arrives with its
+	// reason rather than as a bare boolean.
+	std::string addRefusal(std::function<void()> action)
+	{
+		try
+		{
+			action();
+		}
+		catch (std::exception const& e)
+		{
+			return e.what();
+		}
+		return {};
+	}
+
+	// Every Transit type offered the same landing geometry with each of the
+	// three landing Sectors. The Facade column must match the Room column and
+	// the Background column must stay refused, on both the canAdd query and
+	// the add itself, so the palette preview and the build cannot disagree.
+	void everyTransitLandsOnAFacadeAsItDoesOnARoom()
+	{
+		for (auto const kind : { LandingKind::Facade, LandingKind::Room, LandingKind::Background })
+		{
+			auto const expected = kind != LandingKind::Background;
+			std::string diagnostic;
+
+			auto const verdict = [&](char const* transit, bool accepted)
+			{
+				require(accepted == expected,
+					std::format("A {} landing on a {} was {} (expected {}): {}",
+						transit, nameOf(kind), accepted ? "accepted" : "refused",
+						expected ? "accepted" : "refused", diagnostic).c_str());
+			};
+
+			// Ladder: the Sector under test is the lower landing, a fixed Room
+			// the upper one, both on the Layer in front of the Ladder's own.
+			{
+				core::Building building("Ladder landing", 8, 3);
+				addLanding(building, kind, 0, 0, 0, 1, 1);
+				building.addRoom("Above", 0, 1, 0, 1, 2);
+				verdict("Ladder", building.canAddLadder(1, 0, 0, 2, &diagnostic));
+				auto const refusal = addRefusal([&] { building.addLadder(1, 0, 0, { 2, false, true }); });
+				require(refusal.empty() == expected,
+					std::format("addLadder() over a {} landing said: {}", nameOf(kind), refusal).c_str());
+			}
+
+			// Stairwell: two cells of the Sector under test on each landing deck.
+			{
+				core::Building building("Stairwell landing", 8, 3);
+				addLanding(building, kind, 0, 0, 0, 2, 1);
+				building.addRoom("Above", 0, 1, 0, 2, 2);
+				verdict("Stairwell", building.canAddStairwell(1, 0, 0, 2, &diagnostic));
+				auto const refusal = addRefusal([&] { building.addStairwell(1, 0, 0, 2, CORE_SIDE_RIGHT); });
+				require(refusal.empty() == expected,
+					std::format("addStairwell() over a {} landing said: {}", nameOf(kind), refusal).c_str());
+			}
+
+			// Lift: two stacked landing Sectors, one per stop row - only a
+			// Sector's own bottom deck is walkable floor - with a one-cell shaft
+			// inside them so each stop keeps its call-button space. The landing
+			// rows are the same read the palette preview uses, and the add
+			// follows them.
+			{
+				core::Building building("Lift landing", 8, 3);
+				addLanding(building, kind, 0, 0, 0, 3, 1);
+				addLanding(building, kind, 0, 1, 0, 3, 1);
+				core::Building::CreateLiftOptions options;
+				options.cellsWide = 1;
+				options.stopOffsets = { 0, 1 };
+				auto const rows = building.getLiftLandingRows(1, 0, 1, 1, 2);
+				size_t usable = 0;
+				for (auto const& row : rows)
+					if (row.usableForStop()) ++usable;
+				require(usable == (expected ? 2u : 0u),
+					std::format("The Lift found {} usable landing rows over a {} (expected {})",
+						usable, nameOf(kind), expected ? 2u : 0u).c_str());
+				auto const refusal = addRefusal([&] { building.addLift(1, 0, 1, options); });
+				require(refusal.empty() == expected,
+					std::format("addLift() over a {} landing said: {}", nameOf(kind), refusal).c_str());
+			}
+
+			// Shuttle: one carriage whose door cell lands on the Sector under
+			// test at both stops.
+			{
+				core::Building building("Shuttle landing", 16, 3);
+				addLanding(building, kind, 0, 0, 6, 7, 1);
+				core::Building::CreateShuttleOptions options{ 1, 3, { 0, 4 }, 0 };
+				auto const refusal = addRefusal([&] { building.addShuttle(1, 0, 6, 7, options); });
+				require(refusal.empty() == expected,
+					std::format("addShuttle() landing its carriage doors on a {} said: {}",
+						nameOf(kind), refusal).c_str());
+			}
+
+			// Staircase: the Sector under test is the lower landing and the
+			// upper landing's own Sector; the upper landing meets it through
+			// the open right wall the two share (a Facade's half is already
+			// open, so only the neighbour's wall comes down).
+			{
+				core::Building building("Staircase landing", 8, 3);
+				auto const landing = addLanding(building, kind, 0, 0, 0, 2, 2);
+				auto const next = building.addRoom("Next", 0, 1, 2, 1, 1);
+				if (expected)
+				{
+					building.pauseSimulation();
+					// One removal opens both halves of the boundary; a Facade's
+					// half is already open, so there the neighbour's wall is the
+					// only one standing.
+					if (kind == LandingKind::Room)
+						building.removeLocationWall(landing, 1, CORE_SIDE_RIGHT);
+					else
+						building.removeLocationWall(next, 0, CORE_SIDE_LEFT);
+				}
+				verdict("Staircase", building.canAddStaircase(1, 0, 0, 2, CORE_SIDE_RIGHT, &diagnostic));
+				auto const refusal = addRefusal([&] { building.addStaircase(1, 0, 0, 2, CORE_SIDE_RIGHT, 0.5f); });
+				require(refusal.empty() == expected,
+					std::format("addStaircase() over a {} landing said: {}", nameOf(kind), refusal).c_str());
+			}
+		}
+	}
+
+	// One Building with every Transit type landing on a Facade: the Ladder and
+	// the Stairwell take a Facade below and a Room above, the Lift shaft sits
+	// inside a column of Facades one per stop row, the Shuttle's carriage
+	// doors land on one long Facade, and the Staircase rises from a Facade
+	// through its open right wall into the Facade beside it.
+	//
+	//   Layer 1  La | St St |   Li  | Sh Sh Sh Sh Sh Sh Sh | Sc Sc
+	//   Layer 0  F  | U  U  | FFF   | F  F  F  F  F  F  F  | F  F  F
+	//
+	// Every Facade landing row is its own Facade, because only a Sector's own
+	// bottom deck carries walkable floor.
+	void authorFacadeLandingMenagerie(core::Building& building,
+		uint32_t* facadeMarker = nullptr, uint32_t* upperMarker = nullptr)
+	{
+		auto const belowLadder = building.addFacade(0, 0, 0, 1, 1);
+		auto const aboveLadder = building.addRoom("Above the ladder", 0, 1, 0, 1, 2);
+		if (facadeMarker != nullptr)
+			building.addSectorMarker(belowLadder, 0, 0.5f, facadeMarker);
+		if (upperMarker != nullptr)
+			building.addSectorMarker(aboveLadder, 0, 0.5f, upperMarker);
+		building.addLadder(1, 0, 0, { 2, false, true });
+
+		building.addFacade(0, 0, 2, 2, 1);
+		building.addRoom("Above the stairwell", 0, 1, 2, 2, 2);
+		building.addStairwell(1, 0, 2, 2, CORE_SIDE_RIGHT);
+
+		building.addFacade(0, 0, 5, 3, 1);
+		building.addFacade(0, 1, 5, 3, 1);
+		core::Building::CreateLiftOptions liftOptions;
+		liftOptions.cellsWide = 1;
+		liftOptions.stopOffsets = { 0, 1 };
+		building.addLift(1, 0, 6, liftOptions);
+
+		building.addFacade(0, 0, 9, 7, 1);
+		core::Building::CreateShuttleOptions shuttleOptions{ 1, 3, { 0, 4 }, 0 };
+		building.addShuttle(1, 0, 9, 7, shuttleOptions);
+
+		building.addFacade(0, 0, 17, 2, 2);
+		building.addFacade(0, 1, 19, 1, 1);
+		building.addStaircase(1, 0, 17, 2, CORE_SIDE_RIGHT, 0.5f);
+
+		building.finishBuild();
+	}
+
+	// The Vertex constructors pick a landing Vertex's VertexType from the
+	// Sector it lands on. A Facade landing must be a VertexType::Location -
+	// a Ladder- or Lift-typed Facade Vertex would route agents through the
+	// transit's own traversal rules instead of the floor's.
+	void aFacadeLandingVertexIsALocationVertex()
+	{
+		core::Building building("Facade landing vertices", 22, 3);
+		authorFacadeLandingMenagerie(building);
+
+		auto const graph = building.getGraph();
+		require(graph != nullptr, "The menagerie Building has no Graph");
+
+		uint32_t facadeVertices = 0;
+		uint32_t transitVertices = 0;
+		for (auto const& vertex : graph->getVertices())
+		{
+			auto const sector = vertex->getSector();
+			require(sector != nullptr, "A Graph Vertex reported no Sector");
+			if (sector->getType() == core::SectorType::Facade)
+			{
+				++facadeVertices;
+				require(vertex->getType() == core::VertexType::Location,
+					std::format("A Facade landing Vertex is VertexType {} (subtype {}) on Sector {}, not a Location Vertex",
+						(int)vertex->getType(), (int)vertex->getSubType(), sector->getIndex()).c_str());
+			}
+			else if (vertex->getType() != core::VertexType::Location)
+			{
+				++transitVertices;
+			}
+		}
+
+		require(facadeVertices > 0, "The Facade landings produced no Facade Vertices to check");
+		require(transitVertices > 0,
+			"The menagerie produced no transit Vertices, which makes the Facade Vertex check vacuous");
+	}
+
+	// A Facade landing is not only accepted, it is wired: the route from the
+	// Facade floor up the Ladder and back down exists in both directions, so
+	// the Facade really is in the pathing world at the transit's top of the
+	// shaft and not merely tolerated at validation time.
+	void agentsCanRouteFromAFacadeThroughATransit()
+	{
+		core::Building building("Facade routing", 22, 3);
+		uint32_t facadeMarker = 0;
+		uint32_t upperMarker = 0;
+		authorFacadeLandingMenagerie(building, &facadeMarker, &upperMarker);
+
+		require(hasPath(building, facadeMarker, upperMarker),
+			"No route from a Facade floor up the Ladder to the Room above it");
+		require(hasPath(building, upperMarker, facadeMarker),
+			"No route back down the Ladder into the Facade");
+	}
+
+	// The widened landing rule has to survive the writer too: a map with
+	// every Transit landing on a Facade saves, replays, and re-saves
+	// unchanged, with each landing still attached to the Facade it was built
+	// against.
+	void transitLandingsOnAFacadeRoundTrip()
+	{
+		core::Building building("Facade landing replay", 22, 3);
+		authorFacadeLandingMenagerie(building);
+
+		auto const yaml = serializeBuilding(building);
+		core::Building loaded("placeholder", 1, 1);
+		loadInto(loaded, yaml);
+
+		require(loaded.getNumSectors() == building.getNumSectors(),
+			"The Facade-landing replay changed the Sector count");
+		require(sectorSignature(loaded) == sectorSignature(building),
+			("The Facade-landing replay moved a Sector\nexpected:\n" + sectorSignature(building)
+				+ "actual:\n" + sectorSignature(loaded)).c_str());
+		require(objectSignature(loaded) == objectSignature(building),
+			("The Facade-landing replay moved a SectorObject\nexpected:\n"
+				+ objectSignature(building) + "actual:\n" + objectSignature(loaded)).c_str());
+		require(serializeBuilding(loaded) == yaml,
+			"Re-saving the replayed Facade-landing Building changed its authored records");
+	}
 }
 
 void runFacadeSmokeChecks()
@@ -1290,4 +1575,8 @@ void runFacadeSmokeChecks()
 	facadeBesideHigherFloorDoesNotMerge();
 	wallRemovalAcceptsFacadeNeighboursBothWays();
 	facadeBesideBackgroundHasNoPathingInteraction();
+	everyTransitLandsOnAFacadeAsItDoesOnARoom();
+	aFacadeLandingVertexIsALocationVertex();
+	agentsCanRouteFromAFacadeThroughATransit();
+	transitLandingsOnAFacadeRoundTrip();
 }

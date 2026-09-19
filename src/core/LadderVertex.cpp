@@ -1,6 +1,7 @@
 #include "core/Defines.h"
 #include "core/LadderVertex.h"
 #include "core/Location.h"
+#include "core/SectorType.h"
 #include "core/Exceptions.h"
 
 
@@ -17,14 +18,14 @@ namespace core
 	*/
 
 	LadderVertex::LadderVertex(uint32_t id, shared_ptr<Sector> sector, shared_ptr<Ladder> ladder, float xOffset, float yOffset, int level)
-		: Vertex(id, sector->getType() == SectorType::Location ? VertexType::Location : VertexType::Ladder, VertexSubType::Ladder, sector, xOffset, yOffset)
+		: Vertex(id, isLocationLike(sector->getType()) ? VertexType::Location : VertexType::Ladder, VertexSubType::Ladder, sector, xOffset, yOffset)
 		, mLadder(ladder)
 		, mLevel(level)
 	{
 	}
 
 	LadderVertex::LadderVertex(shared_ptr<Sector> sector, shared_ptr<Ladder> ladder, float xOffset, float yOffset, int level)
-		: Vertex(sector->getType() == SectorType::Location ? VertexType::Location : VertexType::Ladder, VertexSubType::Ladder, sector, xOffset, yOffset)
+		: Vertex(isLocationLike(sector->getType()) ? VertexType::Location : VertexType::Ladder, VertexSubType::Ladder, sector, xOffset, yOffset)
 		, mLadder(ladder)
 		, mLevel(level)
 	{

@@ -1541,9 +1541,12 @@ namespace core
 			return reject("A Ladder must connect two different landing Locations");
 		auto lowerSector = mSectors[lower.sectorIndex];
 		auto upperSector = mSectors[upper.sectorIndex];
-		if (!lowerSector || lowerSector->getType() != SectorType::Location)
+		// A Ladder lands on any location-like Sector: a Room, a Corridor, or a
+		// Facade.  A Facade takes part in traversal exactly as a Room does
+		// (ADR 0003, ticket #52), so it is a valid Ladder landing.
+		if (!lowerSector || !isLocationLike(lowerSector->getType()))
 			return reject(format("A landing Location is required at {},{}", x, y));
-		if (!upperSector || upperSector->getType() != SectorType::Location)
+		if (!upperSector || !isLocationLike(upperSector->getType()))
 			return reject(format("A landing Location is required at {},{}", x, upperY));
 		if (!lower.isTraversableOnFoot())
 			return reject(format("The landing floor at {},{} is not traversable", x, y));
@@ -1598,15 +1601,16 @@ namespace core
 			throw BuildingException(this, format("{} - landing cells from {},{} to {},{} are the same sector, which blocks ladder being placed", caller, x, y0, x, y1));
 		}
 
-		// Ladders can only connect Locations
+		// Ladders can only connect location-like Sectors: Rooms, Corridors, and
+		// Facades (ADR 0003, ticket #52).
 		auto const& foreSector0 = _getSector(foreSectorIndex0);
 		auto const& foreSector1 = _getSector(foreSectorIndex1);
 
-		if (foreSector0->getType() != SectorType::Location)
+		if (!isLocationLike(foreSector0->getType()))
 		{
 			throw BuildingException(this, format("{} - landing cell at {},{} is not a Location, which blocks ladder being placed", caller, x, y0));
 		}
-		if (foreSector1->getType() != SectorType::Location)
+		if (!isLocationLike(foreSector1->getType()))
 		{
 			throw BuildingException(this, format("{} - landing cell at {},{} is not a Location, which blocks ladder being placed", caller, x, y1));
 		}
@@ -1704,7 +1708,9 @@ namespace core
 			if (first.sectorIndex == ~0u)
 				return reject(format("A landing Location is required at {},{}", x, iy));
 			auto sector = mSectors[first.sectorIndex];
-			if (!sector || sector->getType() != SectorType::Location)
+			// A Stairwell lands on any location-like Sector, a Facade included
+			// (ADR 0003, ticket #52).
+			if (!sector || !isLocationLike(sector->getType()))
 				return reject(format("A landing Location is required at {},{}", x, iy));
 			for (uint32_t ix = x; ix < x + 2; ++ix)
 			{
@@ -1780,10 +1786,11 @@ namespace core
 					throw BuildingException(this, format("{} - landing cell at {},{} is not occupied, which blocks stairwell being placed", caller, ix, iy));
 				}
 
-				// Stairwells can only connect Locations
+				// Stairwells can only connect location-like Sectors: Rooms,
+				// Corridors, and Facades (ADR 0003, ticket #52).
 				auto const& foreSector = getSector(foreSectorIndex);
 
-				if (foreSector->getType() != SectorType::Location)
+				if (!isLocationLike(foreSector->getType()))
 				{
 					throw BuildingException(this, format("{} - landing cell at {},{} is not a Location, which blocks stairwell being placed", caller, ix, iy));
 				}
@@ -2242,8 +2249,10 @@ namespace core
 				{
 					uint32_t cx = ix + car * (options.carWidth + 1) + doorOffsets[door];
 					auto const& cell = foreLayer->getCellDefinition(cx, y);
+					// A carriage door lands on any location-like Sector: a Room, a
+					// Corridor, or a Facade (ADR 0003, ticket #52).
 					bool supported = cell.sectorIndex != ~0u
-						&& getSector(cell.sectorIndex)->getType() == SectorType::Location;
+						&& isLocationLike(getSector(cell.sectorIndex)->getType());
 					if (!supported && !options.allowPartialLandings)
 						throw BuildingException(this, format("{} - door {} of carriage {} at stop offset {} has no supported landing",
 							caller, door, car, options.stopOffsets[i]));
@@ -2286,11 +2295,12 @@ namespace core
 					auto globalX = x + options.stopOffsets[stop]
 						+ car * (options.carWidth + 1) + doorOffsets[door];
 					auto const& cell = foreLayer->getCellDefinition(globalX, y);
-					// Same rule as the validation pass above: only a Location landing is
-					// supported. A Background behind a carriage door is omitted, never
-					// built into a threshold that touches it.
+					// Same rule as the validation pass above: only a location-like
+					// landing is supported, a Facade included. A Background behind a
+					// carriage door is omitted, never built into a threshold that
+					// touches it.
 					bool supported = cell.sectorIndex != ~0u
-						&& getSector(cell.sectorIndex)->getType() == SectorType::Location;
+						&& isLocationLike(getSector(cell.sectorIndex)->getType());
 					if (supported)
 						shuttleRes.doors[doorResultIndex(stop, car, door)] = _addSectorDoor(layerInFront(layerIndex), y, globalX,
 							{ 1, { true, false }, DoorActivationMode::Unavailable }, true);
@@ -2800,8 +2810,10 @@ namespace core
 				{
 					auto doorX = x + offset + car * (carWidth + 1) + doorOffset;
 					auto const& first = landing->getCellDefinition(doorX, y);
+					// A Shuttle stop lands on any location-like Sector, a Facade
+					// included (ADR 0003, ticket #52).
 					bool supported = first.sectorIndex != ~0u
-						&& mSectors[first.sectorIndex]->getType() == SectorType::Location;
+						&& isLocationLike(mSectors[first.sectorIndex]->getType());
 					supported = supported && first.isTraversableOnFoot()
 						&& !first.hasObject() && first.markers.empty();
 					if (supported)

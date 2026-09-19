@@ -1,6 +1,7 @@
 #include "core/Defines.h"
 #include "core/StairwellVertex.h"
 #include "core/Location.h"
+#include "core/SectorType.h"
 #include "core/Exceptions.h"
 
 
@@ -18,14 +19,14 @@ namespace core
 	*/
 
 	StairwellVertex::StairwellVertex(uint32_t id, shared_ptr<Sector> sector, shared_ptr<Stairwell> stairwell, float xOffset, float yOffset, uint32_t deckOffset)
-		: Vertex(id, sector->getType() == SectorType::Location ? VertexType::Location : VertexType::Stairwell, VertexSubType::Stairwell, sector, xOffset, yOffset)
+		: Vertex(id, isLocationLike(sector->getType()) ? VertexType::Location : VertexType::Stairwell, VertexSubType::Stairwell, sector, xOffset, yOffset)
 		, mStairwell(stairwell)
 		, mDeckOffset(deckOffset)
 	{
 	}
 
 	StairwellVertex::StairwellVertex(shared_ptr<Sector> sector, shared_ptr<Stairwell> stairwell, float xOffset, float yOffset, uint32_t deckOffset)
-		: Vertex(sector->getType() == SectorType::Location ? VertexType::Location : VertexType::Stairwell, VertexSubType::Stairwell, sector, xOffset, yOffset)
+		: Vertex(isLocationLike(sector->getType()) ? VertexType::Location : VertexType::Stairwell, VertexSubType::Stairwell, sector, xOffset, yOffset)
 		, mStairwell(stairwell)
 		, mDeckOffset(deckOffset)
 	{

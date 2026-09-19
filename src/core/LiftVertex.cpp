@@ -1,6 +1,7 @@
 #include "core/Defines.h"
 #include "core/LiftVertex.h"
 #include "core/Location.h"
+#include "core/SectorType.h"
 #include "core/Exceptions.h"
 
 
@@ -18,14 +19,14 @@ namespace core
 	*/
 
 	LiftVertex::LiftVertex(uint32_t id, shared_ptr<Sector> sector, shared_ptr<Lift> lift, float xOffset, float yOffset, uint32_t stopOffset)
-		: Vertex(id, sector->getType() == SectorType::Location ? VertexType::Location : VertexType::Lift, VertexSubType::Lift, sector, xOffset, yOffset)
+		: Vertex(id, isLocationLike(sector->getType()) ? VertexType::Location : VertexType::Lift, VertexSubType::Lift, sector, xOffset, yOffset)
 		, mLift(lift)
 		, mStopOffset(stopOffset)
 	{
 	}
 
 	LiftVertex::LiftVertex(shared_ptr<Sector> sector, shared_ptr<Lift> lift, float xOffset, float yOffset, uint32_t stopOffset)
-		: Vertex(sector->getType() == SectorType::Location ? VertexType::Location : VertexType::Lift, VertexSubType::Lift, sector, xOffset, yOffset)
+		: Vertex(isLocationLike(sector->getType()) ? VertexType::Location : VertexType::Lift, VertexSubType::Lift, sector, xOffset, yOffset)
 		, mLift(lift)
 		, mStopOffset(stopOffset)
 	{
