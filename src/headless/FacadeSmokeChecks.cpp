@@ -1,4 +1,4 @@
-// Facade checks, for tickets #43, #44, #45 and #48.
+// Facade checks, for tickets #43, #44, #45, #48 and #51.
 //
 // A Facade is an occupiable Location whose perimeter walls are all open by
 // construction: it hosts objects and agents exactly as a Room does, owns
@@ -14,7 +14,9 @@
 // is one continuous floor, a mismatched-floor neighbour does not merge,
 // wall removal accepts a Facade neighbour on either side of the boundary,
 // and a Background stays out of the pathing world entirely; from #48, a
-// Door accepts a Facade as its front Sector and as its back Sector.
+// Door accepts a Facade as its front Sector and as its back Sector; and
+// from #51, hit-testing resolves through a Facade so hosted controls
+// can be hovered and clicked.
 
 #include <array>
 #include <cstdint>
@@ -26,6 +28,7 @@
 
 #include "core/Background.h"
 #include "core/Building.h"
+#include "core/Button.h"
 #include "core/CellDefinition.h"
 #include "core/Defines.h"
 #include "core/Facade.h"
@@ -445,6 +448,73 @@ namespace
 		// The Facade still hosts nothing that a Room does not, and its perimeter
 		// is still open after all that object authoring.
 		everyEndIsOpen(*facadeIn(building, facadeIndex));
+	}
+
+	// Ticket #51: hit-testing must resolve through a Facade exactly as it does
+	// through a Room, so hosted controls - light switches, door buttons - and
+	// other sector objects inside a Facade can be hovered and clicked by the
+	// UI. Before the fix, Building::getObjectAtPosition only delegated to the
+	// Sector for a plain Location, so a Facade always hit-tested empty.
+	void hostedObjectsAreHitTestableThroughAFacade()
+	{
+		core::Building building("Hit-testing through a Facade", 12, 3);
+		auto const facadeIndex = building.addFacade(0, 0, 0, 4, 2);
+		auto const roomIndex = building.addRoom("Comparator", 0, 0, 4, 4, 2);
+		building.finishBuild();
+		building.pauseSimulation();
+
+		auto const facadeSwitch = building.addSectorLightSwitch(facadeIndex, 1);
+		auto const roomSwitch = building.addSectorLightSwitch(roomIndex, 1);
+
+		// Hit-test the centre of a light switch's Button and require that the
+		// hit resolves to that Button and its hosting SectorObject.
+		auto const hitSwitch = [](core::Building const& building,
+			core::Building::CreateObjectResult const& created, char const* what)
+		{
+			auto const object = created.sector->getObject(created.index);
+			require(object != nullptr
+				&& object->getObjectType() == core::SectorObjectType::InteractionPoint,
+				(std::string(what) + ": the light switch is not an InteractionPoint").c_str());
+			auto const button = std::dynamic_pointer_cast<const core::Button>(object->_getObject());
+			require(button != nullptr,
+				(std::string(what) + ": the InteractionPoint wraps no Button").c_str());
+			auto const center = button->getPosition() + button->getSize() * 0.5f;
+			std::shared_ptr<const core::SectorObject> hitObject;
+			auto const hit = building.getObjectAtPosition(0, center.x, center.y, &hitObject);
+			require(hit.get() == button.get(),
+				(std::string(what) + ": the hover ray missed the light switch").c_str());
+			require(hitObject == object,
+				(std::string(what) + ": the hit resolved the wrong SectorObject").c_str());
+		};
+
+		hitSwitch(building, roomSwitch, "A light switch in a Room");
+		hitSwitch(building, facadeSwitch, "A light switch in a Facade");
+
+		// Non-control hover: a Marker inside the Facade is hit-testable too.
+		auto const marker = building.addSectorMarker(facadeIndex, 0, 1.5f);
+		{
+			auto const object = building.getSector(facadeIndex)->getObject(marker.index);
+			require(object != nullptr
+				&& object->getObjectType() == core::SectorObjectType::Marker,
+				"The Facade Marker went missing before its hit-test");
+			auto const shape = object->_getObject();
+			core::Vector2 minExtent, maxExtent;
+			shape->getFullShape(minExtent, maxExtent);
+			auto const center = minExtent + (maxExtent - minExtent) * 0.5f;
+			std::shared_ptr<const core::SectorObject> hitObject;
+			auto const hit = building.getObjectAtPosition(0, center.x, center.y, &hitObject);
+			require(hit.get() == shape.get() && hitObject == object,
+				"The hover ray missed the Marker inside the Facade");
+		}
+
+		// And the Facade still says "nothing here" for an empty cell: the
+		// widening admits hit-tests, it does not make everything hittable.
+		{
+			std::shared_ptr<const core::SectorObject> hitObject;
+			auto const hit = building.getObjectAtPosition(0, 3.5f, 0.5f, &hitObject);
+			require(hit == nullptr && hitObject == nullptr,
+				"An empty Facade cell hit-tested as if it held something");
+		}
 	}
 
 	// A Bulkhead Door is set into a pair of wall ends. A Facade has none, so
@@ -1202,6 +1272,7 @@ void runFacadeSmokeChecks()
 	agentsMayBePlacedInAFacade();
 	objectHostingParityWithARoom();
 	roomSupportedObjectsPlaceInAFacade();
+	hostedObjectsAreHitTestableThroughAFacade();
 	bulkheadDoorsAreRefusedOnAFacade();
 	doorAcceptsAFacadeOnEitherSide();
 	wallCommandsRefuseTheFacadeButNotTowardIt();

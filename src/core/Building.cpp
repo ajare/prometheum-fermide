@@ -4987,7 +4987,11 @@ namespace core
 			auto const& cell = mLayers[layerIndex]->getCellDefinition((int)x, (int)y);
 			if (!cell.occupied()) return nullptr;
 			auto sector = getSector(cell.sectorIndex);
-			if (sector->getType() == SectorType::Location)
+			// A Facade hosts objects exactly as a Location does (ADR 0003), so
+			// hit-testing resolves through it too; without this, controls hosted
+			// by a Facade - light switches, door buttons - can never be hovered
+			// or clicked (ticket #51).
+			if (isLocationLike(sector->getType()))
 				return sector->getObjectAtPosition(x, y, sectorObject);
 			if (sector->getType() == SectorType::Ladder)
 				return dynamic_pointer_cast<const LadderTransit>(sector)->getLadder();
