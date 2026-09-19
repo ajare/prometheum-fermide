@@ -7,6 +7,8 @@
 #include <optional>
 #include <vector>
 
+#include "imgui/imgui.h"
+
 #include "core/Background.h"
 #include "core/Building.h"
 #include "core/Facade.h"
@@ -573,3 +575,12 @@ inline bool shouldRenderSectorAgents(core::SectorType /* sectorType */, LayerRen
 void renderGraph(std::shared_ptr<const core::Graph> graph, std::shared_ptr<const core::Building> building);
 
 void renderBuilding(std::shared_ptr<const core::Building> building);
+
+//
+// Draws one Sector for a single viewport pass: its surface fill, its
+// thresholds and objects, and its Agents, in the order the viewport paints
+// them. Declared here so the headless draw-order check (#49) can exercise
+// the real renderSector() draw-call order rather than a model of it.
+//
+void renderSector(std::shared_ptr<const core::Sector> sector, uint32_t layer,
+	LayerRenderStyle style, bool renderEdges, ImColor colour, ImDrawList* drawList);

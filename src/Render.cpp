@@ -4,15 +4,6 @@
 #include <set>
 #include <algorithm>
 
-#if defined(_WIN32)
-#include <Windows.h>
-#include <gl/GL.h>
-#elif defined(__linux__)
-#include <GL/glew.h>
-#else
-#error "Unsupported platform"
-#endif
-
 #include "imgui/imgui.h"
 #include "imgui/imgui_internal.h"
 #include "imgui/IconsFontAwesome5.h"
@@ -39,9 +30,14 @@
 
 #include "Main.h"
 #include "Render.h"
-#include "Helpers.h"
 #include "UISettings.h"
 #include "Exceptions.h"
+
+
+// Declared in Helpers.h alongside the OpenGL texture loaders, which the
+// renderer itself never calls. Declared here instead so Render.cpp compiles
+// without OpenGL headers and can be linked into the headless checks (#49).
+core::Vector2 getMouseWorldPosition();
 
 
 extern UISettings gUISettings;
@@ -1291,19 +1287,30 @@ void renderSector(shared_ptr<const core::Sector> sector, uint32_t layer, LayerRe
 	transformPosition(bounds0);
 	transformPosition(bounds1);
 
-	// The generic fill below uses the Layer's colour. A Background fills with its
-	// own colour in the type switch, so it is skipped here rather than being
-	// painted twice. A Facade does the same: its colour is its whole surface.
-	if (!ownColour)
+	// The Sector's surface fill. A Sector that carries no colour of its own
+	// takes the Layer's. A flat-colour Sector fills with its own colour here,
+	// where the generic fill sits - before the BEHIND object pass - so a Door
+	// or Window authored on a Facade keeps its aperture instead of being
+	// painted over by the flat fill (#49). The wireframe overlay contributes
+	// the outline only, never a fill (ADR 0002).
+	if (ownColour)
 	{
-		if (style == LayerRenderStyle::Wireframe)
-		{
-			drawList->AddRect({ bounds0.x, bounds0.y }, { bounds1.x, bounds1.y }, colour);
-		}
-		else
-		{
-			drawList->AddRectFilled({ bounds0.x, bounds0.y }, { bounds1.x, bounds1.y }, colour);
-		}
+		auto const surface = flatSurfaceColour(*sector);
+		assert(surface.has_value());
+		auto const fill = ImColor(surface->r, surface->g, surface->b, 255);
+
+		if (shouldFillBackground(style))
+			drawList->AddRectFilled({ bounds0.x, bounds0.y }, { bounds1.x, bounds1.y }, fill);
+		else if (shouldOutlineBackground(style))
+			drawList->AddRect({ bounds0.x, bounds0.y }, { bounds1.x, bounds1.y }, fill);
+	}
+	else if (style == LayerRenderStyle::Wireframe)
+	{
+		drawList->AddRect({ bounds0.x, bounds0.y }, { bounds1.x, bounds1.y }, colour);
+	}
+	else
+	{
+		drawList->AddRectFilled({ bounds0.x, bounds0.y }, { bounds1.x, bounds1.y }, colour);
 	}
 
 	// Thresholds are drawn before the sector-specific stuff so their apertures are
@@ -1352,28 +1359,9 @@ void renderSector(shared_ptr<const core::Sector> sector, uint32_t layer, LayerRe
 			renderStaircase(static_pointer_cast<const core::StaircaseTransit>(sector)->getStaircase(), drawList);
 		break;
 
-	case core::SectorType::Background:
-	case core::SectorType::Facade:
-		// A Background has no geometry of its own: its fill is its own opaque
-		// colour. Solid and Aperture fill - the latter already clipped to the
-		// Window by the caller. The wireframe overlay contributes the outline
-		// only, never a fill (ADR 0002), and that outline is the narrowing #35
-		// records against the umbrella's "no per-sector border": without it a
-		// Background outside an aperture would say nothing about the extent of
-		// the Layer behind. Hidden returned at the top. A Facade is drawn the
-		// same flat way (ADR 0003); its walkability is invisible in the fill.
-		{
-			auto const surface = flatSurfaceColour(*sector);
-			assert(surface.has_value());
-			auto const fill = ImColor(surface->r, surface->g, surface->b, 255);
-
-			if (shouldFillBackground(style))
-				drawList->AddRectFilled({ bounds0.x, bounds0.y }, { bounds1.x, bounds1.y }, fill);
-			else if (shouldOutlineBackground(style))
-				drawList->AddRect({ bounds0.x, bounds0.y }, { bounds1.x, bounds1.y }, fill);
-		}
-		break;
-
+	// Background and Facade carry no geometry of their own: their surface is
+	// the flat fill emitted above, before the thresholds, so nothing here can
+	// paint over an aperture (#49).
 	default:
 		break;
 	}

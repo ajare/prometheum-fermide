@@ -137,6 +137,14 @@ set_target_properties(prometheum-fermide-core PROPERTIES
 )
 
 add_executable(prometheum-fermide-headless
+    # The real renderer, linked headless so #49 can exercise renderSector's
+    # actual draw-call order. ImGui is compiled CPU-side only; the GUI-owned
+    # globals are stubbed in RenderGuiStubs.cpp.
+    src/Render.cpp
+    src/imgui/imgui.cpp
+    src/imgui/imgui_draw.cpp
+    src/imgui/imgui_tables.cpp
+    src/imgui/imgui_widgets.cpp
     src/headless/BackgroundPaintSmokeChecks.cpp
     src/headless/BackgroundPlacementSmokeChecks.cpp
     src/headless/BackgroundCascadeDeleteSmokeChecks.cpp
@@ -146,7 +154,9 @@ add_executable(prometheum-fermide-headless
     src/headless/FacadeSmokeChecks.cpp
     src/headless/FacadeEditorSmokeChecks.cpp
     src/headless/FacadeRenderSmokeChecks.cpp
+    src/headless/FacadeDrawOrderSmokeChecks.cpp
     src/headless/InteractionApiCompileCheck.cpp
+    src/headless/RenderGuiStubs.cpp
     src/headless/RenderOrderSmokeChecks.cpp
     src/headless/SerializationSmokeChecks.cpp
     src/headless/SmokeScenario.cpp
@@ -156,7 +166,12 @@ add_executable(prometheum-fermide-headless
     src/headless/WindowMultiBackgroundSmokeChecks.cpp
 )
 target_compile_features(prometheum-fermide-headless PRIVATE cxx_std_20)
-target_compile_definitions(prometheum-fermide-headless PRIVATE _CONSOLE)
+target_include_directories(prometheum-fermide-headless PRIVATE "${PF_INCLUDE_DIR}/imgui")
+target_compile_definitions(prometheum-fermide-headless PRIVATE
+    _CONSOLE
+    $<$<CONFIG:Debug>:_DEBUG>
+    $<$<CXX_COMPILER_ID:MSVC>:_SILENCE_STDEXT_ARR_ITERS_DEPRECATION_WARNING>
+)
 target_link_libraries(prometheum-fermide-headless PRIVATE prometheum-fermide-core)
 if(MSVC)
     target_compile_options(prometheum-fermide-headless PRIVATE /W3 /permissive-)
