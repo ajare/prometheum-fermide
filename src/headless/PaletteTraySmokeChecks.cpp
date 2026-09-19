@@ -1,4 +1,4 @@
-// Palette tray layout checks, for ticket #54.
+// Palette tray layout and placement checks, for tickets #54 and #41.
 //
 // The palette tray was previously sized for exactly nine slots while the
 // bottom row - anchored to the Ladder column so that Door sits under
@@ -9,6 +9,12 @@
 // inside the tray with the tray's own padding to spare, the bottom row
 // must keep its column alignment under the top row, and no two slots
 // may overlap.
+//
+// The tray is draggable by any part of itself that is not a button, so
+// the checks also pin the placement rules down: a legal drag lands where
+// it asked, an illegal one stops at the view window's edge, the tray can
+// never be dragged clean out of the window, and the grip is exactly the
+// tray minus its buttons.
 
 #include <stdexcept>
 
@@ -137,6 +143,106 @@ namespace
 	static_assert(paletteSlotMax(ImVec2(0.0f, 0.0f), PaletteSlot::PlatformLift).x
 			+ PalettePadding == paletteTraySize().x,
 		"PlatformLift escapes the tray");
+
+	// Ticket #41: the tray is dragged around the view window by its grip and
+	// may never leave that window.
+
+	// A drag that asks for a legal position gets exactly that position.
+	void dragInsideTheCanvasKeepsTheRequestedPosition()
+	{
+		auto const size = paletteTraySize();
+		ImVec2 const canvasMin{ 0.0f, 0.0f };
+		ImVec2 const canvasSize{ size.x + 200.0f, size.y + 120.0f };
+		ImVec2 const requested{ 37.0f, 11.0f };
+		auto const clamped = paletteClampTopLeft(canvasMin, canvasSize, requested);
+		require(clamped.x == requested.x && clamped.y == requested.y,
+			"a tray dragged inside the canvas was moved anyway");
+	}
+
+	// A drag that asks for more than the window has stops at the edge.
+	void dragPastAnEdgeStopsAtThatEdge()
+	{
+		auto const size = paletteTraySize();
+		ImVec2 const canvasMin{ 10.0f, -30.0f };
+		ImVec2 const canvasSize{ size.x + 200.0f, size.y + 120.0f };
+		auto const clamped = paletteClampTopLeft(canvasMin, canvasSize,
+			ImVec2(canvasMin.x - 500.0f, canvasMin.y + 5000.0f));
+		require(clamped.x == canvasMin.x, "the tray was dragged past the left edge");
+		require(clamped.y + size.y == canvasMin.y + canvasSize.y,
+			"the tray was dragged past the bottom edge");
+		auto const other = paletteClampTopLeft(canvasMin, canvasSize,
+			ImVec2(canvasMin.x + 5000.0f, canvasMin.y - 5000.0f));
+		require(other.x + size.x == canvasMin.x + canvasSize.x,
+			"the tray was dragged past the right edge");
+		require(other.y == canvasMin.y, "the tray was dragged past the top edge");
+	}
+
+	// The safety property: whatever the drag asks for, the tray still covers
+	// part of the window, so the palette can always be dragged back.
+	void trayAlwaysOverlapsTheCanvas()
+	{
+		auto const size = paletteTraySize();
+		ImVec2 const canvasMin{ -40.0f, 25.0f };
+		ImVec2 const canvasSize{ 900.0f, 600.0f };
+		for (int step = -40; step <= 40; ++step)
+		{
+			auto const requested = ImVec2(canvasMin.x + static_cast<float>(step) * 60.0f,
+				canvasMin.y + static_cast<float>(step) * 40.0f);
+			auto const clamped = paletteClampTopLeft(canvasMin, canvasSize, requested);
+			auto const overlaps = clamped.x < canvasMin.x + canvasSize.x
+				&& clamped.x + size.x > canvasMin.x
+				&& clamped.y < canvasMin.y + canvasSize.y
+				&& clamped.y + size.y > canvasMin.y;
+			require(overlaps, "the palette left the view window");
+		}
+	}
+
+	// A window smaller than the tray has nowhere to hold it: the tray pins to
+	// the window's top-left corner and the window clips the overflow.
+	void aCanvasSmallerThanTheTrayClipsTheTray()
+	{
+		auto const size = paletteTraySize();
+		ImVec2 const canvasMin{ 5.0f, 7.0f };
+		ImVec2 const canvasSize{ size.x - 100.0f, size.y - 20.0f };
+		auto const clamped = paletteClampTopLeft(canvasMin, canvasSize,
+			ImVec2(canvasMin.x + 4000.0f, canvasMin.y + 4000.0f));
+		require(clamped.x == canvasMin.x && clamped.y == canvasMin.y,
+			"an oversized tray was not pinned to the window's top-left");
+		require(clamped.x + size.x > canvasMin.x && clamped.y + size.y > canvasMin.y,
+			"an oversized tray is hidden rather than clipped");
+	}
+
+	// The grip is the tray minus its buttons: the padding and the gaps
+	// between slots. Every button stays a button.
+	void paddingAndGapsAreTheGrip()
+	{
+		auto const size = paletteTraySize();
+		require(!paletteButtonAt(TrayTopLeft,
+				ImVec2(TrayTopLeft.x + 1.0f, TrayTopLeft.y + 1.0f)),
+			"the tray's top-left padding is not a grip");
+		require(!paletteButtonAt(TrayTopLeft,
+				ImVec2(TrayTopLeft.x + size.x - 1.0f, TrayTopLeft.y + size.y - 1.0f)),
+			"the tray's bottom-right padding is not a grip");
+		auto const rowGapY = TrayTopLeft.y + PalettePadding + PaletteSlotSize
+			+ PaletteGap * 0.5f;
+		require(!paletteButtonAt(TrayTopLeft,
+				ImVec2(TrayTopLeft.x + PalettePadding + PaletteSlotWidth * 0.5f, rowGapY)),
+			"the gap between the tray rows is not a grip");
+		auto const columnGapX = TrayTopLeft.x + PalettePadding + PaletteSlotWidth
+			+ PaletteGap * 0.5f;
+		require(!paletteButtonAt(TrayTopLeft,
+				ImVec2(columnGapX, TrayTopLeft.y + PalettePadding + PaletteSlotSize * 0.5f)),
+			"the gap between the tray columns is not a grip");
+		for (int index = 0; index < static_cast<int>(PaletteSlot::Count); ++index)
+		{
+			auto const slot = slotAt(index);
+			auto const centre = ImVec2(
+				(paletteSlotMin(TrayTopLeft, slot).x + paletteSlotMax(TrayTopLeft, slot).x) * 0.5f,
+				(paletteSlotMin(TrayTopLeft, slot).y + paletteSlotMax(TrayTopLeft, slot).y) * 0.5f);
+			require(paletteButtonAt(TrayTopLeft, centre),
+				"a palette button can be dragged as a grip");
+		}
+	}
 }
 
 void runPaletteTraySmokeChecks()
@@ -146,4 +252,9 @@ void runPaletteTraySmokeChecks()
 	bottomRowKeepsTopRowColumnAlignment();
 	rowsAreContiguous();
 	noTwoSlotsOverlap();
+	dragInsideTheCanvasKeepsTheRequestedPosition();
+	dragPastAnEdgeStopsAtThatEdge();
+	trayAlwaysOverlapsTheCanvas();
+	aCanvasSmallerThanTheTrayClipsTheTray();
+	paddingAndGapsAreTheGrip();
 }

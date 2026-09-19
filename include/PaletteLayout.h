@@ -120,3 +120,41 @@ inline constexpr ImVec2 paletteSlotMax(ImVec2 trayTopLeft, PaletteSlot slot)
 	return ImVec2(paletteSlotMin(trayTopLeft, slot).x + PaletteSlotWidth,
 		paletteSlotMin(trayTopLeft, slot).y + PaletteSlotSize);
 }
+
+// Where a dragged tray ends up, kept inside the view canvas (ticket #41).
+//
+// The tray is clamped to the canvas so it can never be dragged out of reach.
+// A canvas smaller than the tray has no room to hold it, so the clamp
+// collapses onto the canvas' top-left corner: the tray stays anchored there
+// and the canvas clips its overflow instead of the tray sliding away.
+inline constexpr ImVec2 paletteClampTopLeft(ImVec2 canvasMin, ImVec2 canvasSize,
+	ImVec2 trayTopLeft)
+{
+	auto const traySize = paletteTraySize();
+	auto const clampAxis = [](float value, float limitMin, float limitMax)
+	{
+		return value < limitMin ? limitMin : (value > limitMax ? limitMax : value);
+	};
+	auto const slackX = canvasSize.x - traySize.x;
+	auto const slackY = canvasSize.y - traySize.y;
+	return ImVec2(clampAxis(trayTopLeft.x, canvasMin.x,
+			canvasMin.x + (slackX > 0.0f ? slackX : 0.0f)),
+		clampAxis(trayTopLeft.y, canvasMin.y,
+			canvasMin.y + (slackY > 0.0f ? slackY : 0.0f)));
+}
+
+// True when a button slot covers the point. Everything else inside the tray -
+// its padding and the gaps between slots - is the grip the user drags the
+// palette by (ticket #41).
+inline constexpr bool paletteButtonAt(ImVec2 trayTopLeft, ImVec2 point)
+{
+	for (int index = 0; index < static_cast<int>(PaletteSlot::Count); ++index)
+	{
+		auto const slot = static_cast<PaletteSlot>(index);
+		auto const min = paletteSlotMin(trayTopLeft, slot);
+		auto const max = paletteSlotMax(trayTopLeft, slot);
+		if (point.x >= min.x && point.x <= max.x && point.y >= min.y && point.y <= max.y)
+			return true;
+	}
+	return false;
+}

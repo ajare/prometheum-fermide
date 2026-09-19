@@ -198,6 +198,21 @@ namespace
 
 	PaletteDropState gPegman;
 
+	// Palette tray placement (ticket #41). The tray is dragged by any part of
+	// itself that is not a button. Its position is remembered as an offset from
+	// the tray's home in the view's bottom-right corner, so the palette follows
+	// that corner as the window is resized, and is clamped into the canvas as
+	// it is dragged.
+	ImVec2 gPaletteTrayOffset{};
+
+	struct PaletteTrayDrag
+	{
+		bool dragging{ false };
+		ImVec2 grab{};	// Mouse position relative to the tray's top-left.
+	};
+
+	PaletteTrayDrag gTrayDrag;
+
 	bool gSelectingAgentPathDestination{ false };
 	UISettings::SelectionMode gPathSelectionPreviousMode{ UISettings::SelectionMode::Object };
 	bool gPathSelectionPreviouslyRenderedGraph{ false };
@@ -1447,9 +1462,15 @@ namespace
 			if (gPegman.feetY <= gPegman.floorY) landPegman(building);
 		}
 
-		auto trayBottomRight = canvasPos + canvasSize - ImVec2(PaletteInset, PaletteInset);
-		auto traySize = paletteTraySize();
-		auto trayTopLeft = trayBottomRight - traySize;
+		auto const traySize = paletteTraySize();
+		auto const trayHomeTopLeft = canvasPos + canvasSize
+			- ImVec2(PaletteInset, PaletteInset) - traySize;
+		auto const trayTopLeft = paletteClampTopLeft(canvasPos, canvasSize,
+			trayHomeTopLeft + gPaletteTrayOffset);
+		auto const trayBottomRight = trayTopLeft + traySize;
+		// The grip is the tray minus its buttons: the padding and the slot gaps.
+		bool overTray = gWorldHovered && pointInRect(io.MousePos, trayTopLeft, trayBottomRight);
+		bool overGrip = overTray && !paletteButtonAt(trayTopLeft, io.MousePos);
 		auto roomMin = paletteSlotMin(trayTopLeft, PaletteSlot::Room);
 		auto facadeMin = paletteSlotMin(trayTopLeft, PaletteSlot::Facade);
 		auto corridorMin = paletteSlotMin(trayTopLeft, PaletteSlot::Corridor);
@@ -1486,10 +1507,13 @@ namespace
 		auto forceBridgeMax = paletteSlotMax(trayTopLeft, PaletteSlot::ForceBridge);
 		auto roomLadderMax = paletteSlotMax(trayTopLeft, PaletteSlot::RoomLadder);
 		auto platformLiftMax = paletteSlotMax(trayTopLeft, PaletteSlot::PlatformLift);
+		// The tray border lights up while the grip is under the cursor, so the
+		// palette shows that it can be picked up.
+		auto const trayBorder = gTrayDrag.dragging ? yellow
+			: overGrip ? IM_COL32(251, 188, 4, 150) : borderColour;
 		drawList->AddRectFilled(trayTopLeft, trayBottomRight, trayColour, 5.0f);
-		drawList->AddRect(trayTopLeft, trayBottomRight, borderColour, 5.0f);
+		drawList->AddRect(trayTopLeft, trayBottomRight, trayBorder, 5.0f);
 
-		bool overTray = gWorldHovered && pointInRect(io.MousePos, trayTopLeft, trayBottomRight);
 		bool roomHovered = gWorldHovered && pointInRect(io.MousePos, roomMin, roomMax);
 		bool facadeHovered = gWorldHovered && pointInRect(io.MousePos, facadeMin, facadeMax);
 		bool corridorHovered = gWorldHovered && pointInRect(io.MousePos, corridorMin, corridorMax);
@@ -1502,6 +1526,22 @@ namespace
 		bool backOnlyDisabled = gUISettings.visibleLayer == 0;
 		if (overTray) paletteConsumedMouse = true;
 
+		// Picking the palette up: any part of the tray that is not a button
+		// drags the whole tray, which stays inside the view canvas.
+		if (overGrip && gPegman.phase == PalettePhase::Home && io.MouseClicked[0])
+		{
+			gTrayDrag.dragging = true;
+			gTrayDrag.grab = io.MousePos - trayTopLeft;
+		}
+		if (gTrayDrag.dragging)
+		{
+			paletteConsumedMouse = true;
+			ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+			gPaletteTrayOffset = paletteClampTopLeft(canvasPos, canvasSize,
+				io.MousePos - gTrayDrag.grab) - trayHomeTopLeft;
+			if (!io.MouseDown[0]) gTrayDrag.dragging = false;
+		}
+
 		auto drawPaintButton = [&](ImVec2 min, ImVec2 max, char const* label,
 			PaintTool tool, bool hovered, bool disabled)
 		{
@@ -1513,7 +1553,7 @@ namespace
 			drawList->AddText(textPosition, disabled ? disabledColour : IM_COL32_WHITE, label);
 		};
 
-		if (gPegman.phase == PalettePhase::Home
+		if (gPegman.phase == PalettePhase::Home && !gTrayDrag.dragging
 			&& (roomHovered || facadeHovered || corridorHovered || backgroundHovered || ladderHovered
 				|| stairwellHovered || staircaseHovered || liftHovered || shuttleHovered))
 		{
@@ -1712,7 +1752,7 @@ namespace
 		}
 
 		PaletteItem hoveredItem = PaletteItem::None;
-		if (gWorldHovered && gPegman.phase == PalettePhase::Home)
+		if (gWorldHovered && gPegman.phase == PalettePhase::Home && !gTrayDrag.dragging)
 		{
 			if (pointInRect(io.MousePos, agentMin, agentMax)) hoveredItem = PaletteItem::Agent;
 			else if (pointInRect(io.MousePos, markerMin, markerMax)) hoveredItem = PaletteItem::Marker;
