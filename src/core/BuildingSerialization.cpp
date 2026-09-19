@@ -3020,13 +3020,20 @@ namespace core
 		}
 
 		auto const type = object->getObjectType();
-		auto const targetWidth = type == SectorObjectType::Window && plan.windowResize
-			? plan.previewWidth : (uint32_t)ceil(object->getSize().x);
+		auto const resizingObject = (type == SectorObjectType::Window && plan.windowResize)
+			|| (type == SectorObjectType::Door && plan.doorResize);
+		auto const targetWidth = resizingObject ? plan.previewWidth
+			: (uint32_t)ceil(object->getSize().x);
 		auto const targetHeight = type == SectorObjectType::Window && plan.windowResize
 			? plan.previewHeight : (uint32_t)ceil(object->getSize().y);
 		if (type == SectorObjectType::Window && (targetWidth == 0 || targetHeight == 0))
 		{
 			diagnostic = "A Window must be at least one cell wide and one deck high";
+			return false;
+		}
+		if (type == SectorObjectType::Door && plan.doorResize && targetWidth == 0)
+		{
+			diagnostic = "A Door must be at least one cell wide";
 			return false;
 		}
 		if (type == SectorObjectType::Walkway && (plan.x != sourceX || plan.y != sourceY)
@@ -3090,6 +3097,39 @@ namespace core
 			? (uint64_t)plan.x + 1 : (uint64_t)plan.x + targetWidth;
 		uint64_t targetTop = type == SectorObjectType::BulkheadDoor
 			? (uint64_t)plan.y + 1 : (uint64_t)plan.y + targetHeight;
+		if (type == SectorObjectType::Door && plan.doorResize)
+		{
+			// Door authoring reserves the final column as the building boundary.
+			if (targetRight >= mCellsWide)
+			{
+				diagnostic = "Door position is outside the building";
+				return false;
+			}
+			// The widened threshold must stay within one Sector on each Layer of
+			// its pair, as authoring requires. Unlike a move, a resize can never
+			// carry a Door across a Sector boundary.
+			for (uint32_t layer : { found->layer, layerBehind(found->layer) })
+			{
+				auto const& first = mLayers[layer]->getCellDefinition(plan.x, plan.y);
+				for (uint64_t ix = plan.x; ix < targetRight; ++ix)
+					if (mLayers[layer]->getCellDefinition((uint32_t)ix, plan.y).sectorIndex
+						!= first.sectorIndex)
+					{
+						diagnostic = "A Door must stay within one Sector on each Layer";
+						return false;
+					}
+			}
+			// A plain Door cannot grow onto a Lift shaft; landing Doors are owned by
+			// the Lift and resize with it.
+			uint32_t liftX, liftWidth;
+			for (uint64_t ix = plan.x; ix < targetRight; ++ix)
+				if (getLiftLandingGeometry(layerBehind(found->layer), plan.y, (uint32_t)ix,
+						liftX, liftWidth))
+				{
+					diagnostic = "A Door cannot be resized over a Lift";
+					return false;
+				}
+		}
 		if (type == SectorObjectType::Lift)
 		{
 			auto room = dynamic_pointer_cast<const Location>(owner);
@@ -3206,7 +3246,8 @@ namespace core
 
 		switch (type)
 		{
-		case SectorObjectType::Door: found->a = plan.y; found->b = plan.x; break;
+		case SectorObjectType::Door:
+			found->a = plan.y; found->b = plan.x; found->c = targetWidth; break;
 		case SectorObjectType::BulkheadDoor:
 			found->a = owner->getLayerIndex(); found->b = plan.y; found->c = plan.x;
 			found->i = CORE_SIDE_LEFT; break;
@@ -4368,6 +4409,38 @@ namespace core
 			plan.diagnostic = "Only Windows can be resized this way";
 			return plan;
 		}
+		vector<ConstructionRecord> records;
+		uint32_t ignoredSector, ignoredObject;
+		plan.valid = prepareObjectMove(plan, records, ignoredSector, ignoredObject, plan.diagnostic);
+		return plan;
+	}
+
+	Building::ObjectMovePlan Building::planResizeSectorDoor(uint32_t sectorIndex,
+		uint32_t objectIndex, uint32_t x, uint32_t y, uint32_t cellsWide) const
+	{
+		ObjectMovePlan plan;
+		plan.sectorIndex = sectorIndex;
+		plan.objectIndex = objectIndex;
+		plan.x = x;
+		plan.y = y;
+		plan.previewWidth = cellsWide;
+		plan.previewHeight = 1;
+		plan.doorResize = true;
+		if (sectorIndex >= mSectors.size() || !mSectors[sectorIndex]
+			|| objectIndex >= mSectors[sectorIndex]->getNumObjects())
+		{
+			plan.diagnostic = "The selected Door no longer exists";
+			return plan;
+		}
+		auto object = mSectors[sectorIndex]->getObject(objectIndex);
+		if (!object || object->getObjectType() != SectorObjectType::Door)
+		{
+			plan.diagnostic = "Only Doors can be resized this way";
+			return plan;
+		}
+		// Lift and Shuttle landing Doors have no independent Door record; the
+		// record lookup below rejects them as objects which cannot be moved
+		// independently, which also keeps their widths matched to the vehicle.
 		vector<ConstructionRecord> records;
 		uint32_t ignoredSector, ignoredObject;
 		plan.valid = prepareObjectMove(plan, records, ignoredSector, ignoredObject, plan.diagnostic);

@@ -410,12 +410,15 @@ namespace
 			// Editor placement coordinates identify the cell to the right (offset 0.0).
 			++gObjectMove.originalX;
 		}
-		gObjectMove.preview = edge != ResizeEdge::Move
-			? building->planResizeSectorWindow(owner->getIndex(), objectIndex,
-				gObjectMove.originalX, gObjectMove.originalY,
-				gObjectMove.originalWidth, gObjectMove.originalHeight)
-			: building->planMoveSectorObject(owner->getIndex(), objectIndex,
-				gObjectMove.originalX, gObjectMove.originalY);
+		gObjectMove.preview = edge == ResizeEdge::Move
+			? building->planMoveSectorObject(owner->getIndex(), objectIndex,
+				gObjectMove.originalX, gObjectMove.originalY)
+			: object->getObjectType() == core::SectorObjectType::Door
+				? building->planResizeSectorDoor(owner->getIndex(), objectIndex,
+					gObjectMove.originalX, gObjectMove.originalY, gObjectMove.originalWidth)
+				: building->planResizeSectorWindow(owner->getIndex(), objectIndex,
+					gObjectMove.originalX, gObjectMove.originalY,
+					gObjectMove.originalWidth, gObjectMove.originalHeight);
 	}
 
 	void resetPaint(bool clearTool = true)
@@ -7241,10 +7244,11 @@ namespace
 		resetAgentMove();
 	}
 
-	ResizeEdge hoveredWindowResizeEdge(shared_ptr<const core::SectorObject> const& object,
+	ResizeEdge hoveredObjectResizeEdge(shared_ptr<const core::SectorObject> const& object,
 		ImVec2 mouse)
 	{
-		if (!object || object->getObjectType() != core::SectorObjectType::Window)
+		if (!object || (object->getObjectType() != core::SectorObjectType::Window
+			&& object->getObjectType() != core::SectorObjectType::Door))
 			return ResizeEdge::None;
 		auto topLeft = worldToScreen({ (float)object->getCellX(),
 			(float)object->getCellY() + object->getSize().y });
@@ -7261,14 +7265,17 @@ namespace
 			{ ResizeEdge::Top, abs(mouse.y - topLeft.y) },
 			{ ResizeEdge::Bottom, abs(mouse.y - bottomRight.y) }
 		};
-		auto closest = min_element(begin(candidates), end(candidates),
+		// A Door is one deck high; only its horizontal edges resize it.
+		auto const candidateEnd = object->getObjectType() == core::SectorObjectType::Door
+			? begin(candidates) + 2 : end(candidates);
+		auto closest = min_element(begin(candidates), candidateEnd,
 			[](auto const& left, auto const& right) { return left.distance < right.distance; });
 		return closest->distance <= handleRadius ? closest->edge : ResizeEdge::None;
 	}
 
 	// The cells the selection occupies when the editor can resize it by
-	// dragging: a resizable Sector, or a Window SectorObject. False when the
-	// selection cannot be resized, or is not on the Layer being drawn.
+	// dragging: a resizable Sector, or a Window or Door SectorObject. False
+	// when the selection cannot be resized, or is not on the Layer being drawn.
 	bool selectedResizeFootprint(uint32_t& cellX, uint32_t& cellY, uint32_t& cellsWide,
 		uint32_t& decksHigh)
 	{
@@ -7286,16 +7293,34 @@ namespace
 			return true;
 		}
 		if (gUISettings.selectionMode != UISettings::SelectionMode::Object
-			|| !gSelectedSectorObject
-			|| gSelectedSectorObject->getObjectType() != core::SectorObjectType::Window)
+			|| !gSelectedSectorObject)
 			return false;
-		auto const window = static_pointer_cast<const core::WindowSectorObject>(
-			gSelectedSectorObject)->getWindow();
-		if (!window) return false;
-		// A Window is reachable from either Layer of the pair it crosses.
+		auto const objectType = gSelectedSectorObject->getObjectType();
+		if (objectType != core::SectorObjectType::Window
+			&& objectType != core::SectorObjectType::Door)
+			return false;
+		// A Window or Door is reachable from either Layer of the pair it crosses.
 		auto const visible = (uint32_t)gUISettings.visibleLayer;
+		uint32_t frontLayer = gSelectedSectorObject->getSector()->getLayerIndex();
+		uint32_t backLayer = frontLayer;
+		if (objectType == core::SectorObjectType::Window)
+		{
+			auto const window = static_pointer_cast<const core::WindowSectorObject>(
+				gSelectedSectorObject)->getWindow();
+			if (!window) return false;
+			frontLayer = window->getFrontLayer();
+			backLayer = window->getBackLayer();
+		}
+		else
+		{
+			auto const door = static_pointer_cast<const core::DoorSectorObject>(
+				gSelectedSectorObject)->getDoor();
+			if (!door) return false;
+			frontLayer = door->getFrontLayer();
+			backLayer = door->getBackLayer();
+		}
 		if (gSelectedSectorObject->getSector()->getLayerIndex() != visible
-			&& window->getFrontLayer() != visible && window->getBackLayer() != visible)
+			&& frontLayer != visible && backLayer != visible)
 			return false;
 		cellX = gSelectedSectorObject->getCellX();
 		cellY = gSelectedSectorObject->getCellY();
@@ -7327,6 +7352,16 @@ namespace
 				|| window->getFrontLayer() == (uint32_t)gUISettings.visibleLayer
 				|| window->getBackLayer() == (uint32_t)gUISettings.visibleLayer;
 		}
+		else if (gSelectedSectorObject
+			&& gSelectedSectorObject->getObjectType() == core::SectorObjectType::Door)
+		{
+			auto door = static_pointer_cast<const core::DoorSectorObject>(
+				gSelectedSectorObject)->getDoor();
+			// A Door is reachable from either Layer of the pair it crosses.
+			objectOnVisibleLayer = door && (objectOnVisibleLayer
+				|| door->getFrontLayer() == (uint32_t)gUISettings.visibleLayer
+				|| door->getBackLayer() == (uint32_t)gUISettings.visibleLayer);
+		}
 		if (gUISettings.selectionMode != UISettings::SelectionMode::Object
 			|| !gSelectedSectorObject || !objectOnVisibleLayer)
 		{
@@ -7355,7 +7390,7 @@ namespace
 		}
 
 		auto resizeEdge = gObjectMove.dragging ? gObjectMove.edge
-			: gWorldHovered ? hoveredWindowResizeEdge(gSelectedSectorObject, io.MousePos)
+			: gWorldHovered ? hoveredObjectResizeEdge(gSelectedSectorObject, io.MousePos)
 				: ResizeEdge::None;
 		if (resizeEdge == ResizeEdge::Left || resizeEdge == ResizeEdge::Right)
 			ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
@@ -7382,7 +7417,9 @@ namespace
 		int targetY = (int)gObjectMove.originalY + deltaY;
 		int targetWidth = (int)gObjectMove.originalWidth;
 		int targetHeight = (int)gObjectMove.originalHeight;
-		bool const resizingWindow = gObjectMove.edge != ResizeEdge::Move;
+		bool const resizing = gObjectMove.edge != ResizeEdge::Move;
+		bool const resizingDoor = resizing
+			&& gSelectedSectorObject->getObjectType() == core::SectorObjectType::Door;
 		if (gObjectMove.edge == ResizeEdge::Left)
 		{
 			auto right = (int)gObjectMove.originalX + (int)gObjectMove.originalWidth;
@@ -7392,8 +7429,10 @@ namespace
 		}
 		else if (gObjectMove.edge == ResizeEdge::Right)
 		{
+			// Door authoring reserves the final column as the building boundary.
 			auto right = clamp((int)gObjectMove.originalX + (int)gObjectMove.originalWidth
-				+ deltaX, (int)gObjectMove.originalX + 1, (int)building->getCellsWide());
+				+ deltaX, (int)gObjectMove.originalX + 1,
+				(int)building->getCellsWide() - (resizingDoor ? 1 : 0));
 			targetX = (int)gObjectMove.originalX;
 			targetY = (int)gObjectMove.originalY;
 			targetWidth = right - targetX;
@@ -7422,16 +7461,19 @@ namespace
 		}
 		else if (gObjectMove.preview.x != (uint32_t)targetX
 			|| gObjectMove.preview.y != (uint32_t)targetY
-			|| (resizingWindow && (gObjectMove.preview.previewWidth != (uint32_t)targetWidth
+			|| (resizing && (gObjectMove.preview.previewWidth != (uint32_t)targetWidth
 				|| gObjectMove.preview.previewHeight != (uint32_t)targetHeight))
 			|| gObjectMove.preview.diagnostic == "Drop the object inside the world")
 		{
-			gObjectMove.preview = resizingWindow
-				? building->planResizeSectorWindow(owner->getIndex(), objectIndex,
-					(uint32_t)targetX, (uint32_t)targetY,
-					(uint32_t)targetWidth, (uint32_t)targetHeight)
-				: building->planMoveSectorObject(owner->getIndex(), objectIndex,
-					(uint32_t)targetX, (uint32_t)targetY);
+			gObjectMove.preview = resizingDoor
+				? building->planResizeSectorDoor(owner->getIndex(), objectIndex,
+					(uint32_t)targetX, (uint32_t)targetY, (uint32_t)targetWidth)
+				: resizing
+					? building->planResizeSectorWindow(owner->getIndex(), objectIndex,
+						(uint32_t)targetX, (uint32_t)targetY,
+						(uint32_t)targetWidth, (uint32_t)targetHeight)
+					: building->planMoveSectorObject(owner->getIndex(), objectIndex,
+						(uint32_t)targetX, (uint32_t)targetY);
 		}
 
 		if (io.MouseReleased[0])
