@@ -46,6 +46,65 @@ namespace core
 		return false;
 	}
 
+	// Whether a saved Agent position may be restored into the Sector it names.
+	// A live Agent is placed by the editor's drop rules, which keep it inside the
+	// Sector, on one of its decks, and - for a Location - on floor it can walk
+	// on.  Restoration used to write the saved coordinates straight into the
+	// Sector, so a hand-edited NaN or a point in the air became a permanent
+	// Agent the renderer and the hit-tests could not handle (#60).
+	static bool restoredAgentPositionIsValid(Building const& building, Sector const& sector,
+		float localX, float localY, string& diagnostic)
+	{
+		if (!isfinite(localX) || !isfinite(localY))
+		{
+			diagnostic = format("local position {},{} is not finite", localX, localY);
+			return false;
+		}
+
+		if (sector.getType() == SectorType::Background)
+		{
+			diagnostic = format("Background '{}' owns no walkable floor", sector.getName());
+			return false;
+		}
+
+		auto const global = sector.getPosition() + Vector2{ localX, localY };
+		if (!sector.pointInBounds(global.x, global.y))
+		{
+			diagnostic = format("local position {},{} lies outside Sector '{}'",
+				localX, localY, sector.getName());
+			return false;
+		}
+
+		auto const cellX = (uint32_t)floor(global.x);
+		auto const cellY = (uint32_t)floor(global.y);
+		if (cellX >= building.getCellsWide() || cellY >= building.getDecksHigh())
+		{
+			diagnostic = format("cell {},{} is outside the Building", cellX, cellY);
+			return false;
+		}
+
+		if (cellY < sector.getCellY() || cellY >= sector.getCellY() + sector.getDecksHigh())
+		{
+			diagnostic = format("deck {} is outside Sector '{}' ({} deck(s) from cell {})",
+				cellY, sector.getName(), sector.getDecksHigh(), sector.getCellY());
+			return false;
+		}
+
+		// The same floor rule the drop target and the edit-time restore guards
+		// apply: a Location must have walkable floor where the Agent stands.
+		// Transits carry their own occupancy, so they are not floor-checked.
+		if (isLocationLike(sector.getType())
+			&& !building.getLayer(sector.getLayerIndex())
+				->getCellDefinition(cellX, cellY).isTraversableOnFoot())
+		{
+			diagnostic = format("cell {},{} is not traversable floor in Sector '{}'",
+				cellX, cellY, sector.getName());
+			return false;
+		}
+
+		return true;
+	}
+
 	bool Building::childrenModified() const
 	{
 		return std::any_of(mAgents.entries().begin(), mAgents.entries().end(),
@@ -638,6 +697,26 @@ namespace core
 				throw SerializationException("Serialized Agent IDs must be unique");
 			}
 			auto sector = _getSector(sectorIndex);
+
+			// Checked before the Agent takes any ownership, so a malformed position
+			// refuses the open instead of seeding the world with an Agent that can
+			// be neither drawn nor hit-tested (#60).
+			string positionDiagnostic;
+			if (!restoredAgentPositionIsValid(*this, *sector, localX, localY, positionDiagnostic))
+			{
+				throw SerializationException(format("Serialized Agent '{}' position is invalid: {}",
+					agent->getName(), positionDiagnostic));
+			}
+
+			if (destinationSectorIndex
+				&& (*destinationSectorIndex >= mSectors.size()
+					|| !isfinite(destinationLocalX) || !isfinite(destinationLocalY)))
+			{
+				throw SerializationException(format(
+					"Serialized Agent '{}' path has an invalid destination", agent->getName()));
+			}
+
+			auto const agentName = agent->getName();
 			auto* rawAgent = agent.get();
 			rawAgent->attachToBuilding(this);
 			rawAgent->mPosition = SectorPosition(sector.get(), localX, localY);
@@ -646,26 +725,44 @@ namespace core
 			mAgents.restore(id, std::move(agent));
 			mAgentIds.emplace(rawAgent, id);
 
-			if (destinationSectorIndex)
+			try
 			{
-				if (*destinationSectorIndex >= mSectors.size()
-					|| !isfinite(destinationLocalX) || !isfinite(destinationLocalY))
+				if (destinationSectorIndex)
 				{
-					throw SerializationException("Serialized Agent path has an invalid destination");
+					auto const& destinationSector = mSectors[*destinationSectorIndex];
+					auto destinationPosition = destinationSector->getPosition()
+						+ Vector2{ destinationLocalX, destinationLocalY };
+					auto destination = mGraph->getClosestVertexInSector(
+						destinationSector.get(), destinationPosition);
+					auto path = mGraph->calculatePath(rawAgent, destination);
+					if (!path || path->nodes.empty())
+					{
+						throw SerializationException(format(
+							"Serialized Agent '{}' path destination is unreachable", agentName));
+					}
+					rawAgent->assignPath(std::move(path), pathActive, false);
+					rawAgent->mResetPath = rawAgent->mPath.path;
+					rawAgent->mResetPathActive = pathActive;
 				}
-				auto const& destinationSector = mSectors[*destinationSectorIndex];
-				auto destinationPosition = destinationSector->getPosition()
-					+ Vector2{ destinationLocalX, destinationLocalY };
-				auto destination = mGraph->getClosestVertexInSector(
-					destinationSector.get(), destinationPosition);
-				auto path = mGraph->calculatePath(rawAgent, destination);
-				if (!path || path->nodes.empty())
-				{
-					throw SerializationException("Serialized Agent path destination is unreachable");
-				}
-				rawAgent->assignPath(std::move(path), pathActive, false);
-				rawAgent->mResetPath = rawAgent->mPath.path;
-				rawAgent->mResetPathActive = pathActive;
+			}
+			catch (Exception const& error)
+			{
+				// The route could not be rebuilt after the Agent was taken in.  Put
+				// the Building back the way it was found, so a rejected open never
+				// leaves a half-restored Agent behind for the next attempt to trip
+				// over (#60).
+				sector->mAgents.erase(rawAgent);
+				mAgentIds.erase(rawAgent);
+				mAgents.remove(id);
+				throw SerializationException(format(
+					"Serialized Agent '{}' path could not be restored: {}", agentName, error.getMessage()));
+			}
+			catch (...)
+			{
+				sector->mAgents.erase(rawAgent);
+				mAgentIds.erase(rawAgent);
+				mAgents.remove(id);
+				throw;
 			}
 		}
 		serializer.endArray();

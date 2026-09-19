@@ -396,6 +396,175 @@ namespace
 		require(loaded.isModified(), "removing an Agent did not modify its Building");
 	}
 
+	// Ticket #60: a hand-edited Agent position must refuse the open rather than
+	// seed the world with an Agent that can be neither drawn nor hit-tested.
+	void agentRestoreRejectsMalformedPositions()
+	{
+		core::Building original("Position probe", 8, 3);
+		original.addRoom("Fore room", 0, 0, 0, 7, 2);
+		original.addRoom("Back room", 1, 0, 0, 7, 2);
+		core::Building::CreateDoorOptions doorOptions;
+		doorOptions.width = 2;
+		original.addSectorDoor(0, 0, 3, doorOptions);
+		original.finishBuild();
+		original.createAgent("Probe agent", 0, 0, 0.75f);
+
+		core::SerializationWorkData workData;
+		auto writer = core::YamlSerializer::toString();
+		original.serialize(*writer, workData);
+		writer->serialize();
+		auto const yaml = writer->getSerializedString();
+		auto const agentsAt = yaml.find("\nagents:");
+		require(yaml.find("localX: 0.75") != std::string::npos && agentsAt != std::string::npos,
+			"Agent position did not serialize as expected");
+		auto const head = yaml.substr(0, agentsAt + 1);
+
+		auto rejects = [&](std::string const& agentsBlock, std::string const& what)
+		{
+			// A reused instance: the previous contents must not survive the failed
+			// open, and neither must the Agent the bad record half-restored.
+			core::Building reused("reused", 2, 2);
+			{
+				auto goodReader = core::YamlSerializer::fromString(yaml);
+				goodReader->deserialize();
+				require(reused.deserialize(*goodReader, workData),
+					"The good Building did not load into a reused instance");
+				require(reused.getSimulationSnapshot().agents.size() == 1,
+					"The reused instance did not start with one Agent");
+			}
+
+			auto reader = core::YamlSerializer::fromString(head + agentsBlock);
+			reader->deserialize();
+			bool threw{ false };
+			std::string message;
+			try
+			{
+				reused.deserialize(*reader, workData);
+			}
+			catch (core::SerializationException const& error)
+			{
+				threw = true;
+				message = error.what();
+			}
+			require(threw, ("Malformed " + what + " was accepted").c_str());
+			require(message.find("position") != std::string::npos
+				|| message.find("path") != std::string::npos,
+				("Malformed " + what + " gave an imprecise diagnostic: " + message).c_str());
+			require(reused.getSimulationSnapshot().agents.empty(),
+				("Malformed " + what + " left an Agent owned by the reused Building").c_str());
+			require(reused.getSector(0)->getAgents().empty(),
+				("Malformed " + what + " left an Agent in the Sector").c_str());
+		};
+
+		auto positioned = [](std::string const& localX, std::string const& localY)
+		{
+			return "agents:\n"
+				"  - id: 1\n"
+				"    agent:\n"
+				"      name: Probe agent\n"
+				"      flags: 0\n"
+				"    sector: 0\n"
+				"    localX: " + localX + "\n"
+				"    localY: " + localY + "\n";
+		};
+
+		rejects(positioned(".nan", "0"), "NaN localX");
+		rejects(positioned("0.75", ".nan"), "NaN localY");
+		rejects(positioned(".inf", "0"), "infinite localX");
+		rejects(positioned("0.75", "-.inf"), "negative infinite localY");
+		// A finite point beyond the Sector's right edge.
+		rejects(positioned("99.5", "0"), "finite out-of-Sector localX");
+		// A finite point on the Room's upper deck, which has no Walkway there.
+		rejects(positioned("1.5", "1"), "finite position on non-traversable floor");
+	}
+
+	void agentRestoreRejectsBackgroundAndUnreachableDestination()
+	{
+		// Two Door-joined pairs of Rooms on separate Layers, plus a Background.
+		// A<->B and D<->E each connect, but nothing joins the pairs, so a route
+		// from A to D cannot be rebuilt.
+		core::Building original("Background and route probe", 16, 3);
+		original.addLayer();
+		original.addLayer();
+		original.addRoom("A", 0, 0, 0, 3, 2);
+		original.addRoom("B", 1, 0, 0, 3, 2);
+		original.addRoom("D", 2, 0, 5, 3, 2);
+		original.addRoom("E", 3, 0, 5, 3, 2);
+		core::Building::CreateDoorOptions doorOptions;
+		doorOptions.width = 1;
+		original.addSectorDoor(0, 0, 2, doorOptions);
+		original.addSectorDoor(2, 0, 7, doorOptions);
+		original.addBackground(3, 0, 9, 7, 2);
+		original.finishBuild();
+		uint32_t backgroundIndex{ ~0u };
+		for (uint32_t i = 0; i < original.getNumSectors(); ++i)
+		{
+			if (original.getSector(i)->getType() == core::SectorType::Background)
+				backgroundIndex = i;
+		}
+		require(backgroundIndex != ~0u, "The probe Building has no Background to target");
+		require(original.getGraph()->getVertices().size() >= 4,
+			"The probe Building built no route vertices, so the route cases prove nothing");
+
+		core::SerializationWorkData workData;
+		auto writer = core::YamlSerializer::toString();
+		original.serialize(*writer, workData);
+		writer->serialize();
+		auto const yaml = writer->getSerializedString();
+		auto const agentsAt = yaml.find("\nagents:");
+		require(agentsAt != std::string::npos, "The probe Building serialized no agents section");
+		auto const head = yaml.substr(0, agentsAt + 1);
+
+		auto rejects = [&](std::string const& agentsBlock, std::string const& what)
+		{
+			core::Building reused("reused", 2, 2);
+			auto reader = core::YamlSerializer::fromString(head + agentsBlock);
+			reader->deserialize();
+			bool threw{ false };
+			try
+			{
+				reused.deserialize(*reader, workData);
+			}
+			catch (core::SerializationException const&)
+			{
+				threw = true;
+			}
+			require(threw, ("Malformed " + what + " was accepted").c_str());
+			require(reused.getSimulationSnapshot().agents.empty(),
+				("Malformed " + what + " left an Agent owned by the reused Building").c_str());
+			for (uint32_t i = 0; i < reused.getNumSectors(); ++i)
+			{
+				require(reused.getSector(i)->getAgents().empty(),
+					("Malformed " + what + " left an Agent in a Sector").c_str());
+			}
+		};
+
+		rejects("agents:\n"
+			"  - id: 1\n"
+			"    agent:\n"
+			"      name: Nowhere agent\n"
+			"      flags: 0\n"
+			"    sector: " + std::to_string(backgroundIndex) + "\n"
+			"    localX: 1.5\n"
+			"    localY: 0\n", "Background position");
+
+		// Sector 0 is Room A and sector 2 is Room D: both hold route vertices,
+		// but no Door joins the pairs, so the saved route cannot be rebuilt.
+		rejects("agents:\n"
+			"  - id: 1\n"
+			"    agent:\n"
+			"      name: Stranded agent\n"
+			"      flags: 0\n"
+			"    sector: 0\n"
+			"    localX: 1.5\n"
+			"    localY: 0\n"
+			"    path:\n"
+			"      destinationSector: 2\n"
+			"      destinationLocalX: 1.5\n"
+			"      destinationLocalY: 0\n"
+			"      active: false\n", "unreachable destination");
+	}
+
 	void legacyBuildingYamlStillLoads()
 	{
 		auto const yaml = R"yaml(version: 1
@@ -2512,6 +2681,8 @@ void runSerializationSmokeChecks()
 	failedSavePreservesUnsavedChangesState();
 	malformedValuesAndInvalidUsageThrowUsefulErrors();
 	buildingRoundTripsAuthoredStateAndAgents();
+	agentRestoreRejectsMalformedPositions();
+	agentRestoreRejectsBackgroundAndUnreachableDestination();
 	platformLiftStopDurationRoundTrips();
 	legacyBuildingYamlStillLoads();
 	legacyVersion3BuildingYamlStillLoadsWithDefaultLayers();
