@@ -2,9 +2,11 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "core/Coordination.h"
 #include "core/EntityId.h"
+#include "core/Vector2.h"
 
 
 namespace core
@@ -91,7 +93,84 @@ namespace core
 
 		void releaseTraversalOwnership(AgentId id);
 
+		// ------------------------------------------------------------------
+		// Interactions and device operations (ADR 0004 stage 2)
+		//
+		// The InteractionPoint and InteractionRequest lifecycles, the
+		// DeviceOperation lifecycle, and the per-tick phases which allocate,
+		// move and resolve interactions all live here. Building forwards each of
+		// these entry points; no caller outside Building names the coordinator.
+		// ------------------------------------------------------------------
+
+		// Interaction point lifecycle. A point is created bare or fully bound to
+		// device commands; removing one cancels its pending requests first, and
+		// refuses to be silent when a traversal resource still names it as a
+		// control, which is a structural change.
+		InteractionPointId createInteractionPoint(std::string const& name);
+
+		InteractionPointId createInteractionPoint(std::string const& name, SectorId sector,
+			Vector2 position, float reach, float durationSeconds,
+			std::vector<InteractionBinding> bindings);
+
+		EntityLookup<InteractionPoint> lookupInteractionPoint(InteractionPointId id);
+
+		EntityLookup<InteractionPoint const> lookupInteractionPoint(InteractionPointId id) const;
+
+		EntityRemovalResult removeInteractionPoint(InteractionPointId id);
+
+		// Requesting an interaction. A traversal request queues behind whatever
+		// the point is already doing; a request made while passing does not wait -
+		// it activates its operations and presses the control immediately.
+		InteractionRequestId requestInteraction(InteractionPointId point, AgentId actor);
+
+		InteractionRequestId requestInteractionForTraversal(InteractionPointId point, AgentId actor);
+
+		InteractionRequestId requestInteractionWhilePassing(InteractionPointId point, AgentId actor);
+
+		EntityLookup<InteractionRequest const> lookupInteractionRequest(InteractionRequestId id) const;
+
+		bool cancelInteraction(InteractionRequestId id);
+
+		// Device-operation lifecycle. Commands coalesce: one accepted command is
+		// shared by every requester, and the operation outlives no requester.
+		DeviceOperationId createDeviceOperation(std::string const& name, AgentId requester);
+
+		DeviceOperationId findOrCreateDeviceOperation(DeviceCommand const& command, AgentId requester);
+
+		EntityLookup<DeviceOperation> lookupDeviceOperation(DeviceOperationId id);
+
+		EntityLookup<DeviceOperation const> lookupDeviceOperation(DeviceOperationId id) const;
+
+		bool cancelDeviceOperation(DeviceOperationId id, AgentId requester);
+
+		EntityRemovalResult removeDeviceOperation(DeviceOperationId id);
+
+		// Per-tick interaction phases. Device operations advance first, then the
+		// point queues allocate, the actor walks to and presses the control, and
+		// results are resolved from the operations each request depends on.
+		void advanceDeviceOperations();
+
+		void allocateInteractions();
+
+		void moveInteractions(float frameTime);
+
+		void updateInteractionResults();
+
+		// Pressing a physical control. The press is what the rendered Button
+		// reports, not a separate simulation of the device state.
+		void pressPhysicalControl(InteractionPointId point);
+
+		// An Agent walking towards a RemoteControlled Door presses its button
+		// early - while still moving, and only once per door - so the door is open
+		// by the time the threshold arrives.
+		void tryPressUpcomingDoorButton(Agent& agent, Vector2 const& movementStart,
+			Vector2 const& movementEnd);
+
 	private:
+
+		// Releases a cancelling Actor's claim on each operation its request
+		// needed; an operation nobody still wants is cancelled with it.
+		void detachInteractionRequester(InteractionRequest& request);
 
 		// The coordinator owns no state. It reaches the registries it drives
 		// through the Building that owns it.

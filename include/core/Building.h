@@ -811,6 +811,9 @@ namespace core
 
 		DeviceOperationSnapshot makeDeviceOperationSnapshot(DeviceOperationId id, DeviceOperation const& operation) const;
 
+		// Interaction and device-operation orchestration lives in
+		// SimulationCoordinator (ADR 0004); each entry point below - public or
+		// private - forwards to it.
 		DeviceOperationId findOrCreateDeviceOperation(DeviceCommand const& command, AgentId requester);
 
 		void advanceDeviceOperations();
@@ -825,8 +828,6 @@ namespace core
 		void pressPhysicalControl(InteractionPointId point);
 
 		void updateInteractionResults();
-
-		void detachInteractionRequester(InteractionRequest& request);
 
 		InteractionRequestId requestInteractionForTraversal(InteractionPointId point, AgentId actor);
 
@@ -1420,7 +1421,8 @@ namespace core
 		// Building-owned replacement APIs. Callers retain typed IDs, not ownership.
 		// Agent lifecycle - creation, placement, removal, lookup, id resolution,
 		// waking, and traversal-ownership release - lives in SimulationCoordinator
-		// (ADR 0004); every Agent entry point below forwards to it.
+		// (ADR 0004); every Agent entry point below forwards to it, as does every
+		// InteractionPoint, InteractionRequest and DeviceOperation entry point.
 		AgentId createAgent(std::string const& name, uint32_t sectorId, uint32_t deckOffset, float xOffset);
 
 		AgentId createAgent(std::string const& name, uint32_t sectorId);
