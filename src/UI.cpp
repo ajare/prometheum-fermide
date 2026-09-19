@@ -25,6 +25,7 @@
 #include "imgui/imgui.h"
 #include "imgui/imgui_internal.h"
 #include "imgui/IconsFontAwesome5.h"
+#include "PaletteLayout.h"
 
 #if defined(_WIN32)
 #include <nfd.h>
@@ -152,11 +153,7 @@ namespace
 		return true;
 	}
 
-	constexpr float PaletteSlotSize{ 36.0f };
-	constexpr float PaletteSlotWidth{ 64.0f };
 	constexpr float PaletteInset{ 16.0f };
-	constexpr float PaletteGap{ 6.0f };
-	constexpr float PalettePadding{ 6.0f };
 	constexpr float MarkerIconSize{ 22.0f };
 	constexpr float PegmanGravity{ 6.0f };
 	constexpr float PegmanTerminalVelocity{ 8.0f };
@@ -1442,45 +1439,44 @@ namespace
 		}
 
 		auto trayBottomRight = canvasPos + canvasSize - ImVec2(PaletteInset, PaletteInset);
-		auto traySize = ImVec2(PalettePadding * 2.0f + PaletteSlotWidth * 9.0f + PaletteGap * 8.0f,
-			PalettePadding * 2.0f + PaletteSlotSize * 2.0f + PaletteGap);
+		auto traySize = paletteTraySize();
 		auto trayTopLeft = trayBottomRight - traySize;
-		auto roomMin = trayTopLeft + ImVec2(PalettePadding, PalettePadding);
-		auto facadeMin = roomMin + ImVec2(PaletteSlotWidth + PaletteGap, 0.0f);
-		auto corridorMin = facadeMin + ImVec2(PaletteSlotWidth + PaletteGap, 0.0f);
-		auto backgroundMin = corridorMin + ImVec2(PaletteSlotWidth + PaletteGap, 0.0f);
-		auto ladderMin = backgroundMin + ImVec2(PaletteSlotWidth + PaletteGap, 0.0f);
-		auto stairwellMin = ladderMin + ImVec2(PaletteSlotWidth + PaletteGap, 0.0f);
-		auto liftMin = stairwellMin + ImVec2(PaletteSlotWidth + PaletteGap, 0.0f);
-		auto shuttleMin = liftMin + ImVec2(PaletteSlotWidth + PaletteGap, 0.0f);
-		auto staircaseMin = shuttleMin + ImVec2(PaletteSlotWidth + PaletteGap, 0.0f);
-		auto agentMin = roomMin + ImVec2(0.0f, PaletteSlotSize + PaletteGap);
-		auto markerMin = corridorMin + ImVec2(0.0f, PaletteSlotSize + PaletteGap);
-		auto doorMin = ladderMin + ImVec2(0.0f, PaletteSlotSize + PaletteGap);
-		auto bulkheadDoorMin = doorMin + ImVec2(PaletteSlotWidth + PaletteGap, 0.0f);
-		auto windowMin = bulkheadDoorMin + ImVec2(PaletteSlotWidth + PaletteGap, 0.0f);
-		auto walkwayMin = windowMin + ImVec2(PaletteSlotWidth + PaletteGap, 0.0f);
-		auto forceBridgeMin = walkwayMin + ImVec2(PaletteSlotWidth + PaletteGap, 0.0f);
-		auto roomLadderMin = forceBridgeMin + ImVec2(PaletteSlotWidth + PaletteGap, 0.0f);
-		auto platformLiftMin = roomLadderMin + ImVec2(PaletteSlotWidth + PaletteGap, 0.0f);
-		auto roomMax = roomMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
-		auto facadeMax = facadeMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
-		auto corridorMax = corridorMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
-		auto backgroundMax = backgroundMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
-		auto ladderMax = ladderMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
-		auto stairwellMax = stairwellMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
-		auto liftMax = liftMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
-		auto shuttleMax = shuttleMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
-		auto staircaseMax = staircaseMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
-		auto windowMax = windowMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
-		auto doorMax = doorMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
-		auto bulkheadDoorMax = bulkheadDoorMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
-		auto agentMax = agentMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
-		auto markerMax = markerMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
-		auto walkwayMax = walkwayMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
-		auto forceBridgeMax = forceBridgeMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
-		auto roomLadderMax = roomLadderMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
-		auto platformLiftMax = platformLiftMin + ImVec2(PaletteSlotWidth, PaletteSlotSize);
+		auto roomMin = paletteSlotMin(trayTopLeft, PaletteSlot::Room);
+		auto facadeMin = paletteSlotMin(trayTopLeft, PaletteSlot::Facade);
+		auto corridorMin = paletteSlotMin(trayTopLeft, PaletteSlot::Corridor);
+		auto backgroundMin = paletteSlotMin(trayTopLeft, PaletteSlot::Background);
+		auto ladderMin = paletteSlotMin(trayTopLeft, PaletteSlot::Ladder);
+		auto stairwellMin = paletteSlotMin(trayTopLeft, PaletteSlot::Stairwell);
+		auto liftMin = paletteSlotMin(trayTopLeft, PaletteSlot::Lift);
+		auto shuttleMin = paletteSlotMin(trayTopLeft, PaletteSlot::Shuttle);
+		auto staircaseMin = paletteSlotMin(trayTopLeft, PaletteSlot::Staircase);
+		auto agentMin = paletteSlotMin(trayTopLeft, PaletteSlot::Agent);
+		auto markerMin = paletteSlotMin(trayTopLeft, PaletteSlot::Marker);
+		auto doorMin = paletteSlotMin(trayTopLeft, PaletteSlot::Door);
+		auto bulkheadDoorMin = paletteSlotMin(trayTopLeft, PaletteSlot::BulkheadDoor);
+		auto windowMin = paletteSlotMin(trayTopLeft, PaletteSlot::Window);
+		auto walkwayMin = paletteSlotMin(trayTopLeft, PaletteSlot::Walkway);
+		auto forceBridgeMin = paletteSlotMin(trayTopLeft, PaletteSlot::ForceBridge);
+		auto roomLadderMin = paletteSlotMin(trayTopLeft, PaletteSlot::RoomLadder);
+		auto platformLiftMin = paletteSlotMin(trayTopLeft, PaletteSlot::PlatformLift);
+		auto roomMax = paletteSlotMax(trayTopLeft, PaletteSlot::Room);
+		auto facadeMax = paletteSlotMax(trayTopLeft, PaletteSlot::Facade);
+		auto corridorMax = paletteSlotMax(trayTopLeft, PaletteSlot::Corridor);
+		auto backgroundMax = paletteSlotMax(trayTopLeft, PaletteSlot::Background);
+		auto ladderMax = paletteSlotMax(trayTopLeft, PaletteSlot::Ladder);
+		auto stairwellMax = paletteSlotMax(trayTopLeft, PaletteSlot::Stairwell);
+		auto liftMax = paletteSlotMax(trayTopLeft, PaletteSlot::Lift);
+		auto shuttleMax = paletteSlotMax(trayTopLeft, PaletteSlot::Shuttle);
+		auto staircaseMax = paletteSlotMax(trayTopLeft, PaletteSlot::Staircase);
+		auto windowMax = paletteSlotMax(trayTopLeft, PaletteSlot::Window);
+		auto doorMax = paletteSlotMax(trayTopLeft, PaletteSlot::Door);
+		auto bulkheadDoorMax = paletteSlotMax(trayTopLeft, PaletteSlot::BulkheadDoor);
+		auto agentMax = paletteSlotMax(trayTopLeft, PaletteSlot::Agent);
+		auto markerMax = paletteSlotMax(trayTopLeft, PaletteSlot::Marker);
+		auto walkwayMax = paletteSlotMax(trayTopLeft, PaletteSlot::Walkway);
+		auto forceBridgeMax = paletteSlotMax(trayTopLeft, PaletteSlot::ForceBridge);
+		auto roomLadderMax = paletteSlotMax(trayTopLeft, PaletteSlot::RoomLadder);
+		auto platformLiftMax = paletteSlotMax(trayTopLeft, PaletteSlot::PlatformLift);
 		drawList->AddRectFilled(trayTopLeft, trayBottomRight, trayColour, 5.0f);
 		drawList->AddRect(trayTopLeft, trayBottomRight, borderColour, 5.0f);
 

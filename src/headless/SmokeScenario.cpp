@@ -58,6 +58,7 @@ void runFacadeSmokeChecks();
 void runFacadeRenderSmokeChecks();
 void runFacadeDrawOrderSmokeChecks();
 void runFacadeEditorSmokeChecks();
+void runPaletteTraySmokeChecks();
 
 static_assert(!std::is_convertible_v<core::AgentId, core::InteractionPointId>);
 static_assert(!std::is_convertible_v<core::DeviceOperationId, core::TraversalResourceId>);
@@ -4363,6 +4364,7 @@ int main()
 		runFacadeRenderSmokeChecks();
 		runFacadeDrawOrderSmokeChecks();
 		runFacadeEditorSmokeChecks();
+		runPaletteTraySmokeChecks();
 
 		auto const deepJourney = runThreeLayerTransitJourney();
 		if (!deepJourney.pathShapeValid)
