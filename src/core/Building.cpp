@@ -1244,8 +1244,10 @@ namespace core
 	uint32_t Building::addCorridor(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide,
 		uint32_t decksHigh)
 	{
-		beginStructuralEdit("addCorridor");
 		string const caller = format("Building::addCorridor({}, {}, {}, {}, {})", layerIndex, y, x, cellsWide, decksHigh);
+		// Every rejecting check runs before beginStructuralEdit() so a refused
+		// call stays a true no-op: no modified flag, no topology invalidation
+		// (ticket #93).
 		validateLayer(caller, layerIndex);
 		// Minimum (1,1). A zero-sized Location would pass the bounds checks by covering
 		// nothing, leaving a Sector no cell references: invisible, unselectable, and
@@ -1254,6 +1256,7 @@ namespace core
 			throw BuildingException(this, format("{} - a Corridor must be at least one cell wide", caller));
 		if (decksHigh == 0)
 			throw BuildingException(this, format("{} - a Corridor must be at least one deck high", caller));
+		beginStructuralEdit("addCorridor");
 		auto const result = addLocation("Corridor", SectorType::Location, layerIndex, x, y, cellsWide, decksHigh, CORE_CORRIDOR_HEIGHT, true);
 		ConstructionRecord record{ ConstructionType::Corridor };
 		record.layer = layerIndex;
@@ -1264,8 +1267,10 @@ namespace core
 
 	uint32_t Building::addRoom(string const& name, uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t decksHigh, float topDeckHeight)
 	{
-		beginStructuralEdit("addRoom");
 		string const caller = format("Building::addRoom({}, {}, {}, {}, {}, {}, {})", name, layerIndex, y, x, cellsWide, decksHigh, topDeckHeight);
+		// Every rejecting check runs before beginStructuralEdit() so a refused
+		// call stays a true no-op: no modified flag, no topology invalidation
+		// (ticket #93).
 		// Written as a negated in-range test so a NaN topDeckHeight is rejected
 		// too: NaN fails both comparisons, so the plain < / > pair would let it
 		// through (ticket #55).
@@ -1280,6 +1285,8 @@ namespace core
 			throw BuildingException(this, format("{} - a Room must be at least one cell wide", caller));
 		if (decksHigh == 0)
 			throw BuildingException(this, format("{} - a Room must be at least one deck high", caller));
+
+		beginStructuralEdit("addRoom");
 
 		auto const result = addLocation(name, SectorType::Location, layerIndex, x, y, cellsWide, decksHigh, topDeckHeight, false);
 		ConstructionRecord record{ ConstructionType::Room };

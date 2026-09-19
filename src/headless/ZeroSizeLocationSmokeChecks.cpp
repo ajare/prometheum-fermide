@@ -202,6 +202,46 @@ namespace
 		}), "replayed Corridor");
 	}
 
+	// Ticket #93: a refused zero-size edit must be a true no-op. The rejection
+	// has to happen before beginStructuralEdit() mutates anything, so the
+	// Building keeps its Sector count, stays unmodified, and keeps its valid
+	// traversal topology.
+	void rejectedZeroSizeEditsLeaveTheBuildingUntouched()
+	{
+		// The ticket's reproduction shape: a saved, finished, paused Building.
+		auto expectNoOp = [](std::function<void(core::Building&)> edit, std::string const& what)
+		{
+			core::Building building("repro", 4, 2);
+			building.addRoom("ok", 0, 0, 0, 1, 1);
+			building.finishBuild();
+			building.markSaved();
+			building.pauseSimulation();
+			require(building.getNumSectors() == 1 && !building.isModified()
+				&& building.isTraversalTopologyValid(),
+				(what + ": the saved-Building setup did not start clean").c_str());
+
+			requireMinimumRefusal(refusalMessage([&] { edit(building); }), what);
+			require(building.getNumSectors() == 1,
+				(what + ": the refused edit changed the Sector count").c_str());
+			require(!building.isModified(),
+				(what + ": the refused edit marked the Building modified").c_str());
+			require(building.isTraversalTopologyValid(),
+				(what + ": the refused edit invalidated the traversal topology").c_str());
+		};
+
+		expectNoOp([](core::Building& b) { b.addRoom("bad", 0, 0, 1, 0, 1); }, "zero-width Room");
+		expectNoOp([](core::Building& b) { b.addRoom("bad", 0, 0, 1, 1, 0); }, "zero-height Room");
+		expectNoOp([](core::Building& b) { b.addCorridor(0, 0, 1, 0, 1); }, "zero-width Corridor");
+		expectNoOp([](core::Building& b) { b.addCorridor(0, 0, 1, 1, 0); }, "zero-height Corridor");
+		// The Layer-less overload, both dimensions; the cast picks the 4-argument
+		// form because the two overloads are otherwise ambiguous there.
+		expectNoOp([](core::Building& b) { b.addCorridor(0, 1, 0); }, "zero-width layerless Corridor");
+		auto const layerless = static_cast<uint32_t(core::Building::*)(
+			uint32_t, uint32_t, uint32_t, uint32_t)>(&core::Building::addCorridor);
+		expectNoOp([&](core::Building& b) { (b.*layerless)(0u, 1u, 1u, 0u); },
+			"zero-height layerless Corridor");
+	}
+
 	// Positive control: the same documents with honest sizes still load.
 	void honestRecordsStillLoad()
 	{
@@ -236,5 +276,6 @@ void runZeroSizeLocationSmokeChecks()
 	theMinimumOneByOneLocationsAreAccepted();
 	replayRejectsAZeroSizedRoomRecord();
 	replayRejectsAZeroSizedCorridorRecord();
+	rejectedZeroSizeEditsLeaveTheBuildingUntouched();
 	honestRecordsStillLoad();
 }
