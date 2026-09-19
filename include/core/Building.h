@@ -1090,8 +1090,9 @@ namespace core
 		CreateShuttleResult addShuttle(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide, CreateShuttleOptions const& options);
 
 		// Sector object types
-		// Corridor doors are the constrained authoring form exposed by the object palette.
-		// A Door is authored on the front Layer of the pair it crosses.
+		// Doors may connect any two Room, Corridor, or Facade Locations. The legacy
+		// method name remains part of the public API. A Door is authored on the front
+		// Layer of the pair it crosses.
 		bool canAddCorridorDoor(uint32_t layerIndex, uint32_t y, uint32_t x,
 			std::string* diagnostic = nullptr) const;
 

@@ -2955,19 +2955,19 @@ namespace core
 			{
 				auto const& foreCell = mLayers[layerIndex]->getCellDefinition(ix, y);
 				auto const& backCell = mLayers[backLayer]->getCellDefinition(ix, y);
-				if (!foreCell.occupied()) return reject("Doors must be placed on a corridor on the Layer they are authored on");
-				if (!backCell.occupied()) return reject("A Room or Lift on the Layer behind is required here");
+				if (!foreCell.occupied()) return reject("A Door must be placed in a Room, Corridor or Facade on the Layer where it is authored");
+				if (!backCell.occupied()) return reject("A Room, Corridor, Facade or Lift on the Layer behind is required here");
 				sectors[0] = mSectors[foreCell.sectorIndex];
 				sectors[1] = mSectors[backCell.sectorIndex];
 				auto fore = dynamic_pointer_cast<const Location>(sectors[0]);
 				auto back = dynamic_pointer_cast<const Location>(sectors[1]);
-				if (!fore || !fore->isCorridor()) return reject("Doors must be placed on a corridor on the Layer they are authored on");
+				if (!fore) return reject("A Door must be placed in a Room, Corridor or Facade on the Layer where it is authored");
 				if (liftLanding)
 				{
 					if (sectors[1]->getType() != SectorType::Lift)
 						return reject("The complete lift width must overlap one corridor");
 				}
-				else if (!back || back->isCorridor()) return reject("A Room on the Layer behind is required here");
+				else if (!back) return reject("A Room, Corridor or Facade on the Layer behind is required here");
 				if (foreCell.hasObject() || backCell.hasObject()
 					|| !foreCell.markers.empty() || !backCell.markers.empty())
 					return reject("Another object blocks Door placement");
