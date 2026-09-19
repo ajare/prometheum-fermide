@@ -22,6 +22,7 @@
 #include "core/Log.h"
 #include "core/Simulation.h"
 #include "core/Coordination.h"
+#include "core/SimulationCoordinator.h"
 #include "core/EntityRegistry.h"
 #include "core/Serializable.h"
 
@@ -394,6 +395,12 @@ namespace core
 
 
 		std::shared_ptr<Graph> mGraph;
+
+		// Simulation behaviour belongs to the coordinator (ADR 0004). Building
+		// owns it and stays the facade (design pattern) through which every
+		// caller, Agent included, reaches it; the coordinator owns no entities
+		// and reaches the registries below through this Building.
+		SimulationCoordinator mSimulationCoordinator;
 
 		EntityRegistry<AgentId, Agent> mAgents;
 

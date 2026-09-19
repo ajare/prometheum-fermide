@@ -31,6 +31,7 @@ namespace core
 	class Agent : public Serializable
 	{
 		friend class Building;
+		friend class SimulationCoordinator;
 		friend class Sector;
 
 	public:

@@ -103,6 +103,7 @@ namespace core
 		, mDecksHigh(decksHigh)
 		, mLayers(2)
 		, mLayerNames{ defaultLayerName(0), defaultLayerName(1) }
+		, mSimulationCoordinator(*this)
 	{
 		for (uint32_t i = 0; i < mLayers.size(); ++i)
 		{

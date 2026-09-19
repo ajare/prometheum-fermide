@@ -22,6 +22,7 @@ namespace core
 	class Ladder;
 	class Lift;
 	class Shuttle;
+	class SimulationCoordinator;
 	class Stairwell;
 	class Window;
 
@@ -114,6 +115,7 @@ namespace core
 	class InteractionPoint
 	{
 		friend class Building;
+		friend class SimulationCoordinator;
 
 		std::string mName;
 		SectorId mSector;
@@ -166,6 +168,7 @@ namespace core
 	class DeviceOperation
 	{
 		friend class Building;
+		friend class SimulationCoordinator;
 
 		std::string mName;
 		AgentId mRequester;
@@ -202,6 +205,7 @@ namespace core
 	class InteractionRequest
 	{
 		friend class Building;
+		friend class SimulationCoordinator;
 
 		InteractionPointId mPoint;
 		AgentId mActor;
@@ -272,6 +276,7 @@ namespace core
 	class TraversalResource
 	{
 		friend class Building;
+		friend class SimulationCoordinator;
 		std::string mName;
 		std::shared_ptr<Door> mDoor;
 		std::shared_ptr<Window> mWindow;
@@ -461,6 +466,7 @@ namespace core
 	class TraversalRequest
 	{
 		friend class Building;
+		friend class SimulationCoordinator;
 		AgentId mOwner;
 		EdgeType mEdgeType;
 		SectorId mSourceSector;
@@ -537,6 +543,7 @@ namespace core
 	class TraversalPermit
 	{
 		friend class Building;
+		friend class SimulationCoordinator;
 		TraversalRequestId mRequest;
 		AgentId mOwner;
 		TraversalPermitState mState{ TraversalPermitState::Active };
