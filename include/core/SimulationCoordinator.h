@@ -264,6 +264,24 @@ namespace core
 			uint32_t& sourceNode);
 
 		// ------------------------------------------------------------------
+		// Lift onboard destination selection - the riding branch (ADR 0004 stage 3)
+		//
+		// What happens when an Agent which already occupies the car asks to travel
+		// to another stop inside it: scheduled-destination grants (including the
+		// shuttle contiguous-ride alignment), journey-stop resolution, the
+		// shared-destination shortcut, confirmation-queue serialisation at the
+		// interior selector control, and the retry-then-safe-exit policy all live
+		// here. Building's lift allocation dispatcher forwards riding requests
+		// through this entry point; no caller outside Building names the
+		// coordinator.
+		// ------------------------------------------------------------------
+
+		// Allocate one pending riding request. `coordinator` is the lift or
+		// shuttle journey resource the request was made against; the request's
+		// own landing edge is not consulted, since the passenger is already aboard.
+		void allocateLiftRiding(TraversalRequestId requestId, TraversalResource& coordinator);
+
+		// ------------------------------------------------------------------
 		// Open platform lift traversal allocation (ADR 0004 stage 3)
 		//
 		// Allocating an Agent's use of an open platform lift all lives here:

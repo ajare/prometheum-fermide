@@ -18,19 +18,22 @@ namespace core
 
 	using namespace std;
 
-	// Lift scheduling and passenger safe exits moved out of Building
-	// (ADR 0004 stage 3). The behaviour is unchanged: the coordinator works on
+	// Lift scheduling, passenger safe exits and the riding branch of lift
+	// allocation moved out of Building (ADR 0004 stage 3). The behaviour is
+	// unchanged: the coordinator works on
 	// Building's traversal-resource, traversal-request, interaction-request and
 	// agent registries through friendship, and calls back through the Building
 	// facade for the machinery which has not moved out of Building yet - queue
-	// position refresh. The shuttle passenger-carriage lookup these used to call
-	// back for has since moved in with the shuttle door assignment family
-	// (SimulationCoordinatorShuttles.cpp) and is called directly.
+	// position refresh, grants and denials. The shuttle passenger-carriage lookup
+	// these used to call back for has since moved in with the shuttle door
+	// assignment family (SimulationCoordinatorShuttles.cpp) and is called
+	// directly.
 	//
-	// These are helpers with no entry points of their own: every caller reaches
-	// them either from inside the coordinator or through the Building facade
-	// (design pattern, not the Facade sector type), which keeps them while the
-	// lift allocation branches follow.
+	// These were helpers with no entry points of their own until the riding branch
+	// of lift allocation joined them: every caller reaches the scheduling helpers
+	// either from inside the coordinator or through the Building facade (design
+	// pattern, not the Facade sector type), while allocateLiftRiding is reached
+	// only through that facade, from Building's lift allocation dispatcher.
 
 	uint32_t SimulationCoordinator::findLiftStop(TraversalResource const& resource, Vector2 const& endpoint) const
 	{
@@ -404,6 +407,158 @@ namespace core
 			}
 		}
 		return false;
+	}
+
+	// Riding allocation. The Agent is already an occupant of the car and asks to
+	// travel to another stop inside it. A destination already scheduled for the
+	// passenger is granted straight away - for a shuttle, after the passenger has
+	// walked within the carriage to the final node of the contiguous ride so the
+	// whole chain commits as one journey. Otherwise the journey stop is read from
+	// the ride edge ahead on the path: a stop some other passenger has already
+	// requested is shared without further ceremony, and a fresh stop is confirmed
+	// one passenger at a time through the confirmation queue at the interior
+	// selector control. A failed confirmation is retried on the waiting policy's
+	// delay until the retries run out, at which point the passenger is asked to
+	// leave at the next safe stop and the request is denied.
+	void SimulationCoordinator::allocateLiftRiding(TraversalRequestId requestId, TraversalResource& coordinator)
+	{
+		auto request = mBuilding.mTraversalRequests.find(requestId);
+		if (!request || request->mState != TraversalRequestState::Pending) return;
+		if (find(coordinator.mOccupants.begin(), coordinator.mOccupants.end(), request->mOwner)
+			== coordinator.mOccupants.end()) return;
+		if (auto scheduled = coordinator.mLiftPassengerDestinations.find(request->mOwner);
+			scheduled != coordinator.mLiftPassengerDestinations.end())
+		{
+			if (!coordinator.mLiftMoving && coordinator.mLiftCurrentStop == scheduled->second)
+			{
+				if (auto actor = mBuilding.mAgents.find(request->mOwner))
+				{
+					if (coordinator.mShuttle)
+					{
+						// Multiple Door cells create a contiguous chain of Shuttle
+						// edges. Intermediate nodes may still belong to the origin
+						// stop, so align with the final node in this journey rather
+						// than the current edge's endpoint.
+						auto destinationVertex = actor->mTraversalTask
+							? actor->mTraversalTask->destinationVertex : shared_ptr<const Vertex>{};
+						auto destinationNode = actor->mPath.targetNode + 1;
+						if (actor->mPath.path)
+							for (uint32_t i = actor->mPath.targetNode + 1;
+								i < actor->mPath.path->nodes.size(); ++i)
+							{
+								auto const& node = actor->mPath.path->nodes[i];
+								if (!node.edge || node.edge->getType() != EdgeType::Shuttle
+									|| node.edge->getTraversalResourceId()
+										!= coordinator.mShuttle->getTraversalResourceId()) break;
+								if (node.targetVertex)
+								{
+									destinationVertex = node.targetVertex;
+									destinationNode = i;
+								}
+							}
+						if (!destinationVertex) return;
+
+						auto destinationEndpoint = destinationVertex->getPosition();
+						auto alignmentTarget = actor->getGlobalPosition();
+						alignmentTarget.x = destinationEndpoint.x;
+						if (abs(actor->getGlobalPosition().x - alignmentTarget.x) > 0.001f)
+						{
+							actor->mTraversalLocalGoal = alignmentTarget;
+							return;
+						}
+						actor->mTraversalLocalGoal.reset();
+
+						// Commit the contiguous ride as one journey so Agent does not
+						// subsequently traverse stale intermediate Shuttle nodes.
+						request->mDestinationEndpoint = destinationEndpoint;
+						request->mDestinationSector = SectorId{
+							(uint64_t)destinationVertex->getSector()->getIndex() + 1 };
+						if (actor->mTraversalTask)
+							actor->mTraversalTask->destinationVertex = destinationVertex;
+						if (destinationNode > actor->mPath.targetNode)
+							actor->mPath.targetNode = destinationNode - 1;
+					}
+					else
+					{
+						auto transit = mBuilding.mSectors[(size_t)coordinator.mLiftSector.value - 1].get();
+						actor->setPosition({ transit,
+							request->mDestinationEndpoint - transit->getPosition() }, false);
+					}
+				}
+				mBuilding.grantTraversalRequest(requestId);
+			}
+			return;
+		}
+		auto actor = mBuilding.mAgents.find(request->mOwner);
+		auto journeyStop = actor ? findAgentLiftDestination(*actor, coordinator) : ~0u;
+		if (journeyStop >= coordinator.mLiftStops.size()) { mBuilding.denyTraversalRequest(requestId); return; }
+		if (!coordinator.mLiftStopRequestOwners[journeyStop].empty())
+		{
+			addLiftStopRequest(coordinator, journeyStop, request->mOwner);
+			coordinator.mLiftPassengerDestinations[request->mOwner] = journeyStop;
+			// This passenger may have queued for serialized destination
+			// confirmation before another passenger activated the same stop.
+			// Sharing that destination makes the queued confirmation obsolete.
+			coordinator.mLiftConfirmationQueue.erase(remove(
+				coordinator.mLiftConfirmationQueue.begin(),
+				coordinator.mLiftConfirmationQueue.end(), requestId),
+				coordinator.mLiftConfirmationQueue.end());
+			if (coordinator.mLiftActiveConfirmation == requestId)
+				coordinator.mLiftActiveConfirmation = coordinator.mLiftConfirmationQueue.empty()
+					? TraversalRequestId{} : coordinator.mLiftConfirmationQueue.front();
+			return;
+		}
+		if (find(coordinator.mLiftConfirmationQueue.begin(), coordinator.mLiftConfirmationQueue.end(), requestId)
+			== coordinator.mLiftConfirmationQueue.end())
+			coordinator.mLiftConfirmationQueue.push_back(requestId);
+		if (!coordinator.mLiftActiveConfirmation)
+			coordinator.mLiftActiveConfirmation = coordinator.mLiftConfirmationQueue.front();
+		if (coordinator.mLiftActiveConfirmation != requestId) return;
+		if (!request->mPreparationRequested)
+		{
+			if (mBuilding.mSimulationTick < request->mNextPreparationTick) return;
+			if (journeyStop >= coordinator.mControls.size()) { mBuilding.denyTraversalRequest(requestId); return; }
+			coordinator.mLiftSelector = coordinator.mControls[journeyStop];
+			auto selector = mBuilding.mInteractionPoints.find(coordinator.mLiftSelector);
+			auto actor = mBuilding.mAgents.find(request->mOwner);
+			if (selector && actor) selector->mPosition = actor->getGlobalPosition();
+			auto interactionId = requestInteractionForTraversal(coordinator.mLiftSelector, request->mOwner);
+			if (!interactionId) return;
+			auto interaction = mBuilding.mInteractionRequests.find(interactionId);
+			request->mPreparationRequested = true;
+			if (interaction && !interaction->mOperations.empty())
+				request->mPreparationOperation = interaction->mOperations.front().first;
+			return;
+		}
+		auto operation = mBuilding.mDeviceOperations.find(request->mPreparationOperation);
+		if (!operation || operation->mState == DeviceOperationState::Pending
+			|| operation->mState == DeviceOperationState::Running) return;
+		if (operation->mState != DeviceOperationState::Succeeded)
+		{
+			if (request->mPreparationAttempts < mBuilding.mTraversalWaitingPolicy.maximumDestinationRetries)
+			{
+				++request->mPreparationAttempts;
+				for (auto const& [interactionId, interaction] : mBuilding.mInteractionRequests.entries())
+					if (interaction->mActor == request->mOwner
+						&& interaction->mResult == InteractionResult::Pending)
+						cancelInteraction(interactionId);
+				request->mPreparationRequested = false;
+				request->mPreparationOperation = {};
+				request->mNextPreparationTick = mBuilding.mSimulationTick
+					+ mBuilding.mTraversalWaitingPolicy.destinationRetryDelayTicks;
+				return;
+			}
+			requestLiftPassengerSafeExit(request->mOwner, TraversalFailureReason::PreparationFailed);
+			mBuilding.denyTraversalRequest(requestId, TraversalFailureReason::PreparationFailed);
+			return;
+		}
+		addLiftStopRequest(coordinator, journeyStop, request->mOwner);
+		coordinator.mLiftPassengerDestinations[request->mOwner] = journeyStop;
+		coordinator.mLiftDestinationStop = journeyStop;
+		coordinator.mLiftConfirmationQueue.erase(coordinator.mLiftConfirmationQueue.begin());
+		coordinator.mLiftActiveConfirmation = coordinator.mLiftConfirmationQueue.empty()
+			? TraversalRequestId{} : coordinator.mLiftConfirmationQueue.front();
+		return;
 	}
 
 } // core
