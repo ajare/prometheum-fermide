@@ -3923,6 +3923,16 @@ void handleShortcuts(shared_ptr<core::Building>& building)
 						core::addLogMessage("Background editor", 0, core::LogLevel::Error, plan.diagnostic);
 					else queueLocationEdit(building, plan);
 				}
+				else if (gSelectedSector->getType() == core::SectorType::Facade)
+				{
+					// A Facade is occupiable like a Room, so the plan names the Agents
+					// inside and the hosted objects which go with it before anything
+					// is applied (ticket #53).
+					auto plan = building->planRemoveFacade(gSelectedSector->getIndex());
+					if (!plan.valid)
+						core::addLogMessage("Facade editor", 0, core::LogLevel::Error, plan.diagnostic);
+					else queueLocationEdit(building, plan);
+				}
 				else
 				{
 					auto plan = building->planRemoveLocation(gSelectedSector->getIndex());
@@ -4948,6 +4958,28 @@ void renderFacadePanel(shared_ptr<core::Building> const& building,
 	// construction, so every wall command against it refuses; showing buttons
 	// that can only ever be disabled would advertise an edit the type forbids.
 	ImGui::TextDisabled("Facades have no walls - the perimeter is open by construction.");
+	// Resizing stays out of scope for Facades (ticket #53): planResizeLocation
+	// refuses one, and the canvas offers no resize affordance. The panel says
+	// so rather than leaving the refusal to be discovered by a dead keypress.
+	ImGui::TextDisabled("Facades cannot be resized - delete and repaint to change the footprint.");
+	ImGui::Separator();
+	if (ImGui::Button("Delete Facade"))
+	{
+		// A Facade is occupiable, so the plan names the Agents inside and every
+		// hosted object which goes with it, and the shared "Confirm sector edit"
+		// popup spells the cascade out before anything is applied.
+		auto plan = building->planRemoveFacade(sector->getIndex());
+		if (!plan.valid)
+			core::addLogMessage("Facade editor", 0, core::LogLevel::Error, plan.diagnostic);
+		else
+		{
+			// The Sector this panel has been driving may not survive the confirmation.
+			editedSector = nullptr;
+			queueLocationEdit(building, plan);
+		}
+	}
+	ImGui::SameLine();
+	ImGui::TextDisabled("Delete key");
 }
 
 

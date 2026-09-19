@@ -4453,13 +4453,26 @@ namespace core
 
 	Building::LocationEditPlan Building::planRemoveLocation(uint32_t sectorIndex) const
 	{
+		return planRemoveOccupiable(sectorIndex, SectorType::Location,
+			"Only rooms and corridors can be deleted");
+	}
+
+	Building::LocationEditPlan Building::planRemoveFacade(uint32_t sectorIndex) const
+	{
+		return planRemoveOccupiable(sectorIndex, SectorType::Facade,
+			"Only Facades can be deleted here");
+	}
+
+	Building::LocationEditPlan Building::planRemoveOccupiable(uint32_t sectorIndex,
+		SectorType requiredType, std::string const& refusal) const
+	{
 		LocationEditPlan plan;
 		plan.remove = true;
 		plan.sectorIndex = sectorIndex;
 		if (sectorIndex >= mSectors.size() || !mSectors[sectorIndex]
-			|| mSectors[sectorIndex]->getType() != SectorType::Location)
+			|| mSectors[sectorIndex]->getType() != requiredType)
 		{
-			plan.diagnostic = "Only rooms and corridors can be deleted";
+			plan.diagnostic = refusal;
 			return plan;
 		}
 		auto sector = mSectors[sectorIndex];
@@ -4554,8 +4567,12 @@ namespace core
 			&& mSectors[requested.sectorIndex]->getType() == SectorType::Background)
 			return applyBackgroundEdit(requested);
 
+		// A Facade delete re-plans through the Facade path; a Facade resize keeps
+		// refusing through planResizeLocation, which is the ticket #53 decision.
+		auto const facade = requested.sectorIndex < mSectors.size() && mSectors[requested.sectorIndex]
+			&& mSectors[requested.sectorIndex]->getType() == SectorType::Facade;
 		LocationEditPlan plan = requested.remove
-			? planRemoveLocation(requested.sectorIndex)
+			? (facade ? planRemoveFacade(requested.sectorIndex) : planRemoveLocation(requested.sectorIndex))
 			: planResizeLocation(requested.sectorIndex, requested.x, requested.y,
 				requested.cellsWide, requested.decksHigh);
 		if (!plan.valid) throw BuildingException(this, plan.diagnostic);

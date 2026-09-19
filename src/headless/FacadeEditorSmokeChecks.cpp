@@ -461,6 +461,144 @@ void theCanvasDropTargetsAcceptAFacade()
 		"An Agent targeting its own Room stopped working");
 }
 
+// The Facade delete plan (ticket #53): a Facade is occupiable, so the plan
+// names the Agents inside and every hosted object which goes with it, exactly
+// as a Room deletion does - and reaches no further than the Facade's own.
+void theFacadeDeletionPlanNamesItsAgentsAndHostedObjects()
+{
+	core::Building building("Facade deletion", 12, 3);
+	while (building.getLayerCount() < 2) building.addLayer();
+	auto const room = building.addRoom("Neighbour", 0, 0, 0, 4, 1);
+	auto const facade = building.addFacade(1, 0, 0, 4, 2);
+	building.finishBuild();
+	building.pauseSimulation();
+
+	auto const insideId = building.createAgent("Frontage dweller", facade, 0, 1.5f);
+	auto const neighbourId = building.createAgent("Upstairs", room, 0, 1.5f);
+	building.addSectorMarker(facade, 0, 2.0f);
+
+	auto const plan = building.planRemoveFacade(facade);
+	require(plan.valid, "Deleting a Facade was refused: " + plan.diagnostic);
+	require(plan.remove && plan.sectorIndex == facade,
+		"The Facade delete plan came back malformed");
+	bool namesAgent = false, namesMarker = false;
+	for (auto const& line : plan.consequences)
+	{
+		if (line.find("Delete Agent Frontage dweller") != std::string::npos) namesAgent = true;
+		if (line.find("Marker") != std::string::npos) namesMarker = true;
+		require(line.find("Upstairs") == std::string::npos,
+			"The Facade delete plan reached into the neighbouring Room: " + line);
+	}
+	require(namesAgent, "The Facade delete plan did not name the Agent inside it");
+	require(namesMarker, "The Facade delete plan did not name the hosted Marker");
+	require(plan.requiresConfirmation(),
+		"A Facade delete with casualties skipped the confirmation step");
+	(void)insideId;
+	(void)neighbourId;
+}
+
+// A Facade with nothing inside still deletes, and needs no confirmation -
+// there is no cascade to warn about.
+void anEmptyFacadeDeletesWithoutConfirmation()
+{
+	core::Building building("Empty Facade delete", 12, 3);
+	auto const facade = building.addFacade(0, 0, 0, 4, 1);
+	building.finishBuild();
+	building.pauseSimulation();
+
+	auto const plan = building.planRemoveFacade(facade);
+	require(plan.valid, "Deleting an empty Facade was refused: " + plan.diagnostic);
+	require(!plan.requiresConfirmation(),
+		"An empty Facade delete demanded confirmation for no cascade");
+}
+
+// Applying the plan: the Facade is gone, its Agent goes with it, and the rest
+// of the Building - neighbours, their Agents, the saved record - is whole.
+void applyingAFacadeDeleteRemovesItAndLeavesTheRestStanding()
+{
+	core::Building building("Facade delete applied", 12, 3);
+	while (building.getLayerCount() < 2) building.addLayer();
+	auto const room = building.addRoom("Neighbour", 0, 0, 0, 4, 1);
+	auto const facade = building.addFacade(1, 0, 0, 4, 2);
+	building.finishBuild();
+	building.pauseSimulation();
+
+	auto const insideId = building.createAgent("Frontage dweller", facade, 0, 1.5f);
+	auto const neighbourId = building.createAgent("Upstairs", room, 0, 1.5f);
+
+	auto const before = building.getNumSectors();
+	auto const plan = building.planRemoveFacade(facade);
+	require(plan.valid, "Deleting a Facade was refused: " + plan.diagnostic);
+	building.applyLocationEdit(plan);
+
+	require(building.getNumSectors() == before - 1,
+		"The deleted Facade's Sector was not compacted away");
+	for (uint32_t index = 0; index < building.getNumSectors(); ++index)
+		require(building.getSector(index)->getType() != core::SectorType::Facade,
+			"A Facade survived its own deletion");
+	require(building.lookupAgent(insideId).entity == nullptr,
+		"The Agent inside the deleted Facade survived with it");
+	auto const survivor = building.lookupAgent(neighbourId).entity;
+	require(survivor != nullptr && survivor->getSector() != nullptr
+		&& survivor->getSector()->getIndex() == room,
+		"Deleting the Facade disturbed the neighbouring Room's Agent");
+	require(building.isTraversalTopologyValid(),
+		"The Facade delete left an invalid topology: " + building.getTopologyDiagnostic());
+
+	// The authored record is gone too: the save never replays the Facade.
+	core::Building reloaded("Facade delete applied", 1, 1);
+	loadInto(reloaded, serializeBuilding(building));
+	require(reloaded.getNumSectors() == building.getNumSectors(),
+		"The reloaded Building kept a Sector the delete had removed");
+	for (uint32_t index = 0; index < reloaded.getNumSectors(); ++index)
+		require(reloaded.getSector(index)->getType() != core::SectorType::Facade,
+			"The saved record replayed the deleted Facade");
+	require(reloaded.lookupAgent(neighbourId).entity != nullptr,
+		"The surviving Agent did not reload after the Facade delete");
+}
+
+// The deletion paths do not cross types: the Facade plan refuses everything
+// which is not a Facade, and the Location paths keep refusing Facades exactly
+// as they did before - the resize refusal in particular is the ticket #53
+// decision, so it stays put with its diagnostic intact.
+void theDeletionPlansDoNotCrossTypes()
+{
+	core::Building building("Deletion refusal", 12, 3);
+	while (building.getLayerCount() < 2) building.addLayer();
+	auto const room = building.addRoom("Room", 0, 0, 0, 4, 1);
+	auto const corridor = building.addCorridor(0u, 1u, 0u, 4u, 1u);
+	auto const background = building.addBackground(1, 0, 0, 3, 1);
+	auto const facade = building.addFacade(1, 0, 3, 3, 1);
+	building.finishBuild();
+	building.pauseSimulation();
+
+	auto const roomPlan = building.planRemoveFacade(room);
+	require(!roomPlan.valid && roomPlan.diagnostic.find("Facade") != std::string::npos,
+		"A Room accepted the Facade delete plan");
+	auto const corridorPlan = building.planRemoveFacade(corridor);
+	require(!corridorPlan.valid, "A Corridor accepted the Facade delete plan");
+	auto const backgroundPlan = building.planRemoveFacade(background);
+	require(!backgroundPlan.valid, "A Background accepted the Facade delete plan");
+	auto const outsidePlan = building.planRemoveFacade(building.getNumSectors() + 8);
+	require(!outsidePlan.valid, "An index outside the Building accepted the Facade delete plan");
+
+	// The old refusal is untouched: planRemoveLocation still will not delete a
+	// Facade, and planResizeLocation still will not resize one. Deletion has
+	// its own door; resize stays closed.
+	auto const wrongDoor = building.planRemoveLocation(facade);
+	require(!wrongDoor.valid
+		&& wrongDoor.diagnostic == "Only rooms and corridors can be deleted",
+		"planRemoveLocation changed its Facade refusal: " + wrongDoor.diagnostic);
+	auto const resize = building.planResizeLocation(facade, 3, 0, 3, 1);
+	require(!resize.valid
+		&& resize.diagnostic == "Only rooms and corridors can be resized",
+		"planResizeLocation changed its Facade refusal: " + resize.diagnostic);
+	require(building.getSector(facade)->getType() == core::SectorType::Facade,
+		"A refused delete or resize changed the Facade");
+	require(building.isTraversalTopologyValid(),
+		"The refused plans left an invalid topology: " + building.getTopologyDiagnostic());
+}
+
 void runFacadeEditorSmokeChecks()
 {
 	theFacadeCreationFlowPlacesAnOccupiableSelectableSector();
@@ -471,4 +609,8 @@ void runFacadeEditorSmokeChecks()
 	wallCommandsRefuseAFacadeWithAClearDiagnostic();
 	theSelectionPanelShowsNoWallAffordancesForAFacade();
 	theCanvasDropTargetsAcceptAFacade();
+	theFacadeDeletionPlanNamesItsAgentsAndHostedObjects();
+	anEmptyFacadeDeletesWithoutConfirmation();
+	applyingAFacadeDeleteRemovesItAndLeavesTheRestStanding();
+	theDeletionPlansDoNotCrossTypes();
 }

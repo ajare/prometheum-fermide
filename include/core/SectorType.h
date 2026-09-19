@@ -31,8 +31,11 @@ namespace core
 	// Vertex of a Facade is a VertexType::Location (ticket #52).
 	//
 	// Checks that are about plain Location identity rather than traversal -
-	// resize and delete affordances, and the type-specific rendering rules -
-	// keep testing SectorType::Location directly.
+	// the resize affordance, and the type-specific rendering rules - keep
+	// testing SectorType::Location directly.  Deletion is not one of them:
+	// a Facade is occupiable and deletes through its own planRemoveFacade()
+	// with the same Agent-and-object cascade a Room deletion plays, while
+	// Facade resize stays refused (ticket #53).
 	bool isLocationLike(SectorType type);
 
 } // core

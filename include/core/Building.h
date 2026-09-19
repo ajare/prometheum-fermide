@@ -647,6 +647,12 @@ namespace core
 		// Constructs a validation candidate with the same dimensions and layer count as this Building.
 		std::unique_ptr<Building> makeCandidateBuilding() const;
 
+		// Shared body of planRemoveLocation and planRemoveFacade: the same
+		// occupiable-removal cascade, gated on the Sector type the caller
+		// allows and refusing anything else with the caller's own diagnostic.
+		LocationEditPlan planRemoveOccupiable(uint32_t sectorIndex,
+			SectorType requiredType, std::string const& refusal) const;
+
 		void validateCellOccupied(std::string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y) const;
 
 		void validateCellUnoccupied(std::string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y) const;
@@ -1261,6 +1267,13 @@ namespace core
 			uint32_t cellsWide, uint32_t decksHigh) const;
 
 		LocationEditPlan planRemoveLocation(uint32_t sectorIndex) const;
+
+		// A Facade is occupiable, so deleting it goes through the same cascade a
+		// Room deletion plays: the plan names the Agents inside and every hosted
+		// object which goes with it, and the apply rebuilds the rest of the
+		// Building around the removal (ticket #53).  Resizing stays out of
+		// scope: planResizeLocation keeps refusing a Facade.
+		LocationEditPlan planRemoveFacade(uint32_t sectorIndex) const;
 
 		uint32_t applyLocationEdit(LocationEditPlan const& plan);
 
