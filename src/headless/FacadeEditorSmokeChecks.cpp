@@ -20,6 +20,8 @@
 //   diagnostic, both through the can-check and through the throwing command
 //   the Selection panel's gates hold: a Facade is selectable, and no wall
 //   affordance on any deck or side would be actionable
+//   the canvas drop targets - the pegman's Agent drop and a selected
+//   Agent's drag-move - accept a Facade exactly as they accept a Room
 
 #include <cstdint>
 #include <format>
@@ -38,6 +40,7 @@
 #include "core/SectorType.h"
 #include "core/YamlSerializer.h"
 #include "UI.h"
+#include "AgentDropTargets.h"
 
 namespace
 {
@@ -401,6 +404,63 @@ void theSelectionPanelShowsNoWallAffordancesForAFacade()
 	}
 }
 
+// The canvas drop paths: the pegman's Agent drop and a selected Agent's
+// drag-move both accept a Facade as a target (ticket #50, ADR 0003). The
+// headless check calls the same inline functions UI.cpp runs, so the real
+// interaction logic - not a mirror of it - is pinned down.
+void theCanvasDropTargetsAcceptAFacade()
+{
+	auto const building = std::make_shared<core::Building>("Drop targets", 12, 3);
+	auto const roomIndex = building->addRoom("Bunker", 0, 0, 0, 3, 1);
+	auto const facadeIndex = building->addFacade(0, 0, 4, 4, 1);
+	building->finishBuild();
+
+	auto const agentId = building->createAgent("Traveller", roomIndex, 0, 1.5f);
+	auto const agent = building->lookupAgent(agentId).entity;
+	require(agent != nullptr, "The moving Agent was not created");
+	require(agent->getSector() != nullptr
+		&& agent->getSector()->getIndex() == roomIndex,
+		"The Agent did not start in the Room");
+
+	// The pegman drops into the Facade exactly as it drops into a Room.
+	auto const facadeTarget = pegmanAgentTargetAtWorld(building, { 5.5f, 0.5f });
+	require(facadeTarget.sector != nullptr,
+		"The pegman drop found no Sector inside the Facade");
+	require(facadeTarget.diagnostic.empty(),
+		"The pegman drop refused the Facade: " + facadeTarget.diagnostic);
+	require(facadeTarget.sector->getType() == core::SectorType::Facade
+		&& facadeTarget.sector->getIndex() == facadeIndex,
+		"The pegman drop resolved to something other than the Facade");
+	require(facadeTarget.deckOffset == 0, "The pegman drop landed on the wrong deck");
+	require(facadeTarget.localX >= CORE_AGENT_MAX_WIDTH * 0.5f
+		&& facadeTarget.localX <= facadeTarget.sector->getSize().x - CORE_AGENT_MAX_WIDTH * 0.5f,
+		"The pegman drop landed outside the Facade's Agent band");
+
+	// A selected Agent drag-moves into the Facade.
+	auto const moveTarget = getAgentMoveTarget(building, agent, { 5.5f, 0.5f });
+	require(moveTarget.sector != nullptr && moveTarget.diagnostic.empty(),
+		"The Agent drag-move refused the Facade: " + moveTarget.diagnostic);
+	require(moveTarget.sector->getType() == core::SectorType::Facade
+		&& moveTarget.sector->getIndex() == facadeIndex,
+		"The Agent drag-move resolved to something other than the Facade");
+	require(moveTarget.floorY == 0.0f, "The Agent drag-move landed off the Facade floor");
+
+	// The guards still hold: a drop onto a cell with no Sector refuses, and a
+	// drop outside the world refuses.
+	require(!getAgentMoveTarget(building, agent, { 3.5f, 0.5f }),
+		"An Agent drop onto a cell with no Sector was accepted");
+	require(!getAgentMoveTarget(building, agent, { 12.5f, 0.5f }),
+		"An Agent drop outside the world was accepted");
+
+	// And the plain-Location path is unchanged: the Agent can still target
+	// its own Room.
+	auto const selfTarget = getAgentMoveTarget(building, agent, { 1.5f, 0.5f });
+	require(selfTarget.diagnostic.empty()
+		&& selfTarget.sector != nullptr
+		&& selfTarget.sector->getIndex() == roomIndex,
+		"An Agent targeting its own Room stopped working");
+}
+
 void runFacadeEditorSmokeChecks()
 {
 	theFacadeCreationFlowPlacesAnOccupiableSelectableSector();
@@ -410,4 +470,5 @@ void runFacadeEditorSmokeChecks()
 	aRecolourIsRefusedForAnythingWhichIsNotAFacade();
 	wallCommandsRefuseAFacadeWithAClearDiagnostic();
 	theSelectionPanelShowsNoWallAffordancesForAFacade();
+	theCanvasDropTargetsAcceptAFacade();
 }

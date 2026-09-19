@@ -65,6 +65,7 @@
 #include "UI.h"
 #include "Render.h"
 #include "UISettings.h"
+#include "AgentDropTargets.h"
 #include "Helpers.h"
 #include "Exceptions.h"
 
@@ -196,21 +197,6 @@ namespace
 		uint64_t nextAgentNumber{ 1 };
 		string pastedAgentName;
 		uint32_t pastedAgentFlags{ 0 };
-	};
-
-	struct PegmanTarget
-	{
-		shared_ptr<const core::Sector> sector;
-		uint32_t deckOffset{ 0 };
-		float localX{ 0.0f };
-		float feetY{ 0.0f };
-		float floorY{ 0.0f };
-		string diagnostic;
-		uint32_t cellX{ 0 };
-		uint32_t cellY{ 0 };
-		uint32_t cellsWide{ 1 };
-
-		explicit operator bool() const { return sector != nullptr && diagnostic.empty(); }
 	};
 
 	PaletteDropState gPegman;
@@ -427,61 +413,11 @@ namespace
 		};
 	}
 
-	bool locationHasCapacity(shared_ptr<const core::Sector> const& sector)
-	{
-		if (!sector || sector->getType() != core::SectorType::Location) return false;
-		auto capacity = sector->getCapacity();
-		return capacity == ~0u || sector->getAgents().size() < capacity;
-	}
-
 	PegmanTarget getPegmanTarget(shared_ptr<const core::Building> const& building,
 		ImVec2 feet, ImVec2 canvasPos, ImVec2 canvasSize)
 	{
 		if (!pointInRect(feet, canvasPos, canvasPos + canvasSize)) return {};
-
-		auto world = screenToWorld(feet);
-		auto sector = building->getSectorAtPosition(gUISettings.visibleLayer, world.x, world.y);
-		if (!locationHasCapacity(sector) || !sector->pointInBounds(world.x, world.y)) return {};
-
-		auto cellY = (uint32_t)floor(world.y);
-		if (cellY < sector->getCellY()) return {};
-		auto deckOffset = cellY - sector->getCellY();
-		if (deckOffset >= sector->getDecksHigh()) return {};
-
-		float halfAgentWidth = CORE_AGENT_MAX_WIDTH * 0.5f;
-		float minimumX = halfAgentWidth;
-		float maximumX = sector->getSize().x - halfAgentWidth;
-		float localX = world.x - sector->getPosition().x;
-		localX = minimumX <= maximumX
-			? clamp(localX, minimumX, maximumX)
-			: sector->getSize().x * 0.5f;
-
-		return { sector, deckOffset, localX, world.y,
-			(float)sector->getCellY() + deckOffset, {} };
-	}
-
-	PegmanTarget getAgentMoveTarget(shared_ptr<const core::Building> const& building,
-		core::Agent const* agent, core::Vector2 world)
-	{
-		if (world.x < 0.0f || world.y < 0.0f
-			|| world.x >= building->getCellsWide() || world.y >= building->getDecksHigh())
-			return { nullptr, 0, 0.0f, world.y, world.y, "Drop the Agent inside the world" };
-		auto sector = building->getSectorAtPosition(gUISettings.visibleLayer, world.x, world.y);
-		bool const retainsCapacity = sector && agent && agent->getSector() == sector.get();
-		if (!sector || sector->getType() != core::SectorType::Location
-			|| (!retainsCapacity && !locationHasCapacity(sector))
-			|| !sector->pointInBounds(world.x, world.y))
-			return { nullptr, 0, 0.0f, world.y, world.y,
-				"Agents require a viable sector with available capacity" };
-
-		auto cellY = (uint32_t)floor(world.y);
-		if (cellY < sector->getCellY() || cellY >= sector->getCellY() + sector->getDecksHigh())
-			return { nullptr, 0, 0.0f, world.y, world.y, "Agent deck is outside the sector" };
-		float halfWidth = CORE_AGENT_MAX_WIDTH * 0.5f;
-		float localX = clamp(world.x - sector->getPosition().x, halfWidth,
-			max(halfWidth, sector->getSize().x - halfWidth));
-		return { sector, cellY - sector->getCellY(), localX, world.y,
-			(float)cellY, {} };
+		return pegmanAgentTargetAtWorld(building, screenToWorld(feet));
 	}
 
 	PegmanTarget getMarkerTarget(shared_ptr<const core::Building> const& building,
