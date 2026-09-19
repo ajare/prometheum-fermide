@@ -168,6 +168,7 @@ add_executable(prometheum-fermide-headless
     src/headless/WindowLayerSmokeChecks.cpp
     src/headless/WindowIntoBackgroundSmokeChecks.cpp
     src/headless/WindowMultiBackgroundSmokeChecks.cpp
+    src/headless/ZeroSizeLocationSmokeChecks.cpp
 )
 target_compile_features(prometheum-fermide-headless PRIVATE cxx_std_20)
 target_include_directories(prometheum-fermide-headless PRIVATE "${PF_INCLUDE_DIR}/imgui")

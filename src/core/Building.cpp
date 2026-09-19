@@ -1320,8 +1320,15 @@ namespace core
 		uint32_t decksHigh)
 	{
 		beginStructuralEdit("addCorridor");
-		validateLayer(format("Building::addCorridor({}, {}, {}, {}, {})", layerIndex, y, x, cellsWide, decksHigh),
-			layerIndex);
+		string const caller = format("Building::addCorridor({}, {}, {}, {}, {})", layerIndex, y, x, cellsWide, decksHigh);
+		validateLayer(caller, layerIndex);
+		// Minimum (1,1). A zero-sized Location would pass the bounds checks by covering
+		// nothing, leaving a Sector no cell references: invisible, unselectable, and
+		// unreachable forever (ticket #64).
+		if (cellsWide == 0)
+			throw BuildingException(this, format("{} - a Corridor must be at least one cell wide", caller));
+		if (decksHigh == 0)
+			throw BuildingException(this, format("{} - a Corridor must be at least one deck high", caller));
 		auto const result = addLocation("Corridor", SectorType::Location, layerIndex, x, y, cellsWide, decksHigh, CORE_CORRIDOR_HEIGHT, true);
 		ConstructionRecord record{ ConstructionType::Corridor };
 		record.layer = layerIndex;
@@ -1333,15 +1340,21 @@ namespace core
 	uint32_t Building::addRoom(string const& name, uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t decksHigh, float topDeckHeight)
 	{
 		beginStructuralEdit("addRoom");
+		string const caller = format("Building::addRoom({}, {}, {}, {}, {}, {}, {})", name, layerIndex, y, x, cellsWide, decksHigh, topDeckHeight);
 		// Written as a negated in-range test so a NaN topDeckHeight is rejected
 		// too: NaN fails both comparisons, so the plain < / > pair would let it
 		// through (ticket #55).
 		if (!(topDeckHeight >= CORE_ROOM_MIN_HEIGHT && topDeckHeight <= CORE_ROOM_MAX_HEIGHT))
 		{
-			string caller = format("Building::addRoom({}, {}, {}, {}, {}, {}, {})", name, layerIndex, y, x, cellsWide, decksHigh, topDeckHeight);
-
 			throw BuildingException(this, format("{} - topDeckHeight={} is out of range", caller, topDeckHeight));
 		}
+		// Minimum (1,1), the same invariant Background and Facade enforce: a
+		// zero-sized Room would pass the bounds checks by covering nothing,
+		// leaving a Sector no cell references (ticket #64).
+		if (cellsWide == 0)
+			throw BuildingException(this, format("{} - a Room must be at least one cell wide", caller));
+		if (decksHigh == 0)
+			throw BuildingException(this, format("{} - a Room must be at least one deck high", caller));
 
 		auto const result = addLocation(name, SectorType::Location, layerIndex, x, y, cellsWide, decksHigh, topDeckHeight, false);
 		ConstructionRecord record{ ConstructionType::Room };
