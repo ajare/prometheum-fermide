@@ -6,6 +6,7 @@
 
 #include "core/Coordination.h"
 #include "core/EntityId.h"
+#include "core/Simulation.h"
 #include "core/Vector2.h"
 
 
@@ -529,7 +530,105 @@ namespace core
 		// them, surrendering any ownership still held and removing both entities.
 		void releaseTraversal(TraversalRequestId requestId, TraversalPermitId permitId);
 
+		// ------------------------------------------------------------------
+		// Tick pipeline, snapshots and the edit/simulation boundary
+		// (ADR 0004 stage 5)
+		//
+		// The fixed timestep accumulator, the six simulation phases and their
+		// per-phase resource advancement (lifts and shuttles, doors, device
+		// operations), tick event publication, every snapshot builder, the
+		// simulation clock queries and event consumption all live here. The
+		// clock, the phase marker, the event queue and the registries themselves
+		// stay in Building (ADR 0001); the coordinator drives them and owns none
+		// of them. Building forwards each of these entry points; no caller
+		// outside Building names the coordinator.
+		//
+		// Pause and resume around a topology rebuild are deliberately not
+		// coordinator entry points. That protocol is part of Building's
+		// structural-edit contract - an edit refuses to run unless the
+		// simulation is paused, and a resume refuses over dirty topology - so it
+		// stays on the edit side of the boundary. What the coordinator supplies
+		// is the simulation-side work that protocol performs: taking every live
+		// traversal apart, remembering where each Agent was heading, putting
+		// those routes back onto the rebuilt graph, and publishing the boundary
+		// events.
+		// ------------------------------------------------------------------
+
+		// Driving the clock. Rendering supplies wall-clock time to update(),
+		// which accumulates it and runs only whole fixed ticks; advanceTick and
+		// advanceTicks are the deterministic headless seam and never read render
+		// timing. Both are no-ops while the simulation is paused.
+		void update(float elapsedSeconds);
+
+		void advanceTick();
+
+		void advanceTicks(uint64_t count);
+
+		// One tick phase. The phase marker is set before the phase runs and
+		// cleared by advanceTick once the tick has published its events, so a
+		// paused or unwinding Building reports None.
+		void runSimulationPhase(SimulationPhase phase);
+
+		// Per-phase resource advancement. The lift and shuttle resources are
+		// advanced first so a vehicle which arrives this tick can be boarded in
+		// the phases that follow, then doors react to their sensors and drain
+		// requests made against a disabled resource.
+		void advanceLiftResources();
+
+		void advanceDoorResources();
+
+		// Tick event publication. Every completed phase is reported, then the
+		// before-tick snapshot is merged against the after-tick one to publish
+		// the Agents and device operations which changed.
+		void publishTickEvents(SimulationSnapshot const& before);
+
+		// Simulation clock and event consumption.
+		uint64_t getSimulationTick() const;
+
+		SimulationPhase getCurrentSimulationPhase() const;
+
+		std::vector<SimulationEvent> consumeSimulationEvents();
+
+		// Snapshot builders. Each is a read-only projection of one registry
+		// entry; getSimulationSnapshot is the whole-world projection the tick
+		// pipeline diffs against and the editor and tests read.
+		AgentSnapshot makeAgentSnapshot(Agent const* agent) const;
+
+		InteractionPointSnapshot makeInteractionPointSnapshot(InteractionPointId id,
+			InteractionPoint const& point) const;
+
+		InteractionRequestSnapshot makeInteractionRequestSnapshot(InteractionRequestId id,
+			InteractionRequest const& request) const;
+
+		DeviceOperationSnapshot makeDeviceOperationSnapshot(DeviceOperationId id,
+			DeviceOperation const& operation) const;
+
+		TraversalResourceSnapshot makeTraversalResourceSnapshot(TraversalResourceId id,
+			TraversalResource const& resource) const;
+
+		TraversalRequestSnapshot makeTraversalRequestSnapshot(TraversalRequestId id,
+			TraversalRequest const& request) const;
+
+		TraversalPermitSnapshot makeTraversalPermitSnapshot(TraversalPermitId id,
+			TraversalPermit const& permit) const;
+
+		SimulationSnapshot getSimulationSnapshot() const;
+
+		// The simulation-side half of Building's pause/resume protocol.
+		void cancelAllTraversalForTopologyRebuild();
+
+		void restorePausedPathIntents();
+
+		// Boundary event publication, shared with the structural-edit paths
+		// which report a rebuild, a failed rebuild, a pause and a resume.
+		void publishTopologyEvent(SimulationEventType type, std::string diagnostic = {});
+
 	private:
+
+		// Tear one Agent's traversal down for a topology rebuild: an
+		// uncommitted crossing is walked back onto its source boundary before the
+		// transaction is cancelled and released, and the Agent is left idle.
+		void cancelTraversalForTopologyRebuild(Agent& agent);
 
 		// Move a request - and the Agent's traversal task with it - onto the
 		// selected landing Door, surrendering any queue ownership the request held

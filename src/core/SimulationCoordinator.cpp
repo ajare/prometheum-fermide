@@ -21,8 +21,11 @@ namespace core
 	// tickets, queue positions, door queue, traversal progress and permit expiry
 	// in SimulationCoordinatorQueues.cpp, the ladder admission family in
 	// SimulationCoordinatorAdmissions.cpp, and the traversal transaction
-	// lifecycle in SimulationCoordinatorTraversal.cpp; only the tick pipeline
-	// and snapshot building remain in Building.
+	// lifecycle in SimulationCoordinatorTraversal.cpp, the tick pipeline - the
+	// fixed timestep, the simulation phases, lift and door resource advancement
+	// and tick event publication - in SimulationCoordinatorTick.cpp, and every
+	// snapshot builder in SimulationCoordinatorSnapshots.cpp. Nothing but
+	// world-structure editing and forwarding remains in Building.
 	SimulationCoordinator::SimulationCoordinator(Building& building)
 		: mBuilding(building)
 	{

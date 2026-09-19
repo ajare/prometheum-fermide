@@ -29,10 +29,9 @@ namespace core
 	//
 	// The behaviour is unchanged. The coordinator works on Building's
 	// traversal-request, traversal-permit and agent registries through
-	// friendship (ADR 0001 keeps the registries with Building), and calls back
-	// through the Building facade (design pattern, not the Facade sector type)
-	// only for what has not moved out of Building yet - the request and permit
-	// snapshot builders which publish lifecycle events.
+	// friendship (ADR 0001 keeps the registries with Building). The request and
+	// permit snapshots its lifecycle events carry are built by the coordinator's
+	// own snapshot seam, which joined it in stage 5.
 
 	TraversalRequestId SimulationCoordinator::createTraversalRequest(Agent const& agent, shared_ptr<const Edge> const& edge,
 		shared_ptr<const Vertex> const& source, shared_ptr<const Vertex> const& destination)
@@ -74,7 +73,7 @@ namespace core
 		event.tick = mBuilding.mSimulationTick;
 		event.type = SimulationEventType::TraversalRequestAdded;
 		event.phase = mBuilding.mCurrentPhase;
-		event.traversalRequest = mBuilding.makeTraversalRequestSnapshot(id, *mBuilding.mTraversalRequests.find(id));
+		event.traversalRequest = makeTraversalRequestSnapshot(id, *mBuilding.mTraversalRequests.find(id));
 		mBuilding.mEvents.push_back(std::move(event));
 		return id;
 	}
@@ -374,7 +373,7 @@ namespace core
 		permitChanged.tick = mBuilding.mSimulationTick;
 		permitChanged.type = SimulationEventType::TraversalPermitChanged;
 		permitChanged.phase = mBuilding.mCurrentPhase;
-		permitChanged.traversalPermit = mBuilding.makeTraversalPermitSnapshot(permitId, *permit);
+		permitChanged.traversalPermit = makeTraversalPermitSnapshot(permitId, *permit);
 		mBuilding.mEvents.push_back(std::move(permitChanged));
 
 		request->mPermit = {};
@@ -449,7 +448,7 @@ namespace core
 			agent->mState = Agent::State::WaitingForTraversal;
 		}
 
-		auto removed = mBuilding.makeTraversalPermitSnapshot(permitId, *permit);
+		auto removed = makeTraversalPermitSnapshot(permitId, *permit);
 		mBuilding.mTraversalPermits.remove(permitId);
 		SimulationEvent permitRemoved;
 		permitRemoved.sequence = mBuilding.mNextEventSequence++;
@@ -464,7 +463,7 @@ namespace core
 		requestChanged.tick = mBuilding.mSimulationTick;
 		requestChanged.type = SimulationEventType::TraversalRequestChanged;
 		requestChanged.phase = mBuilding.mCurrentPhase;
-		requestChanged.traversalRequest = mBuilding.makeTraversalRequestSnapshot(requestId, *request);
+		requestChanged.traversalRequest = makeTraversalRequestSnapshot(requestId, *request);
 		mBuilding.mEvents.push_back(std::move(requestChanged));
 	}
 

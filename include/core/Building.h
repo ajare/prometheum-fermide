@@ -722,13 +722,14 @@ namespace core
 
 		void beginStructuralEdit(std::string const& operation);
 
-		void cancelTraversalForTopologyRebuild(Agent& agent);
+		// The simulation-side work of a topology rebuild - taking every live
+		// traversal apart, remembering the route each Agent was working to,
+		// restoring those routes onto the rebuilt graph, and publishing the
+		// boundary events - lives in SimulationCoordinator (ADR 0004 stage 5).
+		// pauseSimulation and resumeSimulation stay here, on the structural-edit
+		// side of the edit/simulation boundary, and call it.
 
 		void validateTraversalTopology(Graph const& graph) const;
-
-		void restorePausedPathIntents();
-
-		void publishTopologyEvent(SimulationEventType type, std::string diagnostic = {});
 
 		std::shared_ptr<Sector> _getSector(uint32_t index);
 
@@ -803,13 +804,14 @@ namespace core
 
 		AgentId addOwnedAgentToSector(std::unique_ptr<Agent> agent, uint32_t sectorId);
 
-		AgentSnapshot makeAgentSnapshot(Agent const* agent) const;
-
-		InteractionPointSnapshot makeInteractionPointSnapshot(InteractionPointId id, InteractionPoint const& point) const;
-
-		InteractionRequestSnapshot makeInteractionRequestSnapshot(InteractionRequestId id, InteractionRequest const& request) const;
-
-		DeviceOperationSnapshot makeDeviceOperationSnapshot(DeviceOperationId id, DeviceOperation const& operation) const;
+		// Snapshot building - every per-entity projection and the whole-world
+		// SimulationSnapshot - lives in SimulationCoordinator (ADR 0004 stage 5).
+		// Building keeps the whole-world forward in the public section below, plus
+		// one private forward: creating and removing a traversal resource is entity
+		// ownership which stays with Building (ADR 0001), and the lifecycle events
+		// those paths publish carry the resource snapshot the coordinator builds.
+		TraversalResourceSnapshot makeTraversalResourceSnapshot(TraversalResourceId id,
+			TraversalResource const& resource) const;
 
 		// Interaction and device-operation orchestration lives in
 		// SimulationCoordinator (ADR 0004); each entry point below - public or
@@ -866,10 +868,6 @@ namespace core
 
 		bool releaseDoorOpenLease(TraversalResource& resource, DoorOpenLeaseId lease);
 
-		void advanceDoorResources();
-
-		void advanceLiftResources();
-
 		// The lift allocation dispatcher and its branches - the platform lift
 		// dispatch, the journey resource and stop resolution, the enabled check
 		// and the boarding / riding / disembarking classification - live in
@@ -905,12 +903,6 @@ namespace core
 		bool replaceOnboardLiftDestination(Agent& agent, std::shared_ptr<Path> const& path,
 			uint32_t& sourceNode);
 
-		TraversalResourceSnapshot makeTraversalResourceSnapshot(TraversalResourceId id, TraversalResource const& resource) const;
-
-		TraversalRequestSnapshot makeTraversalRequestSnapshot(TraversalRequestId id, TraversalRequest const& request) const;
-
-		TraversalPermitSnapshot makeTraversalPermitSnapshot(TraversalPermitId id, TraversalPermit const& permit) const;
-
 		// The traversal transaction lifecycle below - request creation, allocation,
 		// denial, commit, cancel and release - also lives in SimulationCoordinator
 		// (ADR 0004); these forward. The grant is reached only from inside the
@@ -940,10 +932,6 @@ namespace core
 		bool holdsTraversalOwnership(AgentId id) const;
 		void releaseAgentFromResource(TraversalResource& resource, AgentId id);
 		void releaseTraversalOwnership(AgentId id);
-
-		void runSimulationPhase(SimulationPhase phase);
-
-		void publishTickEvents(SimulationSnapshot const& before);
 
 	public:
 
@@ -1381,6 +1369,10 @@ namespace core
 		// Runtime structural editing protocol. Pausing deterministically cancels
 		// active edge transactions while retaining route destinations for the new
 		// graph. A failed rebuild is atomic at the graph boundary and cannot resume.
+		// Pause and resume are the edit/simulation boundary and live here, on the
+		// editing side of it; the simulation-side work they drive - the teardown,
+		// the paused route intents and the boundary events - lives in
+		// SimulationCoordinator (ADR 0004 stage 5).
 		void pauseSimulation();
 
 		bool rebuildTraversalTopology();
@@ -1551,6 +1543,12 @@ namespace core
 
 		// Rendering supplies elapsed wall time here.  It is accumulated and only
 		// whole fixed simulation ticks are executed.
+		//
+		// The tick pipeline itself - the accumulator, the six simulation phases,
+		// the per-phase lift, shuttle and door advancement, tick event
+		// publication, the simulation clock and event consumption, and every
+		// snapshot builder - lives in SimulationCoordinator (ADR 0004 stage 5);
+		// every entry point below forwards to it.
 		void update(float elapsedSeconds);
 
 		// Headless deterministic seam.  These methods never use render timing.

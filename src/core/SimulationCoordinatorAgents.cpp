@@ -22,11 +22,13 @@ namespace core
 	// Agent lifecycle moved out of Building (ADR 0004 stage 1). The behaviour is
 	// unchanged: the coordinator works on Building's registries through
 	// friendship, and calls back through the Building facade for the machinery
-	// which has not moved out of Building yet - snapshots, the modified-state
-	// marker, interaction cancellation, and device-operation cancellation and
-	// removal. The stop requests it drops for a departing passenger go to the
-	// coordinator's own lift scheduling helpers, and traversal cancellation and
-	// release to the transaction lifecycle which joined it in stage 4.
+	// which has not moved out of Building yet - the modified-state marker,
+	// sector lookup, interaction cancellation, and device-operation
+	// cancellation and removal. The Agent snapshots it publishes are built by
+	// the coordinator's own snapshot seam, which joined it in stage 5. The stop
+	// requests it drops for a departing passenger go to the coordinator's own
+	// lift scheduling helpers, and traversal cancellation and release to the
+	// transaction lifecycle which joined it in stage 4.
 
 	AgentId SimulationCoordinator::addOwnedAgentToSector(unique_ptr<Agent> agent, uint32_t sectorId, uint32_t deckOffset, float xOffset)
 	{
@@ -55,7 +57,7 @@ namespace core
 		event.sequence = mBuilding.mNextEventSequence++;
 		event.tick = mBuilding.mSimulationTick;
 		event.type = SimulationEventType::AgentAdded;
-		event.agent = mBuilding.makeAgentSnapshot(rawAgent);
+		event.agent = makeAgentSnapshot(rawAgent);
 		mBuilding.mEvents.push_back(std::move(event));
 		return id;
 	}
@@ -87,7 +89,7 @@ namespace core
 		event.sequence = mBuilding.mNextEventSequence++;
 		event.tick = mBuilding.mSimulationTick;
 		event.type = SimulationEventType::AgentAdded;
-		event.agent = mBuilding.makeAgentSnapshot(rawAgent);
+		event.agent = makeAgentSnapshot(rawAgent);
 		mBuilding.mEvents.push_back(std::move(event));
 		return id;
 	}
@@ -297,7 +299,7 @@ namespace core
 			}
 		}
 
-		auto snapshot = mBuilding.makeAgentSnapshot(found.entity);
+		auto snapshot = makeAgentSnapshot(found.entity);
 		if (auto sector = const_cast<Sector*>(found.entity->getSector()))
 		{
 			sector->exitAgent(found.entity);

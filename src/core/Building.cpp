@@ -4508,49 +4508,18 @@ namespace core
 		mTopologyDiagnostic = "Traversal topology has unvalidated structural edits";
 	}
 
-	void Building::publishTopologyEvent(SimulationEventType type, string diagnostic)
-	{
-		SimulationEvent event;
-		event.sequence = mNextEventSequence++;
-		event.tick = mSimulationTick;
-		event.type = type;
-		event.phase = SimulationPhase::None;
-		event.diagnostic = std::move(diagnostic);
-		mEvents.push_back(std::move(event));
-	}
+	// Topology event publication and the teardown of live traversal for a topology
+	// rebuild live in SimulationCoordinator (ADR 0004 stage 5); Building's
+	// pause/resume protocol calls them.
 
-	void Building::cancelTraversalForTopologyRebuild(Agent& agent)
-	{
-		if (agent.mTraversalTask)
-		{
-			// A threshold crossing which has not committed still belongs to its source
-			// sector. Put it back on that safe boundary before releasing its permit.
-			if ((agent.mState == Agent::State::TraversingEdge
-				|| agent.mState == Agent::State::AwaitingTraversalCommit)
-				&& agent.mTraversalTask->sourceVertex && agent.getSector())
-			{
-				auto source = agent.mTraversalTask->sourceVertex->getPosition();
-				agent.setPosition({ const_cast<Sector*>(agent.getSector()),
-					source - agent.getSector()->getPosition() }, false);
-			}
-			cancelTraversal(agent.mTraversalTask->request, agent.mTraversalTask->permit, false);
-			releaseTraversal(agent.mTraversalTask->request, agent.mTraversalTask->permit);
-			agent.mTraversalTask.reset();
-			agent.mTraversalLocalGoal.reset();
-		}
-		if (agent.mQueuedTraversalTask)
-		{
-			cancelTraversal(agent.mQueuedTraversalTask->request,
-				agent.mQueuedTraversalTask->permit, false);
-			releaseTraversal(agent.mQueuedTraversalTask->request,
-				agent.mQueuedTraversalTask->permit);
-			agent.mQueuedTraversalTask.reset();
-		}
-		agent.mPath.path.reset();
-		agent.mPath.targetNode = 0;
-		agent.mState = Agent::State::Idle;
-	}
-
+	// Pause and resume are the edit/simulation boundary and stay here, on the
+	// structural-edit side of that boundary (ADR 0004 stage 5): they belong to
+	// the same contract as beginStructuralEdit, finishBuild and
+	// rebuildTraversalTopology, which refuses a structural edit unless the
+	// simulation is paused and refuses a resume over dirty topology. The
+	// simulation-side work they perform - tearing down every live traversal,
+	// remembering each Agent's route intent, restoring those routes onto the new
+	// graph and publishing the boundary events - lives in SimulationCoordinator.
 	void Building::pauseSimulation()
 	{
 		if (mSimulationPaused) return;
@@ -4559,36 +4528,8 @@ namespace core
 
 		mSimulationPaused = true;
 		mAccumulatedTime = 0.0;
-		mPausedPathIntents.clear();
-		for (auto const& [id, agent] : mAgents.entries())
-		{
-			if (agent->mPath.path && !agent->mPath.path->nodes.empty())
-			{
-				auto destination = agent->mPath.path->nodes.back().targetVertex;
-				if (destination && destination->getSector())
-					mPausedPathIntents[id] = {
-						SectorId{ (uint64_t)destination->getSector()->getIndex() + 1 },
-						destination->getPosition(), agent->mState != Agent::State::Idle };
-			}
-			cancelTraversalForTopologyRebuild(*agent);
-		}
-
-		// Defensive cleanup also handles requests whose owning Agent was removed or
-		// whose task was already detached. Typed IDs are never recycled.
-		vector<TraversalRequestId> orphaned;
-		for (auto const& [id, request] : mTraversalRequests.entries())
-		{
-			(void)request;
-			orphaned.push_back(id);
-		}
-		for (auto id : orphaned)
-		{
-			auto request = mTraversalRequests.find(id);
-			auto permit = request ? request->mPermit : TraversalPermitId{};
-			cancelTraversal(id, permit, false);
-			releaseTraversal(id, permit);
-		}
-		publishTopologyEvent(SimulationEventType::SimulationPaused);
+		mSimulationCoordinator.cancelAllTraversalForTopologyRebuild();
+		mSimulationCoordinator.publishTopologyEvent(SimulationEventType::SimulationPaused);
 	}
 
 	void Building::validateTraversalTopology(Graph const& graph) const
@@ -4808,31 +4749,6 @@ namespace core
 		}
 	}
 
-	void Building::restorePausedPathIntents()
-	{
-		for (auto const& [id, intent] : mPausedPathIntents)
-		{
-			auto agent = mAgents.find(id);
-			if (!agent || !agent->getSector() || !intent.destinationSector
-				|| intent.destinationSector.value > mSectors.size()) continue;
-			try
-			{
-				auto source = mGraph->getClosestVertexInSector(agent->getSector(), agent->getGlobalPosition());
-				auto destinationSector = mSectors[(size_t)intent.destinationSector.value - 1];
-				auto destination = mGraph->getClosestVertexInSector(
-					destinationSector.get(), intent.destinationPosition);
-				auto path = mGraph->calculatePath(agent, source, destination);
-				if (path && !path->nodes.empty())
-					agent->assignPath(std::move(path), intent.wasPathing, false);
-			}
-			catch (Exception const&)
-			{
-				// The destination was structurally removed or disconnected. The Agent
-				// remains safely idle; this does not invalidate otherwise usable topology.
-			}
-		}
-		mPausedPathIntents.clear();
-	}
 
 	void Building::buildGraph()
 	{
@@ -4865,10 +4781,10 @@ namespace core
 			mTopologyValid = true;
 			mTopologyDiagnostic.clear();
 			++mTopologyGeneration;
-			restorePausedPathIntents();
+			mSimulationCoordinator.restorePausedPathIntents();
 			auto const& graphLog = mGraph->getBuildLog();
 			mBuildLog.insert(mBuildLog.end(), graphLog.begin(), graphLog.end());
-			publishTopologyEvent(SimulationEventType::TopologyRebuilt);
+			mSimulationCoordinator.publishTopologyEvent(SimulationEventType::TopologyRebuilt);
 			return true;
 		}
 		catch (Exception const& error)
@@ -4879,7 +4795,7 @@ namespace core
 			auto const& graphLog = candidate->getBuildLog();
 			mBuildLog.insert(mBuildLog.end(), graphLog.begin(), graphLog.end());
 			mBuildLog.push_back({ "Topology rebuild", ~0u, LogLevel::Error, mTopologyDiagnostic });
-			publishTopologyEvent(SimulationEventType::TopologyRebuildFailed, mTopologyDiagnostic);
+			mSimulationCoordinator.publishTopologyEvent(SimulationEventType::TopologyRebuildFailed, mTopologyDiagnostic);
 			return false;
 		}
 		catch (exception const& error)
@@ -4888,7 +4804,7 @@ namespace core
 			mTopologyValid = false;
 			mTopologyDiagnostic = error.what();
 			mBuildLog.push_back({ "Topology rebuild", ~0u, LogLevel::Error, mTopologyDiagnostic });
-			publishTopologyEvent(SimulationEventType::TopologyRebuildFailed, mTopologyDiagnostic);
+			mSimulationCoordinator.publishTopologyEvent(SimulationEventType::TopologyRebuildFailed, mTopologyDiagnostic);
 			return false;
 		}
 	}
@@ -4902,10 +4818,10 @@ namespace core
 				mTopologyDiagnostic = "Traversal topology contains unvalidated structural edits";
 			return false;
 		}
-		restorePausedPathIntents();
+		mSimulationCoordinator.restorePausedPathIntents();
 		mSimulationPaused = false;
 		mAccumulatedTime = 0.0;
-		publishTopologyEvent(SimulationEventType::SimulationResumed);
+		mSimulationCoordinator.publishTopologyEvent(SimulationEventType::SimulationResumed);
 		return true;
 	}
 
@@ -5057,431 +4973,17 @@ namespace core
 		mSimulationCoordinator.wakeAllAgents();
 	}
 
-	AgentSnapshot Building::makeAgentSnapshot(Agent const* agent) const
+	// Snapshot building - the per-entity projections and the whole-world
+	// snapshot - lives in SimulationCoordinator (ADR 0004 stage 5). Building
+	// keeps the whole-world forward with the rest of the tick pipeline below,
+	// and this one private forward: creating and removing a traversal resource is
+	// entity ownership which stays with Building (ADR 0001), and the lifecycle
+	// events those paths publish carry the resource snapshot the coordinator
+	// builds.
+	TraversalResourceSnapshot Building::makeTraversalResourceSnapshot(TraversalResourceId id,
+		TraversalResource const& resource) const
 	{
-		AgentSnapshot result;
-		result.id = getAgentId(agent);
-		result.name = agent->getName();
-		result.sectorId = SectorId{ agent->getSector() ? (uint64_t)agent->getSector()->getIndex() + 1 : 0 };
-		result.localPosition = agent->getLocalPosition();
-		result.globalPosition = agent->getGlobalPosition();
-		result.hasPath = (bool)agent->getPath();
-		result.targetPathNode = agent->getPathTargetNodeIndex();
-		result.pathNodeCount = result.hasPath ? (uint32_t)agent->getPath()->nodes.size() : 0;
-		result.hasLocomotionTask = agent->hasActiveLocomotionTask();
-		result.traversalRequest = agent->getTraversalRequestId();
-		result.traversalPermit = agent->getTraversalPermitId();
-		for (auto const& [requestId, request] : mInteractionRequests.entries())
-		{
-			if (request->getActor() == result.id && request->getResult() == InteractionResult::Pending)
-			{
-				result.interactionRequest = requestId;
-				result.hasLocomotionTask = true;
-				break;
-			}
-		}
-
-		switch (agent->getState())
-		{
-		case Agent::State::Idle:
-			result.state = AgentPathState::Idle;
-			break;
-		case Agent::State::MovingToVertex:
-			result.state = AgentPathState::MovingToVertex;
-			break;
-		case Agent::State::WaitingForTraversal:
-			result.state = AgentPathState::WaitingForTraversal;
-			break;
-		case Agent::State::TraversingEdge:
-			result.state = AgentPathState::TraversingEdge;
-			break;
-		case Agent::State::AwaitingTraversalCommit:
-			result.state = AgentPathState::AwaitingTraversalCommit;
-			break;
-		}
-
-		return result;
-	}
-
-	InteractionPointSnapshot Building::makeInteractionPointSnapshot(InteractionPointId id, InteractionPoint const& point) const
-	{
-		return { id, point.getName(), point.getSector(), point.getPosition(), point.getReach(),
-			point.getDurationTicks(), point.getActiveRequest() };
-	}
-
-	InteractionRequestSnapshot Building::makeInteractionRequestSnapshot(InteractionRequestId id, InteractionRequest const& request) const
-	{
-		InteractionRequestSnapshot result;
-		result.id = id;
-		result.point = request.getPoint();
-		result.actor = request.getActor();
-		result.result = request.getResult();
-		for (auto const& [operation, requirement] : request.getOperations())
-		{
-			(void)requirement;
-			result.operations.push_back(operation);
-		}
-		return result;
-	}
-
-	DeviceOperationSnapshot Building::makeDeviceOperationSnapshot(DeviceOperationId id, DeviceOperation const& operation) const
-	{
-		DeviceOperationSnapshot result;
-		result.id = id;
-		result.name = operation.getName();
-		result.requester = operation.getRequester();
-		result.requesters.assign(operation.getRequesters().begin(), operation.getRequesters().end());
-		result.hasCommand = operation.hasCommand();
-		if (result.hasCommand)
-		{
-			result.command = operation.getCommand();
-		}
-		result.state = operation.getState();
-		return result;
-	}
-
-	TraversalResourceSnapshot Building::makeTraversalResourceSnapshot(TraversalResourceId id, TraversalResource const& resource) const
-	{
-		TraversalResourceSnapshot result;
-		result.id = id;
-		result.name = resource.getName();
-		result.isDoor = resource.mDoor != nullptr;
-		result.isWindow = resource.mWindow != nullptr;
-		result.windowNormallyTraversable = resource.mWindow && resource.mWindow->isNormallyTraversable();
-		result.isLadder = resource.mLadder != nullptr;
-		result.isForceBridge = resource.mForceBridge != nullptr;
-		result.isLift = resource.mLift != nullptr;
-		result.isOpenPlatformLift = resource.mOpenPlatformLift;
-		result.virtualBoundaryOwners = resource.mVirtualBoundaryOwners;
-		result.virtualBoundaryCrossingCount = (uint32_t)count_if(
-			resource.mVirtualBoundaryOwners.begin(), resource.mVirtualBoundaryOwners.end(),
-			[](auto owner) { return (bool)owner; });
-		result.isShuttle = resource.mShuttle != nullptr;
-		result.shuttleCapacityPerCarriage = resource.mShuttleCapacityPerCarriage;
-		result.liftMoving = resource.mLiftMoving;
-		result.liftCarDoorOpen = resource.mLiftCarDoorOpen;
-		result.liftStopPhase = resource.mLiftStopPhase;
-		result.liftServiceStartedTick = resource.mLiftServiceStartedTick;
-		result.liftBoardingCutoffTick = resource.mLiftBoardingCutoffTick;
-		result.liftAcceptingBoarders = (resource.mLift || resource.mShuttle) && resource.mEnabled && !resource.mLiftMoving
-			&& resource.mLiftStopPhase == LiftStopPhase::Boarding
-			&& mSimulationTick <= resource.mLiftBoardingCutoffTick;
-		result.liftDraining = resource.mLiftDraining;
-		result.liftPendingSafeExits = (uint32_t)resource.mLiftExitAtSafeStop.size();
-		result.liftCurrentStop = resource.mLiftCurrentStop;
-		result.liftTargetStop = resource.mLiftTargetStop;
-		result.liftDirection = resource.mLiftDirection;
-		result.liftPosition = resource.mLiftPosition;
-		result.liftSector = resource.mLiftSector;
-		result.liftPassenger = resource.mLiftPassenger;
-		result.liftAdmissionReservation = resource.mLiftAdmissionReservation;
-		result.liftDestinationStop = resource.mLiftDestinationStop;
-		result.liftSelector = resource.mLiftSelector;
-		result.liftActiveConfirmation = resource.mLiftActiveConfirmation;
-		result.liftConfirmationQueue = resource.mLiftConfirmationQueue;
-		for (uint32_t stop = 0; stop < resource.mLiftStopRequestOwners.size(); ++stop)
-		{
-			result.liftStopRequestOwnerCounts.push_back((uint32_t)resource.mLiftStopRequestOwners[stop].size());
-			auto const& ticks = resource.mLiftStopRequestTicks[stop];
-			auto oldest = ticks.empty() ? ticks.end() : min_element(ticks.begin(), ticks.end(),
-				[](auto const& left, auto const& right)
-				{ return left.second != right.second ? left.second < right.second : left.first < right.first; });
-			result.liftStopOldestRequestTicks.push_back(oldest == ticks.end() ? 0 : oldest->second);
-			if (!resource.mLiftStopRequestOwners[stop].empty()) result.liftScheduledStops.push_back(stop);
-		}
-		if (resource.mLift || resource.mShuttle)
-		{
-			for (auto const& [agentId, agent] : mAgents.entries())
-			{
-				auto request = mTraversalRequests.find(agent->getTraversalRequestId());
-				bool associatedRequest = false;
-				if (request)
-				{
-					auto requestResource = mTraversalResources.find(request->mResource);
-					associatedRequest = request->mResource == id
-						|| (requestResource && requestResource->mLiftCoordinator == id);
-				}
-				bool const occupant = find(resource.mOccupants.begin(), resource.mOccupants.end(), agentId)
-					!= resource.mOccupants.end();
-				bool const queued = resource.mLiftTripIntents.contains(agentId);
-				if (!associatedRequest && !occupant && !queued) continue;
-
-				LiftAgentSnapshot passenger;
-				passenger.agent = agentId;
-				if (associatedRequest && request->mSourceSector == resource.mLiftSector
-					&& request->mDestinationSector != resource.mLiftSector)
-					passenger.state = LiftAgentState::Exiting;
-				else if (associatedRequest && request->mSourceSector != resource.mLiftSector
-					&& request->mDestinationSector == resource.mLiftSector
-					&& request->mState != TraversalRequestState::Pending)
-					passenger.state = LiftAgentState::Entering;
-				else if (occupant) passenger.state = LiftAgentState::InLift;
-				else passenger.state = LiftAgentState::QueuingAtDoor;
-
-				auto intent = resource.mLiftTripIntents.find(agentId);
-				auto destination = resource.mLiftPassengerDestinations.find(agentId);
-				passenger.targetStop = intent != resource.mLiftTripIntents.end()
-					? intent->second.destinationStop
-					: destination != resource.mLiftPassengerDestinations.end()
-						? destination->second : findAgentLiftDestination(*agent, resource);
-				if (passenger.targetStop < resource.mLiftStops.size())
-					passenger.targetFloor = resource.mLiftStops[passenger.targetStop].globalPosition;
-				result.liftAgents.push_back(passenger);
-			}
-		}
-		result.liftAligned = !resource.mLiftMoving && resource.mLiftCurrentStop < resource.mLiftStops.size()
-			&& abs(resource.mLiftPosition - resource.mLiftStops[resource.mLiftCurrentStop].globalPosition) < 0.001f;
-		result.isExtensible = resource.mExtensible && resource.mExtensible->isExtensible();
-		result.extended = resource.mExtensible && resource.mExtensible->isExtended();
-		result.retractionPending = resource.mRetractionPending;
-		result.extensionRequestLeaseCount = (uint32_t)resource.mExtensionRequestLeases.size();
-		result.extensionOccupantLeaseCount = (uint32_t)resource.mExtensionOccupantLeases.size();
-		result.isNarrowStairwell = resource.mStairwell != nullptr;
-		result.enabled = resource.mEnabled;
-		result.capacity = resource.mCapacity;
-		result.agentSpacing = resource.mLadderSpacing;
-		result.capacitySector = resource.mLadderSector;
-		result.admissionQueue = resource.mAdmissionQueue;
-		result.activeDirection = resource.mActiveDirection;
-		result.directionalBatchCount = resource.mDirectionalBatchCount;
-		result.directionalBatchLimit = resource.mDirectionalBatchLimit;
-		for (auto requestId : resource.mAdmissionQueue)
-		{
-			if (auto request = mTraversalRequests.find(requestId))
-			{
-				if (request->mDirection == TraversalDirection::Ascending) ++result.ascendingWaitingCount;
-				else if (request->mDirection == TraversalDirection::Descending) ++result.descendingWaitingCount;
-			}
-		}
-		for (uint32_t i = 0; i < resource.mCapacityPositions.size(); ++i)
-		{
-			result.capacityPositions.push_back({ i, resource.mCapacityPositions[i],
-				resource.mOccupants[i], resource.mAdmissionReservations[i] });
-			if (resource.mOccupants[i]) ++result.occupantCount;
-			if (resource.mAdmissionReservations[i]) ++result.admissionReservationCount;
-		}
-		for (auto const& carriage : resource.mShuttleCarriages)
-		{
-			ShuttleCarriageSnapshot snapshot;
-			snapshot.index = carriage.index;
-			snapshot.capacity = carriage.capacity;
-			snapshot.stopDoors = carriage.stopDoors;
-			for (uint32_t i = 0; i < carriage.capacity; ++i)
-			{
-				auto position = carriage.firstCapacityPosition + i;
-				if (position >= resource.mCapacityPositions.size()) break;
-				snapshot.positions.push_back({ i, resource.mCapacityPositions[position],
-					resource.mOccupants[position], resource.mAdmissionReservations[position] });
-				if (resource.mOccupants[position]) ++snapshot.occupantCount;
-				if (resource.mAdmissionReservations[position]) ++snapshot.admissionReservationCount;
-			}
-			result.shuttleCarriages.push_back(std::move(snapshot));
-		}
-		if (resource.mShuttle)
-		{
-			for (auto const& door : resource.mShuttleDoors)
-				for (auto direction : { TraversalDirection::Ascending, TraversalDirection::Descending })
-					if (find_if(result.shuttleAccessZones.begin(), result.shuttleAccessZones.end(),
-						[&](auto const& value) { return value.stopIndex == door.stopIndex
-							&& value.accessZoneIndex == door.accessZoneIndex
-							&& value.direction == direction; }) == result.shuttleAccessZones.end())
-						result.shuttleAccessZones.push_back({ door.stopIndex, door.accessZoneIndex,
-							door.locationSector, direction, {} });
-			for (auto const& [requestId, request] : mTraversalRequests.entries())
-			{
-				if (!request->mQueueTicket || request->mSourceSector == resource.mLiftSector
-					|| request->mState != TraversalRequestState::Pending) continue;
-				auto authority = mTraversalResources.find(request->mResource);
-				if (!authority || authority->mLiftCoordinator != id) continue;
-				auto intent = resource.mLiftTripIntents.find(request->mOwner);
-				if (intent == resource.mLiftTripIntents.end()) continue;
-				auto direction = resource.mLiftStops[intent->second.destinationStop].globalPosition
-					> resource.mLiftStops[intent->second.originStop].globalPosition
-					? TraversalDirection::Ascending : TraversalDirection::Descending;
-				auto zone = request->mShuttleAccessZone;
-				if (zone == ~0u)
-				{
-					auto door = find_if(resource.mShuttleDoors.begin(), resource.mShuttleDoors.end(),
-						[&](auto const& value) { return value.landingResource == request->mResource; });
-					if (door != resource.mShuttleDoors.end()) zone = door->accessZoneIndex;
-				}
-				auto found = find_if(result.shuttleAccessZones.begin(), result.shuttleAccessZones.end(),
-					[&](auto const& value) { return value.stopIndex == intent->second.originStop
-						&& value.accessZoneIndex == zone && value.direction == direction; });
-				if (found == result.shuttleAccessZones.end())
-				{
-					result.shuttleAccessZones.push_back({ intent->second.originStop, zone,
-						request->mSourceSector, direction, { requestId } });
-				}
-				else found->queue.push_back(requestId);
-			}
-			for (auto& zone : result.shuttleAccessZones)
-				sort(zone.queue.begin(), zone.queue.end(), [&](auto left, auto right)
-				{
-					auto lhs = mTraversalRequests.find(left);
-					auto rhs = mTraversalRequests.find(right);
-					return lhs && rhs ? lhs->mQueueTicket < rhs->mQueueTicket : left < right;
-				});
-		}
-		result.doorActivationMode = resource.mDoorActivationMode;
-		result.holdOpenTicks = resource.mHoldOpenTicks;
-		result.openLeaseCount = (uint32_t)resource.mOpenLeases.size();
-		for (auto const& [leaseId, lease] : resource.mOpenLeases)
-		{
-			(void)leaseId;
-			switch (lease.kind)
-			{
-			case DoorOpenLeaseKind::Preparation: ++result.preparationLeaseCount; break;
-			case DoorOpenLeaseKind::Crossing: ++result.crossingLeaseCount; break;
-			case DoorOpenLeaseKind::ExternalHoldOpen: ++result.externalOpenLeaseCount; break;
-			}
-		}
-		for (auto const& [sensor, observation] : resource.mSensorObservations)
-		{
-			(void)sensor;
-			result.presenceObserved = result.presenceObserved || observation == DoorSensorObservation::Presence;
-			result.obstructionObserved = result.obstructionObserved || observation == DoorSensorObservation::Obstruction;
-		}
-		result.controls = resource.mControls;
-		result.activePreparation = resource.mActivePreparation;
-		result.preparationOperator = resource.mPreparationOperator;
-		for (uint32_t i = 0; i < resource.mCrossingOwners.size(); ++i)
-		{
-			result.crossingLanes.push_back({ i, resource.mCrossingOwners[i] });
-			if (!result.crossingOwner && resource.mCrossingOwners[i])
-			{
-				result.crossingOwner = resource.mCrossingOwners[i];
-			}
-		}
-		for (auto const& lane : resource.mQueueLanes)
-		{
-			if (!lane.sector)
-			{
-				continue;
-			}
-			QueueLaneSnapshot queueLaneSnapshot;
-			queueLaneSnapshot.sector = lane.sector;
-			queueLaneSnapshot.origin = lane.origin;
-			queueLaneSnapshot.direction = lane.direction;
-			queueLaneSnapshot.extent = lane.extent;
-			queueLaneSnapshot.queue = lane.queue;
-			for (uint32_t i = 0; i < lane.positions.size(); ++i)
-			{
-				queueLaneSnapshot.positions.push_back({ i, lane.positions[i], lane.positionOwners[i] });
-			}
-			result.queueLanes.push_back(std::move(queueLaneSnapshot));
-		}
-		if (resource.mDoor)
-		{
-			result.doorOpenPercentage = resource.mDoor->getOpenPercentage();
-			switch (resource.mDoor->getState())
-			{
-			case OpenableObject::State::Closed: result.doorState = DoorSnapshotState::Closed; break;
-			case OpenableObject::State::Opening: result.doorState = DoorSnapshotState::Opening; break;
-			case OpenableObject::State::Open: result.doorState = DoorSnapshotState::Open; break;
-			case OpenableObject::State::Closing: result.doorState = DoorSnapshotState::Closing; break;
-			}
-		}
-		return result;
-	}
-
-	TraversalRequestSnapshot Building::makeTraversalRequestSnapshot(TraversalRequestId id, TraversalRequest const& request) const
-	{
-		TraversalRequestSnapshot result{ id, request.getOwner(), request.getEdgeType(), request.getSourceSector(),
-			request.getDestinationSector(), request.getSourceEndpoint(), request.getDestinationEndpoint(),
-			request.getState(), request.getResource(), request.getPreparationOperation(), request.getPermit(),
-			request.getFailureReason() };
-		result.queueTicket = request.mQueueTicket;
-		result.queuedAtTick = request.mQueuedAtTick;
-		result.queueApproach = request.mQueueApproach;
-		result.hasQueuePosition = request.mQueuePosition != ~0u;
-		result.queuePosition = request.mQueuePosition;
-		result.hasCrossingLane = request.mCrossingLane != ~0u;
-		result.crossingLane = request.mCrossingLane;
-		result.hasCapacityPosition = request.mCapacityPosition != ~0u;
-		result.capacityPosition = request.mCapacityPosition;
-		result.shuttleCarriage = request.mShuttleCarriage;
-		result.shuttleAccessZone = request.mShuttleAccessZone;
-		result.shuttleDoor = request.mShuttleDoor;
-		result.direction = request.mDirection;
-		result.positionAssignedAtTick = request.mPositionAssignedAtTick;
-		result.lastPositionProgressTick = request.mLastPositionProgressTick;
-		result.positionRetryAtTick = request.mPositionRetryAtTick;
-		result.positionRetryCount = request.mPositionRetryCount;
-
-		auto failureDiagnostic = [](TraversalFailureReason reason)
-		{
-			switch (reason)
-			{
-			case TraversalFailureReason::NoReachableControl: return "no reachable interaction point can prepare the resource";
-			case TraversalFailureReason::ControlRejected: return "the resource control rejected the request";
-			case TraversalFailureReason::PreparationFailed: return "resource preparation failed";
-			case TraversalFailureReason::ResourceDisabled: return "the traversal resource is disabled";
-			case TraversalFailureReason::LocalGoalUnreachable: return "the assigned local waiting position is unreachable";
-			case TraversalFailureReason::PermitExpired: return "the traversal permit expired before progress was made";
-			case TraversalFailureReason::None: return "no failure was reported";
-			}
-			return "unknown traversal failure";
-		};
-		switch (request.mState)
-		{
-		case TraversalRequestState::Denied:
-			result.diagnostic = string("Denied: ") + failureDiagnostic(request.mFailureReason);
-			break;
-		case TraversalRequestState::Cancelled:
-			result.diagnostic = "Cancelled: all traversal ownership is being released";
-			break;
-		case TraversalRequestState::Committed:
-			result.diagnostic = "Committed: the authorized sector transition completed";
-			break;
-		case TraversalRequestState::Granted:
-			result.diagnostic = request.mPermit
-				? format("Active: permit {} authorizes this transition", request.mPermit.value)
-				: "Active: admission was granted and a permit is pending publication";
-			break;
-		case TraversalRequestState::Pending:
-		{
-			auto resource = mTraversalResources.find(request.mResource);
-			if (!request.mResource)
-				result.diagnostic = "Waiting: immediate traversal allocation is pending";
-			else if (!resource)
-				result.diagnostic = "Waiting: the referenced traversal resource is unavailable";
-			else if (!resource->mEnabled)
-				result.diagnostic = "Waiting: the traversal resource is draining or disabled";
-			else if (request.mPreparationOperation)
-				result.diagnostic = format("Waiting: device operation {} is preparing the resource",
-					request.mPreparationOperation.value);
-			else if (request.mQueuePosition != ~0u)
-				result.diagnostic = format("Waiting: moving to reserved queue position {}",
-					request.mQueuePosition);
-			else if (request.mQueueTicket)
-				result.diagnostic = format("Waiting: queue ticket {} is awaiting a position or admission",
-					request.mQueueTicket.value);
-			else if (request.mCapacityPosition != ~0u)
-				result.diagnostic = format("Waiting: capacity position {} is reserved for boarding",
-					request.mCapacityPosition);
-			else if ((resource->mLift || resource->mShuttle) && resource->mLiftMoving)
-				result.diagnostic = format("Waiting: transport is moving toward stop {}", resource->mLiftTargetStop);
-			else
-				result.diagnostic = "Waiting: resource admission conditions are not yet satisfied";
-			break;
-		}
-		}
-		if (result.hasQueuePosition)
-		{
-			if (auto resource = mTraversalResources.find(request.mResource);
-				resource && request.mQueueApproach < resource->mQueueLanes.size()
-				&& request.mQueuePosition < resource->mQueueLanes[request.mQueueApproach].positions.size())
-			{
-				result.queuePositionTarget = resource->mQueueLanes[request.mQueueApproach].positions[request.mQueuePosition];
-			}
-		}
-		return result;
-	}
-
-	TraversalPermitSnapshot Building::makeTraversalPermitSnapshot(TraversalPermitId id, TraversalPermit const& permit) const
-	{
-		return { id, permit.getRequest(), permit.getOwner(), permit.getState(), permit.getExpiresAtTick() };
+		return mSimulationCoordinator.makeTraversalResourceSnapshot(id, resource);
 	}
 
 	// The queue and admission core - traversal-request creation, queue tickets,
@@ -6453,395 +5955,11 @@ namespace core
 			* mTraversalWaitingPolicy.queueDelayPerAgentSeconds;
 	}
 
-	SimulationSnapshot Building::getSimulationSnapshot() const
-	{
-		SimulationSnapshot result;
-		result.tick = mSimulationTick;
-		result.paused = mSimulationPaused;
-		result.topologyDirty = mTopologyDirty;
-		result.topologyValid = mTopologyValid;
-		result.topologyGeneration = mTopologyGeneration;
-		result.topologyDiagnostic = mTopologyDiagnostic;
-		result.agents.reserve(mAgents.entries().size());
-		result.interactionPoints.reserve(mInteractionPoints.entries().size());
-		result.interactionRequests.reserve(mInteractionRequests.entries().size());
-		result.deviceOperations.reserve(mDeviceOperations.entries().size());
-		result.traversalResources.reserve(mTraversalResources.entries().size());
-		result.traversalRequests.reserve(mTraversalRequests.entries().size());
-		result.traversalPermits.reserve(mTraversalPermits.entries().size());
-
-		for (auto const& [id, agent] : mAgents.entries())
-		{
-			(void)id;
-			result.agents.push_back(makeAgentSnapshot(agent.get()));
-		}
-		for (auto const& [id, point] : mInteractionPoints.entries())
-		{
-			result.interactionPoints.push_back(makeInteractionPointSnapshot(id, *point));
-		}
-		for (auto const& [id, request] : mInteractionRequests.entries())
-		{
-			result.interactionRequests.push_back(makeInteractionRequestSnapshot(id, *request));
-		}
-		for (auto const& [id, operation] : mDeviceOperations.entries())
-		{
-			result.deviceOperations.push_back(makeDeviceOperationSnapshot(id, *operation));
-		}
-		for (auto const& [id, resource] : mTraversalResources.entries())
-		{
-			result.traversalResources.push_back(makeTraversalResourceSnapshot(id, *resource));
-		}
-		for (auto const& [id, request] : mTraversalRequests.entries())
-		{
-			result.traversalRequests.push_back(makeTraversalRequestSnapshot(id, *request));
-		}
-		for (auto const& [id, permit] : mTraversalPermits.entries())
-		{
-			result.traversalPermits.push_back(makeTraversalPermitSnapshot(id, *permit));
-		}
-
-		return result;
-	}
-
-	void Building::advanceLiftResources()
-	{
-		for (auto const& [resourceId, resourcePtr] : mTraversalResources.entries())
-		{
-			(void)resourceId;
-			auto& resource = *resourcePtr;
-			if ((!resource.mLift && !resource.mShuttle) || resource.mLiftStops.empty()) continue;
-			for (auto requestId : resource.mOpenPlatformMissedBoarding)
-				if (auto request = mTraversalRequests.find(requestId); request)
-					if (auto actor = mAgents.find(request->mOwner))
-					{
-						actor->mTraversalLocalGoal.reset();
-						auto held = resource.mOpenPlatformMissedPositions.find(requestId);
-						if (held != resource.mOpenPlatformMissedPositions.end() && actor->getSector())
-							actor->setPosition({ const_cast<Sector*>(actor->getSector()),
-								held->second - actor->getSector()->getPosition() }, false);
-					}
-			auto previousVehiclePosition = resource.mLiftPosition;
-			auto forEachLanding = [&](auto&& callback)
-			{
-				if (resource.mShuttle)
-				{
-					for (auto const& door : resource.mShuttleDoors)
-						callback(door.stopIndex, mTraversalResources.find(door.landingResource));
-				}
-				else for (uint32_t stop = 0; stop < resource.mLiftStops.size(); ++stop)
-					callback(stop, mTraversalResources.find(resource.mLiftStops[stop].landingResource));
-			};
-			auto hasWaitingAdmissionAtStop = [&](uint32_t stop)
-			{
-				return any_of(resource.mAdmissionQueue.begin(), resource.mAdmissionQueue.end(),
-					[&](TraversalRequestId id)
-					{
-						auto request = mTraversalRequests.find(id);
-						if (!request) return false;
-						if (resource.mOpenPlatformLift)
-						{
-							auto intent = resource.mLiftTripIntents.find(request->mOwner);
-							return intent != resource.mLiftTripIntents.end()
-								&& intent->second.originStop == stop;
-						}
-						auto landing = mTraversalResources.find(request->mResource);
-						return landing && landing->mLiftStopIndex == stop;
-					});
-			};
-			auto beginBoardingWindow = [&]
-			{
-				resource.mLiftStopPhase = LiftStopPhase::Boarding;
-				if (resource.mOpenPlatformLift)
-				{
-					for (auto requestId : resource.mAdmissionQueue)
-						if (auto request = mTraversalRequests.find(requestId); request)
-						{
-							auto intent = resource.mLiftTripIntents.find(request->mOwner);
-							if (intent != resource.mLiftTripIntents.end()
-								&& intent->second.originStop == resource.mLiftCurrentStop)
-							{
-								resource.mOpenPlatformMissedBoarding.erase(requestId);
-								resource.mOpenPlatformMissedPositions.erase(requestId);
-							}
-						}
-					refreshQueuePositions(resource);
-				}
-				// A nonzero cutoff belongs to an existing boarding window, such as
-				// one temporarily reopened by an obstruction during closure.
-				if (resource.mLiftBoardingCutoffTick) return;
-				resource.mLiftServiceStartedTick = mSimulationTick;
-				resource.mLiftBoardingCutoffTick = mSimulationTick + resource.mLiftMaximumBoardingTicks;
-			};
-
-			// A safety hold or obstruction at the aligned landing overrides closure.
-			// The original cutoff is retained, so this cannot admit a late caller.
-			if (!resource.mLiftMoving && resource.mLiftCurrentStop < resource.mLiftStops.size()
-				&& resource.mLiftStopPhase == LiftStopPhase::Closing)
-			{
-				bool heldOrObstructed = false;
-				forEachLanding([&](uint32_t stop, TraversalResource* landing)
-				{
-					if (stop != resource.mLiftCurrentStop || !landing) return;
-					auto obstruction = any_of(landing->mSensorObservations.begin(),
-						landing->mSensorObservations.end(), [](auto const& value)
-						{ return value.second == DoorSensorObservation::Obstruction; });
-					heldOrObstructed = heldOrObstructed || !landing->mOpenLeases.empty() || obstruction;
-				});
-				if (heldOrObstructed) resource.mLiftStopPhase = LiftStopPhase::Opening;
-			}
-
-			if ((resource.mLiftStopPhase == LiftStopPhase::Idle
-				|| resource.mLiftStopPhase == LiftStopPhase::Closing) && !resource.mLiftMoving)
-			{
-				// An idle car is already available to callers at its aligned stop, even
-				// while their physical call interaction is still in progress. Service
-				// them before dispatching the empty car to an earlier completed call.
-				resource.mLiftTargetStop = resource.mLiftStopPhase == LiftStopPhase::Idle
-					&& hasWaitingAdmissionAtStop(resource.mLiftCurrentStop)
-					? resource.mLiftCurrentStop : chooseNextLiftStop(resource);
-			}
-
-			if (resource.mLiftTargetStop < resource.mLiftStops.size()
-				&& resource.mLiftTargetStop != resource.mLiftCurrentStop)
-			{
-				auto target = resource.mLiftStops[resource.mLiftTargetStop].globalPosition;
-				bool interlocked = any_of(resource.mVirtualBoundaryOwners.begin(),
-					resource.mVirtualBoundaryOwners.end(), [](auto owner) { return (bool)owner; });
-				forEachLanding([&](uint32_t, TraversalResource* landing)
-				{
-					if (!landing || !landing->mDoor) return;
-					if (!landing->mOpenLeases.empty()) interlocked = true;
-					if (!landing->mDoor->isClosed())
-					{
-						interlocked = true;
-						if (landing->mOpenLeases.empty() && !landing->mDoor->isClosing())
-							landing->mDoor->requestClose();
-					}
-				});
-				if (!interlocked && resource.mLiftStopPhase == LiftStopPhase::Closing)
-				{
-					resource.mLiftStopPhase = LiftStopPhase::Moving;
-					resource.mLiftMoving = true;
-				}
-				if (resource.mLiftStopPhase == LiftStopPhase::Moving)
-				{
-					auto amount = (resource.mShuttle ? CORE_SHUTTLE_SPEED : CORE_LIFT_SPEED)
-						* getFixedTimestep();
-					if (target > resource.mLiftPosition)
-						resource.mLiftPosition = min(target, resource.mLiftPosition + amount);
-					else resource.mLiftPosition = max(target, resource.mLiftPosition - amount);
-					if (abs(resource.mLiftPosition - target) < 0.001f)
-					{
-						resource.mLiftPosition = target;
-						resource.mLiftCurrentStop = resource.mLiftTargetStop;
-						resource.mLiftMoving = false;
-						resource.mLiftStopPhase = LiftStopPhase::Opening;
-						resource.mLiftServiceStartedTick = mSimulationTick;
-						resource.mLiftBoardingCutoffTick = resource.mShuttle ? 0
-							: mSimulationTick + resource.mLiftMaximumBoardingTicks;
-					}
-				}
-			}
-			else if (resource.mLiftTargetStop == resource.mLiftCurrentStop
-				&& (resource.mLiftStopPhase == LiftStopPhase::Idle
-					|| resource.mLiftStopPhase == LiftStopPhase::Moving))
-			{
-				resource.mLiftMoving = false;
-				resource.mLiftStopPhase = LiftStopPhase::Opening;
-				resource.mLiftServiceStartedTick = mSimulationTick;
-				resource.mLiftBoardingCutoffTick = resource.mShuttle ? 0
-					: mSimulationTick + resource.mLiftMaximumBoardingTicks;
-			}
-			else if (resource.mLiftTargetStop == resource.mLiftCurrentStop
-				&& resource.mLiftStopPhase == LiftStopPhase::Closing)
-			{
-				// Calls accepted after cutoff cannot reverse a close already in progress.
-				// Once fully closed they may begin a distinct service visit.
-				bool allClosed = true;
-				forEachLanding([&](uint32_t, TraversalResource* landing)
-				{
-					allClosed = allClosed && (!landing || !landing->mDoor || landing->mDoor->isClosed());
-				});
-				if (allClosed) resource.mLiftStopPhase = LiftStopPhase::Idle;
-			}
-
-			// Every Shuttle Door authored at the aligned stop opens together. Door
-			// leases still protect active crossings; the stop phase controls closure.
-			if (resource.mShuttle && !resource.mLiftMoving
-				&& resource.mLiftCurrentStop < resource.mLiftStops.size()
-				&& (resource.mLiftStopPhase == LiftStopPhase::Opening
-					|| resource.mLiftStopPhase == LiftStopPhase::Disembarking
-					|| resource.mLiftStopPhase == LiftStopPhase::Boarding))
-				forEachLanding([&](uint32_t stop, TraversalResource* landing)
-				{
-					if (stop == resource.mLiftCurrentStop && landing && landing->mDoor
-						&& !landing->mDoor->isOpen() && !landing->mDoor->isOpening())
-						landing->mDoor->requestOpen();
-				});
-
-			if (!resource.mLiftMoving && resource.mLiftStopPhase == LiftStopPhase::Opening
-				&& mSimulationTick > resource.mLiftServiceStartedTick)
-			{
-				if (liftHasDisembarkDemand(resource, resource.mLiftCurrentStop))
-					resource.mLiftStopPhase = LiftStopPhase::Disembarking;
-				else beginBoardingWindow();
-			}
-			if (resource.mLiftStopPhase == LiftStopPhase::Disembarking
-				&& !liftHasDisembarkDemand(resource, resource.mLiftCurrentStop)
-				&& resource.mLiftExitAtSafeStop.empty())
-				beginBoardingWindow();
-
-			assignLiftSafeExitPaths(resource);
-
-			bool crossing = any_of(resource.mVirtualBoundaryOwners.begin(),
-				resource.mVirtualBoundaryOwners.end(), [](auto owner) { return (bool)owner; });
-			forEachLanding([&](uint32_t, TraversalResource* landing)
-			{
-				if (landing) crossing = crossing || any_of(landing->mCrossingOwners.begin(),
-					landing->mCrossingOwners.end(), [](auto owner) { return (bool)owner; });
-			});
-			auto reserved = any_of(resource.mAdmissionReservations.begin(), resource.mAdmissionReservations.end(),
-				[](auto id) { return (bool)id; });
-			auto occupied = (uint32_t)count_if(resource.mOccupants.begin(), resource.mOccupants.end(),
-				[](auto id) { return (bool)id; });
-			auto unresolvedDestination = any_of(resource.mOccupants.begin(), resource.mOccupants.end(), [&](auto owner)
-				{ return owner && !resource.mLiftPassengerDestinations.contains(owner); });
-			bool waitingHere = hasWaitingAdmissionAtStop(resource.mLiftCurrentStop);
-
-			bool closeStop = false;
-			if (resource.mLiftStopPhase == LiftStopPhase::Boarding)
-			{
-				if (resource.mOpenPlatformLift)
-				{
-					// A Platform Lift has one exact per-stop timer. Waiting callers neither
-					// shorten nor extend it; callers missing the cutoff retain their requests.
-					closeStop = mSimulationTick >= resource.mLiftBoardingCutoffTick;
-				}
-				else closeStop = mSimulationTick
-						>= resource.mLiftServiceStartedTick + resource.mLiftMinimumDwellTicks
-					&& !crossing && !reserved && !unresolvedDestination
-					&& !resource.mLiftActiveConfirmation
-					&& (occupied == resource.mCapacity
-						|| mSimulationTick > resource.mLiftBoardingCutoffTick || !waitingHere);
-			}
-			if (closeStop)
-			{
-				if (resource.mOpenPlatformLift)
-					for (auto requestId : resource.mAdmissionQueue)
-						if (auto request = mTraversalRequests.find(requestId); request)
-						{
-							auto intent = resource.mLiftTripIntents.find(request->mOwner);
-							if (intent != resource.mLiftTripIntents.end()
-								&& intent->second.originStop == resource.mLiftCurrentStop)
-							{
-								resource.mOpenPlatformMissedBoarding.insert(requestId);
-								addLiftStopRequest(resource, intent->second.originStop, request->mOwner);
-								if (auto actor = mAgents.find(request->mOwner))
-								{
-									actor->mTraversalLocalGoal.reset();
-									resource.mOpenPlatformMissedPositions[requestId]
-										= actor->getGlobalPosition();
-								}
-							}
-						}
-				resource.mLiftStopPhase = LiftStopPhase::Closing;
-				resource.mLiftTargetStop = ~0u;
-			}
-
-			if (resource.mLiftDraining && occupied == 0 && !crossing && !reserved)
-			{
-				for (uint32_t stop = 0; stop < resource.mLiftStopRequestOwners.size(); ++stop)
-				{
-					resource.mLiftStopRequestOwners[stop].clear();
-					resource.mLiftStopRequestTicks[stop].clear();
-				}
-				resource.mLiftDraining = false;
-				resource.mLiftTargetStop = ~0u;
-				resource.mLiftDirection = TraversalDirection::None;
-				resource.mLiftStopPhase = LiftStopPhase::Idle;
-			}
-
-			resource.mLiftCarDoorOpen = !resource.mOpenPlatformLift
-				&& (resource.mLiftStopPhase == LiftStopPhase::Opening
-					|| resource.mLiftStopPhase == LiftStopPhase::Disembarking
-					|| resource.mLiftStopPhase == LiftStopPhase::Boarding);
-			if (resource.mLift) resource.mLift->setCoordinatedPosition(resource.mLiftPosition);
-			else resource.mShuttle->setCoordinatedPosition(resource.mLiftPosition);
-			for (uint32_t i = 0; i < resource.mOccupants.size(); ++i)
-				if (auto passenger = mAgents.find(resource.mOccupants[i]))
-				{
-					auto transit = mSectors[(size_t)resource.mLiftSector.value - 1].get();
-					auto local = resource.mCapacityPositions[i];
-					if (resource.mShuttle)
-					{
-						// Carry the passenger by the vehicle's translation without changing
-						// their position within the carriage, then let Agent locomotion close
-						// the remaining distance to the reserved standing position.
-						auto vehicleDelta = resource.mLiftPosition - previousVehiclePosition;
-						if (abs(vehicleDelta) > 0.0f)
-							passenger->setPosition({ transit,
-								passenger->getLocalPosition() + Vector2{ vehicleDelta, 0.0f } }, false);
-						auto target = transit->getPosition() + local;
-						target.x += resource.mLiftPosition - transit->getPosition().x;
-						passenger->mTraversalLocalGoal = target;
-					}
-					else if (resource.mOpenPlatformLift)
-					{
-						// The open platform may depart while a newly boarded passenger is still
-						// walking to their spot. Translate their current position with the car
-						// and keep the reserved spot as an ordinary walking goal.
-						auto vehicleDelta = resource.mLiftPosition - previousVehiclePosition;
-						if (abs(vehicleDelta) > 0.0f)
-							passenger->setPosition({ transit,
-								passenger->getLocalPosition() + Vector2{ 0.0f, vehicleDelta } }, false);
-						auto target = transit->getPosition() + local;
-						target.y = resource.mLiftPosition;
-						passenger->mTraversalLocalGoal = target;
-					}
-					else if (resource.mLiftMoving)
-					{
-						local.y += resource.mLiftPosition - transit->getPosition().y;
-						passenger->setPosition({ transit, local }, false);
-					}
-				}
-		}
-	}
-
-	void Building::advanceDoorResources()
-	{
-		for (auto const& [resourceId, resourcePtr] : mTraversalResources.entries())
-		{
-			auto& resource = *resourcePtr;
-			if (!resource.mDoor) continue;
-			bool presence = false;
-			bool obstruction = false;
-			for (auto const& [sensor, observation] : resource.mSensorObservations)
-			{
-				(void)sensor;
-				presence = presence || observation == DoorSensorObservation::Presence;
-				obstruction = obstruction || observation == DoorSensorObservation::Obstruction;
-			}
-			resource.mDoor->setObstructed(obstruction);
-			if ((obstruction || (presence && resource.mDoorActivationMode == DoorActivationMode::Automatic))
-				&& resource.mEnabled && !resource.mDoor->isOpen() && !resource.mDoor->isOpening())
-			{
-				resource.mDoor->requestOpen();
-			}
-
-			bool activeCrossing = any_of(resource.mCrossingOwners.begin(), resource.mCrossingOwners.end(),
-				[](TraversalRequestId owner) { return (bool)owner; });
-			if (!resource.mEnabled && !activeCrossing)
-			{
-				vector<TraversalRequestId> pending;
-				for (auto const& [requestId, request] : mTraversalRequests.entries())
-				{
-					if (request->mResource == resourceId && request->mState == TraversalRequestState::Pending)
-						pending.push_back(requestId);
-				}
-				for (auto requestId : pending) denyTraversalRequest(requestId, TraversalFailureReason::ResourceDisabled);
-			}
-		}
-	}
+	// The tick pipeline - lift and door resource advancement, the simulation
+	// phases, tick event publication, the simulation clock and event consumption -
+	// lives in SimulationCoordinator (ADR 0004 stage 5), as does every snapshot
+	// builder removed above. Building keeps the forwards which still have callers
+	// outside itself.
 
 	// Per-tick interaction phases - device-operation advancement, allocation,
 	// movement and result resolution - run in SimulationCoordinator (ADR 0004).
@@ -6876,221 +5994,39 @@ namespace core
 		mSimulationCoordinator.updateInteractionResults();
 	}
 
-	void Building::runSimulationPhase(SimulationPhase phase)
+	void Building::update(float elapsedSeconds)
 	{
-		mCurrentPhase = phase;
-		auto const timestep = getFixedTimestep();
-
-		switch (phase)
-		{
-		case SimulationPhase::ResourceAdvancement:
-			for (auto const& sector : mSectors)
-			{
-				sector->advanceResources(timestep);
-			}
-			advanceLiftResources();
-			advanceDoorResources();
-			advanceDeviceOperations();
-			break;
-
-		case SimulationPhase::IntentCollection:
-			for (auto const& [id, agent] : mAgents.entries())
-			{
-				(void)id;
-				agent->collectTraversalIntent();
-			}
-			break;
-
-		case SimulationPhase::Allocation:
-			for (auto const& [id, agent] : mAgents.entries())
-			{
-				(void)id;
-				agent->allocateTraversal();
-			}
-			allocateInteractions();
-			break;
-
-		case SimulationPhase::Movement:
-			for (auto const& [id, agent] : mAgents.entries())
-			{
-				(void)id;
-				auto const movementStart = agent->getGlobalPosition();
-				auto const approachingDoor = agent->getState() == Agent::State::MovingToVertex
-					|| (agent->getState() == Agent::State::TraversingEdge && agent->mTraversalTask
-						&& agent->mTraversalTask->edge
-						&& agent->mTraversalTask->edge->getType() != EdgeType::Door);
-				agent->update(timestep);
-				if (approachingDoor)
-					tryPressUpcomingDoorButton(*agent, movementStart, agent->getGlobalPosition());
-			}
-			moveInteractions(timestep);
-			break;
-
-		case SimulationPhase::Commit:
-			for (auto const& [id, agent] : mAgents.entries())
-			{
-				(void)id;
-				agent->commitTraversal();
-			}
-			break;
-
-		case SimulationPhase::CleanupAndEventPublication:
-			updateTraversalProgressAndTimeouts();
-			for (auto const& [id, agent] : mAgents.entries())
-			{
-				(void)id;
-				agent->cleanupTraversal();
-			}
-			updateInteractionResults();
-			break;
-
-		case SimulationPhase::None:
-			break;
-		}
-	}
-
-	void Building::publishTickEvents(SimulationSnapshot const& before)
-	{
-		for (auto phase : { SimulationPhase::ResourceAdvancement, SimulationPhase::IntentCollection,
-			SimulationPhase::Allocation, SimulationPhase::Movement, SimulationPhase::Commit,
-			SimulationPhase::CleanupAndEventPublication })
-		{
-			SimulationEvent event;
-			event.sequence = mNextEventSequence++;
-			event.tick = mSimulationTick;
-			event.type = SimulationEventType::PhaseCompleted;
-			event.phase = phase;
-			mEvents.push_back(std::move(event));
-		}
-
-		auto after = getSimulationSnapshot();
-		// Registry snapshots are in stable ID order. Merge them linearly rather than
-		// searching the entire previous snapshot for every active agent.
-		size_t previousAgentIndex = 0;
-		for (auto const& current : after.agents)
-		{
-			while (previousAgentIndex < before.agents.size()
-				&& before.agents[previousAgentIndex].id < current.id)
-			{
-				++previousAgentIndex;
-			}
-			if (previousAgentIndex == before.agents.size()
-				|| before.agents[previousAgentIndex].id != current.id)
-			{
-				continue;
-			}
-
-			auto const& previous = before.agents[previousAgentIndex];
-			auto changed = current.sectorId != previous.sectorId
-				|| current.localPosition != previous.localPosition
-				|| current.globalPosition != previous.globalPosition
-				|| current.state != previous.state
-				|| current.hasPath != previous.hasPath
-				|| current.targetPathNode != previous.targetPathNode
-				|| current.pathNodeCount != previous.pathNodeCount
-				|| current.hasLocomotionTask != previous.hasLocomotionTask
-				|| current.traversalRequest != previous.traversalRequest
-				|| current.traversalPermit != previous.traversalPermit
-				|| current.interactionRequest != previous.interactionRequest;
-
-			if (changed)
-			{
-				SimulationEvent event;
-				event.sequence = mNextEventSequence++;
-				event.tick = mSimulationTick;
-				event.type = SimulationEventType::AgentChanged;
-				event.phase = SimulationPhase::CleanupAndEventPublication;
-				event.hasPreviousAgent = true;
-				event.previousAgent = previous;
-				event.agent = current;
-				mEvents.push_back(std::move(event));
-			}
-		}
-
-		size_t previousOperationIndex = 0;
-		for (auto const& current : after.deviceOperations)
-		{
-			while (previousOperationIndex < before.deviceOperations.size()
-				&& before.deviceOperations[previousOperationIndex].id < current.id)
-			{
-				++previousOperationIndex;
-			}
-			if (previousOperationIndex < before.deviceOperations.size()
-				&& before.deviceOperations[previousOperationIndex].id == current.id
-				&& before.deviceOperations[previousOperationIndex].state != current.state)
-			{
-				SimulationEvent event;
-				event.sequence = mNextEventSequence++;
-				event.tick = mSimulationTick;
-				event.type = SimulationEventType::DeviceOperationChanged;
-				event.phase = SimulationPhase::CleanupAndEventPublication;
-				event.deviceOperation = current;
-				mEvents.push_back(std::move(event));
-			}
-		}
+		mSimulationCoordinator.update(elapsedSeconds);
 	}
 
 	void Building::advanceTick()
 	{
-		if (mSimulationPaused) return;
-		auto before = getSimulationSnapshot();
-		++mSimulationTick;
-
-		runSimulationPhase(SimulationPhase::ResourceAdvancement);
-		runSimulationPhase(SimulationPhase::IntentCollection);
-		runSimulationPhase(SimulationPhase::Allocation);
-		runSimulationPhase(SimulationPhase::Movement);
-		runSimulationPhase(SimulationPhase::Commit);
-		runSimulationPhase(SimulationPhase::CleanupAndEventPublication);
-		publishTickEvents(before);
-		mCurrentPhase = SimulationPhase::None;
+		mSimulationCoordinator.advanceTick();
 	}
 
 	void Building::advanceTicks(uint64_t count)
 	{
-		for (uint64_t i = 0; i < count; ++i)
-		{
-			advanceTick();
-		}
-	}
-
-	void Building::update(float elapsedSeconds)
-	{
-		if (mSimulationPaused) return;
-		if (elapsedSeconds <= 0.0f)
-		{
-			return;
-		}
-
-		mAccumulatedTime += elapsedSeconds;
-		auto const timestep = (double)getFixedTimestep();
-		while (mAccumulatedTime + timestep * 1e-9 >= timestep)
-		{
-			advanceTick();
-			mAccumulatedTime -= timestep;
-		}
-
-		if (mAccumulatedTime < 0.0)
-		{
-			mAccumulatedTime = 0.0;
-		}
+		mSimulationCoordinator.advanceTicks(count);
 	}
 
 	uint64_t Building::getSimulationTick() const
 	{
-		return mSimulationTick;
+		return mSimulationCoordinator.getSimulationTick();
 	}
 
 	SimulationPhase Building::getCurrentSimulationPhase() const
 	{
-		return mCurrentPhase;
+		return mSimulationCoordinator.getCurrentSimulationPhase();
+	}
+
+	SimulationSnapshot Building::getSimulationSnapshot() const
+	{
+		return mSimulationCoordinator.getSimulationSnapshot();
 	}
 
 	vector<SimulationEvent> Building::consumeSimulationEvents()
 	{
-		auto result = std::move(mEvents);
-		mEvents.clear();
-		return result;
+		return mSimulationCoordinator.consumeSimulationEvents();
 	}
 
 } // core

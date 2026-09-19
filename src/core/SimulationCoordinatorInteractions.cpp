@@ -25,9 +25,10 @@ namespace core
 	// (ADR 0004 stage 2). The behaviour is unchanged: the coordinator works on
 	// Building's interaction and device-operation registries through friendship,
 	// and calls back through the Building facade for the machinery which has not
-	// moved out of Building yet - snapshots and the structural-edit guard. The
-	// lift stop request it makes for an accepted lift call goes to the
-	// coordinator's own lift scheduling helper.
+	// moved out of Building yet - the structural-edit guard. The snapshots it
+	// publishes are built by the coordinator's own snapshot seam, which joined
+	// it in stage 5. The lift stop request it makes for an accepted lift call
+	// goes to the coordinator's own lift scheduling helper.
 
 	InteractionPointId SimulationCoordinator::createInteractionPoint(string const& name)
 	{
@@ -36,7 +37,7 @@ namespace core
 		event.sequence = mBuilding.mNextEventSequence++;
 		event.tick = mBuilding.mSimulationTick;
 		event.type = SimulationEventType::InteractionPointAdded;
-		event.interactionPoint = mBuilding.makeInteractionPointSnapshot(id, *mBuilding.mInteractionPoints.find(id));
+		event.interactionPoint = makeInteractionPointSnapshot(id, *mBuilding.mInteractionPoints.find(id));
 		mBuilding.mEvents.push_back(std::move(event));
 		return id;
 	}
@@ -78,7 +79,7 @@ namespace core
 		event.sequence = mBuilding.mNextEventSequence++;
 		event.tick = mBuilding.mSimulationTick;
 		event.type = SimulationEventType::InteractionPointAdded;
-		event.interactionPoint = mBuilding.makeInteractionPointSnapshot(id, *mBuilding.mInteractionPoints.find(id));
+		event.interactionPoint = makeInteractionPointSnapshot(id, *mBuilding.mInteractionPoints.find(id));
 		mBuilding.mEvents.push_back(std::move(event));
 		return id;
 	}
@@ -126,7 +127,7 @@ namespace core
 		{
 			cancelInteraction(requestId);
 		}
-		auto snapshot = mBuilding.makeInteractionPointSnapshot(id, *found.entity);
+		auto snapshot = makeInteractionPointSnapshot(id, *found.entity);
 		mBuilding.mInteractionPoints.remove(id);
 
 		SimulationEvent event;
@@ -165,7 +166,7 @@ namespace core
 		event.tick = mBuilding.mSimulationTick;
 		event.type = SimulationEventType::DeviceOperationAdded;
 		event.phase = mBuilding.mCurrentPhase;
-		event.deviceOperation = mBuilding.makeDeviceOperationSnapshot(id, *mBuilding.mDeviceOperations.find(id));
+		event.deviceOperation = makeDeviceOperationSnapshot(id, *mBuilding.mDeviceOperations.find(id));
 		mBuilding.mEvents.push_back(std::move(event));
 		return id;
 	}
@@ -201,7 +202,7 @@ namespace core
 		event.tick = mBuilding.mSimulationTick;
 		event.type = SimulationEventType::InteractionRequestAdded;
 		event.phase = mBuilding.mCurrentPhase;
-		event.interactionRequest = mBuilding.makeInteractionRequestSnapshot(id, *request);
+		event.interactionRequest = makeInteractionRequestSnapshot(id, *request);
 		mBuilding.mEvents.push_back(std::move(event));
 		return id;
 	}
@@ -244,7 +245,7 @@ namespace core
 		event.tick = mBuilding.mSimulationTick;
 		event.type = SimulationEventType::InteractionRequestAdded;
 		event.phase = mBuilding.mCurrentPhase;
-		event.interactionRequest = mBuilding.makeInteractionRequestSnapshot(id, *request);
+		event.interactionRequest = makeInteractionRequestSnapshot(id, *request);
 		mBuilding.mEvents.push_back(std::move(event));
 		return id;
 	}
@@ -296,7 +297,7 @@ namespace core
 		event.tick = mBuilding.mSimulationTick;
 		event.type = SimulationEventType::InteractionRequestChanged;
 		event.phase = mBuilding.mCurrentPhase;
-		event.interactionRequest = mBuilding.makeInteractionRequestSnapshot(id, *request);
+		event.interactionRequest = makeInteractionRequestSnapshot(id, *request);
 		mBuilding.mEvents.push_back(std::move(event));
 		return true;
 	}
@@ -314,7 +315,7 @@ namespace core
 		event.sequence = mBuilding.mNextEventSequence++;
 		event.tick = mBuilding.mSimulationTick;
 		event.type = SimulationEventType::DeviceOperationAdded;
-		event.deviceOperation = mBuilding.makeDeviceOperationSnapshot(id, *mBuilding.mDeviceOperations.find(id));
+		event.deviceOperation = makeDeviceOperationSnapshot(id, *mBuilding.mDeviceOperations.find(id));
 		mBuilding.mEvents.push_back(std::move(event));
 		return id;
 	}
@@ -372,7 +373,7 @@ namespace core
 		{
 			return { false, found.diagnostic };
 		}
-		auto snapshot = mBuilding.makeDeviceOperationSnapshot(id, *found.entity);
+		auto snapshot = makeDeviceOperationSnapshot(id, *found.entity);
 		mBuilding.mDeviceOperations.remove(id);
 
 		SimulationEvent event;
@@ -784,7 +785,7 @@ namespace core
 				event.tick = mBuilding.mSimulationTick;
 				event.type = SimulationEventType::InteractionRequestChanged;
 				event.phase = mBuilding.mCurrentPhase;
-				event.interactionRequest = mBuilding.makeInteractionRequestSnapshot(id, *request);
+				event.interactionRequest = makeInteractionRequestSnapshot(id, *request);
 				mBuilding.mEvents.push_back(std::move(event));
 			}
 		}
