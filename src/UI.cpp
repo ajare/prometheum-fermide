@@ -2287,10 +2287,9 @@ namespace
 
 		try
 		{
-			auto serializer = core::YamlSerializer::toFile(filepath);
-			core::SerializationWorkData workData;
-			building->serialize(*serializer, workData);
-			serializer->serialize();
+			// #63: the Building only becomes clean once saveTo has fully written
+			// and replaced the destination; any error leaves it dirty.
+			building->saveTo(filepath);
 			gBuildingFilepath = std::move(filepath);
 			gSavedStateId = gCurrentStateId;
 			core::addLogMessage("File", 0, core::LogLevel::Info,

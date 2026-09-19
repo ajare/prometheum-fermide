@@ -692,6 +692,29 @@ namespace core
 		if (wasPaused) pauseSimulation();
 	}
 
+	void Building::markSaved()
+	{
+		markUnmodified();
+		for (auto const& [id, agent] : mAgents.entries())
+		{
+			(void)id;
+			if (agent) agent->markUnmodified();
+		}
+	}
+
+	void Building::saveTo(string const& filepath)
+	{
+		auto serializer = YamlSerializer::toFile(filepath);
+		SerializationWorkData workData;
+		workData.markSerializedUnmodified = false;
+		serialize(*serializer, workData);
+		// Everything that can fail - opening, writing, flushing, closing, and
+		// replacing the destination - happens above.  Only now may the document
+		// become clean (#63).
+		serializer->serialize();
+		markSaved();
+	}
+
 	void Building::resetForDeserialization(std::string name, uint32_t cellsWide, uint32_t decksHigh)
 	{
 		for (auto const& [id, agent] : mAgents.entries())

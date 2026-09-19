@@ -1523,6 +1523,17 @@ namespace core
 		// objects in their configured initial state.
 		void resetSimulation();
 
+		// Clear the modified state of the Building and every Agent it owns, so
+		// isModified() reports clean.  Only call this once a save has fully
+		// succeeded; a save that fails must leave the dirty state intact.
+		void markSaved();
+
+		// Persist the Building to filepath.  The clean-state transition happens
+		// only after the file write has completely succeeded; any open, write,
+		// flush, close, or replacement error throws and leaves the Building and
+		// its Agents exactly as dirty as they were before the attempt.
+		void saveTo(std::string const& filepath);
+
 		// Rendering supplies elapsed wall time here.  It is accumulated and only
 		// whole fixed simulation ticks are executed.
 		void update(float elapsedSeconds);

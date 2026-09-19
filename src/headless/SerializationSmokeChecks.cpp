@@ -202,6 +202,67 @@ namespace
 		require(countRegularFiles() == 1, "successful save left a temporary file behind");
 	}
 
+	// #63: a failed save must not clear the Building's unsaved-changes state.
+	// The clean-state transition may only happen after the file write has fully
+	// succeeded, so Save stays available and closing still prompts for unsaved
+	// changes after any open, write, flush, close, or replacement error.
+	void failedSavePreservesUnsavedChangesState()
+	{
+		namespace filesystem = std::filesystem;
+		filesystem::path const directory = filesystem::temp_directory_path() / "pf-dirty-save-smoke";
+		std::error_code error;
+		filesystem::remove_all(directory, error);
+		filesystem::create_directories(directory);
+		struct DirectoryCleanup
+		{
+			filesystem::path path;
+			~DirectoryCleanup()
+			{
+				std::error_code ignored;
+				filesystem::remove_all(path, ignored);
+			}
+		} cleanup{ directory };
+		filesystem::path const destination = directory / "building.yaml";
+
+		core::Building building("Dirty save", 8, 2);
+		building.addRoom("Fore room", 0, 0, 0, 7, 1);
+		building.addRoom("Back room", 1, 0, 0, 7, 1);
+		building.finishBuild();
+		// Enough Agents that the YAML exceeds the injected failure threshold,
+		// so the failure lands mid-write rather than at open.
+		for (int i = 0; i < 200; ++i)
+		{
+			building.createAgent("Agent keeping the document dirty " + std::to_string(i), 0, 0, 0.5f);
+		}
+
+		// A fully successful save marks the document clean.
+		building.saveTo(destination.string());
+		require(!building.isModified(), "successful save did not clear the unsaved-changes state");
+
+		// Edit again, then fail the save mid-write.
+		building.markModified();
+		require(building.isModified(), "Building did not become dirty after an edit");
+		core::YamlSerializer::setWriteFailureAfterBytesForTesting(4096);
+		bool reportedFailure = false;
+		try
+		{
+			building.saveTo(destination.string());
+		}
+		catch (core::SerializationException const&)
+		{
+			reportedFailure = true;
+		}
+		core::YamlSerializer::setWriteFailureAfterBytesForTesting(0);
+		require(reportedFailure, "injected write failure did not report a save error");
+		require(building.isModified(),
+			"failed save cleared the unsaved-changes state; Save would be disabled and "
+			"closing would not prompt for unsaved changes");
+
+		// Retrying the save after the failure succeeds and only then goes clean.
+		building.saveTo(destination.string());
+		require(!building.isModified(), "retry save after failure did not clear the unsaved-changes state");
+	}
+
 	void malformedValuesAndInvalidUsageThrowUsefulErrors()
 	{
 		auto reader = core::YamlSerializer::fromString("count: nope\n");
@@ -2448,6 +2509,7 @@ void runSerializationSmokeChecks()
 	stringYamlRoundTripsPrimitiveValues();
 	fileYamlRoundTrips();
 	lateWriteFailurePreservesThePreviousSaveFile();
+	failedSavePreservesUnsavedChangesState();
 	malformedValuesAndInvalidUsageThrowUsefulErrors();
 	buildingRoundTripsAuthoredStateAndAgents();
 	platformLiftStopDurationRoundTrips();

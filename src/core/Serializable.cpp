@@ -72,6 +72,11 @@ namespace core
 		modify();
 	}
 
+	void Serializable::markUnmodified()
+	{
+		mModified = false;
+	}
+
 	void Serializable::copyErrorsAndWarnings(Serializable const* serializable, bool errors, bool warnings)
 	{
 		if (!serializable)
