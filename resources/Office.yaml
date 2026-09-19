@@ -1,0 +1,137 @@
+version: 6
+name: Untitled
+cellsWide: 16
+decksHigh: 6
+layers: 4
+layerNames:
+  - Street
+  - Office 1
+  - Office 2
+  - Background
+construction:
+  - type: room
+    name: Room 1
+    layer: 1
+    y: 0
+    x: 6
+    cellsWide: 4
+    decksHigh: 2
+    topDeckHeight: 0.9
+  - type: corridor
+    layer: 1
+    y: 0
+    x: 10
+    cellsWide: 5
+    decksHigh: 1
+  - type: corridor
+    layer: 1
+    y: 0
+    x: 1
+    cellsWide: 5
+    decksHigh: 1
+  - type: corridor
+    layer: 1
+    y: 1
+    x: 1
+    cellsWide: 5
+    decksHigh: 1
+  - type: corridor
+    layer: 1
+    y: 1
+    x: 10
+    cellsWide: 5
+    decksHigh: 1
+  - type: corridor
+    layer: 1
+    y: 2
+    x: 1
+    cellsWide: 14
+    decksHigh: 1
+  - type: corridor
+    layer: 1
+    y: 3
+    x: 1
+    cellsWide: 14
+    decksHigh: 1
+  - type: room
+    name: Room 2
+    layer: 2
+    y: 2
+    x: 2
+    cellsWide: 4
+    decksHigh: 1
+    topDeckHeight: 0.9
+  - type: room
+    name: Room 3
+    layer: 2
+    y: 2
+    x: 10
+    cellsWide: 4
+    decksHigh: 1
+    topDeckHeight: 0.9
+  - type: door
+    layer: 1
+    y: 2
+    x: 3
+    width: 1
+    foreControl: false
+    backControl: false
+    activationMode: manual
+    holdOpenSeconds: 5
+    crossingLanes: 0
+  - type: door
+    layer: 1
+    y: 2
+    x: 12
+    width: 1
+    foreControl: false
+    backControl: false
+    activationMode: manual
+    holdOpenSeconds: 5
+    crossingLanes: 0
+  - type: facade
+    name: Facade 1
+    layer: 0
+    y: 0
+    x: 1
+    cellsWide: 14
+    decksHigh: 4
+    topDeckHeight: 0.9
+    colour: 11575424
+  - type: window
+    layer: 0
+    y: 0
+    x: 2
+    cellsWide: 1
+    decksHigh: 1
+    traversable: false
+    initialState: closed
+    style: clear
+  - type: window
+    layer: 0
+    y: 0
+    x: 13
+    cellsWide: 1
+    decksHigh: 1
+    traversable: false
+    initialState: closed
+    style: clear
+  - type: objectTombstone
+    sectorIndex: 0
+  - type: objectTombstone
+    sectorIndex: 9
+  - type: background
+    layer: 3
+    y: 0
+    x: 0
+    cellsWide: 16
+    decksHigh: 6
+    colour: 6324384
+  - type: corridor
+    layer: 2
+    y: 0
+    x: 4
+    cellsWide: 8
+    decksHigh: 1
+agents:
+  []
