@@ -577,6 +577,23 @@ void renderGraph(std::shared_ptr<const core::Graph> graph, std::shared_ptr<const
 void renderBuilding(std::shared_ptr<const core::Building> building);
 
 //
+// The Sectors of one Layer that the current viewport sees: culled from the
+// visible world origin (-xOffset, -yOffset) over the viewport's size. Every
+// render pass culls through here so the passes cannot disagree (#58). Declared
+// here so the headless viewport-culling check can exercise the real bounds.
+//
+std::vector<std::shared_ptr<const core::Sector>> viewportSectors(
+	std::shared_ptr<const core::Building> const& building, uint32_t layer);
+
+//
+// Draws every Sector one Layer contributes for a single viewport pass, culled
+// to the current viewport. Declared here so the headless viewport-culling
+// check (#58) can exercise the real pass against a live ImDrawList.
+//
+void renderSectors(std::shared_ptr<const core::Building> building, uint32_t layer,
+	LayerRenderStyle style, ImDrawList* drawList);
+
+//
 // Draws one Sector for a single viewport pass: its surface fill, its
 // thresholds and objects, and its Agents, in the order the viewport paints
 // them. Declared here so the headless draw-order check (#49) can exercise

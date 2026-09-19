@@ -163,6 +163,7 @@ add_executable(prometheum-fermide-headless
     src/headless/SerializationSmokeChecks.cpp
     src/headless/SmokeScenario.cpp
     src/headless/ThresholdRefusalSmokeChecks.cpp
+    src/headless/ViewportCullingSmokeChecks.cpp
     src/headless/WindowLayerSmokeChecks.cpp
     src/headless/WindowIntoBackgroundSmokeChecks.cpp
     src/headless/WindowMultiBackgroundSmokeChecks.cpp

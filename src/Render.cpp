@@ -1520,6 +1520,22 @@ void renderTransitThroughApertures(shared_ptr<const core::Sector> const& transit
 
 
 //
+// The Sectors of one Layer that the current viewport actually sees.
+//
+// Every render pass must cull with the same bounds (#58): the visible world
+// origin is (-xOffset, -yOffset) - the scrollbars drive both - over the
+// viewport's own width and height. Passing a hard-coded Y origin here is what
+// made high decks vanish when scrolled into view.
+//
+std::vector<std::shared_ptr<const core::Sector>> viewportSectors(
+	std::shared_ptr<const core::Building> const& building, uint32_t layer)
+{
+	return building->getSectorsInBounds(layer, -gUISettings.xOffset, -gUISettings.yOffset,
+		gUISettings.worldViewportWidth, gUISettings.worldViewportHeight);
+}
+
+
+//
 // Draws every Sector one Layer contributes, in the given style.
 //
 void renderSectors(shared_ptr<const core::Building> building, uint32_t layer, LayerRenderStyle style,
@@ -1530,8 +1546,7 @@ void renderSectors(shared_ptr<const core::Building> building, uint32_t layer, La
 		return;
 	}
 
-	auto const sectors = building->getSectorsInBounds(layer, -gUISettings.xOffset, 0,
-		gUISettings.worldViewportWidth, gUISettings.worldViewportHeight);
+	auto const sectors = viewportSectors(building, layer);
 
 	auto const colour = style == LayerRenderStyle::Solid ? ForeLocationColour : BackLocationColour;
 
@@ -1557,8 +1572,7 @@ void renderBehindLayerTransits(shared_ptr<const core::Building> building, uint32
 {
 	auto const viewLayer = core::layerInFront(behindLayer);
 
-	auto const transits = building->getSectorsInBounds(behindLayer, -gUISettings.xOffset, 0,
-		gUISettings.worldViewportWidth, gUISettings.worldViewportHeight);
+	auto const transits = viewportSectors(building, behindLayer);
 
 	for (auto const& transit : transits)
 	{
@@ -1586,8 +1600,7 @@ void renderBuilding(shared_ptr<const core::Building> building)
 
 	if (viewLayer + 1 < layerCount)
 	{
-		viewSectors = building->getSectorsInBounds(viewLayer, -gUISettings.xOffset, 0,
-			gUISettings.worldViewportWidth, gUISettings.worldViewportHeight);
+		viewSectors = viewportSectors(building, viewLayer);
 	}
 
 	for (auto const& pass : renderPasses(viewLayer, layerCount, gUISettings.renderNextLayerWireframe))

@@ -1263,7 +1263,7 @@ namespace core
 		int cellX0 = max((int)(x / CORE_CELL_WIDTH_PIXELS), 0);
 		int cellY0 = max((int)(y / CORE_DECK_HEIGHT_PIXELS), 0);
 		int cellX1 = min((int)((x + width) / CORE_CELL_WIDTH_PIXELS), (int)mCellsWide - 1);
-		int cellY1 = min((int)((y + height) / CORE_CELL_WIDTH_PIXELS), (int)mDecksHigh - 1);
+		int cellY1 = min((int)((y + height) / CORE_DECK_HEIGHT_PIXELS), (int)mDecksHigh - 1);
 
 		// Add all Locations to a set, as a single Location will have a reference for every CellDefinition,
 		// but we only want it once.
