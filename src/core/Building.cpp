@@ -6546,73 +6546,18 @@ namespace core
 	// Open platform lift traversal allocation - calling the platform, boarding at the
 	// reserved queue position, onboard destination selection, and disembark through the
 	// virtual boundary - lives in SimulationCoordinator (ADR 0004), alongside the
-	// admission release which undoes it. Building keeps this entry point and forwards,
-	// so no caller outside Building names the coordinator.
+	// admission release which undoes it. It is reached only from the coordinator's own
+	// lift allocation dispatcher now, so no Building forward is left for it.
 
-	void Building::allocateOpenPlatformLiftTraversal(TraversalRequestId requestId, TraversalResource& resource)
-	{
-		mSimulationCoordinator.allocateOpenPlatformLiftTraversal(requestId, resource);
-	}
-
-	// The lift allocation dispatcher stays here: it resolves the journey resource,
-	// the stop and the boarding / disembarking / riding classification, then hands
-	// the request to the branch which owns it. All three branches live in
-	// SimulationCoordinator (ADR 0004).
+	// The lift allocation dispatcher - the platform lift dispatch, the journey resource
+	// and stop resolution, the enabled check and the boarding / disembarking / riding
+	// classification - lives in SimulationCoordinator (ADR 0004), which delegates to
+	// the three branch methods extracted ahead of it. Building keeps this entry point and
+	// forwards, so no caller outside Building names the coordinator.
 
 	void Building::allocateLiftTraversal(TraversalRequestId requestId, TraversalResource& edgeResource)
 	{
-		auto request = mTraversalRequests.find(requestId);
-		if (!request || request->mState != TraversalRequestState::Pending) return;
-		if (edgeResource.mOpenPlatformLift)
-		{
-			allocateOpenPlatformLiftTraversal(requestId, edgeResource);
-			return;
-		}
-		auto coordinatorId = (edgeResource.mLift || edgeResource.mShuttle)
-			? request->mResource : edgeResource.mLiftCoordinator;
-		auto coordinator = mTraversalResources.find(coordinatorId);
-		if (!coordinator || (!coordinator->mLift && !coordinator->mShuttle))
-		{
-			denyTraversalRequest(requestId, TraversalFailureReason::ResourceDisabled);
-			return;
-		}
-		auto stop = (edgeResource.mLift || edgeResource.mShuttle)
-			? findLiftStop(*coordinator, request->mDestinationEndpoint) : edgeResource.mLiftStopIndex;
-		if (stop >= coordinator->mLiftStops.size())
-		{
-			denyTraversalRequest(requestId);
-			return;
-		}
-		auto boarding = request->mSourceSector != coordinator->mLiftSector
-			&& request->mDestinationSector == coordinator->mLiftSector;
-		auto disembarking = request->mSourceSector == coordinator->mLiftSector
-			&& request->mDestinationSector != coordinator->mLiftSector;
-		auto riding = request->mSourceSector == coordinator->mLiftSector
-			&& request->mDestinationSector == coordinator->mLiftSector;
-		if (!coordinator->mEnabled && !disembarking)
-		{
-			denyTraversalRequest(requestId, TraversalFailureReason::ResourceDisabled);
-			return;
-		}
-
-		if (boarding)
-		{
-			mSimulationCoordinator.allocateLiftBoarding(requestId, edgeResource, *coordinator, stop);
-			return;
-		}
-
-		if (riding)
-		{
-			mSimulationCoordinator.allocateLiftRiding(requestId, *coordinator);
-			return;
-		}
-
-		if (disembarking)
-		{
-			mSimulationCoordinator.allocateLiftDisembarking(requestId, edgeResource, *coordinator, stop);
-			return;
-		}
-		denyTraversalRequest(requestId);
+		mSimulationCoordinator.allocateLiftTraversal(requestId, edgeResource);
 	}
 
 	// Remote-door and extensible traversal preparation live in

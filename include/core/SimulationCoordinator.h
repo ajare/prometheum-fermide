@@ -264,6 +264,23 @@ namespace core
 			uint32_t& sourceNode);
 
 		// ------------------------------------------------------------------
+		// Lift traversal allocation dispatcher (ADR 0004 stage 3)
+		//
+		// Resolving the journey resource and the stop a request is made against,
+		// the enabled check, the boarding / riding / disembarking classification
+		// and the dispatch to the three branches above all live here, together
+		// with the open platform lift dispatch which bypasses the journey
+		// resource entirely. Building's traversal-request allocation forwards
+		// lift and shuttle requests through this entry point; no caller outside
+		// Building names the coordinator.
+		// ------------------------------------------------------------------
+
+		// Allocate one pending request made against a lift, shuttle or landing
+		// resource. `edgeResource` is the resource the request was made on: the
+		// journey itself, or the landing door whose coordinator link is followed.
+		void allocateLiftTraversal(TraversalRequestId requestId, TraversalResource& edgeResource);
+
+		// ------------------------------------------------------------------
 		// Lift boarding branch (ADR 0004 stage 3)
 		//
 		// What happens when an Agent outside the car asks to enter it: the

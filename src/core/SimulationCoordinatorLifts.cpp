@@ -20,22 +20,25 @@ namespace core
 
 	using namespace std;
 
-	// Lift scheduling, passenger safe exits and the boarding, riding and disembarking
-	// branches of lift allocation moved out of Building (ADR 0004 stage 3). The
-	// behaviour is unchanged: the coordinator works on Building's traversal-resource,
-	// traversal-request, interaction-request and agent registries through
-	// friendship, and calls back through the Building facade for the machinery
-	// which has not moved out of Building yet - the landing queue ticket attach,
-	// queue position refresh, grants and denials. The shuttle passenger-carriage
-	// lookup these used to call back for has since moved in with the shuttle door
-	// assignment family (SimulationCoordinatorShuttles.cpp) and is called directly.
+	// Lift scheduling, passenger safe exits, the lift allocation dispatcher and the
+	// boarding, riding and disembarking branches of lift allocation moved out of
+	// Building (ADR 0004 stage 3). The behaviour is unchanged: the coordinator
+	// works on Building's traversal-resource, traversal-request,
+	// interaction-request and agent registries through friendship, and calls back
+	// through the Building facade for the machinery which has not moved out of
+	// Building yet - the landing queue ticket attach, queue position refresh,
+	// grants and denials. The shuttle passenger-carriage lookup these used to call
+	// back for has since moved in with the shuttle door assignment family
+	// (SimulationCoordinatorShuttles.cpp) and is called directly.
 	//
-	// These were helpers with no entry points of their own until the boarding,
-	// riding and disembarking branches of lift allocation joined them: every caller
-	// reaches the scheduling helpers either from inside the coordinator or through
-	// the Building facade (design pattern, not the Facade sector type), while
-	// allocateLiftBoarding, allocateLiftRiding and allocateLiftDisembarking are
-	// reached only through that facade, from Building's lift allocation dispatcher.
+	// These were helpers with no entry points of their own until the dispatcher and
+	// the boarding, riding and disembarking branches of lift allocation joined
+	// them: every caller reaches the scheduling helpers either from inside the
+	// coordinator or through the Building facade (design pattern, not the Facade
+	// sector type), while allocateLiftTraversal, allocateLiftBoarding,
+	// allocateLiftRiding and allocateLiftDisembarking are reached only through
+	// that facade - the dispatcher from Building's traversal-request allocation,
+	// the branches from the dispatcher.
 
 	uint32_t SimulationCoordinator::findLiftStop(TraversalResource const& resource, Vector2 const& endpoint) const
 	{
@@ -409,6 +412,73 @@ namespace core
 			}
 		}
 		return false;
+	}
+
+	// The lift allocation dispatcher. An open platform lift allocates against its
+	// own resource, so it is dispatched out first. Otherwise the journey resource
+	// is the request's own resource when the request was made on the lift or
+	// shuttle itself, and the landing's coordinator link otherwise; the stop is
+	// resolved the same way - nearest to the endpoint for the journey, the
+	// landing's fixed stop index for a landing. A journey which is not enabled may
+	// still be left, so only disembarking survives the disabled check. The
+	// request's sectors against the journey sector give the boarding / riding /
+	// disembarking classification, and the request goes to the branch which owns
+	// it; anything which is none of the three is denied.
+	void SimulationCoordinator::allocateLiftTraversal(TraversalRequestId requestId,
+		TraversalResource& edgeResource)
+	{
+		auto request = mBuilding.mTraversalRequests.find(requestId);
+		if (!request || request->mState != TraversalRequestState::Pending) return;
+		if (edgeResource.mOpenPlatformLift)
+		{
+			allocateOpenPlatformLiftTraversal(requestId, edgeResource);
+			return;
+		}
+		auto coordinatorId = (edgeResource.mLift || edgeResource.mShuttle)
+			? request->mResource : edgeResource.mLiftCoordinator;
+		auto coordinator = mBuilding.mTraversalResources.find(coordinatorId);
+		if (!coordinator || (!coordinator->mLift && !coordinator->mShuttle))
+		{
+			mBuilding.denyTraversalRequest(requestId, TraversalFailureReason::ResourceDisabled);
+			return;
+		}
+		auto stop = (edgeResource.mLift || edgeResource.mShuttle)
+			? findLiftStop(*coordinator, request->mDestinationEndpoint) : edgeResource.mLiftStopIndex;
+		if (stop >= coordinator->mLiftStops.size())
+		{
+			mBuilding.denyTraversalRequest(requestId);
+			return;
+		}
+		auto boarding = request->mSourceSector != coordinator->mLiftSector
+			&& request->mDestinationSector == coordinator->mLiftSector;
+		auto disembarking = request->mSourceSector == coordinator->mLiftSector
+			&& request->mDestinationSector != coordinator->mLiftSector;
+		auto riding = request->mSourceSector == coordinator->mLiftSector
+			&& request->mDestinationSector == coordinator->mLiftSector;
+		if (!coordinator->mEnabled && !disembarking)
+		{
+			mBuilding.denyTraversalRequest(requestId, TraversalFailureReason::ResourceDisabled);
+			return;
+		}
+
+		if (boarding)
+		{
+			allocateLiftBoarding(requestId, edgeResource, *coordinator, stop);
+			return;
+		}
+
+		if (riding)
+		{
+			allocateLiftRiding(requestId, *coordinator);
+			return;
+		}
+
+		if (disembarking)
+		{
+			allocateLiftDisembarking(requestId, edgeResource, *coordinator, stop);
+			return;
+		}
+		mBuilding.denyTraversalRequest(requestId);
 	}
 
 	// Boarding allocation. The Agent stands outside the car and asks to enter it at

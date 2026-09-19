@@ -883,9 +883,13 @@ namespace core
 
 		void advanceLiftResources();
 
+		// The lift allocation dispatcher - the platform lift dispatch, the journey
+		// resource and stop resolution, the enabled check and the boarding /
+		// disembarking / riding classification - lives in SimulationCoordinator
+		// (ADR 0004); this forwards. The open platform lift allocation it dispatches
+		// to is reached only from inside the coordinator now, so no forward is left
+		// for it.
 		void allocateLiftTraversal(TraversalRequestId requestId, TraversalResource& resource);
-
-		void allocateOpenPlatformLiftTraversal(TraversalRequestId requestId, TraversalResource& resource);
 
 		uint32_t findLiftStop(TraversalResource const& resource, Vector2 const& endpoint) const;
 
