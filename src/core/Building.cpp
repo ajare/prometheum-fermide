@@ -752,7 +752,9 @@ namespace core
 		auto foreSector = _getSector(mLayers[layerIndex]->getCellDefinition(x, y).sectorIndex);
 		auto backSector = _getSector(mLayers[backLayer]->getCellDefinition(x, y).sectorIndex);
 
-		assert(foreSector->getType() == SectorType::Location);
+		// A Door's front Sector is a Location or a Facade: a Facade follows
+		// the Room hosting rule (ADR 0003, ticket #48).
+		assert(isLocationLike(foreSector->getType()));
 
 		// Create door in Fore Location and add to Back.
 		uint32_t doorIndex = foreSector->createDoor(foreSector, backSector, x, y, cellsWide, vertexIdentifier);

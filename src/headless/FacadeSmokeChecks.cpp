@@ -1,4 +1,4 @@
-// Facade checks, for tickets #43, #44 and #45.
+// Facade checks, for tickets #43, #44, #45 and #48.
 //
 // A Facade is an occupiable Location whose perimeter walls are all open by
 // construction: it hosts objects and agents exactly as a Room does, owns
@@ -13,7 +13,8 @@
 // horizontal-adjacency merging: a Facade between two floor-aligned Rooms
 // is one continuous floor, a mismatched-floor neighbour does not merge,
 // wall removal accepts a Facade neighbour on either side of the boundary,
-// and a Background stays out of the pathing world entirely.
+// and a Background stays out of the pathing world entirely; from #48, a
+// Door accepts a Facade as its front Sector and as its back Sector.
 
 #include <array>
 #include <cstdint>
@@ -485,6 +486,52 @@ namespace
 		require(control.canAddSectorBulkheadDoor(0, 0, 4, CORE_SIDE_LEFT,
 				core::Building::CreateBulkheadDoorOptions{}, &diagnostic),
 			("The Bulkhead Door check broke for plain Rooms too: " + diagnostic).c_str());
+	}
+
+	// A Door may have a Facade as its front Sector or as its back Sector:
+	// a Facade follows the Room hosting rule, so createDoor's front-Sector
+	// assert must admit it (ADR 0003, ticket #48). The corridor-door UI
+	// tool cannot reach this - it requires isCorridor() - so this is the
+	// API and lift-landing path.
+	void doorAcceptsAFacadeOnEitherSide()
+	{
+		// The ticket repro: Facade on the front Layer, a Room directly behind.
+		core::Building front("Door on Facade front", 8, 1);
+		front.addLayer();
+		auto const facadeIndex = front.addFacade(0, 0, 0, 4, 1);
+		front.addRoom("Back", 1, 0, 0, 4, 1);
+		front.finishBuild();
+		front.pauseSimulation();
+
+		auto const foreDoor = front.addSectorDoor(0, 0, 1);
+		require(foreDoor.door.sector != nullptr
+				&& foreDoor.door.sector->getIndex() == facadeIndex,
+			"The Door was not authored in the Facade front Sector");
+		require(std::as_const(front).getLayer(0)->getCellDefinition(1, 0).sectorObjectType
+			== core::SectorObjectType::Door,
+			"The Facade-side cell does not carry the Door");
+		require(std::as_const(front).getLayer(1)->getCellDefinition(1, 0).sectorObjectType
+			== core::SectorObjectType::Door,
+			"The Room-side cell does not carry the Door");
+
+		// The mirror: a Room in front with the Facade directly behind.
+		core::Building back("Door on Facade back", 8, 1);
+		back.addLayer();
+		back.addRoom("Front", 0, 0, 0, 4, 1);
+		back.addFacade(1, 0, 0, 4, 1);
+		back.finishBuild();
+		back.pauseSimulation();
+
+		auto const backDoor = back.addSectorDoor(0, 0, 1);
+		require(backDoor.door.sector != nullptr
+				&& backDoor.door.sector->getType() == core::SectorType::Location,
+			"The Door was not authored in the Room front Sector");
+		require(std::as_const(back).getLayer(0)->getCellDefinition(1, 0).sectorObjectType
+			== core::SectorObjectType::Door,
+			"The Room-side cell does not carry the Door");
+		require(std::as_const(back).getLayer(1)->getCellDefinition(1, 0).sectorObjectType
+			== core::SectorObjectType::Door,
+			"The Facade-side cell does not carry the Door");
 	}
 
 	// Wall edits refuse the Facade itself - its perimeter is not editable -
@@ -1156,6 +1203,7 @@ void runFacadeSmokeChecks()
 	objectHostingParityWithARoom();
 	roomSupportedObjectsPlaceInAFacade();
 	bulkheadDoorsAreRefusedOnAFacade();
+	doorAcceptsAFacadeOnEitherSide();
 	wallCommandsRefuseTheFacadeButNotTowardIt();
 	theFacadeRecordRoundTrips();
 	aHandAuthoredFacadeRecordLoads();
