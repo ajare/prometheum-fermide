@@ -90,6 +90,20 @@ using namespace std;
 static bool gWorldHovered{ false };
 static bool gPegmanConsumesLeftMouse{ false };
 
+// Drag-scrolling the World view: shift + middle button, or shift + alt +
+// left button. Kept at file scope because a pan claims the left button for
+// the whole gesture - the palette reports that through
+// gPegmanConsumesLeftMouse - so no selection, paint, or move starts under
+// the cursor while the view is being dragged.
+struct ViewPanState
+{
+	bool dragging{ false };
+	ImVec2 pressPosition{};
+	ImVec2 scrollAtPress{};
+};
+
+static ViewPanState gViewPan;
+
 void setSelectionMode(UISettings::SelectionMode mode);
 
 namespace
@@ -1528,7 +1542,8 @@ namespace
 
 		// Picking the palette up: any part of the tray that is not a button
 		// drags the whole tray, which stays inside the view canvas.
-		if (overGrip && gPegman.phase == PalettePhase::Home && io.MouseClicked[0])
+		if (overGrip && gPegman.phase == PalettePhase::Home && !gViewPan.dragging
+			&& io.MouseClicked[0])
 		{
 			gTrayDrag.dragging = true;
 			gTrayDrag.grab = io.MousePos - trayTopLeft;
@@ -1570,7 +1585,7 @@ namespace
 					: stairwellHovered ? "Paint Stairwell" : staircaseHovered ? "Paint Staircase"
 					: liftHovered ? "Paint Lift" : "Paint Shuttle");
 
-			if (io.MouseClicked[0]
+			if (io.MouseClicked[0] && !gViewPan.dragging
 				&& !((ladderHovered || stairwellHovered || staircaseHovered || liftHovered || shuttleHovered)
 					&& backOnlyDisabled))
 			{
@@ -1625,7 +1640,7 @@ namespace
 		}
 
 		if (gPaint.tool != PaintTool::None && !gPaint.dragging && gWorldHovered
-			&& !overTray && io.MouseClicked[0])
+			&& !overTray && !gViewPan.dragging && io.MouseClicked[0])
 		{
 			auto world = screenToWorld(io.MousePos);
 			int x = (int)floor(world.x);
@@ -1794,7 +1809,7 @@ namespace
 				: hoveredItem == PaletteItem::ForceBridge ? "Drag to add Force Bridge"
 				: hoveredItem == PaletteItem::RoomLadder ? "Drag to add Room Ladder"
 				: hoveredItem == PaletteItem::PlatformLift ? "Drag to add Platform Lift" : "Drag to add Door");
-			if (io.MouseClicked[0])
+			if (io.MouseClicked[0] && !gViewPan.dragging)
 			{
 				gPegman.phase = PalettePhase::Armed;
 				gPegman.item = hoveredItem;
@@ -2003,7 +2018,7 @@ namespace
 
 		gPegmanConsumesLeftMouse = gSectorResize.dragging || gObjectMove.dragging
 			|| gAgentMove.dragging || paletteConsumedMouse || gPaint.tool != PaintTool::None
-			|| gPaint.dragging || paintWasActive;
+			|| gPaint.dragging || paintWasActive || gViewPan.dragging;
 	}
 }
 
@@ -7149,7 +7164,8 @@ namespace
 			resetAgentMove();
 			return;
 		}
-		if (!gAgentMove.dragging && gWorldHovered && gHoveredAgent && io.MouseClicked[0])
+		if (!gAgentMove.dragging && gWorldHovered && !gViewPan.dragging && gHoveredAgent
+			&& io.MouseClicked[0])
 		{
 			gSelectedAgent = gHoveredAgent;
 			gSelectedSector.reset();
@@ -7345,7 +7361,7 @@ namespace
 			ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
 		else if (resizeEdge == ResizeEdge::Top || resizeEdge == ResizeEdge::Bottom)
 			ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
-		if (!gObjectMove.dragging && gWorldHovered
+		if (!gObjectMove.dragging && gWorldHovered && !gViewPan.dragging
 			&& (gHoveredSectorObject == gSelectedSectorObject || resizeEdge != ResizeEdge::None)
 			&& io.MouseClicked[0])
 			beginObjectMove(building, gSelectedSectorObject, objectIndex,
@@ -7476,7 +7492,8 @@ namespace
 		else if (hoverEdge == ResizeEdge::Move)
 			ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
 
-		if (!gSectorResize.dragging && gWorldHovered && hoverEdge != ResizeEdge::None && io.MouseClicked[0])
+		if (!gSectorResize.dragging && gWorldHovered && !gViewPan.dragging
+			&& hoverEdge != ResizeEdge::None && io.MouseClicked[0])
 		{
 			bool const selectedLift = gSelectedSector->getType() == core::SectorType::Lift;
 			bool const selectedShuttle = gSelectedSector->getType() == core::SectorType::Shuttle;
@@ -7885,6 +7902,36 @@ void renderWorldWindow(shared_ptr<core::Building> building, shared_ptr<const cor
 
 	static float scrollX = 0.0f;
 	static float scrollY = 0.0f;
+
+	// Drag-scrolling the view. The gesture is claimed by the modifiers held
+	// when the button goes down, so the click never reaches the world or the
+	// palette underneath it. The world is grabbed rather than pushed: dragging
+	// right reveals what lies to the left. An axis with nowhere to go simply
+	// does not move.
+	auto const& io = ImGui::GetIO();
+	bool const canPan = horizontalScrollMax > 0.0f || verticalScrollMax > 0.0f;
+	bool const panGesture = io.KeyShift
+		&& (io.MouseDown[ImGuiMouseButton_Middle]
+			|| (io.KeyAlt && io.MouseDown[ImGuiMouseButton_Left]));
+	if (!gViewPan.dragging && gWorldHovered && canPan && panGesture
+		&& (io.MouseClicked[ImGuiMouseButton_Middle]
+			|| io.MouseClicked[ImGuiMouseButton_Left]))
+	{
+		gViewPan.dragging = true;
+		gViewPan.pressPosition = io.MousePos;
+		gViewPan.scrollAtPress = { scrollX, scrollY };
+	}
+	if (gViewPan.dragging)
+	{
+		if (!panGesture) gViewPan.dragging = false;
+		else
+		{
+			auto const drag = io.MousePos - gViewPan.pressPosition;
+			scrollX = clamp(gViewPan.scrollAtPress.x - drag.x, 0.0f, horizontalScrollMax);
+			scrollY = clamp(gViewPan.scrollAtPress.y - drag.y, 0.0f, verticalScrollMax);
+		}
+	}
+
 	if (showVerticalScrollbar)
 	{
 		scrollY = clamp(scrollY, 0.0f, verticalScrollMax);
@@ -7967,6 +8014,9 @@ void renderWorldWindow(shared_ptr<core::Building> building, shared_ptr<const cor
 		if (gHoveredAgent || gHoveredSector || gHoveredSectorObject || gHoveredVertex)
 			ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
 	}
+
+	// Set after the hover tests so a pan outranks the Hand cursor.
+	if (gViewPan.dragging) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
 
 	updateAgentMove(building);
 	updateObjectMove(building);
