@@ -277,6 +277,32 @@ namespace
 		near(clip.w, apertureBottom, "the aperture clip's bottom edge");
 	}
 
+	// Fully open: the leaf has slid off the aperture's left jamb and paints no
+	// fill at all; the back Sector's clip covers the whole aperture.
+	void checkFullyOpenSolidPass()
+	{
+		ImGuiGuard imgui;
+		auto scene = buildOpenLeftDoorScene();
+		driveTo(scene, 1.0f);
+		auto drawList = testDrawList();
+
+		renderPass(scene, LayerRenderStyle::Solid, drawList);
+
+		require(!extentOf(drawList, kDoorLeafColour).painted(),
+			"the fully-open Solid pass painted a degenerate Door leaf");
+
+		auto const apertureTop = toScreenY(CORE_DOOR_HEIGHT);
+		auto const apertureBottom = toScreenY(0.0f);
+
+		auto const back = extentOf(drawList, kApertureFillColour);
+		require(back.painted(), "no aperture fill reached the Sector behind");
+		auto const clip = clipCovering(drawList, kApertureFillColour);
+		near(clip.x, toScreenX(scene.worldX0), "the aperture clip's left edge");
+		near(clip.z, toScreenX(scene.worldX2), "the aperture clip's right edge");
+		near(clip.y, apertureTop, "the aperture clip's top edge");
+		near(clip.w, apertureBottom, "the aperture clip's bottom edge");
+	}
+
 	// Wireframe pass at a given percentage: the remaining leaf is outlined and
 	// nothing is filled - no leaf colour, no back Sector colour.
 	void checkWireframePass(float openPct)
@@ -306,6 +332,26 @@ namespace
 		require(!extentOf(drawList, kApertureFillColour).painted(),
 			"the wireframe pass filled the aperture");
 	}
+
+	// Fully open: the leaf has slid off the aperture's left jamb, so the
+	// wireframe pass outlines nothing at all - no stroked zero-width rectangle
+	// at the jamb - and nothing is filled.
+	void checkFullyOpenWireframePass()
+	{
+		ImGuiGuard imgui;
+		auto scene = buildOpenLeftDoorScene();
+		driveTo(scene, 1.0f);
+		auto drawList = testDrawList();
+
+		renderPass(scene, LayerRenderStyle::Wireframe, drawList);
+
+		require(!extentOf(drawList, kThresholdOutlineColour).painted(),
+			"the fully-open wireframe pass drew a leaf outline at the jamb");
+		require(!extentOf(drawList, kDoorLeafColour).painted(),
+			"the fully-open wireframe pass filled the leaf solid");
+		require(!extentOf(drawList, kApertureFillColour).painted(),
+			"the fully-open wireframe pass filled the aperture");
+	}
 }
 
 void runDoorOpenLeftRenderSmokeChecks()
@@ -320,7 +366,7 @@ void runDoorOpenLeftRenderSmokeChecks()
 	checkWireframePass(0.5f);
 
 	// Fully open: the leaf has slid off the aperture's left jamb; the back
-	// Sector's clip covers the whole aperture.
-	checkSolidPass(1.0f);
-	checkWireframePass(1.0f);
+	// Sector's clip covers the whole aperture, and no leaf geometry remains.
+	checkFullyOpenSolidPass();
+	checkFullyOpenWireframePass();
 }

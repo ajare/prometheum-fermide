@@ -514,6 +514,11 @@ void renderDoorOpenLeft(shared_ptr<const core::Door> door, uint32_t layer, Layer
 	bounds1 = bounds2;
 	bounds1.x -= door->getOpenPercentage() * (bounds2.x - bounds0.x);
 
+	// At 100% open the leaf has slid clean out of the aperture, so it paints
+	// neither fill nor outline - otherwise the wireframe pass would emit a
+	// stroked zero-width rectangle at the left jamb.
+	bool const leafVisible = bounds1.x > bounds0.x;
+
 	transformPosition(bounds0);
 	transformPosition(bounds1);
 	transformPosition(bounds2);
@@ -521,7 +526,8 @@ void renderDoorOpenLeft(shared_ptr<const core::Door> door, uint32_t layer, Layer
 	if (style == LayerRenderStyle::Solid)
 	{
 		auto doorColour = ImColor(64, 192, 255);
-		drawList->AddRectFilled({ bounds0.x, bounds0.y }, { bounds1.x, bounds2.y }, doorColour);
+		if (leafVisible)
+			drawList->AddRectFilled({ bounds0.x, bounds0.y }, { bounds1.x, bounds2.y }, doorColour);
 
 		drawList->AddDrawCmd();
 
@@ -546,7 +552,8 @@ void renderDoorOpenLeft(shared_ptr<const core::Door> door, uint32_t layer, Layer
 	else if (style == LayerRenderStyle::Wireframe)
 	{
 		// Only the remaining leaf is outlined; the aperture carries no solid fill.
-		drawList->AddRect({ bounds0.x, bounds0.y }, { bounds1.x, bounds2.y }, ImColor(0, 0, 0));
+		if (leafVisible)
+			drawList->AddRect({ bounds0.x, bounds0.y }, { bounds1.x, bounds2.y }, ImColor(0, 0, 0));
 	}
 }
 
@@ -563,6 +570,11 @@ void renderDoorOpenRight(shared_ptr<const core::Door> door, uint32_t layer, Laye
 	bounds1 = bounds0;
 	bounds1.x += door->getOpenPercentage() * (bounds2.x - bounds0.x);
 
+	// At 100% open the leaf has slid clean out of the aperture, so it paints
+	// neither fill nor outline - otherwise the wireframe pass would emit a
+	// stroked zero-width rectangle at the right jamb.
+	bool const leafVisible = bounds1.x < bounds2.x;
+
 	transformPosition(bounds0);
 	transformPosition(bounds1);
 	transformPosition(bounds2);
@@ -570,7 +582,8 @@ void renderDoorOpenRight(shared_ptr<const core::Door> door, uint32_t layer, Laye
 	if (style == LayerRenderStyle::Solid)
 	{
 		auto doorColour = ImColor(64, 192, 255);
-		drawList->AddRectFilled({ bounds1.x, bounds0.y }, { bounds2.x, bounds2.y }, doorColour);
+		if (leafVisible)
+			drawList->AddRectFilled({ bounds1.x, bounds0.y }, { bounds2.x, bounds2.y }, doorColour);
 
 		drawList->AddDrawCmd();
 
@@ -595,7 +608,8 @@ void renderDoorOpenRight(shared_ptr<const core::Door> door, uint32_t layer, Laye
 	else if (style == LayerRenderStyle::Wireframe)
 	{
 		// Only the remaining leaf is outlined; the aperture carries no solid fill.
-		drawList->AddRect({ bounds1.x, bounds0.y }, { bounds2.x, bounds2.y }, ImColor(0, 0, 0));
+		if (leafVisible)
+			drawList->AddRect({ bounds1.x, bounds0.y }, { bounds2.x, bounds2.y }, ImColor(0, 0, 0));
 	}
 }
 
