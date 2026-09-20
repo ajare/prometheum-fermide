@@ -1132,10 +1132,11 @@ namespace core
 		// Re-authors one Lift stop's landing Door opening style while the Lift's
 		// topology stays fixed.  The override lives in the Lift's own record, not
 		// in a Door record, so editing one stop affects no sibling Door; save/load
-		// and snapshot-based undo/redo carry the choice, and reconstructing an
-		// unchanged Lift retains every override.  Stops without an override keep
-		// the generated OpenApart default.  Transport-managed geometry, controls,
-		// timing, and traversal are untouched.
+		// and snapshot-based undo/redo carry the choice.  The override is keyed by
+		// the stop's absolute landing floor, so moving or resizing the Lift while
+		// retaining its stops keeps every style attached to its own stop.
+		// Stops without an override keep the generated OpenApart default.
+		// Transport-managed geometry, controls, timing, and traversal are untouched.
 		bool setLiftStopDoorOpenStyle(uint32_t liftSectorIndex, uint32_t stopIndex,
 			Door::OpenStyle style, std::string* diagnostic = nullptr);
 

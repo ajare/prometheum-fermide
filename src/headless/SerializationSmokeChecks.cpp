@@ -2815,6 +2815,156 @@ agents: []
 			"Reconstructing an unchanged Lift lost a second per-stop override");
 	}
 
+	// Ticket #86: per-stop Door styles follow the stop's identity when the Lift
+	// moves or resizes without changing its stop floors. The overrides remap by
+	// absolute landing floor rather than by the transient offset from the shaft
+	// anchor, so a sideways move, a shaft extension that shifts every offset,
+	// and a width change all retain each stop's own style, and the reconciled
+	// styles survive save/load.
+	void liftDoorStylesFollowStopsWhenTheLiftMovesOrResizes()
+	{
+		auto findLiftStopDoor = [](core::Building const& building, uint32_t liftSector,
+			uint32_t stopIndex) -> std::shared_ptr<const core::Door>
+		{
+			for (uint32_t sectorIndex = 0; sectorIndex < building.getNumSectors(); ++sectorIndex)
+			{
+				auto const sector = building.getSector(sectorIndex);
+				if (!sector) continue;
+				for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
+				{
+					auto const object = sector->getObject(i);
+					if (!object || object->getObjectType() != core::SectorObjectType::Door) continue;
+					uint32_t ownerSector{ ~0u }, ownerStop{ ~0u };
+					if (building.isLiftOwnedDoor(object, &ownerSector, &ownerStop)
+						&& ownerSector == liftSector && ownerStop == stopIndex)
+						return static_pointer_cast<const core::DoorSectorObject>(object)->getDoor();
+				}
+			}
+			return nullptr;
+		};
+		auto stopFloor = [](core::Building const& building, uint32_t liftSector,
+			uint32_t stopIndex) -> uint32_t
+		{
+			auto const lift = std::dynamic_pointer_cast<const core::LiftTransit>(
+				building.getSector(liftSector));
+			require(static_cast<bool>(lift), "The Lift transit disappeared");
+			auto const& value = lift->getStop(stopIndex);
+			return static_cast<uint32_t>((int)value.sector->getCellY() + value.sectorOffsetY);
+		};
+		auto requireStyles = [&findLiftStopDoor](core::Building const& building, uint32_t liftSector,
+			std::vector<core::Door::OpenStyle> const& styles, char const* context)
+		{
+			for (size_t stop = 0; stop < styles.size(); ++stop)
+			{
+				auto const door = findLiftStopDoor(building, liftSector, (uint32_t)stop);
+				require(static_cast<bool>(door),
+					(std::string(context) + ": landing Door is missing").c_str());
+				require(door->getOpenStyle() == styles[stop],
+					(std::string(context) + ": stop " + std::to_string(stop)
+						+ " does not carry its own style").c_str());
+			}
+		};
+		auto snapshotYaml = [](core::Building& building)
+		{
+			core::SerializationWorkData workData;
+			auto writer = core::YamlSerializer::toString();
+			building.serialize(*writer, workData);
+			writer->serialize();
+			return writer->getSerializedString();
+		};
+		auto loadYaml = [](std::string const& yaml)
+		{
+			auto building = std::make_shared<core::Building>("placeholder", 1, 1);
+			core::SerializationWorkData workData;
+			auto reader = core::YamlSerializer::fromString(yaml);
+			reader->deserialize();
+			building->deserialize(*reader, workData);
+			return building;
+		};
+
+		// Landings live on floors 1-3 so the shaft's bottom anchor never sits on
+		// a stop: extending the shaft downward shifts every stop offset while
+		// retaining the same stop floors.
+		core::Building building("Lift move style retention", 12, 4);
+		building.addRoom("Landing 1", 0, 1, 0, 12, 1);
+		building.addRoom("Landing 2", 0, 2, 0, 12, 1);
+		building.addRoom("Landing 3", 0, 3, 0, 12, 1);
+		auto const created = building.addLift(1, 1, 2, 1, 3);
+		building.finishBuild();
+		building.pauseSimulation();
+		require(created.doors.size() == 3, "The Lift did not generate three landing Doors");
+		auto liftSector = created.lift.sector->getIndex();
+		std::string diagnostic;
+		const std::vector<core::Door::OpenStyle> styles{
+			core::Door::OpenStyle::OpenLeft, core::Door::OpenStyle::OpenUp,
+			core::Door::OpenStyle::OpenRight };
+		for (uint32_t stop = 0; stop < 3; ++stop)
+			require(building.setLiftStopDoorOpenStyle(liftSector, stop, styles[stop], &diagnostic),
+				("A per-stop override was refused: " + diagnostic).c_str());
+		requireStyles(building, liftSector, styles, "Freshly styled Lift");
+
+		// A sideways move retains the stop set and every style.
+		{
+			auto const plan = building.planResizeLift(liftSector, 6, 1, 1, 3);
+			require(plan.valid, ("A sideways Lift move was refused: " + plan.diagnostic).c_str());
+			require(plan.stopOffsets == std::vector<uint32_t>{ 0, 1, 2 },
+				"The sideways move did not retain the stop offsets");
+			liftSector = building.applyLiftEdit(plan);
+			require(stopFloor(building, liftSector, 0) == 1
+				&& stopFloor(building, liftSector, 1) == 2
+				&& stopFloor(building, liftSector, 2) == 3,
+				"The sideways move changed the stop floors");
+			requireStyles(building, liftSector, styles, "Lift moved sideways");
+		}
+
+		// Extending the shaft downward keeps the same stop floors but shifts
+		// every stop offset by one; each style must follow its stop's floor
+		// instead of sliding onto the neighbouring Door.
+		{
+			auto const plan = building.planResizeLift(liftSector, 6, 0, 1, 4);
+			require(plan.valid, ("A shaft-extension resize was refused: " + plan.diagnostic).c_str());
+			require(plan.stopOffsets == std::vector<uint32_t>{ 1, 2, 3 },
+				"The shaft extension did not shift the stop offsets as expected");
+			liftSector = building.applyLiftEdit(plan);
+			require(stopFloor(building, liftSector, 0) == 1
+				&& stopFloor(building, liftSector, 1) == 2
+				&& stopFloor(building, liftSector, 2) == 3,
+				"The shaft extension changed the stop floors");
+			requireStyles(building, liftSector, styles, "Lift shaft extended below its stops");
+		}
+
+		// Widening the Lift while retaining the stops retains every style.
+		{
+			auto const plan = building.planResizeLift(liftSector, 6, 0, 2, 4);
+			require(plan.valid, ("A width resize was refused: " + plan.diagnostic).c_str());
+			require(plan.stopOffsets == std::vector<uint32_t>{ 1, 2, 3 },
+				"The width change did not retain the stop offsets");
+			liftSector = building.applyLiftEdit(plan);
+			requireStyles(building, liftSector, styles, "Lift widened to two cells");
+		}
+
+		// The reconciled styles ride in the Lift's record: a save/load after
+		// the move and resize retains them.
+		auto const loaded = loadYaml(snapshotYaml(building));
+		requireStyles(*loaded, liftSector, styles, "Loaded Lift after move and resize");
+
+		// Deleting the middle stop takes its override with it; the surviving
+		// stops keep their own styles rather than inheriting a neighbour's.
+		{
+			loaded->pauseSimulation();
+			auto const plan = loaded->planRemoveLiftStop(liftSector, 1);
+			require(plan.valid, ("Deleting the middle stop was refused: " + plan.diagnostic).c_str());
+			auto const remaining = loaded->applyLiftEdit(plan);
+			require(remaining == liftSector, "Removing a stop moved the Lift to another Sector");
+			require(stopFloor(*loaded, liftSector, 0) == 1
+				&& stopFloor(*loaded, liftSector, 1) == 3,
+				"The remaining stops are not on the expected floors");
+			requireStyles(*loaded, liftSector,
+				{ core::Door::OpenStyle::OpenLeft, core::Door::OpenStyle::OpenRight },
+				"Lift after its middle stop was deleted");
+		}
+	}
+
 	void recentFilesPersistAcrossStartup()
 	{
 		auto directory = std::filesystem::temp_directory_path() / "prometheum-fermide-recent-files-smoke";
@@ -3640,6 +3790,7 @@ void runSerializationSmokeChecks()
 	doorOpenApartPersistsThroughEveryEditorPath();
 	liftDoorsDefaultToOpenApartWhileOtherDoorsKeepOpenUp();
 	liftStopDoorStyleOverridesArePerStopAndPersist();
+	liftDoorStylesFollowStopsWhenTheLiftMovesOrResizes();
 	recentFilesPersistAcrossStartup();
 	serializableTracksModificationState();
 	doorAndWindowRemovalWorksOnDeepLayerPairs();

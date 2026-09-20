@@ -1116,22 +1116,30 @@ namespace core
 		if (plan.remove) records.erase(found);
 		else
 		{
+			auto const oldY = found->a;
 			found->a = plan.y; found->b = plan.x; found->c = plan.cellsWide;
 			found->e = plan.decksHigh;
-			// Per-stop Door style overrides follow their stop, keyed by stop
-			// offset: an unchanged topology retains every override, an inserted
-			// stop takes the generated default, and a removed stop takes its
-			// override with it.
+			// Per-stop Door style overrides follow their stop, keyed by the
+			// stop's absolute landing floor rather than its offset from the
+			// shaft anchor: a move or a shaft extension that shifts the offsets
+			// still lands each override on the Door it was authored for, an
+			// inserted stop takes the generated default, and a removed stop
+			// takes its override with it.
 			auto const oldOffsets = found->values;
 			auto const oldStyles = found->overrides;
 			found->values = plan.stopOffsets;
 			found->overrides.assign(plan.stopOffsets.size(), ~0u);
 			for (size_t i = 0; i < plan.stopOffsets.size(); ++i)
 			{
-				auto const match = find(oldOffsets.begin(), oldOffsets.end(), plan.stopOffsets[i]);
-				if (match == oldOffsets.end()) continue;
-				auto const j = static_cast<size_t>(distance(oldOffsets.begin(), match));
-				if (j < oldStyles.size()) found->overrides[i] = oldStyles[j];
+				auto const floor = plan.y + plan.stopOffsets[i];
+				for (size_t j = 0; j < oldOffsets.size(); ++j)
+				{
+					if (oldY + oldOffsets[j] == floor && j < oldStyles.size())
+					{
+						found->overrides[i] = oldStyles[j];
+						break;
+					}
+				}
 			}
 			if (all_of(found->overrides.begin(), found->overrides.end(),
 				[](uint32_t style) { return style == ~0u; }))
