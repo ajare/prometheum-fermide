@@ -464,6 +464,20 @@ namespace core
 			mState = State::WaitingForTraversal;
 			return;
 		}
+		// Ticket #98: a plain Door's request-creation gate is the crossing-width
+		// band. An Agent whose next edge crosses a Door enters the traversal
+		// flow as soon as it stands within the crossing width at the threshold
+		// row, instead of converging on the exact vertex. The early stop above
+		// keeps precedence for contended doors - it claims the queue spot on
+		// the way, so the two never double-start the flow; request creation
+		// itself still happens once, in the next intent-collection phase.
+		if (mBuilding && mPath.targetNode + 1 < mPath.path->nodes.size()
+			&& mBuilding->isAtDoorCrossingArrival(*this,
+				mPath.path->nodes[mPath.targetNode + 1].edge, targetPos))
+		{
+			mState = State::WaitingForTraversal;
+			return;
+		}
 		if (!moveToPosition(targetPos, frameTime, getWalkSpeed()))
 		{
 			return;

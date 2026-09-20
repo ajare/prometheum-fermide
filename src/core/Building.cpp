@@ -5198,6 +5198,12 @@ namespace core
 		return mSimulationCoordinator.stopForAvailableQueuePosition(agent, edge, endpoint, movementDistance);
 	}
 
+	bool Building::isAtDoorCrossingArrival(Agent const& agent,
+		shared_ptr<const Edge> const& edge, Vector2 const& threshold)
+	{
+		return mSimulationCoordinator.isAtDoorCrossingArrival(agent, edge, threshold);
+	}
+
 	void Building::refreshQueuePositions(TraversalResource& resource)
 	{
 		mSimulationCoordinator.refreshQueuePositions(resource);

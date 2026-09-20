@@ -199,6 +199,20 @@ namespace core
 		return true;
 	}
 
+	bool SimulationCoordinator::isAtDoorCrossingArrival(Agent const& agent,
+		shared_ptr<const Edge> const& edge, Vector2 const& threshold)
+	{
+		// Ticket #98: the request-creation gate for a plain Door is the same
+		// crossing-width band the grant gate uses (#97, ADR 0005). Lift landing
+		// doors keep their centre-based alignment interlocks, so only plain Door
+		// resources without a lift coordinator take the band.
+		if (!edge || edge->getType() != EdgeType::Door || !agent.getSector()) return false;
+		auto resource = mBuilding.mTraversalResources.find(edge->getTraversalResourceId());
+		if (!resource || !resource->mDoor || resource->mLiftCoordinator) return false;
+		return isWithinDoorCrossingBand(agent.getGlobalPosition(), threshold,
+			CORE_DOOR_CROSSING_HALF_WIDTH(resource->mDoor->getCellsWide()));
+	}
+
 	void SimulationCoordinator::refreshQueuePositions(TraversalResource& resource)
 	{
 		// Doors and Ladders intentionally share this allocator: prefer proximity

@@ -874,6 +874,12 @@ namespace core
 			std::shared_ptr<const Edge> const& edge, Vector2 const& endpoint,
 			float movementDistance);
 
+		// Ticket #98: door-aware arrival check for Agent's vertex movement. The
+		// forward keeps the crossing-band request-creation gate in
+		// SimulationCoordinator.
+		bool isAtDoorCrossingArrival(Agent const& agent,
+			std::shared_ptr<const Edge> const& edge, Vector2 const& threshold);
+
 		void configureLadderQueueLanes(TraversalResourceId resource,
 			std::array<SectorId, 2> const& sectors,
 			std::array<Vector2, 2> const& endpoints);

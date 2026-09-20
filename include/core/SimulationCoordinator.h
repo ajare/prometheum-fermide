@@ -433,6 +433,14 @@ namespace core
 			std::shared_ptr<const Edge> const& edge, Vector2 const& endpoint,
 			float movementDistance);
 
+		// Whether an Agent walking towards a threshold enters the traversal flow
+		// from where it stands: its next edge crosses a plain Door (no lift
+		// landing interlock) and it is within the door's crossing-width band at
+		// the threshold row. The same band gates the grant (#97, ADR 0005); this
+		// is the request-creation gate (#98).
+		bool isAtDoorCrossingArrival(Agent const& agent,
+			std::shared_ptr<const Edge> const& edge, Vector2 const& threshold);
+
 		// Re-assign every lane's physical waiting positions. Proximity to the
 		// resource endpoint wins, then proximity to the waiting Agent. A request
 		// which is preparing, or whose last position timed out, keeps its logical

@@ -2007,12 +2007,13 @@ namespace
 		return foundNarrow && foundWide;
 	}
 
-	// Runs a contended manual door with a blocker and a waiter that stops at the
-	// queue tail, and records the waiter's grant moment relative to the band.
+	// Runs a contended manual door with a blocker and a waiter that enters the
+	// flow at the band, and records the waiter's request and grant moments
+	// relative to the band.
 	struct CrossingBandTrace
 	{
 		std::string text;
-		bool observedPendingOutsideBand{ false };
+		bool createdWithinBand{ false };
 		bool grantedBeforeCentre{ false };
 		bool grantedWithinBand{ false };
 		bool crossedOver{ false };
@@ -2044,6 +2045,8 @@ namespace
 		building.lookupAgent(blockerId).entity->setPath(twoNodePath(source, destination, edge), true);
 		building.lookupAgent(waiterId).entity->setPath(twoNodePath(source, destination, edge), true);
 
+		bool firstObservation = true;
+
 		for (uint32_t tick = 0; tick < MaximumSimulationTicks * 2; ++tick)
 		{
 			building.advanceTick();
@@ -2065,13 +2068,15 @@ namespace
 				snapshot.traversalPermits.end(),
 				[&](auto const& permit) { return permit.request == request->id; });
 			auto const dx = std::abs(waiter->globalPosition.x - centre.x);
+			// Ticket #98: the request-creation gate is the band itself, so the
+			// waiter's first observed request sits inside the band.
+			if (firstObservation)
+			{
+				firstObservation = false;
+				trace.createdWithinBand = dx <= crossingWidth + 0.001f;
+			}
 			if (!hasPermit)
 			{
-				if (request->state == core::TraversalRequestState::Pending
-					&& dx > crossingWidth + 0.001f)
-				{
-					trace.observedPendingOutsideBand = true;
-				}
 				continue;
 			}
 			trace.grantedWithinBand = dx <= crossingWidth + 0.001f
@@ -2087,27 +2092,270 @@ namespace
 		return trace;
 	}
 
-	// Ticket #97: at a wide door the head of queue is granted from inside the
-	// crossing band without reaching its assigned centre position, and repeated
-	// runs produce identical grant traces.
+	// Ticket #97/#98: at a wide door the head of queue enters the flow inside
+	// the crossing band and is granted from there without reaching its
+	// assigned centre position, and repeated runs produce identical traces.
 	bool crossingWidthGrantsHeadOfQueueBeforeCentre()
 	{
 		auto const first = runCrossingWidthGrantScenario(3);
 		auto const second = runCrossingWidthGrantScenario(3);
-		return first.grantedWithinBand && first.grantedBeforeCentre && first.crossedOver
-			&& !first.text.empty() && first.text == second.text;
+		return first.createdWithinBand && first.grantedWithinBand && first.grantedBeforeCentre
+			&& first.crossedOver && !first.text.empty() && first.text == second.text;
 	}
 
-	// Ticket #97: at a 1-cell door the band is only +/-0.2, so a head of queue
-	// waiting outside the band is not grant-eligible until it arrives within the
-	// tolerance of the threshold position.
-	bool narrowDoorHeadOfQueueWaitsOutsideBand()
+	// Ticket #97/#98: at a 1-cell door the band is only +/-0.2. With the
+	// request-creation gate on the band the waiter enters the flow at the
+	// band edge and is granted within the +/-0.2 tolerance of the centre -
+	// never before it - and repeated runs are identical.
+	bool narrowDoorBandArrivalGrantsAtCentreTolerance()
 	{
 		auto const first = runCrossingWidthGrantScenario(1);
 		auto const second = runCrossingWidthGrantScenario(1);
-		return first.observedPendingOutsideBand && first.grantedWithinBand
+		return first.createdWithinBand && first.grantedWithinBand
 			&& !first.grantedBeforeCentre && first.crossedOver
 			&& !first.text.empty() && first.text == second.text;
+	}
+
+	// Ticket #98: a lone Agent approaching an open wide Door enters the
+	// traversal flow - request created, queue ticket taken - as soon as it is
+	// within the crossing width at the threshold row, and crosses from where
+	// it stands without ever converging on the door centre.
+	struct BandEntryTrace
+	{
+		std::string text;
+		bool createdWithinBand{ false };
+		bool createdOnThresholdRow{ false };
+		bool createdOffCentre{ false };
+		bool grantedOffCentre{ false };
+		bool neverNearedCentre{ false };
+		bool crossedOver{ false };
+	};
+
+	BandEntryTrace runBandEntryScenario(uint32_t cellsWide)
+	{
+		BandEntryTrace trace;
+		core::Building building("Band entry crossing", 10, 2);
+		auto fore = building.addRoom("Entry fore", 0, 0, 0, 9, 1);
+		auto back = building.addRoom("Entry back", 1, 0, 0, 9, 1);
+		core::Building::CreateDoorOptions options;
+		options.width = cellsWide;
+		options.activationMode = core::DoorActivationMode::Automatic;
+		auto created = building.addSectorDoor(0, 0, 3, options);
+		building.finishBuild();
+		// Hold the door open so the grant lands as soon as the request exists.
+		if (!building.acquireDoorOpenLease(created.traversalResource)) return trace;
+
+		auto edge = *std::find_if(building.getGraph()->getEdges().begin(),
+			building.getGraph()->getEdges().end(), [&](auto const& candidate)
+				{ return candidate->getTraversalResourceId() == created.traversalResource; });
+		auto source = edge->getVertex(0)->getSector()->getIndex() == fore
+			? edge->getVertex(0) : edge->getVertex(1);
+		auto destination = edge->getOtherVertex(source);
+		auto const centre = source->getPosition();
+		auto const crossingWidth = CORE_DOOR_CROSSING_HALF_WIDTH(cellsWide);
+
+		auto agentId = building.createAgent("Band arriver", fore, 0, centre.x + 2.5f);
+		building.lookupAgent(agentId).entity->setPath(twoNodePath(source, destination, edge), true);
+
+		auto minDx = 1000.0f;
+		bool requestObserved = false;
+		bool granted = false;
+		for (uint32_t tick = 0; tick < MaximumSimulationTicks * 2; ++tick)
+		{
+			building.advanceTick();
+			if (building.lookupAgent(agentId).entity->getSector() == building.getSector(back).get())
+			{
+				break;
+			}
+			auto snapshot = building.getSimulationSnapshot();
+			auto agent = std::find_if(snapshot.agents.begin(), snapshot.agents.end(),
+				[&](auto const& value) { return value.id == agentId; });
+			if (agent == snapshot.agents.end()) return trace;
+			auto const dx = std::abs(agent->globalPosition.x - centre.x);
+			minDx = std::min(minDx, dx);
+			auto request = std::find_if(snapshot.traversalRequests.begin(),
+				snapshot.traversalRequests.end(),
+				[&](auto const& value) { return value.owner == agentId; });
+			if (request == snapshot.traversalRequests.end()) continue;
+			trace.text += std::to_string(tick) + ':' + std::to_string((int)request->state) + ':'
+				+ std::to_string(request->queuePosition) + ':'
+				+ std::to_string(std::bit_cast<uint32_t>(agent->globalPosition.x)) + ';';
+			if (!requestObserved)
+			{
+				requestObserved = true;
+				trace.createdWithinBand = dx <= crossingWidth + 0.001f;
+				trace.createdOnThresholdRow
+					= std::abs(agent->globalPosition.y - centre.y) <= 0.001f;
+				trace.createdOffCentre = dx > 0.5f;
+			}
+			if (!granted && std::any_of(snapshot.traversalPermits.begin(),
+				snapshot.traversalPermits.end(),
+				[&](auto const& permit) { return permit.request == request->id; }))
+			{
+				granted = true;
+				trace.grantedOffCentre = dx > 0.5f;
+			}
+		}
+		building.advanceTicks(MaximumSimulationTicks);
+		trace.neverNearedCentre = minDx > 0.5f;
+		trace.crossedOver = building.lookupAgent(agentId).entity->getSector()
+			== building.getSector(back).get();
+		return trace;
+	}
+
+	bool bandArrivalCrossesWideDoorFromStandingPosition()
+	{
+		auto const first = runBandEntryScenario(3);
+		auto const second = runBandEntryScenario(3);
+		return first.createdWithinBand && first.createdOnThresholdRow && first.createdOffCentre
+			&& first.grantedOffCentre && first.neverNearedCentre && first.crossedOver
+			&& !first.text.empty() && first.text == second.text;
+	}
+
+	// Ticket #98: band arrival composes with the queue and the existing early
+	// stop at a contended wide door. A second Agent joins while the first is
+	// still waiting inside the band: both requests share the queue, the grant
+	// follows ticket order on the single crossing lane, and neither Agent is
+	// stranded between the gates.
+	bool bandArrivalComposesWithEarlyStopForContendedDoor()
+	{
+		core::Building building("Band contention", 10, 2);
+		auto fore = building.addRoom("Contended fore", 0, 0, 0, 9, 1);
+		auto back = building.addRoom("Contended back", 1, 0, 0, 9, 1);
+		core::Building::CreateDoorOptions options;
+		options.width = 3;
+		options.crossingLanes = 1;
+		options.activationMode = core::DoorActivationMode::Manual;
+		auto created = building.addSectorDoor(0, 0, 3, options);
+		building.finishBuild();
+		auto edge = *std::find_if(building.getGraph()->getEdges().begin(),
+			building.getGraph()->getEdges().end(), [&](auto const& candidate)
+				{ return candidate->getTraversalResourceId() == created.traversalResource; });
+		auto source = edge->getVertex(0)->getSector()->getIndex() == fore
+			? edge->getVertex(0) : edge->getVertex(1);
+		auto destination = edge->getOtherVertex(source);
+		auto const centre = source->getPosition();
+		auto const crossingWidth = CORE_DOOR_CROSSING_HALF_WIDTH(3);
+
+		auto firstId = building.createAgent("Contended first", fore, 0, 7.0f);
+		building.lookupAgent(firstId).entity->setPath(twoNodePath(source, destination, edge), true);
+
+		core::AgentId secondId{};
+		bool overlappedPending{ false };
+		bool secondCreatedOffCentre{ false };
+		bool secondHadQueuePosition{ false };
+		bool firstGrantedBeforeSecond{ false };
+		int firstGrantTick = -1;
+		int secondGrantTick = -1;
+		std::string text;
+		for (uint32_t tick = 0; tick < MaximumSimulationTicks * 2; ++tick)
+		{
+			building.advanceTick();
+			auto snapshot = building.getSimulationSnapshot();
+			auto firstRequest = std::find_if(snapshot.traversalRequests.begin(),
+				snapshot.traversalRequests.end(),
+				[&](auto const& value) { return value.owner == firstId; });
+			// Spawn the second Agent just outside the band once the first is
+			// queued inside it, so the two requests contend for one lane.
+			if (!secondId && firstRequest != snapshot.traversalRequests.end()
+				&& firstRequest->state == core::TraversalRequestState::Pending
+				&& firstRequest->hasQueuePosition)
+			{
+				secondId = building.createAgent("Contended second", fore, 0,
+					centre.x + crossingWidth + 0.25f);
+				building.lookupAgent(secondId).entity->setPath(
+					twoNodePath(source, destination, edge), true);
+			}
+			if (!secondId) continue;
+			auto secondRequest = std::find_if(snapshot.traversalRequests.begin(),
+				snapshot.traversalRequests.end(),
+				[&](auto const& value) { return value.owner == secondId; });
+			auto secondAgent = std::find_if(snapshot.agents.begin(), snapshot.agents.end(),
+				[&](auto const& value) { return value.id == secondId; });
+			if (secondRequest == snapshot.traversalRequests.end()
+				|| secondAgent == snapshot.agents.end())
+			{
+				continue;
+			}
+			text += std::to_string(tick) + ':' + std::to_string((int)firstRequest->state) + ':'
+				+ std::to_string((int)secondRequest->state) + ':'
+				+ std::to_string(std::bit_cast<uint32_t>(secondAgent->globalPosition.x)) + ';';
+			if (!secondCreatedOffCentre)
+			{
+				secondCreatedOffCentre
+					= std::abs(secondAgent->globalPosition.x - centre.x) > 0.25f;
+			}
+			secondHadQueuePosition = secondHadQueuePosition || secondRequest->hasQueuePosition;
+			overlappedPending = overlappedPending
+				|| (firstRequest->state == core::TraversalRequestState::Pending
+					&& secondRequest->state == core::TraversalRequestState::Pending);
+			if (firstGrantTick < 0 && std::any_of(snapshot.traversalPermits.begin(),
+				snapshot.traversalPermits.end(),
+				[&](auto const& permit) { return permit.request == firstRequest->id; }))
+			{
+				firstGrantTick = (int)tick;
+			}
+			if (secondGrantTick < 0 && std::any_of(snapshot.traversalPermits.begin(),
+				snapshot.traversalPermits.end(),
+				[&](auto const& permit) { return permit.request == secondRequest->id; }))
+			{
+				secondGrantTick = (int)tick;
+				firstGrantedBeforeSecond = firstGrantTick >= 0 && firstGrantTick < secondGrantTick;
+			}
+			if (firstGrantedBeforeSecond && secondGrantTick >= 0
+				&& building.lookupAgent(firstId).entity->getSector() == building.getSector(back).get()
+				&& building.lookupAgent(secondId).entity->getSector() == building.getSector(back).get())
+			{
+				break;
+			}
+		}
+		building.advanceTicks(MaximumSimulationTicks);
+		return overlappedPending && secondCreatedOffCentre && secondHadQueuePosition
+			&& firstGrantedBeforeSecond
+			&& building.lookupAgent(firstId).entity->getSector() == building.getSector(back).get()
+			&& building.lookupAgent(secondId).entity->getSector() == building.getSector(back).get()
+			&& !text.empty();
+	}
+
+	// Ticket #98: the band only arms an Agent whose next edge crosses the
+	// Door. An Agent walking through the band's x range at the threshold row
+	// with no intent to cross never creates a traversal request.
+	bool bandArrivalLeavesNonCrossingAgentsUnaffected()
+	{
+		core::Building building("Band passer by", 10, 2);
+		auto fore = building.addRoom("Passer fore", 0, 0, 0, 9, 1);
+		building.addRoom("Passer back", 1, 0, 0, 9, 1);
+		core::Building::CreateDoorOptions options;
+		options.width = 3;
+		options.activationMode = core::DoorActivationMode::Automatic;
+		auto created = building.addSectorDoor(0, 0, 3, options);
+		uint32_t pastDoorId;
+		building.addSectorMarker(fore, 0, 8.0f, &pastDoorId);
+		building.finishBuild();
+
+		auto walker = building.createAgent("Passer by", fore, 0, 1.0f);
+		auto walkerEntity = building.lookupAgent(walker).entity;
+		auto target = building.getGraph()->getVertexByIdentifier(pastDoorId);
+		if (!target) return false;
+		auto path = building.getGraph()->calculatePath(walkerEntity, target);
+		if (!path) return false;
+		walkerEntity->setPath(std::move(path), true);
+
+		bool crossedBandRow = false;
+		for (uint32_t tick = 0; tick < MaximumSimulationTicks; ++tick)
+		{
+			building.advanceTick();
+			auto snapshot = building.getSimulationSnapshot();
+			// Only a crossing intent arms the Door gate; the walker's ordinary
+			// Location-edge requests must never target the door resource.
+			for (auto const& request : snapshot.traversalRequests)
+				if (request.owner == walker && request.resource == created.traversalResource)
+					return false;
+			auto const x = walkerEntity->getGlobalPosition().x;
+			crossedBandRow = crossedBandRow || (x > 3.3f && x < 5.7f);
+			if (walkerEntity->getState() == core::Agent::State::Idle) break;
+		}
+		return crossedBandRow && walkerEntity->getGlobalPosition().x > 7.0f;
 	}
 
 	bool doorLeasesAndSensorObservationsPreventUnsafeClosure()
@@ -4969,9 +5217,24 @@ int main(int argc, char** argv)
 			std::cerr << "FAIL: wide door head of queue was not granted from within the crossing band\n";
 			return 1;
 		}
-		if (!narrowDoorHeadOfQueueWaitsOutsideBand())
+		if (!narrowDoorBandArrivalGrantsAtCentreTolerance())
 		{
-			std::cerr << "FAIL: 1-cell door granted inside its +/-0.2 band without waiting outside it\n";
+			std::cerr << "FAIL: 1-cell door band arrival was not granted at its centre tolerance\n";
+			return 1;
+		}
+		if (!bandArrivalCrossesWideDoorFromStandingPosition())
+		{
+			std::cerr << "FAIL: lone agent did not cross a wide door from its band-entry position\n";
+			return 1;
+		}
+		if (!bandArrivalComposesWithEarlyStopForContendedDoor())
+		{
+			std::cerr << "FAIL: band arrival did not compose with the queue at a contended door\n";
+			return 1;
+		}
+		if (!bandArrivalLeavesNonCrossingAgentsUnaffected())
+		{
+			std::cerr << "FAIL: non-crossing agent inside the band x range created a request\n";
 			return 1;
 		}
 		if (!resilientWaitingRetainsPriorityAndExpiresPermits())
