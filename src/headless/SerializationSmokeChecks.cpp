@@ -2110,6 +2110,149 @@ agents: []
 		}
 	}
 
+	// Ticket #82: OpenLeft is a fully-fledged authored Door opening style. It is
+	// carried by creation options, persisted as openStyle: openLeft, replayed on
+	// load, editable through the selected-Door editor's Building call (which moves
+	// the authored record and the live Door together), preserved by moves, and
+	// rides the snapshot-based undo/redo and the option-based clipboard copy/paste.
+	void doorOpenLeftPersistsThroughEveryEditorPath()
+	{
+		auto findDoor = [](core::Building const& building, uint32_t sectorIndex)
+			-> std::shared_ptr<const core::Door>
+		{
+			auto sector = building.getSector(sectorIndex);
+			if (!sector) return nullptr;
+			for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
+			{
+				auto const object = sector->getObject(i);
+				if (object && object->getObjectType() == core::SectorObjectType::Door)
+					return static_pointer_cast<const core::DoorSectorObject>(object)->getDoor();
+			}
+			return nullptr;
+		};
+		auto snapshotYaml = [](core::Building& building)
+		{
+			core::SerializationWorkData workData;
+			auto writer = core::YamlSerializer::toString();
+			building.serialize(*writer, workData);
+			writer->serialize();
+			return writer->getSerializedString();
+		};
+		auto loadYaml = [](std::string const& yaml)
+		{
+			auto building = std::make_shared<core::Building>("placeholder", 1, 1);
+			core::SerializationWorkData workData;
+			auto reader = core::YamlSerializer::fromString(yaml);
+			reader->deserialize();
+			building->deserialize(*reader, workData);
+			return building;
+		};
+
+		core::Building original("OpenLeft door", 8, 3);
+		original.addRoom("Fore room", 0, 0, 0, 7, 2);
+		original.addRoom("Back room", 1, 0, 0, 7, 2);
+		core::Building::CreateDoorOptions doorOptions;
+		doorOptions.width = 2;
+		doorOptions.openStyle = core::Door::OpenStyle::OpenLeft;
+		auto const created = original.addSectorDoor(0, 0, 3, doorOptions);
+		original.finishBuild();
+		auto const doorSectorIndex = created.door.sector->getIndex();
+		auto const createdDoor = findDoor(original, doorSectorIndex);
+		require(createdDoor && createdDoor->getOpenStyle() == core::Door::OpenStyle::OpenLeft,
+			"Ordinary Door creation did not carry the OpenLeft opening style");
+		core::Building::CreateDoorOptions readBack;
+		require(original.getSectorDoorOptions(0, 0, 3, 2, readBack)
+			&& readBack.openStyle == core::Door::OpenStyle::OpenLeft,
+			"Authored Door options did not report the OpenLeft opening style");
+
+		// Save/load: the record persists the style and replays it on load.
+		auto const yaml = snapshotYaml(original);
+		require(yaml.find("openStyle: openLeft") != std::string::npos,
+			"Building YAML did not persist the Door's openStyle: openLeft");
+		auto loaded = loadYaml(yaml);
+		auto const loadedDoor = findDoor(*loaded, doorSectorIndex);
+		require(loadedDoor && loadedDoor->getOpenStyle() == core::Door::OpenStyle::OpenLeft,
+			"Loaded Door lost its OpenLeft opening style");
+		require(loaded->getSectorDoorOptions(0, 0, 3, 2, readBack)
+			&& readBack.openStyle == core::Door::OpenStyle::OpenLeft,
+			"Loaded Door options lost the OpenLeft opening style");
+
+		// The selected-Door editor's change: record and live Door move together.
+		loaded->pauseSimulation();
+		std::string diagnostic;
+		require(loaded->setSectorDoorOpenStyle(0, 0, 3, 2,
+			core::Door::OpenStyle::OpenUp, &diagnostic),
+			("Re-authoring the Door to OpenUp was refused: " + diagnostic).c_str());
+		require(loaded->getSectorDoorOptions(0, 0, 3, 2, readBack)
+			&& readBack.openStyle == core::Door::OpenStyle::OpenUp,
+			"Re-authored Door record did not take the new opening style");
+		require(findDoor(*loaded, doorSectorIndex)->getOpenStyle() == core::Door::OpenStyle::OpenUp,
+			"Re-authored live Door did not take the new opening style");
+		require(loaded->setSectorDoorOpenStyle(0, 0, 3, 2,
+			core::Door::OpenStyle::OpenLeft, &diagnostic),
+			("Re-authoring the Door back to OpenLeft was refused: " + diagnostic).c_str());
+
+		// Undo/redo mirror: the editor snapshots YAML before and after a change
+		// and restores either side verbatim. Both sides carry their own style.
+		auto const openLeftSnapshot = snapshotYaml(*loaded);
+		require(loaded->setSectorDoorOpenStyle(0, 0, 3, 2,
+			core::Door::OpenStyle::OpenUp, &diagnostic),
+			("Second re-author to OpenUp was refused: " + diagnostic).c_str());
+		auto const openUpSnapshot = snapshotYaml(*loaded);
+		auto const undone = loadYaml(openUpSnapshot);
+		require(undone->getSectorDoorOptions(0, 0, 3, 2, readBack)
+			&& readBack.openStyle == core::Door::OpenStyle::OpenUp,
+			"Undo snapshot did not restore the OpenUp style");
+		auto const redone = loadYaml(openLeftSnapshot);
+		require(redone->getSectorDoorOptions(0, 0, 3, 2, readBack)
+			&& readBack.openStyle == core::Door::OpenStyle::OpenLeft,
+			"Redo snapshot did not restore the OpenLeft style");
+		require(redone->setSectorDoorOpenStyle(0, 0, 9, 2,
+			core::Door::OpenStyle::OpenLeft, &diagnostic) == false,
+			"Opening-style edit was accepted where no Door record exists");
+
+		// A move replays the authored record at a new position; the style rides along.
+		auto& moveTarget = *redone;
+		moveTarget.pauseSimulation();
+		uint32_t movedDoorObjectIndex{ ~0u };
+		{
+			auto const sector = moveTarget.getSector(doorSectorIndex);
+			for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
+			{
+				auto const candidate = sector->getObject(i);
+				if (candidate && candidate->getObjectType() == core::SectorObjectType::Door
+					&& static_pointer_cast<const core::DoorSectorObject>(candidate)->getDoor()
+						== findDoor(moveTarget, doorSectorIndex))
+					{ movedDoorObjectIndex = i; break; }
+			}
+		}
+		require(movedDoorObjectIndex != ~0u, "OpenLeft Door object could not be found");
+		auto const movePlan = moveTarget.planMoveSectorObject(
+			doorSectorIndex, movedDoorObjectIndex, 5, 0);
+		require(movePlan.valid, "OpenLeft Door move plan was rejected");
+		require(moveTarget.applyObjectMove(movePlan) != nullptr, "OpenLeft Door move failed");
+		require(moveTarget.getSectorDoorOptions(0, 0, 5, 2, readBack)
+			&& readBack.openStyle == core::Door::OpenStyle::OpenLeft,
+			"Moving the OpenLeft Door did not preserve its opening style");
+
+		// Clipboard copy/paste mirror: the paste side reads the copied Door's
+		// authored options and re-creates through addSectorDoor; the style rides
+		// through CreateDoorOptions unchanged.
+		require(moveTarget.getSectorDoorOptions(0, 0, 5, 2, readBack),
+			"Copied Door options could not be read");
+		core::Building pasteTarget("OpenLeft paste", 8, 3);
+		pasteTarget.addRoom("Fore room", 0, 0, 0, 7, 2);
+		pasteTarget.addRoom("Back room", 1, 0, 0, 7, 2);
+		auto const pasted = pasteTarget.addSectorDoor(0, 0, 1, readBack);
+		pasteTarget.finishBuild();
+		auto const pastedDoor = findDoor(pasteTarget, pasted.door.sector->getIndex());
+		require(pastedDoor && pastedDoor->getOpenStyle() == core::Door::OpenStyle::OpenLeft,
+			"Pasted Door did not carry the copied OpenLeft opening style");
+		require(pasteTarget.getSectorDoorOptions(0, 0, 1, 2, readBack)
+			&& readBack.openStyle == core::Door::OpenStyle::OpenLeft,
+			"Pasted Door record lost the OpenLeft opening style");
+	}
+
 	void recentFilesPersistAcrossStartup()
 	{
 		auto directory = std::filesystem::temp_directory_path() / "prometheum-fermide-recent-files-smoke";
@@ -2930,6 +3073,7 @@ void runSerializationSmokeChecks()
 	physicalControlsPreferDistinctWallPositions();
 	bulkheadDoorsSupportIndependentObjectEditing();
 	doorOpeningStyleIsAuthoredPersistedAndLegacyDefaulted();
+	doorOpenLeftPersistsThroughEveryEditorPath();
 	recentFilesPersistAcrossStartup();
 	serializableTracksModificationState();
 	doorAndWindowRemovalWorksOnDeepLayerPairs();

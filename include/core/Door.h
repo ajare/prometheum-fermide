@@ -17,7 +17,7 @@ namespace core
 	public:
 		// The authored visual manner in which the Door's leaf reveals its threshold.
 		// Opening style never changes timing, state, obstruction, or traversal.
-		enum struct OpenStyle { OpenUp };
+		enum struct OpenStyle { OpenUp, OpenLeft };
 
 	private:
 		uint32_t mCellsWide;

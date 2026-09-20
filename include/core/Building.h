@@ -1112,6 +1112,14 @@ namespace core
 		bool getSectorDoorOptions(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t width,
 			CreateDoorOptions& options) const;
 
+		// Re-authors an ordinary Door's opening style.  The authored construction
+		// record is the persistence boundary, so the record and the live Door move
+		// together: save/load, clipboard readback, moves, and undo/redo all carry
+		// the new style.  Opening style feeds only the Door's rendering - timing,
+		// state, obstruction, and traversal are untouched.
+		bool setSectorDoorOpenStyle(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t width,
+			Door::OpenStyle style, std::string* diagnostic = nullptr);
+
 		CreateDoorResult addSectorDoor(uint32_t layerIndex, uint32_t y, uint32_t x);
 
 		CreateDoorResult addSectorDoor(uint32_t layerIndex, uint32_t y, uint32_t x, CreateDoorOptions const& options);

@@ -206,6 +206,7 @@ namespace core
 			switch (static_cast<Door::OpenStyle>(style))
 			{
 			case Door::OpenStyle::OpenUp: return "openUp";
+			case Door::OpenStyle::OpenLeft: return "openLeft";
 			}
 			throw SerializationException("Cannot serialize an unknown Door opening style");
 		};
@@ -458,6 +459,7 @@ namespace core
 			if (!serializer.hasField(field)) return static_cast<int32_t>(Door::OpenStyle::OpenUp);
 			auto const value = serializer.readString(field);
 			if (value == "openUp") return static_cast<int32_t>(Door::OpenStyle::OpenUp);
+			if (value == "openLeft") return static_cast<int32_t>(Door::OpenStyle::OpenLeft);
 			throw SerializationException(format("Unknown Door opening style: {}", value));
 		};
 		auto readStops = [&]

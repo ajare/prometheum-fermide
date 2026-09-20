@@ -2954,6 +2954,56 @@ namespace core
 		return true;
 	}
 
+	bool Building::setSectorDoorOpenStyle(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t width,
+		Door::OpenStyle style, std::string* diagnostic)
+	{
+		// Same patch shape as a Background recolour: the authored record is the
+		// persistence boundary, so the record's style and the live Door move
+		// together.  The most recent matching record wins, matching
+		// getSectorDoorOptions' read-back.
+		auto found = find_if(mConstructionRecords.rbegin(), mConstructionRecords.rend(),
+			[&](ConstructionRecord const& record)
+			{
+				return record.type == ConstructionType::Door
+					&& record.layer == layerIndex
+					&& record.a == y && record.b == x && record.c == width;
+			});
+		if (found == mConstructionRecords.rend())
+		{
+			if (diagnostic)
+				*diagnostic = "The selected Door no longer has an authored definition";
+			return false;
+		}
+		found->j = static_cast<int32_t>(style);
+
+		// The live Door rides with its record so the viewport and the Selection
+		// panel show the new style without a rebuild.  The record's coordinates
+		// are the Door's own left cell on its front Layer.
+		if (layerIndex < mLayers.size() && mLayers[layerIndex])
+		{
+			auto const layer = mLayers[layerIndex].get();
+			if (x < layer->getCellsWide() && y < layer->getDecksHigh())
+			{
+				auto const& cell = layer->getCellDefinition(x, y);
+				if (cell.sectorObjectType == SectorObjectType::Door
+					&& cell.sectorIndex < mSectors.size() && mSectors[cell.sectorIndex])
+				{
+					auto const sector = mSectors[cell.sectorIndex];
+					if (cell.sectorObjectIndex < sector->getNumObjects())
+					{
+						auto doorObject = dynamic_pointer_cast<DoorSectorObject>(
+							sector->_getObject(cell.sectorObjectIndex));
+						if (doorObject && doorObject->getDoor())
+							doorObject->getDoor()->setOpenStyle(style);
+					}
+				}
+			}
+		}
+		modify();
+		if (diagnostic) diagnostic->clear();
+		return true;
+	}
+
 	Building::CreateDoorResult Building::addSectorDoor(uint32_t layerIndex, uint32_t y, uint32_t x)
 	{
 		return addSectorDoor(layerIndex, y, x, CreateDoorOptions{});

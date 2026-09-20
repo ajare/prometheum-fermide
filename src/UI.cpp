@@ -3197,6 +3197,7 @@ namespace
 		switch (style)
 		{
 		case core::Door::OpenStyle::OpenUp: return "OpenUp";
+		case core::Door::OpenStyle::OpenLeft: return "OpenLeft";
 		}
 		return "OpenUp";
 	}
@@ -3206,6 +3207,7 @@ namespace
 		switch (style)
 		{
 		case core::Door::OpenStyle::OpenUp: return "Open Up";
+		case core::Door::OpenStyle::OpenLeft: return "Open Left";
 		}
 		return "Open Up";
 	}
@@ -3443,6 +3445,7 @@ namespace
 			if (object["openStyle"]) {
 				auto style = object["openStyle"].as<std::string>();
 				if (style == "OpenUp") definition.door.openStyle = core::Door::OpenStyle::OpenUp;
+				else if (style == "OpenLeft") definition.door.openStyle = core::Door::OpenStyle::OpenLeft;
 				else throw runtime_error("Door openStyle is invalid");
 			}
 			else definition.door.openStyle = core::Door::OpenStyle::OpenUp;
@@ -5246,7 +5249,6 @@ void renderDoorPanel(shared_ptr<core::Building> const& building,
 	ImGui::Text("Position: %.2f, %.2f", position.x, position.y);
 	ImGui::Text("Width: %u cell%s", door->getCellsWide(),
 		door->getCellsWide() == 1 ? "" : "s");
-	ImGui::Text("Opening: %s", doorOpenStyleLabel(door->getOpenStyle()));
 
 	float pct = door->getOpenPercentage() * 100;
 
@@ -5291,6 +5293,42 @@ void renderDoorPanel(shared_ptr<core::Building> const& building,
 		ImGui::TextDisabled("Landing geometry and controls are managed by the transport.");
 	}
 
+	ImGui::BeginDisabled(!building->isSimulationPaused() || liftOwned || shuttleOwned);
+	int openStyleIndex = door->getOpenStyle() == core::Door::OpenStyle::OpenLeft ? 1 : 0;
+	char const* const openStyleItems[] =
+	{
+		doorOpenStyleLabel(core::Door::OpenStyle::OpenUp),
+		doorOpenStyleLabel(core::Door::OpenStyle::OpenLeft)
+	};
+	if (ImGui::Combo("Opening", &openStyleIndex, openStyleItems, 2))
+	{
+		auto undo = captureDocumentSnapshot(building);
+		try
+		{
+			gUISettings.worldPaused = true;
+			std::string diagnostic;
+			if (!building->setSectorDoorOpenStyle(door->getFrontSector()->getLayerIndex(),
+				object->getCellY(), object->getCellX(), door->getCellsWide(),
+				openStyleIndex == 1 ? core::Door::OpenStyle::OpenLeft
+					: core::Door::OpenStyle::OpenUp,
+				&diagnostic))
+				throw runtime_error(diagnostic.empty()
+					? "Could not change the Door's opening style" : diagnostic);
+			commitDocumentEdit(std::move(undo));
+		}
+		catch (core::Exception const& error)
+		{
+			core::addLogMessage("Door editor", 0, core::LogLevel::Error, error.getMessage());
+		}
+		catch (std::exception const& error)
+		{
+			core::addLogMessage("Door editor", 0, core::LogLevel::Error, error.what());
+		}
+	}
+	if (!building->isSimulationPaused())
+		ImGui::TextDisabled("Pause simulation to change the opening style.");
+
+	ImGui::Separator();
 	ImGui::BeginDisabled(!building->isSimulationPaused() || liftOwned || shuttleOwned);
 	if (ImGui::Button("Add Door Button"))
 	{
