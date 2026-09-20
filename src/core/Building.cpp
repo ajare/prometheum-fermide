@@ -34,12 +34,12 @@ namespace core
 	// its doors occupy - lives in SimulationCoordinator with the shuttle door
 	// assignment family that consumes that indexing (ADR 0004).
 
-	Building::CreateDoorOptions Building::ManualDoor1Options{ 1, 1, { false, false }, DoorActivationMode::Manual };
-	Building::CreateDoorOptions Building::RemoteControlledDoor1Options{ 1, 1, { true, true }, DoorActivationMode::RemoteControlled };
-	Building::CreateDoorOptions Building::UnavailableDoor1Options{ 1, 1, { false, false }, DoorActivationMode::Unavailable };
-	Building::CreateDoorOptions Building::ManualDoor2Options{ 2, 1, { false, false }, DoorActivationMode::Manual };
-	Building::CreateDoorOptions Building::RemoteControlledDoor2Options{ 2, 1, { true, true }, DoorActivationMode::RemoteControlled };
-	Building::CreateDoorOptions Building::UnavailableDoor2Options{ 2, 1, { false, false }, DoorActivationMode::Unavailable };
+	Building::CreateDoorOptions Building::ManualDoor1Options{ 1, Door::Height::Regular, { false, false }, DoorActivationMode::Manual };
+	Building::CreateDoorOptions Building::RemoteControlledDoor1Options{ 1, Door::Height::Regular, { true, true }, DoorActivationMode::RemoteControlled };
+	Building::CreateDoorOptions Building::UnavailableDoor1Options{ 1, Door::Height::Regular, { false, false }, DoorActivationMode::Unavailable };
+	Building::CreateDoorOptions Building::ManualDoor2Options{ 2, Door::Height::Regular, { false, false }, DoorActivationMode::Manual };
+	Building::CreateDoorOptions Building::RemoteControlledDoor2Options{ 2, Door::Height::Regular, { true, true }, DoorActivationMode::RemoteControlled };
+	Building::CreateDoorOptions Building::UnavailableDoor2Options{ 2, Door::Height::Regular, { false, false }, DoorActivationMode::Unavailable };
 
 	/*
 	Building
@@ -362,6 +362,8 @@ namespace core
 
 	void Building::validateSectorDoorOptions(string const& caller, CreateDoorOptions const& options) const
 	{
+		if (options.height != Door::Height::Regular && options.height != Door::Height::Tall)
+			throw BuildingException(this, format("{} - unknown Door height", caller));
 		if (options.holdOpenSeconds < 0.0f)
 		{
 			throw BuildingException(this, format("{} - Door hold-open time cannot be negative.", caller));
@@ -660,9 +662,10 @@ namespace core
 		return sectorIndex;
 	}
 
-	Building::CreateObjectResult Building::createDoor(uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh, uint32_t* vertexIdentifier)
+	Building::CreateObjectResult Building::createDoor(uint32_t layerIndex, uint32_t x, uint32_t y,
+		uint32_t cellsWide, Door::Height height, uint32_t* vertexIdentifier)
 	{	
-		string caller = format("Building::createDoor({}, {}, {}, {}, {})", layerIndex, x, y, cellsWide, decksHigh);
+		string caller = format("Building::createDoor({}, {}, {}, {})", layerIndex, x, y, cellsWide);
 
 		// A Door is authored on the front Layer of its pair and opens into the Layer
 		// directly behind it.
@@ -670,8 +673,9 @@ namespace core
 
 		validateCellOccupied(caller, layerIndex, x, y);
 		validateCellOccupied(caller, backLayer, x, y);
+		// A threshold is owned by the Layer where it is authored. Objects on the
+		// destination Layer coexist with it and do not block its placement.
 		validateCellHasNoDoor(caller, layerIndex, x, y);
-		validateCellHasNoDoor(caller, backLayer, x, y);
 
 		// Find Sectors that the Door is connecting.
 		auto foreSector = _getSector(mLayers[layerIndex]->getCellDefinition(x, y).sectorIndex);
@@ -682,7 +686,7 @@ namespace core
 		assert(isLocationLike(foreSector->getType()));
 
 		// Create door in Fore Location and add to Back.
-		uint32_t doorIndex = foreSector->createDoor(foreSector, backSector, x, y, cellsWide, decksHigh, vertexIdentifier);
+		uint32_t doorIndex = foreSector->createDoor(foreSector, backSector, x, y, cellsWide, height, vertexIdentifier);
 		backSector->addDoor(dynamic_pointer_cast<DoorSectorObject>(foreSector->_getObject(doorIndex)));
 
 		return {
@@ -2927,9 +2931,7 @@ namespace core
 		if (layerIndex + 1 >= getLayerCount())
 			return reject("A Door needs a Layer directly behind the Layer it is authored on");
 		auto const backLayer = layerBehind(layerIndex);
-		auto const decksHigh = options.decksHigh == 0 ? 1u : options.decksHigh;
-		if (decksHigh > CORE_DOOR_MAX_DECKS)
-			return reject(format("A Door can be at most {} decks high", CORE_DOOR_MAX_DECKS));
+		constexpr uint32_t decksHigh = 1;
 		// Door authoring reserves the final column as the building boundary.
 		if (options.width == 0 || x >= mCellsWide || options.width > mCellsWide - x
 			|| x + options.width >= mCellsWide || y + decksHigh > mDecksHigh)
@@ -2942,10 +2944,6 @@ namespace core
 			bool const liftLanding = getLiftLandingGeometry(backLayer, y, x, liftX, liftWidth);
 			if (liftLanding && (x != liftX || options.width != liftWidth))
 				return reject(format("Lift landing doors must start at {} and be {} cells wide", liftX, liftWidth));
-			// A Lift shaft is one deck per stop and its landing door belongs to the
-			// transport, so a taller opening over a Lift is never authorable.
-			if (liftLanding && decksHigh > 1)
-				return reject("A Lift landing door is one deck high");
 			if (options.activationMode != DoorActivationMode::RemoteControlled
 				&& (options.controls[0] || options.controls[1]))
 				return reject("Physical controls require a remote-controlled Door");
@@ -2968,14 +2966,18 @@ namespace core
 				auto fore = dynamic_pointer_cast<const Location>(sectors[0]);
 				auto back = dynamic_pointer_cast<const Location>(sectors[1]);
 				if (!fore) return reject("A Door must be placed in a Room, Corridor or Facade on the Layer where it is authored");
+				if (options.height == Door::Height::Tall
+					&& (fore->getType() != SectorType::Location || fore->isCorridor()))
+					return reject("A tall Door is only available in a Room");
 				if (liftLanding)
 				{
 					if (sectors[1]->getType() != SectorType::Lift)
 						return reject("The complete lift width must overlap one corridor");
 				}
 				else if (!back) return reject("A Room, Corridor or Facade on the Layer behind is required here");
-				if (foreCell.hasObject() || backCell.hasObject()
-					|| !foreCell.markers.empty() || !backCell.markers.empty())
+				// Only the authored Layer owns the Door's cell occupancy. Objects and
+				// Markers on the destination Layer remain independent.
+				if (foreCell.hasObject() || !foreCell.markers.empty())
 					return reject("Another object blocks Door placement");
 				// Only the threshold deck carries the walking floor.  The decks above it
 				// are the opening's headroom, so they need no floor of their own.
@@ -3026,13 +3028,57 @@ namespace core
 			});
 		if (found == mConstructionRecords.rend()) return false;
 		options.width = found->c;
-		options.decksHigh = found->e == 0 ? 1 : found->e;
+		options.height = static_cast<Door::Height>(found->e);
 		options.controls[0] = found->p;
 		options.controls[1] = found->q;
 		options.activationMode = static_cast<DoorActivationMode>(found->i);
 		options.holdOpenSeconds = found->x;
 		options.crossingLanes = found->d;
 		options.openStyle = static_cast<Door::OpenStyle>(found->j);
+		return true;
+	}
+
+	bool Building::setSectorDoorHeight(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t width,
+		Door::Height height, std::string* diagnostic)
+	{
+		CreateDoorOptions options;
+		if (!getSectorDoorOptions(layerIndex, y, x, width, options))
+		{
+			if (diagnostic) *diagnostic = "The selected Door no longer has an authored definition";
+			return false;
+		}
+		if (height != Door::Height::Regular && height != Door::Height::Tall)
+		{
+			if (diagnostic) *diagnostic = "Unknown Door height";
+			return false;
+		}
+		auto const front = getSectorAtPosition(layerIndex, (float)x + 0.5f, (float)y + 0.5f);
+		auto const room = dynamic_pointer_cast<const Location>(front);
+		if (height == Door::Height::Tall
+			&& (!room || room->getType() != SectorType::Location || room->isCorridor()))
+		{
+			if (diagnostic) *diagnostic = "A tall Door is only available in a Room";
+			return false;
+		}
+		auto found = find_if(mConstructionRecords.rbegin(), mConstructionRecords.rend(),
+			[&](ConstructionRecord const& record)
+			{
+				return record.type == ConstructionType::Door && record.layer == layerIndex
+					&& record.a == y && record.b == x && record.c == width;
+			});
+		if (found == mConstructionRecords.rend()) return false;
+		found->e = static_cast<uint32_t>(height);
+
+		auto const& cell = mLayers[layerIndex]->getCellDefinition(x, y);
+		if (cell.sectorIndex < mSectors.size() && mSectors[cell.sectorIndex]
+			&& cell.sectorObjectIndex < mSectors[cell.sectorIndex]->getNumObjects())
+		{
+			auto object = dynamic_pointer_cast<DoorSectorObject>(
+				mSectors[cell.sectorIndex]->_getObject(cell.sectorObjectIndex));
+			if (object && object->getDoor()) object->getDoor()->setHeight(height);
+		}
+		modify();
+		if (diagnostic) diagnostic->clear();
 		return true;
 	}
 
@@ -3270,7 +3316,7 @@ namespace core
 		ConstructionRecord record{ ConstructionType::Door };
 		record.layer = layerIndex;
 		record.a = y; record.b = x; record.c = options.width; record.d = options.crossingLanes;
-		record.e = options.decksHigh == 0 ? 1u : options.decksHigh;
+		record.e = static_cast<uint32_t>(options.height);
 		record.p = options.controls[0]; record.q = options.controls[1];
 		record.i = static_cast<int32_t>(options.activationMode); record.x = options.holdOpenSeconds;
 		record.j = static_cast<int32_t>(options.openStyle);
@@ -3379,12 +3425,7 @@ namespace core
 			throw BuildingException(this,
 				format("{} - physical controls require remote-controlled activation", caller));
 		}
-		auto const decksHigh = options.decksHigh == 0 ? 1u : options.decksHigh;
-		if (decksHigh > CORE_DOOR_MAX_DECKS)
-		{
-			throw BuildingException(this,
-				format("{} - a Door can be at most {} decks high", caller, CORE_DOOR_MAX_DECKS));
-		}
+		constexpr uint32_t decksHigh = 1;
 		validateBounds(caller, x, y, cellsWide, decksHigh);
 		validateSpaceOnlyInOneSector(caller, layerIndex, x, y, cellsWide, decksHigh);
 		validateSpaceOnlyInOneSector(caller, backLayer, x, y, cellsWide, decksHigh);
@@ -3405,6 +3446,12 @@ namespace core
 			}
 
 			sectors[0] = _getSector(cellDef0.sectorIndex);
+			if (options.height == Door::Height::Tall)
+			{
+				auto const room = dynamic_pointer_cast<Location>(sectors[0]);
+				if (!room || room->getType() != SectorType::Location || room->isCorridor())
+					throw BuildingException(this, format("{} - a tall Door is only available in a Room", caller));
+			}
 
 			if (cellDef1.sectorIndex == ~0u)
 			{
@@ -3413,9 +3460,10 @@ namespace core
 
 			sectors[1] = _getSector(cellDef1.sectorIndex);
 
-			if (cellDef0.sectorObjectType == SectorObjectType::Door)
+			if (cellDef0.hasObject() || !cellDef0.markers.empty())
 			{
-				throw BuildingException(this, format("{} - cell at {},{} is already has a door.", caller, ix, iy));
+				throw BuildingException(this, format(
+					"{} - another object occupies front Layer cell at {},{}", caller, ix, iy));
 			}
 
 			// The decks above the threshold are the opening's headroom: a Walkway or
@@ -3434,7 +3482,7 @@ namespace core
 		// Create door, making sure we add it to the other Location as well
 		// If there is a button, then a stateful button will control a stateless door - the state
 		// can only be in one object.
-		auto doorObject = createDoor(layerIndex, x, y, cellsWide, decksHigh);
+		auto doorObject = createDoor(layerIndex, x, y, cellsWide, options.height);
 		auto doorSectorObject = dynamic_pointer_cast<DoorSectorObject>(doorObject.sector->_getObject(doorObject.index));
 		auto door = doorSectorObject->getDoor();
 		door->setOpenStyle(options.openStyle);
@@ -3502,32 +3550,15 @@ namespace core
 			lane.positionOwners.assign(lane.positions.size(), {});
 		}
 
-		// The shared Door can have different local object indices in its two Sectors.
-		uint32_t backDoorIndex = ~0u;
-		for (uint32_t i = 0; i < sectors[1]->getNumObjects(); ++i)
-		{
-			if (sectors[1]->getObject(i) == doorSectorObject)
-			{
-				backDoorIndex = i;
-				break;
-			}
-		}
-		if (backDoorIndex == ~0u)
-			throw BuildingException(this, format("{} - could not locate Door in its back-layer Sector", caller));
-
-		// Set layers.  Every cell the opening covers on either Layer of the pair
-		// carries the Door, so the whole rectangle reads as one object.
+		// Only the authored Layer carries the Door in its cell grid. The shared
+		// Door remains registered in the destination Sector for rendering and
+		// traversal, without replacing that Layer's own object occupancy.
 		for (uint32_t iy = y; iy < y + decksHigh; ++iy)
 			for (uint32_t ix = x; ix < x + cellsWide; ++ix)
 		{
 			auto& cellDef0 = frontLayer->getCellDefinition(ix, iy);
-			auto& cellDef1 = behindLayer->getCellDefinition(ix, iy);
-
 			cellDef0.sectorObjectIndex = doorObject.index;
 			cellDef0.sectorObjectType = doorObject.type;
-
-			cellDef1.sectorObjectIndex = backDoorIndex;
-			cellDef1.sectorObjectType = doorObject.type;
 		}
 
 		// Bind physical controls to typed device commands
@@ -3606,7 +3637,8 @@ namespace core
 							validateObjectAllowedInSector(caller, SectorObjectType::Window, cellDef.sectorIndex);
 						else
 							validateObjectAllowedInSectorAsLookTarget(caller, SectorObjectType::Window, cellDef.sectorIndex);
-						if (cellDef.hasObject() || !cellDef.markers.empty())
+						if (requiredLayer == layerIndex
+							&& (cellDef.hasObject() || !cellDef.markers.empty()))
 							throw BuildingException(this, format("{} - another object occupies cell at {},{}",
 								caller, ix, iy));
 					}
@@ -3673,24 +3705,6 @@ namespace core
 		{
 			traversalResource = createWindowTraversalResource(format("Window at {},{}", x, y), window);
 			window->configureTraversal(true, traversalResource);
-
-			// A traversable threshold must be discovered while scanning both layers.
-			// The shared SectorObject may have a different vector index in its second
-			// sector, so recover that index rather than copying the foreground value.
-			auto backSector = const_pointer_cast<Sector>(window->getBackSector());
-			uint32_t backObjectIndex = ~0u;
-			for (uint32_t i = 0; i < backSector->getNumObjects(); ++i)
-			{
-				if (backSector->_getObject(i) == windowObject) { backObjectIndex = i; break; }
-			}
-			if (backObjectIndex == ~0u) throw BuildingException(this, "Traversable window is missing its back-sector object");
-			for (uint32_t iy = y; iy < y + decksHigh; ++iy)
-				for (uint32_t ix = x; ix < x + cellsWide; ++ix)
-				{
-					auto& backCell = mLayers[layerBehind(layerIndex)]->getCellDefinition(ix, iy);
-					backCell.sectorObjectIndex = backObjectIndex;
-					backCell.sectorObjectType = SectorObjectType::Window;
-				}
 		}
 
 		// Set layers

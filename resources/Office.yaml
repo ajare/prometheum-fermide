@@ -152,21 +152,31 @@ construction:
     traversable: false
     initialState: closed
     style: clear
+  - type: objectTombstone
+    sectorIndex: 9
+  - type: objectTombstone
+    sectorIndex: 0
+  - type: marker
+    sectorIndex: 0
+    deckIndex: 0
+    xOffset: 0.546875
   - type: door
     layer: 0
     y: 0
-    x: 8
-    width: 1
+    x: 7
+    width: 2
     foreControl: false
     backControl: false
     activationMode: manual
     holdOpenSeconds: 5
     crossingLanes: 0
     openStyle: openUp
+  - type: objectTombstone
+    sectorIndex: 1
   - type: marker
     sectorIndex: 0
     deckIndex: 0
-    xOffset: 0.546875
+    xOffset: 3.5
 agents:
   - id: 1
     agent:
@@ -175,3 +185,20 @@ agents:
     sector: 9
     localX: 9.515625
     localY: 0
+    path:
+      destinationSector: 0
+      destinationLocalX: 3.5
+      destinationLocalY: 0
+      active: true
+  - id: 2
+    agent:
+      name: Agent 2
+      flags: 0
+    sector: 9
+    localX: 11.671875
+    localY: 0
+    path:
+      destinationSector: 0
+      destinationLocalX: 3.5
+      destinationLocalY: 0
+      active: true

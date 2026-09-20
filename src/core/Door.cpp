@@ -13,17 +13,21 @@ namespace core
 	}
 
 	Door::Door(uint32_t cellX, uint32_t cellY, uint32_t cellsWide,
-		std::shared_ptr<const Sector> sectors[2], uint32_t decksHigh)
+		std::shared_ptr<const Sector> sectors[2], Height height)
 		: Door((float)cellX + CORE_DOOR_X_INSET, (float)cellY,
 			cellsWide - CORE_DOOR_X_INSET * 2.0f,
-			CORE_DOOR_HEIGHT_FOR_DECKS(decksHigh == 0 ? 1 : decksHigh), cellsWide, sectors)
+			height == Height::Tall ? CORE_DOOR_TALL_HEIGHT : CORE_DOOR_HEIGHT,
+			cellsWide, sectors)
 	{
-		// A delegating constructor may not initialise members alongside the
-		// delegation, so the deck span is settled here.
-		mDecksHigh = decksHigh == 0 ? 1 : decksHigh;
+		mHeight = height;
 	}
 
 	uint32_t Door::getCellsWide() const { return mCellsWide; }
+	void Door::setHeight(Height height)
+	{
+		mHeight = height;
+		setSize({ getSize().x, height == Height::Tall ? CORE_DOOR_TALL_HEIGHT : CORE_DOOR_HEIGHT });
+	}
 	Door::OpenStyle Door::getOpenStyle() const { return mOpenStyle; }
 	void Door::setOpenStyle(OpenStyle style) { mOpenStyle = style; }
 
@@ -107,7 +111,14 @@ namespace core
 	}
 
 	std::string Door::getDescription() const { return "Door"; }
-	float Door::getOpenCloseTime() const { return CORE_DOOR_OPEN_CLOSE_TIME; }
+	float Door::getOpenCloseTime() const
+	{
+		// OpenUp is a vertical slide, so a taller leaf takes proportionally longer
+		// and therefore travels at the same world-space speed as a regular leaf.
+		return mOpenStyle == OpenStyle::OpenUp
+			? CORE_DOOR_OPEN_CLOSE_TIME * getSize().y / CORE_DOOR_HEIGHT
+			: CORE_DOOR_OPEN_CLOSE_TIME;
+	}
 	float Door::getTimeBeforeClosing() const { return mHoldOpenTime; }
 	void Door::getCurrentShape(Vector2& minExtent, Vector2& maxExtent) const
 	{

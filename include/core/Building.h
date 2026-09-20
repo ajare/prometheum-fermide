@@ -50,9 +50,7 @@ namespace core
 		struct CreateDoorOptions
 		{
 			uint32_t width{ 1 };
-			// The whole number of decks the Door's opening spans, from its threshold
-			// deck up.  A regular Door may stand up to CORE_DOOR_MAX_DECKS tall.
-			uint32_t decksHigh{ 1 };
+			Door::Height height{ Door::Height::Regular };
 			bool controls[2] = { false, false };
 			DoorActivationMode activationMode{ DoorActivationMode::Manual };
 			float holdOpenSeconds{ CORE_DOOR_STAY_OPEN_TIME };
@@ -779,7 +777,7 @@ namespace core
 		// A Door is authored on the front Layer of its pair and opens into the Layer
 		// directly behind it.
 		CreateObjectResult createDoor(uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide,
-			uint32_t decksHigh = 1, uint32_t* vertexIdentifier = nullptr);
+			Door::Height height = Door::Height::Regular, uint32_t* vertexIdentifier = nullptr);
 
 		CreateObjectResult createWindow(uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh, uint32_t* vertexIdentifier = nullptr);
 
@@ -1158,11 +1156,16 @@ namespace core
 		bool getSectorDoorOptions(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t width,
 			CreateDoorOptions& options) const;
 
+		// Re-authors an ordinary Door's physical height. Tall is available only to
+		// Doors authored in Rooms; transport, Corridor and Facade Doors stay regular.
+		bool setSectorDoorHeight(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t width,
+			Door::Height height, std::string* diagnostic = nullptr);
+
 		// Re-authors an ordinary Door's opening style.  The authored construction
 		// record is the persistence boundary, so the record and the live Door move
 		// together: save/load, clipboard readback, moves, and undo/redo all carry
-		// the new style.  Opening style feeds only the Door's rendering - timing,
-		// state, obstruction, and traversal are untouched.
+		// the new style. Opening style affects rendering and, for a tall OpenUp Door,
+		// scales timing to preserve vertical speed; state and traversal are untouched.
 		bool setSectorDoorOpenStyle(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t width,
 			Door::OpenStyle style, std::string* diagnostic = nullptr);
 
@@ -1435,13 +1438,9 @@ namespace core
 		ObjectMovePlan planResizeSectorWindow(uint32_t sectorIndex, uint32_t objectIndex,
 			uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh) const;
 
-		// Regular Doors resize horizontally between one and two cells, and vertically
-		// between one and CORE_DOOR_MAX_DECKS decks. The plan uses the same atomic
-		// replay path as movement, preserving authored options while validating the
-		// new span against normal Door placement rules: the whole rectangle must stay
-		// inside one Sector on each Layer of the pair, and must stay clear of other
-		// objects. Lift and Shuttle landing doors are managed by their transport and
-		// refuse to resize.
+		// Regular Doors resize horizontally between one and two cells. Their one-deck
+		// footprint has a separately authored regular/tall physical height. Lift and
+		// Shuttle landing doors are managed by their transport and refuse to resize.
 		ObjectMovePlan planResizeSectorDoor(uint32_t sectorIndex, uint32_t objectIndex,
 			uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh) const;
 

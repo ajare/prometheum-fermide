@@ -69,13 +69,9 @@ namespace core
 #define CORE_DOOR_OPEN_CLOSE_TIME					2.0f
 #define CORE_DOOR_STAY_OPEN_TIME					5.0f
 #define CORE_DOOR_HEIGHT							(CORE_CORRIDOR_HEIGHT - 0.2f)
-// A regular Door may stand up to two decks tall.  Lift and Shuttle landing doors
-// belong to their transport and stay one deck tall.
-#define CORE_DOOR_MAX_DECKS						2
-// World height of a Door spanning the given whole number of decks.  One deck is
-// CORE_DOOR_HEIGHT, and each extra deck adds a full deck, which keeps the same
-// 0.2 gap below the ceiling of the topmost deck the Door occupies.
-#define CORE_DOOR_HEIGHT_FOR_DECKS(decksHigh)	(((float)(decksHigh) - 1.0f) + CORE_DOOR_HEIGHT)
+// Tall Doors are available only to ordinary Doors authored in Rooms. Transport
+// landing Doors, Corridor Doors and Facade Doors always use the regular height.
+#define CORE_DOOR_TALL_HEIGHT					0.9f
 #define CORE_DOOR_X_INSET							0.1f
 #define CORE_DOOR_QUEUE_STOP_WIDTH					(CORE_AGENT_MAX_WIDTH + 0.1f)
 // Crossing half-width about a Door vertex's x position (ticket #97): the

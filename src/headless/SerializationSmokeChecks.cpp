@@ -2112,10 +2112,9 @@ agents: []
 		}
 	}
 
-	// A regular Door's deck span is authored, persisted and replayed.  A Door
-	// record written before the span existed replays one deck tall, which is all
-	// any pre-span build could ever have shown.
-	void doorDeckSpanPersistsAndLegacyRecordsStayOneDeckTall()
+	// An ordinary Room Door may use the 0.9-unit tall leaf. The choice persists,
+	// defaults to regular for legacy records, and OpenUp keeps one vertical speed.
+	void doorHeightPersistsAndIsLimitedToRooms()
 	{
 		auto findDoor = [](core::Building const& building, uint32_t sectorIndex)
 			-> std::shared_ptr<const core::Door>
@@ -2131,70 +2130,51 @@ agents: []
 			return nullptr;
 		};
 
-		core::Building original("Two deck door", 8, 3);
-		original.addRoom("Fore room", 0, 0, 0, 7, 2);
-		original.addRoom("Back room", 1, 0, 0, 7, 2);
-		core::Building::CreateDoorOptions doorOptions;
-		doorOptions.width = 1;
-		doorOptions.decksHigh = 2;
-		auto const created = original.addSectorDoor(0, 0, 3, doorOptions);
+		core::Building original("Tall Room door", 8, 2);
+		original.addRoom("Fore room", 0, 0, 0, 7, 1);
+		original.addRoom("Back room", 1, 0, 0, 7, 1);
+		core::Building::CreateDoorOptions options;
+		options.height = core::Door::Height::Tall;
+		auto const created = original.addSectorDoor(0, 0, 3, options);
 		original.finishBuild();
-		auto const createdDoor = findDoor(original, created.door.sector->getIndex());
-		require(createdDoor && createdDoor->getDecksHigh() == 2
-				&& createdDoor->getSize().y > 1.0f,
-			"Ordinary Door creation did not carry the two-deck span");
-
-		// Past the authored ceiling nothing is accepted, authored or replayed.
-		core::Building::CreateDoorOptions tooTall;
-		tooTall.width = 1;
-		tooTall.decksHigh = 3;
-		std::string diagnostic;
-		require(!original.canAddCorridorDoor(0, 0, 5, tooTall, &diagnostic),
-			"A three-deck Door was accepted");
+		auto const door = findDoor(original, created.door.sector->getIndex());
+		require(door && door->getHeight() == core::Door::Height::Tall
+			&& std::fabs(door->getSize().y - CORE_DOOR_TALL_HEIGHT) < 0.001f,
+			"Room Door creation did not carry the tall height");
+		require(std::fabs(door->getOpenCloseTime()
+			- CORE_DOOR_OPEN_CLOSE_TIME * CORE_DOOR_TALL_HEIGHT / CORE_DOOR_HEIGHT) < 0.001f,
+			"Tall OpenUp Door does not move at the regular Door's vertical speed");
 
 		core::SerializationWorkData workData;
 		auto writer = core::YamlSerializer::toString();
 		original.serialize(*writer, workData);
 		writer->serialize();
-		auto const yaml = writer->getSerializedString();
-		require(yaml.find("decksHigh: 2") != std::string::npos,
-			"Building YAML did not persist the Door's two-deck span");
-
+		auto yaml = writer->getSerializedString();
+		require(yaml.find("height: tall") != std::string::npos,
+			"Building YAML did not persist the tall Door height");
 		core::Building loaded("placeholder", 1, 1);
 		auto reader = core::YamlSerializer::fromString(yaml);
 		reader->deserialize();
-		require(loaded.deserialize(*reader, workData),
-			"Two-deck Door building did not round-trip");
-		auto const loadedDoor = findDoor(loaded, created.door.sector->getIndex());
-		require(loadedDoor && loadedDoor->getDecksHigh() == 2,
-			"Loaded Door did not restore its two-deck span");
+		require(loaded.deserialize(*reader, workData), "Tall Door building did not round-trip");
+		require(findDoor(loaded, created.door.sector->getIndex())->getHeight()
+			== core::Door::Height::Tall, "Loaded Door lost its tall height");
 
-		// A Door record with no decksHigh field is a pre-span record.
-		core::Building legacyOriginal("Legacy door", 8, 3);
-		legacyOriginal.addRoom("Fore room", 0, 0, 0, 7, 2);
-		legacyOriginal.addRoom("Back room", 1, 0, 0, 7, 2);
-		auto const legacyCreated = legacyOriginal.addSectorDoor(0, 0, 3);
-		legacyOriginal.finishBuild();
-		core::SerializationWorkData legacyWork;
-		auto legacyWriter = core::YamlSerializer::toString();
-		legacyOriginal.serialize(*legacyWriter, legacyWork);
-		legacyWriter->serialize();
-		auto legacyYaml = legacyWriter->getSerializedString();
-		auto const doorAt = legacyYaml.find("type: door");
-		require(doorAt != std::string::npos, "No Door record in the legacy YAML fixture");
-		auto const spanAt = legacyYaml.find("decksHigh:", doorAt);
-		require(spanAt != std::string::npos, "The Door record carried no decksHigh field");
-		auto const lineStart = legacyYaml.rfind('\n', spanAt) + 1;
-		auto const lineEnd = legacyYaml.find('\n', spanAt);
-		legacyYaml.erase(lineStart, lineEnd - lineStart + 1);
+		auto const heightAt = yaml.find("    height: tall");
+		require(heightAt != std::string::npos, "No Door height field in YAML fixture");
+		yaml.erase(heightAt, yaml.find('\n', heightAt) - heightAt + 1);
 		core::Building legacy("placeholder", 1, 1);
-		auto legacyReader = core::YamlSerializer::fromString(legacyYaml);
+		auto legacyReader = core::YamlSerializer::fromString(yaml);
 		legacyReader->deserialize();
-		require(legacy.deserialize(*legacyReader, legacyWork),
-			"A Door record without decksHigh did not load");
-		auto const legacyDoor = findDoor(legacy, legacyCreated.door.sector->getIndex());
-		require(legacyDoor && legacyDoor->getDecksHigh() == 1,
-			"A pre-span Door record did not replay as one deck tall");
+		require(legacy.deserialize(*legacyReader, workData), "Legacy Door record did not load");
+		require(findDoor(legacy, created.door.sector->getIndex())->getHeight()
+			== core::Door::Height::Regular, "Legacy Door did not default to regular height");
+
+		core::Building corridor("Corridor tall refusal", 8, 1);
+		corridor.addCorridor(0, 0, 7);
+		corridor.addCorridor(1, 0, 0, 7, 1);
+		std::string diagnostic;
+		require(!corridor.canAddCorridorDoor(0, 0, 3, options, &diagnostic),
+			"A Corridor Door accepted the tall height");
 	}
 
 	// Ticket #82: OpenLeft is a fully-fledged authored Door opening style. It is
@@ -5628,7 +5608,7 @@ void runSerializationSmokeChecks()
 	physicalControlsPreferDistinctWallPositions();
 	bulkheadDoorsSupportIndependentObjectEditing();
 	doorOpeningStyleIsAuthoredPersistedAndLegacyDefaulted();
-	doorDeckSpanPersistsAndLegacyRecordsStayOneDeckTall();
+	doorHeightPersistsAndIsLimitedToRooms();
 	doorOpenLeftPersistsThroughEveryEditorPath();
 	doorOpenRightPersistsThroughEveryEditorPath();
 	doorOpenApartPersistsThroughEveryEditorPath();

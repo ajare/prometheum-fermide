@@ -75,7 +75,7 @@ The controlled boundary between two sectors, such as a doorway or the entrance t
 _Avoid_: Vertex, when discussing physical movement rules
 
 **Door**:
-A threshold that connects two adjacent layers. It is authored on the front layer of the pair and opens into the layer immediately behind it. A regular Door stands one or two decks tall; its whole rectangle must lie within a single Sector on each layer of the pair, so it can never join its threshold deck to more than one Sector behind. Only the threshold deck carries a walking floor - the decks above are the opening's headroom, so a Walkway or other floor above the threshold blocks the opening. Lift and Shuttle landing doors belong to their transport and stay one deck tall.
+A threshold that connects two adjacent layers. It is authored on the front layer of the pair and opens into the layer immediately behind it. A regular Door has a one-deck footprint. An ordinary Door authored in a Room may be regular height or 0.9-unit tall; Corridor, Facade, Lift, and Shuttle Doors always use regular height. Lift and Shuttle landing doors belong to their transport.
 _Avoid_: Portal
 
 **Crossing width**:
@@ -141,7 +141,7 @@ _Avoid_: Queue ticket, occupancy slot
 The permitted way to open a door: automatically by presence, manually by the crossing agent, through a remote interaction point, or not at all.
 
 **Door opening style**:
-The visual manner in which a Door's leaf or leaves reveal its threshold: OpenUp, OpenLeft, OpenRight, or OpenApart. Opening style does not change the Door's timing, state, obstruction, or traversal behaviour.
+The visual manner in which a Door's leaf or leaves reveal its threshold: OpenUp, OpenLeft, OpenRight, or OpenApart. Opening style does not change the Door's state, obstruction, or traversal behaviour. A tall OpenUp Door takes proportionally longer to open and close so its leaf moves at the same vertical speed as a regular Door.
 
 **Interaction point**:
 A place where an agent can request one or more typed device commands, usually represented by a physical button or switch.

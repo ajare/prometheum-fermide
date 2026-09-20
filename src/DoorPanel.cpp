@@ -14,6 +14,7 @@
 #include "core/DoorSectorObject.h"
 #include "core/Exceptions.h"
 #include "core/Log.h"
+#include "core/Location.h"
 #include "core/Sector.h"
 #include "core/SectorObject.h"
 
@@ -54,8 +55,7 @@ void renderDoorPanel(shared_ptr<core::Building> const& building,
 	ImGui::Text("Position: %.2f, %.2f", position.x, position.y);
 	ImGui::Text("Width: %u cell%s", door->getCellsWide(),
 		door->getCellsWide() == 1 ? "" : "s");
-	ImGui::Text("Height: %u deck%s", door->getDecksHigh(),
-		door->getDecksHigh() == 1 ? "" : "s");
+	ImGui::Text("Height: %.2f units", door->getSize().y);
 
 	float pct = door->getOpenPercentage() * 100;
 
@@ -104,7 +104,40 @@ void renderDoorPanel(shared_ptr<core::Building> const& building,
 			: "The opening style is authored per Door and can be changed here.");
 	}
 
+	auto const frontLocation = dynamic_pointer_cast<const core::Location>(door->getFrontSector());
+	bool const roomDoor = !liftOwned && !shuttleOwned && frontLocation
+		&& frontLocation->getType() == core::SectorType::Location && !frontLocation->isCorridor();
+
 	ImGui::BeginDisabled(!building->isSimulationPaused());
+	if (roomDoor)
+	{
+		char const* const heightItems[] = { "Regular", "Tall" };
+		int heightIndex = door->getHeight() == core::Door::Height::Tall ? 1 : 0;
+		if (ImGui::Combo("Height", &heightIndex, heightItems, 2))
+		{
+			auto undo = captureDocumentSnapshot(building);
+			try
+			{
+				gUISettings.worldPaused = true;
+				std::string diagnostic;
+				if (!building->setSectorDoorHeight(door->getFrontLayer(), object->getCellY(),
+					object->getCellX(), door->getCellsWide(), heightIndex == 1
+						? core::Door::Height::Tall : core::Door::Height::Regular, &diagnostic))
+					throw runtime_error(diagnostic.empty()
+						? "Could not change the Door's height" : diagnostic);
+				commitDocumentEdit(std::move(undo));
+			}
+			catch (core::Exception const& error)
+			{
+				core::addLogMessage("Door editor", 0, core::LogLevel::Error, error.getMessage());
+			}
+			catch (std::exception const& error)
+			{
+				core::addLogMessage("Door editor", 0, core::LogLevel::Error, error.what());
+			}
+		}
+	}
+
 	// The combo index is the position in this list, not the enum value, so the
 	// styles can be offered in any order the editor prefers.
 	core::Door::OpenStyle const openStyleChoices[] =

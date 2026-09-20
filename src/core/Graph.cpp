@@ -458,9 +458,8 @@ namespace core
 
 		if (role == LayerPairRole::Front)
 		{
-			// Doors are added to the CellDefinitions of both Layers of their pair, so
-			// the front Vertex is recorded here and joined when the Layer directly
-			// behind this one is scanned.
+			// Record the front Vertex before the caller resolves this shared Door in
+			// its destination Sector and processes the back side.
 			if (it != interLayerVertexLookup.end())
 			{
 				string errMsg = format("A Door was already set on the front Layer of the pair at {},{}", obj.x, obj.y);
@@ -1295,20 +1294,42 @@ namespace core
 		bool const frontProcessable = cellIsProcessable(frontLayer, x, y);
 		bool const backProcessable = cellIsProcessable(backLayer, x, y);
 
-		// Thresholds are authored on the front Layer of the pair and open into the
-		// Layer directly behind it.  The front Vertex is recorded first, then joined
-		// when the back Layer's copy of the same cell is reached.  A threshold only
-		// ever pairs on the pair it belongs to, so a Layer that merely holds a
-		// reference to a neighbouring pair's threshold contributes nothing.
+		// Thresholds are owned by the Layer where they are authored. Their shared
+		// SectorObject is registered in the destination Sector, but that Layer's
+		// cell grid remains free to describe its own object. Resolve the shared
+		// object in the destination Sector directly instead of requiring a second
+		// cell-grid reference which would overwrite that occupancy.
+		auto indexOfSharedObject = [](shared_ptr<Sector> const& sector,
+			shared_ptr<SectorObject> const& object)
+		{
+			if (!sector || !object) return ~0u;
+			for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
+				if (sector->_getObject(i) == object) return i;
+			return ~0u;
+		};
+
 		if (frontProcessable && frontCell.sectorObjectType == SectorObjectType::Door
 			&& isLeftMostObjectCell(frontLayer, x, y, frontCell)
 			&& thresholdBelongsToPair(mwBuilding->_getSector(frontCell.sectorIndex),
 				frontCell.sectorObjectIndex, SectorObjectType::Door, frontLayer, backLayer))
 		{
-			ObjectData obj = { frontCell.sectorObjectIndex, frontLayer, x, y,
-				mwBuilding->_getSector(frontCell.sectorIndex), {} };
+			auto const frontSector = mwBuilding->_getSector(frontCell.sectorIndex);
+			auto const sharedObject = frontSector->_getObject(frontCell.sectorObjectIndex);
+			ObjectData front = { frontCell.sectorObjectIndex, frontLayer, x, y, frontSector, {} };
+			processDoor(front, LayerPairRole::Front, interLayerVertexLookup,
+				rows[frontLayer][y], crossDeckVertices);
 
-			processDoor(obj, LayerPairRole::Front, interLayerVertexLookup, rows[frontLayer][y], crossDeckVertices);
+			if (backProcessable)
+			{
+				auto const backSector = mwBuilding->_getSector(backCell.sectorIndex);
+				auto const backIndex = indexOfSharedObject(backSector, sharedObject);
+				if (backIndex == ~0u)
+					throw BuildingException(mwBuilding,
+						format("A Door at {},{} is missing from its back-layer Sector", x, y));
+				ObjectData back = { backIndex, backLayer, x, y, backSector, {} };
+				processDoor(back, LayerPairRole::Back, interLayerVertexLookup,
+					rows[backLayer][y], crossDeckVertices);
+			}
 		}
 
 		if (frontProcessable && frontCell.sectorObjectType == SectorObjectType::Window
@@ -1316,32 +1337,22 @@ namespace core
 			&& thresholdBelongsToPair(mwBuilding->_getSector(frontCell.sectorIndex),
 				frontCell.sectorObjectIndex, SectorObjectType::Window, frontLayer, backLayer))
 		{
-			ObjectData obj = { frontCell.sectorObjectIndex, frontLayer, x, y,
-				mwBuilding->_getSector(frontCell.sectorIndex), {} };
+			auto const frontSector = mwBuilding->_getSector(frontCell.sectorIndex);
+			auto const sharedObject = frontSector->_getObject(frontCell.sectorObjectIndex);
+			ObjectData front = { frontCell.sectorObjectIndex, frontLayer, x, y, frontSector, {} };
+			processWindow(front, interLayerVertexLookup, rows[frontLayer][y]);
 
-			processWindow(obj, interLayerVertexLookup, rows[frontLayer][y]);
-		}
-
-		if (backProcessable && backCell.sectorObjectType == SectorObjectType::Door
-			&& isLeftMostObjectCell(backLayer, x, y, backCell)
-			&& thresholdBelongsToPair(mwBuilding->_getSector(backCell.sectorIndex),
-				backCell.sectorObjectIndex, SectorObjectType::Door, frontLayer, backLayer))
-		{
-			ObjectData obj = { backCell.sectorObjectIndex, backLayer, x, y,
-				mwBuilding->_getSector(backCell.sectorIndex), {} };
-
-			processDoor(obj, LayerPairRole::Back, interLayerVertexLookup, rows[backLayer][y], crossDeckVertices);
-		}
-
-		if (backProcessable && backCell.sectorObjectType == SectorObjectType::Window
-			&& isLeftMostObjectCell(backLayer, x, y, backCell)
-			&& thresholdBelongsToPair(mwBuilding->_getSector(backCell.sectorIndex),
-				backCell.sectorObjectIndex, SectorObjectType::Window, frontLayer, backLayer))
-		{
-			ObjectData obj = { backCell.sectorObjectIndex, backLayer, x, y,
-				mwBuilding->_getSector(backCell.sectorIndex), {} };
-
-			processWindow(obj, interLayerVertexLookup, rows[backLayer][y]);
+			auto const windowObject = dynamic_pointer_cast<WindowSectorObject>(sharedObject);
+			if (backProcessable && windowObject && windowObject->getWindow()->isTraversalConfigured())
+			{
+				auto const backSector = mwBuilding->_getSector(backCell.sectorIndex);
+				auto const backIndex = indexOfSharedObject(backSector, sharedObject);
+				if (backIndex == ~0u)
+					throw BuildingException(mwBuilding,
+						format("A traversable Window at {},{} is missing from its back-layer Sector", x, y));
+				ObjectData back = { backIndex, backLayer, x, y, backSector, {} };
+				processWindow(back, interLayerVertexLookup, rows[backLayer][y]);
+			}
 		}
 
 		// Transits sit on the back Layer of the pair and land on the front Layer.

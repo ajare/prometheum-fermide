@@ -281,8 +281,8 @@ namespace core
 			serializer.writeUint32("layer", record.layer);
 			serializer.writeUint32("y", record.a); serializer.writeUint32("x", record.b);
 			serializer.writeUint32("width", record.c);
-			// A Door record written before the deck span existed is one deck tall.
-			serializer.writeUint32("decksHigh", record.e == 0 ? 1u : record.e);
+			serializer.writeString("height", record.e == static_cast<uint32_t>(Door::Height::Tall)
+				? "tall" : "regular");
 			serializer.writeBool("foreControl", record.p);
 			serializer.writeBool("backControl", record.q); serializer.writeString("activationMode", activationName(record.i));
 			serializer.writeFloat("holdOpenSeconds", record.x); serializer.writeUint32("crossingLanes", record.d);
@@ -355,7 +355,7 @@ namespace core
 	void Building::serializeImpl(Serializer& serializer, SerializationWorkData& workData) const
 	{
 		serializer.beginMap("building");
-		// Version 8 is the first schema that persists a regular Door's deck span.
+		// Version 8 is the first schema that persists a regular Door's physical height.
 		// Version 7 is the first schema that persists Door opening styles. Older
 		// readers cap out at version 6, so they refuse these files instead of
 		// silently dropping the authored style fields.
@@ -570,7 +570,14 @@ namespace core
 			record.layer = readLayerOr("layer", 0u);
 			record.a = serializer.readUint32("y"); record.b = serializer.readUint32("x");
 			record.c = serializer.readUint32("width");
-			record.e = serializer.readUint32("decksHigh", true, 1);
+			if (serializer.hasField("height"))
+			{
+				auto const height = serializer.readString("height");
+				if (height == "regular") record.e = static_cast<uint32_t>(Door::Height::Regular);
+				else if (height == "tall") record.e = static_cast<uint32_t>(Door::Height::Tall);
+				else throw SerializationException(format("Unknown Door height: {}", height));
+			}
+			else record.e = static_cast<uint32_t>(Door::Height::Regular);
 			record.p = serializer.readBool("foreControl");
 			record.q = serializer.readBool("backControl"); record.i = readActivation("activationMode");
 			record.x = serializer.readFloat("holdOpenSeconds"); record.d = serializer.readUint32("crossingLanes");
@@ -988,7 +995,7 @@ namespace core
 			break;
 		case ConstructionType::Door:
 			addSectorDoor(doorLayer(record), record.a, record.b,
-				{ record.c, record.e == 0 ? 1u : record.e, { record.p, record.q },
+				{ record.c, static_cast<Door::Height>(record.e), { record.p, record.q },
 					static_cast<DoorActivationMode>(record.i), record.x, record.d,
 					static_cast<Door::OpenStyle>(record.j) });
 			break;
@@ -3286,10 +3293,9 @@ namespace core
 			diagnostic = "A Door must be one or two cells wide";
 			return false;
 		}
-		if (type == SectorObjectType::Door && resizing
-			&& (targetHeight == 0 || targetHeight > CORE_DOOR_MAX_DECKS))
+		if (type == SectorObjectType::Door && resizing && targetHeight != 1)
 		{
-			diagnostic = format("A Door must be one or {} decks high", CORE_DOOR_MAX_DECKS);
+			diagnostic = "A Door has a one-deck footprint";
 			return false;
 		}
 		if (type == SectorObjectType::Walkway && (plan.x != sourceX || plan.y != sourceY)
@@ -3532,11 +3538,7 @@ namespace core
 		{
 		case SectorObjectType::Door:
 			found->a = plan.y; found->b = plan.x;
-			if (plan.resizeRequested)
-			{
-				found->c = targetWidth;
-				found->e = targetHeight;
-			}
+			if (plan.resizeRequested) found->c = targetWidth;
 			break;
 		case SectorObjectType::BulkheadDoor:
 			found->a = owner->getLayerIndex(); found->b = plan.y; found->c = plan.x;
@@ -3737,6 +3739,7 @@ namespace core
 			[&](ConstructionRecord const& record)
 			{
 				return record.type == ConstructionType::Door
+					&& record.layer == door->getFrontLayer()
 					&& record.a == object->getCellY() && record.b == object->getCellX()
 					&& record.c == door->getCellsWide();
 			});

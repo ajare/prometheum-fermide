@@ -588,9 +588,8 @@ namespace
 		require(std::as_const(front).getLayer(0)->getCellDefinition(1, 0).sectorObjectType
 			== core::SectorObjectType::Door,
 			"The Facade-side cell does not carry the Door");
-		require(std::as_const(front).getLayer(1)->getCellDefinition(1, 0).sectorObjectType
-			== core::SectorObjectType::Door,
-			"The Room-side cell does not carry the Door");
+		require(!std::as_const(front).getLayer(1)->getCellDefinition(1, 0).hasObject(),
+			"The Door claimed object occupancy on its destination Layer");
 
 		// The mirror: a Room in front with the Facade directly behind.
 		core::Building back("Door on Facade back", 8, 1);
@@ -607,9 +606,8 @@ namespace
 		require(std::as_const(back).getLayer(0)->getCellDefinition(1, 0).sectorObjectType
 			== core::SectorObjectType::Door,
 			"The Room-side cell does not carry the Door");
-		require(std::as_const(back).getLayer(1)->getCellDefinition(1, 0).sectorObjectType
-			== core::SectorObjectType::Door,
-			"The Facade-side cell does not carry the Door");
+		require(!std::as_const(back).getLayer(1)->getCellDefinition(1, 0).hasObject(),
+			"The Door claimed Facade object occupancy on its destination Layer");
 	}
 
 	// Wall edits refuse the Facade itself - its perimeter is not editable -

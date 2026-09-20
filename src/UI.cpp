@@ -3238,7 +3238,8 @@ namespace
 			output << YAML::Key << "type" << YAML::Value << "Door"
 				<< YAML::Key << "object" << YAML::Value << YAML::BeginMap
 				<< YAML::Key << "width" << YAML::Value << options.width
-				<< YAML::Key << "decksHigh" << YAML::Value << options.decksHigh
+				<< YAML::Key << "height" << YAML::Value
+				<< (options.height == core::Door::Height::Tall ? "Tall" : "Regular")
 				<< YAML::Key << "controls" << YAML::Value << YAML::Flow << YAML::BeginSeq
 				<< options.controls[0] << options.controls[1] << YAML::EndSeq
 				<< YAML::Key << "activationMode" << YAML::Value << activationModeName(options.activationMode)
@@ -3383,9 +3384,13 @@ namespace
 		{
 			definition.type = ClipboardObjectType::Door;
 			definition.door.width = requiredYaml<uint32_t>(object, "width");
-			// A clipboard entry written before the deck span existed pastes one deck tall.
-			definition.door.decksHigh = object["decksHigh"]
-				? object["decksHigh"].as<uint32_t>() : 1u;
+			if (object["height"])
+			{
+				auto const height = object["height"].as<string>();
+				if (height == "Regular") definition.door.height = core::Door::Height::Regular;
+				else if (height == "Tall") definition.door.height = core::Door::Height::Tall;
+				else throw runtime_error("Door height is invalid");
+			}
 			auto controls = object["controls"];
 			if (!controls || !controls.IsSequence() || controls.size() != 2)
 				throw runtime_error("Door controls must contain two values");
@@ -7175,9 +7180,8 @@ namespace
 		return closest->distance <= handleRadius ? closest->edge : ResizeEdge::None;
 	}
 
-	// A regular Door resizes from any of its four edges: one or two cells wide, and
-	// one or CORE_DOOR_MAX_DECKS decks high.  Lift and Shuttle landing doors never
-	// reach a resize drag at all - the editor refuses them before this is asked.
+	// A Door resizes horizontally only. Physical regular/tall height is selected
+	// in the Selection panel and does not change its one-deck grid footprint.
 	ResizeEdge hoveredDoorResizeEdge(shared_ptr<const core::SectorObject> const& object,
 		ImVec2 mouse)
 	{
@@ -7194,9 +7198,7 @@ namespace
 		struct Candidate { ResizeEdge edge; float distance; };
 		Candidate candidates[] = {
 			{ ResizeEdge::Left, abs(mouse.x - topLeft.x) },
-			{ ResizeEdge::Right, abs(mouse.x - bottomRight.x) },
-			{ ResizeEdge::Top, abs(mouse.y - topLeft.y) },
-			{ ResizeEdge::Bottom, abs(mouse.y - bottomRight.y) }
+			{ ResizeEdge::Right, abs(mouse.x - bottomRight.x) }
 		};
 		auto closest = min_element(begin(candidates), end(candidates),
 			[](auto const& left, auto const& right) { return left.distance < right.distance; });
@@ -7361,12 +7363,10 @@ namespace
 		bool const resizing = gObjectMove.edge != ResizeEdge::Move;
 		bool const doorResize = resizing
 			&& gSelectedSectorObject->getObjectType() == core::SectorObjectType::Door;
-		// A regular Door may span at most two cells and CORE_DOOR_MAX_DECKS decks;
-		// stick the drag to those limits instead of showing a preview the plan would
-		// refuse anyway.
+		// A regular Door may span at most two cells and always has a one-deck
+		// footprint; physical regular/tall height is not changed by dragging.
 		int const maxResizeWidth = doorResize ? 2 : (int)building->getCellsWide();
-		int const maxResizeHeight = doorResize ? CORE_DOOR_MAX_DECKS
-			: (int)building->getDecksHigh();
+		int const maxResizeHeight = (int)building->getDecksHigh();
 		if (gObjectMove.edge == ResizeEdge::Left)
 		{
 			auto right = (int)gObjectMove.originalX + (int)gObjectMove.originalWidth;

@@ -20,6 +20,7 @@ namespace core
 	protected:
 
 		void setPosition(Vector2 const& position);
+		void setSize(Vector2 const& size) { mSize = size; }
 
 	public:
 

@@ -16,13 +16,14 @@ namespace core
 		friend class Building;
 	public:
 		// The authored visual manner in which the Door's leaf or leaves reveal its
-		// threshold.  Opening style never changes timing, state, obstruction, or
-		// traversal, and OpenApart's two leaves remain one logical Door.
+		// threshold. OpenApart's two leaves remain one logical Door. A tall OpenUp
+		// Door takes longer so its leaf keeps the regular Door's vertical speed.
 		enum struct OpenStyle { OpenUp, OpenLeft, OpenRight, OpenApart };
+		enum struct Height { Regular, Tall };
 
 	private:
 		uint32_t mCellsWide;
-		uint32_t mDecksHigh{ 1 };
+		Height mHeight{ Height::Regular };
 		OpenStyle mOpenStyle{ OpenStyle::OpenUp };
 		std::shared_ptr<const Sector> mSectors[2];
 		DoorActivationMode mActivationMode{ DoorActivationMode::Manual };
@@ -36,15 +37,12 @@ namespace core
 			std::shared_ptr<const Sector> sectors[2]);
 
 	public:
-		// A regular Door stands one or two decks tall; CORE_DOOR_MAX_DECKS is the
-		// authored ceiling.  Lift and Shuttle landing doors are created through the
-		// same path with the one-deck default and never grow.
 		Door(uint32_t cellX, uint32_t cellY, uint32_t cellsWide,
-			std::shared_ptr<const Sector> sectors[2], uint32_t decksHigh = 1);
+			std::shared_ptr<const Sector> sectors[2], Height height = Height::Regular);
 
 		uint32_t getCellsWide() const;
-		// The whole number of decks the Door's opening spans, from its threshold deck up.
-		uint32_t getDecksHigh() const { return mDecksHigh; }
+		Height getHeight() const { return mHeight; }
+		void setHeight(Height height);
 		OpenStyle getOpenStyle() const;
 		void setOpenStyle(OpenStyle style);
 
