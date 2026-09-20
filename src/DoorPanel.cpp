@@ -54,6 +54,8 @@ void renderDoorPanel(shared_ptr<core::Building> const& building,
 	ImGui::Text("Position: %.2f, %.2f", position.x, position.y);
 	ImGui::Text("Width: %u cell%s", door->getCellsWide(),
 		door->getCellsWide() == 1 ? "" : "s");
+	ImGui::Text("Height: %u deck%s", door->getDecksHigh(),
+		door->getDecksHigh() == 1 ? "" : "s");
 
 	float pct = door->getOpenPercentage() * 100;
 

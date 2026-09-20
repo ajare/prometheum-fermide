@@ -373,7 +373,8 @@ namespace
 				gObjectMove.originalX, gObjectMove.originalY)
 			: object->getObjectType() == core::SectorObjectType::Door
 				? building->planResizeSectorDoor(owner->getIndex(), objectIndex,
-					gObjectMove.originalX, gObjectMove.originalY, gObjectMove.originalWidth)
+					gObjectMove.originalX, gObjectMove.originalY,
+					gObjectMove.originalWidth, gObjectMove.originalHeight)
 				: building->planResizeSectorWindow(owner->getIndex(), objectIndex,
 					gObjectMove.originalX, gObjectMove.originalY,
 					gObjectMove.originalWidth, gObjectMove.originalHeight);
@@ -3237,6 +3238,7 @@ namespace
 			output << YAML::Key << "type" << YAML::Value << "Door"
 				<< YAML::Key << "object" << YAML::Value << YAML::BeginMap
 				<< YAML::Key << "width" << YAML::Value << options.width
+				<< YAML::Key << "decksHigh" << YAML::Value << options.decksHigh
 				<< YAML::Key << "controls" << YAML::Value << YAML::Flow << YAML::BeginSeq
 				<< options.controls[0] << options.controls[1] << YAML::EndSeq
 				<< YAML::Key << "activationMode" << YAML::Value << activationModeName(options.activationMode)
@@ -3381,6 +3383,9 @@ namespace
 		{
 			definition.type = ClipboardObjectType::Door;
 			definition.door.width = requiredYaml<uint32_t>(object, "width");
+			// A clipboard entry written before the deck span existed pastes one deck tall.
+			definition.door.decksHigh = object["decksHigh"]
+				? object["decksHigh"].as<uint32_t>() : 1u;
 			auto controls = object["controls"];
 			if (!controls || !controls.IsSequence() || controls.size() != 2)
 				throw runtime_error("Door controls must contain two values");
@@ -7170,8 +7175,9 @@ namespace
 		return closest->distance <= handleRadius ? closest->edge : ResizeEdge::None;
 	}
 
-	// A Door resizes horizontally only: its height is one deck and its vertical
-	// extent is fixed by the doorway it occupies.
+	// A regular Door resizes from any of its four edges: one or two cells wide, and
+	// one or CORE_DOOR_MAX_DECKS decks high.  Lift and Shuttle landing doors never
+	// reach a resize drag at all - the editor refuses them before this is asked.
 	ResizeEdge hoveredDoorResizeEdge(shared_ptr<const core::SectorObject> const& object,
 		ImVec2 mouse)
 	{
@@ -7188,7 +7194,9 @@ namespace
 		struct Candidate { ResizeEdge edge; float distance; };
 		Candidate candidates[] = {
 			{ ResizeEdge::Left, abs(mouse.x - topLeft.x) },
-			{ ResizeEdge::Right, abs(mouse.x - bottomRight.x) }
+			{ ResizeEdge::Right, abs(mouse.x - bottomRight.x) },
+			{ ResizeEdge::Top, abs(mouse.y - topLeft.y) },
+			{ ResizeEdge::Bottom, abs(mouse.y - bottomRight.y) }
 		};
 		auto closest = min_element(begin(candidates), end(candidates),
 			[](auto const& left, auto const& right) { return left.distance < right.distance; });
@@ -7353,9 +7361,12 @@ namespace
 		bool const resizing = gObjectMove.edge != ResizeEdge::Move;
 		bool const doorResize = resizing
 			&& gSelectedSectorObject->getObjectType() == core::SectorObjectType::Door;
-		// A regular Door may span at most two cells; stick the drag to that limit
-		// instead of showing a wide preview that the plan would refuse anyway.
+		// A regular Door may span at most two cells and CORE_DOOR_MAX_DECKS decks;
+		// stick the drag to those limits instead of showing a preview the plan would
+		// refuse anyway.
 		int const maxResizeWidth = doorResize ? 2 : (int)building->getCellsWide();
+		int const maxResizeHeight = doorResize ? CORE_DOOR_MAX_DECKS
+			: (int)building->getDecksHigh();
 		if (gObjectMove.edge == ResizeEdge::Left)
 		{
 			auto right = (int)gObjectMove.originalX + (int)gObjectMove.originalWidth;
@@ -7377,13 +7388,15 @@ namespace
 		{
 			auto top = (int)gObjectMove.originalY + (int)gObjectMove.originalHeight;
 			targetX = (int)gObjectMove.originalX;
-			targetY = clamp((int)gObjectMove.originalY + deltaY, 0, top - 1);
+			targetY = clamp((int)gObjectMove.originalY + deltaY,
+				max(0, top - maxResizeHeight), top - 1);
 			targetHeight = top - targetY;
 		}
 		else if (gObjectMove.edge == ResizeEdge::Top)
 		{
 			auto top = clamp((int)gObjectMove.originalY + (int)gObjectMove.originalHeight
-				+ deltaY, (int)gObjectMove.originalY + 1, (int)building->getDecksHigh());
+				+ deltaY, (int)gObjectMove.originalY + 1,
+				min(maxResizeHeight + (int)gObjectMove.originalY, (int)building->getDecksHigh()));
 			targetX = (int)gObjectMove.originalX;
 			targetY = (int)gObjectMove.originalY;
 			targetHeight = top - targetY;
@@ -7403,7 +7416,8 @@ namespace
 		{
 			gObjectMove.preview = doorResize
 				? building->planResizeSectorDoor(owner->getIndex(), objectIndex,
-					(uint32_t)targetX, (uint32_t)targetY, (uint32_t)targetWidth)
+					(uint32_t)targetX, (uint32_t)targetY,
+					(uint32_t)targetWidth, (uint32_t)targetHeight)
 				: resizing
 					? building->planResizeSectorWindow(owner->getIndex(), objectIndex,
 						(uint32_t)targetX, (uint32_t)targetY,

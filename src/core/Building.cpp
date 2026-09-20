@@ -34,12 +34,12 @@ namespace core
 	// its doors occupy - lives in SimulationCoordinator with the shuttle door
 	// assignment family that consumes that indexing (ADR 0004).
 
-	Building::CreateDoorOptions Building::ManualDoor1Options{ 1, { false, false }, DoorActivationMode::Manual };
-	Building::CreateDoorOptions Building::RemoteControlledDoor1Options{ 1, { true, true }, DoorActivationMode::RemoteControlled };
-	Building::CreateDoorOptions Building::UnavailableDoor1Options{ 1, { false, false }, DoorActivationMode::Unavailable };
-	Building::CreateDoorOptions Building::ManualDoor2Options{ 2, { false, false }, DoorActivationMode::Manual };
-	Building::CreateDoorOptions Building::RemoteControlledDoor2Options{ 2, { true, true }, DoorActivationMode::RemoteControlled };
-	Building::CreateDoorOptions Building::UnavailableDoor2Options{ 2, { false, false }, DoorActivationMode::Unavailable };
+	Building::CreateDoorOptions Building::ManualDoor1Options{ 1, 1, { false, false }, DoorActivationMode::Manual };
+	Building::CreateDoorOptions Building::RemoteControlledDoor1Options{ 1, 1, { true, true }, DoorActivationMode::RemoteControlled };
+	Building::CreateDoorOptions Building::UnavailableDoor1Options{ 1, 1, { false, false }, DoorActivationMode::Unavailable };
+	Building::CreateDoorOptions Building::ManualDoor2Options{ 2, 1, { false, false }, DoorActivationMode::Manual };
+	Building::CreateDoorOptions Building::RemoteControlledDoor2Options{ 2, 1, { true, true }, DoorActivationMode::RemoteControlled };
+	Building::CreateDoorOptions Building::UnavailableDoor2Options{ 2, 1, { false, false }, DoorActivationMode::Unavailable };
 
 	/*
 	Building
@@ -660,9 +660,9 @@ namespace core
 		return sectorIndex;
 	}
 
-	Building::CreateObjectResult Building::createDoor(uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t* vertexIdentifier)
+	Building::CreateObjectResult Building::createDoor(uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh, uint32_t* vertexIdentifier)
 	{	
-		string caller = format("Building::createDoor({}, {}, {}, {})", layerIndex, x, y, cellsWide);
+		string caller = format("Building::createDoor({}, {}, {}, {}, {})", layerIndex, x, y, cellsWide, decksHigh);
 
 		// A Door is authored on the front Layer of its pair and opens into the Layer
 		// directly behind it.
@@ -682,7 +682,7 @@ namespace core
 		assert(isLocationLike(foreSector->getType()));
 
 		// Create door in Fore Location and add to Back.
-		uint32_t doorIndex = foreSector->createDoor(foreSector, backSector, x, y, cellsWide, vertexIdentifier);
+		uint32_t doorIndex = foreSector->createDoor(foreSector, backSector, x, y, cellsWide, decksHigh, vertexIdentifier);
 		backSector->addDoor(dynamic_pointer_cast<DoorSectorObject>(foreSector->_getObject(doorIndex)));
 
 		return {
@@ -2927,9 +2927,12 @@ namespace core
 		if (layerIndex + 1 >= getLayerCount())
 			return reject("A Door needs a Layer directly behind the Layer it is authored on");
 		auto const backLayer = layerBehind(layerIndex);
+		auto const decksHigh = options.decksHigh == 0 ? 1u : options.decksHigh;
+		if (decksHigh > CORE_DOOR_MAX_DECKS)
+			return reject(format("A Door can be at most {} decks high", CORE_DOOR_MAX_DECKS));
 		// Door authoring reserves the final column as the building boundary.
 		if (options.width == 0 || x >= mCellsWide || options.width > mCellsWide - x
-			|| x + options.width >= mCellsWide || y >= mDecksHigh)
+			|| x + options.width >= mCellsWide || y + decksHigh > mDecksHigh)
 			return reject("Door position is outside the building");
 		try
 		{
@@ -2939,17 +2942,25 @@ namespace core
 			bool const liftLanding = getLiftLandingGeometry(backLayer, y, x, liftX, liftWidth);
 			if (liftLanding && (x != liftX || options.width != liftWidth))
 				return reject(format("Lift landing doors must start at {} and be {} cells wide", liftX, liftWidth));
+			// A Lift shaft is one deck per stop and its landing door belongs to the
+			// transport, so a taller opening over a Lift is never authorable.
+			if (liftLanding && decksHigh > 1)
+				return reject("A Lift landing door is one deck high");
 			if (options.activationMode != DoorActivationMode::RemoteControlled
 				&& (options.controls[0] || options.controls[1]))
 				return reject("Physical controls require a remote-controlled Door");
-			validateBounds(caller, x, y, options.width, 1);
-			validateSpaceOnlyInOneSector(caller, layerIndex, x, y, options.width, 1);
-			validateSpaceOnlyInOneSector(caller, backLayer, x, y, options.width, 1);
+			validateBounds(caller, x, y, options.width, decksHigh);
+			// The whole Door rectangle stays inside one Sector on each Layer of its pair:
+			// a tall opening that straddles a Sector boundary on the Layer behind would
+			// join two Sectors with one threshold.
+			validateSpaceOnlyInOneSector(caller, layerIndex, x, y, options.width, decksHigh);
+			validateSpaceOnlyInOneSector(caller, backLayer, x, y, options.width, decksHigh);
 			shared_ptr<const Sector> sectors[2];
-			for (uint32_t ix = x; ix < x + options.width; ++ix)
+			for (uint32_t iy = y; iy < y + decksHigh; ++iy)
+				for (uint32_t ix = x; ix < x + options.width; ++ix)
 			{
-				auto const& foreCell = mLayers[layerIndex]->getCellDefinition(ix, y);
-				auto const& backCell = mLayers[backLayer]->getCellDefinition(ix, y);
+				auto const& foreCell = mLayers[layerIndex]->getCellDefinition(ix, iy);
+				auto const& backCell = mLayers[backLayer]->getCellDefinition(ix, iy);
 				if (!foreCell.occupied()) return reject("A Door must be placed in a Room, Corridor or Facade on the Layer where it is authored");
 				if (!backCell.occupied()) return reject("A Room, Corridor, Facade or Lift on the Layer behind is required here");
 				sectors[0] = mSectors[foreCell.sectorIndex];
@@ -2966,8 +2977,15 @@ namespace core
 				if (foreCell.hasObject() || backCell.hasObject()
 					|| !foreCell.markers.empty() || !backCell.markers.empty())
 					return reject("Another object blocks Door placement");
-				if (!foreCell.isTraversableOnFoot() || !backCell.isTraversableOnFoot())
+				// Only the threshold deck carries the walking floor.  The decks above it
+				// are the opening's headroom, so they need no floor of their own.
+				if (iy == y && (!foreCell.isTraversableOnFoot() || !backCell.isTraversableOnFoot()))
 					return reject("Door placement requires a traversable floor on both layers");
+				// A Walkway or other floor above the threshold deck runs through the
+				// opening, so the Door cannot cover it.
+				if (iy != y && (foreCell.floorType != CellFloorType::None
+					|| backCell.floorType != CellFloorType::None))
+					return reject("A Door cannot open through a Walkway above its threshold");
 				validateObjectAllowedInSector(caller, SectorObjectType::Door, foreCell.sectorIndex);
 				validateObjectAllowedInSector(caller, SectorObjectType::Door, backCell.sectorIndex);
 			}
@@ -3008,6 +3026,7 @@ namespace core
 			});
 		if (found == mConstructionRecords.rend()) return false;
 		options.width = found->c;
+		options.decksHigh = found->e == 0 ? 1 : found->e;
 		options.controls[0] = found->p;
 		options.controls[1] = found->q;
 		options.activationMode = static_cast<DoorActivationMode>(found->i);
@@ -3251,6 +3270,7 @@ namespace core
 		ConstructionRecord record{ ConstructionType::Door };
 		record.layer = layerIndex;
 		record.a = y; record.b = x; record.c = options.width; record.d = options.crossingLanes;
+		record.e = options.decksHigh == 0 ? 1u : options.decksHigh;
 		record.p = options.controls[0]; record.q = options.controls[1];
 		record.i = static_cast<int32_t>(options.activationMode); record.x = options.holdOpenSeconds;
 		record.j = static_cast<int32_t>(options.openStyle);
@@ -3359,36 +3379,52 @@ namespace core
 			throw BuildingException(this,
 				format("{} - physical controls require remote-controlled activation", caller));
 		}
-		validateBounds(caller, x, y, cellsWide, 1);
-		validateSpaceOnlyInOneSector(caller, layerIndex, x, y, cellsWide, 1);
-		validateSpaceOnlyInOneSector(caller, backLayer, x, y, cellsWide, 1);
+		auto const decksHigh = options.decksHigh == 0 ? 1u : options.decksHigh;
+		if (decksHigh > CORE_DOOR_MAX_DECKS)
+		{
+			throw BuildingException(this,
+				format("{} - a Door can be at most {} decks high", caller, CORE_DOOR_MAX_DECKS));
+		}
+		validateBounds(caller, x, y, cellsWide, decksHigh);
+		validateSpaceOnlyInOneSector(caller, layerIndex, x, y, cellsWide, decksHigh);
+		validateSpaceOnlyInOneSector(caller, backLayer, x, y, cellsWide, decksHigh);
 
 		auto frontLayer = getLayer(layerIndex);
 		auto behindLayer = getLayer(backLayer);
 
 		shared_ptr<Sector> sectors[2];
-		for (uint32_t ix = x; ix < x + cellsWide; ++ix)
+		for (uint32_t iy = y; iy < y + decksHigh; ++iy)
+			for (uint32_t ix = x; ix < x + cellsWide; ++ix)
 		{
-			auto& cellDef0 = frontLayer->getCellDefinition(ix, y);
-			auto& cellDef1 = behindLayer->getCellDefinition(ix, y);
+			auto& cellDef0 = frontLayer->getCellDefinition(ix, iy);
+			auto& cellDef1 = behindLayer->getCellDefinition(ix, iy);
 
 			if (cellDef0.sectorIndex == ~0u)
 			{
-				throw BuildingException(this, format("{} - front Layer cell at {},{} is not occupied.", caller, ix, y));
+				throw BuildingException(this, format("{} - front Layer cell at {},{} is not occupied.", caller, ix, iy));
 			}
 
 			sectors[0] = _getSector(cellDef0.sectorIndex);
 
 			if (cellDef1.sectorIndex == ~0u)
 			{
-				throw BuildingException(this, format("{} - back Layer cell at {},{} is not occupied.", caller, ix, y));
+				throw BuildingException(this, format("{} - back Layer cell at {},{} is not occupied.", caller, ix, iy));
 			}
 
 			sectors[1] = _getSector(cellDef1.sectorIndex);
 
 			if (cellDef0.sectorObjectType == SectorObjectType::Door)
 			{
-				throw BuildingException(this, format("{} - cell at {},{} is already has a door.", caller, ix, y));
+				throw BuildingException(this, format("{} - cell at {},{} is already has a door.", caller, ix, iy));
+			}
+
+			// The decks above the threshold are the opening's headroom: a Walkway or
+			// other floor there runs through the opening.
+			if (iy != y && (cellDef0.floorType != CellFloorType::None
+				|| cellDef1.floorType != CellFloorType::None))
+			{
+				throw BuildingException(this, format(
+					"{} - a Door cannot open through a Walkway above its threshold", caller));
 			}
 
 			validateObjectAllowedInSector(caller, SectorObjectType::Door, cellDef0.sectorIndex);
@@ -3398,7 +3434,7 @@ namespace core
 		// Create door, making sure we add it to the other Location as well
 		// If there is a button, then a stateful button will control a stateless door - the state
 		// can only be in one object.
-		auto doorObject = createDoor(layerIndex, x, y, cellsWide);
+		auto doorObject = createDoor(layerIndex, x, y, cellsWide, decksHigh);
 		auto doorSectorObject = dynamic_pointer_cast<DoorSectorObject>(doorObject.sector->_getObject(doorObject.index));
 		auto door = doorSectorObject->getDoor();
 		door->setOpenStyle(options.openStyle);
@@ -3479,11 +3515,13 @@ namespace core
 		if (backDoorIndex == ~0u)
 			throw BuildingException(this, format("{} - could not locate Door in its back-layer Sector", caller));
 
-		// Set layers
-		for (uint32_t ix = x; ix < x + cellsWide; ++ix)
+		// Set layers.  Every cell the opening covers on either Layer of the pair
+		// carries the Door, so the whole rectangle reads as one object.
+		for (uint32_t iy = y; iy < y + decksHigh; ++iy)
+			for (uint32_t ix = x; ix < x + cellsWide; ++ix)
 		{
-			auto& cellDef0 = frontLayer->getCellDefinition(ix, y);
-			auto& cellDef1 = behindLayer->getCellDefinition(ix, y);
+			auto& cellDef0 = frontLayer->getCellDefinition(ix, iy);
+			auto& cellDef1 = behindLayer->getCellDefinition(ix, iy);
 
 			cellDef0.sectorObjectIndex = doorObject.index;
 			cellDef0.sectorObjectType = doorObject.type;

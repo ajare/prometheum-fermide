@@ -312,8 +312,8 @@ namespace
 		building.finishBuild();
 
 		auto const yaml = serializeBuilding(building);
-		require(yaml.find("version: 7") != std::string::npos,
-			"The Building writer did not emit version 7");
+		require(yaml.find("version: 8") != std::string::npos,
+			"The Building writer did not emit version 8");
 		require(yaml.find("type: background") != std::string::npos,
 			"The Background record was not written");
 		require(yaml.find(std::format("colour: {}",

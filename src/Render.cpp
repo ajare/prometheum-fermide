@@ -467,7 +467,9 @@ void renderDoorOpenUp(shared_ptr<const core::Door> door, uint32_t layer, LayerRe
 	door->getFullShape(bounds0, bounds2);
 
 	bounds1 = bounds0;
-	bounds1.y += door->getOpenPercentage() * CORE_DOOR_HEIGHT;
+	// The leaf travels the Door's own height, which is more than one deck when the
+	// Door stands two decks tall.
+	bounds1.y += door->getOpenPercentage() * door->getSize().y;
 
 	transformPosition(bounds0);
 	transformPosition(bounds1);

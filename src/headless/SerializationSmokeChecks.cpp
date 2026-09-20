@@ -429,7 +429,7 @@ namespace
 		original.serialize(*writer, workData);
 		writer->serialize();
 		auto const yaml = writer->getSerializedString();
-		require(yaml.find("version: 7") != std::string::npos
+		require(yaml.find("version: 8") != std::string::npos
 			&& yaml.find("layers: 2") != std::string::npos
 			&& yaml.find("layerNames:") != std::string::npos
 			&& yaml.find("- Layer 0") != std::string::npos
@@ -2112,6 +2112,91 @@ agents: []
 		}
 	}
 
+	// A regular Door's deck span is authored, persisted and replayed.  A Door
+	// record written before the span existed replays one deck tall, which is all
+	// any pre-span build could ever have shown.
+	void doorDeckSpanPersistsAndLegacyRecordsStayOneDeckTall()
+	{
+		auto findDoor = [](core::Building const& building, uint32_t sectorIndex)
+			-> std::shared_ptr<const core::Door>
+		{
+			auto sector = building.getSector(sectorIndex);
+			if (!sector) return nullptr;
+			for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
+			{
+				auto object = sector->getObject(i);
+				if (object && object->getObjectType() == core::SectorObjectType::Door)
+					return static_pointer_cast<const core::DoorSectorObject>(object)->getDoor();
+			}
+			return nullptr;
+		};
+
+		core::Building original("Two deck door", 8, 3);
+		original.addRoom("Fore room", 0, 0, 0, 7, 2);
+		original.addRoom("Back room", 1, 0, 0, 7, 2);
+		core::Building::CreateDoorOptions doorOptions;
+		doorOptions.width = 1;
+		doorOptions.decksHigh = 2;
+		auto const created = original.addSectorDoor(0, 0, 3, doorOptions);
+		original.finishBuild();
+		auto const createdDoor = findDoor(original, created.door.sector->getIndex());
+		require(createdDoor && createdDoor->getDecksHigh() == 2
+				&& createdDoor->getSize().y > 1.0f,
+			"Ordinary Door creation did not carry the two-deck span");
+
+		// Past the authored ceiling nothing is accepted, authored or replayed.
+		core::Building::CreateDoorOptions tooTall;
+		tooTall.width = 1;
+		tooTall.decksHigh = 3;
+		std::string diagnostic;
+		require(!original.canAddCorridorDoor(0, 0, 5, tooTall, &diagnostic),
+			"A three-deck Door was accepted");
+
+		core::SerializationWorkData workData;
+		auto writer = core::YamlSerializer::toString();
+		original.serialize(*writer, workData);
+		writer->serialize();
+		auto const yaml = writer->getSerializedString();
+		require(yaml.find("decksHigh: 2") != std::string::npos,
+			"Building YAML did not persist the Door's two-deck span");
+
+		core::Building loaded("placeholder", 1, 1);
+		auto reader = core::YamlSerializer::fromString(yaml);
+		reader->deserialize();
+		require(loaded.deserialize(*reader, workData),
+			"Two-deck Door building did not round-trip");
+		auto const loadedDoor = findDoor(loaded, created.door.sector->getIndex());
+		require(loadedDoor && loadedDoor->getDecksHigh() == 2,
+			"Loaded Door did not restore its two-deck span");
+
+		// A Door record with no decksHigh field is a pre-span record.
+		core::Building legacyOriginal("Legacy door", 8, 3);
+		legacyOriginal.addRoom("Fore room", 0, 0, 0, 7, 2);
+		legacyOriginal.addRoom("Back room", 1, 0, 0, 7, 2);
+		auto const legacyCreated = legacyOriginal.addSectorDoor(0, 0, 3);
+		legacyOriginal.finishBuild();
+		core::SerializationWorkData legacyWork;
+		auto legacyWriter = core::YamlSerializer::toString();
+		legacyOriginal.serialize(*legacyWriter, legacyWork);
+		legacyWriter->serialize();
+		auto legacyYaml = legacyWriter->getSerializedString();
+		auto const doorAt = legacyYaml.find("type: door");
+		require(doorAt != std::string::npos, "No Door record in the legacy YAML fixture");
+		auto const spanAt = legacyYaml.find("decksHigh:", doorAt);
+		require(spanAt != std::string::npos, "The Door record carried no decksHigh field");
+		auto const lineStart = legacyYaml.rfind('\n', spanAt) + 1;
+		auto const lineEnd = legacyYaml.find('\n', spanAt);
+		legacyYaml.erase(lineStart, lineEnd - lineStart + 1);
+		core::Building legacy("placeholder", 1, 1);
+		auto legacyReader = core::YamlSerializer::fromString(legacyYaml);
+		legacyReader->deserialize();
+		require(legacy.deserialize(*legacyReader, legacyWork),
+			"A Door record without decksHigh did not load");
+		auto const legacyDoor = findDoor(legacy, legacyCreated.door.sector->getIndex());
+		require(legacyDoor && legacyDoor->getDecksHigh() == 1,
+			"A pre-span Door record did not replay as one deck tall");
+	}
+
 	// Ticket #82: OpenLeft is a fully-fledged authored Door opening style. It is
 	// carried by creation options, persisted as openStyle: openLeft, replayed on
 	// load, editable through the selected-Door editor's Building call (which moves
@@ -2668,7 +2753,7 @@ agents: []
 	}
 
 	// Ticket #100: a map carrying authored Door opening styles is written at
-	// schema version 7, one above the version-6 ceiling of every pre-feature
+	// schema version 8, one above the version-6 ceiling of every pre-feature
 	// build, so those builds refuse the whole file instead of accepting it and
 	// erasing every style when they next save. Version 6 files keep loading,
 	// replaying OpenUp for ordinary and Shuttle-owned Doors and OpenApart for
@@ -2798,8 +2883,8 @@ agents: []
 			("A Lift stop style override was refused: " + diagnostic).c_str());
 
 		auto const yaml = serialize(authored);
-		require(yaml.find("version: 7") != std::string::npos,
-			"A map with authored Door styles was not written at version 7");
+		require(yaml.find("version: 8") != std::string::npos,
+			"A map with authored Door styles was not written at version 8");
 		require(yaml.find("version: 6") == std::string::npos,
 			"A map with authored Door styles still carries version 6");
 		require(yaml.find("openStyle: openLeft") != std::string::npos
@@ -2883,7 +2968,7 @@ agents: []
 			"A legacy Shuttle-owned Door");
 
 		// The current reader still refuses anything above its own ceiling.
-		auto const futureYaml = std::string("version: 8")
+		auto const futureYaml = std::string("version: 9")
 			+ defaultsYaml.substr(defaultsYaml.find("\n"));
 		bool refusedFuture{ false };
 		try
@@ -5543,6 +5628,7 @@ void runSerializationSmokeChecks()
 	physicalControlsPreferDistinctWallPositions();
 	bulkheadDoorsSupportIndependentObjectEditing();
 	doorOpeningStyleIsAuthoredPersistedAndLegacyDefaulted();
+	doorDeckSpanPersistsAndLegacyRecordsStayOneDeckTall();
 	doorOpenLeftPersistsThroughEveryEditorPath();
 	doorOpenRightPersistsThroughEveryEditorPath();
 	doorOpenApartPersistsThroughEveryEditorPath();

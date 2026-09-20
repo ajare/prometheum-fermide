@@ -280,7 +280,10 @@ namespace core
 		case ConstructionType::Door:
 			serializer.writeUint32("layer", record.layer);
 			serializer.writeUint32("y", record.a); serializer.writeUint32("x", record.b);
-			serializer.writeUint32("width", record.c); serializer.writeBool("foreControl", record.p);
+			serializer.writeUint32("width", record.c);
+			// A Door record written before the deck span existed is one deck tall.
+			serializer.writeUint32("decksHigh", record.e == 0 ? 1u : record.e);
+			serializer.writeBool("foreControl", record.p);
 			serializer.writeBool("backControl", record.q); serializer.writeString("activationMode", activationName(record.i));
 			serializer.writeFloat("holdOpenSeconds", record.x); serializer.writeUint32("crossingLanes", record.d);
 			serializer.writeString("openStyle", openStyleName(record.j)); break;
@@ -352,10 +355,11 @@ namespace core
 	void Building::serializeImpl(Serializer& serializer, SerializationWorkData& workData) const
 	{
 		serializer.beginMap("building");
+		// Version 8 is the first schema that persists a regular Door's deck span.
 		// Version 7 is the first schema that persists Door opening styles. Older
 		// readers cap out at version 6, so they refuse these files instead of
 		// silently dropping the authored style fields.
-		serializer.writeUint32("version", 7);
+		serializer.writeUint32("version", 8);
 		serializer.writeString("name", mName);
 		serializer.writeUint32("cellsWide", mCellsWide);
 		serializer.writeUint32("decksHigh", mDecksHigh);
@@ -565,7 +569,9 @@ namespace core
 		case ConstructionType::Door:
 			record.layer = readLayerOr("layer", 0u);
 			record.a = serializer.readUint32("y"); record.b = serializer.readUint32("x");
-			record.c = serializer.readUint32("width"); record.p = serializer.readBool("foreControl");
+			record.c = serializer.readUint32("width");
+			record.e = serializer.readUint32("decksHigh", true, 1);
+			record.p = serializer.readBool("foreControl");
 			record.q = serializer.readBool("backControl"); record.i = readActivation("activationMode");
 			record.x = serializer.readFloat("holdOpenSeconds"); record.d = serializer.readUint32("crossingLanes");
 			record.j = readOpenStyle("openStyle"); break;
@@ -657,7 +663,7 @@ namespace core
 		// Versions 1 through 6 predate Door opening styles; their records replay
 		// through the owner-sensitive defaults (OpenUp for ordinary and
 		// Shuttle-owned Doors, OpenApart for Lift-owned Doors).
-		if (version < 1 || version > 7)
+		if (version < 1 || version > 8)
 		{
 			throw SerializationException("Unsupported Building serialization version");
 		}
@@ -982,7 +988,8 @@ namespace core
 			break;
 		case ConstructionType::Door:
 			addSectorDoor(doorLayer(record), record.a, record.b,
-				{ record.c, { record.p, record.q }, static_cast<DoorActivationMode>(record.i), record.x, record.d,
+				{ record.c, record.e == 0 ? 1u : record.e, { record.p, record.q },
+					static_cast<DoorActivationMode>(record.i), record.x, record.d,
 					static_cast<Door::OpenStyle>(record.j) });
 			break;
 		case ConstructionType::Window:
@@ -3279,6 +3286,12 @@ namespace core
 			diagnostic = "A Door must be one or two cells wide";
 			return false;
 		}
+		if (type == SectorObjectType::Door && resizing
+			&& (targetHeight == 0 || targetHeight > CORE_DOOR_MAX_DECKS))
+		{
+			diagnostic = format("A Door must be one or {} decks high", CORE_DOOR_MAX_DECKS);
+			return false;
+		}
 		if (type == SectorObjectType::Walkway && (plan.x != sourceX || plan.y != sourceY)
 			&& walkwayHasOccupant(owner, sourceX, sourceY))
 		{
@@ -3348,30 +3361,33 @@ namespace core
 				diagnostic = "Door position is outside the building";
 				return false;
 			}
-			// The widened threshold must stay within one Sector on each Layer of
+			// The resized threshold must stay within one Sector on each Layer of
 			// its pair, as authoring requires. Unlike a move, a resize can never
-			// carry a Door across a Sector boundary.
+			// carry a Door across a Sector boundary, in width or in height: the
+			// whole rectangle joins one Sector to one Sector.
 			for (uint32_t layer : { found->layer, layerBehind(found->layer) })
 			{
 				auto const& first = mLayers[layer]->getCellDefinition(plan.x, plan.y);
-				for (uint64_t ix = plan.x; ix < targetRight; ++ix)
-					if (mLayers[layer]->getCellDefinition((uint32_t)ix, plan.y).sectorIndex
-						!= first.sectorIndex)
-					{
-						diagnostic = "A Door must stay within one Sector on each Layer";
-						return false;
-					}
+				for (uint64_t iy = plan.y; iy < targetTop; ++iy)
+					for (uint64_t ix = plan.x; ix < targetRight; ++ix)
+						if (mLayers[layer]->getCellDefinition((uint32_t)ix, (uint32_t)iy).sectorIndex
+							!= first.sectorIndex)
+						{
+							diagnostic = "A Door must stay within one Sector on each Layer";
+							return false;
+						}
 			}
 			// A plain Door cannot grow onto a Lift shaft; landing Doors are owned by
 			// the Lift and resize with it.
 			uint32_t liftX, liftWidth;
-			for (uint64_t ix = plan.x; ix < targetRight; ++ix)
-				if (getLiftLandingGeometry(layerBehind(found->layer), plan.y, (uint32_t)ix,
-						liftX, liftWidth))
-				{
-					diagnostic = "A Door cannot be resized over a Lift";
-						return false;
-				}
+			for (uint64_t iy = plan.y; iy < targetTop; ++iy)
+				for (uint64_t ix = plan.x; ix < targetRight; ++ix)
+					if (getLiftLandingGeometry(layerBehind(found->layer), (uint32_t)iy, (uint32_t)ix,
+							liftX, liftWidth))
+					{
+						diagnostic = "A Door cannot be resized over a Lift";
+							return false;
+					}
 			// Authored crossing lanes outrank a narrower Door: shrinking below
 			// them would silently drop capacity, so the plan refuses.
 			if (found->d != 0 && found->d > targetWidth)
@@ -3379,6 +3395,21 @@ namespace core
 				diagnostic = "A Door cannot shrink below its authored crossing lanes";
 				return false;
 			}
+			// The decks above the threshold are the opening's headroom.  A Walkway
+			// or other floor there runs through the opening, so the Door cannot
+			// grow across it.
+			for (uint64_t iy = plan.y + 1; iy < targetTop; ++iy)
+				for (uint32_t layer : { found->layer, layerBehind(found->layer) })
+					for (uint64_t ix = plan.x; ix < targetRight; ++ix)
+					{
+						auto const& cell = mLayers[layer]->getCellDefinition(
+							(uint32_t)ix, (uint32_t)iy);
+						if (cell.floorType != CellFloorType::None)
+						{
+							diagnostic = "A Door cannot open through a Walkway above its threshold";
+							return false;
+						}
+					}
 		}
 		if (type == SectorObjectType::Lift)
 		{
@@ -3480,25 +3511,32 @@ namespace core
 		}
 		if (type == SectorObjectType::Door)
 		{
+			auto const sourceRight = (uint64_t)sourceX + (uint64_t)ceil(object->getSize().x);
+			auto const sourceTop = (uint64_t)sourceY + (uint64_t)ceil(object->getSize().y);
 			for (uint32_t layer = 0; layer < mLayers.size(); ++layer)
-				for (uint32_t ix = plan.x; ix < targetRight; ++ix)
-				{
-					auto const& cell = mLayers[layer]->getCellDefinition(ix, plan.y);
-					bool const selectedDoorOccupiesCell = plan.y == sourceY
-						&& ix >= sourceX && ix < sourceX + object->getSize().x;
-					if (!cell.markers.empty() || (cell.hasObject() && !selectedDoorOccupiesCell))
+				for (uint64_t iy = plan.y; iy < targetTop; ++iy)
+					for (uint32_t ix = plan.x; ix < targetRight; ++ix)
 					{
-						diagnostic = "Another object blocks the Door's destination";
-						return false;
+						auto const& cell = mLayers[layer]->getCellDefinition((uint32_t)ix, (uint32_t)iy);
+						bool const selectedDoorOccupiesCell = iy >= sourceY && iy < sourceTop
+							&& ix >= sourceX && ix < sourceRight;
+						if (!cell.markers.empty() || (cell.hasObject() && !selectedDoorOccupiesCell))
+						{
+							diagnostic = "Another object blocks the Door's destination";
+							return false;
+						}
 					}
-				}
 		}
 
 		switch (type)
 		{
 		case SectorObjectType::Door:
 			found->a = plan.y; found->b = plan.x;
-			if (plan.resizeRequested) found->c = targetWidth;
+			if (plan.resizeRequested)
+			{
+				found->c = targetWidth;
+				found->e = targetHeight;
+			}
 			break;
 		case SectorObjectType::BulkheadDoor:
 			found->a = owner->getLayerIndex(); found->b = plan.y; found->c = plan.x;
@@ -4668,7 +4706,8 @@ namespace core
 	}
 
 	Building::ObjectMovePlan Building::planResizeSectorDoor(uint32_t sectorIndex,
-		uint32_t objectIndex, uint32_t x, uint32_t y, uint32_t cellsWide) const
+		uint32_t objectIndex, uint32_t x, uint32_t y, uint32_t cellsWide,
+		uint32_t decksHigh) const
 	{
 		ObjectMovePlan plan;
 		plan.sectorIndex = sectorIndex;
@@ -4676,7 +4715,7 @@ namespace core
 		plan.x = x;
 		plan.y = y;
 		plan.previewWidth = cellsWide;
-		plan.previewHeight = 1;
+		plan.previewHeight = decksHigh;
 		plan.resizeRequested = true;
 		if (sectorIndex >= mSectors.size() || !mSectors[sectorIndex]
 			|| objectIndex >= mSectors[sectorIndex]->getNumObjects())

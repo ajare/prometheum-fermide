@@ -22,6 +22,7 @@ namespace core
 
 	private:
 		uint32_t mCellsWide;
+		uint32_t mDecksHigh{ 1 };
 		OpenStyle mOpenStyle{ OpenStyle::OpenUp };
 		std::shared_ptr<const Sector> mSectors[2];
 		DoorActivationMode mActivationMode{ DoorActivationMode::Manual };
@@ -35,10 +36,15 @@ namespace core
 			std::shared_ptr<const Sector> sectors[2]);
 
 	public:
+		// A regular Door stands one or two decks tall; CORE_DOOR_MAX_DECKS is the
+		// authored ceiling.  Lift and Shuttle landing doors are created through the
+		// same path with the one-deck default and never grow.
 		Door(uint32_t cellX, uint32_t cellY, uint32_t cellsWide,
-			std::shared_ptr<const Sector> sectors[2]);
+			std::shared_ptr<const Sector> sectors[2], uint32_t decksHigh = 1);
 
 		uint32_t getCellsWide() const;
+		// The whole number of decks the Door's opening spans, from its threshold deck up.
+		uint32_t getDecksHigh() const { return mDecksHigh; }
 		OpenStyle getOpenStyle() const;
 		void setOpenStyle(OpenStyle style);
 

@@ -13,10 +13,14 @@ namespace core
 	}
 
 	Door::Door(uint32_t cellX, uint32_t cellY, uint32_t cellsWide,
-		std::shared_ptr<const Sector> sectors[2])
+		std::shared_ptr<const Sector> sectors[2], uint32_t decksHigh)
 		: Door((float)cellX + CORE_DOOR_X_INSET, (float)cellY,
-			cellsWide - CORE_DOOR_X_INSET * 2.0f, CORE_DOOR_HEIGHT, cellsWide, sectors)
+			cellsWide - CORE_DOOR_X_INSET * 2.0f,
+			CORE_DOOR_HEIGHT_FOR_DECKS(decksHigh == 0 ? 1 : decksHigh), cellsWide, sectors)
 	{
+		// A delegating constructor may not initialise members alongside the
+		// delegation, so the deck span is settled here.
+		mDecksHigh = decksHigh == 0 ? 1 : decksHigh;
 	}
 
 	uint32_t Door::getCellsWide() const { return mCellsWide; }

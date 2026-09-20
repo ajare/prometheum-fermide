@@ -75,7 +75,7 @@ The controlled boundary between two sectors, such as a doorway or the entrance t
 _Avoid_: Vertex, when discussing physical movement rules
 
 **Door**:
-A threshold that connects two adjacent layers. It is authored on the front layer of the pair and opens into the layer immediately behind it.
+A threshold that connects two adjacent layers. It is authored on the front layer of the pair and opens into the layer immediately behind it. A regular Door stands one or two decks tall; its whole rectangle must lie within a single Sector on each layer of the pair, so it can never join its threshold deck to more than one Sector behind. Only the threshold deck carries a walking floor - the decks above are the opening's headroom, so a Walkway or other floor above the threshold blocks the opening. Lift and Shuttle landing doors belong to their transport and stay one deck tall.
 _Avoid_: Portal
 
 **Crossing width**:

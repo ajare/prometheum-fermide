@@ -534,12 +534,12 @@ namespace
 			return ~0u;
 		};
 		auto resize = [&](std::shared_ptr<const core::SectorObject> const& object,
-			uint32_t x, uint32_t y, uint32_t width)
+			uint32_t x, uint32_t y, uint32_t width, uint32_t height = 1)
 		{
 			auto owner = object->getSector();
 			auto index = findDoorIndex(owner, object);
 			if (index == ~0u) return std::shared_ptr<const core::SectorObject>{};
-			auto plan = building.planResizeSectorDoor(owner->getIndex(), index, x, y, width);
+			auto plan = building.planResizeSectorDoor(owner->getIndex(), index, x, y, width, height);
 			return plan.valid ? building.applyObjectMove(plan)
 				: std::shared_ptr<const core::SectorObject>{};
 		};
@@ -552,15 +552,22 @@ namespace
 		auto index = findDoorIndex(owner, resized);
 		if (index == ~0u) return false;
 		// A Door is one or two cells wide, never zero and never three.
-		if (building.planResizeSectorDoor(owner->getIndex(), index, 2, 0, 0).valid
-			|| building.planResizeSectorDoor(owner->getIndex(), index, 2, 0, 3).valid)
+		if (building.planResizeSectorDoor(owner->getIndex(), index, 2, 0, 0, 1).valid
+			|| building.planResizeSectorDoor(owner->getIndex(), index, 2, 0, 3, 1).valid)
+			return false;
+		// A Door is one or CORE_DOOR_MAX_DECKS decks high, never zero and never three.
+		if (building.planResizeSectorDoor(owner->getIndex(), index, 2, 0, 2, 0).valid
+			|| building.planResizeSectorDoor(owner->getIndex(), index, 2, 0, 2, 3).valid)
 			return false;
 		// The span may not cross the front Sector boundary into the neighbour.
-		if (building.planResizeSectorDoor(owner->getIndex(), index, 7, 0, 2).valid)
+		if (building.planResizeSectorDoor(owner->getIndex(), index, 7, 0, 2, 1).valid)
 			return false;
 		// Nor may it grow into a cell another object occupies.
 		building.addSectorMarker(front, 0, 4.5f);
-		if (building.planResizeSectorDoor(owner->getIndex(), index, 3, 0, 2).valid)
+		if (building.planResizeSectorDoor(owner->getIndex(), index, 3, 0, 2, 1).valid)
+			return false;
+		// These rooms are one deck tall, so the Door cannot grow upward here.
+		if (building.planResizeSectorDoor(owner->getIndex(), index, 2, 0, 2, 2).valid)
 			return false;
 
 		if (!building.rebuildTraversalTopology()) return false;
@@ -587,7 +594,7 @@ namespace
 		owner = laneDoor.door.sector;
 		index = findDoorIndex(owner, laneDoor.door.sector->getObject(laneDoor.door.index));
 		if (index == ~0u
-			|| laneBuilding.planResizeSectorDoor(owner->getIndex(), index, 3, 0, 1).valid)
+			|| laneBuilding.planResizeSectorDoor(owner->getIndex(), index, 3, 0, 1, 1).valid)
 			return false;
 
 		// Lift landing doors belong to the transport and refuse to resize.
@@ -604,11 +611,112 @@ namespace
 		index = findDoorIndex(owner, landingDoor);
 		if (index == ~0u
 			|| liftBuilding.planResizeSectorDoor(owner->getIndex(), index,
-				landingDoor->getCellX(), landingDoor->getCellY(), 1).valid)
+				landingDoor->getCellX(), landingDoor->getCellY(), 1, 1).valid)
 			return false;
 		return true;
 	}
 
+
+	// A regular Door drags vertically as well as horizontally: it may stand up to
+	// CORE_DOOR_MAX_DECKS decks tall.  The whole opening must stay inside one
+	// Sector on each Layer of its pair - it can never join its threshold deck to a
+	// different Sector behind - and must stay clear of other objects.  Lift and
+	// Shuttle landing doors belong to their transport and never grow.
+	bool doorVerticalResizeStaysWithinOneSector()
+	{
+		auto findDoorIndex = [](std::shared_ptr<const core::Sector> const& owner,
+			std::shared_ptr<const core::SectorObject> const& object)
+		{
+			for (uint32_t i = 0; i < owner->getNumObjects(); ++i)
+				if (owner->getObject(i) == object) return i;
+			return ~0u;
+		};
+
+		core::Building building("Tall doors", 12, 3);
+		building.addRoom("Front", 0, 0, 0, 6, 2);
+		building.addRoom("Front above", 0, 2, 0, 6, 1);
+		building.addRoom("Behind", 1, 0, 0, 12, 2);
+		building.addRoom("Behind above", 1, 2, 0, 12, 1);
+		auto created = building.addSectorDoor(0, 0, 3);
+		building.finishBuild();
+		building.pauseSimulation();
+
+		auto doorObject = created.door.sector->getObject(created.door.index);
+		auto owner = doorObject->getSector();
+		auto index = findDoorIndex(owner, doorObject);
+		if (index == ~0u) return false;
+
+		// Growing to the tallest permitted opening is allowed while both Layers of
+		// the pair hold a single Sector across the whole rectangle.
+		auto grownPlan = building.planResizeSectorDoor(owner->getIndex(), index, 3, 0, 1, 2);
+		if (!grownPlan.valid || grownPlan.previewHeight != 2) return false;
+		auto grown = building.applyObjectMove(grownPlan);
+		if (!grown || grown->getSize() != core::Vector2{ 1.0f, 2.0f }) return false;
+		auto const grownDoor = std::static_pointer_cast<const core::DoorSectorObject>(grown)->getDoor();
+		if (!grownDoor || grownDoor->getDecksHigh() != 2) return false;
+		// Every cell the opening covers reads as the Door on both Layers.
+		auto const& constBuilding = building;
+		if (!constBuilding.getLayer(0)->getCellDefinition(3, 1).hasObject()
+			|| !constBuilding.getLayer(1)->getCellDefinition(3, 1).hasObject()) return false;
+		// The deck above is the opening's headroom, not a second threshold: the
+		// rebuilt graph still stands on the threshold deck.
+		if (!building.rebuildTraversalTopology() || !building.isTraversalTopologyValid())
+			return false;
+		core::Building::CreateDoorOptions retained;
+		if (!building.getSectorDoorOptions(0, 0, 3, 1, retained) || retained.decksHigh != 2)
+			return false;
+
+		owner = grown->getSector();
+		index = findDoorIndex(owner, grown);
+		if (index == ~0u) return false;
+		// Past the authored ceiling of CORE_DOOR_MAX_DECKS decks the plan refuses.
+		if (building.planResizeSectorDoor(owner->getIndex(), index, 3, 0, 1, 3).valid)
+			return false;
+		// Sliding the opening up so it straddles the front Sector boundary is
+		// refused: decks 1 and 2 belong to different front Sectors.
+		if (building.planResizeSectorDoor(owner->getIndex(), index, 3, 1, 1, 2).valid)
+			return false;
+		// A Walkway in the deck above blocks the opening from growing into it.
+		core::Building blocked("Blocked above", 12, 3);
+		blocked.addRoom("Front", 0, 0, 0, 6, 2);
+		blocked.addRoom("Behind", 1, 0, 0, 12, 2);
+		auto blockedDoor = blocked.addSectorDoor(0, 0, 3);
+		blocked.finishBuild();
+		blocked.pauseSimulation();
+		blocked.addSectorWalkway(blockedDoor.door.sector->getIndex(), 1, 3);
+		auto blockedObject = blockedDoor.door.sector->getObject(blockedDoor.door.index);
+		auto blockedOwner = blockedObject->getSector();
+		auto blockedIndex = findDoorIndex(blockedOwner, blockedObject);
+		if (blockedIndex == ~0u) return false;
+		if (blocked.planResizeSectorDoor(blockedOwner->getIndex(), blockedIndex, 3, 0, 1, 2).valid)
+			return false;
+
+		// The Sector behind is the one that matters most: a Door that would join
+		// its threshold deck to one Sector below and another above is refused even
+		// where the front Layer is a single Sector all the way up.
+		core::Building split("Split behind", 12, 3);
+		split.addRoom("Front", 0, 0, 0, 12, 2);
+		split.addRoom("Behind lower", 1, 0, 0, 12, 1);
+		split.addRoom("Behind upper", 1, 1, 0, 12, 1);
+		auto splitDoor = split.addSectorDoor(0, 0, 3);
+		split.finishBuild();
+		split.pauseSimulation();
+		auto splitObject = splitDoor.door.sector->getObject(splitDoor.door.index);
+		auto splitOwner = splitObject->getSector();
+		auto splitIndex = findDoorIndex(splitOwner, splitObject);
+		if (splitIndex == ~0u) return false;
+		if (split.planResizeSectorDoor(splitOwner->getIndex(), splitIndex, 3, 0, 1, 2).valid)
+			return false;
+		// The same rule applies when authoring: a two-deck Door cannot be placed
+		// where the Layer behind breaks after one deck.
+		core::Building::CreateDoorOptions tall;
+		tall.width = 1;
+		tall.decksHigh = 2;
+		std::string diagnostic;
+		if (split.canAddCorridorDoor(0, 0, 5, tall, &diagnostic)) return false;
+
+		return true;
+	}
 
 	bool staircasePathSpansOuterCellEdges()
 	{
@@ -5077,6 +5185,11 @@ int main(int argc, char** argv)
 		if (!doorResizeRespectsDoorPlacementRules())
 		{
 			std::cerr << "FAIL: Door resizing did not preserve options or placement rules\n";
+			return 1;
+		}
+		if (!doorVerticalResizeStaysWithinOneSector())
+		{
+			std::cerr << "FAIL: Door vertical resize did not stay within one Sector\n";
 			return 1;
 		}
 		if (!staircasePathSpansOuterCellEdges())

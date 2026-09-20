@@ -67,7 +67,8 @@ namespace core
 
 		// Following functions to be called by Building
 		uint32_t createDoor(std::shared_ptr<const Sector> sector, std::shared_ptr<const Sector> backSector,
-			uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t* vertexIdentifier = nullptr);
+			uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh = 1,
+			uint32_t* vertexIdentifier = nullptr);
 
 		void addDoor(std::shared_ptr<DoorSectorObject> door);
 
