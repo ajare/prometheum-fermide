@@ -1,4 +1,4 @@
-version: 6
+version: 7
 name: Untitled
 cellsWide: 16
 decksHigh: 6
@@ -79,6 +79,7 @@ construction:
     activationMode: manual
     holdOpenSeconds: 5
     crossingLanes: 0
+    openStyle: openUp
   - type: door
     layer: 1
     y: 2
@@ -89,6 +90,7 @@ construction:
     activationMode: manual
     holdOpenSeconds: 5
     crossingLanes: 0
+    openStyle: openUp
   - type: facade
     name: Facade 1
     layer: 0
@@ -150,5 +152,26 @@ construction:
     traversable: false
     initialState: closed
     style: clear
+  - type: door
+    layer: 0
+    y: 0
+    x: 8
+    width: 1
+    foreControl: false
+    backControl: false
+    activationMode: manual
+    holdOpenSeconds: 5
+    crossingLanes: 0
+    openStyle: openUp
+  - type: marker
+    sectorIndex: 0
+    deckIndex: 0
+    xOffset: 0.546875
 agents:
-  []
+  - id: 1
+    agent:
+      name: Agent 1
+      flags: 0
+    sector: 9
+    localX: 9.515625
+    localY: 0
