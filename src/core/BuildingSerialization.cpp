@@ -352,7 +352,10 @@ namespace core
 	void Building::serializeImpl(Serializer& serializer, SerializationWorkData& workData) const
 	{
 		serializer.beginMap("building");
-		serializer.writeUint32("version", 6);
+		// Version 7 is the first schema that persists Door opening styles. Older
+		// readers cap out at version 6, so they refuse these files instead of
+		// silently dropping the authored style fields.
+		serializer.writeUint32("version", 7);
 		serializer.writeString("name", mName);
 		serializer.writeUint32("cellsWide", mCellsWide);
 		serializer.writeUint32("decksHigh", mDecksHigh);
@@ -651,7 +654,10 @@ namespace core
 	{
 		serializer.beginMap("building");
 		auto const version = serializer.readUint32("version");
-		if (version < 1 || version > 6)
+		// Versions 1 through 6 predate Door opening styles; their records replay
+		// through the owner-sensitive defaults (OpenUp for ordinary and
+		// Shuttle-owned Doors, OpenApart for Lift-owned Doors).
+		if (version < 1 || version > 7)
 		{
 			throw SerializationException("Unsupported Building serialization version");
 		}

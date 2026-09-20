@@ -429,7 +429,7 @@ namespace
 		original.serialize(*writer, workData);
 		writer->serialize();
 		auto const yaml = writer->getSerializedString();
-		require(yaml.find("version: 6") != std::string::npos
+		require(yaml.find("version: 7") != std::string::npos
 			&& yaml.find("layers: 2") != std::string::npos
 			&& yaml.find("layerNames:") != std::string::npos
 			&& yaml.find("- Layer 0") != std::string::npos
@@ -2665,6 +2665,240 @@ agents: []
 		shuttleBuilding.finishBuild();
 		requireAll(collectOwnedDoorStyles(shuttleBuilding, false), core::Door::OpenStyle::OpenUp, 2,
 			"A Shuttle-owned Door");
+	}
+
+	// Ticket #100: a map carrying authored Door opening styles is written at
+	// schema version 7, one above the version-6 ceiling of every pre-feature
+	// build, so those builds refuse the whole file instead of accepting it and
+	// erasing every style when they next save. Version 6 files keep loading,
+	// replaying OpenUp for ordinary and Shuttle-owned Doors and OpenApart for
+	// Lift-owned Doors when no style field is present.
+	void doorStyleMapsAdvanceTheSchemaVersionAndLegacySixStillLoads()
+	{
+		auto findDoor = [](core::Building const& building, uint32_t sectorIndex)
+			-> std::shared_ptr<const core::Door>
+		{
+			auto sector = building.getSector(sectorIndex);
+			if (!sector) return nullptr;
+			for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
+			{
+				auto const object = sector->getObject(i);
+				if (object && object->getObjectType() == core::SectorObjectType::Door)
+					return static_pointer_cast<const core::DoorSectorObject>(object)->getDoor();
+			}
+			return nullptr;
+		};
+		// Every Door of one ownership kind, found through the public ownership
+		// predicates rather than by remembering where creation left it.
+		auto collectOwnedDoorStyles = [](core::Building const& building, bool liftDoors)
+		{
+			std::vector<core::Door::OpenStyle> styles;
+			std::set<core::Door const*> seen;
+			for (uint32_t sectorIndex = 0; sectorIndex < building.getNumSectors(); ++sectorIndex)
+			{
+				auto const sector = building.getSector(sectorIndex);
+				if (!sector) continue;
+				for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
+				{
+					auto const object = sector->getObject(i);
+					if (!object || object->getObjectType() != core::SectorObjectType::Door) continue;
+					uint32_t ownerSector{ ~0u }, stopIndex{ ~0u }, carriageIndex{ ~0u };
+					bool const owned = liftDoors
+						? building.isLiftOwnedDoor(object, &ownerSector, &stopIndex)
+						: building.isShuttleOwnedDoor(object, &ownerSector, &stopIndex, &carriageIndex);
+					if (!owned) continue;
+					auto const door = static_pointer_cast<const core::DoorSectorObject>(object)->getDoor();
+					if (!seen.insert(door.get()).second) continue;
+					styles.push_back(door->getOpenStyle());
+				}
+			}
+			return styles;
+		};
+		auto requireAllStyles = [](std::vector<core::Door::OpenStyle> const& styles,
+			core::Door::OpenStyle expected, size_t atLeast, char const* what)
+		{
+			require(styles.size() >= atLeast,
+				(std::string("Too few Doors were found to check: ") + what).c_str());
+			for (auto const style : styles)
+				require(style == expected,
+					(std::string(what) + " has the wrong opening style").c_str());
+		};
+		auto serialize = [](core::Building const& building)
+		{
+			core::SerializationWorkData workData;
+			auto writer = core::YamlSerializer::toString();
+			building.serialize(*writer, workData);
+			writer->serialize();
+			return writer->getSerializedString();
+		};
+
+		// A stand-in for a pre-Door-style (version 6) build's reader: the version
+		// ceiling that build accepted, and its construction-record name table. A
+		// style-bearing map has to be refused at the version check rather than
+		// have its Door style fields silently ignored.
+		uint32_t const preDoorStyleVersionCeiling{ 6 };
+		static std::set<std::string> const preDoorStyleRecordNames{
+			"corridor", "room", "ladder", "stairwell", "staircase", "lift", "shuttle", "door",
+			"window", "bulkheadDoor", "lightSwitch", "forceBridge", "sectorLadder", "platformLift",
+			"walkway", "marker", "removeWall", "removeMarker", "objectTombstone", "background",
+			"facade" };
+		auto preDoorStyleReaderReads = [&](std::string const& yaml)
+		{
+			auto reader = core::YamlSerializer::fromString(yaml);
+			reader->deserialize();
+			reader->beginMap("building");
+			auto const version = reader->readUint32("version");
+			if (version > preDoorStyleVersionCeiling)
+				throw core::SerializationException("Unsupported Building serialization version");
+			reader->beginArray("construction");
+			while (reader->nextArrayItem())
+			{
+				reader->beginMap("");
+				auto const type = reader->readString("type");
+				if (preDoorStyleRecordNames.find(type) == preDoorStyleRecordNames.end())
+					throw core::SerializationException(
+						"Unknown Building construction record type: " + type);
+				reader->endMap();
+			}
+			reader->endArray();
+			reader->endMap();
+		};
+
+		// One map exercising every ownership kind and every style field: an
+		// ordinary OpenLeft Door, a Lift with a per-stop override, and a Shuttle
+		// with a per-Door override.
+		core::Building authored("Door-style schema", 40, 3);
+		authored.addRoom("Fore hall", 0, 0, 0, 8, 3);
+		authored.addRoom("Aft room", 1, 0, 0, 8, 3);
+		core::Building::CreateDoorOptions doorOptions;
+		doorOptions.width = 2;
+		doorOptions.openStyle = core::Door::OpenStyle::OpenLeft;
+		auto const ordinaryDoor = authored.addSectorDoor(0, 0, 3, doorOptions);
+		auto const liftHall = authored.addRoom("Lift hall", 0, 0, 10, 8, 3);
+		for (uint32_t deck = 1; deck < 3; ++deck)
+			for (uint32_t x = 0; x < 8; ++x)
+				authored.addSectorWalkway(liftHall, deck, x);
+		core::Building::CreateLiftOptions liftOptions;
+		liftOptions.cellsWide = 1;
+		liftOptions.decksHigh = 3;
+		liftOptions.stopOffsets = { 0, 1, 2 };
+		auto const lift = authored.addLift(1, 0, 13, liftOptions);
+		authored.addCorridor(0, 0, 20, 20, 1);
+		core::Building::CreateShuttleOptions shuttleOptions{ 2, 3, { 0, 12 }, 0 };
+		shuttleOptions.doorOpenStyles = { static_cast<uint32_t>(core::Door::OpenStyle::OpenApart),
+			~0u, ~0u, ~0u };
+		auto const shuttle = authored.addShuttle(1, 0, 20, 20, shuttleOptions);
+		authored.finishBuild();
+		require(lift.doors.size() == 3, "The Lift did not generate one Door per stop");
+		require(shuttle.doors.size() == 4, "The Shuttle did not generate four landing Doors");
+		authored.pauseSimulation();
+		std::string diagnostic;
+		require(authored.setLiftStopDoorOpenStyle(lift.lift.sector->getIndex(), 1,
+				core::Door::OpenStyle::OpenRight, &diagnostic),
+			("A Lift stop style override was refused: " + diagnostic).c_str());
+
+		auto const yaml = serialize(authored);
+		require(yaml.find("version: 7") != std::string::npos,
+			"A map with authored Door styles was not written at version 7");
+		require(yaml.find("version: 6") == std::string::npos,
+			"A map with authored Door styles still carries version 6");
+		require(yaml.find("openStyle: openLeft") != std::string::npos
+			&& yaml.find("stopDoorOpenStyles") != std::string::npos
+			&& yaml.find("doorOpenStyles") != std::string::npos,
+			"The Door-style fields were not persisted alongside the new version");
+
+		// A version-6 reader refuses the file at the version check: the refusal
+		// is about the schema version, not about record shapes it would have
+		// accepted.
+		bool refusedVersion{ false };
+		try
+		{
+			preDoorStyleReaderReads(yaml);
+		}
+		catch (core::SerializationException const& error)
+		{
+			refusedVersion = true;
+			require(std::string(error.what()).find("version") != std::string::npos,
+				("A version-6 reader failed for a reason other than the version: "
+					+ std::string(error.what())).c_str());
+		}
+		require(refusedVersion, "A version-6 reader accepted a version-7 Door-style map");
+
+		// A defaults-only map replays exactly like a pre-feature version-6 file:
+		// every style field absent.  Reconstruct that legacy shape by rewriting
+		// the version and dropping the only style line the writer emitted.
+		core::Building defaults("Legacy-shaped map", 40, 3);
+		defaults.addRoom("Fore hall", 0, 0, 0, 8, 3);
+		defaults.addRoom("Aft room", 1, 0, 0, 8, 3);
+		auto const defaultDoor = defaults.addSectorDoor(0, 0, 3, core::Building::CreateDoorOptions{});
+		auto const defaultHall = defaults.addRoom("Lift hall", 0, 0, 10, 8, 3);
+		for (uint32_t deck = 1; deck < 3; ++deck)
+			for (uint32_t x = 0; x < 8; ++x)
+				defaults.addSectorWalkway(defaultHall, deck, x);
+		core::Building::CreateLiftOptions defaultLiftOptions;
+		defaultLiftOptions.cellsWide = 1;
+		defaultLiftOptions.decksHigh = 3;
+		defaultLiftOptions.stopOffsets = { 0, 1, 2 };
+		auto const defaultLift = defaults.addLift(1, 0, 13, defaultLiftOptions);
+		defaults.addCorridor(0, 0, 20, 20, 1);
+		core::Building::CreateShuttleOptions defaultShuttleOptions{ 2, 3, { 0, 12 }, 0 };
+		auto const defaultShuttle = defaults.addShuttle(1, 0, 20, 20, defaultShuttleOptions);
+		defaults.finishBuild();
+
+		auto defaultsYaml = serialize(defaults);
+		require(defaultsYaml.find("stopDoorOpenStyles") == std::string::npos
+			&& defaultsYaml.find("doorOpenStyles") == std::string::npos,
+			"A defaults-only map persisted transport style overrides");
+		std::string const styleLine = "    openStyle: openUp\n";
+		require(defaultsYaml.find(styleLine) != std::string::npos,
+			"The defaults-only map did not persist the ordinary Door's openStyle line");
+		auto const legacyYaml = std::string("version: 6")
+			+ defaultsYaml.substr(defaultsYaml.find("\n"));
+		auto const strippedYaml = legacyYaml.substr(0, legacyYaml.find(styleLine))
+			+ legacyYaml.substr(legacyYaml.find(styleLine) + styleLine.size());
+		require(strippedYaml.find("openStyle") == std::string::npos,
+			"The reconstructed legacy map still carried a Door style field");
+
+		// The version-6 reader is content with the legacy shape: its refusal of
+		// the new map is the version alone.
+		preDoorStyleReaderReads(strippedYaml);
+
+		// The current reader loads version 6 and supplies the owner-sensitive
+		// defaults: OpenUp for the ordinary and Shuttle-owned Doors, OpenApart
+		// for the Lift-owned Doors.
+		auto legacy = std::make_shared<core::Building>("placeholder", 1, 1);
+		{
+			core::SerializationWorkData workData;
+			auto reader = core::YamlSerializer::fromString(strippedYaml);
+			reader->deserialize();
+			legacy->deserialize(*reader, workData);
+		}
+		auto const legacyOrdinary = findDoor(*legacy, defaultDoor.door.sector->getIndex());
+		require(legacyOrdinary
+			&& legacyOrdinary->getOpenStyle() == core::Door::OpenStyle::OpenUp,
+			"A legacy ordinary Door did not replay as OpenUp");
+		requireAllStyles(collectOwnedDoorStyles(*legacy, true), core::Door::OpenStyle::OpenApart, 3,
+			"A legacy Lift-owned Door");
+		requireAllStyles(collectOwnedDoorStyles(*legacy, false), core::Door::OpenStyle::OpenUp, 4,
+			"A legacy Shuttle-owned Door");
+
+		// The current reader still refuses anything above its own ceiling.
+		auto const futureYaml = std::string("version: 8")
+			+ defaultsYaml.substr(defaultsYaml.find("\n"));
+		bool refusedFuture{ false };
+		try
+		{
+			core::SerializationWorkData workData;
+			auto reader = core::YamlSerializer::fromString(futureYaml);
+			reader->deserialize();
+			core::Building rejected("placeholder", 1, 1);
+			rejected.deserialize(*reader, workData);
+		}
+		catch (core::SerializationException const&)
+		{
+			refusedFuture = true;
+		}
+		require(refusedFuture, "A version-8 map was accepted by the current reader");
 	}
 
 	// Ticket #85: each Door at a Lift stop carries an individually authored
@@ -4996,6 +5230,7 @@ void runSerializationSmokeChecks()
 	doorOpenRightPersistsThroughEveryEditorPath();
 	doorOpenApartPersistsThroughEveryEditorPath();
 	liftDoorsDefaultToOpenApartWhileOtherDoorsKeepOpenUp();
+	doorStyleMapsAdvanceTheSchemaVersionAndLegacySixStillLoads();
 	liftStopDoorStyleOverridesArePerStopAndPersist();
 	liftDoorStylesFollowStopsWhenTheLiftMovesOrResizes();
 	liftDoorStylesReconcileWhenStopsChange();

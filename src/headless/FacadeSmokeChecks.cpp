@@ -944,8 +944,8 @@ agents: []
 		building.finishBuild();
 
 		auto const yaml = serializeBuilding(building);
-		require(yaml.find("version: 6") != std::string::npos,
-			"The Facade writer did not raise the version above the pre-Facade ceiling");
+		require(yaml.find("version: 7") != std::string::npos,
+			"The writer did not raise the version above the pre-Door-style ceiling");
 
 		bool refusedVersion = false;
 		try
