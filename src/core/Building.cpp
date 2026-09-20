@@ -2142,6 +2142,10 @@ namespace core
 		record.e = decksHigh; record.g = options.initialStop;
 		record.x = options.minimumDwellSeconds; record.y = options.maximumBoardingSeconds;
 		record.values = options.stopOffsets;
+		// The per-stop Door styles are authored Lift data, not just initial Door
+		// state: record them so save/load and later rebuilds replay them, the
+		// way the Shuttle path records its doorOpenStyles.
+		record.overrides = options.stopDoorOpenStyles;
 		recordConstruction(std::move(record));
 		return liftRes;
 	}

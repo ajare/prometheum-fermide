@@ -3051,6 +3051,130 @@ agents: []
 			"Reconstructing an unchanged Lift lost a second per-stop override");
 	}
 
+	// Ticket #101: per-stop Door styles supplied through CreateLiftOptions at
+	// creation time are authored Lift data.  They reach the live Doors, ride in
+	// the Lift's construction record, round-trip through save/load unchanged,
+	// and survive an unchanged rebuild and a stop-preserving resize on their
+	// stop identities.
+	void liftCreationStopDoorStylesAreAuthoredAndPersist()
+	{
+		auto findLiftStopDoor = [](core::Building const& building, uint32_t liftSector,
+			uint32_t stopIndex) -> std::shared_ptr<const core::Door>
+		{
+			for (uint32_t sectorIndex = 0; sectorIndex < building.getNumSectors(); ++sectorIndex)
+			{
+				auto const sector = building.getSector(sectorIndex);
+				if (!sector) continue;
+				for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
+				{
+					auto const object = sector->getObject(i);
+					if (!object || object->getObjectType() != core::SectorObjectType::Door) continue;
+					uint32_t ownerSector{ ~0u }, ownerStop{ ~0u };
+					if (building.isLiftOwnedDoor(object, &ownerSector, &ownerStop)
+						&& ownerSector == liftSector && ownerStop == stopIndex)
+						return static_pointer_cast<const core::DoorSectorObject>(object)->getDoor();
+				}
+			}
+			return nullptr;
+		};
+		auto requireStyles = [&findLiftStopDoor](core::Building const& building, uint32_t liftSector,
+			char const* context)
+		{
+			auto const expected = { core::Door::OpenStyle::OpenLeft, core::Door::OpenStyle::OpenApart,
+				core::Door::OpenStyle::OpenUp };
+			uint32_t stop = 0;
+			for (auto const style : expected)
+			{
+				auto const door = findLiftStopDoor(building, liftSector, stop);
+				require(static_cast<bool>(door),
+					(std::string(context) + ": landing Door is missing").c_str());
+				require(door->getOpenStyle() == style,
+					(std::string(context) + ": stop " + std::to_string(stop)
+						+ " does not carry its creation-time style").c_str());
+				++stop;
+			}
+		};
+		auto snapshotYaml = [](core::Building& building)
+		{
+			core::SerializationWorkData workData;
+			auto writer = core::YamlSerializer::toString();
+			building.serialize(*writer, workData);
+			writer->serialize();
+			return writer->getSerializedString();
+		};
+		auto loadYaml = [](std::string const& yaml)
+		{
+			auto building = std::make_shared<core::Building>("placeholder", 1, 1);
+			core::SerializationWorkData workData;
+			auto reader = core::YamlSerializer::fromString(yaml);
+			reader->deserialize();
+			building->deserialize(*reader, workData);
+			return building;
+		};
+
+		// Landings live on floors 1-3 so extending the shaft downward shifts
+		// every stop offset while retaining the same stop floors.
+		core::Building building("Lift creation styles", 12, 4);
+		building.addRoom("Landing 1", 0, 1, 0, 12, 1);
+		building.addRoom("Landing 2", 0, 2, 0, 12, 1);
+		building.addRoom("Landing 3", 0, 3, 0, 12, 1);
+		core::Building::CreateLiftOptions options;
+		options.cellsWide = 1;
+		options.decksHigh = 3;
+		options.stopOffsets = { 0, 1, 2 };
+		// The middle stop carries no override (~0u) and must keep the generated
+		// OpenApart default through every replay.
+		options.stopDoorOpenStyles = { static_cast<uint32_t>(core::Door::OpenStyle::OpenLeft),
+			~0u, static_cast<uint32_t>(core::Door::OpenStyle::OpenUp) };
+		auto const created = building.addLift(1, 1, 2, options);
+		building.finishBuild();
+		building.pauseSimulation();
+		require(created.doors.size() == 3, "The Lift did not generate three landing Doors");
+		auto const liftSector = created.lift.sector->getIndex();
+		requireStyles(building, liftSector, "Lift styled at creation");
+
+		// The styles are authored record data, so they reach the persistence
+		// boundary immediately rather than only the initial Door objects.
+		auto const yaml = snapshotYaml(building);
+		require(yaml.find("stopDoorOpenStyles") != std::string::npos,
+			"A Lift styled at creation did not persist its stopDoorOpenStyles array");
+		require(yaml.find("openLeft") != std::string::npos
+			&& yaml.find("openUp") != std::string::npos
+			&& yaml.find("default") != std::string::npos,
+			"The persisted stopDoorOpenStyles array lost a creation-time style");
+
+		// Save/load: every style, including the explicit no-override default,
+		// replays onto the same stop.
+		auto loaded = loadYaml(yaml);
+		requireStyles(*loaded, liftSector, "Loaded Lift styled at creation");
+
+		// An unchanged rebuild retains the creation-time styles on their stops.
+		loaded->pauseSimulation();
+		auto const rebuildPlan = loaded->planResizeLift(liftSector, 2, 1, 1, 3);
+		require(rebuildPlan.valid,
+			("An unchanged-topology rebuild plan was refused: " + rebuildPlan.diagnostic).c_str());
+		require(rebuildPlan.stopOffsets == std::vector<uint32_t>{ 0, 1, 2 },
+			"The rebuild plan did not keep the Lift's stop topology");
+		auto const rebuiltSector = loaded->applyLiftEdit(rebuildPlan);
+		require(rebuiltSector == liftSector, "The rebuilt Lift moved to another Sector");
+		requireStyles(*loaded, liftSector, "Rebuilt Lift styled at creation");
+
+		// A stop-preserving resize - the shaft extends below its stops, shifting
+		// every offset - keeps each style on its stop's landing floor.
+		auto const resizePlan = loaded->planResizeLift(liftSector, 2, 0, 1, 4);
+		require(resizePlan.valid,
+			("A stop-preserving resize plan was refused: " + resizePlan.diagnostic).c_str());
+		require(resizePlan.stopOffsets == std::vector<uint32_t>{ 1, 2, 3 },
+			"The resize plan did not shift the stop offsets as expected");
+		auto const resizedSector = loaded->applyLiftEdit(resizePlan);
+		require(resizedSector == liftSector, "The resized Lift moved to another Sector");
+		requireStyles(*loaded, liftSector, "Resized Lift styled at creation");
+
+		// The reconciled styles still round-trip after the resize.
+		auto const resized = loadYaml(snapshotYaml(*loaded));
+		requireStyles(*resized, liftSector, "Loaded Lift after a stop-preserving resize");
+	}
+
 	// Ticket #86: per-stop Door styles follow the stop's identity when the Lift
 	// moves or resizes without changing its stop floors. The overrides remap by
 	// absolute landing floor rather than by the transient offset from the shaft
@@ -5232,6 +5356,7 @@ void runSerializationSmokeChecks()
 	liftDoorsDefaultToOpenApartWhileOtherDoorsKeepOpenUp();
 	doorStyleMapsAdvanceTheSchemaVersionAndLegacySixStillLoads();
 	liftStopDoorStyleOverridesArePerStopAndPersist();
+	liftCreationStopDoorStylesAreAuthoredAndPersist();
 	liftDoorStylesFollowStopsWhenTheLiftMovesOrResizes();
 	liftDoorStylesReconcileWhenStopsChange();
 	shuttleDoorStyleOverridesAreIndividualAndPersist();
