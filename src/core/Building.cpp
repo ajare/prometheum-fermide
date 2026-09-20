@@ -5540,6 +5540,53 @@ namespace core
 		return true;
 	}
 
+	bool Building::canSetAgentGroup(AgentId agent, AgentGroupId group, std::string* diagnostic) const
+	{
+		if (diagnostic) diagnostic->clear();
+
+		auto const agentLookup = lookupAgent(agent);
+		if (!agentLookup)
+		{
+			if (diagnostic) *diagnostic = agentLookup.diagnostic;
+			return false;
+		}
+
+		// An empty AgentGroupId is the "no Agent group" value rather than a
+		// reference to something that may be missing, so clearing an assignment
+		// never has to be judged against the group registry.
+		if (!group) return true;
+
+		auto const lookup = lookupAgentGroup(group);
+		if (!lookup)
+		{
+			if (diagnostic) *diagnostic = lookup.diagnostic;
+			return false;
+		}
+		return true;
+	}
+
+	bool Building::setAgentGroup(AgentId agent, AgentGroupId group, std::string* diagnostic)
+	{
+		// Both halves are judged before a single field is written, so a refusal
+		// leaves every Agent and every group exactly as it was found.
+		if (!canSetAgentGroup(agent, group, diagnostic)) return false;
+
+		// Only the Agent's own reference moves. The group is not told, and no
+		// other Agent is touched: membership is read off the Agent, which is
+		// why a rename never needs to rewrite its members.
+		auto* target = mAgents.find(agent);
+		target->setAgentGroupId(group);
+		modify();
+		return true;
+	}
+
+	AgentGroupId Building::getAgentGroup(AgentId agent) const
+	{
+		auto const lookup = lookupAgent(agent);
+		if (!lookup) throw BuildingException(this, lookup.diagnostic);
+		return lookup.entity->getAgentGroupId();
+	}
+
 	// Interaction and device-operation orchestration - the InteractionPoint and
 	// InteractionRequest lifecycles, the DeviceOperation lifecycle, pressing
 	// physical controls, and the per-tick interaction phases - lives in

@@ -356,10 +356,13 @@ namespace core
 	void Building::serializeImpl(Serializer& serializer, SerializationWorkData& workData) const
 	{
 		serializer.beginMap("building");
-		// Version 9 is the first schema that persists Agent groups. Version 8 is
-		// the first that persists a regular Door's physical height, and version 7
-		// the first that persists Door opening styles. Older readers cap out at
-		// their own version, so they refuse these files instead of silently
+		// Version 9 is the first schema that persists Agent groups, and with
+		// them each Agent's optional Agent group assignment (ticket #110). The
+		// two arrived together because one is meaningless without the other: an
+		// assignment references a group the same document defines. Version 8 is
+		// the first that persists a regular Door's physical height, and version
+		// 7 the first that persists Door opening styles. Older readers cap out
+		// at their own version, so they refuse these files instead of silently
 		// dropping fields they do not know.
 		serializer.writeUint32("version", 9);
 		serializer.writeString("name", mName);
@@ -686,7 +689,8 @@ namespace core
 		// Versions 1 through 6 predate Door opening styles; their records replay
 		// through the owner-sensitive defaults (OpenUp for ordinary and
 		// Shuttle-owned Doors, OpenApart for Lift-owned Doors). Version 9 is the
-		// first to carry Agent groups; versions 1 through 8 load with none.
+		// first to carry Agent groups and the Agent assignments that reference
+		// them; versions 1 through 8 load with neither.
 		if (version < 1 || version > 9)
 		{
 			throw SerializationException("Unsupported Building serialization version");
@@ -810,6 +814,29 @@ namespace core
 		mDeserializingConstruction = false;
 		mConstructionRecords = std::move(records);
 
+		// Every Agent is read and judged before any of them is taken in, so a
+		// refusal in the read - an Agent assigned to an Agent group this file
+		// never defines, a duplicate ID, an impossible position - rejects the
+		// whole document instead of leaving the Building holding some of its
+		// Agents and not others. The Agent group definitions were read ahead of
+		// the Agents that use them, so every group a valid file assigns to is
+		// already registered here.
+		struct PendingAgent
+		{
+			AgentId id;
+			std::unique_ptr<Agent> agent;
+			std::shared_ptr<Sector> sector;
+			float localX{ 0.0f };
+			float localY{ 0.0f };
+			optional<uint32_t> destinationSectorIndex;
+			float destinationLocalX{ 0.0f };
+			float destinationLocalY{ 0.0f };
+			bool pathActive{ false };
+		};
+
+		std::vector<PendingAgent> pending;
+		set<AgentId> seenIds;
+
 		serializer.beginArray("agents");
 		while (serializer.nextArrayItem())
 		{
@@ -839,10 +866,23 @@ namespace core
 			}
 			serializer.endMap();
 
-			if (mAgents.find(id))
+			if (mAgents.find(id) || !seenIds.insert(id).second)
 			{
 				throw SerializationException("Serialized Agent IDs must be unique");
 			}
+
+			// An assignment is restored by ID, so the ID has to name a group this
+			// Building owns. Silently dropping an assignment the file says is
+			// present would be the quiet data loss this check exists to prevent.
+			// An Agent that carries no assignment field simply loads with none.
+			auto const groupId = agent->getAgentGroupId();
+			if (groupId && !lookupAgentGroup(groupId))
+			{
+				throw SerializationException(format(
+					"Serialized Agent '{}' is assigned to Agent group {}, which this Building does not define",
+					agent->getName(), groupId.value));
+			}
+
 			auto sector = _getSector(sectorIndex);
 
 			// Checked before the Agent takes any ownership, so a malformed position
@@ -863,22 +903,33 @@ namespace core
 					"Serialized Agent '{}' path has an invalid destination", agent->getName()));
 			}
 
-			auto const agentName = agent->getName();
-			auto* rawAgent = agent.get();
+			pending.push_back(PendingAgent{
+				id, std::move(agent), sector, localX, localY,
+				destinationSectorIndex, destinationLocalX, destinationLocalY, pathActive });
+		}
+		serializer.endArray();
+		serializer.endMap();
+
+		// Nothing above touched the live world, so the takes-in below runs on
+		// input that has already been judged.
+		for (auto& entry : pending)
+		{
+			auto const agentName = entry.agent->getName();
+			auto* rawAgent = entry.agent.get();
 			rawAgent->attachToBuilding(this);
-			rawAgent->mPosition = SectorPosition(sector.get(), localX, localY);
+			rawAgent->mPosition = SectorPosition(entry.sector.get(), entry.localX, entry.localY);
 			rawAgent->mResetPosition = rawAgent->mPosition;
-			sector->mAgents.insert(rawAgent);
-			mAgents.restore(id, std::move(agent));
-			mAgentIds.emplace(rawAgent, id);
+			entry.sector->mAgents.insert(rawAgent);
+			mAgents.restore(entry.id, std::move(entry.agent));
+			mAgentIds.emplace(rawAgent, entry.id);
 
 			try
 			{
-				if (destinationSectorIndex)
+				if (entry.destinationSectorIndex)
 				{
-					auto const& destinationSector = mSectors[*destinationSectorIndex];
+					auto const& destinationSector = mSectors[*entry.destinationSectorIndex];
 					auto destinationPosition = destinationSector->getPosition()
-						+ Vector2{ destinationLocalX, destinationLocalY };
+						+ Vector2{ entry.destinationLocalX, entry.destinationLocalY };
 					auto destination = mGraph->getClosestVertexInSector(
 						destinationSector.get(), destinationPosition);
 					auto path = mGraph->calculatePath(rawAgent, destination);
@@ -887,9 +938,9 @@ namespace core
 						throw SerializationException(format(
 							"Serialized Agent '{}' path destination is unreachable", agentName));
 					}
-					rawAgent->assignPath(std::move(path), pathActive, false);
+					rawAgent->assignPath(std::move(path), entry.pathActive, false);
 					rawAgent->mResetPath = rawAgent->mPath.path;
-					rawAgent->mResetPathActive = pathActive;
+					rawAgent->mResetPathActive = entry.pathActive;
 				}
 			}
 			catch (Exception const& error)
@@ -898,22 +949,21 @@ namespace core
 				// the Building back the way it was found, so a rejected open never
 				// leaves a half-restored Agent behind for the next attempt to trip
 				// over (#60).
-				sector->mAgents.erase(rawAgent);
+				entry.sector->mAgents.erase(rawAgent);
 				mAgentIds.erase(rawAgent);
-				mAgents.remove(id);
+				mAgents.remove(entry.id);
 				throw SerializationException(format(
 					"Serialized Agent '{}' path could not be restored: {}", agentName, error.getMessage()));
 			}
 			catch (...)
 			{
-				sector->mAgents.erase(rawAgent);
+				entry.sector->mAgents.erase(rawAgent);
 				mAgentIds.erase(rawAgent);
-				mAgents.remove(id);
+				mAgents.remove(entry.id);
 				throw;
 			}
 		}
-		serializer.endArray();
-		serializer.endMap();
+
 		return true;
 	}
 

@@ -29,6 +29,12 @@ namespace core
 		serializer.beginMap("agent");
 		serializer.writeString("name", mName);
 		serializer.writeUint32("flags", mFlags);
+		// The Agent group is written by its stable ID and never by name, so a
+		// rename of the group leaves every assigned Agent's stored form
+		// untouched (ADR 0006). An Agent with no group writes no field at all -
+		// the same convention as an Agent with no path, which writes no `path`
+		// map - so a missing field reads back as "no Agent group".
+		if (mAgentGroup) serializer.writeUint64("group", mAgentGroup.value);
 		serializer.endMap();
 	}
 
@@ -37,6 +43,10 @@ namespace core
 		serializer.beginMap("agent");
 		mName = serializer.readString("name");
 		mFlags = serializer.readUint32("flags");
+		// Absent means no Agent group. Whether an ID that is present actually
+		// names a group this Building owns is the Building's call, made before
+		// the Agent is taken in.
+		mAgentGroup = AgentGroupId{ serializer.readUint64("group", true, 0) };
 		serializer.endMap();
 
 		mState = State::Idle;

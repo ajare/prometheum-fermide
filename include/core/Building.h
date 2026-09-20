@@ -1551,6 +1551,28 @@ namespace core
 		bool renameAgentGroup(AgentGroupId id, std::string const& name,
 			std::string* diagnostic = nullptr);
 
+		// Assigning an Agent to an Agent group, or clearing the assignment.
+		// An empty `group` AgentGroupId means no Agent group, so clearing is
+		// the same operation as assigning rather than a second path through
+		// the API. Both the Agent and the group have to be ones this Building
+		// issued; a refusal changes nothing and reports why.
+		//
+		// Like the group definitions themselves this is editor-only metadata:
+		// it needs no paused simulation, never dirties the traversal topology,
+		// and leaves every runtime snapshot and simulation event as it was.
+		bool canSetAgentGroup(AgentId agent, AgentGroupId group,
+			std::string* diagnostic = nullptr) const;
+
+		// Returns false and changes nothing when the Agent is unknown or the
+		// Agent group is one this Building never defined, reporting the reason
+		// through `diagnostic`.
+		bool setAgentGroup(AgentId agent, AgentGroupId group,
+			std::string* diagnostic = nullptr);
+
+		// The Agent group assigned to an Agent, or an empty AgentGroupId when
+		// it has none. Throws if the Agent is not one this Building owns.
+		AgentGroupId getAgentGroup(AgentId agent) const;
+
 		InteractionPointId createInteractionPoint(std::string const& name);
 
 		InteractionPointId createInteractionPoint(std::string const& name, SectorId sector,

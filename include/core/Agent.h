@@ -66,6 +66,17 @@ namespace core
 
 		std::string mName;
 
+		// The Agent group this Agent is assigned to (ADR 0006). An empty
+		// AgentGroupId means no Agent group, which is the default for every
+		// newly created Agent and for every Agent loaded from a document that
+		// predates the assignment field. The reference is to the group's stable
+		// identity, never to its name, so renaming a group rewrites nothing.
+		//
+		// This is authored editor metadata. It never reaches the runtime
+		// snapshot, the simulation events, or any movement, pathfinding,
+		// capacity or traversal decision.
+		AgentGroupId mAgentGroup{};
+
 		Building* mBuilding{ nullptr };
 
 		SectorPosition mPosition;
@@ -111,6 +122,10 @@ namespace core
 		void serializeImpl(Serializer& serializer, SerializationWorkData& workData) const override;
 
 		bool deserializeImpl(Serializer& serializer, SerializationWorkData& workData) override;
+
+		// Assignment belongs to Building::setAgentGroup, which has already
+		// judged both the Agent and the Agent group against this Building.
+		void setAgentGroupId(AgentGroupId id) { mAgentGroup = id; }
 
 		void setPosition(SectorPosition pos, bool authored = true);
 
@@ -164,6 +179,10 @@ namespace core
 		virtual ~Agent() = default;
 
 		std::string const& getName() const;
+
+		// The Agent group this Agent is assigned to. An empty AgentGroupId
+		// means no Agent group.
+		AgentGroupId getAgentGroupId() const { return mAgentGroup; }
 
 		State getState() const;
 

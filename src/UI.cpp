@@ -29,6 +29,7 @@
 #include "DocumentEdit.h"
 #include "DoorPanel.h"
 #include "AgentGroupsPanel.h"
+#include "AgentGroupAssignmentPanel.h"
 
 #if defined(_WIN32)
 #include <nfd.h>
@@ -5829,7 +5830,7 @@ void renderShuttlePanel(shared_ptr<const core::Building> const& building,
 }
 
 
-void renderAgentView(shared_ptr<const core::Building> building)
+void renderAgentView(shared_ptr<core::Building> building)
 {
 	ImGuiTableFlags flags =
 		ImGuiTableFlags_SizingStretchSame |
@@ -5838,9 +5839,10 @@ void renderAgentView(shared_ptr<const core::Building> building)
 		ImGuiTableFlags_BordersV |
 		ImGuiTableFlags_ContextMenuInBody;
 
-	if (ImGui::BeginTable("Agents", 4, flags))
+	if (ImGui::BeginTable("Agents", 5, flags))
 	{
 		ImGui::TableSetupColumn("Name");
+		ImGui::TableSetupColumn("Group");
 		ImGui::TableSetupColumn("Sector");
 		ImGui::TableSetupColumn("State");
 		ImGui::TableSetupColumn("Path");
@@ -5880,12 +5882,18 @@ void renderAgentView(shared_ptr<const core::Building> building)
 					ImGui::SameLine();
 					ImGui::Text("%s", agent->getName().c_str());
 
-					// Sector
+					// Group: the Agent group this Agent is assigned to, edited in
+					// place. The cell shows the group's current name rather than a
+					// copy of it, so a rename is reflected here the next frame.
 					ImGui::TableSetColumnIndex(1);
+					renderAgentGroupAssignmentCell(building, building->getAgentId(agent));
+
+					// Sector
+					ImGui::TableSetColumnIndex(2);
 					ImGui::TextUnformatted(sector->getDescription().c_str());
 
 					// State
-					ImGui::TableSetColumnIndex(2);
+					ImGui::TableSetColumnIndex(3);
 
 					switch (agent->getState())
 					{
@@ -5915,7 +5923,7 @@ void renderAgentView(shared_ptr<const core::Building> building)
 					}
 
 					// Path
-					ImGui::TableSetColumnIndex(3);
+					ImGui::TableSetColumnIndex(4);
 					
 					auto const& path = agent->getPath();
 					

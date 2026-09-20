@@ -45,6 +45,7 @@
 
 void runSerializationSmokeChecks();
 void runAgentGroupSmokeChecks();
+void runAgentGroupAssignmentSmokeChecks();
 void runShuttleDoorQuerySmokeChecks();
 void runRenderOrderSmokeChecks();
 void runDoorOpenApartRenderSmokeChecks();
@@ -4969,6 +4970,7 @@ int main(int argc, char** argv)
 
 		runSerializationSmokeChecks();
 		runAgentGroupSmokeChecks();
+		runAgentGroupAssignmentSmokeChecks();
 		runRenderOrderSmokeChecks();
 		runDoorOpenApartRenderSmokeChecks();
 		runDoorOpenLeftRenderSmokeChecks();
