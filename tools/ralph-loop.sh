@@ -1,5 +1,29 @@
 #!/usr/bin/env bash
 # Run ready GitHub tickets through pi or Claude Code until no ready work remains.
+#
+# Examples:
+#   Run tickets for a feature label on its matching branch:
+#     tools/ralph-loop.sh --agent pi --labels feature:platform-lifts \
+#       --use-branch feature/platform-lifts
+#
+#   Run the same feature loop, then hunt for bugs:
+#     tools/ralph-loop.sh --agent pi --labels feature:platform-lifts \
+#       --use-branch feature/platform-lifts \
+#       --bug-hunt openai-codex/gpt-5.6-sol:high
+#
+#   Run the feature loop, hunt for bugs, then fix matching bug tickets:
+#     tools/ralph-loop.sh --agent pi --labels feature:platform-lifts \
+#       --use-branch feature/platform-lifts \
+#       --bug-hunt openai-codex/gpt-5.6-sol:high --fix-bugs
+#
+#   Override selected difficulty mappings (may be repeated):
+#     tools/ralph-loop.sh --agent pi --adaptive-model-and-effort \
+#       --difficulty-override easy=openai-codex/gpt-5.6-terra:high \
+#       --difficulty-override hard=openai-codex/gpt-5.6-sol:xhigh
+#
+#   Pin the model and effort for every ticket instead of using adaptive selection:
+#     tools/ralph-loop.sh --agent pi --model openai-codex/gpt-5.6-sol \
+#       --effort high
 set -uo pipefail
 
 usage() {
@@ -12,13 +36,16 @@ Options:
   --effort LEVEL                    off|minimal|low|medium|high|xhigh|max
   --adaptive-model-and-effort       Select model/effort from difficulty label
                                     (cannot be combined with --model or --effort)
+  --difficulty-override D=M:E       Override the adaptive model/effort for difficulty D;
+                                    may be repeated
   --repo OWNER/NAME                 Repository (inferred when omitted)
   --ready-label LABEL               Eligibility label (default: ready-for-agent)
   --labels LABEL[,LABEL...]         Additional required labels; may be repeated
   --use-branch BRANCH               Check out/create this branch
-  --bug-hunt                        Run tools/bug_hunt.sh after the main loop
-  --bug-hunt-model MODEL:EFFORT     Bug-hunt model and effort (required with
-                                    --bug-hunt)
+  --bug-hunt MODEL:EFFORT           Run tools/bug_hunt.sh after the main loop
+                                    with the specified model and effort
+  --fix-bugs                        After bug hunting, process its 'bug' tickets;
+                                    also applies every --labels filter
   --initial-retry-interval-seconds N (default: 30)
   --max-retry-interval-seconds N     (default: 900)
   --usage-poll-seconds N             (default: 600)
@@ -41,17 +68,21 @@ require_value() { [[ $# -ge 2 ]] || { echo "error: $1 requires a value" >&2; exi
 
 agent="" model="" effort="medium" repo="" ready_label="ready-for-agent" use_branch=""
 bug_hunt_model_spec="" bug_hunt_model="" bug_hunt_effort=""
-adaptive=0 once=0 dry_run=0 quiet=0 verbose=0 bug_hunt=0
+adaptive=0 once=0 dry_run=0 quiet=0 verbose=0 bug_hunt=0 fix_bugs=0
 # Track explicit --model/--effort separately: `effort` has a default, so its value
 # alone cannot tell "user asked for medium" from "nobody said".
 model_set=0 effort_set=0
 initial_retry=30 max_retry=900 usage_poll=600
 labels=()
+loop_labels=()
+difficulty_override_specs=()
+declare -A difficulty_override_models difficulty_override_efforts
 while (($#)); do
     case "$1" in
         --agent) require_value "$@"; agent=$2; shift 2 ;;
         --model) require_value "$@"; model=$2; model_set=1; shift 2 ;;
         --effort) require_value "$@"; effort=$2; effort_set=1; shift 2 ;;
+        --difficulty-override) require_value "$@"; difficulty_override_specs+=("$2"); shift 2 ;;
         --repo) require_value "$@"; repo=$2; shift 2 ;;
         --ready-label) require_value "$@"; ready_label=$2; shift 2 ;;
         --labels)
@@ -60,8 +91,8 @@ while (($#)); do
             labels+=("${new_labels[@]}")
             shift 2 ;;
         --use-branch) require_value "$@"; use_branch=$2; shift 2 ;;
-        --bug-hunt) bug_hunt=1; shift ;;
-        --bug-hunt-model) require_value "$@"; bug_hunt_model_spec=$2; shift 2 ;;
+        --bug-hunt) require_value "$@"; bug_hunt=1; bug_hunt_model_spec=$2; shift 2 ;;
+        --fix-bugs) fix_bugs=1; shift ;;
         --initial-retry-interval-seconds) require_value "$@"; initial_retry=$2; shift 2 ;;
         --max-retry-interval-seconds) require_value "$@"; max_retry=$2; shift 2 ;;
         --usage-poll-seconds) require_value "$@"; usage_poll=$2; shift 2 ;;
@@ -86,18 +117,27 @@ if ((adaptive)) && ((model_set || effort_set)); then
     exit 2
 fi
 [[ "$effort" =~ ^(off|minimal|low|medium|high|xhigh|max)$ ]] || { echo "error: unsupported --effort '$effort'" >&2; exit 2; }
+if ((${#difficulty_override_specs[@]})); then
+    ((adaptive)) || { echo "error: --difficulty-override requires --adaptive-model-and-effort" >&2; exit 2; }
+    for override in "${difficulty_override_specs[@]}"; do
+        if [[ "$override" =~ ^(trivial|easy|small|low|medium|large|high|hard)=(.+):(off|minimal|low|medium|high|xhigh|max)$ ]]; then
+            override_difficulty=${BASH_REMATCH[1]}
+            difficulty_override_models[$override_difficulty]=${BASH_REMATCH[2]}
+            difficulty_override_efforts[$override_difficulty]=${BASH_REMATCH[3]}
+        else
+            echo "error: --difficulty-override must be in the form DIFFICULTY=MODEL:EFFORT, with a supported difficulty and effort" >&2
+            exit 2
+        fi
+    done
+fi
 if ((bug_hunt)); then
-    [[ -n "$bug_hunt_model_spec" ]] || { echo "error: --bug-hunt requires --bug-hunt-model MODEL:EFFORT" >&2; exit 2; }
     if [[ "$bug_hunt_model_spec" =~ ^(.+):(off|minimal|low|medium|high|xhigh|max)$ ]]; then
         bug_hunt_model=${BASH_REMATCH[1]}
         bug_hunt_effort=${BASH_REMATCH[2]}
     else
-        echo "error: --bug-hunt-model must be in the form MODEL:EFFORT, with a supported effort" >&2
+        echo "error: --bug-hunt must be in the form MODEL:EFFORT, with a supported effort" >&2
         exit 2
     fi
-elif [[ -n "$bug_hunt_model_spec" ]]; then
-    echo "error: --bug-hunt-model requires --bug-hunt" >&2
-    exit 2
 fi
 [[ "$initial_retry" =~ ^[0-9]+$ && "$max_retry" =~ ^[0-9]+$ && "$usage_poll" =~ ^[0-9]+$ ]] || die "Retry intervals must be integers."
 ((initial_retry >= 1 && max_retry >= initial_retry)) || die "Retry intervals must be positive and max must be at least initial."
@@ -107,6 +147,17 @@ fi
     || die "Effort '$effort' is not supported by claude. Use low, medium, high, xhigh, or max."
 ((bug_hunt == 0)) || [[ "$agent" != claude || "$bug_hunt_effort" =~ ^(low|medium|high|xhigh|max)$ ]] \
     || die "Bug-hunt effort '$bug_hunt_effort' is not supported by claude. Use low, medium, high, xhigh, or max."
+if [[ "$agent" == claude ]]; then
+    for override_difficulty in "${!difficulty_override_efforts[@]}"; do
+        override_effort=${difficulty_override_efforts[$override_difficulty]}
+        [[ "$override_effort" =~ ^(low|medium|high|xhigh|max)$ ]] \
+            || die "Difficulty override effort '$override_effort' is not supported by claude. Use low, medium, high, xhigh, or max."
+    done
+fi
+if ((fix_bugs && !bug_hunt)); then
+    warn "--fix-bugs has no effect without --bug-hunt."
+    fix_bugs=0
+fi
 
 for command in gh git jq perl curl "$agent"; do
     command -v "$command" >/dev/null 2>&1 || die "$command is required but was not found on PATH."
@@ -152,7 +203,7 @@ priority_of() {
 
 get_next_ticket() {
     local args=(issue list --repo "$repo" --state open --label "$ready_label") extra json parents issue number assignee_count assigned blocked rank priority
-    for extra in "${labels[@]}"; do [[ -n "$extra" ]] && args+=(--label "$extra"); done
+    for extra in "${loop_labels[@]}"; do [[ -n "$extra" ]] && args+=(--label "$extra"); done
     args+=(--limit 100 --json number,title,body,labels,assignees,url)
     json=$(gh "${args[@]}") || return 2
     [[ $(jq length <<<"$json") -gt 0 ]] || return 1
@@ -180,6 +231,10 @@ get_next_ticket() {
 # Echoes "<model>|<effort>"; returns non-zero for an unsupported difficulty.
 adaptive_mapping() {
     local difficulty=$1 small large
+    if [[ -n "${difficulty_override_models[$difficulty]+x}" ]]; then
+        echo "${difficulty_override_models[$difficulty]}|${difficulty_override_efforts[$difficulty]}"
+        return 0
+    fi
     if [[ "$agent" == pi ]]; then small="openai-codex/gpt-5.6-terra"; large="openai-codex/gpt-5.6-sol"; else small=sonnet; large=opus; fi
     case "$difficulty" in
         trivial) echo "$small|medium" ;;
@@ -215,7 +270,11 @@ select_adaptive() {
     mapping=$(adaptive_mapping "${difficulties[0]}") || die "Unsupported difficulty '${difficulties[0]}'."
     ticket_model=${mapping%%|*}
     ticket_effort=${mapping##*|}
-    selection_source="adaptive difficulty:${difficulties[0]}"
+    if [[ -n "${difficulty_override_models[${difficulties[0]}]+x}" ]]; then
+        selection_source="difficulty override:${difficulties[0]}"
+    else
+        selection_source="adaptive difficulty:${difficulties[0]}"
+    fi
 }
 
 # One GraphQL call returns every candidate with its real blocker numbers, so the dry
@@ -250,7 +309,12 @@ dry_run_selection() {
     elif [[ "$diffs" == *,* ]]; then
         ticket_model="(conflict)"; ticket_effort="(conflict)"; selection_source="adaptive: conflicting labels [$diffs]"
     elif mapping=$(adaptive_mapping "$diffs"); then
-        ticket_model=${mapping%%|*}; ticket_effort=${mapping##*|}; selection_source="adaptive difficulty:$diffs"
+        ticket_model=${mapping%%|*}; ticket_effort=${mapping##*|}
+        if [[ -n "${difficulty_override_models[$diffs]+x}" ]]; then
+            selection_source="difficulty override:$diffs"
+        else
+            selection_source="adaptive difficulty:$diffs"
+        fi
     else
         ticket_model="(unsupported)"; ticket_effort="(unsupported)"; selection_source="adaptive: unsupported difficulty '$diffs'"
     fi
@@ -486,10 +550,15 @@ server_error_re='HTTP[[:space:]]*(408|409|425|429|5[0-9][0-9])|status[[:space:]]
 
 if ((dry_run)); then run_dry_run; exit 0; fi
 
+run_ticket_loop() {
+    local loop_name=$1
+    shift
+    loop_labels=("${labels[@]}" "$@")
+
 while true; do
     ticket=$(get_next_ticket); ticket_result=$?
     ((ticket_result != 2)) || die "Failed to query eligible tickets."
-    if ((ticket_result == 1)); then status "No unblocked, unclaimed '$ready_label' tickets are available."; break; fi
+    if ((ticket_result == 1)); then status "No unblocked, unclaimed '$ready_label' tickets are available for the $loop_name loop."; break; fi
     number=$(jq -r .number <<<"$ticket"); title=$(jq -r .title <<<"$ticket")
     status "Selected #$number: $title"
     ticket_model=$model; ticket_effort=$effort; selection_source="command line/default"
@@ -560,6 +629,9 @@ EOF
     if [[ -z "$usage" ]]; then warn "Could not read current-ticket usage from $usage_source."; else show_provider_usage "$usage"; fi
     ((once)) && break
 done
+}
+
+run_ticket_loop "initial"
 
 if ((bug_hunt)); then
     bug_hunt_args=(
@@ -571,4 +643,14 @@ if ((bug_hunt)); then
     [[ -z "$use_branch" ]] || bug_hunt_args+=(--branch-only)
     status "Starting post-loop bug hunt with $bug_hunt_model at $bug_hunt_effort effort."
     "$repo_root/tools/bug_hunt.sh" "${bug_hunt_args[@]}"
+    bug_hunt_result=$?
+    if ((bug_hunt_result != 0)); then
+        ((fix_bugs)) && die "Bug hunt failed; bug-fix loop will not start."
+        exit "$bug_hunt_result"
+    fi
+
+    if ((fix_bugs)); then
+        status "Starting post-hunt bug-fix loop."
+        run_ticket_loop "post-hunt bug-fix" bug
+    fi
 fi
