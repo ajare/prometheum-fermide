@@ -2965,6 +2965,251 @@ agents: []
 		}
 	}
 
+	// Ticket #87: per-stop Door styles reconcile by stop identity when stops
+	// are added, removed, or reordered.  A surviving stop keeps its own style,
+	// a removed stop takes its override with it, a newly generated stop
+	// receives the Lift's OpenApart default instead of any discarded style,
+	// stop-list reindexing does not slide styles onto other stops, and the
+	// reconciled result round-trips through save/load.
+	void liftDoorStylesReconcileWhenStopsChange()
+	{
+		auto findLiftStopDoor = [](core::Building const& building, uint32_t liftSector,
+			uint32_t stopIndex) -> std::shared_ptr<const core::Door>
+		{
+			for (uint32_t sectorIndex = 0; sectorIndex < building.getNumSectors(); ++sectorIndex)
+			{
+				auto const sector = building.getSector(sectorIndex);
+				if (!sector) continue;
+				for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
+				{
+					auto const object = sector->getObject(i);
+					if (!object || object->getObjectType() != core::SectorObjectType::Door) continue;
+					uint32_t ownerSector{ ~0u }, ownerStop{ ~0u };
+					if (building.isLiftOwnedDoor(object, &ownerSector, &ownerStop)
+						&& ownerSector == liftSector && ownerStop == stopIndex)
+						return static_pointer_cast<const core::DoorSectorObject>(object)->getDoor();
+				}
+			}
+			return nullptr;
+		};
+		auto stopFloor = [](core::Building const& building, uint32_t liftSector,
+			uint32_t stopIndex) -> uint32_t
+		{
+			auto const lift = std::dynamic_pointer_cast<const core::LiftTransit>(
+				building.getSector(liftSector));
+			require(static_cast<bool>(lift), "The Lift transit disappeared");
+			auto const& value = lift->getStop(stopIndex);
+			return static_cast<uint32_t>((int)value.sector->getCellY() + value.sectorOffsetY);
+		};
+		auto stopCount = [](core::Building const& building, uint32_t liftSector) -> uint32_t
+		{
+			auto const lift = std::dynamic_pointer_cast<const core::LiftTransit>(
+				building.getSector(liftSector));
+			require(static_cast<bool>(lift), "The Lift transit disappeared");
+			return lift->getNumStops();
+		};
+		// Styles are asserted against the stop's landing floor, not its index
+		// in the stop list: the floor is the stop's identity for reconciliation.
+		auto requireStyleAtFloor = [&](core::Building const& building, uint32_t liftSector,
+			uint32_t floor, core::Door::OpenStyle expected, char const* context)
+		{
+			auto const count = stopCount(building, liftSector);
+			for (uint32_t stop = 0; stop < count; ++stop)
+			{
+				if (stopFloor(building, liftSector, stop) != floor) continue;
+				auto const door = findLiftStopDoor(building, liftSector, stop);
+				require(static_cast<bool>(door),
+					(std::string(context) + ": landing Door is missing at floor "
+						+ std::to_string(floor)).c_str());
+				require(door->getOpenStyle() == expected,
+					(std::string(context) + ": the stop at floor " + std::to_string(floor)
+						+ " does not carry its own style").c_str());
+				return;
+			}
+			require(false, (std::string(context) + ": no stop exists at floor "
+				+ std::to_string(floor)).c_str());
+		};
+		auto requireNoStopAtFloor = [](core::Building const& building, uint32_t liftSector,
+			uint32_t floor, char const* context)
+		{
+			auto const lift = std::dynamic_pointer_cast<const core::LiftTransit>(
+				building.getSector(liftSector));
+			require(static_cast<bool>(lift), "The Lift transit disappeared");
+			for (uint32_t stop = 0; stop < lift->getNumStops(); ++stop)
+			{
+				auto const& value = lift->getStop(stop);
+				auto const stopAt = static_cast<uint32_t>((int)value.sector->getCellY()
+					+ value.sectorOffsetY);
+				require(stopAt != floor,
+					(std::string(context) + ": a stop still exists at floor "
+						+ std::to_string(floor)).c_str());
+			}
+		};
+		auto snapshotYaml = [](core::Building& building)
+		{
+			core::SerializationWorkData workData;
+			auto writer = core::YamlSerializer::toString();
+			building.serialize(*writer, workData);
+			writer->serialize();
+			return writer->getSerializedString();
+		};
+		auto loadYaml = [](std::string const& yaml)
+		{
+			auto building = std::make_shared<core::Building>("placeholder", 1, 1);
+			core::SerializationWorkData workData;
+			auto reader = core::YamlSerializer::fromString(yaml);
+			reader->deserialize();
+			building->deserialize(*reader, workData);
+			return building;
+		};
+
+		// Landings on floors 1-3; further landings are added mid-lifecycle so
+		// stops can be created at the top and bottom of the shaft.
+		core::Building building("Lift stop style reconciliation", 12, 5);
+		building.addRoom("Landing 1", 0, 1, 0, 12, 1);
+		building.addRoom("Landing 2", 0, 2, 0, 12, 1);
+		building.addRoom("Landing 3", 0, 3, 0, 12, 1);
+		auto const created = building.addLift(1, 1, 2, 1, 3);
+		building.finishBuild();
+		building.pauseSimulation();
+		auto liftSector = created.lift.sector->getIndex();
+		std::string diagnostic;
+		require(created.doors.size() == 3, "The Lift did not generate three landing Doors");
+		require(building.setLiftStopDoorOpenStyle(liftSector, 0,
+			core::Door::OpenStyle::OpenLeft, &diagnostic),
+			("Styling stop 0 was refused: " + diagnostic).c_str());
+		require(building.setLiftStopDoorOpenStyle(liftSector, 1,
+			core::Door::OpenStyle::OpenUp, &diagnostic),
+			("Styling stop 1 was refused: " + diagnostic).c_str());
+		require(building.setLiftStopDoorOpenStyle(liftSector, 2,
+			core::Door::OpenStyle::OpenRight, &diagnostic),
+			("Styling stop 2 was refused: " + diagnostic).c_str());
+		requireStyleAtFloor(building, liftSector, 1, core::Door::OpenStyle::OpenLeft,
+			"Freshly styled Lift");
+		requireStyleAtFloor(building, liftSector, 2, core::Door::OpenStyle::OpenUp,
+			"Freshly styled Lift");
+		requireStyleAtFloor(building, liftSector, 3, core::Door::OpenStyle::OpenRight,
+			"Freshly styled Lift");
+
+		// Adding a stop: extending the shaft over a new landing creates a stop
+		// at floor 4.  Every surviving stop keeps its own style and the new
+		// Door takes the Lift's generated OpenApart default.  The added Room
+		// record canonicalizes ahead of the Lift, so follow the Lift's Sector.
+		{
+			building.addRoom("Landing 4", 0, 4, 0, 12, 1);
+			auto const plan = building.planResizeLift(liftSector, 2, 1, 1, 4);
+			require(plan.valid, ("Extending the Lift over a new landing was refused: "
+				+ plan.diagnostic).c_str());
+			require(plan.stopOffsets == std::vector<uint32_t>{ 0, 1, 2, 3 },
+				"The extended Lift did not gain the new stop");
+			liftSector = building.applyLiftEdit(plan);
+			require(stopCount(building, liftSector) == 4,
+				"The Lift did not gain exactly one new stop");
+			requireStyleAtFloor(building, liftSector, 1, core::Door::OpenStyle::OpenLeft,
+				"Lift after adding a stop");
+			requireStyleAtFloor(building, liftSector, 2, core::Door::OpenStyle::OpenUp,
+				"Lift after adding a stop");
+			requireStyleAtFloor(building, liftSector, 3, core::Door::OpenStyle::OpenRight,
+				"Lift after adding a stop");
+			requireStyleAtFloor(building, liftSector, 4, core::Door::OpenStyle::OpenApart,
+				"The newly added stop");
+		}
+
+		// Removing a stop: deleting the middle stop (floor 2) takes its OpenUp
+		// override with it; the surviving stops keep their own styles.
+		{
+			auto const plan = building.planRemoveLiftStop(liftSector, 1);
+			require(plan.valid, ("Removing the stop at floor 2 was refused: "
+				+ plan.diagnostic).c_str());
+			liftSector = building.applyLiftEdit(plan);
+			require(stopCount(building, liftSector) == 3,
+				"Removing a stop did not leave three stops");
+			requireNoStopAtFloor(building, liftSector, 2,
+				"Lift after removing its floor-2 stop");
+			requireStyleAtFloor(building, liftSector, 1, core::Door::OpenStyle::OpenLeft,
+				"Lift after removing a stop");
+			requireStyleAtFloor(building, liftSector, 3, core::Door::OpenStyle::OpenRight,
+				"Lift after removing a stop");
+			requireStyleAtFloor(building, liftSector, 4, core::Door::OpenStyle::OpenApart,
+				"Lift after removing a stop");
+		}
+
+		// A later new stop cannot inherit the discarded OpenUp override from
+		// the removed stop it replaced at floor 2: the new identity is
+		// generated with the Lift's OpenApart default while every survivor is
+		// untouched.
+		{
+			auto const plan = building.planResizeLift(liftSector, 2, 1, 1, 4);
+			require(plan.valid, ("Re-adding the stop at floor 2 was refused: "
+				+ plan.diagnostic).c_str());
+			require(plan.stopOffsets == std::vector<uint32_t>{ 0, 1, 2, 3 },
+				"The Lift did not re-derive the stop at floor 2");
+			liftSector = building.applyLiftEdit(plan);
+			require(stopCount(building, liftSector) == 4,
+				"The Lift did not regain its fourth stop");
+			requireStyleAtFloor(building, liftSector, 1, core::Door::OpenStyle::OpenLeft,
+				"Lift after re-adding the floor-2 stop");
+			requireStyleAtFloor(building, liftSector, 2, core::Door::OpenStyle::OpenApart,
+				"The new stop replacing the removed one");
+			requireStyleAtFloor(building, liftSector, 3, core::Door::OpenStyle::OpenRight,
+				"Lift after re-adding the floor-2 stop");
+			requireStyleAtFloor(building, liftSector, 4, core::Door::OpenStyle::OpenApart,
+				"Lift after re-adding the floor-2 stop");
+		}
+
+		// Reordering stop data does not swap styles: adding a stop at the
+		// bottom shifts every surviving stop to a new index in the stop list.
+		// Each style follows its stop's landing floor instead of sliding onto
+		// the Door that now sits at the style's old index.
+		{
+			building.addRoom("Landing 0", 0, 0, 0, 12, 1);
+			auto const plan = building.planResizeLift(liftSector, 2, 0, 1, 5);
+			require(plan.valid, ("Inserting a stop below the Lift was refused: "
+				+ plan.diagnostic).c_str());
+			require(plan.stopOffsets == std::vector<uint32_t>{ 0, 1, 2, 3, 4 },
+				"The Lift did not gain the bottom stop");
+			liftSector = building.applyLiftEdit(plan);
+			require(stopCount(building, liftSector) == 5,
+				"Inserting the bottom stop changed the stop count unexpectedly");
+			require(stopFloor(building, liftSector, 0) == 0
+				&& stopFloor(building, liftSector, 1) == 1
+				&& stopFloor(building, liftSector, 2) == 2
+				&& stopFloor(building, liftSector, 3) == 3
+				&& stopFloor(building, liftSector, 4) == 4,
+				"The shifted stop list is not on the expected floors");
+			requireStyleAtFloor(building, liftSector, 0, core::Door::OpenStyle::OpenApart,
+				"The newly inserted bottom stop");
+			requireStyleAtFloor(building, liftSector, 1, core::Door::OpenStyle::OpenLeft,
+				"Lift after its stop indices shifted down");
+			requireStyleAtFloor(building, liftSector, 2, core::Door::OpenStyle::OpenApart,
+				"Lift after its stop indices shifted down");
+			requireStyleAtFloor(building, liftSector, 3, core::Door::OpenStyle::OpenRight,
+				"Lift after its stop indices shifted down");
+			requireStyleAtFloor(building, liftSector, 4, core::Door::OpenStyle::OpenApart,
+				"Lift after its stop indices shifted down");
+		}
+
+		// The reconciled result round-trips: a save/load after the adds,
+		// the removal, and the reindexing retains every style on its own
+		// stop's landing floor.
+		{
+			auto const yaml = snapshotYaml(building);
+			auto const loaded = loadYaml(yaml);
+			require(stopCount(*loaded, liftSector) == 5,
+				"The loaded Lift lost stops in the round-trip");
+			requireStyleAtFloor(*loaded, liftSector, 0, core::Door::OpenStyle::OpenApart,
+				"Loaded Lift after stop reconciliation");
+			requireStyleAtFloor(*loaded, liftSector, 1, core::Door::OpenStyle::OpenLeft,
+				"Loaded Lift after stop reconciliation");
+			requireStyleAtFloor(*loaded, liftSector, 2, core::Door::OpenStyle::OpenApart,
+				"Loaded Lift after stop reconciliation");
+			requireStyleAtFloor(*loaded, liftSector, 3, core::Door::OpenStyle::OpenRight,
+				"Loaded Lift after stop reconciliation");
+			requireStyleAtFloor(*loaded, liftSector, 4, core::Door::OpenStyle::OpenApart,
+				"Loaded Lift after stop reconciliation");
+		}
+	}
+
 	void recentFilesPersistAcrossStartup()
 	{
 		auto directory = std::filesystem::temp_directory_path() / "prometheum-fermide-recent-files-smoke";
@@ -3791,6 +4036,7 @@ void runSerializationSmokeChecks()
 	liftDoorsDefaultToOpenApartWhileOtherDoorsKeepOpenUp();
 	liftStopDoorStyleOverridesArePerStopAndPersist();
 	liftDoorStylesFollowStopsWhenTheLiftMovesOrResizes();
+	liftDoorStylesReconcileWhenStopsChange();
 	recentFilesPersistAcrossStartup();
 	serializableTracksModificationState();
 	doorAndWindowRemovalWorksOnDeepLayerPairs();
