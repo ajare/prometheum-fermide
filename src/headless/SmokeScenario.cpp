@@ -30,6 +30,7 @@
 #include "core/LiftTransit.h"
 #include "core/LiftSectorObject.h"
 #include "core/DoorSectorObject.h"
+#include "core/DoorVertex.h"
 #include "core/LadderSectorObject.h"
 #include "core/Path.h"
 #include "core/SectorEdge.h"
@@ -1952,6 +1953,161 @@ namespace
 			&& denied->state == core::TraversalRequestState::Denied
 			&& denied->failureReason == core::TraversalFailureReason::ResourceDisabled
 			&& snapshot.traversalResources.front().crossingLeaseCount == 0;
+	}
+
+	// Ticket #97: the band predicate itself - within crossingWidth in x of the
+	// threshold, on the threshold row in y.
+	bool doorCrossingBandPredicateShape()
+	{
+		auto const width = CORE_DOOR_CROSSING_HALF_WIDTH(3);
+		if (std::abs(width - 1.2f) > 0.0001f) return false;
+		if (std::abs(CORE_DOOR_CROSSING_HALF_WIDTH(1) - 0.2f) > 0.0001f) return false;
+
+		auto const threshold = core::Vector2{ 4.5f, 0.0f };
+		if (!core::isWithinDoorCrossingBand({ 4.5f, 0.0f }, threshold, width)) return false;
+		if (!core::isWithinDoorCrossingBand({ 3.3f, 0.0f }, threshold, width)) return false;
+		if (!core::isWithinDoorCrossingBand({ 5.7f, 0.0f }, threshold, width)) return false;
+		if (core::isWithinDoorCrossingBand({ 3.2f, 0.0f }, threshold, width)) return false;
+		if (core::isWithinDoorCrossingBand({ 5.8f, 0.0f }, threshold, width)) return false;
+		if (core::isWithinDoorCrossingBand({ 4.5f, 0.1f }, threshold, width)) return false;
+		if (core::isWithinDoorCrossingBand({ 4.5f, -0.01f }, threshold, width)) return false;
+		return true;
+	}
+
+	// Ticket #97: Door vertices carry the crossing width derived from the
+	// physical doorway (cell width minus the x insets) minus the agent width.
+	bool doorVertexCarriesCrossingWidth()
+	{
+		core::Building building("Crossing width vertices", 8, 2);
+		building.addRoom("Width fore", 0, 0, 0, 7, 1);
+		building.addRoom("Width back", 1, 0, 0, 7, 1);
+		core::Building::CreateDoorOptions wide;
+		wide.width = 3;
+		building.addSectorDoor(0, 0, 1);
+		building.addSectorDoor(0, 0, 3, wide);
+		building.finishBuild();
+
+		bool foundNarrow = false;
+		bool foundWide = false;
+		for (auto const& vertex : building.getGraph()->getVertices())
+		{
+			auto doorVertex = std::dynamic_pointer_cast<const core::DoorVertex>(vertex);
+			if (!doorVertex || !doorVertex->getDoor()) continue;
+			if (doorVertex->getDoor()->getCellsWide() == 1)
+			{
+				foundNarrow = std::abs(doorVertex->getCrossingWidth() - 0.2f) <= 0.0001f;
+				if (!foundNarrow) return false;
+			}
+			else if (doorVertex->getDoor()->getCellsWide() == 3)
+			{
+				foundWide = std::abs(doorVertex->getCrossingWidth() - 1.2f) <= 0.0001f;
+				if (!foundWide) return false;
+			}
+		}
+		return foundNarrow && foundWide;
+	}
+
+	// Runs a contended manual door with a blocker and a waiter that stops at the
+	// queue tail, and records the waiter's grant moment relative to the band.
+	struct CrossingBandTrace
+	{
+		std::string text;
+		bool observedPendingOutsideBand{ false };
+		bool grantedBeforeCentre{ false };
+		bool grantedWithinBand{ false };
+		bool crossedOver{ false };
+	};
+
+	CrossingBandTrace runCrossingWidthGrantScenario(uint32_t cellsWide)
+	{
+		CrossingBandTrace trace;
+		core::Building building("Crossing width grant", 10, 2);
+		auto fore = building.addRoom("Band fore", 0, 0, 0, 9, 1);
+		auto back = building.addRoom("Band back", 1, 0, 0, 9, 1);
+		core::Building::CreateDoorOptions options;
+		options.width = cellsWide;
+		options.activationMode = core::DoorActivationMode::Manual;
+		auto created = building.addSectorDoor(0, 0, 3, options);
+		building.finishBuild();
+
+		auto edge = *std::find_if(building.getGraph()->getEdges().begin(),
+			building.getGraph()->getEdges().end(), [&](auto const& candidate)
+				{ return candidate->getTraversalResourceId() == created.traversalResource; });
+		auto source = edge->getVertex(0)->getSector()->getIndex() == fore
+			? edge->getVertex(0) : edge->getVertex(1);
+		auto destination = edge->getOtherVertex(source);
+		auto const centre = source->getPosition();
+		auto const crossingWidth = CORE_DOOR_CROSSING_HALF_WIDTH(cellsWide);
+
+		auto blockerId = building.createAgent("Band blocker", fore, 0, 7.0f);
+		auto waiterId = building.createAgent("Band waiter", fore, 0, 8.0f);
+		building.lookupAgent(blockerId).entity->setPath(twoNodePath(source, destination, edge), true);
+		building.lookupAgent(waiterId).entity->setPath(twoNodePath(source, destination, edge), true);
+
+		for (uint32_t tick = 0; tick < MaximumSimulationTicks * 2; ++tick)
+		{
+			building.advanceTick();
+			auto snapshot = building.getSimulationSnapshot();
+			auto waiter = std::find_if(snapshot.agents.begin(), snapshot.agents.end(),
+				[&](auto const& value) { return value.id == waiterId; });
+			auto request = std::find_if(snapshot.traversalRequests.begin(),
+				snapshot.traversalRequests.end(),
+				[&](auto const& value) { return value.owner == waiterId; });
+			if (waiter == snapshot.agents.end() || request == snapshot.traversalRequests.end())
+			{
+				continue;
+			}
+			trace.text += std::to_string(tick) + ':' + std::to_string((int)request->state) + ':'
+				+ std::to_string(request->queuePosition) + ':'
+				+ std::to_string(std::bit_cast<uint32_t>(waiter->globalPosition.x)) + ':'
+				+ std::to_string(snapshot.traversalPermits.size()) + ';';
+			auto const hasPermit = std::any_of(snapshot.traversalPermits.begin(),
+				snapshot.traversalPermits.end(),
+				[&](auto const& permit) { return permit.request == request->id; });
+			auto const dx = std::abs(waiter->globalPosition.x - centre.x);
+			if (!hasPermit)
+			{
+				if (request->state == core::TraversalRequestState::Pending
+					&& dx > crossingWidth + 0.001f)
+				{
+					trace.observedPendingOutsideBand = true;
+				}
+				continue;
+			}
+			trace.grantedWithinBand = dx <= crossingWidth + 0.001f
+				&& std::abs(waiter->globalPosition.y - centre.y) <= 0.001f;
+			// The waiter approaches from the right; "before centre" means it is
+			// still short of the door centre by a clear margin.
+			trace.grantedBeforeCentre = waiter->globalPosition.x > centre.x + 0.25f;
+			break;
+		}
+		building.advanceTicks(MaximumSimulationTicks);
+		trace.crossedOver = building.lookupAgent(waiterId).entity->getSector()
+			== building.getSector(back).get();
+		return trace;
+	}
+
+	// Ticket #97: at a wide door the head of queue is granted from inside the
+	// crossing band without reaching its assigned centre position, and repeated
+	// runs produce identical grant traces.
+	bool crossingWidthGrantsHeadOfQueueBeforeCentre()
+	{
+		auto const first = runCrossingWidthGrantScenario(3);
+		auto const second = runCrossingWidthGrantScenario(3);
+		return first.grantedWithinBand && first.grantedBeforeCentre && first.crossedOver
+			&& !first.text.empty() && first.text == second.text;
+	}
+
+	// Ticket #97: at a 1-cell door the band is only +/-0.2, so a head of queue
+	// waiting outside the band is not grant-eligible until it arrives within the
+	// tolerance of the threshold position.
+	bool narrowDoorHeadOfQueueWaitsOutsideBand()
+	{
+		auto const first = runCrossingWidthGrantScenario(1);
+		auto const second = runCrossingWidthGrantScenario(1);
+		return first.observedPendingOutsideBand && first.grantedWithinBand
+			&& !first.grantedBeforeCentre && first.crossedOver
+			&& !first.text.empty() && first.text == second.text;
 	}
 
 	bool doorLeasesAndSensorObservationsPreventUnsafeClosure()
@@ -4796,6 +4952,26 @@ int main(int argc, char** argv)
 		if (!wideDoorLanesAndGracefulDisableAreSafe())
 		{
 			std::cerr << "FAIL: wide door lanes exceeded capacity or deactivation was unsafe\n";
+			return 1;
+		}
+		if (!doorCrossingBandPredicateShape())
+		{
+			std::cerr << "FAIL: door crossing width band predicate admitted or refused the wrong positions\n";
+			return 1;
+		}
+		if (!doorVertexCarriesCrossingWidth())
+		{
+			std::cerr << "FAIL: Door vertices did not carry the derived crossing width\n";
+			return 1;
+		}
+		if (!crossingWidthGrantsHeadOfQueueBeforeCentre())
+		{
+			std::cerr << "FAIL: wide door head of queue was not granted from within the crossing band\n";
+			return 1;
+		}
+		if (!narrowDoorHeadOfQueueWaitsOutsideBand())
+		{
+			std::cerr << "FAIL: 1-cell door granted inside its +/-0.2 band without waiting outside it\n";
 			return 1;
 		}
 		if (!resilientWaitingRetainsPriorityAndExpiresPermits())

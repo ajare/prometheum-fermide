@@ -19,12 +19,14 @@ namespace core
 	DoorVertex::DoorVertex(uint32_t id, shared_ptr<Sector> sector, shared_ptr<Door> door, float xLocationOffset, float yLocationOffset)
 		: Vertex(id, VertexType::Location, VertexSubType::Door, sector,	xLocationOffset, yLocationOffset)
 		, mDoor(door)
+		, mCrossingWidth(door ? CORE_DOOR_CROSSING_HALF_WIDTH(door->getCellsWide()) : 0.0f)
 	{
 	}
 
 	DoorVertex::DoorVertex(shared_ptr<Sector> sector, shared_ptr<Door> door, float xLocationOffset, float yLocationOffset)
 		: Vertex(VertexType::Location, VertexSubType::Door, sector,	xLocationOffset, yLocationOffset)
 		, mDoor(door)
+		, mCrossingWidth(door ? CORE_DOOR_CROSSING_HALF_WIDTH(door->getCellsWide()) : 0.0f)
 	{
 	}
 

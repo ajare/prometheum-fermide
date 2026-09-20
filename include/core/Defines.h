@@ -71,6 +71,11 @@ namespace core
 #define CORE_DOOR_HEIGHT							(CORE_CORRIDOR_HEIGHT - 0.2f)
 #define CORE_DOOR_X_INSET							0.1f
 #define CORE_DOOR_QUEUE_STOP_WIDTH					(CORE_AGENT_MAX_WIDTH + 0.1f)
+// Crossing half-width about a Door vertex's x position (ticket #97): the
+// physical doorway width (cell width minus the door's x insets) minus the
+// agent's width, halved. A 1-cell door yields +/-0.2; a 3-cell door +/-1.2.
+#define CORE_DOOR_CROSSING_HALF_WIDTH(cellsWide)		\
+	(((float)(cellsWide) - 2.0f * CORE_DOOR_X_INSET - CORE_AGENT_MAX_WIDTH) * 0.5f)
 
 //
 // Bulkhead doors

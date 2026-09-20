@@ -11,6 +11,7 @@ namespace core
 	class DoorVertex : public Vertex
 	{
 		std::shared_ptr<Door> mDoor;
+		float mCrossingWidth;
 
 	public:
 
@@ -20,6 +21,12 @@ namespace core
 		DoorVertex(std::shared_ptr<Sector> sector, std::shared_ptr<Door> door, float xLocationOffset, float yLocationOffset);
 
 		std::shared_ptr<Door> getDoor() const;
+
+		// Symmetric distance either side of this vertex's x position within which
+		// an agent on the threshold row may begin crossing (ticket #97). Derived
+		// from the Door's physical doorway width minus the agent's width; never
+		// serialized.
+		float getCrossingWidth() const { return mCrossingWidth; }
 
 		// Overridden from Vertex
 		std::shared_ptr<Vertex> copyWithoutEdges() override;

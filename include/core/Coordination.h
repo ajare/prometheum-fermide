@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cmath>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -270,6 +271,16 @@ namespace core
 		std::vector<TraversalRequestId> positionOwners;
 		std::vector<TraversalRequestId> queue;
 	};
+
+	// The Door crossing-width band (ticket #97): within crossingWidth of the
+	// threshold's x position, on the threshold row. The band relaxes where a
+	// crossing may start; it never stops an agent or reorders a queue.
+	inline bool isWithinDoorCrossingBand(Vector2 const& position,
+		Vector2 const& threshold, float crossingWidth)
+	{
+		return std::abs(position.x - threshold.x) <= crossingWidth + 0.001f
+			&& std::abs(position.y - threshold.y) <= 0.001f;
+	}
 
 	enum struct TraversalFailureReason;
 

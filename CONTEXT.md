@@ -78,6 +78,10 @@ _Avoid_: Vertex, when discussing physical movement rules
 A threshold that connects two adjacent layers. It is authored on the front layer of the pair and opens into the layer immediately behind it.
 _Avoid_: Portal
 
+**Crossing width**:
+At a Door, the symmetric distance either side of the threshold vertex's x position within which an agent on the threshold row may begin crossing. Derived from the physical doorway width (cell width minus the door's x insets) minus the agent's width; a 1-cell door yields +/-0.2. The width relaxes where a crossing starts, never who crosses: queue order, lane allocation, and safety interlocks are unchanged, and the band never stops an agent.
+_Avoid_: Door width, doorway width, when referring to the arrival band
+
 **Window**:
 A threshold, similar to a Door, that connects two adjacent layers and is authored on the front layer of the pair. It always looks into the layer directly behind it, so it can never sit on the back-most layer.
 

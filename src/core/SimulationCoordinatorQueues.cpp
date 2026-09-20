@@ -7,6 +7,7 @@
 #include "core/Agent.h"
 #include "core/Building.h"
 #include "core/Coordination.h"
+#include "core/Defines.h"
 #include "core/Edge.h"
 #include "core/ExtensibleObject.h"
 #include "core/ForceBridge.h"
@@ -474,6 +475,15 @@ namespace core
 			return;
 		}
 
+		// Ticket #97: a plain Door's head-of-queue arrival check is the
+		// crossing-width band - within the door's crossing width in x of the
+		// vertex position, at the threshold row in y - instead of arrival at
+		// the exact assigned position. Force Bridges keep the exact-arrival
+		// check; lift landing doors are routed through the lift coordinator.
+		bool const useCrossingBand = resource.mDoor && !resource.mLiftCoordinator;
+		float const crossingWidth = useCrossingBand
+			? CORE_DOOR_CROSSING_HALF_WIDTH(resource.mDoor->getCellsWide()) : 0.0f;
+
 		bool queueChanged = false;
 		for (uint32_t crossingLane = 0; crossingLane < resource.mCrossingOwners.size(); ++crossingLane)
 		{
@@ -493,7 +503,18 @@ namespace core
 					continue;
 				}
 				auto agent = mBuilding.mAgents.find(candidate->mOwner);
-				if (!agent || agent->getGlobalPosition().distanceTo(
+				if (!agent)
+				{
+					continue;
+				}
+				if (useCrossingBand)
+				{
+					if (!isWithinDoorCrossingBand(agent->getGlobalPosition(), lane.origin, crossingWidth))
+					{
+						continue;
+					}
+				}
+				else if (agent->getGlobalPosition().distanceTo(
 					lane.positions[candidate->mQueuePosition]) > 0.001f)
 				{
 					continue;
