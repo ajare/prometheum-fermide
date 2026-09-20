@@ -3098,8 +3098,12 @@ namespace core
 				*diagnostic = "The selected stop is outside the Lift's authored topology";
 			return false;
 		}
+		// Normalize with a preserving resize: a creation/load vector shorter
+		// than the stop list keeps every authored prefix entry, and only the
+		// newly added slots take the default sentinel.  assign() would discard
+		// accepted overrides on earlier stops.
 		if (found->overrides.size() < found->values.size())
-			found->overrides.assign(found->values.size(), ~0u);
+			found->overrides.resize(found->values.size(), ~0u);
 		found->overrides[stopIndex] = static_cast<uint32_t>(style);
 
 		// The live landing Door rides with its record so the viewport and the

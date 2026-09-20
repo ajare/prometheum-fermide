@@ -3175,6 +3175,135 @@ agents: []
 		requireStyles(*resized, liftSector, "Loaded Lift after a stop-preserving resize");
 	}
 
+	// Ticket #105: editing a stop on a Lift whose creation/load override vector
+	// is shorter than the stop list must not erase the accepted overrides on the
+	// earlier stops.  The setter normalizes with a preserving resize, so every
+	// existing entry survives and only the newly added slots take the default
+	// sentinel.
+	void liftShortStopDoorStyleVectorEditPreservesEarlierOverrides()
+	{
+		auto findLiftStopDoor = [](core::Building const& building, uint32_t liftSector,
+			uint32_t stopIndex) -> std::shared_ptr<const core::Door>
+		{
+			for (uint32_t sectorIndex = 0; sectorIndex < building.getNumSectors(); ++sectorIndex)
+			{
+				auto const sector = building.getSector(sectorIndex);
+				if (!sector) continue;
+				for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
+				{
+					auto const object = sector->getObject(i);
+					if (!object || object->getObjectType() != core::SectorObjectType::Door) continue;
+					uint32_t ownerSector{ ~0u }, ownerStop{ ~0u };
+					if (building.isLiftOwnedDoor(object, &ownerSector, &ownerStop)
+						&& ownerSector == liftSector && ownerStop == stopIndex)
+						return static_pointer_cast<const core::DoorSectorObject>(object)->getDoor();
+				}
+			}
+			return nullptr;
+		};
+		auto requireStyles = [&findLiftStopDoor](core::Building const& building, uint32_t liftSector,
+			std::vector<core::Door::OpenStyle> const& styles, char const* context)
+		{
+			for (size_t stop = 0; stop < styles.size(); ++stop)
+			{
+				auto const door = findLiftStopDoor(building, liftSector, (uint32_t)stop);
+				require(static_cast<bool>(door),
+					(std::string(context) + ": landing Door is missing").c_str());
+				require(door->getOpenStyle() == styles[stop],
+					(std::string(context) + ": stop " + std::to_string(stop)
+						+ " does not carry its expected style").c_str());
+			}
+		};
+		auto snapshotYaml = [](core::Building& building)
+		{
+			core::SerializationWorkData workData;
+			auto writer = core::YamlSerializer::toString();
+			building.serialize(*writer, workData);
+			writer->serialize();
+			return writer->getSerializedString();
+		};
+		auto loadYaml = [](std::string const& yaml)
+		{
+			auto building = std::make_shared<core::Building>("placeholder", 1, 1);
+			core::SerializationWorkData workData;
+			auto reader = core::YamlSerializer::fromString(yaml);
+			reader->deserialize();
+			building->deserialize(*reader, workData);
+			return building;
+		};
+		auto const expectedAfterEdit = { core::Door::OpenStyle::OpenLeft,
+			core::Door::OpenStyle::OpenApart, core::Door::OpenStyle::OpenRight };
+
+		core::Building building("Lift short style vector edit", 12, 4);
+		building.addRoom("Landing 1", 0, 1, 0, 12, 1);
+		building.addRoom("Landing 2", 0, 2, 0, 12, 1);
+		building.addRoom("Landing 3", 0, 3, 0, 12, 1);
+		core::Building::CreateLiftOptions options;
+		options.cellsWide = 1;
+		options.decksHigh = 3;
+		options.stopOffsets = { 0, 1, 2 };
+		// A creation-time vector shorter than the stop list: only stop 0 is
+		// styled; stops 1 and 2 replay with the generated OpenApart default.
+		options.stopDoorOpenStyles = { static_cast<uint32_t>(core::Door::OpenStyle::OpenLeft) };
+		auto const created = building.addLift(1, 1, 2, options);
+		building.finishBuild();
+		building.pauseSimulation();
+		require(created.doors.size() == 3, "The Lift did not generate three landing Doors");
+		auto const liftSector = created.lift.sector->getIndex();
+		requireStyles(building, liftSector,
+			{ core::Door::OpenStyle::OpenLeft, core::Door::OpenStyle::OpenApart,
+				core::Door::OpenStyle::OpenApart },
+			"Lift created with a one-entry style vector");
+
+		// The creation-time document persists the short array as written by
+		// addLift: a single openLeft entry with no padding.
+		auto const shortYaml = snapshotYaml(building);
+		require(shortYaml.find("stopDoorOpenStyles") != std::string::npos,
+			"The short creation-time style vector was not persisted");
+
+		// Editing a later stop preserves the creation-time override on stop 0
+		// and default-fills only the slots that had no authored style.
+		std::string diagnostic;
+		require(building.setLiftStopDoorOpenStyle(liftSector, 2,
+			core::Door::OpenStyle::OpenRight, &diagnostic),
+			("A per-stop override on a short-vector Lift was refused: " + diagnostic).c_str());
+		requireStyles(building, liftSector, expectedAfterEdit,
+			"Live Lift after editing stop 2 of a short-vector Lift");
+		auto const editedYaml = snapshotYaml(building);
+		require(editedYaml.find("openLeft") != std::string::npos
+			&& editedYaml.find("openRight") != std::string::npos
+			&& editedYaml.find("default") != std::string::npos,
+			"The persisted stopDoorOpenStyles array lost the stop 0 override after editing stop 2");
+
+		// The load path: loading the short-array document and editing a later
+		// stop goes through the same normalization without erasing the loaded
+		// prefix entry.
+		auto loaded = loadYaml(shortYaml);
+		loaded->pauseSimulation();
+		require(loaded->setLiftStopDoorOpenStyle(liftSector, 2,
+			core::Door::OpenStyle::OpenRight, &diagnostic),
+			("A per-stop override on a loaded short-vector Lift was refused: " + diagnostic).c_str());
+		requireStyles(*loaded, liftSector, expectedAfterEdit,
+			"Loaded Lift after editing stop 2 with a short override vector");
+
+		// The corrected state round-trips through save/load unchanged.
+		auto const reloaded = loadYaml(snapshotYaml(*loaded));
+		requireStyles(*reloaded, liftSector, expectedAfterEdit,
+			"Reloaded Lift after the corrected edit");
+
+		// An unchanged rebuild retains the corrected result.
+		reloaded->pauseSimulation();
+		auto const rebuildPlan = reloaded->planResizeLift(liftSector, 2, 1, 1, 3);
+		require(rebuildPlan.valid,
+			("An unchanged-topology rebuild plan was refused: " + rebuildPlan.diagnostic).c_str());
+		require(rebuildPlan.stopOffsets == std::vector<uint32_t>{ 0, 1, 2 },
+			"The rebuild plan did not keep the Lift's stop topology");
+		auto const rebuiltSector = reloaded->applyLiftEdit(rebuildPlan);
+		require(rebuiltSector == liftSector, "The rebuilt Lift moved to another Sector");
+		requireStyles(*reloaded, liftSector, expectedAfterEdit,
+			"Unchanged rebuild of the corrected Lift");
+	}
+
 	// Ticket #86: per-stop Door styles follow the stop's identity when the Lift
 	// moves or resizes without changing its stop floors. The overrides remap by
 	// absolute landing floor rather than by the transient offset from the shaft
@@ -5421,6 +5550,7 @@ void runSerializationSmokeChecks()
 	doorStyleMapsAdvanceTheSchemaVersionAndLegacySixStillLoads();
 	liftStopDoorStyleOverridesArePerStopAndPersist();
 	liftCreationStopDoorStylesAreAuthoredAndPersist();
+	liftShortStopDoorStyleVectorEditPreservesEarlierOverrides();
 	liftDoorStylesFollowStopsWhenTheLiftMovesOrResizes();
 	liftDoorStylesReconcileWhenStopsChange();
 	shuttleDoorStyleOverridesAreIndividualAndPersist();
