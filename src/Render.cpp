@@ -460,7 +460,7 @@ void renderGraph(shared_ptr<const core::Graph> graph, shared_ptr<const core::Bui
 }
 
 
-void renderDoorVertFromFloor(shared_ptr<const core::Door> door, uint32_t layer, LayerRenderStyle style, bool /* selected */, ImDrawList* drawList)
+void renderDoorOpenUp(shared_ptr<const core::Door> door, uint32_t layer, LayerRenderStyle style, bool /* selected */, ImDrawList* drawList)
 {
 	core::Vector2 bounds0, bounds1, bounds2;
 
@@ -502,18 +502,6 @@ void renderDoorVertFromFloor(shared_ptr<const core::Door> door, uint32_t layer, 
 }
 
 
-void renderDoorHorzFromCentre(shared_ptr<const core::Door> /* door */, uint32_t /* layer */, LayerRenderStyle /* style */, bool /* selected */, ImDrawList* /* drawList */)
-{
-	throw NotImplementedException("Lift-style Door rendering");
-}
-
-
-void renderDoorQuadIris(shared_ptr<const core::Door> /* door */, uint32_t /* layer */, LayerRenderStyle /* style */, bool /* selected */, ImDrawList* /* drawList */)
-{
-	throw NotImplementedException("Iris Door rendering");
-}
-
-
 void renderDoor(shared_ptr<const core::Door> door, uint32_t layer, LayerRenderStyle style, bool selected, ImDrawList* drawList)
 {
 	if (style == LayerRenderStyle::Hidden)
@@ -525,16 +513,8 @@ void renderDoor(shared_ptr<const core::Door> door, uint32_t layer, LayerRenderSt
 
 	switch (openStyle)
 	{
-	case core::Door::OpenStyle::VertFromFloor:
-		renderDoorVertFromFloor(door, layer, style, selected, drawList);
-		break;
-
-	case core::Door::OpenStyle::HorzFromCentre:
-		renderDoorHorzFromCentre(door, layer, style, selected, drawList);
-		break;
-
-	case core::Door::OpenStyle::QuadIris:
-		renderDoorQuadIris(door, layer, style, selected, drawList);
+	case core::Door::OpenStyle::OpenUp:
+		renderDoorOpenUp(door, layer, style, selected, drawList);
 		break;
 	}
 

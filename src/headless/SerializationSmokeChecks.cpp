@@ -1987,6 +1987,129 @@ agents: []
 			"Bulkhead Door could not be deleted independently");
 	}
 
+	// Ticket #81: OpenUp is the canonical authored Door opening style. It is carried
+	// by creation options, persisted as openStyle: openUp, replayed on load, and
+	// legacy records without a style default to OpenUp while unknown names fail clearly.
+	void doorOpeningStyleIsAuthoredPersistedAndLegacyDefaulted()
+	{
+		auto findDoor = [](core::Building const& building, uint32_t sectorIndex)
+			-> std::shared_ptr<const core::Door>
+		{
+			auto sector = building.getSector(sectorIndex);
+			if (!sector) return nullptr;
+			for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
+			{
+				auto const object = sector->getObject(i);
+				if (object && object->getObjectType() == core::SectorObjectType::Door)
+					return static_pointer_cast<const core::DoorSectorObject>(object)->getDoor();
+			}
+			return nullptr;
+		};
+
+		core::Building original("OpenUp door", 8, 3);
+		original.addRoom("Fore room", 0, 0, 0, 7, 2);
+		original.addRoom("Back room", 1, 0, 0, 7, 2);
+		core::Building::CreateDoorOptions doorOptions;
+		doorOptions.width = 2;
+		doorOptions.openStyle = core::Door::OpenStyle::OpenUp;
+		auto const created = original.addSectorDoor(0, 0, 3, doorOptions);
+		original.finishBuild();
+		auto const createdDoor = findDoor(original, created.door.sector->getIndex());
+		require(createdDoor && createdDoor->getOpenStyle() == core::Door::OpenStyle::OpenUp,
+			"Ordinary Door creation did not carry the OpenUp opening style");
+		core::Building::CreateDoorOptions readBack;
+		require(original.getSectorDoorOptions(0, 0, 3, 2, readBack)
+			&& readBack.openStyle == core::Door::OpenStyle::OpenUp,
+			"Authored Door options did not report the OpenUp opening style");
+
+		core::SerializationWorkData workData;
+		auto writer = core::YamlSerializer::toString();
+		original.serialize(*writer, workData);
+		writer->serialize();
+		auto const yaml = writer->getSerializedString();
+		require(yaml.find("openStyle: openUp") != std::string::npos,
+			"Building YAML did not persist the Door's openStyle: openUp");
+
+		core::Building loaded("placeholder", 1, 1);
+		auto reader = core::YamlSerializer::fromString(yaml);
+		reader->deserialize();
+		require(loaded.deserialize(*reader, workData), "OpenUp Door building did not round-trip");
+		auto const loadedDoor = findDoor(loaded, created.door.sector->getIndex());
+		require(loadedDoor && loadedDoor->getOpenStyle() == core::Door::OpenStyle::OpenUp,
+			"Loaded Door lost its OpenUp opening style");
+		require(loaded.getSectorDoorOptions(0, 0, 3, 2, readBack)
+			&& readBack.openStyle == core::Door::OpenStyle::OpenUp,
+			"Loaded Door options lost the OpenUp opening style");
+
+		// A move replays the authored record at a new position; the style rides along.
+		loaded.pauseSimulation();
+		uint32_t loadedDoorObjectIndex{ ~0u };
+		{
+			auto const sector = loaded.getSector(created.door.sector->getIndex());
+			for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
+			{
+				auto const candidate = sector->getObject(i);
+				if (candidate && candidate->getObjectType() == core::SectorObjectType::Door
+					&& static_pointer_cast<const core::DoorSectorObject>(candidate)->getDoor() == loadedDoor)
+					{ loadedDoorObjectIndex = i; break; }
+			}
+		}
+		require(loadedDoorObjectIndex != ~0u, "Loaded Door object could not be found");
+		auto const movePlan = loaded.planMoveSectorObject(
+			loadedDoor->getFrontSector()->getIndex(), loadedDoorObjectIndex, 5, 0);
+		require(movePlan.valid, "OpenUp Door move plan was rejected");
+		require(loaded.applyObjectMove(movePlan) != nullptr, "OpenUp Door move failed");
+		require(loaded.getSectorDoorOptions(0, 0, 5, 2, readBack)
+			&& readBack.openStyle == core::Door::OpenStyle::OpenUp,
+			"Moving the Door did not preserve its OpenUp opening style");
+
+		// Legacy records written before opening styles existed load as OpenUp.
+		std::string legacyYaml;
+		{
+			std::string const needle = "    openStyle: openUp\n";
+			auto const at = yaml.find(needle);
+			require(at != std::string::npos, "Door openStyle line was not where expected");
+			legacyYaml = yaml.substr(0, at) + yaml.substr(at + needle.size());
+		}
+		core::Building legacy("placeholder", 1, 1);
+		{
+			auto legacyReader = core::YamlSerializer::fromString(legacyYaml);
+			legacyReader->deserialize();
+			require(legacy.deserialize(*legacyReader, workData),
+				"Legacy Door record without an openStyle no longer loads");
+			auto const legacyDoor = findDoor(legacy, created.door.sector->getIndex());
+			require(legacyDoor && legacyDoor->getOpenStyle() == core::Door::OpenStyle::OpenUp,
+				"Legacy Door without a style did not load as OpenUp");
+		}
+
+		// An unknown persisted style name fails with a clear serialization error.
+		{
+			auto const at = legacyYaml.find("crossingLanes:");
+			require(at != std::string::npos, "Door crossingLanes line was not where expected");
+			auto const lineEnd = legacyYaml.find('\n', at);
+			auto const unknownStyle = legacyYaml.substr(0, lineEnd + 1)
+				+ "    openStyle: openSideways\n" + legacyYaml.substr(lineEnd + 1);
+			core::Building rejected("placeholder", 1, 1);
+			auto badReader = core::YamlSerializer::fromString(unknownStyle);
+			badReader->deserialize();
+			bool threw{ false };
+			std::string message;
+			try
+			{
+				rejected.deserialize(*badReader, workData);
+			}
+			catch (core::SerializationException const& error)
+			{
+				threw = true;
+				message = error.what();
+			}
+			require(threw, "Unknown Door opening style was accepted");
+			require(message.find("opening style") != std::string::npos
+				&& message.find("openSideways") != std::string::npos,
+				("Unknown Door opening style gave an imprecise diagnostic: " + message).c_str());
+		}
+	}
+
 	void recentFilesPersistAcrossStartup()
 	{
 		auto directory = std::filesystem::temp_directory_path() / "prometheum-fermide-recent-files-smoke";
@@ -2806,6 +2929,7 @@ void runSerializationSmokeChecks()
 	stairwellsCanBeValidatedEditedAndDeleted();
 	physicalControlsPreferDistinctWallPositions();
 	bulkheadDoorsSupportIndependentObjectEditing();
+	doorOpeningStyleIsAuthoredPersistedAndLegacyDefaulted();
 	recentFilesPersistAcrossStartup();
 	serializableTracksModificationState();
 	doorAndWindowRemovalWorksOnDeepLayerPairs();

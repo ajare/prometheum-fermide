@@ -2950,6 +2950,7 @@ namespace core
 		options.activationMode = static_cast<DoorActivationMode>(found->i);
 		options.holdOpenSeconds = found->x;
 		options.crossingLanes = found->d;
+		options.openStyle = static_cast<Door::OpenStyle>(found->j);
 		return true;
 	}
 
@@ -2998,6 +2999,7 @@ namespace core
 		record.a = y; record.b = x; record.c = options.width; record.d = options.crossingLanes;
 		record.p = options.controls[0]; record.q = options.controls[1];
 		record.i = static_cast<int32_t>(options.activationMode); record.x = options.holdOpenSeconds;
+		record.j = static_cast<int32_t>(options.openStyle);
 		recordConstruction(std::move(record));
 		return result;
 	}
@@ -3145,6 +3147,7 @@ namespace core
 		auto doorObject = createDoor(layerIndex, x, y, cellsWide);
 		auto doorSectorObject = dynamic_pointer_cast<DoorSectorObject>(doorObject.sector->_getObject(doorObject.index));
 		auto door = doorSectorObject->getDoor();
+		door->setOpenStyle(options.openStyle);
 		auto traversalResource = createDoorTraversalResource(
 			format("Door at {},{}", x, y), door, options.activationMode, options.holdOpenSeconds);
 		door->configureTraversal(options.activationMode, traversalResource, options.holdOpenSeconds);

@@ -15,11 +15,13 @@ namespace core
 	{
 		friend class Building;
 	public:
-		enum struct OpenStyle { VertFromFloor, HorzFromCentre, QuadIris };
+		// The authored visual manner in which the Door's leaf reveals its threshold.
+		// Opening style never changes timing, state, obstruction, or traversal.
+		enum struct OpenStyle { OpenUp };
 
 	private:
 		uint32_t mCellsWide;
-		OpenStyle mOpenStyle{ OpenStyle::VertFromFloor };
+		OpenStyle mOpenStyle{ OpenStyle::OpenUp };
 		std::shared_ptr<const Sector> mSectors[2];
 		DoorActivationMode mActivationMode{ DoorActivationMode::Manual };
 		TraversalResourceId mTraversalResource;
@@ -37,6 +39,7 @@ namespace core
 
 		uint32_t getCellsWide() const;
 		OpenStyle getOpenStyle() const;
+		void setOpenStyle(OpenStyle style);
 
 		// A Door joins exactly one adjacent Layer pair.  The index is the side of that
 		// pair, not an absolute Layer index: 0 is the front Layer the Door is authored

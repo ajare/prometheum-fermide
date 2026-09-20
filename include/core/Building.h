@@ -55,6 +55,7 @@ namespace core
 			float holdOpenSeconds{ CORE_DOOR_STAY_OPEN_TIME };
 			// Zero derives one lane per cell of usable threshold width.
 			uint32_t crossingLanes{ 0 };
+			Door::OpenStyle openStyle{ Door::OpenStyle::OpenUp };
 		};
 
 		struct CreateDoorResult

@@ -3192,6 +3192,24 @@ namespace
 		return "Manual";
 	}
 
+	char const* doorOpenStyleName(core::Door::OpenStyle style)
+	{
+		switch (style)
+		{
+		case core::Door::OpenStyle::OpenUp: return "OpenUp";
+		}
+		return "OpenUp";
+	}
+
+	char const* doorOpenStyleLabel(core::Door::OpenStyle style)
+	{
+		switch (style)
+		{
+		case core::Door::OpenStyle::OpenUp: return "Open Up";
+		}
+		return "Open Up";
+	}
+
 	char const* windowStateName(core::Window::State state)
 	{
 		switch (state)
@@ -3268,6 +3286,7 @@ namespace
 				<< YAML::Key << "activationMode" << YAML::Value << activationModeName(options.activationMode)
 				<< YAML::Key << "holdOpenSeconds" << YAML::Value << options.holdOpenSeconds
 				<< YAML::Key << "crossingLanes" << YAML::Value << options.crossingLanes
+				<< YAML::Key << "openStyle" << YAML::Value << doorOpenStyleName(options.openStyle)
 				<< YAML::EndMap;
 		}
 		else if (gSelectedSectorObject->getObjectType() == core::SectorObjectType::BulkheadDoor)
@@ -3419,6 +3438,14 @@ namespace
 			else throw runtime_error("Door activationMode is invalid");
 			definition.door.holdOpenSeconds = requiredYaml<float>(object, "holdOpenSeconds");
 			definition.door.crossingLanes = requiredYaml<uint32_t>(object, "crossingLanes");
+			// A clipboard entry written before opening styles existed carries no style;
+			// it pastes as OpenUp, the only style those builds could ever show.
+			if (object["openStyle"]) {
+				auto style = object["openStyle"].as<std::string>();
+				if (style == "OpenUp") definition.door.openStyle = core::Door::OpenStyle::OpenUp;
+				else throw runtime_error("Door openStyle is invalid");
+			}
+			else definition.door.openStyle = core::Door::OpenStyle::OpenUp;
 		}
 		else if (type == "BulkheadDoor")
 		{
@@ -5219,6 +5246,7 @@ void renderDoorPanel(shared_ptr<core::Building> const& building,
 	ImGui::Text("Position: %.2f, %.2f", position.x, position.y);
 	ImGui::Text("Width: %u cell%s", door->getCellsWide(),
 		door->getCellsWide() == 1 ? "" : "s");
+	ImGui::Text("Opening: %s", doorOpenStyleLabel(door->getOpenStyle()));
 
 	float pct = door->getOpenPercentage() * 100;
 

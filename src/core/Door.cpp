@@ -21,6 +21,7 @@ namespace core
 
 	uint32_t Door::getCellsWide() const { return mCellsWide; }
 	Door::OpenStyle Door::getOpenStyle() const { return mOpenStyle; }
+	void Door::setOpenStyle(OpenStyle style) { mOpenStyle = style; }
 
 	std::shared_ptr<const Sector> Door::getSector(uint32_t pairSide) const
 	{

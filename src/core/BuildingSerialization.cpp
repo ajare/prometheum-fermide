@@ -201,6 +201,14 @@ namespace core
 			}
 			throw SerializationException("Cannot serialize an unknown Door activation mode");
 		};
+		auto openStyleName = [](int32_t style)
+		{
+			switch (static_cast<Door::OpenStyle>(style))
+			{
+			case Door::OpenStyle::OpenUp: return "openUp";
+			}
+			throw SerializationException("Cannot serialize an unknown Door opening style");
+		};
 
 		serializer.writeString("type", constructionTypeName(record.type));
 		switch (record.type)
@@ -255,7 +263,8 @@ namespace core
 			serializer.writeUint32("y", record.a); serializer.writeUint32("x", record.b);
 			serializer.writeUint32("width", record.c); serializer.writeBool("foreControl", record.p);
 			serializer.writeBool("backControl", record.q); serializer.writeString("activationMode", activationName(record.i));
-			serializer.writeFloat("holdOpenSeconds", record.x); serializer.writeUint32("crossingLanes", record.d); break;
+			serializer.writeFloat("holdOpenSeconds", record.x); serializer.writeUint32("crossingLanes", record.d);
+			serializer.writeString("openStyle", openStyleName(record.j)); break;
 		case ConstructionType::Window:
 		{
 			static char const* states[] = { "open", "opening", "closed", "closing", "broken", "frosted", "frosting", "unfrosting", "tinted", "tinting", "untinting" };
@@ -442,6 +451,15 @@ namespace core
 			if (value == "unavailable") return static_cast<int32_t>(DoorActivationMode::Unavailable);
 			throw SerializationException(format("Unknown Door activation mode: {}", value));
 		};
+		auto readOpenStyle = [&](char const* field)
+		{
+			// A Door record written before opening styles existed replays as OpenUp,
+			// the only style those builds could ever show.
+			if (!serializer.hasField(field)) return static_cast<int32_t>(Door::OpenStyle::OpenUp);
+			auto const value = serializer.readString(field);
+			if (value == "openUp") return static_cast<int32_t>(Door::OpenStyle::OpenUp);
+			throw SerializationException(format("Unknown Door opening style: {}", value));
+		};
 		auto readStops = [&]
 		{
 			serializer.beginArray("stopOffsets", false);
@@ -502,7 +520,8 @@ namespace core
 			record.a = serializer.readUint32("y"); record.b = serializer.readUint32("x");
 			record.c = serializer.readUint32("width"); record.p = serializer.readBool("foreControl");
 			record.q = serializer.readBool("backControl"); record.i = readActivation("activationMode");
-			record.x = serializer.readFloat("holdOpenSeconds"); record.d = serializer.readUint32("crossingLanes"); break;
+			record.x = serializer.readFloat("holdOpenSeconds"); record.d = serializer.readUint32("crossingLanes");
+			record.j = readOpenStyle("openStyle"); break;
 		case ConstructionType::Window:
 		{
 			static char const* states[] = { "open", "opening", "closed", "closing", "broken", "frosted", "frosting", "unfrosting", "tinted", "tinting", "untinting" };
@@ -912,7 +931,8 @@ namespace core
 			break;
 		case ConstructionType::Door:
 			addSectorDoor(doorLayer(record), record.a, record.b,
-				{ record.c, { record.p, record.q }, static_cast<DoorActivationMode>(record.i), record.x, record.d });
+				{ record.c, { record.p, record.q }, static_cast<DoorActivationMode>(record.i), record.x, record.d,
+					static_cast<Door::OpenStyle>(record.j) });
 			break;
 		case ConstructionType::Window:
 			addSectorWindow(record.a, record.b, record.c, record.d, record.e,
