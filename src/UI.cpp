@@ -5297,9 +5297,10 @@ void renderDoorPanel(shared_ptr<core::Building> const& building,
 		if (liftOwned) ImGui::Text("Stop: %u (floor %u)", stopIndex, object->getCellY());
 		else ImGui::Text("Stop: %u, carriage: %u", stopIndex, carriageIndex);
 		ImGui::TextDisabled("Landing geometry and controls are managed by the transport.");
+		ImGui::TextDisabled("The opening style is authored per stop and can be changed here.");
 	}
 
-	ImGui::BeginDisabled(!building->isSimulationPaused() || liftOwned || shuttleOwned);
+	ImGui::BeginDisabled(!building->isSimulationPaused() || shuttleOwned);
 	// The combo index is the position in this list, not the enum value, so the
 	// styles can be offered in any order the editor prefers.
 	core::Door::OpenStyle const openStyleChoices[] =
@@ -5313,7 +5314,8 @@ void renderDoorPanel(shared_ptr<core::Building> const& building,
 	{
 		doorOpenStyleLabel(openStyleChoices[0]),
 		doorOpenStyleLabel(openStyleChoices[1]),
-		doorOpenStyleLabel(openStyleChoices[2])
+		doorOpenStyleLabel(openStyleChoices[2]),
+		doorOpenStyleLabel(openStyleChoices[3])
 	};
 	int openStyleIndex = 0;
 	for (size_t i = 0; i < sizeof(openStyleChoices) / sizeof(openStyleChoices[0]); ++i)
@@ -5326,10 +5328,15 @@ void renderDoorPanel(shared_ptr<core::Building> const& building,
 		{
 			gUISettings.worldPaused = true;
 			std::string diagnostic;
-			if (!building->setSectorDoorOpenStyle(door->getFrontSector()->getLayerIndex(),
-				object->getCellY(), object->getCellX(), door->getCellsWide(),
-				openStyleChoices[openStyleIndex],
-				&diagnostic))
+			// A Lift-owned Door has no Door record of its own; the edit lands as a
+			// per-stop override in the Lift's record, leaving sibling stops alone.
+			bool changed = liftOwned
+				? building->setLiftStopDoorOpenStyle(liftSector, stopIndex,
+						openStyleChoices[openStyleIndex], &diagnostic)
+				: building->setSectorDoorOpenStyle(door->getFrontSector()->getLayerIndex(),
+						object->getCellY(), object->getCellX(), door->getCellsWide(),
+						openStyleChoices[openStyleIndex], &diagnostic);
+			if (!changed)
 				throw runtime_error(diagnostic.empty()
 					? "Could not change the Door's opening style" : diagnostic);
 			commitDocumentEdit(std::move(undo));

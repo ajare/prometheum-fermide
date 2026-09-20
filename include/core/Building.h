@@ -162,6 +162,11 @@ namespace core
 			// Used only by open PlatformLifts. Enclosed Lifts retain their separate
 			// minimum-dwell and maximum-boarding timings.
 			float platformStopDurationSeconds{ CORE_PLATFORM_LIFT_STOP_DURATION };
+			// Per-stop landing-Door opening styles, parallel to stopOffsets.  ~0u
+			// means "no override": the generated Door keeps its owner default
+			// (OpenApart for a Lift).  The Lift's topology stays fixed; only the
+			// authored style varies per stop.
+			std::vector<uint32_t> stopDoorOpenStyles{};
 		};
 
 		struct CreateLiftResult
@@ -511,6 +516,10 @@ namespace core
 			float x{ 0.0f }, y{ 0.0f }, z{ 0.0f };
 			bool p{ false }, q{ false };
 			std::vector<uint32_t> values{};
+			// Lift: per-stop landing-Door opening style overrides, parallel to
+			// values (stopOffsets).  ~0u means "no override"; a record whose
+			// overrides are all defaults persists none of them.
+			std::vector<uint32_t> overrides{};
 		};
 
 		std::vector<ConstructionRecord> mConstructionRecords;
@@ -1118,6 +1127,16 @@ namespace core
 		// the new style.  Opening style feeds only the Door's rendering - timing,
 		// state, obstruction, and traversal are untouched.
 		bool setSectorDoorOpenStyle(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t width,
+			Door::OpenStyle style, std::string* diagnostic = nullptr);
+
+		// Re-authors one Lift stop's landing Door opening style while the Lift's
+		// topology stays fixed.  The override lives in the Lift's own record, not
+		// in a Door record, so editing one stop affects no sibling Door; save/load
+		// and snapshot-based undo/redo carry the choice, and reconstructing an
+		// unchanged Lift retains every override.  Stops without an override keep
+		// the generated OpenApart default.  Transport-managed geometry, controls,
+		// timing, and traversal are untouched.
+		bool setLiftStopDoorOpenStyle(uint32_t liftSectorIndex, uint32_t stopIndex,
 			Door::OpenStyle style, std::string* diagnostic = nullptr);
 
 		CreateDoorResult addSectorDoor(uint32_t layerIndex, uint32_t y, uint32_t x);

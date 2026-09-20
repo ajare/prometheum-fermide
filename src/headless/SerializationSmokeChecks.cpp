@@ -2665,6 +2665,156 @@ agents: []
 			"A Shuttle-owned Door");
 	}
 
+	// Ticket #85: each Door at a Lift stop carries an individually authored
+	// opening-style override while the Lift's topology stays fixed. Editing one
+	// stop changes no sibling, the overrides round-trip through Building
+	// persistence, snapshot-based undo/redo restores the previous per-stop
+	// style, and reconstructing an unchanged Lift retains every override.
+	void liftStopDoorStyleOverridesArePerStopAndPersist()
+	{
+		auto findLiftStopDoor = [](core::Building const& building, uint32_t liftSector,
+			uint32_t stopIndex) -> std::shared_ptr<const core::Door>
+		{
+			for (uint32_t sectorIndex = 0; sectorIndex < building.getNumSectors(); ++sectorIndex)
+			{
+				auto const sector = building.getSector(sectorIndex);
+				if (!sector) continue;
+				for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
+				{
+					auto const object = sector->getObject(i);
+					if (!object || object->getObjectType() != core::SectorObjectType::Door) continue;
+					uint32_t ownerSector{ ~0u }, ownerStop{ ~0u };
+					if (building.isLiftOwnedDoor(object, &ownerSector, &ownerStop)
+						&& ownerSector == liftSector && ownerStop == stopIndex)
+						return static_pointer_cast<const core::DoorSectorObject>(object)->getDoor();
+				}
+			}
+			return nullptr;
+		};
+		auto snapshotYaml = [](core::Building& building)
+		{
+			core::SerializationWorkData workData;
+			auto writer = core::YamlSerializer::toString();
+			building.serialize(*writer, workData);
+			writer->serialize();
+			return writer->getSerializedString();
+		};
+		auto loadYaml = [](std::string const& yaml)
+		{
+			auto building = std::make_shared<core::Building>("placeholder", 1, 1);
+			core::SerializationWorkData workData;
+			auto reader = core::YamlSerializer::fromString(yaml);
+			reader->deserialize();
+			building->deserialize(*reader, workData);
+			return building;
+		};
+
+		core::Building building("Lift stop door styles", 12, 3);
+		building.addRoom("Landing A", 0, 0, 0, 12, 1);
+		building.addRoom("Landing B", 0, 1, 0, 12, 1);
+		building.addRoom("Landing C", 0, 2, 0, 12, 1);
+		auto const created = building.addLift(1, 0, 2, 1, 3);
+		building.finishBuild();
+		require(created.doors.size() == 3, "The Lift did not generate three landing Doors");
+		auto const liftSector = created.lift.sector->getIndex();
+		building.pauseSimulation();
+
+		// A Lift with no per-stop choices persists no style data at all, and an
+		// override outside the authored topology is refused.
+		require(snapshotYaml(building).find("stopDoorOpenStyles") == std::string::npos,
+			"A Lift with no per-stop overrides persisted a stopDoorOpenStyles array");
+		std::string diagnostic;
+		require(!building.setLiftStopDoorOpenStyle(liftSector, 3,
+			core::Door::OpenStyle::OpenLeft, &diagnostic),
+			"An override was accepted for a stop outside the Lift's authored topology");
+
+		// Editing one stop takes effect live and touches no sibling stop.
+		require(building.setLiftStopDoorOpenStyle(liftSector, 1,
+			core::Door::OpenStyle::OpenLeft, &diagnostic),
+			("A per-stop override was refused: " + diagnostic).c_str());
+		require(findLiftStopDoor(building, liftSector, 1)->getOpenStyle()
+			== core::Door::OpenStyle::OpenLeft,
+			"The edited Lift stop Door did not take the override live");
+		require(findLiftStopDoor(building, liftSector, 0)->getOpenStyle()
+				== core::Door::OpenStyle::OpenApart
+			&& findLiftStopDoor(building, liftSector, 2)->getOpenStyle()
+				== core::Door::OpenStyle::OpenApart,
+			"Editing one Lift stop Door changed a sibling stop");
+
+		// A second stop takes its own style while the first keeps its own.
+		require(building.setLiftStopDoorOpenStyle(liftSector, 2,
+			core::Door::OpenStyle::OpenUp, &diagnostic),
+			("A second per-stop override was refused: " + diagnostic).c_str());
+		require(findLiftStopDoor(building, liftSector, 1)->getOpenStyle()
+			== core::Door::OpenStyle::OpenLeft,
+			"Editing a second Lift stop changed the first stop's override");
+
+		// Save/load: the overrides ride in the Lift's own record, and the stop
+		// without an override replays as the generated OpenApart default.
+		auto const yaml = snapshotYaml(building);
+		require(yaml.find("stopDoorOpenStyles") != std::string::npos,
+			"The Lift record did not persist its per-stop Door styles");
+		require(yaml.find("openLeft") != std::string::npos
+			&& yaml.find("openUp") != std::string::npos
+			&& yaml.find("default") != std::string::npos,
+			"The persisted stopDoorOpenStyles array lost a stop's style");
+		auto loaded = loadYaml(yaml);
+		require(findLiftStopDoor(*loaded, liftSector, 0)->getOpenStyle()
+			== core::Door::OpenStyle::OpenApart,
+			"A loaded Lift stop without an override lost the OpenApart default");
+		require(findLiftStopDoor(*loaded, liftSector, 1)->getOpenStyle()
+			== core::Door::OpenStyle::OpenLeft,
+			"A loaded Lift stop lost its OpenLeft override");
+		require(findLiftStopDoor(*loaded, liftSector, 2)->getOpenStyle()
+			== core::Door::OpenStyle::OpenUp,
+			"A loaded Lift stop lost its OpenUp override");
+
+		// Undo/redo mirror: the editor snapshots YAML before and after a change
+		// and restores either side verbatim.
+		loaded->pauseSimulation();
+		auto const before = snapshotYaml(*loaded);
+		require(loaded->setLiftStopDoorOpenStyle(liftSector, 1,
+			core::Door::OpenStyle::OpenRight, &diagnostic),
+			("A re-author to OpenRight was refused: " + diagnostic).c_str());
+		auto const after = snapshotYaml(*loaded);
+		require(findLiftStopDoor(*loaded, liftSector, 1)->getOpenStyle()
+			== core::Door::OpenStyle::OpenRight,
+			"The re-authored stop did not take OpenRight live");
+		auto const undone = loadYaml(before);
+		require(findLiftStopDoor(*undone, liftSector, 1)->getOpenStyle()
+			== core::Door::OpenStyle::OpenLeft,
+			"Undo did not restore the previous per-stop style");
+		require(findLiftStopDoor(*undone, liftSector, 2)->getOpenStyle()
+			== core::Door::OpenStyle::OpenUp,
+			"Undo disturbed another stop's override");
+		auto const redone = loadYaml(after);
+		require(findLiftStopDoor(*redone, liftSector, 1)->getOpenStyle()
+			== core::Door::OpenStyle::OpenRight,
+			"Redo did not restore the edited per-stop style");
+
+		// Reconstructing the Lift with unchanged topology retains every override:
+		// the edit plan rewrites the record in place and the overrides follow
+		// their stops.
+		redone->pauseSimulation();
+		auto const rebuildPlan = redone->planResizeLift(liftSector, 2, 0, 1, 3);
+		require(rebuildPlan.valid,
+			("An unchanged-topology Lift rebuild plan was refused: "
+				+ rebuildPlan.diagnostic).c_str());
+		require(rebuildPlan.stopOffsets == std::vector<uint32_t>{ 0, 1, 2 },
+			"The rebuild plan did not keep the Lift's stop topology");
+		auto const rebuiltSector = redone->applyLiftEdit(rebuildPlan);
+		require(rebuiltSector == liftSector, "The rebuilt Lift moved to another Sector");
+		require(findLiftStopDoor(*redone, rebuiltSector, 0)->getOpenStyle()
+			== core::Door::OpenStyle::OpenApart,
+			"Reconstructing the Lift lost the no-override OpenApart default");
+		require(findLiftStopDoor(*redone, rebuiltSector, 1)->getOpenStyle()
+			== core::Door::OpenStyle::OpenRight,
+			"Reconstructing an unchanged Lift lost a per-stop override");
+		require(findLiftStopDoor(*redone, rebuiltSector, 2)->getOpenStyle()
+			== core::Door::OpenStyle::OpenUp,
+			"Reconstructing an unchanged Lift lost a second per-stop override");
+	}
+
 	void recentFilesPersistAcrossStartup()
 	{
 		auto directory = std::filesystem::temp_directory_path() / "prometheum-fermide-recent-files-smoke";
@@ -3489,6 +3639,7 @@ void runSerializationSmokeChecks()
 	doorOpenRightPersistsThroughEveryEditorPath();
 	doorOpenApartPersistsThroughEveryEditorPath();
 	liftDoorsDefaultToOpenApartWhileOtherDoorsKeepOpenUp();
+	liftStopDoorStyleOverridesArePerStopAndPersist();
 	recentFilesPersistAcrossStartup();
 	serializableTracksModificationState();
 	doorAndWindowRemovalWorksOnDeepLayerPairs();

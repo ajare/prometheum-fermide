@@ -212,6 +212,21 @@ namespace core
 			}
 			throw SerializationException("Cannot serialize an unknown Door opening style");
 		};
+		auto writeStopDoorOpenStyles = [&]
+		{
+			// Only overrides that differ from the generated default are persisted,
+			// so a Lift with no per-stop choices keeps the record shape it had
+			// before per-stop styles existed.
+			bool anyOverride = false;
+			for (auto style : record.overrides)
+				if (style != ~0u) { anyOverride = true; break; }
+			if (!anyOverride) return;
+			serializer.beginArray("stopDoorOpenStyles", false);
+			for (auto style : record.overrides)
+				serializer.writeString("", style == ~0u ? "default" : openStyleName(
+					static_cast<int32_t>(style)));
+			serializer.endArray();
+		};
 
 		serializer.writeString("type", constructionTypeName(record.type));
 		switch (record.type)
@@ -247,7 +262,7 @@ namespace core
 			serializer.writeUint32("layer", record.layer);
 			serializer.writeUint32("y", record.a); serializer.writeUint32("x", record.b);
 			serializer.writeUint32("cellsWide", record.c); serializer.writeUint32("decksHigh", record.e);
-			writeStops(); serializer.writeUint32("capacity", record.d);
+			writeStops(); writeStopDoorOpenStyles(); serializer.writeUint32("capacity", record.d);
 			serializer.writeFloat("minimumDwellSeconds", record.x);
 			serializer.writeFloat("maximumBoardingSeconds", record.y);
 			serializer.writeUint32("initialStop", record.g); break;
@@ -472,6 +487,27 @@ namespace core
 			while (serializer.nextArrayItem()) record.values.push_back(serializer.readUint32());
 			serializer.endArray();
 		};
+		auto readStopDoorOpenStyles = [&]
+		{
+			// A Lift record written before per-stop Door styles existed simply has
+			// no overrides: every landing replays with the generated default.
+			if (!serializer.hasField("stopDoorOpenStyles")) return;
+			serializer.beginArray("stopDoorOpenStyles", false);
+			while (serializer.nextArrayItem())
+			{
+				auto const value = serializer.readString("");
+				uint32_t style;
+				if (value == "default") style = ~0u;
+				else if (value == "openUp") style = static_cast<uint32_t>(Door::OpenStyle::OpenUp);
+				else if (value == "openLeft") style = static_cast<uint32_t>(Door::OpenStyle::OpenLeft);
+				else if (value == "openRight") style = static_cast<uint32_t>(Door::OpenStyle::OpenRight);
+				else if (value == "openApart") style = static_cast<uint32_t>(Door::OpenStyle::OpenApart);
+				else throw SerializationException(
+					format("Unknown Lift stop Door opening style: {}", value));
+				record.overrides.push_back(style);
+			}
+			serializer.endArray();
+		};
 
 		record.type = constructionTypeFromName(serializer.readString("type"));
 		switch (record.type)
@@ -507,7 +543,7 @@ namespace core
 			record.layer = readLayerOr("layer", layerBehind(0));
 			record.a = serializer.readUint32("y"); record.b = serializer.readUint32("x");
 			record.c = serializer.readUint32("cellsWide"); record.e = serializer.readUint32("decksHigh");
-			readStops(); record.d = serializer.readUint32("capacity");
+			readStops(); readStopDoorOpenStyles(); record.d = serializer.readUint32("capacity");
 			record.x = serializer.readFloat("minimumDwellSeconds");
 			record.y = serializer.readFloat("maximumBoardingSeconds");
 			record.g = serializer.readUint32("initialStop"); break;
@@ -928,7 +964,8 @@ namespace core
 			break;
 		case ConstructionType::Lift:
 			addLift(transitLayer(record), record.a, record.b,
-				{ record.c, record.values, record.d, record.x, record.y, record.g, record.e });
+				{ record.c, record.values, record.d, record.x, record.y, record.g, record.e,
+					CORE_PLATFORM_LIFT_STOP_DURATION, record.overrides });
 			break;
 		case ConstructionType::Shuttle:
 			addShuttle(transitLayer(record), record.a, record.b, record.c,
@@ -1080,7 +1117,25 @@ namespace core
 		else
 		{
 			found->a = plan.y; found->b = plan.x; found->c = plan.cellsWide;
-			found->e = plan.decksHigh; found->values = plan.stopOffsets;
+			found->e = plan.decksHigh;
+			// Per-stop Door style overrides follow their stop, keyed by stop
+			// offset: an unchanged topology retains every override, an inserted
+			// stop takes the generated default, and a removed stop takes its
+			// override with it.
+			auto const oldOffsets = found->values;
+			auto const oldStyles = found->overrides;
+			found->values = plan.stopOffsets;
+			found->overrides.assign(plan.stopOffsets.size(), ~0u);
+			for (size_t i = 0; i < plan.stopOffsets.size(); ++i)
+			{
+				auto const match = find(oldOffsets.begin(), oldOffsets.end(), plan.stopOffsets[i]);
+				if (match == oldOffsets.end()) continue;
+				auto const j = static_cast<size_t>(distance(oldOffsets.begin(), match));
+				if (j < oldStyles.size()) found->overrides[i] = oldStyles[j];
+			}
+			if (all_of(found->overrides.begin(), found->overrides.end(),
+				[](uint32_t style) { return style == ~0u; }))
+				found->overrides.clear();
 			auto oldPosition = 0.0f;
 			for (auto const& [id, resource] : mTraversalResources.entries())
 			{

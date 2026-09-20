@@ -2045,17 +2045,22 @@ namespace core
 
 		// Landing controls are physical InteractionPoints; the lift coordinator owns
 		// scheduling, door interlocks, and operation completion.
-		for (auto stopOffset : options.stopOffsets)
+		for (size_t stopIndex = 0; stopIndex < options.stopOffsets.size(); ++stopIndex)
 		{
 			// A Lift entrance reads as a centre-opening pair, so its generated Doors
-			// are authored OpenApart by default.  Shuttle-owned Doors keep OpenUp.
+			// are authored OpenApart unless the Lift's record carries a per-stop
+			// override.  Shuttle-owned Doors keep OpenUp.
 			CreateDoorOptions stopDoorOptions;
 			stopDoorOptions.width = options.cellsWide;
 			stopDoorOptions.controls[0] = true;
 			stopDoorOptions.activationMode = DoorActivationMode::Unavailable;
 			stopDoorOptions.openStyle = Door::OpenStyle::OpenApart;
-			auto doorRes = _addSectorDoor(layerInFront(layerIndex), y + stopOffset, x,
-				stopDoorOptions, true);
+			if (stopIndex < options.stopDoorOpenStyles.size()
+				&& options.stopDoorOpenStyles[stopIndex] != ~0u)
+				stopDoorOptions.openStyle =
+					static_cast<Door::OpenStyle>(options.stopDoorOpenStyles[stopIndex]);
+			auto doorRes = _addSectorDoor(layerInFront(layerIndex), y + options.stopOffsets[stopIndex],
+				x, stopDoorOptions, true);
 			liftRes.doors.push_back(doorRes);
 		}
 
@@ -3014,6 +3019,71 @@ namespace core
 	Building::CreateDoorResult Building::addSectorDoor(uint32_t layerIndex, uint32_t y, uint32_t x)
 	{
 		return addSectorDoor(layerIndex, y, x, CreateDoorOptions{});
+	}
+
+	bool Building::setLiftStopDoorOpenStyle(uint32_t liftSectorIndex, uint32_t stopIndex,
+		Door::OpenStyle style, std::string* diagnostic)
+	{
+		// A Lift's landing Doors have no Door records of their own; the Lift's
+		// producing record owns them.  The per-stop override therefore rides in
+		// that record, which is the persistence boundary: save/load and the
+		// editor's snapshot-based undo/redo carry the choice, and any later
+		// rebuild replays it.  The Lift's topology is not touched.
+		uint32_t producerIndex = 0;
+		auto found = mConstructionRecords.end();
+		for (auto it = mConstructionRecords.begin(); it != mConstructionRecords.end(); ++it)
+		{
+			if (!constructionTypeCreatesSector(it->type)) continue;
+			if (producerIndex++ == liftSectorIndex) { found = it; break; }
+		}
+		if (found == mConstructionRecords.end() || found->type != ConstructionType::Lift)
+		{
+			if (diagnostic) *diagnostic = "The selected Lift no longer has an authored definition";
+			return false;
+		}
+		if (stopIndex >= found->values.size())
+		{
+			if (diagnostic)
+				*diagnostic = "The selected stop is outside the Lift's authored topology";
+			return false;
+		}
+		if (found->overrides.size() < found->values.size())
+			found->overrides.assign(found->values.size(), ~0u);
+		found->overrides[stopIndex] = static_cast<uint32_t>(style);
+
+		// The live landing Door rides with its record so the viewport and the
+		// Selection panel show the new style without a rebuild.  The Door is
+		// authored on the Layer in front of the Lift, at the stop's deck.
+		if (liftSectorIndex < mSectors.size() && mSectors[liftSectorIndex])
+		{
+			auto const lift = dynamic_pointer_cast<const LiftTransit>(mSectors[liftSectorIndex]);
+			if (lift && lift->getLayerIndex() > 0)
+			{
+				auto const frontLayer = layerInFront(lift->getLayerIndex());
+				auto const doorY = lift->getCellY() + found->values[stopIndex];
+				if (frontLayer < mLayers.size() && mLayers[frontLayer]
+					&& lift->getCellX() < mLayers[frontLayer]->getCellsWide()
+					&& doorY < mLayers[frontLayer]->getDecksHigh())
+				{
+					auto const& cell = mLayers[frontLayer]->getCellDefinition(lift->getCellX(), doorY);
+					if (cell.sectorObjectType == SectorObjectType::Door
+						&& cell.sectorIndex < mSectors.size() && mSectors[cell.sectorIndex])
+					{
+						auto const sector = mSectors[cell.sectorIndex];
+						if (cell.sectorObjectIndex < sector->getNumObjects())
+						{
+							auto doorObject = dynamic_pointer_cast<DoorSectorObject>(
+								sector->_getObject(cell.sectorObjectIndex));
+							if (doorObject && doorObject->getDoor())
+								doorObject->getDoor()->setOpenStyle(style);
+						}
+					}
+				}
+			}
+		}
+		modify();
+		if (diagnostic) diagnostic->clear();
+		return true;
 	}
 
 	Building::CreateDoorResult Building::addSectorDoor(uint32_t layerIndex, uint32_t y, uint32_t x, CreateDoorOptions const& options)
