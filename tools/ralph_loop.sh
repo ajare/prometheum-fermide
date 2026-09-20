@@ -41,7 +41,8 @@ Options:
                                     may be repeated and combined with fixed selection
   --repo OWNER/NAME                 Repository (inferred when omitted)
   --ready-label LABEL               Eligibility label (default: ready-for-agent)
-  --labels LABEL[,LABEL...]         Additional required labels; may be repeated
+  --labels LABEL[,LABEL...]         Additional required labels; may be repeated.
+                                    Also applied to tickets created by --bug-hunt
   --use-branch BRANCH               Check out/create this branch
   --bug-hunt MODEL:EFFORT           Run tools/bug_hunt.sh after the main loop
                                     with the specified model and effort
@@ -75,6 +76,7 @@ adaptive=0 once=0 dry_run=0 quiet=0 verbose=0 bug_hunt=0 fix_bugs=0
 model_set=0 effort_set=0
 initial_retry=30 max_retry=900 usage_poll=600
 labels=()
+label_specs=()
 loop_labels=()
 difficulty_override_specs=()
 declare -A difficulty_override_models difficulty_override_efforts
@@ -88,6 +90,7 @@ while (($#)); do
         --ready-label) require_value "$@"; ready_label=$2; shift 2 ;;
         --labels)
             require_value "$@"
+            label_specs+=("$2")
             IFS=',' read -ra new_labels <<<"$2"
             labels+=("${new_labels[@]}")
             shift 2 ;;
@@ -671,6 +674,9 @@ if ((bug_hunt)); then
         --publish tracker
     )
     [[ -z "$use_branch" ]] || bug_hunt_args+=(--branch-only)
+    for label_spec in "${label_specs[@]}"; do
+        bug_hunt_args+=(--labels "$label_spec")
+    done
     status "Starting post-loop bug hunt with $bug_hunt_model at $bug_hunt_effort effort."
     "$repo_root/tools/bug_hunt.sh" "${bug_hunt_args[@]}"
     bug_hunt_result=$?

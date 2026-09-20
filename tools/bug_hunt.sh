@@ -17,8 +17,9 @@ Required:
                      tickets under docs/tickets/bug-hunt/
 
 Options:
-  --branch-only      Inspect only commits unique to the current branch and the
-                     changes introduced by those commits
+  --branch-only              Inspect only commits unique to the current branch and the
+                             changes introduced by those commits
+  --labels LABEL[,LABEL...]  Additional labels for every published ticket; may be repeated
   --help
 
 Environment:
@@ -39,6 +40,7 @@ die() { echo "error: $*" >&2; exit 1; }
 require_value() { [[ $# -ge 2 ]] || { echo "error: $1 requires a value" >&2; exit 2; }; }
 
 agent="" model="" effort="" publish="" branch_only=0
+labels=()
 while (($#)); do
     case "$1" in
         --agent) require_value "$@"; agent=$2; shift 2 ;;
@@ -46,6 +48,13 @@ while (($#)); do
         --effort) require_value "$@"; effort=$2; shift 2 ;;
         --publish) require_value "$@"; publish=$2; shift 2 ;;
         --branch-only) branch_only=1; shift ;;
+        --labels)
+            require_value "$@"
+            IFS=',' read -ra new_labels <<<"$2"
+            for new_label in "${new_labels[@]}"; do
+                [[ -z "$new_label" ]] || labels+=("$new_label")
+            done
+            shift 2 ;;
         --help|-h) usage; exit 0 ;;
         *) echo "error: unknown argument: $1" >&2; usage >&2; exit 2 ;;
     esac
@@ -109,6 +118,13 @@ else
 Publish every ticket as a separate Markdown file under `docs/tickets/bug-hunt/`; do not create GitHub issues. Create the directory if needed, inspect existing tickets to avoid duplicates, and use stable, descriptive kebab-case filenames. Begin each file with YAML front matter containing `labels` with `bug`, exactly one `difficulty:*`, exactly one `priority:*`, and `ready-for-agent`. Include a `blockedBy` list containing the relative filenames of prerequisite tickets (or an empty list) so all dependencies are explicit and machine-readable. Do not modify files outside `docs/tickets/bug-hunt/`.
 EOF
 )
+fi
+
+if ((${#labels[@]})); then
+    publish_prompt+=$'\n\nApply each of these additional labels to every published ticket (without duplicating labels):'
+    for label in "${labels[@]}"; do
+        publish_prompt+=$'\n'"- $label"
+    done
 fi
 
 prompt=$(cat <<EOF
