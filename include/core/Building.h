@@ -1573,6 +1573,15 @@ namespace core
 		// it has none. Throws if the Agent is not one this Building owns.
 		AgentGroupId getAgentGroup(AgentId agent) const;
 
+		// How many of this Building's Agents are assigned to the Agent group.
+		// The count is derived from the Agents themselves on every call rather
+		// than kept alongside the group: the group holds no counter of its own,
+		// so nothing can drift out of step with the assignments it reports.
+		// It covers the whole Building - every Layer, every Sector, and every
+		// movement state - and is current the moment an assignment is made.
+		// Throws if the ID is not one this Building issued.
+		uint32_t getAgentGroupMemberCount(AgentGroupId id) const;
+
 		InteractionPointId createInteractionPoint(std::string const& name);
 
 		InteractionPointId createInteractionPoint(std::string const& name, SectorId sector,

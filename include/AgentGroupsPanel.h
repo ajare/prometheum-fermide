@@ -12,6 +12,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "core/EntityId.h"
 
@@ -39,7 +40,27 @@ bool commitAgentGroupRename(
 // a different Building's group.
 void resetAgentGroupsPanelState();
 
+// The Groups table's column headers, in the order the panel declares them:
+// the group's name, then its live membership count. The panel sets up its
+// columns from this exact list, so the list a check reads is the list the
+// table is built with rather than a second copy kept for testing.
+std::vector<std::string> const& agentGroupsPanelColumns();
+
+// The text the Agents column shows for one group: how many of the Building's
+// Agents are assigned to it. The count is derived through the Building on
+// every call - the group stores no total of its own - so it covers every
+// Layer and Sector and every movement state, and is current the moment an
+// assignment is made. Throws if the group is not one this Building issued.
+std::string agentGroupMemberCountLabel(core::Building const& building,
+	core::AgentGroupId id);
+
+// Renders one membership count cell: the group's current count, read off the
+// Building. Read-only, so there is nothing here to commit and no edit to undo.
+void renderAgentGroupMemberCountCell(core::Building const& building,
+	core::AgentGroupId id);
+
 // Renders the Groups table for the Agents collapsible section: one inline
-// rename editor per group, in creation order, plus the add row. Available
-// whether or not the simulation is running. This slice exposes no delete.
+// rename editor per group, in creation order, each with its live Agents
+// count, plus the add row. Available whether or not the simulation is
+// running. This slice exposes no delete.
 void renderAgentGroupsPanel(std::shared_ptr<core::Building> const& building);

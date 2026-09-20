@@ -46,6 +46,16 @@ namespace
 	std::array<char, NameBufferSize> gNewGroupName{};
 	string gAddDiagnostic;
 
+	// The Groups table's columns, in declaration order. The panel below sets
+	// up every column from this list, so the Agents count column is declared
+	// here once rather than being implied by a bare index somewhere.
+	//
+	// The name column takes the stretch: it holds an editor. The count is a
+	// short read-only number, so it is fixed to its content and never crowds
+	// the name out when the panel is narrow.
+	std::vector<std::string> const kAgentGroupColumns{ "Name", "Agents" };
+	size_t const kMemberCountColumn{ kAgentGroupColumns.size() - 1 };
+
 	void loadIntoBuffer(std::array<char, NameBufferSize>& buffer, string const& value)
 	{
 		strncpy(buffer.data(), value.c_str(), buffer.size() - 1);
@@ -214,6 +224,24 @@ void resetAgentGroupsPanelState()
 	gAddDiagnostic.clear();
 }
 
+std::vector<std::string> const& agentGroupsPanelColumns()
+{
+	return kAgentGroupColumns;
+}
+
+std::string agentGroupMemberCountLabel(core::Building const& building, core::AgentGroupId id)
+{
+	// Straight through the Building, which derives the count from the Agents
+	// that carry the group's ID. No counter lives here, in the panel or on the
+	// group, so there is nothing to keep in step with an assignment.
+	return std::to_string(building.getAgentGroupMemberCount(id));
+}
+
+void renderAgentGroupMemberCountCell(core::Building const& building, core::AgentGroupId id)
+{
+	ImGui::TextUnformatted(agentGroupMemberCountLabel(building, id).c_str());
+}
+
 void renderAgentGroupsPanel(shared_ptr<core::Building> const& building)
 {
 	if (!building) return;
@@ -225,9 +253,14 @@ void renderAgentGroupsPanel(shared_ptr<core::Building> const& building)
 		ImGuiTableFlags_BordersV |
 		ImGuiTableFlags_ContextMenuInBody;
 
-	if (ImGui::BeginTable("AgentGroups", 1, flags))
+	if (ImGui::BeginTable("AgentGroups",
+		static_cast<int>(kAgentGroupColumns.size()), flags))
 	{
-		ImGui::TableSetupColumn("Name");
+		// The name column stretches, the count column keeps to its number.
+		ImGui::TableSetupColumn(kAgentGroupColumns[0].c_str(),
+			ImGuiTableColumnFlags_WidthStretch);
+		ImGui::TableSetupColumn(kAgentGroupColumns[kMemberCountColumn].c_str(),
+			ImGuiTableColumnFlags_WidthFixed);
 		ImGui::TableHeadersRow();
 
 		// Creation order, straight off the Building's registry key order.
@@ -237,6 +270,12 @@ void renderAgentGroupsPanel(shared_ptr<core::Building> const& building)
 			ImGui::PushID(id.value);
 			ImGui::TableSetColumnIndex(0);
 			renderAgentGroupNameEditor(building, id);
+
+			// The group's live membership count: every Agent in the Building
+			// that carries this group's ID, wherever it is and whatever it is
+			// doing. Recomputed each frame, which is what makes it live.
+			ImGui::TableSetColumnIndex(static_cast<int>(kMemberCountColumn));
+			renderAgentGroupMemberCountCell(*building, id);
 			ImGui::PopID();
 		}
 

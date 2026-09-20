@@ -5587,6 +5587,33 @@ namespace core
 		return lookup.entity->getAgentGroupId();
 	}
 
+	uint32_t Building::getAgentGroupMemberCount(AgentGroupId id) const
+	{
+		// Judged the way every other group query judges its ID: counting a
+		// group this Building never issued is an error, not a zero that could
+		// be mistaken for a group that happens to be empty.
+		auto const lookup = lookupAgentGroup(id);
+		if (!lookup) throw BuildingException(this, lookup.diagnostic);
+
+		// The Agents are the membership record, so the count reads them off
+		// the Agent registry rather than off the group. Nothing is cached on
+		// the group and nothing is synchronised by hand: every assignment, and
+		// every removal, is reflected the next time this is asked.
+		//
+		// The scan is over the Building's whole Agent registry on purpose.
+		// Where an Agent sits - which Layer, which Sector, which path, whether
+		// it is idle, walking, waiting at a door or riding a lift - is not
+		// part of the question, and a count that walked the spatial index
+		// instead would answer a different one.
+		uint32_t count{ 0 };
+		for (auto const& [agentId, agent] : mAgents.entries())
+		{
+			(void)agentId;
+			if (agent && agent->getAgentGroupId() == id) ++count;
+		}
+		return count;
+	}
+
 	// Interaction and device-operation orchestration - the InteractionPoint and
 	// InteractionRequest lifecycles, the DeviceOperation lifecycle, pressing
 	// physical controls, and the per-tick interaction phases - lives in
