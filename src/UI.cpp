@@ -5908,6 +5908,24 @@ void renderAgentView(shared_ptr<const core::Building> building)
 					{
 						ImGui::Text("%u/%zu vertices", agent->getPathTargetNodeIndex(), path->nodes.size());
 					}
+					else if (building->isSimulationPaused())
+					{
+						// Pausing tears down live traversal, so the Agent's path pointer is
+						// cleared. Its retained destination still tells us where it resumes.
+						core::Building::TopologyPathIntent intent;
+						if (building->getPausedPathIntent(*agent, intent))
+						{
+							auto destination = intent.destinationSector
+								? building->getSector((uint32_t)intent.destinationSector.value - 1)
+								: nullptr;
+							ImGui::TextDisabled("to %s (paused)",
+								destination ? destination->getDescription().c_str() : "<unknown>");
+						}
+						else
+						{
+							ImGui::TextUnformatted("");
+						}
+					}
 					else
 					{
 						ImGui::TextUnformatted("");
