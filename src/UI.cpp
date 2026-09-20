@@ -7948,10 +7948,14 @@ void renderWorldWindow(shared_ptr<core::Building> building, shared_ptr<const cor
 		gLastWorldCursor = mousePos;
 		// Hit-test in reverse visual order. Graph vertices are rendered over agents,
 		// agents over sector objects, and sector objects over their owning sector.
+		// While picking an agent's path destination only vertices are selectable,
+		// with a slightly enlarged target radius to make them easier to pick.
+		float vertexRadius = RENDER_VERTEX_SIZE / (float)CORE_DECK_HEIGHT_PIXELS;
+		if (gSelectingAgentPathDestination) vertexRadius *= 1.5f;
 		if (gUISettings.renderGraph)
 			gHoveredVertex = graph->getVertexAtPosition(gUISettings.visibleLayer, mousePos.x,
-				mousePos.y, RENDER_VERTEX_SIZE / (float)CORE_DECK_HEIGHT_PIXELS);
-		if (!gHoveredVertex)
+				mousePos.y, vertexRadius);
+		if (!gSelectingAgentPathDestination && !gHoveredVertex)
 			gHoveredAgent = building->getAgentAtPosition(gUISettings.visibleLayer,
 				mousePos.x, mousePos.y);
 		if (!gHoveredVertex && !gHoveredAgent)
@@ -7978,7 +7982,8 @@ void renderWorldWindow(shared_ptr<core::Building> building, shared_ptr<const cor
 					gHoveredInteractionPoint = button->getInteractionPointId();
 			}
 		}
-		if (!gHoveredVertex && !gHoveredAgent && !gHoveredSectorObject)
+		if (!gSelectingAgentPathDestination && !gHoveredVertex && !gHoveredAgent
+			&& !gHoveredSectorObject)
 		{
 			auto sector = building->getSectorAtPosition(gUISettings.visibleLayer,
 				mousePos.x, mousePos.y);
