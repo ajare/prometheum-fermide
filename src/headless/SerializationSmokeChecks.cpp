@@ -3394,6 +3394,183 @@ agents: []
 			"Reconstructing an unchanged Shuttle changed a Door without an override");
 	}
 
+	// Ticket #89: moving a Shuttle with unchanged stops, carriages, and door
+	// positions preserves every per-Door style.  Styles follow the structural
+	// Door identity - owning Shuttle, stop, carriage, configured door position -
+	// rather than transient object indices: a sideways or vertical move, a
+	// restyle at the new position, a second move, a topology-equivalent
+	// reconstruction, and a save/load all keep every style on its own Door.
+	void shuttleDoorStylesSurviveShuttleMovement()
+	{
+		auto findShuttleDoor = [](core::Building const& building, uint32_t shuttleSector,
+			uint32_t stopIndex, uint32_t carriageIndex, uint32_t doorIndex)
+			-> std::shared_ptr<const core::Door>
+		{
+			for (uint32_t sectorIndex = 0; sectorIndex < building.getNumSectors(); ++sectorIndex)
+			{
+				auto const sector = building.getSector(sectorIndex);
+				if (!sector) continue;
+				for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
+				{
+					auto const object = sector->getObject(i);
+					if (!object || object->getObjectType() != core::SectorObjectType::Door) continue;
+					uint32_t ownerSector{ ~0u }, ownerStop{ ~0u };
+					uint32_t ownerCarriage{ ~0u }, ownerDoor{ ~0u };
+					if (building.isShuttleOwnedDoor(object, &ownerSector, &ownerStop,
+							&ownerCarriage, &ownerDoor)
+						&& ownerSector == shuttleSector && ownerStop == stopIndex
+						&& ownerCarriage == carriageIndex && ownerDoor == doorIndex)
+						return static_pointer_cast<const core::DoorSectorObject>(object)->getDoor();
+				}
+			}
+			return nullptr;
+		};
+		auto snapshotYaml = [](core::Building& building)
+		{
+			core::SerializationWorkData workData;
+			auto writer = core::YamlSerializer::toString();
+			building.serialize(*writer, workData);
+			writer->serialize();
+			return writer->getSerializedString();
+		};
+		auto loadYaml = [](std::string const& yaml)
+		{
+			auto building = std::make_shared<core::Building>("placeholder", 1, 1);
+			core::SerializationWorkData workData;
+			auto reader = core::YamlSerializer::fromString(yaml);
+			reader->deserialize();
+			building->deserialize(*reader, workData);
+			return building;
+		};
+		// Every one of the eight stop/carriage/door identities carries its own
+		// expected style; no two adjacent identities share a style so a swap
+		// between any pair of siblings is visible.
+		core::Door::OpenStyle expected[2][2][2] = {
+			{ { core::Door::OpenStyle::OpenLeft, core::Door::OpenStyle::OpenApart },
+			  { core::Door::OpenStyle::OpenRight, core::Door::OpenStyle::OpenUp } },
+			{ { core::Door::OpenStyle::OpenApart, core::Door::OpenStyle::OpenRight },
+			  { core::Door::OpenStyle::OpenUp, core::Door::OpenStyle::OpenLeft } } };
+		auto requireAllStyles = [&](core::Building const& building, uint32_t shuttleSector,
+			char const* context)
+		{
+			for (uint32_t stop = 0; stop < 2; ++stop)
+				for (uint32_t car = 0; car < 2; ++car)
+					for (uint32_t door = 0; door < 2; ++door)
+					{
+						auto const found = findShuttleDoor(building, shuttleSector, stop, car, door);
+						require(found != nullptr,
+							("Shuttle Door identity lost in " + std::string(context)).c_str());
+						require(found->getOpenStyle() == expected[stop][car][door],
+							("Shuttle Door style wrong in " + std::string(context)).c_str());
+					}
+		};
+		auto requireTransitAt = [](core::Building const& building, uint32_t shuttleSector,
+			uint32_t x, uint32_t y, char const* context)
+		{
+			auto const transit = std::dynamic_pointer_cast<const core::ShuttleTransit>(
+				building.getSector(shuttleSector));
+			require(transit != nullptr,
+				("The Shuttle Sector is not a Shuttle Transit in " + std::string(context)).c_str());
+			require(transit->getCellX() == x && transit->getCellY() == y,
+				("The Shuttle did not reach its requested position in " + std::string(context)).c_str());
+		};
+
+		core::Building building("Shuttle move styles", 48, 3);
+		for (uint32_t row = 0; row < 3; ++row)
+			building.addCorridor(0u, row, 0u, 47u, 1u);
+		core::Building::CreateShuttleOptions options{ 2, 3, { 0, 18 }, 0 };
+		options.capacity = 2;
+		options.doorMask = 0b101; // Two doors per carriage: cells 0 and 2.
+		auto const created = building.addShuttle(1, 0, 0, 27, options);
+		building.finishBuild();
+		building.pauseSimulation();
+		auto shuttleSector = created.shuttle.sector->getIndex();
+
+		std::string diagnostic;
+		for (uint32_t stop = 0; stop < 2; ++stop)
+			for (uint32_t car = 0; car < 2; ++car)
+				for (uint32_t door = 0; door < 2; ++door)
+					require(building.setShuttleDoorOpenStyle(shuttleSector, stop, car, door,
+						expected[stop][car][door], &diagnostic),
+						("Styling a Shuttle Door was refused: " + diagnostic).c_str());
+		requireAllStyles(building, shuttleSector, "authored styles");
+
+		// Move the Shuttle sideways without changing stops, carriages, or door
+		// positions.  Every style must follow its own structural Door identity.
+		{
+			auto const plan = building.planResizeShuttle(shuttleSector, 4, 0, 27);
+			require(plan.valid, ("Moving the Shuttle was refused: " + plan.diagnostic).c_str());
+			require(plan.move, "A sideways Shuttle edit was not recognized as a move");
+			require(plan.stopOffsets == std::vector<uint32_t>{ 0, 18 },
+				"The move changed the Shuttle's stop topology unexpectedly");
+			shuttleSector = building.applyShuttleEdit(plan);
+			requireTransitAt(building, shuttleSector, 4, 0, "Shuttle after moving");
+			requireAllStyles(building, shuttleSector, "Shuttle after moving");
+		}
+
+		// Restyling at the new position addresses the same structural identity:
+		// the live Door the panel finds after the move is the Door the override
+		// grid slot governs, not a transient neighbour.
+		{
+			expected[1][1][1] = core::Door::OpenStyle::OpenRight;
+			expected[0][0][0] = core::Door::OpenStyle::OpenUp;
+			require(building.setShuttleDoorOpenStyle(shuttleSector, 1, 1, 1,
+				core::Door::OpenStyle::OpenRight, &diagnostic),
+				("Restyling after the move was refused: " + diagnostic).c_str());
+			require(building.setShuttleDoorOpenStyle(shuttleSector, 0, 0, 0,
+				core::Door::OpenStyle::OpenUp, &diagnostic),
+				("Restyling after the move was refused: " + diagnostic).c_str());
+			requireAllStyles(building, shuttleSector, "Shuttle restyled after moving");
+		}
+
+		// A second move, this time vertically as well as sideways, keeps every
+		// style on its own stop/carriage/door identity.
+		{
+			auto const plan = building.planResizeShuttle(shuttleSector, 10, 1, 27);
+			require(plan.valid, ("Moving the Shuttle to another row was refused: "
+				+ plan.diagnostic).c_str());
+			require(plan.move, "A diagonal Shuttle edit was not recognized as a move");
+			shuttleSector = building.applyShuttleEdit(plan);
+			requireTransitAt(building, shuttleSector, 10, 1, "Shuttle after the second move");
+			requireAllStyles(building, shuttleSector, "Shuttle after the second move");
+		}
+
+		// Extending the track to the left shifts every stop offset while keeping
+		// the same stops, carriages, and door configuration; styles must stay on
+		// their own structural identities, not slide with the offsets.
+		{
+			auto const plan = building.planResizeShuttle(shuttleSector, 8, 1, 29);
+			require(plan.valid, ("Extending the Shuttle track leftward was refused: "
+				+ plan.diagnostic).c_str());
+			require(plan.stopOffsets == std::vector<uint32_t>{ 2, 20 },
+				("Left extension did not shift stop offsets as expected: got "
+					+ std::to_string(plan.stopOffsets.size()) + " stops").c_str());
+			shuttleSector = building.applyShuttleEdit(plan);
+			requireTransitAt(building, shuttleSector, 8, 1, "Shuttle after left extension");
+			requireAllStyles(building, shuttleSector, "Shuttle after left extension");
+		}
+
+		// A topology-equivalent reconstruction at the new position must not
+		// reset or swap styles.
+		{
+			auto const plan = building.planResizeShuttle(shuttleSector, 8, 1, 29);
+			require(plan.valid, ("Reconstructing the moved Shuttle was refused: "
+				+ plan.diagnostic).c_str());
+			shuttleSector = building.applyShuttleEdit(plan);
+			requireTransitAt(building, shuttleSector, 8, 1,
+				"Shuttle after topology-equivalent reconstruction");
+			requireAllStyles(building, shuttleSector,
+				"Shuttle after topology-equivalent reconstruction");
+		}
+
+		// Save/load after the moves retains the reconciled styles.
+		{
+			auto const loaded = loadYaml(snapshotYaml(building));
+			requireTransitAt(*loaded, shuttleSector, 8, 1, "Loaded Shuttle after movement");
+			requireAllStyles(*loaded, shuttleSector, "Loaded Shuttle after movement");
+		}
+	}
+
 	void recentFilesPersistAcrossStartup()
 	{
 		auto directory = std::filesystem::temp_directory_path() / "prometheum-fermide-recent-files-smoke";
@@ -4222,6 +4399,7 @@ void runSerializationSmokeChecks()
 	liftDoorStylesFollowStopsWhenTheLiftMovesOrResizes();
 	liftDoorStylesReconcileWhenStopsChange();
 	shuttleDoorStyleOverridesAreIndividualAndPersist();
+	shuttleDoorStylesSurviveShuttleMovement();
 	recentFilesPersistAcrossStartup();
 	serializableTracksModificationState();
 	doorAndWindowRemovalWorksOnDeepLayerPairs();
