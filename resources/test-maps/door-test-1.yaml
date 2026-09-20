@@ -1,0 +1,235 @@
+version: 8
+name: Untitled
+cellsWide: 16
+decksHigh: 6
+layers: 2
+layerNames:
+  - Layer 0
+  - Layer 1
+construction:
+  - type: corridor
+    layer: 0
+    y: 0
+    x: 0
+    cellsWide: 16
+    decksHigh: 1
+  - type: corridor
+    layer: 0
+    y: 1
+    x: 0
+    cellsWide: 16
+    decksHigh: 1
+  - type: room
+    name: Room 1
+    layer: 1
+    y: 0
+    x: 4
+    cellsWide: 8
+    decksHigh: 1
+    topDeckHeight: 0.9
+  - type: room
+    name: Room 2
+    layer: 1
+    y: 1
+    x: 4
+    cellsWide: 8
+    decksHigh: 1
+    topDeckHeight: 0.9
+  - type: objectTombstone
+    sectorIndex: 0
+  - type: objectTombstone
+    sectorIndex: 2
+  - type: window
+    layer: 0
+    y: 0
+    x: 4
+    cellsWide: 2
+    decksHigh: 1
+    traversable: false
+    initialState: closed
+    style: clear
+  - type: objectTombstone
+    sectorIndex: 1
+  - type: objectTombstone
+    sectorIndex: 3
+  - type: window
+    layer: 0
+    y: 1
+    x: 4
+    cellsWide: 2
+    decksHigh: 1
+    traversable: false
+    initialState: closed
+    style: clear
+  - type: objectTombstone
+    sectorIndex: 1
+  - type: objectTombstone
+    sectorIndex: 3
+  - type: window
+    layer: 0
+    y: 1
+    x: 10
+    cellsWide: 2
+    decksHigh: 1
+    traversable: false
+    initialState: closed
+    style: clear
+  - type: objectTombstone
+    sectorIndex: 0
+  - type: objectTombstone
+    sectorIndex: 2
+  - type: window
+    layer: 0
+    y: 0
+    x: 10
+    cellsWide: 2
+    decksHigh: 1
+    traversable: false
+    initialState: closed
+    style: clear
+  - type: door
+    layer: 0
+    y: 0
+    x: 7
+    width: 1
+    height: regular
+    foreControl: false
+    backControl: false
+    activationMode: manual
+    holdOpenSeconds: 5
+    crossingLanes: 0
+    openStyle: openUp
+  - type: objectTombstone
+    sectorIndex: 1
+  - type: objectTombstone
+    sectorIndex: 3
+  - type: door
+    layer: 0
+    y: 1
+    x: 7
+    width: 2
+    height: regular
+    foreControl: false
+    backControl: false
+    activationMode: manual
+    holdOpenSeconds: 5
+    crossingLanes: 0
+    openStyle: openUp
+  - type: marker
+    sectorIndex: 3
+    deckIndex: 0
+    xOffset: 0.5625
+  - type: marker
+    sectorIndex: 3
+    deckIndex: 0
+    xOffset: 7.328125
+  - type: marker
+    sectorIndex: 2
+    deckIndex: 0
+    xOffset: 0.640625
+  - type: marker
+    sectorIndex: 2
+    deckIndex: 0
+    xOffset: 7.5
+  - type: room
+    name: Room 3
+    layer: 0
+    y: 2
+    x: 6
+    cellsWide: 4
+    decksHigh: 1
+    topDeckHeight: 0.9
+  - type: corridor
+    layer: 0
+    y: 2
+    x: 0
+    cellsWide: 6
+    decksHigh: 1
+  - type: corridor
+    layer: 0
+    y: 2
+    x: 10
+    cellsWide: 6
+    decksHigh: 1
+  - type: room
+    name: Room 4
+    layer: 1
+    y: 2
+    x: 6
+    cellsWide: 4
+    decksHigh: 2
+    topDeckHeight: 0.9
+  - type: marker
+    sectorIndex: 7
+    deckIndex: 0
+    xOffset: 3.53125
+  - type: marker
+    sectorIndex: 7
+    deckIndex: 0
+    xOffset: 0.5625
+  - type: corridor
+    layer: 0
+    y: 4
+    x: 0
+    cellsWide: 16
+    decksHigh: 1
+  - type: room
+    name: Room 5
+    layer: 1
+    y: 4
+    x: 6
+    cellsWide: 4
+    decksHigh: 2
+    topDeckHeight: 0.9
+  - type: door
+    layer: 0
+    y: 4
+    x: 7
+    width: 1
+    height: regular
+    foreControl: true
+    backControl: false
+    activationMode: remoteControlled
+    holdOpenSeconds: 5
+    crossingLanes: 0
+    openStyle: openUp
+  - type: objectTombstone
+    sectorIndex: 4
+  - type: objectTombstone
+    sectorIndex: 7
+  - type: objectTombstone
+    sectorIndex: 4
+  - type: objectTombstone
+    sectorIndex: 7
+  - type: door
+    layer: 0
+    y: 2
+    x: 7
+    width: 2
+    height: tall
+    foreControl: false
+    backControl: false
+    activationMode: manual
+    holdOpenSeconds: 5
+    crossingLanes: 0
+    openStyle: openUp
+  - type: window
+    layer: 0
+    y: 2
+    x: 9
+    cellsWide: 1
+    decksHigh: 1
+    traversable: false
+    initialState: closed
+    style: clear
+  - type: window
+    layer: 0
+    y: 2
+    x: 6
+    cellsWide: 1
+    decksHigh: 1
+    traversable: false
+    initialState: closed
+    style: clear
+agents:
+  []
