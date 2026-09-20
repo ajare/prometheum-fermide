@@ -1,15 +1,17 @@
 // The Agents section's Agent-group table; see include/AgentGroupsPanel.h.
 //
-// The widgets here are deliberately thin over two commit functions. Every
-// add and rename the user performs goes through captureDocumentSnapshot() ->
-// Building operation -> commitDocumentEdit(), so one accepted operation is
-// one undoable document edit and one refused operation is none. The headless
-// smoke checks call those same functions, which is what pins that rule down.
+// The widgets here are deliberately thin over a few commit functions. Every
+// add, rename and delete the user performs goes through
+// captureDocumentSnapshot() -> Building operation -> commitDocumentEdit(),
+// so one accepted operation is one undoable document edit and one refused
+// operation is none. The headless smoke checks call those same functions,
+// which is what pins that rule down.
 
 #include "AgentGroupsPanel.h"
 
 #include <array>
 #include <cstring>
+#include <format>
 #include <map>
 #include <memory>
 #include <string>
@@ -47,14 +49,41 @@ namespace
 	string gAddDiagnostic;
 
 	// The Groups table's columns, in declaration order. The panel below sets
-	// up every column from this list, so the Agents count column is declared
-	// here once rather than being implied by a bare index somewhere.
+	// up every column from this list, so the Agents count column and the
+	// Delete column are declared here once rather than being implied by a
+	// bare index somewhere.
 	//
 	// The name column takes the stretch: it holds an editor. The count is a
-	// short read-only number, so it is fixed to its content and never crowds
-	// the name out when the panel is narrow.
-	std::vector<std::string> const kAgentGroupColumns{ "Name", "Agents" };
-	size_t const kMemberCountColumn{ kAgentGroupColumns.size() - 1 };
+	// short read-only number and the delete is one icon, so both are fixed to
+	// their content and never crowd the name out when the panel is narrow -
+	// and the Delete control keeps the same width the Layers table gives its
+	// own, so the two tables read alike.
+	std::vector<std::string> const kAgentGroupColumns{ "Name", "Agents", "Delete" };
+	size_t const kMemberCountColumn{ 1 };
+	size_t const kDeleteColumn{ 2 };
+	float const kDeleteColumnWidth{ 40.0f };
+
+	// The confirmation's popup id. A plain string with no "##" decoration,
+	// so the window ImGui builds for it carries this exact name, which is how
+	// a headless check can assert the confirmation really reached the screen
+	// instead of trusting a flag of our own.
+	char const* const kDeletePopupId{ "Delete Agent group?" };
+
+	// A deletion that has been asked for but not yet answered. Only an
+	// occupied group ever gets here: an empty one is deleted on the spot, so
+	// there is nothing to answer. Held by the panel rather than the Building,
+	// because arming a dialog is editor state; the deletion itself is the
+	// Building's, and stays behind commitAgentGroupDelete().
+	struct PendingAgentGroupDelete
+	{
+		core::AgentGroupId id{};
+		std::string text;
+		uint32_t memberCount{ 0 };
+		bool active{ false };
+		bool openRequested{ false };
+	};
+
+	PendingAgentGroupDelete gPendingAgentGroupDelete;
 
 	void loadIntoBuffer(std::array<char, NameBufferSize>& buffer, string const& value)
 	{
@@ -215,6 +244,114 @@ bool commitAgentGroupRename(shared_ptr<core::Building> const& building, core::Ag
 	return true;
 }
 
+bool commitAgentGroupDelete(shared_ptr<core::Building> const& building, core::AgentGroupId id,
+	string& diagnostic)
+{
+	diagnostic.clear();
+	if (!building)
+	{
+		diagnostic = "There is no Building to delete an Agent group from";
+		return false;
+	}
+
+	// One snapshot, one Building operation, one commit: the group and every
+	// assignment cleared on its way out are inside the same document edit, so
+	// no undo can ever land between them and leave Agents pointing at a group
+	// that is back but missing, or a group gone with its Agents still on it.
+	auto const undo = captureDocumentSnapshot(building);
+	if (!building->deleteAgentGroup(id, &diagnostic)) return false;
+
+	commitDocumentEdit(std::move(undo));
+	return true;
+}
+
+bool agentGroupDeleteRequiresConfirmation(core::Building const& building,
+	core::AgentGroupId id)
+{
+	// Straight through the Building, which counts the Agents that carry the
+	// group's ID. The panel keeps no tally of its own, so the number that
+	// decides whether to ask - and the number the confirmation then shows -
+	// is one number, read from one place.
+	return building.getAgentGroupMemberCount(id) > 0;
+}
+
+std::string agentGroupDeleteConfirmationText(core::Building const& building,
+	core::AgentGroupId id)
+{
+	auto const count = building.getAgentGroupMemberCount(id);
+	return std::format("Delete the Agent group \"{}\"? {} Agent{} assigned to it "
+		"will return to no Agent group.",
+		building.getAgentGroupName(id), count, count == 1 ? "" : "s");
+}
+
+void requestAgentGroupDelete(shared_ptr<core::Building> const& building,
+	core::AgentGroupId id)
+{
+	if (!building) return;
+
+	string diagnostic;
+	if (!building->canDeleteAgentGroup(id, &diagnostic))
+	{
+		core::addLogMessage("Agent groups", 0, core::LogLevel::Warning, diagnostic);
+		return;
+	}
+
+	// An empty group has nothing to warn about: deleting it is the whole of
+	// the operation, so it happens now rather than behind a dialog that can
+	// only ever be answered "yes".
+	if (!agentGroupDeleteRequiresConfirmation(*building, id))
+	{
+		if (!commitAgentGroupDelete(building, id, diagnostic))
+			core::addLogMessage("Agent groups", 0, core::LogLevel::Warning, diagnostic);
+		return;
+	}
+
+	// Occupied: the impact is put to the user before anything is written.
+	// The text is taken from the Building here, at the moment the request is
+	// made, so the count the user reads is the authoritative one rather than
+	// one the panel guessed at some earlier time.
+	gPendingAgentGroupDelete.id = id;
+	gPendingAgentGroupDelete.memberCount = building->getAgentGroupMemberCount(id);
+	gPendingAgentGroupDelete.text = agentGroupDeleteConfirmationText(*building, id);
+	gPendingAgentGroupDelete.active = true;
+	gPendingAgentGroupDelete.openRequested = true;
+}
+
+bool agentGroupDeletePending(core::AgentGroupId* id, uint32_t* memberCount)
+{
+	if (id) *id = gPendingAgentGroupDelete.active ? gPendingAgentGroupDelete.id
+		: core::AgentGroupId{};
+	if (memberCount) *memberCount = gPendingAgentGroupDelete.active
+		? gPendingAgentGroupDelete.memberCount : 0u;
+	return gPendingAgentGroupDelete.active;
+}
+
+bool confirmPendingAgentGroupDelete(shared_ptr<core::Building> const& building,
+	string& diagnostic)
+{
+	if (!gPendingAgentGroupDelete.active)
+	{
+		diagnostic = "No Agent group deletion is awaiting confirmation";
+		return false;
+	}
+
+	// The request is spent the moment it is answered, whichever way the
+	// deletion turns out: a delete that the Building refused should not stay
+	// armed behind a popup the user has already closed.
+	auto const id = gPendingAgentGroupDelete.id;
+	cancelPendingAgentGroupDelete();
+
+	return commitAgentGroupDelete(building, id, diagnostic);
+}
+
+void cancelPendingAgentGroupDelete()
+{
+	// Drops the request and nothing else. No snapshot was taken when the
+	// request was armed, so there is nothing here to unwind: the Building,
+	// its Agents, the dirty flag and the undo history were never touched.
+	gPendingAgentGroupDelete = PendingAgentGroupDelete{};
+}
+
 void resetAgentGroupsPanelState()
 {
 	gGroupNameEdits.clear();
@@ -222,6 +359,11 @@ void resetAgentGroupsPanelState()
 	gFocusAddRow = false;
 	loadIntoBuffer(gNewGroupName, "");
 	gAddDiagnostic.clear();
+	// A document that was replaced, opened, or undone into place is not the
+	// document a pending deletion was asked for, so a confirmation never
+	// survives it: answering one would delete a group the user was never
+	// shown the count of.
+	cancelPendingAgentGroupDelete();
 }
 
 std::vector<std::string> const& agentGroupsPanelColumns()
@@ -242,6 +384,88 @@ void renderAgentGroupMemberCountCell(core::Building const& building, core::Agent
 	ImGui::TextUnformatted(agentGroupMemberCountLabel(building, id).c_str());
 }
 
+void renderAgentGroupDeleteCell(std::shared_ptr<core::Building> const& building,
+	core::AgentGroupId id)
+{
+	if (!building) return;
+
+	ImGui::PushID("delete");
+	if (ImGui::Button(ICON_FA_TRASH, ImVec2(ImGui::GetFrameHeight(), 0.0f)))
+		requestAgentGroupDelete(building, id);
+	ImGui::PopID();
+
+	// The tooltip says what the button would do before it is asked, in the
+	// same terms the confirmation uses, so the two never disagree about how
+	// many Agents a delete would hand back.
+	if (ImGui::IsItemHovered())
+	{
+		auto const count = building->getAgentGroupMemberCount(id);
+		auto const tooltip = count == 0
+			? std::format("Delete the Agent group \"{}\"", building->getAgentGroupName(id))
+			: std::format("Delete the Agent group \"{}\": {} Agent{} return to no Agent group",
+				building->getAgentGroupName(id), count, count == 1 ? "" : "s");
+		ImGui::SetTooltip("%s", tooltip.c_str());
+	}
+}
+
+void renderAgentGroupDeleteConfirmation(std::shared_ptr<core::Building> const& building)
+{
+	// Asked for on this pass: open the modal now, in the same ID scope the
+	// rest of this function uses, so the popup's identity is stable however
+	// many frames it takes the user to answer.
+	if (gPendingAgentGroupDelete.openRequested)
+	{
+		ImGui::OpenPopup(kDeletePopupId);
+		gPendingAgentGroupDelete.openRequested = false;
+	}
+
+	// Dismissed without an answer - Escape, or a click outside the modal.
+	// Neither is a delete, so the request is dropped rather than left armed
+	// behind a popup that is no longer on screen to be answered.
+	if (gPendingAgentGroupDelete.active && !ImGui::IsPopupOpen(kDeletePopupId))
+	{
+		cancelPendingAgentGroupDelete();
+		return;
+	}
+
+	if (!ImGui::BeginPopupModal(kDeletePopupId, nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+		return;
+
+	// The popup outlived its request: the document was replaced, reopened or
+	// undone while the confirmation was up, or the delete was answered from
+	// somewhere other than the modal's own button. There is nothing left to
+	// confirm, so the popup closes itself rather than lingering over the
+	// editor with a question nobody asked.
+	if (!gPendingAgentGroupDelete.active)
+	{
+		ImGui::TextUnformatted("There is no Agent group deletion to confirm.");
+		ImGui::Separator();
+		ImGui::CloseCurrentPopup();
+		ImGui::EndPopup();
+		return;
+	}
+
+	ImGui::TextUnformatted(gPendingAgentGroupDelete.text.c_str());
+	ImGui::Separator();
+
+	if (ImGui::Button(ICON_FA_TRASH " Delete"))
+	{
+		string diagnostic;
+		if (!confirmPendingAgentGroupDelete(building, diagnostic))
+			core::addLogMessage("Agent groups", 0, core::LogLevel::Warning, diagnostic);
+		ImGui::CloseCurrentPopup();
+	}
+
+	ImGui::SameLine();
+	if (ImGui::Button(ICON_FA_TIMES " Cancel"))
+	{
+		cancelPendingAgentGroupDelete();
+		ImGui::CloseCurrentPopup();
+	}
+
+	ImGui::EndPopup();
+}
+
 void renderAgentGroupsPanel(shared_ptr<core::Building> const& building)
 {
 	if (!building) return;
@@ -256,11 +480,14 @@ void renderAgentGroupsPanel(shared_ptr<core::Building> const& building)
 	if (ImGui::BeginTable("AgentGroups",
 		static_cast<int>(kAgentGroupColumns.size()), flags))
 	{
-		// The name column stretches, the count column keeps to its number.
+		// The name column stretches, the count column keeps to its number, and
+		// the Delete column holds one icon per group.
 		ImGui::TableSetupColumn(kAgentGroupColumns[0].c_str(),
 			ImGuiTableColumnFlags_WidthStretch);
 		ImGui::TableSetupColumn(kAgentGroupColumns[kMemberCountColumn].c_str(),
 			ImGuiTableColumnFlags_WidthFixed);
+		ImGui::TableSetupColumn(kAgentGroupColumns[kDeleteColumn].c_str(),
+			ImGuiTableColumnFlags_WidthFixed, kDeleteColumnWidth);
 		ImGui::TableHeadersRow();
 
 		// Creation order, straight off the Building's registry key order.
@@ -276,6 +503,12 @@ void renderAgentGroupsPanel(shared_ptr<core::Building> const& building)
 			// doing. Recomputed each frame, which is what makes it live.
 			ImGui::TableSetColumnIndex(static_cast<int>(kMemberCountColumn));
 			renderAgentGroupMemberCountCell(*building, id);
+
+			// Every group can be deleted, running or paused: grouping is
+			// editor-only metadata, so nothing about a live simulation makes a
+			// group safer to keep than one it is not running.
+			ImGui::TableSetColumnIndex(static_cast<int>(kDeleteColumn));
+			renderAgentGroupDeleteCell(building, id);
 			ImGui::PopID();
 		}
 
@@ -283,6 +516,12 @@ void renderAgentGroupsPanel(shared_ptr<core::Building> const& building)
 
 		ImGui::EndTable();
 	}
+
+	// The confirmation lives with the panel that raises it, and is drawn on
+	// every pass rather than only the one that armed it: a modal that stopped
+	// being drawn would still block the editor, and one that was never drawn
+	// again could never be answered.
+	renderAgentGroupDeleteConfirmation(building);
 
 	ImGui::Spacing();
 

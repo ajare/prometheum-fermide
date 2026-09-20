@@ -727,17 +727,20 @@ namespace
 	}
 
 	// The panel's own column list is what the table is built from, and the
-	// Agents column is in it, after the name.
+	// Agents column is in it, after the name and before the Delete control.
 	void theGroupsTableDeclaresAnAgentsColumn()
 	{
 		auto const& columns = agentGroupsPanelColumns();
-		require(columns.size() == 2,
-			("The Groups table does not have a name column and an Agents column; it has "
+		require(columns.size() == 3,
+			("The Groups table does not have a name column, an Agents column and a "
+				"Delete column; it has "
 				+ std::to_string(columns.size())).c_str());
 		require(columns[0] == "Name",
 			"The Groups table's first column is not the name column");
 		require(columns[1] == "Agents",
 			"The Groups table's count column is not called Agents");
+		require(columns[2] == "Delete",
+			"The Groups table's third column is not the Delete column");
 	}
 
 	// The real panel, rendered for real, with the count column in it. What

@@ -5614,6 +5614,65 @@ namespace core
 		return count;
 	}
 
+	bool Building::canDeleteAgentGroup(AgentGroupId id, std::string* diagnostic) const
+	{
+		if (diagnostic) diagnostic->clear();
+
+		// An empty AgentGroupId names no group at all, so there is nothing for
+		// the request to delete. Refusing it keeps "deleted" meaning something
+		// this Building actually did rather than a no-op that reports success.
+		if (!id)
+		{
+			if (diagnostic) *diagnostic = "No Agent group was given to delete";
+			return false;
+		}
+
+		// Judged the way every other group query judges its ID: deleting a
+		// group this Building never issued is an error, not a success that
+		// quietly matched nothing.
+		auto const lookup = lookupAgentGroup(id);
+		if (!lookup)
+		{
+			if (diagnostic) *diagnostic = lookup.diagnostic;
+			return false;
+		}
+		return true;
+	}
+
+	bool Building::deleteAgentGroup(AgentGroupId id, std::string* diagnostic)
+	{
+		// The whole operation is judged before a single field is written, so a
+		// refusal leaves the Building exactly as it was found: no group gone,
+		// no assignment cleared, no half-deletion for a save to write down.
+		if (!canDeleteAgentGroup(id, diagnostic)) return false;
+
+		// The assignments go first, through the same field setAgentGroup()
+		// writes, and they all go before the group does. That ordering is what
+		// makes the deletion atomic from an Agent's point of view: at no point
+		// does this Building hold an Agent carrying an AgentGroupId it cannot
+		// resolve, which is the dangling state the file format refuses.
+		//
+		// The scan covers the whole Agent registry for the same reason the
+		// count does. A member that is walking, waiting at a Door, riding a
+		// lift, or idle on the back-most Layer is still a member, and every
+		// one of them has to come back to no Agent group.
+		for (auto& [agentId, agent] : mAgents.entries())
+		{
+			(void)agentId;
+			if (!agent || agent->getAgentGroupId() != id) continue;
+			agent->setAgentGroupId(AgentGroupId{});
+		}
+
+		// Only now can the group itself go. The registry keeps its next-ID
+		// counter, so the deleted AgentGroupId is never handed to a later
+		// group: an old reference can never silently come back pointing at
+		// something new, and an undo snapshot that still names the ID brings
+		// back the same identity, in the same creation-order position.
+		mAgentGroups.remove(id);
+		modify();
+		return true;
+	}
+
 	// Interaction and device-operation orchestration - the InteractionPoint and
 	// InteractionRequest lifecycles, the DeviceOperation lifecycle, pressing
 	// physical controls, and the per-tick interaction phases - lives in

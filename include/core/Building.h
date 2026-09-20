@@ -1582,6 +1582,23 @@ namespace core
 		// Throws if the ID is not one this Building issued.
 		uint32_t getAgentGroupMemberCount(AgentGroupId id) const;
 
+		// Deleting an Agent group. The Building is the sole mutation boundary:
+		// the group and every Agent reference to it can only go together, here.
+		bool canDeleteAgentGroup(AgentGroupId id,
+			std::string* diagnostic = nullptr) const;
+
+		// Removes the Agent group and, in the same operation, returns every
+		// Agent assigned to it to no Agent group. The assignments are cleared
+		// before the group is removed, so the Building is never left holding an
+		// Agent that names a group it does not own - the state a later save
+		// would refuse to load back.
+		//
+		// Nothing is written until the ID has been judged: an unknown or empty
+		// AgentGroupId is refused atomically, leaving every Agent, every group,
+		// and the reason for the refusal exactly as the caller can read it back
+		// through `diagnostic`.
+		bool deleteAgentGroup(AgentGroupId id, std::string* diagnostic = nullptr);
+
 		InteractionPointId createInteractionPoint(std::string const& name);
 
 		InteractionPointId createInteractionPoint(std::string const& name, SectorId sector,
