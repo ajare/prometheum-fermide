@@ -982,15 +982,15 @@ void renderMarker(shared_ptr<const core::Marker> marker, uint32_t /* layer */, L
 	bool selected, ImDrawList* drawList)
 {
 	if (style != LayerRenderStyle::Solid) return;
-	constexpr float iconExtent = 18.0f;
 	auto point = marker->getPosition();
 	point.x += marker->getOffset();
+	point.y += MarkerDeckLift;
 	transformPosition(point);
 
 	ImFont* font = gAgentIconFont ? gAgentIconFont : ImGui::GetFont();
 	auto sourceSize = font->FontSize;
 	auto sourceBounds = font->CalcTextSizeA(sourceSize, FLT_MAX, 0.0f, ICON_FA_MAP_MARKER_ALT);
-	auto fontSize = sourceSize * iconExtent
+	auto fontSize = sourceSize * MarkerIconSize
 		/ max(max(sourceBounds.x, sourceBounds.y), 1.0f);
 	auto size = font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, ICON_FA_MAP_MARKER_ALT);
 	ImVec2 topLeft{ point.x - size.x * 0.5f, point.y - size.y };

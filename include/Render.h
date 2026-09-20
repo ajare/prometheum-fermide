@@ -32,6 +32,17 @@
 #define RENDER_INTER_LAYER_EDGE_SIZE			11
 
 //
+// Marker icon geometry.
+//
+// A Marker's icon floats MarkerDeckLift world units above the deck its Vertex
+// sits on, which clears the deck line and lets the editor's hit box cover the
+// icon plus the gap down to the deck. The Vertex itself stays on the ground;
+// only the icon lifts.
+//
+inline constexpr float MarkerIconSize{ 22.0f };	// longest edge of the drawn icon, in pixels
+inline constexpr float MarkerDeckLift{ 0.1f };	// how far the icon floats above the deck, in world units
+
+//
 // How a Sector is drawn by one pass of the viewport.
 //
 // The selected Layer is drawn solid and whole. The Layer directly behind it is

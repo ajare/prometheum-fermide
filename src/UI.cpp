@@ -127,7 +127,6 @@ namespace
 	}
 
 	constexpr float PaletteInset{ 16.0f };
-	constexpr float MarkerIconSize{ 22.0f };
 	constexpr float PegmanGravity{ 6.0f };
 	constexpr float PegmanTerminalVelocity{ 8.0f };
 
@@ -775,9 +774,12 @@ namespace
 				auto marker = static_pointer_cast<const core::MarkerSectorObject>(object)->getMarker();
 				auto world = marker->getPosition();
 				world.x += marker->getOffset();
-				auto point = worldToScreen(world);
+				// The icon is drawn MarkerDeckLift above the deck, so the hit box covers
+				// the icon and the gap down to the deck the Vertex stays on.
+				auto point = worldToScreen({ world.x, world.y + MarkerDeckLift });
+				auto deckPad = MarkerDeckLift * CORE_DECK_HEIGHT_PIXELS + 2.0f;
 				if (pointInRect(position, point - ImVec2(MarkerIconSize * 0.5f, MarkerIconSize),
-					point + ImVec2(MarkerIconSize * 0.5f, 2.0f))) return object;
+					point + ImVec2(MarkerIconSize * 0.5f, deckPad))) return object;
 			}
 		}
 		return nullptr;
@@ -1885,7 +1887,8 @@ namespace
 			if (gPegman.item == PaletteItem::Marker)
 			{
 				auto preview = target.sector
-					? worldToScreen({ target.sector->getPosition().x + target.localX, target.floorY })
+					? worldToScreen({ target.sector->getPosition().x + target.localX,
+						target.floorY + MarkerDeckLift })
 					: io.MousePos;
 				drawMarkerIcon(drawList, preview, MarkerIconSize, colour);
 			}
