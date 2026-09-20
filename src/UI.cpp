@@ -3861,6 +3861,21 @@ bool requestApplicationClose(shared_ptr<core::Building>& building)
 	return false;
 }
 
+void resetWorldSimulation(shared_ptr<core::Building> const& building)
+{
+	try
+	{
+		building->resetSimulation();
+		clearDocumentState(false);
+		gUISettings.worldPaused = building->isSimulationPaused();
+	}
+	catch (std::exception const& error)
+	{
+		core::addLogMessage("Simulation", 0, core::LogLevel::Error,
+			"Could not reset simulation: " + string(error.what()));
+	}
+}
+
 void handleShortcuts(shared_ptr<core::Building>& building)
 {
 	if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_N, 0, ImGuiInputFlags_RouteGlobalLow))
@@ -3903,13 +3918,21 @@ void handleShortcuts(shared_ptr<core::Building>& building)
 		beginAgentPathSelection();
 	}
 
-	// World pause
-	if (!ImGui::GetIO().KeyCtrl
-		&& ImGui::Shortcut(ImGuiKey_P, 0, ImGuiInputFlags_RouteGlobalLow))
+	// Start or stop the simulation
+	if (ImGui::Shortcut(ImGuiKey_S, 0, ImGuiInputFlags_RouteGlobalLow))
 	{
 		if (!ImGui::IsAnyItemActive() && !ImGui::IsAnyItemFocused())
 		{
 			setWorldPaused(building, !gUISettings.worldPaused);
+		}
+	}
+
+	// Reset simulation
+	if (ImGui::Shortcut(ImGuiKey_R, 0, ImGuiInputFlags_RouteGlobalLow))
+	{
+		if (!ImGui::IsAnyItemActive() && !ImGui::IsAnyItemFocused())
+		{
+			resetWorldSimulation(building);
 		}
 	}
 
@@ -4119,12 +4142,6 @@ void handleShortcuts(shared_ptr<core::Building>& building)
 	if (ImGui::Shortcut(ImGuiKey_V, 0, ImGuiInputFlags_RouteGlobalLow))
 	{
 		setSelectionMode(UISettings::SelectionMode::Vertex);
-	}
-
-	// Sector selection mode
-	if (ImGui::Shortcut(ImGuiKey_S, 0, ImGuiInputFlags_RouteGlobalLow))
-	{
-		setSelectionMode(UISettings::SelectionMode::Sector);
 	}
 
 	// View
@@ -4448,7 +4465,7 @@ void renderMenu(shared_ptr<core::Building>& building)
 				}
 
 				selected = gUISettings.selectionMode == UISettings::SelectionMode::Sector;
-				if (ImGui::MenuItem("Sectors", "S", &selected) && selected)
+				if (ImGui::MenuItem("Sectors", 0, &selected) && selected)
 					setSelectionMode(UISettings::SelectionMode::Sector);
 
 				ImGui::EndMenu();
@@ -4584,33 +4601,21 @@ void renderDocumentToolbar(shared_ptr<core::Building>& building)
 
 void renderToolbar(shared_ptr<core::Building> building)
 {
-	if (ImGui::Button(gUISettings.worldPaused ? "Resume" : "Pause"))
+	if (ImGui::Button(gUISettings.worldPaused ? "Start" : "Stop"))
 	{
 		setWorldPaused(building, !gUISettings.worldPaused);
 	}
-
-		ImGui::SameLine();
-
-		if (ImGui::Button("Wake Agents"))
-		{
-			building->wakeAllAgents();
-		}
+	if (ImGui::IsItemHovered())
+	{
+		ImGui::SetTooltip(gUISettings.worldPaused ? "Start (S)" : "Stop (S)");
+	}
 
 		ImGui::SameLine();
 		if (ImGui::Button("Reset"))
 		{
-			try
-			{
-				building->resetSimulation();
-				clearDocumentState(false);
-				gUISettings.worldPaused = building->isSimulationPaused();
-			}
-			catch (std::exception const& error)
-			{
-				core::addLogMessage("Simulation", 0, core::LogLevel::Error,
-					"Could not reset simulation: " + string(error.what()));
-			}
+			resetWorldSimulation(building);
 		}
+		if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reset (R)");
 
 
 		// Select visible Layer
