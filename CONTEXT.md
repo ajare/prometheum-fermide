@@ -97,6 +97,10 @@ _Avoid_: Lift, when distinguishing the open room object from an enclosed lift tr
 **Agent**:
 A simulated person with a position, destination path, and current movement state.
 
+**Agent group**:
+A named, Building-scoped classification that may be assigned to an Agent for administrative organisation. An Agent group retains its identity when renamed; deleting it leaves its Agents with no Agent group. It has no effect on movement, pathfinding, capacity, or other simulation behaviour.
+_Avoid_: Group, when the broader term could be ambiguous
+
 **Shared resource**:
 A constrained facility that agents must coordinate to use, such as a lift car, shuttle carriage, ladder, stairwell, or doorway.
 
