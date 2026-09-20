@@ -44,6 +44,7 @@
 #endif
 
 void runSerializationSmokeChecks();
+void runShuttleDoorQuerySmokeChecks();
 void runRenderOrderSmokeChecks();
 void runDoorOpenApartRenderSmokeChecks();
 void runDoorOpenLeftRenderSmokeChecks();
@@ -4971,6 +4972,7 @@ int main(int argc, char** argv)
 		runBackgroundCascadeDeleteSmokeChecks();
 		runBackgroundSelectionPanelSmokeChecks();
 		runDoorPanelScopeSmokeChecks();
+		runShuttleDoorQuerySmokeChecks();
 		runThresholdRefusalSmokeChecks();
 		runWindowIntoBackgroundSmokeChecks();
 		runWindowMultiBackgroundSmokeChecks();

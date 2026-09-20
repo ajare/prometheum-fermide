@@ -2744,7 +2744,10 @@ namespace core
 		auto mapping = find_if(coordinator->mShuttleDoors.begin(), coordinator->mShuttleDoors.end(),
 			[landingId](auto const& value) { return value.landingResource == landingId; });
 		if (mapping == coordinator->mShuttleDoors.end()) return false;
-		if (shuttleSectorIndex) *shuttleSectorIndex = (uint32_t)coordinator->mLiftSector.value - 1;
+		// Every output is independently optional (#104): the Shuttle sector index is
+		// kept in a local so resolving doorIndex never dereferences a null output.
+		auto const sectorIndex = (uint32_t)coordinator->mLiftSector.value - 1;
+		if (shuttleSectorIndex) *shuttleSectorIndex = sectorIndex;
 		if (stopIndex) *stopIndex = mapping->stopIndex;
 		if (carriageIndex) *carriageIndex = mapping->carriageIndex;
 		if (doorIndex)
@@ -2757,7 +2760,7 @@ namespace core
 			for (auto const& record : mConstructionRecords)
 			{
 				if (!constructionTypeCreatesSector(record.type)) continue;
-				if (producerIndex++ != *shuttleSectorIndex) continue;
+				if (producerIndex++ != sectorIndex) continue;
 				if (record.type != ConstructionType::Shuttle) break;
 				if (mapping->stopIndex >= record.values.size()
 					|| mapping->carriageIndex >= record.d) break;

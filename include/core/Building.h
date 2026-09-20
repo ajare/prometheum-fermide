@@ -1126,6 +1126,8 @@ namespace core
 		bool isLiftOwnedControl(std::shared_ptr<const SectorObject> const& object,
 			uint32_t* liftSectorIndex = nullptr, uint32_t* stopIndex = nullptr) const;
 
+		// Every output is independently optional: a caller may ask for any subset
+		// and the query answers those fields without needing another supplied.
 		// The optional doorIndex is the position within the carriage's selected
 		// doorMask cells, matching the per-Door override grid of
 		// setShuttleDoorOpenStyle.
