@@ -1985,13 +1985,23 @@ namespace core
 	Building::ShuttleEditPlan Building::planEditShuttleVehicle(uint32_t sectorIndex,
 		uint32_t numCars, uint32_t carWidth, uint32_t doorMask) const
 	{
+		ShuttleEditPlan plan;
 		if (sectorIndex >= mSectors.size()
 			|| !dynamic_pointer_cast<const ShuttleTransit>(mSectors[sectorIndex]))
 		{
-			ShuttleEditPlan plan;
 			plan.diagnostic = "Only a Shuttle vehicle can be re-authored";
 			return plan;
 		}
+		// A public vehicle edit authors a complete vehicle.  Zero is the private
+		// "keep the authored part" sentinel shared with track-only resizes and must
+		// never be consumed as one through this API; reject it with the same
+		// diagnostics the sentinel-substituted checks would have given.
+		if (numCars == 0)
+		{ plan.diagnostic = "A Shuttle needs at least one carriage"; return plan; }
+		if (carWidth == 0)
+		{ plan.diagnostic = "Shuttle carriage width must be between 3 and 5 cells"; return plan; }
+		if (doorMask == 0)
+		{ plan.diagnostic = "The carriage door layout must select at least one cell within the carriage width"; return plan; }
 		auto transit = dynamic_pointer_cast<const ShuttleTransit>(mSectors[sectorIndex]);
 		return planResizeShuttleWithVehicle(sectorIndex, transit->getCellX(),
 			transit->getCellY(), transit->getCellsWide(), numCars, carWidth, doorMask);

@@ -1375,7 +1375,9 @@ namespace core
 
 		// Re-author a Shuttle's coupled vehicle - carriage count, carriage width,
 		// and the configured door positions within a carriage - over its current
-		// track.  Per-Door opening styles are reconciled by their structural
+		// track.  All three layout arguments are required and must be non-zero;
+		// zero is the internal keep-current sentinel of the shared track-resize
+		// path and is rejected here rather than silently meaning "unchanged".  Per-Door opening styles are reconciled by their structural
 		// identity: a style survives only where the same stop, the same carriage
 		// index, and the same configured carriage cell still exist and that cell
 		// still lands on a supported landing.  Dropped carriages and deselected

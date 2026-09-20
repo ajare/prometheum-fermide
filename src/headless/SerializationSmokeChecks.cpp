@@ -4530,6 +4530,70 @@ agents: []
 		}
 	}
 
+	// Ticket #103: the public vehicle-edit API authors a complete vehicle, so a
+	// zero carriage count, carriage width, or door mask must be rejected rather
+	// than consumed as the internal keep-current sentinel.
+	void shuttleVehicleEditsRejectZeroValuedFields()
+	{
+		core::Building building("Shuttle vehicle edit validation", 32, 2);
+		building.addCorridor(0, 0, 0, 31, 1);
+		core::Building::CreateShuttleOptions options{ 1, 3, { 0, 18 }, 0 };
+		options.capacity = 2;
+		options.doorMask = 0b101;
+		auto const created = building.addShuttle(1, 0, 0, 27, options);
+		building.finishBuild();
+		building.pauseSimulation();
+		auto const index = created.shuttle.sector->getIndex();
+
+		auto const rejected = [&](uint32_t numCars, uint32_t carWidth, uint32_t doorMask,
+			std::string const& needle, std::string const& field)
+		{
+			auto const plan = building.planEditShuttleVehicle(index, numCars, carWidth, doorMask);
+			require(!plan.valid,
+				("A zero-valued " + field + " was accepted as a Shuttle vehicle edit").c_str());
+			require(plan.diagnostic.find(needle) != std::string::npos,
+				("The rejected " + field + " carried no useful diagnostic: "
+					+ plan.diagnostic).c_str());
+		};
+		rejected(0, 3, 0b101, "at least one carriage", "carriage count");
+		rejected(1, 0, 0b101, "between 3 and 5", "carriage width");
+		rejected(1, 3, 0, "at least one cell", "door mask");
+
+		// The pre-existing range diagnostics stay enforced through the public API.
+		auto const tooNarrow = building.planEditShuttleVehicle(index, 1, 2, 0b11);
+		require(!tooNarrow.valid
+			&& tooNarrow.diagnostic.find("between 3 and 5") != std::string::npos,
+			("An out-of-range carriage width was accepted: "
+				+ tooNarrow.diagnostic).c_str());
+		auto const maskBeyondWidth = building.planEditShuttleVehicle(index, 1, 3, 0b1000);
+		require(!maskBeyondWidth.valid
+			&& maskBeyondWidth.diagnostic.find("within the carriage width") != std::string::npos,
+			("A door mask reaching past the carriage width was accepted: "
+				+ maskBeyondWidth.diagnostic).c_str());
+
+		// The sentinel stays private to the track-resize path, which keeps the
+		// current vehicle layout.
+		auto const trackOnly = building.planResizeShuttle(index, 0, 0, 27);
+		require(trackOnly.valid && trackOnly.numCars == 1 && trackOnly.carWidth == 3
+			&& trackOnly.doorMask == 0b101,
+			("A track-only Shuttle edit did not preserve the authored vehicle layout: "
+				+ trackOnly.diagnostic).c_str());
+
+		// A valid vehicle edit still plans and applies end to end.
+		auto const valid = building.planEditShuttleVehicle(index, 2, 4, 0b1001);
+		require(valid.valid, ("A valid Shuttle vehicle edit was refused: " + valid.diagnostic).c_str());
+		require(valid.numCars == 2 && valid.carWidth == 4 && valid.doorMask == 0b1001,
+			"The valid vehicle plan did not carry the requested layout");
+		auto const edited = building.applyShuttleEdit(valid);
+		auto const transit = std::dynamic_pointer_cast<const core::ShuttleTransit>(
+			building.getSector(edited));
+		require(transit != nullptr, "The edited Shuttle is no longer a Shuttle Transit");
+		core::Building::CreateShuttleOptions applied{};
+		require(building.getShuttleOptions(transit->getShuttle().get(), applied)
+			&& applied.numCars == 2 && applied.carWidth == 4 && applied.doorMask == 0b1001,
+			"The applied Shuttle vehicle does not match the plan");
+	}
+
 	void recentFilesPersistAcrossStartup()
 	{
 		auto directory = std::filesystem::temp_directory_path() / "prometheum-fermide-recent-files-smoke";
@@ -5363,6 +5427,7 @@ void runSerializationSmokeChecks()
 	shuttleDoorStylesSurviveShuttleMovement();
 	shuttleDoorStylesReconcileWhenStopsChange();
 	shuttleDoorStylesReconcileWhenCarriageAndDoorLayoutChanges();
+	shuttleVehicleEditsRejectZeroValuedFields();
 	recentFilesPersistAcrossStartup();
 	serializableTracksModificationState();
 	doorAndWindowRemovalWorksOnDeepLayerPairs();
