@@ -1692,6 +1692,31 @@ agents: []
 			"Deleted Stairwell still occupies the Back layer");
 	}
 
+	// Mirrors resources/test-maps/stairs-test-1.yaml: the Stairwell is authored
+	// before the Room its upper landing would rest on, and replaying an edit in
+	// authored order used to reject the extension because the landing cell read
+	// as unoccupied during the candidate replay.
+	void stairwellEditsReplayLocationsBeforeTransits()
+	{
+		core::Building building("Stairwell landing order", 16, 6);
+		building.addCorridor(0u, 1, 0, 16, 1);
+		building.addCorridor(0u, 2, 0, 7, 1);
+		auto created = building.addStairwell(1, 1, 2,
+			core::Building::CreateStairwellOptions{ 2, CORE_SIDE_LEFT });
+		building.addRoom("Room 1", 0, 3, 0, 7, 1);
+		building.finishBuild();
+		building.pauseSimulation();
+
+		core::Building::CreateStairwellOptions extended{ 3, CORE_SIDE_LEFT };
+		auto plan = building.planResizeStairwell(created.sectorIndex, 2, 1, extended);
+		require(plan.valid, "Extending a Stairwell onto a Location authored after it was rejected");
+		auto edited = building.applyStairwellEdit(plan);
+		auto stairwell = std::dynamic_pointer_cast<const core::StairwellTransit>(
+			building.getSector(edited));
+		require(stairwell && stairwell->getDecksHigh() == 3,
+			"The extended Stairwell does not span the new deck");
+	}
+
 	// A Transit on the Layer behind the selection is visible only through the
 	// apertures the selected Layer's Locations give it. Each Transit type exposes
 	// its own aperture geometry, and a Transit with no aperture is not drawn.
@@ -5540,6 +5565,7 @@ void runSerializationSmokeChecks()
 	staircasesConnectAdjacentCorridorsAndRoundTrip();
 	laddersCanBeValidatedEditedAndDeleted();
 	stairwellsCanBeValidatedEditedAndDeleted();
+	stairwellEditsReplayLocationsBeforeTransits();
 	physicalControlsPreferDistinctWallPositions();
 	bulkheadDoorsSupportIndependentObjectEditing();
 	doorOpeningStyleIsAuthoredPersistedAndLegacyDefaulted();

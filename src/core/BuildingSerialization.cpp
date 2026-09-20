@@ -2645,6 +2645,11 @@ namespace core
 			found->e = plan.options.directionalBatchLimit;
 		}
 
+		// Replay Locations before Transits regardless of the order they were
+		// authored in: an extended Stairwell may land on a Location that was
+		// painted after it (mirrors prepareLiftEdit).
+		records = canonicalConstructionRecords(std::move(records));
+
 		try
 		{
 			auto candidate = makeCandidateBuilding();
