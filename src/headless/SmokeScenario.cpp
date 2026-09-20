@@ -69,6 +69,7 @@ void runPaletteTraySmokeChecks();
 void runOnboardAgentDeletionSmokeChecks();
 void runViewportCullingSmokeChecks();
 void runZeroSizeLocationSmokeChecks();
+void runIsolatedSectorPathingSmokeChecks();
 void runGraphicsStartupSmokeChecks();
 
 static_assert(!std::is_convertible_v<core::AgentId, core::InteractionPointId>);
@@ -4992,6 +4993,7 @@ int main(int argc, char** argv)
 		runOnboardAgentDeletionSmokeChecks();
 		runViewportCullingSmokeChecks();
 		runZeroSizeLocationSmokeChecks();
+		runIsolatedSectorPathingSmokeChecks();
 
 		auto const deepJourney = runThreeLayerTransitJourney();
 		if (!deepJourney.pathShapeValid)

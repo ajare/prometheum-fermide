@@ -4777,6 +4777,19 @@ namespace core
 		mSimulationCoordinator.publishTopologyEvent(SimulationEventType::SimulationPaused);
 	}
 
+	bool Building::getPausedPathIntent(Agent const& agent, TopologyPathIntent& intent) const
+	{
+		for (auto const& [id, candidate] : mPausedPathIntents)
+		{
+			if (mAgents.find(id) == &agent)
+			{
+				intent = candidate;
+				return true;
+			}
+		}
+		return false;
+	}
+
 	void Building::validateTraversalTopology(Graph const& graph) const
 	{
 		auto validSector = [&](SectorId id) { return id && id.value <= mSectors.size(); };

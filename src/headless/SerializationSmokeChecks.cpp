@@ -1692,9 +1692,78 @@ agents: []
 			"Deleted Stairwell still occupies the Back layer");
 	}
 
+	// Mirrors resources/test-maps/stairs-test-1.yaml: the Stairwell is authored
+	// before the Room its upper landing would rest on, and replaying an edit in
+	// authored order used to reject the extension because the landing cell read
+	// as unoccupied during the candidate replay.
+	void stairwellEditsReplayLocationsBeforeTransits()
+	{
+		core::Building building("Stairwell landing order", 16, 6);
+		building.addCorridor(0u, 1, 0, 16, 1);
+		building.addCorridor(0u, 2, 0, 7, 1);
+		auto created = building.addStairwell(1, 1, 2,
+			core::Building::CreateStairwellOptions{ 2, CORE_SIDE_LEFT });
+		building.addRoom("Room 1", 0, 3, 0, 7, 1);
+		building.finishBuild();
+		building.pauseSimulation();
+
+		core::Building::CreateStairwellOptions extended{ 3, CORE_SIDE_LEFT };
+		auto plan = building.planResizeStairwell(created.sectorIndex, 2, 1, extended);
+		require(plan.valid, "Extending a Stairwell onto a Location authored after it was rejected");
+		auto edited = building.applyStairwellEdit(plan);
+		auto stairwell = std::dynamic_pointer_cast<const core::StairwellTransit>(
+			building.getSector(edited));
+		require(stairwell && stairwell->getDecksHigh() == 3,
+			"The extended Stairwell does not span the new deck");
+	}
+
+	// Same ordering bug the Stairwell edit had: a Ladder extended onto a
+	// Location authored after it must replay Locations before Transits.
+	void ladderEditsReplayLocationsBeforeTransits()
+	{
+		core::Building building("Ladder landing order", 16, 6);
+		building.addCorridor(0u, 1, 0, 16, 1);
+		building.addCorridor(0u, 2, 0, 7, 1);
+		auto created = building.addLadder(1, 1, 2, { 2, false, true });
+		building.addCorridor(0u, 3, 0, 7, 1);
+		building.finishBuild();
+		building.pauseSimulation();
+
+		core::Building::CreateLadderOptions extended{ 3, false, true };
+		auto plan = building.planResizeLadder(created.ladder.sector->getIndex(), 2, 1, extended);
+		require(plan.valid, "Extending a Ladder onto a Location authored after it was rejected");
+		auto edited = building.applyLadderEdit(plan);
+		auto ladder = std::dynamic_pointer_cast<const core::LadderTransit>(
+			building.getSector(edited));
+		require(ladder && ladder->getDecksHigh() == 3,
+			"The extended Ladder does not span the new deck");
+	}
+
 	// A Transit on the Layer behind the selection is visible only through the
 	// apertures the selected Layer's Locations give it. Each Transit type exposes
 	// its own aperture geometry, and a Transit with no aperture is not drawn.
+	// A Staircase moved onto a Location authored after it must replay Locations
+	// before Transits, like every other Transit edit.
+	void staircaseEditsReplayLocationsBeforeTransits()
+	{
+		core::Building building("Staircase landing order", 16, 6);
+		building.addCorridor(0u, 1, 0, 16, 1);
+		building.addCorridor(0u, 2, 0, 16, 1);
+		auto index = building.addStaircase(1, 1, 2, { 2, CORE_SIDE_RIGHT, 0.0f });
+		building.addCorridor(0u, 3, 0, 7, 1);
+		building.finishBuild();
+		building.pauseSimulation();
+
+		core::Building::CreateStaircaseOptions moved{ 2, CORE_SIDE_RIGHT, 0.0f };
+		auto plan = building.planResizeStaircase(index, 2, 2, moved);
+		require(plan.valid && plan.move, "Moving a Staircase onto a Location authored after it was rejected");
+		auto edited = building.applyStaircaseEdit(plan);
+		auto staircase = std::dynamic_pointer_cast<const core::StaircaseTransit>(
+			building.getSector(edited));
+		require(staircase && staircase->getCellY() == 2,
+			"The moved Staircase did not reach the new deck");
+	}
+
 	void transitsOnTheLayerBehindAreOnlyDrawnThroughApertures()
 	{
 		require(!shouldClipTransitToApertures(LayerRenderStyle::Solid),
@@ -5605,6 +5674,9 @@ void runSerializationSmokeChecks()
 	staircasesConnectAdjacentCorridorsAndRoundTrip();
 	laddersCanBeValidatedEditedAndDeleted();
 	stairwellsCanBeValidatedEditedAndDeleted();
+	stairwellEditsReplayLocationsBeforeTransits();
+	ladderEditsReplayLocationsBeforeTransits();
+	staircaseEditsReplayLocationsBeforeTransits();
 	physicalControlsPreferDistinctWallPositions();
 	bulkheadDoorsSupportIndependentObjectEditing();
 	doorOpeningStyleIsAuthoredPersistedAndLegacyDefaulted();
