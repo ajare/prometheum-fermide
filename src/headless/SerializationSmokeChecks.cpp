@@ -1,8 +1,10 @@
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -3857,6 +3859,319 @@ agents: []
 		}
 	}
 
+	// Ticket #91: Shuttle Door styles reconcile when the coupled vehicle changes.
+	// A style survives only where its own stop, carriage index, and configured
+	// carriage cell still exist and still land on a supported landing.  Adding or
+	// removing carriages keeps every surviving carriage's styles and takes the
+	// removed carriage's overrides with it; deselecting a carriage door position
+	// discards that Door's style instead of letting the compacted door index
+	// slide it onto the next cell, and reselecting the cell later does not
+	// resurrect it; a carriage width change moves each style to the physical
+	// Door its identity now addresses - never to a neighbour - and a Door that
+	// the widening moves onto no landing loses its override rather than staying
+	// live.  Every newly generated Door uses OpenUp, and the reconciled result
+	// round-trips through save/load.
+	void shuttleDoorStylesReconcileWhenCarriageAndDoorLayoutChanges()
+	{
+		auto findShuttleDoorObject = [](core::Building const& building, uint32_t shuttleSector,
+			uint32_t stopIndex, uint32_t carriageIndex, uint32_t doorIndex)
+			-> std::shared_ptr<const core::SectorObject>
+		{
+			for (uint32_t sectorIndex = 0; sectorIndex < building.getNumSectors(); ++sectorIndex)
+			{
+				auto const sector = building.getSector(sectorIndex);
+				if (!sector) continue;
+				for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
+				{
+					auto const object = sector->getObject(i);
+					if (!object || object->getObjectType() != core::SectorObjectType::Door) continue;
+					uint32_t ownerSector{ ~0u }, ownerStop{ ~0u };
+					uint32_t ownerCarriage{ ~0u }, ownerDoor{ ~0u };
+					if (building.isShuttleOwnedDoor(object, &ownerSector, &ownerStop,
+							&ownerCarriage, &ownerDoor)
+						&& ownerSector == shuttleSector && ownerStop == stopIndex
+						&& ownerCarriage == carriageIndex && ownerDoor == doorIndex)
+						return object;
+				}
+			}
+			return nullptr;
+		};
+		auto findShuttleDoor = [&findShuttleDoorObject](core::Building const& building,
+			uint32_t shuttleSector, uint32_t stopIndex, uint32_t carriageIndex, uint32_t doorIndex)
+			-> std::shared_ptr<const core::Door>
+		{
+			auto const object = findShuttleDoorObject(building, shuttleSector, stopIndex,
+				carriageIndex, doorIndex);
+			return object ? static_pointer_cast<const core::DoorSectorObject>(object)->getDoor()
+				: nullptr;
+		};
+		auto snapshotYaml = [](core::Building& building)
+		{
+			core::SerializationWorkData workData;
+			auto writer = core::YamlSerializer::toString();
+			building.serialize(*writer, workData);
+			writer->serialize();
+			return writer->getSerializedString();
+		};
+		auto loadYaml = [](std::string const& yaml)
+		{
+			auto building = std::make_shared<core::Building>("placeholder", 1, 1);
+			core::SerializationWorkData workData;
+			auto reader = core::YamlSerializer::fromString(yaml);
+			reader->deserialize();
+			building->deserialize(*reader, workData);
+			return building;
+		};
+		auto offsetsOf = [](uint32_t mask)
+		{
+			std::vector<uint32_t> offsets;
+			for (uint32_t cell = 0; cell < 32; ++cell)
+				if ((mask & (1u << cell)) != 0) offsets.push_back(cell);
+			return offsets;
+		};
+		// The style the Shuttle's own record carries for one grid slot,
+		// ~0u when the record holds no override there.
+		auto recordedStyle = [](core::Building const& building, uint32_t shuttleSector,
+			uint32_t numCars, uint32_t doorCount, uint32_t stop, uint32_t car, uint32_t door)
+			-> uint32_t
+		{
+			auto const transit = std::dynamic_pointer_cast<const core::ShuttleTransit>(
+				building.getSector(shuttleSector));
+			require(transit != nullptr, "The Shuttle Sector is not a Shuttle Transit");
+			core::Building::CreateShuttleOptions options{};
+			require(building.getShuttleOptions(transit->getShuttle().get(), options),
+				"The Shuttle record could not be read back");
+			auto const slot = (stop * numCars + car) * doorCount + door;
+			return slot < options.doorOpenStyles.size() ? options.doorOpenStyles[slot] : ~0u;
+		};
+		auto shuttleDoorColumns = [](core::Building const& building, uint32_t shuttleSector)
+		{
+			std::set<uint32_t> columns;
+			for (uint32_t sectorIndex = 0; sectorIndex < building.getNumSectors(); ++sectorIndex)
+			{
+				auto const sector = building.getSector(sectorIndex);
+				if (!sector) continue;
+				for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
+				{
+					auto const object = sector->getObject(i);
+					uint32_t ownerSector{ ~0u };
+					if (building.isShuttleOwnedDoor(object, &ownerSector)
+						&& ownerSector == shuttleSector)
+						columns.insert(object->getCellX());
+				}
+			}
+			return columns;
+		};
+		using Style = core::Door::OpenStyle;
+		// The front Layer leaves cell 7 of row 0 empty: a Door whose cell moves
+		// there has no landing, so it is never built and keeps no override.
+		uint32_t const holeX = 7;
+		// expected holds the authored styles that should still be live, keyed by
+		// (stop, carriage, configured carriage cell).  Any identity absent from
+		// the map must show the generated OpenUp default.
+		auto requireLayout = [&](core::Building const& building, uint32_t shuttleSector,
+			uint32_t shuttleX, uint32_t numCars, uint32_t carWidth, uint32_t doorMask,
+			std::vector<uint32_t> const& stopOffsets,
+			std::map<std::array<uint32_t, 3>, Style> const& expected,
+			std::set<uint32_t> const& expectedColumns, char const* context)
+		{
+			auto const offsets = offsetsOf(doorMask);
+			auto const doorCount = static_cast<uint32_t>(offsets.size());
+			auto const transit = std::dynamic_pointer_cast<const core::ShuttleTransit>(
+				building.getSector(shuttleSector));
+			require(transit != nullptr, "The Shuttle Sector is not a Shuttle Transit");
+			core::Building::CreateShuttleOptions options{};
+			require(building.getShuttleOptions(transit->getShuttle().get(), options),
+				"The Shuttle record could not be read back");
+			require(options.numCars == numCars && options.carWidth == carWidth
+				&& options.doorMask == doorMask,
+				("The Shuttle vehicle was not re-authored as planned in "
+					+ std::string(context)).c_str());
+			for (uint32_t stop = 0; stop < stopOffsets.size(); ++stop)
+				for (uint32_t car = 0; car < numCars; ++car)
+					for (uint32_t door = 0; door < doorCount; ++door)
+					{
+						auto const offset = offsets[door];
+						auto const doorX = shuttleX + stopOffsets[stop]
+							+ car * (carWidth + 1) + offset;
+						std::array<uint32_t, 3> const key{ stop, car, offset };
+						auto const authored = expected.find(key);
+						auto const label = std::string(context) + " (stop " + std::to_string(stop)
+							+ ", carriage " + std::to_string(car) + ", carriage cell "
+							+ std::to_string(offset) + ")";
+						auto const recorded = recordedStyle(building, shuttleSector, numCars,
+								doorCount, stop, car, door);
+						if (doorX == holeX)
+						{
+							require(findShuttleDoor(building, shuttleSector, stop, car, door) == nullptr,
+								("A Door was built on a landing that does not exist in " + label).c_str());
+							require(recorded == ~0u,
+								("An override survived a Door with no landing in " + label).c_str());
+							continue;
+						}
+						auto const found = findShuttleDoor(building, shuttleSector, stop, car, door);
+						require(found != nullptr,
+							("A supported Shuttle Door is missing in " + label).c_str());
+						auto const foundObject = findShuttleDoorObject(building, shuttleSector,
+							stop, car, door);
+						require(foundObject != nullptr && foundObject->getCellX() == doorX,
+							("A Shuttle Door does not sit on the cell its own identity addresses in "
+								+ label).c_str());
+						auto const want = authored == expected.end() ? Style::OpenUp : authored->second;
+						require(found->getOpenStyle() == want,
+							("A Shuttle Door style is wrong in " + label).c_str());
+						auto const wantRecord = authored == expected.end()
+							? ~0u : static_cast<uint32_t>(authored->second);
+						require(recorded == wantRecord,
+							("The recorded override disagrees with the live Door in " + label).c_str());
+					}
+			require(shuttleDoorColumns(building, shuttleSector) == expectedColumns,
+				("The Shuttle does not own the expected landing Door columns in "
+					+ std::string(context)).c_str());
+		};
+		auto applyVehicle = [](core::Building& building, uint32_t shuttleSector,
+			uint32_t numCars, uint32_t carWidth, uint32_t doorMask) -> uint32_t
+		{
+			auto const plan = building.planEditShuttleVehicle(shuttleSector, numCars, carWidth, doorMask);
+			require(plan.valid, ("Re-authoring the Shuttle vehicle was refused: " + plan.diagnostic).c_str());
+			require(!plan.move, "A vehicle-only edit was mistaken for a Shuttle move");
+			require(plan.requiresConfirmation(),
+				"A vehicle change reported no consequence for the rebuilt landings");
+			require(plan.numCars == numCars && plan.carWidth == carWidth && plan.doorMask == doorMask,
+				"The plan did not carry the requested vehicle layout");
+			return building.applyShuttleEdit(plan);
+		};
+
+		// The front Layer covers every landing column the Shuttle will ever use
+		// except cell 7, which stays empty for the width-change step.
+		core::Building building("Shuttle vehicle style reconciliation", 64, 3);
+		building.addCorridor(0, 0, 0, 7, 1);
+		building.addCorridor(0, 0, 8, 44, 1);
+		core::Building::CreateShuttleOptions options{ 2, 3, { 0, 20 }, 0 };
+		options.capacity = 2;
+		options.doorMask = 0b101; // Two doors per carriage: cells 0 and 2.
+		options.allowPartialLandings = true;
+		auto const created = building.addShuttle(1, 0, 0, 40, options);
+		building.finishBuild();
+		building.pauseSimulation();
+		auto shuttleSector = created.shuttle.sector->getIndex();
+		std::vector<uint32_t> const stops{ 0, 20 };
+
+		// Style all eight authored Doors, no two neighbours alike, so any leak
+		// from one identity to another is visible.
+		std::map<std::array<uint32_t, 3>, Style> expected{
+			{ { 0, 0, 0 }, Style::OpenLeft }, { { 0, 0, 2 }, Style::OpenApart },
+			{ { 0, 1, 0 }, Style::OpenRight }, { { 0, 1, 2 }, Style::OpenLeft },
+			{ { 1, 0, 0 }, Style::OpenApart }, { { 1, 0, 2 }, Style::OpenRight },
+			{ { 1, 1, 0 }, Style::OpenLeft }, { { 1, 1, 2 }, Style::OpenApart } };
+		std::string diagnostic;
+		struct Slot { uint32_t stop; uint32_t car; uint32_t offset; Style style; };
+		auto const authoredOffsets = offsetsOf(0b101);
+		for (auto const& entry : expected)
+		{
+			auto const& key = entry.first;
+			auto const doorIndex = static_cast<uint32_t>(
+				std::find(authoredOffsets.begin(), authoredOffsets.end(), key[2])
+				- authoredOffsets.begin());
+			require(building.setShuttleDoorOpenStyle(shuttleSector, key[0], key[1], doorIndex,
+				entry.second, &diagnostic),
+				("Styling an authored Shuttle Door was refused: " + diagnostic).c_str());
+		}
+		requireLayout(building, shuttleSector, 0, 2, 3, 0b101, stops, expected,
+			{ 0, 2, 4, 6, 20, 22, 24, 26 }, "authored two-carriage Shuttle");
+
+		// Adding a carriage keeps every surviving carriage's styles and gives the
+		// new carriage the OpenUp default.
+		shuttleSector = applyVehicle(building, shuttleSector, 3, 3, 0b101);
+		requireLayout(building, shuttleSector, 0, 3, 3, 0b101, stops, expected,
+			{ 0, 2, 4, 6, 8, 10, 20, 22, 24, 26, 28, 30 },
+			"Shuttle with an added carriage");
+
+		// Style the new carriage so its removal has something to take away.
+		for (auto const& slot : std::vector<Slot>{
+			{ 0, 2, 0, Style::OpenRight }, { 0, 2, 2, Style::OpenLeft },
+			{ 1, 2, 0, Style::OpenApart }, { 1, 2, 2, Style::OpenRight } })
+		{
+			auto const doorIndex = slot.offset == 0u ? 0u : 1u;
+			require(building.setShuttleDoorOpenStyle(shuttleSector, slot.stop, slot.car, doorIndex,
+				slot.style, &diagnostic),
+				("Styling the added carriage's Door was refused: " + diagnostic).c_str());
+			expected[std::array<uint32_t, 3>{ slot.stop, slot.car, slot.offset }] = slot.style;
+		}
+		requireLayout(building, shuttleSector, 0, 3, 3, 0b101, stops, expected,
+			{ 0, 2, 4, 6, 8, 10, 20, 22, 24, 26, 28, 30 },
+			"Shuttle with the added carriage styled");
+
+		// Dropping the carriage takes its overrides with it: the surviving
+		// carriages keep their own styles and nothing shifts sideways.
+		expected = {
+			{ { 0, 0, 0 }, Style::OpenLeft }, { { 0, 0, 2 }, Style::OpenApart },
+			{ { 0, 1, 0 }, Style::OpenRight }, { { 0, 1, 2 }, Style::OpenLeft },
+			{ { 1, 0, 0 }, Style::OpenApart }, { { 1, 0, 2 }, Style::OpenRight },
+			{ { 1, 1, 0 }, Style::OpenLeft }, { { 1, 1, 2 }, Style::OpenApart } };
+		shuttleSector = applyVehicle(building, shuttleSector, 2, 3, 0b101);
+		requireLayout(building, shuttleSector, 0, 2, 3, 0b101, stops, expected,
+			{ 0, 2, 4, 6, 20, 22, 24, 26 }, "Shuttle with the carriage removed");
+		for (uint32_t stop = 0; stop < 2; ++stop)
+			for (uint32_t door = 0; door < 2; ++door)
+				require(findShuttleDoor(building, shuttleSector, stop, 2, door) == nullptr,
+					"The removed carriage still owns a landing Door");
+
+		// Deselecting carriage cell 0 discards those Doors' styles instead of
+		// letting the compacted door index slide them onto cell 1, and cell 1 is
+		// newly configured so it generates OpenUp.
+		expected = {
+			{ { 0, 0, 2 }, Style::OpenApart }, { { 0, 1, 2 }, Style::OpenLeft },
+			{ { 1, 0, 2 }, Style::OpenRight }, { { 1, 1, 2 }, Style::OpenApart } };
+		shuttleSector = applyVehicle(building, shuttleSector, 2, 3, 0b110);
+		requireLayout(building, shuttleSector, 0, 2, 3, 0b110, stops, expected,
+			{ 1, 2, 5, 6, 21, 22, 25, 26 }, "Shuttle with cell 0 deselected");
+		require(findShuttleDoor(building, shuttleSector, 0, 0, 0)->getOpenStyle()
+			== Style::OpenUp,
+			"The deselected cell 0 style slid onto the newly configured cell 1");
+
+		// Re-selecting cell 0 does not resurrect the style it carried before it
+		// was deselected.
+		shuttleSector = applyVehicle(building, shuttleSector, 2, 3, 0b111);
+		requireLayout(building, shuttleSector, 0, 2, 3, 0b111, stops, expected,
+			{ 0, 1, 2, 4, 5, 6, 20, 21, 22, 24, 25, 26 },
+			"Shuttle with cell 0 re-selected");
+		require(findShuttleDoor(building, shuttleSector, 0, 0, 0)->getOpenStyle()
+			== Style::OpenUp,
+			"A discarded style came back when its carriage cell was re-selected");
+		for (auto const& slot : std::vector<Slot>{
+			{ 0, 0, 0, Style::OpenRight }, { 0, 1, 0, Style::OpenApart },
+			{ 1, 0, 0, Style::OpenLeft }, { 1, 1, 0, Style::OpenRight } })
+		{
+			require(building.setShuttleDoorOpenStyle(shuttleSector, slot.stop, slot.car, 0,
+				slot.style, &diagnostic),
+				("Restyling a re-selected Door was refused: " + diagnostic).c_str());
+			expected[std::array<uint32_t, 3>{ slot.stop, slot.car, 0 }] = slot.style;
+		}
+		requireLayout(building, shuttleSector, 0, 2, 3, 0b111, stops, expected,
+			{ 0, 1, 2, 4, 5, 6, 20, 21, 22, 24, 25, 26 },
+			"Shuttle with every cell of width 3 styled");
+
+		// Widening the carriages moves every style to the physical Door its own
+		// identity now addresses.  The style authored for stop 0, carriage 1,
+		// cell 2 moves onto the cell 7 landing, which does not exist, so it is
+		// dropped there rather than leaking onto cell 6 or cell 8; the new cell 3
+		// generates OpenUp.
+		expected.erase(std::array<uint32_t, 3>{ 0u, 1u, 2u });
+		shuttleSector = applyVehicle(building, shuttleSector, 2, 4, 0b1111);
+		requireLayout(building, shuttleSector, 0, 2, 4, 0b1111, stops, expected,
+			{ 0, 1, 2, 3, 5, 6, 8, 20, 21, 22, 23, 25, 26, 27, 28 },
+			"Shuttle on wider carriages");
+
+		// The reconciled result round-trips through save/load.
+		{
+			auto const loaded = loadYaml(snapshotYaml(building));
+			requireLayout(*loaded, shuttleSector, 0, 2, 4, 0b1111, stops, expected,
+				{ 0, 1, 2, 3, 5, 6, 8, 20, 21, 22, 23, 25, 26, 27, 28 },
+				"loaded Shuttle after the vehicle changes");
+		}
+	}
+
 	void recentFilesPersistAcrossStartup()
 	{
 		auto directory = std::filesystem::temp_directory_path() / "prometheum-fermide-recent-files-smoke";
@@ -4687,6 +5002,7 @@ void runSerializationSmokeChecks()
 	shuttleDoorStyleOverridesAreIndividualAndPersist();
 	shuttleDoorStylesSurviveShuttleMovement();
 	shuttleDoorStylesReconcileWhenStopsChange();
+	shuttleDoorStylesReconcileWhenCarriageAndDoorLayoutChanges();
 	recentFilesPersistAcrossStartup();
 	serializableTracksModificationState();
 	doorAndWindowRemovalWorksOnDeepLayerPairs();

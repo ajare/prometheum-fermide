@@ -306,6 +306,13 @@ namespace core
 			bool move{ false };
 			uint32_t sectorIndex{ ~0u };
 			uint32_t x{ 0 }, y{ 0 }, cellsWide{ 0 };
+			// The coupled vehicle layout the plan authors: carriage count, carriage
+			// width in cells, and the door mask selecting one-cell doors within a
+			// carriage.  A plan always carries the resolved layout, so a plan that
+			// leaves the vehicle alone carries the current values unchanged.
+			uint32_t numCars{ 0 };
+			uint32_t carWidth{ 0 };
+			uint32_t doorMask{ 0 };
 			std::vector<uint32_t> stopOffsets;
 			std::string diagnostic;
 			std::vector<std::string> consequences;
@@ -605,6 +612,13 @@ namespace core
 
 		bool prepareShuttleEdit(ShuttleEditPlan const& plan,
 			std::vector<ConstructionRecord>& records, std::string& diagnostic) const;
+
+		// Resize the Shuttle track and, when the vehicle arguments are supplied
+		// (non-zero), re-author its coupled vehicle in the same edit.  A zero
+		// argument keeps that part of the authored vehicle as it is.
+		ShuttleEditPlan planResizeShuttleWithVehicle(uint32_t sectorIndex, uint32_t x,
+			uint32_t y, uint32_t cellsWide, uint32_t numCars, uint32_t carWidth,
+			uint32_t doorMask) const;
 
 		bool prepareLadderEdit(LadderEditPlan const& plan,
 			std::vector<ConstructionRecord>& records, std::string& diagnostic) const;
@@ -1358,6 +1372,18 @@ namespace core
 
 		ShuttleEditPlan planResizeShuttle(uint32_t sectorIndex, uint32_t x,
 			uint32_t y, uint32_t cellsWide) const;
+
+		// Re-author a Shuttle's coupled vehicle - carriage count, carriage width,
+		// and the configured door positions within a carriage - over its current
+		// track.  Per-Door opening styles are reconciled by their structural
+		// identity: a style survives only where the same stop, the same carriage
+		// index, and the same configured carriage cell still exist and that cell
+		// still lands on a supported landing.  Dropped carriages and deselected
+		// door positions take their overrides with them instead of letting a
+		// shifted grid index leak the style onto an unrelated physical Door, and
+		// every newly generated Door uses the Shuttle's OpenUp default.
+		ShuttleEditPlan planEditShuttleVehicle(uint32_t sectorIndex, uint32_t numCars,
+			uint32_t carWidth, uint32_t doorMask) const;
 
 		ShuttleEditPlan planRemoveShuttle(uint32_t sectorIndex) const;
 

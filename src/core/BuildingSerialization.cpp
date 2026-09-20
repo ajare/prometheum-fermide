@@ -1869,13 +1869,34 @@ namespace core
 			// Shuttle, so the stop offset travels with the stop and is its
 			// identity; any other edit keeps the platforms where they are, so
 			// the stop's absolute landing X is its identity.
+			//
+			// The same rule governs the vehicle itself (ticket #91).  Within a
+			// stop, a Door's identity is its carriage index plus the configured
+			// carriage cell its door was authored in, not its position in the
+			// compacted list of selected doorMask cells: that list shifts when a
+			// neighbouring cell is selected or deselected, so keying by it would
+			// slide one Door's style onto a different physical Door.  A carriage
+			// beyond the new carriage count, a deselected carriage cell, and a
+			// newly added carriage or door position therefore hold no override,
+			// and the Doors generated there use the Shuttle's OpenUp default.
 			auto const oldOffsets = found->values;
 			auto const oldStyles = found->overrides;
 			auto const oldBaseX = found->b;
+			auto const oldCars = found->d;
+			auto const oldCarWidth = found->e;
+			auto const oldDoorMask = found->h ? found->h : (1u << 1);
 			found->b = plan.x;
-			auto const doorMask = found->h ? found->h : (1u << 1);
-			auto const doorOffsets = SimulationCoordinator::shuttleDoorOffsets(found->e, doorMask);
-			auto const doorsPerStop = found->d * static_cast<uint32_t>(doorOffsets.size());
+			auto const cars = plan.numCars != 0 ? plan.numCars : found->d;
+			auto const carWidth = plan.carWidth != 0 ? plan.carWidth : found->e;
+			auto const doorMask = plan.doorMask != 0 ? plan.doorMask
+				: (found->h ? found->h : (1u << 1));
+			found->d = cars; found->e = carWidth; found->h = doorMask;
+			auto const oldDoorOffsets = SimulationCoordinator::shuttleDoorOffsets(
+				oldCarWidth, oldDoorMask);
+			auto const doorOffsets = SimulationCoordinator::shuttleDoorOffsets(carWidth, doorMask);
+			auto const oldDoorsPerStop = oldCars
+				* static_cast<uint32_t>(oldDoorOffsets.size());
+			auto const doorsPerStop = cars * static_cast<uint32_t>(doorOffsets.size());
 			found->values = plan.stopOffsets;
 			found->overrides.assign(plan.stopOffsets.size() * doorsPerStop, ~0u);
 			auto const landingLayer = layerInFront(transitLayer);
@@ -1890,25 +1911,38 @@ namespace core
 							== static_cast<int64_t>(plan.x) + plan.stopOffsets[i];
 					if (same) { source = j; break; }
 				}
-				for (uint32_t slot = 0; slot < doorsPerStop; ++slot)
+				if (source >= oldOffsets.size()) continue;
+				for (uint32_t car = 0; car < cars; ++car)
 				{
-					auto const oldSlot = source * doorsPerStop + slot;
-					if (oldSlot >= oldStyles.size() || oldStyles[oldSlot] == ~0u) continue;
-					// A Door whose partial landing is unsupported is never built,
-					// so its override is dropped rather than left live to leak a
-					// style back if the landing later returns; a newly supported
-					// Door then generates with the OpenUp default.
-					auto const car = slot / static_cast<uint32_t>(doorOffsets.size());
-					auto const door = slot % static_cast<uint32_t>(doorOffsets.size());
-					auto const doorX = plan.x + plan.stopOffsets[i]
-						+ car * (found->e + 1) + doorOffsets[door];
-					if (doorX >= mCellsWide) continue;
-					auto const& cell = mLayers[landingLayer]->getCellDefinition(doorX, plan.y);
-					if (cell.sectorIndex == ~0u
-						|| cell.sectorIndex >= mSectors.size()
-						|| !isLocationLike(mSectors[cell.sectorIndex]->getType()))
-						continue;
-					found->overrides[i * doorsPerStop + slot] = oldStyles[oldSlot];
+					if (car >= oldCars) break;
+					for (size_t door = 0; door < doorOffsets.size(); ++door)
+					{
+						// The surviving identity is the same configured carriage
+						// cell, whatever index that cell now holds in the list.
+						size_t sourceDoor = oldDoorOffsets.size();
+						for (size_t candidate = 0; candidate < oldDoorOffsets.size(); ++candidate)
+							if (oldDoorOffsets[candidate] == doorOffsets[door])
+							{ sourceDoor = candidate; break; }
+						if (sourceDoor >= oldDoorOffsets.size()) continue;
+						auto const oldSlot = source * oldDoorsPerStop
+							+ car * static_cast<uint32_t>(oldDoorOffsets.size()) + sourceDoor;
+						if (oldSlot >= oldStyles.size() || oldStyles[oldSlot] == ~0u) continue;
+						// A Door whose partial landing is unsupported is never built,
+						// so its override is dropped rather than left live to leak a
+						// style back if the landing later returns; a newly supported
+						// Door then generates with the OpenUp default.
+						auto const doorX = plan.x + plan.stopOffsets[i]
+							+ car * (carWidth + 1) + doorOffsets[door];
+						if (doorX >= mCellsWide) continue;
+						auto const& cell = mLayers[landingLayer]->getCellDefinition(doorX, plan.y);
+						if (cell.sectorIndex == ~0u
+							|| cell.sectorIndex >= mSectors.size()
+							|| !isLocationLike(mSectors[cell.sectorIndex]->getType()))
+							continue;
+						found->overrides[i * doorsPerStop
+							+ car * static_cast<uint32_t>(doorOffsets.size()) + door]
+							= oldStyles[oldSlot];
+					}
 				}
 			}
 			if (all_of(found->overrides.begin(), found->overrides.end(),
@@ -1939,6 +1973,28 @@ namespace core
 	Building::ShuttleEditPlan Building::planResizeShuttle(uint32_t sectorIndex,
 		uint32_t x, uint32_t y, uint32_t cellsWide) const
 	{
+		return planResizeShuttleWithVehicle(sectorIndex, x, y, cellsWide, 0, 0, 0);
+	}
+
+	Building::ShuttleEditPlan Building::planEditShuttleVehicle(uint32_t sectorIndex,
+		uint32_t numCars, uint32_t carWidth, uint32_t doorMask) const
+	{
+		if (sectorIndex >= mSectors.size()
+			|| !dynamic_pointer_cast<const ShuttleTransit>(mSectors[sectorIndex]))
+		{
+			ShuttleEditPlan plan;
+			plan.diagnostic = "Only a Shuttle vehicle can be re-authored";
+			return plan;
+		}
+		auto transit = dynamic_pointer_cast<const ShuttleTransit>(mSectors[sectorIndex]);
+		return planResizeShuttleWithVehicle(sectorIndex, transit->getCellX(),
+			transit->getCellY(), transit->getCellsWide(), numCars, carWidth, doorMask);
+	}
+
+	Building::ShuttleEditPlan Building::planResizeShuttleWithVehicle(uint32_t sectorIndex,
+		uint32_t x, uint32_t y, uint32_t cellsWide,
+		uint32_t numCars, uint32_t carWidth, uint32_t doorMask) const
+	{
 		ShuttleEditPlan plan;
 		plan.sectorIndex = sectorIndex; plan.x = x; plan.y = y; plan.cellsWide = cellsWide;
 		if (sectorIndex >= mSectors.size() || !dynamic_pointer_cast<const ShuttleTransit>(mSectors[sectorIndex]))
@@ -1966,7 +2022,23 @@ namespace core
 		}
 		if (!authored || authored->type != ConstructionType::Shuttle)
 		{ plan.diagnostic = "The selected Shuttle no longer has an authored definition"; return plan; }
-		auto shuttleWidth = authored->d * authored->e + authored->d - 1;
+		// The vehicle the plan will author.  A zero argument keeps that part of the
+		// authored vehicle, so a plain track resize carries the current layout and
+		// reconciles nothing but the stops.
+		auto const authoredDoorMask = authored->h ? authored->h : (1u << 1);
+		auto const vehicleCars = numCars != 0 ? numCars : authored->d;
+		auto const vehicleWidth = carWidth != 0 ? carWidth : authored->e;
+		auto const vehicleMask = doorMask != 0 ? doorMask : authoredDoorMask;
+		auto const vehicleChanged = vehicleCars != authored->d || vehicleWidth != authored->e
+			|| vehicleMask != authoredDoorMask;
+		plan.numCars = vehicleCars; plan.carWidth = vehicleWidth; plan.doorMask = vehicleMask;
+		if (vehicleChanged && vehicleCars == 0)
+		{ plan.diagnostic = "A Shuttle needs at least one carriage"; return plan; }
+		if (vehicleChanged && (vehicleWidth < 3 || vehicleWidth > 5))
+		{ plan.diagnostic = "Shuttle carriage width must be between 3 and 5 cells"; return plan; }
+		if (vehicleChanged && (vehicleMask == 0 || (vehicleMask >> vehicleWidth) != 0))
+		{ plan.diagnostic = "The carriage door layout must select at least one cell within the carriage width"; return plan; }
+		auto shuttleWidth = vehicleCars * vehicleWidth + vehicleCars - 1;
 		if (cellsWide < shuttleWidth)
 		{ plan.diagnostic = "The Shuttle track is shorter than the coupled vehicle"; return plan; }
 
@@ -2001,12 +2073,12 @@ namespace core
 		{
 			if (offset + shuttleWidth > cellsWide) return false;
 			bool any = false, all = true;
-			auto doorMask = authored->h ? authored->h : (1u << 1);
-			for (uint32_t car = 0; car < authored->d; ++car)
-				for (uint32_t doorOffset = 0; doorOffset < authored->e; ++doorOffset)
+			auto doorMask = vehicleMask;
+			for (uint32_t car = 0; car < vehicleCars; ++car)
+				for (uint32_t doorOffset = 0; doorOffset < vehicleWidth; ++doorOffset)
 				{
 					if ((doorMask & (1u << doorOffset)) == 0) continue;
-					auto doorX = x + offset + car * (authored->e + 1) + doorOffset;
+					auto doorX = x + offset + car * (vehicleWidth + 1) + doorOffset;
 					auto const& cell = mLayers[landingLayer]->getCellDefinition(doorX, y);
 					// A carriage door lands on any location-like Sector, a Facade
 					// included (ADR 0003, ticket #52).
@@ -2049,6 +2121,15 @@ namespace core
 		if (plan.move) plan.consequences.push_back("Move the Shuttle and rebuild every landing door and button");
 		else if (x != shuttleTransit->getCellX() || cellsWide != shuttleTransit->getCellsWide())
 			plan.consequences.push_back("Resize the Shuttle track and rebuild affected landings");
+		if (vehicleChanged)
+		{
+			string layout;
+			for (uint32_t cell = 0; cell < vehicleWidth; ++cell)
+				layout += (vehicleMask & (1u << cell)) != 0 ? "D" : "-";
+			plan.consequences.push_back(format(
+				"Rebuild the Shuttle as {} carriage(s) of {} cells with door layout {}",
+				vehicleCars, vehicleWidth, layout));
+		}
 		if (!plan.move)
 		{
 			for (auto global : oldGlobalStops)
@@ -2145,7 +2226,8 @@ namespace core
 	{
 		if (!mSimulationPaused) throw BuildingException(this, "Editing a Shuttle requires the simulation to be paused");
 		auto plan = requested.remove ? planRemoveShuttle(requested.sectorIndex)
-			: planResizeShuttle(requested.sectorIndex, requested.x, requested.y, requested.cellsWide);
+			: planResizeShuttleWithVehicle(requested.sectorIndex, requested.x, requested.y,
+				requested.cellsWide, requested.numCars, requested.carWidth, requested.doorMask);
 		if (!plan.valid) throw BuildingException(this, plan.diagnostic);
 		// The rebuilt Shuttle keeps the Layer it was authored on; read the answer back
 		// from there rather than from a fixed Back Layer.
