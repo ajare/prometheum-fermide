@@ -44,6 +44,7 @@
 
 void runSerializationSmokeChecks();
 void runRenderOrderSmokeChecks();
+void runDoorOpenApartRenderSmokeChecks();
 void runDoorOpenLeftRenderSmokeChecks();
 void runDoorOpenRightRenderSmokeChecks();
 void runEditorLayerSmokeChecks();
@@ -4554,6 +4555,7 @@ int main(int argc, char** argv)
 
 		runSerializationSmokeChecks();
 		runRenderOrderSmokeChecks();
+		runDoorOpenApartRenderSmokeChecks();
 		runDoorOpenLeftRenderSmokeChecks();
 		runDoorOpenRightRenderSmokeChecks();
 		runEditorLayerSmokeChecks();

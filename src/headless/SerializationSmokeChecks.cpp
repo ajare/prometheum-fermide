@@ -2401,6 +2401,270 @@ agents: []
 			"Pasted Door record lost the OpenRight opening style");
 	}
 
+	// Ticket #84: OpenApart is the fourth authored Door opening style and rides
+	// the same authored-style pipeline as its siblings - creation options, the
+	// openStyle: openApart record, load replay, the selected-Door editor's
+	// Building call (record and live Door moving together), moves, snapshot-based
+	// undo/redo, and option-based clipboard copy/paste. The checks move between
+	// OpenApart and OpenLeft rather than OpenUp so the two horizontal styles are
+	// proven distinct at every step.
+	void doorOpenApartPersistsThroughEveryEditorPath()
+	{
+		auto findDoor = [](core::Building const& building, uint32_t sectorIndex)
+			-> std::shared_ptr<const core::Door>
+		{
+			auto sector = building.getSector(sectorIndex);
+			if (!sector) return nullptr;
+			for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
+			{
+				auto const object = sector->getObject(i);
+				if (object && object->getObjectType() == core::SectorObjectType::Door)
+					return static_pointer_cast<const core::DoorSectorObject>(object)->getDoor();
+			}
+			return nullptr;
+		};
+		auto snapshotYaml = [](core::Building& building)
+		{
+			core::SerializationWorkData workData;
+			auto writer = core::YamlSerializer::toString();
+			building.serialize(*writer, workData);
+			writer->serialize();
+			return writer->getSerializedString();
+		};
+		auto loadYaml = [](std::string const& yaml)
+		{
+			auto building = std::make_shared<core::Building>("placeholder", 1, 1);
+			core::SerializationWorkData workData;
+			auto reader = core::YamlSerializer::fromString(yaml);
+			reader->deserialize();
+			building->deserialize(*reader, workData);
+			return building;
+		};
+
+		core::Building original("OpenApart door", 8, 3);
+		original.addRoom("Fore room", 0, 0, 0, 7, 2);
+		original.addRoom("Back room", 1, 0, 0, 7, 2);
+		core::Building::CreateDoorOptions doorOptions;
+		doorOptions.width = 2;
+		doorOptions.openStyle = core::Door::OpenStyle::OpenApart;
+		auto const created = original.addSectorDoor(0, 0, 3, doorOptions);
+		original.finishBuild();
+		auto const doorSectorIndex = created.door.sector->getIndex();
+		auto const createdDoor = findDoor(original, doorSectorIndex);
+		require(createdDoor && createdDoor->getOpenStyle() == core::Door::OpenStyle::OpenApart,
+			"Ordinary Door creation did not carry the OpenApart opening style");
+		core::Building::CreateDoorOptions readBack;
+		require(original.getSectorDoorOptions(0, 0, 3, 2, readBack)
+			&& readBack.openStyle == core::Door::OpenStyle::OpenApart,
+			"Authored Door options did not report the OpenApart opening style");
+
+		// Save/load: the record persists the style and replays it on load.
+		auto const yaml = snapshotYaml(original);
+		require(yaml.find("openStyle: openApart") != std::string::npos,
+			"Building YAML did not persist the Door's openStyle: openApart");
+		auto loaded = loadYaml(yaml);
+		auto const loadedDoor = findDoor(*loaded, doorSectorIndex);
+		require(loadedDoor && loadedDoor->getOpenStyle() == core::Door::OpenStyle::OpenApart,
+			"Loaded Door lost its OpenApart opening style");
+		require(loaded->getSectorDoorOptions(0, 0, 3, 2, readBack)
+			&& readBack.openStyle == core::Door::OpenStyle::OpenApart,
+			"Loaded Door options lost the OpenApart opening style");
+
+		// The selected-Door editor's change: record and live Door move together,
+		// and OpenApart is never confused with its OpenLeft neighbour.
+		loaded->pauseSimulation();
+		std::string diagnostic;
+		require(loaded->setSectorDoorOpenStyle(0, 0, 3, 2,
+			core::Door::OpenStyle::OpenLeft, &diagnostic),
+			("Re-authoring the Door to OpenLeft was refused: " + diagnostic).c_str());
+		require(loaded->getSectorDoorOptions(0, 0, 3, 2, readBack)
+			&& readBack.openStyle == core::Door::OpenStyle::OpenLeft,
+			"Re-authored Door record did not take the OpenLeft style");
+		require(findDoor(*loaded, doorSectorIndex)->getOpenStyle() == core::Door::OpenStyle::OpenLeft,
+			"Re-authored live Door did not take the OpenLeft style");
+		require(loaded->setSectorDoorOpenStyle(0, 0, 3, 2,
+			core::Door::OpenStyle::OpenApart, &diagnostic),
+			("Re-authoring the Door back to OpenApart was refused: " + diagnostic).c_str());
+		require(findDoor(*loaded, doorSectorIndex)->getOpenStyle() == core::Door::OpenStyle::OpenApart,
+			"Re-authored live Door did not return to OpenApart");
+
+		// Undo/redo mirror: the editor snapshots YAML before and after a change
+		// and restores either side verbatim. Both sides carry their own style.
+		auto const openApartSnapshot = snapshotYaml(*loaded);
+		require(loaded->setSectorDoorOpenStyle(0, 0, 3, 2,
+			core::Door::OpenStyle::OpenLeft, &diagnostic),
+			("Second re-author to OpenLeft was refused: " + diagnostic).c_str());
+		auto const openLeftSnapshot = snapshotYaml(*loaded);
+		auto const undone = loadYaml(openLeftSnapshot);
+		require(undone->getSectorDoorOptions(0, 0, 3, 2, readBack)
+			&& readBack.openStyle == core::Door::OpenStyle::OpenLeft,
+			"Undo snapshot did not restore the OpenLeft style");
+		auto const redone = loadYaml(openApartSnapshot);
+		require(redone->getSectorDoorOptions(0, 0, 3, 2, readBack)
+			&& readBack.openStyle == core::Door::OpenStyle::OpenApart,
+			"Redo snapshot did not restore the OpenApart style");
+		require(redone->setSectorDoorOpenStyle(0, 0, 9, 2,
+			core::Door::OpenStyle::OpenApart, &diagnostic) == false,
+			"OpenApart style edit was accepted where no Door record exists");
+
+		// A move replays the authored record at a new position; the style rides along.
+		auto& moveTarget = *redone;
+		moveTarget.pauseSimulation();
+		uint32_t movedDoorObjectIndex{ ~0u };
+		{
+			auto const sector = moveTarget.getSector(doorSectorIndex);
+			for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
+			{
+				auto const candidate = sector->getObject(i);
+				if (candidate && candidate->getObjectType() == core::SectorObjectType::Door
+					&& static_pointer_cast<const core::DoorSectorObject>(candidate)->getDoor()
+						== findDoor(moveTarget, doorSectorIndex))
+					{ movedDoorObjectIndex = i; break; }
+			}
+		}
+		require(movedDoorObjectIndex != ~0u, "OpenApart Door object could not be found");
+		auto const movePlan = moveTarget.planMoveSectorObject(
+			doorSectorIndex, movedDoorObjectIndex, 5, 0);
+		require(movePlan.valid, "OpenApart Door move plan was rejected");
+		require(moveTarget.applyObjectMove(movePlan) != nullptr, "OpenApart Door move failed");
+		require(moveTarget.getSectorDoorOptions(0, 0, 5, 2, readBack)
+			&& readBack.openStyle == core::Door::OpenStyle::OpenApart,
+			"Moving the OpenApart Door did not preserve its opening style");
+
+		// Clipboard copy/paste mirror: the paste side reads the copied Door's
+		// authored options and re-creates through addSectorDoor; the style rides
+		// through CreateDoorOptions unchanged.
+		require(moveTarget.getSectorDoorOptions(0, 0, 5, 2, readBack),
+			"Copied Door options could not be read");
+		core::Building pasteTarget("OpenApart paste", 8, 3);
+		pasteTarget.addRoom("Fore room", 0, 0, 0, 7, 2);
+		pasteTarget.addRoom("Back room", 1, 0, 0, 7, 2);
+		auto const pasted = pasteTarget.addSectorDoor(0, 0, 1, readBack);
+		pasteTarget.finishBuild();
+		auto const pastedDoor = findDoor(pasteTarget, pasted.door.sector->getIndex());
+		require(pastedDoor && pastedDoor->getOpenStyle() == core::Door::OpenStyle::OpenApart,
+			"Pasted Door did not carry the copied OpenApart opening style");
+		require(pasteTarget.getSectorDoorOptions(0, 0, 1, 2, readBack)
+			&& readBack.openStyle == core::Door::OpenStyle::OpenApart,
+			"Pasted Door record lost the OpenApart opening style");
+	}
+
+	// Ticket #84: generated-Door defaults are owner-sensitive. A Lift's landing
+	// Doors are authored OpenApart so a Lift entrance reads as a centre-opening
+	// pair, while ordinary and Shuttle-owned Doors keep their established OpenUp.
+	// The default lives with the generated Door rather than the transport's own
+	// record, so a legacy Lift map - which carries no style data at all - still
+	// reconstructs its landing Doors OpenApart.
+	void liftDoorsDefaultToOpenApartWhileOtherDoorsKeepOpenUp()
+	{
+		auto doorFromResult = [](core::Building::CreateObjectResult const& result)
+			-> std::shared_ptr<const core::Door>
+		{
+			if (!result.sector || result.index == ~0u) return nullptr;
+			auto const object = result.sector->getObject(result.index);
+			if (!object || object->getObjectType() != core::SectorObjectType::Door) return nullptr;
+			return static_pointer_cast<const core::DoorSectorObject>(object)->getDoor();
+		};
+		// Every Door of one ownership kind, found through the public ownership
+		// predicates rather than by remembering where creation left it.
+		auto collectOwnedDoorStyles = [](core::Building const& building, bool liftDoors)
+		{
+			std::vector<core::Door::OpenStyle> styles;
+			std::set<core::Door const*> seen;
+			for (uint32_t sectorIndex = 0; sectorIndex < building.getNumSectors(); ++sectorIndex)
+			{
+				auto const sector = building.getSector(sectorIndex);
+				if (!sector) continue;
+				for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
+				{
+					auto const object = sector->getObject(i);
+					if (!object || object->getObjectType() != core::SectorObjectType::Door) continue;
+					uint32_t ownerSector{ ~0u }, stopIndex{ ~0u }, carriageIndex{ ~0u };
+					bool const owned = liftDoors
+						? building.isLiftOwnedDoor(object, &ownerSector, &stopIndex)
+						: building.isShuttleOwnedDoor(object, &ownerSector, &stopIndex, &carriageIndex);
+					if (!owned) continue;
+					auto const door = static_pointer_cast<const core::DoorSectorObject>(object)->getDoor();
+					if (!seen.insert(door.get()).second) continue;
+					styles.push_back(door->getOpenStyle());
+				}
+			}
+			return styles;
+		};
+		auto requireAll = [](std::vector<core::Door::OpenStyle> const& styles,
+			core::Door::OpenStyle expected, size_t atLeast, char const* what)
+		{
+			require(styles.size() >= atLeast,
+				(std::string("Too few Doors were found to check: ") + what).c_str());
+			for (auto const style : styles)
+				require(style == expected, (std::string(what) + " has the wrong default opening style").c_str());
+		};
+
+		// An ordinary Door with no style set keeps the OpenUp default.
+		core::Building ordinary("Ordinary door defaults", 12, 3);
+		ordinary.addRoom("Fore", 0, 0, 0, 11, 2);
+		ordinary.addRoom("Aft", 1, 0, 0, 11, 2);
+		auto const ordinaryDoor = ordinary.addSectorDoor(0, 0, 3, core::Building::CreateDoorOptions{});
+		ordinary.finishBuild();
+		require(doorFromResult(ordinaryDoor.door)
+			&& doorFromResult(ordinaryDoor.door)->getOpenStyle() == core::Door::OpenStyle::OpenUp,
+			"An ordinary Door no longer defaults to OpenUp");
+
+		// Every landing Door a Lift generates is authored OpenApart.
+		core::Building liftBuilding("Lift door defaults", 16, 3);
+		auto hall = liftBuilding.addRoom("Lift Hall", 0, 0, 0, 16, 3);
+		for (uint32_t deck = 1; deck < 3; ++deck)
+			for (uint32_t x = 0; x < 16; ++x)
+				liftBuilding.addSectorWalkway(hall, deck, x);
+		core::Building::CreateLiftOptions liftOptions;
+		liftOptions.cellsWide = 1;
+		liftOptions.decksHigh = 3;
+		liftOptions.stopOffsets = { 0, 1, 2 };
+		auto const lift = liftBuilding.addLift(1, 0, 8, liftOptions);
+		liftBuilding.finishBuild();
+		require(lift.doors.size() == 3, "The Lift did not generate one Door per stop");
+		for (size_t i = 0; i < lift.doors.size(); ++i)
+			require(doorFromResult(lift.doors[i].door)
+				&& doorFromResult(lift.doors[i].door)->getOpenStyle() == core::Door::OpenStyle::OpenApart,
+				"A newly created Lift Door does not default to OpenApart");
+		requireAll(collectOwnedDoorStyles(liftBuilding, true), core::Door::OpenStyle::OpenApart, 3,
+			"A Lift-owned Door");
+
+		// The Lift record carries no style of its own, so replaying a legacy map -
+		// whose Lift record predates opening styles entirely - still lands on the
+		// generated-Door default rather than an explicit override.
+		core::SerializationWorkData workData;
+		auto writer = core::YamlSerializer::toString();
+		liftBuilding.serialize(*writer, workData);
+		writer->serialize();
+		auto const liftYaml = writer->getSerializedString();
+		require(liftYaml.find("type: lift") != std::string::npos,
+			"The Lift record was not persisted");
+		require(liftYaml.find("openStyle") == std::string::npos,
+			"A Lift record grew its own opening style, so a legacy Lift map would no "
+			"longer reconstruct through the generated-Door default");
+		auto legacy = std::make_shared<core::Building>("placeholder", 1, 1);
+		{
+			auto reader = core::YamlSerializer::fromString(liftYaml);
+			reader->deserialize();
+			legacy->deserialize(*reader, workData);
+		}
+		requireAll(collectOwnedDoorStyles(*legacy, true), core::Door::OpenStyle::OpenApart, 3,
+			"A reconstructed Lift Door");
+
+		// Shuttle-owned Doors keep the OpenUp default: only Lift Doors change.
+		core::Building shuttleBuilding("Shuttle door defaults", 32, 3);
+		shuttleBuilding.addCorridor(0, 0, 31);
+		shuttleBuilding.addCorridor(1, 0, 31);
+		core::Building::CreateShuttleOptions shuttleOptions{ 2, 3, { 0, 18 }, 0 };
+		shuttleOptions.capacity = 2;
+		shuttleOptions.doorMask = 0b101;
+		shuttleBuilding.addShuttle(1, 0, 0, 27, shuttleOptions);
+		shuttleBuilding.finishBuild();
+		requireAll(collectOwnedDoorStyles(shuttleBuilding, false), core::Door::OpenStyle::OpenUp, 2,
+			"A Shuttle-owned Door");
+	}
+
 	void recentFilesPersistAcrossStartup()
 	{
 		auto directory = std::filesystem::temp_directory_path() / "prometheum-fermide-recent-files-smoke";
@@ -3223,6 +3487,8 @@ void runSerializationSmokeChecks()
 	doorOpeningStyleIsAuthoredPersistedAndLegacyDefaulted();
 	doorOpenLeftPersistsThroughEveryEditorPath();
 	doorOpenRightPersistsThroughEveryEditorPath();
+	doorOpenApartPersistsThroughEveryEditorPath();
+	liftDoorsDefaultToOpenApartWhileOtherDoorsKeepOpenUp();
 	recentFilesPersistAcrossStartup();
 	serializableTracksModificationState();
 	doorAndWindowRemovalWorksOnDeepLayerPairs();

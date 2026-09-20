@@ -2047,8 +2047,15 @@ namespace core
 		// scheduling, door interlocks, and operation completion.
 		for (auto stopOffset : options.stopOffsets)
 		{
+			// A Lift entrance reads as a centre-opening pair, so its generated Doors
+			// are authored OpenApart by default.  Shuttle-owned Doors keep OpenUp.
+			CreateDoorOptions stopDoorOptions;
+			stopDoorOptions.width = options.cellsWide;
+			stopDoorOptions.controls[0] = true;
+			stopDoorOptions.activationMode = DoorActivationMode::Unavailable;
+			stopDoorOptions.openStyle = Door::OpenStyle::OpenApart;
 			auto doorRes = _addSectorDoor(layerInFront(layerIndex), y + stopOffset, x,
-				{ options.cellsWide, { true, false }, DoorActivationMode::Unavailable }, true);
+				stopDoorOptions, true);
 			liftRes.doors.push_back(doorRes);
 		}
 

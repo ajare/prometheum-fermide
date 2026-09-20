@@ -3199,6 +3199,7 @@ namespace
 		case core::Door::OpenStyle::OpenUp: return "OpenUp";
 		case core::Door::OpenStyle::OpenLeft: return "OpenLeft";
 		case core::Door::OpenStyle::OpenRight: return "OpenRight";
+		case core::Door::OpenStyle::OpenApart: return "OpenApart";
 		}
 		return "OpenUp";
 	}
@@ -3210,6 +3211,7 @@ namespace
 		case core::Door::OpenStyle::OpenUp: return "Open Up";
 		case core::Door::OpenStyle::OpenLeft: return "Open Left";
 		case core::Door::OpenStyle::OpenRight: return "Open Right";
+		case core::Door::OpenStyle::OpenApart: return "Open Apart";
 		}
 		return "Open Up";
 	}
@@ -3449,6 +3451,7 @@ namespace
 				if (style == "OpenUp") definition.door.openStyle = core::Door::OpenStyle::OpenUp;
 				else if (style == "OpenLeft") definition.door.openStyle = core::Door::OpenStyle::OpenLeft;
 				else if (style == "OpenRight") definition.door.openStyle = core::Door::OpenStyle::OpenRight;
+				else if (style == "OpenApart") definition.door.openStyle = core::Door::OpenStyle::OpenApart;
 				else throw runtime_error("Door openStyle is invalid");
 			}
 			else definition.door.openStyle = core::Door::OpenStyle::OpenUp;
@@ -5303,7 +5306,8 @@ void renderDoorPanel(shared_ptr<core::Building> const& building,
 	{
 		core::Door::OpenStyle::OpenUp,
 		core::Door::OpenStyle::OpenLeft,
-		core::Door::OpenStyle::OpenRight
+		core::Door::OpenStyle::OpenRight,
+		core::Door::OpenStyle::OpenApart
 	};
 	char const* const openStyleItems[] =
 	{

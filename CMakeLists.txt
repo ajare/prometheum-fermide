@@ -189,6 +189,7 @@ add_executable(prometheum-fermide-headless
     src/headless/BackgroundSelectionPanelSmokeChecks.cpp
     src/headless/BackgroundSectorSmokeChecks.cpp
     src/headless/EditorLayerSmokeChecks.cpp
+    src/headless/DoorOpenApartRenderSmokeChecks.cpp
     src/headless/DoorOpenLeftRenderSmokeChecks.cpp
     src/headless/DoorOpenRightRenderSmokeChecks.cpp
     src/headless/FacadeSmokeChecks.cpp

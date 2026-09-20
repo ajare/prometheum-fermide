@@ -600,6 +600,116 @@ void renderDoorOpenRight(shared_ptr<const core::Door> door, uint32_t layer, Laye
 }
 
 
+void renderDoorOpenApart(shared_ptr<const core::Door> door, uint32_t layer, LayerRenderStyle style, bool /* selected */, ImDrawList* drawList)
+{
+	core::Vector2 bounds0, bounds2;
+
+	door->getFullShape(bounds0, bounds2);
+
+	// Two equal leaves split at the aperture midpoint and slide outward: each
+	// travels half an aperture width over the open percentage, so the gap they
+	// leave is always centred and becomes the whole aperture at 100% open.
+	// Fractional midpoints are valid, so any Door width is supported.
+	auto const worldX0 = bounds0.x;
+	auto const worldX2 = bounds2.x;
+	auto const halfWidth = (worldX2 - worldX0) * 0.5f;
+	auto const midX = worldX0 + halfWidth;
+	auto const travel = door->getOpenPercentage() * halfWidth;
+
+	auto const leftLeafX0 = midX - halfWidth - travel;
+	auto const leftLeafX1 = midX - travel;
+	auto const rightLeafX0 = midX + travel;
+	auto const rightLeafX1 = midX + halfWidth + travel;
+
+	// A leaf paints only while some part of it is still inside the aperture; at
+	// 100% open both have slid clean out and the Door draws no leaf geometry.
+	bool const leftLeafVisible = leftLeafX1 > worldX0;
+	bool const rightLeafVisible = rightLeafX0 < worldX2;
+
+	transformPosition(bounds0);
+	transformPosition(bounds2);
+
+	// The transform flips Y for rendering, so bounds2 carries the aperture's top
+	// and bounds0 its bottom.  X stays linear in world units, which lets the leaf
+	// edges be projected without re-running the whole transform.
+	auto const apertureLeft = min(bounds0.x, bounds2.x);
+	auto const apertureRight = max(bounds0.x, bounds2.x);
+	auto const apertureTop = min(bounds0.y, bounds2.y);
+	auto const apertureBottom = max(bounds0.y, bounds2.y);
+	auto const screenX = [&](float worldX)
+	{
+		return apertureLeft + (worldX - worldX0) * CORE_CELL_WIDTH_PIXELS;
+	};
+
+	if (style == LayerRenderStyle::Solid)
+	{
+		auto doorColour = ImColor(64, 192, 255);
+		auto seamColour = ImColor(0, 0, 0);
+
+		// The leaves slide out of the Door, so their fill is clipped to the full
+		// aperture and never paints over the surrounding Location.
+		drawList->PushClipRect({ apertureLeft, apertureTop }, { apertureRight, apertureBottom }, true);
+
+		if (leftLeafVisible)
+		{
+			drawList->AddRectFilled({ screenX(leftLeafX0), apertureTop },
+				{ screenX(leftLeafX1), apertureBottom }, doorColour);
+			// The inner edge is the centre seam while closed and the facing edge of
+			// the two leaves while the Door is part open.
+			drawList->AddLine({ screenX(leftLeafX1), apertureTop },
+				{ screenX(leftLeafX1), apertureBottom }, seamColour);
+		}
+
+		if (rightLeafVisible)
+		{
+			drawList->AddRectFilled({ screenX(rightLeafX0), apertureTop },
+				{ screenX(rightLeafX1), apertureBottom }, doorColour);
+			drawList->AddLine({ screenX(rightLeafX0), apertureTop },
+				{ screenX(rightLeafX0), apertureBottom }, seamColour);
+		}
+
+		drawList->PopClipRect();
+		drawList->AddDrawCmd();
+
+		// The back Sector shows only through the centred gap between the two
+		// leaves: it grows symmetrically from the midpoint and fills the whole
+		// aperture at 100% open.  ImGui clipping expects ascending Y coordinates,
+		// but we have flipped them for rendering.
+		drawList->PushClipRect({ screenX(leftLeafX1), apertureTop },
+			{ screenX(rightLeafX0), apertureBottom }, true);
+
+		// A Door is authored on the front Layer of its pair, so index 1 is the
+		// Sector on the Layer directly behind.
+		auto backSector = door->getBackSector();
+		if (backSector)
+		{
+			renderSector(backSector, core::layerBehind(layer), LayerRenderStyle::Aperture, false,
+				BackLocationColour, drawList);
+		}
+
+		drawList->PopClipRect();
+		drawList->AddDrawCmd();
+	}
+	else if (style == LayerRenderStyle::Wireframe)
+	{
+		// Both remaining leaves are outlined separately, clipped to the aperture,
+		// and the aperture carries no solid fill.
+		drawList->PushClipRect({ apertureLeft, apertureTop }, { apertureRight, apertureBottom }, true);
+
+		if (leftLeafVisible)
+			drawList->AddRect({ screenX(leftLeafX0), apertureTop },
+				{ screenX(leftLeafX1), apertureBottom }, ImColor(0, 0, 0));
+
+		if (rightLeafVisible)
+			drawList->AddRect({ screenX(rightLeafX0), apertureTop },
+				{ screenX(rightLeafX1), apertureBottom }, ImColor(0, 0, 0));
+
+		drawList->PopClipRect();
+		drawList->AddDrawCmd();
+	}
+}
+
+
 void renderDoor(shared_ptr<const core::Door> door, uint32_t layer, LayerRenderStyle style, bool selected, ImDrawList* drawList)
 {
 	if (style == LayerRenderStyle::Hidden)
@@ -621,6 +731,10 @@ void renderDoor(shared_ptr<const core::Door> door, uint32_t layer, LayerRenderSt
 
 	case core::Door::OpenStyle::OpenRight:
 		renderDoorOpenRight(door, layer, style, selected, drawList);
+		break;
+
+	case core::Door::OpenStyle::OpenApart:
+		renderDoorOpenApart(door, layer, style, selected, drawList);
 		break;
 	}
 

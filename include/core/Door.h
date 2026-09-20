@@ -15,9 +15,10 @@ namespace core
 	{
 		friend class Building;
 	public:
-		// The authored visual manner in which the Door's leaf reveals its threshold.
-		// Opening style never changes timing, state, obstruction, or traversal.
-		enum struct OpenStyle { OpenUp, OpenLeft, OpenRight };
+		// The authored visual manner in which the Door's leaf or leaves reveal its
+		// threshold.  Opening style never changes timing, state, obstruction, or
+		// traversal, and OpenApart's two leaves remain one logical Door.
+		enum struct OpenStyle { OpenUp, OpenLeft, OpenRight, OpenApart };
 
 	private:
 		uint32_t mCellsWide;
