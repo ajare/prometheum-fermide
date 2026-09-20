@@ -1858,8 +1858,62 @@ namespace core
 				if (resource->mShuttle && resource->mLiftSector.value == (uint64_t)plan.sectorIndex + 1)
 				{ oldPosition = resource->mLiftPosition; oldCurrentStop = resource->mLiftCurrentStop; break; }
 			}
-			found->a = plan.y; found->b = plan.x; found->c = plan.cellsWide;
+			found->a = plan.y; found->c = plan.cellsWide;
+			// Per-Door style overrides follow their stop's identity rather than
+			// its position in the stop list: adding, removing, or reindexing
+			// stops keeps every surviving Door's style on its own structural
+			// stop/carriage/door identity, a newly added stop takes the
+			// generated OpenUp default, and a removed stop takes its overrides
+			// with it instead of letting shifted grid indices leak the style
+			// onto a different stop's Doors.  A move translates the whole
+			// Shuttle, so the stop offset travels with the stop and is its
+			// identity; any other edit keeps the platforms where they are, so
+			// the stop's absolute landing X is its identity.
+			auto const oldOffsets = found->values;
+			auto const oldStyles = found->overrides;
+			auto const oldBaseX = found->b;
+			found->b = plan.x;
+			auto const doorMask = found->h ? found->h : (1u << 1);
+			auto const doorOffsets = SimulationCoordinator::shuttleDoorOffsets(found->e, doorMask);
+			auto const doorsPerStop = found->d * static_cast<uint32_t>(doorOffsets.size());
 			found->values = plan.stopOffsets;
+			found->overrides.assign(plan.stopOffsets.size() * doorsPerStop, ~0u);
+			auto const landingLayer = layerInFront(transitLayer);
+			for (size_t i = 0; i < plan.stopOffsets.size(); ++i)
+			{
+				size_t source = oldOffsets.size();
+				for (size_t j = 0; j < oldOffsets.size(); ++j)
+				{
+					auto const same = plan.move
+						? oldOffsets[j] == plan.stopOffsets[i]
+						: static_cast<int64_t>(oldBaseX) + oldOffsets[j]
+							== static_cast<int64_t>(plan.x) + plan.stopOffsets[i];
+					if (same) { source = j; break; }
+				}
+				for (uint32_t slot = 0; slot < doorsPerStop; ++slot)
+				{
+					auto const oldSlot = source * doorsPerStop + slot;
+					if (oldSlot >= oldStyles.size() || oldStyles[oldSlot] == ~0u) continue;
+					// A Door whose partial landing is unsupported is never built,
+					// so its override is dropped rather than left live to leak a
+					// style back if the landing later returns; a newly supported
+					// Door then generates with the OpenUp default.
+					auto const car = slot / static_cast<uint32_t>(doorOffsets.size());
+					auto const door = slot % static_cast<uint32_t>(doorOffsets.size());
+					auto const doorX = plan.x + plan.stopOffsets[i]
+						+ car * (found->e + 1) + doorOffsets[door];
+					if (doorX >= mCellsWide) continue;
+					auto const& cell = mLayers[landingLayer]->getCellDefinition(doorX, plan.y);
+					if (cell.sectorIndex == ~0u
+						|| cell.sectorIndex >= mSectors.size()
+						|| !isLocationLike(mSectors[cell.sectorIndex]->getType()))
+						continue;
+					found->overrides[i * doorsPerStop + slot] = oldStyles[oldSlot];
+				}
+			}
+			if (all_of(found->overrides.begin(), found->overrides.end(),
+				[](uint32_t style) { return style == ~0u; }))
+				found->overrides.clear();
 			auto nearest = min_element(found->values.begin(), found->values.end(), [&](auto a, auto b)
 			{
 				auto da = abs((float)(plan.x + a) - oldPosition);

@@ -3571,6 +3571,292 @@ agents: []
 		}
 	}
 
+	// Ticket #90: Shuttle Door styles reconcile when the stop set or partial
+	// landing support changes.  Surviving stop/carriage/door identities retain
+	// their authored styles across stop removal, stop addition, and the index
+	// shifts they cause; a deleted stop and an omitted partial-landing Door
+	// take their overrides with them instead of leaking a style onto a
+	// different stop, carriage, or door position; newly added or newly
+	// supported Doors generate OpenUp; and the reconciled result round-trips
+	// through save/load.
+	void shuttleDoorStylesReconcileWhenStopsChange()
+	{
+		auto findShuttleDoor = [](core::Building const& building, uint32_t shuttleSector,
+			uint32_t stopIndex, uint32_t carriageIndex, uint32_t doorIndex)
+			-> std::shared_ptr<const core::Door>
+		{
+			for (uint32_t sectorIndex = 0; sectorIndex < building.getNumSectors(); ++sectorIndex)
+			{
+				auto const sector = building.getSector(sectorIndex);
+				if (!sector) continue;
+				for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
+				{
+					auto const object = sector->getObject(i);
+					if (!object || object->getObjectType() != core::SectorObjectType::Door) continue;
+					uint32_t ownerSector{ ~0u }, ownerStop{ ~0u };
+					uint32_t ownerCarriage{ ~0u }, ownerDoor{ ~0u };
+					if (building.isShuttleOwnedDoor(object, &ownerSector, &ownerStop,
+							&ownerCarriage, &ownerDoor)
+						&& ownerSector == shuttleSector && ownerStop == stopIndex
+						&& ownerCarriage == carriageIndex && ownerDoor == doorIndex)
+						return static_pointer_cast<const core::DoorSectorObject>(object)->getDoor();
+				}
+			}
+			return nullptr;
+		};
+		auto snapshotYaml = [](core::Building& building)
+		{
+			core::SerializationWorkData workData;
+			auto writer = core::YamlSerializer::toString();
+			building.serialize(*writer, workData);
+			writer->serialize();
+			return writer->getSerializedString();
+		};
+		auto loadYaml = [](std::string const& yaml)
+		{
+			auto building = std::make_shared<core::Building>("placeholder", 1, 1);
+			core::SerializationWorkData workData;
+			auto reader = core::YamlSerializer::fromString(yaml);
+			reader->deserialize();
+			building->deserialize(*reader, workData);
+			return building;
+		};
+		// The style the Shuttle's own record carries for one grid slot,
+		// ~0u when the record holds no override there.
+		auto recordedStyle = [](core::Building const& building, uint32_t shuttleSector,
+			uint32_t stop, uint32_t car, uint32_t door) -> uint32_t
+		{
+			auto const transit = std::dynamic_pointer_cast<const core::ShuttleTransit>(
+				building.getSector(shuttleSector));
+			require(transit != nullptr, "The Shuttle Sector is not a Shuttle Transit");
+			core::Building::CreateShuttleOptions options{};
+			require(building.getShuttleOptions(transit->getShuttle().get(), options),
+				"The Shuttle record could not be read back");
+			auto const slot = (stop * 2 + car) * 2 + door;
+			return slot < options.doorOpenStyles.size() ? options.doorOpenStyles[slot] : ~0u;
+		};
+		// Every live Shuttle-owned Door column, to prove removed stops take
+		// their Doors with them and omitted partial landings stay unbuilt.
+		auto shuttleDoorColumns = [](core::Building const& building, uint32_t shuttleSector)
+		{
+			std::set<uint32_t> columns;
+			for (uint32_t sectorIndex = 0; sectorIndex < building.getNumSectors(); ++sectorIndex)
+			{
+				auto const sector = building.getSector(sectorIndex);
+				if (!sector) continue;
+				for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
+				{
+					auto const object = sector->getObject(i);
+					uint32_t ownerSector{ ~0u };
+					if (building.isShuttleOwnedDoor(object, &ownerSector)
+						&& ownerSector == shuttleSector)
+						columns.insert(object->getCellX());
+				}
+			}
+			return columns;
+		};
+		using Style = core::Door::OpenStyle;
+		// present[stop][car][door]: the Door must exist and carry the
+		// expected style (when present) or must not exist at all.
+		auto requireGrid = [&](core::Building const& building, uint32_t shuttleSector,
+			bool const present[3][2][2], Style const expected[3][2][2], char const* context)
+		{
+			for (uint32_t stop = 0; stop < 3; ++stop)
+				for (uint32_t car = 0; car < 2; ++car)
+					for (uint32_t door = 0; door < 2; ++door)
+					{
+						auto const found = findShuttleDoor(building, shuttleSector, stop, car, door);
+						if (!present[stop][car][door])
+						{
+							require(found == nullptr,
+								("A Door that should be absent exists in " + std::string(context)).c_str());
+							continue;
+						}
+						require(found != nullptr,
+							("A surviving Shuttle Door was lost in " + std::string(context)).c_str());
+						require(found->getOpenStyle() == expected[stop][car][door],
+							("A Shuttle Door style is wrong in " + std::string(context)).c_str());
+					}
+		};
+		auto copyPresence = [](bool dst[2][2], bool const src[2][2])
+		{
+			for (uint32_t car = 0; car < 2; ++car)
+				for (uint32_t door = 0; door < 2; ++door) dst[car][door] = src[car][door];
+		};
+		auto copyStyles = [](Style dst[2][2], Style const src[2][2])
+		{
+			for (uint32_t car = 0; car < 2; ++car)
+				for (uint32_t door = 0; door < 2; ++door) dst[car][door] = src[car][door];
+		};
+
+		// The front-layer platform leaves cells 31 and 32 empty: the last
+		// stop's first carriage second door has no landing and is omitted as
+		// an unsupported partial landing.
+		core::Building building("Shuttle stop style reconciliation", 48, 3);
+		building.addCorridor(0, 0, 0, 31, 1);
+		building.addCorridor(0, 0, 33, 15, 1);
+		core::Building::CreateShuttleOptions options{ 2, 3, { 0, 18, 29 }, 0 };
+		options.capacity = 2;
+		options.doorMask = 0b101; // Two doors per carriage: cells 0 and 2.
+		options.allowPartialLandings = true;
+		auto const created = building.addShuttle(1, 0, 0, 40, options);
+		building.finishBuild();
+		require(created.doors.size() == 12,
+			"The Shuttle did not generate its twelve-slot landing Door grid");
+		require(!created.doors[(2 * 2 + 0) * 2 + 1].traversalResource,
+			"An unsupported partial landing produced a Door instead of being omitted");
+		building.pauseSimulation();
+		auto shuttleSector = created.shuttle.sector->getIndex();
+		require(shuttleDoorColumns(building, shuttleSector)
+			== std::set<uint32_t>{ 0, 2, 4, 6, 18, 20, 22, 24, 29, 33, 35 },
+			"The authored Shuttle does not own the expected landing Door columns");
+
+		// Style rows are tracked by stop identity, not by stop index:
+		// rowA is the stop at global X 0, rowB the stop at global X 18, and
+		// rowC the stop at global X 29 whose one partial landing is omitted.
+		Style const rowA[2][2] = { { Style::OpenLeft, Style::OpenApart },
+			{ Style::OpenRight, Style::OpenUp } };
+		Style const rowB[2][2] = { { Style::OpenRight, Style::OpenLeft },
+			{ Style::OpenUp, Style::OpenApart } };
+		Style const rowC[2][2] = { { Style::OpenApart, Style::OpenUp },
+			{ Style::OpenLeft, Style::OpenRight } };
+		Style const rowNew[2][2] = { { Style::OpenUp, Style::OpenUp },
+			{ Style::OpenUp, Style::OpenUp } };
+		bool const fullStop[2][2] = { { true, true }, { true, true } };
+		bool const partialStop[2][2] = { { true, false }, { true, true } };
+		bool const noStop[2][2] = { { false, false }, { false, false } };
+		bool present[3][2][2];
+		Style expected[3][2][2];
+		copyPresence(present[0], fullStop);
+		copyPresence(present[1], fullStop);
+		copyPresence(present[2], partialStop);
+		copyStyles(expected[0], rowA);
+		copyStyles(expected[1], rowB);
+		copyStyles(expected[2], rowC);
+
+		std::string diagnostic;
+		for (uint32_t stop = 0; stop < 3; ++stop)
+			for (uint32_t car = 0; car < 2; ++car)
+				for (uint32_t door = 0; door < 2; ++door)
+				{
+					if (!present[stop][car][door]) continue;
+					require(building.setShuttleDoorOpenStyle(shuttleSector, stop, car, door,
+						expected[stop][car][door], &diagnostic),
+						("Styling a Shuttle Door was refused: " + diagnostic).c_str());
+				}
+		// An override addressed to the omitted partial-landing Door is a
+		// valid grid slot that governs no live Door; reconciliation must
+		// take it away with the omission rather than leave it live.
+		require(building.setShuttleDoorOpenStyle(shuttleSector, 2, 0, 1,
+			Style::OpenRight, &diagnostic),
+			("Styling the omitted partial-landing slot was refused: " + diagnostic).c_str());
+		require(findShuttleDoor(building, shuttleSector, 2, 0, 1) == nullptr,
+			"The omitted partial-landing slot has a live Door");
+		requireGrid(building, shuttleSector, present, expected, "authored styles");
+
+		// Deleting the middle stop reindexes the far stop: its styles stay on
+		// its own stop, the deleted stop's overrides leave with it, and the
+		// override on the omitted partial-landing Door is dropped too.
+		{
+			auto const plan = building.planRemoveShuttleStop(shuttleSector, 1);
+			require(plan.valid, ("Deleting the middle Shuttle stop was refused: " + plan.diagnostic).c_str());
+			shuttleSector = building.applyShuttleEdit(plan);
+			copyPresence(present[0], fullStop);
+			copyPresence(present[1], partialStop);
+			copyPresence(present[2], noStop);
+			copyStyles(expected[0], rowA);
+			copyStyles(expected[1], rowC);
+			requireGrid(building, shuttleSector, present, expected, "after deleting the middle stop");
+			require(shuttleDoorColumns(building, shuttleSector)
+				== std::set<uint32_t>{ 0, 2, 4, 6, 29, 33, 35 },
+				"The deleted stop left Doors behind or the omitted landing gained one");
+			require(recordedStyle(building, shuttleSector, 1, 0, 1) == ~0u,
+				"The omitted partial-landing Door retained a live override");
+		}
+
+		// Adding a stop in the middle shifts the indices again: every
+		// survivor keeps its own style and the new stop's Doors generate
+		// OpenUp with no override of their own.
+		{
+			auto const plan = building.planAddShuttleStop(shuttleSector, 10);
+			require(plan.valid, ("Adding a Shuttle stop was refused: " + plan.diagnostic).c_str());
+			shuttleSector = building.applyShuttleEdit(plan);
+			copyPresence(present[0], fullStop);
+			copyPresence(present[1], fullStop);
+			copyPresence(present[2], partialStop);
+			copyStyles(expected[0], rowA);
+			copyStyles(expected[1], rowNew);
+			copyStyles(expected[2], rowC);
+			requireGrid(building, shuttleSector, present, expected, "after adding a middle stop");
+			require(recordedStyle(building, shuttleSector, 1, 0, 0) == ~0u
+				&& recordedStyle(building, shuttleSector, 1, 1, 1) == ~0u,
+				"A newly added stop's Door did not default to no override");
+			require(recordedStyle(building, shuttleSector, 2, 0, 1) == ~0u,
+				"The omitted partial-landing override survived the stop addition");
+		}
+
+		// A styled stop that is deleted and later re-added at the same
+		// offset cannot resurrect its discarded overrides: the re-added
+		// Doors are new identities and generate OpenUp.
+		{
+			auto const remove = building.planRemoveShuttleStop(shuttleSector, 0);
+			require(remove.valid, ("Deleting the styled first stop was refused: " + remove.diagnostic).c_str());
+			shuttleSector = building.applyShuttleEdit(remove);
+			auto const readd = building.planAddShuttleStop(shuttleSector, 0);
+			require(readd.valid, ("Re-adding the deleted stop offset was refused: " + readd.diagnostic).c_str());
+			shuttleSector = building.applyShuttleEdit(readd);
+			copyPresence(present[0], fullStop);
+			copyPresence(present[1], fullStop);
+			copyPresence(present[2], partialStop);
+			copyStyles(expected[0], rowNew);
+			copyStyles(expected[1], rowNew);
+			copyStyles(expected[2], rowC);
+			requireGrid(building, shuttleSector, present, expected,
+				"after re-adding the deleted first stop");
+			require(recordedStyle(building, shuttleSector, 0, 0, 0) == ~0u
+				&& recordedStyle(building, shuttleSector, 0, 1, 1) == ~0u,
+				"A re-added stop resurrected the deleted stop's overrides");
+		}
+
+		// Partial-landing support changes: a new Corridor fills the gap at
+		// cells 31-32, so the omitted Door becomes supported.  The next
+		// Shuttle rebuild builds it fresh at OpenUp - the override dropped
+		// with the omission does not come back.
+		{
+			building.addCorridor(0, 0, 31, 2, 1);
+			auto const plan = building.planResizeShuttle(shuttleSector, 0, 0, 40);
+			require(plan.valid, ("Rebuilding the Shuttle over the extended platform was refused: "
+				+ plan.diagnostic).c_str());
+			shuttleSector = building.applyShuttleEdit(plan);
+			copyPresence(present[0], fullStop);
+			copyPresence(present[1], fullStop);
+			copyPresence(present[2], fullStop);
+			copyStyles(expected[0], rowNew);
+			copyStyles(expected[1], rowNew);
+			copyStyles(expected[2], rowC);
+			expected[2][0][1] = Style::OpenUp;
+			requireGrid(building, shuttleSector, present, expected,
+				"after the omitted landing became supported");
+			require(shuttleDoorColumns(building, shuttleSector).count(31) == 1,
+				"The newly supported landing did not gain its Door");
+			require(recordedStyle(building, shuttleSector, 2, 0, 1) == ~0u,
+				"The newly supported Door carried a stale override");
+		}
+
+		// The reconciled result round-trips through save/load unchanged.
+		{
+			auto const loaded = loadYaml(snapshotYaml(building));
+			requireGrid(*loaded, shuttleSector, present, expected, "loaded Shuttle");
+			require(recordedStyle(*loaded, shuttleSector, 2, 0, 1) == ~0u,
+				"The loaded Shuttle carried an override for the once-omitted Door");
+			require(recordedStyle(*loaded, shuttleSector, 0, 0, 0) == ~0u,
+				"The loaded Shuttle carried a stale override on the re-added stop");
+			require(recordedStyle(*loaded, shuttleSector, 2, 1, 1)
+				== static_cast<uint32_t>(Style::OpenRight),
+				"The loaded Shuttle lost a surviving stop's override");
+		}
+	}
+
 	void recentFilesPersistAcrossStartup()
 	{
 		auto directory = std::filesystem::temp_directory_path() / "prometheum-fermide-recent-files-smoke";
@@ -4400,6 +4686,7 @@ void runSerializationSmokeChecks()
 	liftDoorStylesReconcileWhenStopsChange();
 	shuttleDoorStyleOverridesAreIndividualAndPersist();
 	shuttleDoorStylesSurviveShuttleMovement();
+	shuttleDoorStylesReconcileWhenStopsChange();
 	recentFilesPersistAcrossStartup();
 	serializableTracksModificationState();
 	doorAndWindowRemovalWorksOnDeepLayerPairs();
