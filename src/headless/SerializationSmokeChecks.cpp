@@ -3210,6 +3210,190 @@ agents: []
 		}
 	}
 
+	// Ticket #88: each generated Shuttle Door carries an individually authored
+	// opening-style override while the Shuttle's topology stays fixed. Editing
+	// one Shuttle Door changes no sibling Door at the same or another stop, the
+	// overrides round-trip through Building persistence, snapshot-based
+	// undo/redo restores the previous per-Door style, and reconstructing an
+	// unchanged Shuttle retains every override. Shuttle Doors without an
+	// override keep OpenUp.
+	void shuttleDoorStyleOverridesAreIndividualAndPersist()
+	{
+		auto findShuttleDoor = [](core::Building const& building, uint32_t shuttleSector,
+			uint32_t stopIndex, uint32_t carriageIndex, uint32_t doorIndex)
+			-> std::shared_ptr<const core::Door>
+		{
+			for (uint32_t sectorIndex = 0; sectorIndex < building.getNumSectors(); ++sectorIndex)
+			{
+				auto const sector = building.getSector(sectorIndex);
+				if (!sector) continue;
+				for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
+				{
+					auto const object = sector->getObject(i);
+					if (!object || object->getObjectType() != core::SectorObjectType::Door) continue;
+					uint32_t ownerSector{ ~0u }, ownerStop{ ~0u };
+					uint32_t ownerCarriage{ ~0u }, ownerDoor{ ~0u };
+					if (building.isShuttleOwnedDoor(object, &ownerSector, &ownerStop,
+							&ownerCarriage, &ownerDoor)
+						&& ownerSector == shuttleSector && ownerStop == stopIndex
+						&& ownerCarriage == carriageIndex && ownerDoor == doorIndex)
+						return static_pointer_cast<const core::DoorSectorObject>(object)->getDoor();
+				}
+			}
+			return nullptr;
+		};
+		auto snapshotYaml = [](core::Building& building)
+		{
+			core::SerializationWorkData workData;
+			auto writer = core::YamlSerializer::toString();
+			building.serialize(*writer, workData);
+			writer->serialize();
+			return writer->getSerializedString();
+		};
+		auto loadYaml = [](std::string const& yaml)
+		{
+			auto building = std::make_shared<core::Building>("placeholder", 1, 1);
+			core::SerializationWorkData workData;
+			auto reader = core::YamlSerializer::fromString(yaml);
+			reader->deserialize();
+			building->deserialize(*reader, workData);
+			return building;
+		};
+
+		core::Building building("Shuttle door styles", 32, 3);
+		building.addCorridor(0, 0, 31);
+		building.addCorridor(1, 0, 31);
+		core::Building::CreateShuttleOptions options{ 2, 3, { 0, 18 }, 0 };
+		options.capacity = 2;
+		options.doorMask = 0b101; // Two doors per carriage: cells 0 and 2.
+		auto const created = building.addShuttle(1, 0, 0, 27, options);
+		building.finishBuild();
+		require(created.doors.size() == 8,
+			"The Shuttle did not generate eight landing Doors");
+		auto const shuttleSector = created.shuttle.sector->getIndex();
+		building.pauseSimulation();
+
+		// Every generated Shuttle Door without an override opens Up.
+		for (uint32_t stop = 0; stop < 2; ++stop)
+			for (uint32_t car = 0; car < 2; ++car)
+				for (uint32_t door = 0; door < 2; ++door)
+				{
+					auto const generated = findShuttleDoor(building, shuttleSector, stop, car, door);
+					require(generated != nullptr, "A generated Shuttle Door could not be found");
+					require(generated->getOpenStyle() == core::Door::OpenStyle::OpenUp,
+						"A Shuttle Door without an override is not OpenUp");
+				}
+
+		// A Shuttle with no per-Door choices persists no style data at all, and
+		// overrides outside the authored stop/carriage/door grid are refused.
+		require(snapshotYaml(building).find("doorOpenStyles") == std::string::npos,
+			"A Shuttle with no per-Door overrides persisted a doorOpenStyles array");
+		std::string diagnostic;
+		require(!building.setShuttleDoorOpenStyle(shuttleSector, 2, 0, 0,
+			core::Door::OpenStyle::OpenLeft, &diagnostic),
+			"An override was accepted for a stop outside the Shuttle's authored topology");
+		require(!building.setShuttleDoorOpenStyle(shuttleSector, 0, 2, 0,
+			core::Door::OpenStyle::OpenLeft, &diagnostic),
+			"An override was accepted for a carriage outside the Shuttle's authored topology");
+		require(!building.setShuttleDoorOpenStyle(shuttleSector, 0, 0, 2,
+			core::Door::OpenStyle::OpenLeft, &diagnostic),
+			"An override was accepted for a door cell outside the Shuttle's doorMask");
+
+		// Editing one Door takes effect live and touches no sibling Door at the
+		// same or another stop.
+		require(building.setShuttleDoorOpenStyle(shuttleSector, 0, 0, 0,
+			core::Door::OpenStyle::OpenLeft, &diagnostic),
+			("A per-Door override was refused: " + diagnostic).c_str());
+		require(findShuttleDoor(building, shuttleSector, 0, 0, 0)->getOpenStyle()
+			== core::Door::OpenStyle::OpenLeft,
+			"The edited Shuttle Door did not take the override live");
+		require(findShuttleDoor(building, shuttleSector, 0, 0, 1)->getOpenStyle()
+			== core::Door::OpenStyle::OpenUp,
+			"Editing one Shuttle Door changed its sibling door on the same carriage");
+		require(findShuttleDoor(building, shuttleSector, 0, 1, 0)->getOpenStyle()
+			== core::Door::OpenStyle::OpenUp,
+			"Editing one Shuttle Door changed a sibling carriage at the same stop");
+		require(findShuttleDoor(building, shuttleSector, 1, 0, 0)->getOpenStyle()
+			== core::Door::OpenStyle::OpenUp,
+			"Editing one Shuttle Door changed a sibling Door at another stop");
+
+		// A second Door takes its own style while the first keeps its own.
+		require(building.setShuttleDoorOpenStyle(shuttleSector, 1, 1, 1,
+			core::Door::OpenStyle::OpenRight, &diagnostic),
+			("A second per-Door override was refused: " + diagnostic).c_str());
+		require(findShuttleDoor(building, shuttleSector, 0, 0, 0)->getOpenStyle()
+			== core::Door::OpenStyle::OpenLeft,
+			"Editing a second Shuttle Door changed the first Door's override");
+
+		// Save/load: the overrides ride in the Shuttle's own record, and Doors
+		// without an override replay as the generated OpenUp default.
+		auto const yaml = snapshotYaml(building);
+		require(yaml.find("doorOpenStyles") != std::string::npos,
+			"The Shuttle record did not persist its per-Door styles");
+		require(yaml.find("openLeft") != std::string::npos
+			&& yaml.find("openRight") != std::string::npos
+			&& yaml.find("default") != std::string::npos,
+			"The persisted doorOpenStyles array lost a Door's style");
+		auto loaded = loadYaml(yaml);
+		require(findShuttleDoor(*loaded, shuttleSector, 0, 0, 0)->getOpenStyle()
+			== core::Door::OpenStyle::OpenLeft,
+			"A loaded Shuttle Door lost its OpenLeft override");
+		require(findShuttleDoor(*loaded, shuttleSector, 1, 1, 1)->getOpenStyle()
+			== core::Door::OpenStyle::OpenRight,
+			"A loaded Shuttle Door lost its OpenRight override");
+		require(findShuttleDoor(*loaded, shuttleSector, 1, 0, 0)->getOpenStyle()
+			== core::Door::OpenStyle::OpenUp,
+			"A loaded Shuttle Door without an override lost the OpenUp default");
+
+		// Undo/redo mirror: the editor snapshots YAML before and after a change
+		// and restores either side verbatim.
+		loaded->pauseSimulation();
+		auto const before = snapshotYaml(*loaded);
+		require(loaded->setShuttleDoorOpenStyle(shuttleSector, 0, 0, 0,
+			core::Door::OpenStyle::OpenApart, &diagnostic),
+			("A re-author to OpenApart was refused: " + diagnostic).c_str());
+		auto const after = snapshotYaml(*loaded);
+		require(findShuttleDoor(*loaded, shuttleSector, 0, 0, 0)->getOpenStyle()
+			== core::Door::OpenStyle::OpenApart,
+			"The re-authored Shuttle Door did not take OpenApart live");
+		require(findShuttleDoor(*loaded, shuttleSector, 1, 1, 1)->getOpenStyle()
+			== core::Door::OpenStyle::OpenRight,
+			"The re-author disturbed a sibling Door");
+		auto const undone = loadYaml(before);
+		require(findShuttleDoor(*undone, shuttleSector, 0, 0, 0)->getOpenStyle()
+			== core::Door::OpenStyle::OpenLeft,
+			"Undo did not restore the previous per-Door style");
+		require(findShuttleDoor(*undone, shuttleSector, 1, 1, 1)->getOpenStyle()
+			== core::Door::OpenStyle::OpenRight,
+			"Undo disturbed another Door's override");
+		auto const redone = loadYaml(after);
+		require(findShuttleDoor(*redone, shuttleSector, 0, 0, 0)->getOpenStyle()
+			== core::Door::OpenStyle::OpenApart,
+			"Redo did not restore the edited per-Door style");
+
+		// Reconstructing the Shuttle with unchanged topology retains every
+		// override: the edit plan rewrites the record in place and the overrides
+		// stay attached to their grid slots.
+		redone->pauseSimulation();
+		auto const rebuildPlan = redone->planResizeShuttle(shuttleSector, 0, 0, 27);
+		require(rebuildPlan.valid,
+			("An unchanged-topology Shuttle rebuild plan was refused: "
+				+ rebuildPlan.diagnostic).c_str());
+		require(rebuildPlan.stopOffsets == std::vector<uint32_t>{ 0, 18 },
+			"The rebuild plan did not keep the Shuttle's stop topology");
+		auto const rebuiltSector = redone->applyShuttleEdit(rebuildPlan);
+		require(rebuiltSector == shuttleSector, "The rebuilt Shuttle moved to another Sector");
+		require(findShuttleDoor(*redone, rebuiltSector, 0, 0, 0)->getOpenStyle()
+			== core::Door::OpenStyle::OpenApart,
+			"Reconstructing an unchanged Shuttle lost an edited override");
+		require(findShuttleDoor(*redone, rebuiltSector, 1, 1, 1)->getOpenStyle()
+			== core::Door::OpenStyle::OpenRight,
+			"Reconstructing an unchanged Shuttle lost a second override");
+		require(findShuttleDoor(*redone, rebuiltSector, 0, 1, 1)->getOpenStyle()
+			== core::Door::OpenStyle::OpenUp,
+			"Reconstructing an unchanged Shuttle changed a Door without an override");
+	}
+
 	void recentFilesPersistAcrossStartup()
 	{
 		auto directory = std::filesystem::temp_directory_path() / "prometheum-fermide-recent-files-smoke";
@@ -4037,6 +4221,7 @@ void runSerializationSmokeChecks()
 	liftStopDoorStyleOverridesArePerStopAndPersist();
 	liftDoorStylesFollowStopsWhenTheLiftMovesOrResizes();
 	liftDoorStylesReconcileWhenStopsChange();
+	shuttleDoorStyleOverridesAreIndividualAndPersist();
 	recentFilesPersistAcrossStartup();
 	serializableTracksModificationState();
 	doorAndWindowRemovalWorksOnDeepLayerPairs();

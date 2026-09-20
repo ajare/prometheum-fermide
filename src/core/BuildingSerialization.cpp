@@ -212,16 +212,16 @@ namespace core
 			}
 			throw SerializationException("Cannot serialize an unknown Door opening style");
 		};
-		auto writeStopDoorOpenStyles = [&]
+		auto writeStopDoorOpenStyles = [&](char const* field)
 		{
 			// Only overrides that differ from the generated default are persisted,
-			// so a Lift with no per-stop choices keeps the record shape it had
-			// before per-stop styles existed.
+			// so a transport with no per-Door choices keeps the record shape it
+			// had before per-Door styles existed.
 			bool anyOverride = false;
 			for (auto style : record.overrides)
 				if (style != ~0u) { anyOverride = true; break; }
 			if (!anyOverride) return;
-			serializer.beginArray("stopDoorOpenStyles", false);
+			serializer.beginArray(field, false);
 			for (auto style : record.overrides)
 				serializer.writeString("", style == ~0u ? "default" : openStyleName(
 					static_cast<int32_t>(style)));
@@ -262,7 +262,7 @@ namespace core
 			serializer.writeUint32("layer", record.layer);
 			serializer.writeUint32("y", record.a); serializer.writeUint32("x", record.b);
 			serializer.writeUint32("cellsWide", record.c); serializer.writeUint32("decksHigh", record.e);
-			writeStops(); writeStopDoorOpenStyles(); serializer.writeUint32("capacity", record.d);
+			writeStops(); writeStopDoorOpenStyles("stopDoorOpenStyles"); serializer.writeUint32("capacity", record.d);
 			serializer.writeFloat("minimumDwellSeconds", record.x);
 			serializer.writeFloat("maximumBoardingSeconds", record.y);
 			serializer.writeUint32("initialStop", record.g); break;
@@ -271,6 +271,7 @@ namespace core
 			serializer.writeUint32("y", record.a); serializer.writeUint32("x", record.b);
 			serializer.writeUint32("cellsWide", record.c); serializer.writeUint32("numCars", record.d);
 			serializer.writeUint32("carWidth", record.e); writeStops();
+			writeStopDoorOpenStyles("doorOpenStyles");
 			serializer.writeUint32("initialStop", record.f); serializer.writeUint32("capacityPerCarriage", record.g);
 			serializer.writeUint32("doorMask", record.h ? record.h : (1u << 1));
 			serializer.writeFloat("minimumDwellSeconds", record.x);
@@ -487,12 +488,12 @@ namespace core
 			while (serializer.nextArrayItem()) record.values.push_back(serializer.readUint32());
 			serializer.endArray();
 		};
-		auto readStopDoorOpenStyles = [&]
+		auto readStopDoorOpenStyles = [&](char const* field, char const* ownerLabel)
 		{
-			// A Lift record written before per-stop Door styles existed simply has
-			// no overrides: every landing replays with the generated default.
-			if (!serializer.hasField("stopDoorOpenStyles")) return;
-			serializer.beginArray("stopDoorOpenStyles", false);
+			// A transport record written before per-Door styles existed simply has
+			// no overrides: every generated Door replays with the owner default.
+			if (!serializer.hasField(field)) return;
+			serializer.beginArray(field, false);
 			while (serializer.nextArrayItem())
 			{
 				auto const value = serializer.readString("");
@@ -503,7 +504,7 @@ namespace core
 				else if (value == "openRight") style = static_cast<uint32_t>(Door::OpenStyle::OpenRight);
 				else if (value == "openApart") style = static_cast<uint32_t>(Door::OpenStyle::OpenApart);
 				else throw SerializationException(
-					format("Unknown Lift stop Door opening style: {}", value));
+					format("Unknown {} Door opening style: {}", ownerLabel, value));
 				record.overrides.push_back(style);
 			}
 			serializer.endArray();
@@ -543,7 +544,7 @@ namespace core
 			record.layer = readLayerOr("layer", layerBehind(0));
 			record.a = serializer.readUint32("y"); record.b = serializer.readUint32("x");
 			record.c = serializer.readUint32("cellsWide"); record.e = serializer.readUint32("decksHigh");
-			readStops(); readStopDoorOpenStyles(); record.d = serializer.readUint32("capacity");
+			readStops(); readStopDoorOpenStyles("stopDoorOpenStyles", "Lift stop"); record.d = serializer.readUint32("capacity");
 			record.x = serializer.readFloat("minimumDwellSeconds");
 			record.y = serializer.readFloat("maximumBoardingSeconds");
 			record.g = serializer.readUint32("initialStop"); break;
@@ -552,6 +553,7 @@ namespace core
 			record.a = serializer.readUint32("y"); record.b = serializer.readUint32("x");
 			record.c = serializer.readUint32("cellsWide"); record.d = serializer.readUint32("numCars");
 			record.e = serializer.readUint32("carWidth"); readStops();
+			readStopDoorOpenStyles("doorOpenStyles", "Shuttle");
 			record.f = serializer.readUint32("initialStop"); record.g = serializer.readUint32("capacityPerCarriage");
 			record.h = serializer.readUint32("doorMask", true, 1u << 1);
 			record.x = serializer.readFloat("minimumDwellSeconds");
@@ -970,7 +972,7 @@ namespace core
 		case ConstructionType::Shuttle:
 			addShuttle(transitLayer(record), record.a, record.b, record.c,
 				{ record.d, record.e, record.values, record.f, record.g, record.x, record.y,
-					record.p, record.h ? record.h : (1u << 1) });
+					record.p, record.h ? record.h : (1u << 1), record.overrides });
 			break;
 		case ConstructionType::Door:
 			addSectorDoor(doorLayer(record), record.a, record.b,

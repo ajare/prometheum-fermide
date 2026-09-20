@@ -5286,21 +5286,24 @@ void renderDoorPanel(shared_ptr<core::Building> const& building,
 	ImGui::Text("From: %s", door->getFrontSector()->getDescription().c_str());
 	ImGui::Text("To: %s", door->getBackSector()->getDescription().c_str());
 
-	uint32_t liftSector, stopIndex, carriageIndex;
+	uint32_t liftSector, stopIndex, carriageIndex, doorIndex;
 	bool const liftOwned = building->isLiftOwnedDoor(object, &liftSector, &stopIndex);
-	bool const shuttleOwned = building->isShuttleOwnedDoor(object, &liftSector, &stopIndex, &carriageIndex);
+	bool const shuttleOwned = building->isShuttleOwnedDoor(object, &liftSector, &stopIndex,
+		&carriageIndex, &doorIndex);
 	if (liftOwned || shuttleOwned)
 	{
 		ImGui::Separator();
 		ImGui::Text("Owned by %s", liftOwned ? "Lift" : "Shuttle");
 		ImGui::Text("%s sector: %u", liftOwned ? "Lift" : "Shuttle", liftSector);
 		if (liftOwned) ImGui::Text("Stop: %u (floor %u)", stopIndex, object->getCellY());
-		else ImGui::Text("Stop: %u, carriage: %u", stopIndex, carriageIndex);
+		else ImGui::Text("Stop: %u, carriage: %u, door: %u", stopIndex, carriageIndex, doorIndex);
 		ImGui::TextDisabled("Landing geometry and controls are managed by the transport.");
-		ImGui::TextDisabled("The opening style is authored per stop and can be changed here.");
+		ImGui::TextDisabled(liftOwned
+			? "The opening style is authored per stop and can be changed here."
+			: "The opening style is authored per Door and can be changed here.");
 	}
 
-	ImGui::BeginDisabled(!building->isSimulationPaused() || shuttleOwned);
+	ImGui::BeginDisabled(!building->isSimulationPaused());
 	// The combo index is the position in this list, not the enum value, so the
 	// styles can be offered in any order the editor prefers.
 	core::Door::OpenStyle const openStyleChoices[] =
@@ -5328,14 +5331,18 @@ void renderDoorPanel(shared_ptr<core::Building> const& building,
 		{
 			gUISettings.worldPaused = true;
 			std::string diagnostic;
-			// A Lift-owned Door has no Door record of its own; the edit lands as a
-			// per-stop override in the Lift's record, leaving sibling stops alone.
+			// A Lift- or Shuttle-owned Door has no Door record of its own; the
+			// edit lands as an override in the transport's own record, leaving
+			// sibling Doors alone.
 			bool changed = liftOwned
 				? building->setLiftStopDoorOpenStyle(liftSector, stopIndex,
 						openStyleChoices[openStyleIndex], &diagnostic)
-				: building->setSectorDoorOpenStyle(door->getFrontSector()->getLayerIndex(),
-						object->getCellY(), object->getCellX(), door->getCellsWide(),
-						openStyleChoices[openStyleIndex], &diagnostic);
+				: shuttleOwned
+					? building->setShuttleDoorOpenStyle(liftSector, stopIndex, carriageIndex,
+							doorIndex, openStyleChoices[openStyleIndex], &diagnostic)
+					: building->setSectorDoorOpenStyle(door->getFrontSector()->getLayerIndex(),
+							object->getCellY(), object->getCellX(), door->getCellsWide(),
+							openStyleChoices[openStyleIndex], &diagnostic);
 			if (!changed)
 				throw runtime_error(diagnostic.empty()
 					? "Could not change the Door's opening style" : diagnostic);

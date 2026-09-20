@@ -2264,8 +2264,22 @@ namespace core
 					bool supported = cell.sectorIndex != ~0u
 						&& isLocationLike(getSector(cell.sectorIndex)->getType());
 					if (supported)
-						shuttleRes.doors[doorResultIndex(stop, car, door)] = _addSectorDoor(layerInFront(layerIndex), y, globalX,
-							{ 1, { true, false }, DoorActivationMode::Unavailable }, true);
+					{
+						// A Shuttle landing reads as a hatch, so its generated Doors
+						// are authored OpenUp unless the Shuttle's record carries a
+						// per-Door override on this grid slot.
+						CreateDoorOptions stopDoorOptions;
+						stopDoorOptions.width = 1;
+						stopDoorOptions.controls[0] = true;
+						stopDoorOptions.activationMode = DoorActivationMode::Unavailable;
+						auto const slot = doorResultIndex(stop, car, door);
+						if (slot < options.doorOpenStyles.size()
+							&& options.doorOpenStyles[slot] != ~0u)
+							stopDoorOptions.openStyle =
+								static_cast<Door::OpenStyle>(options.doorOpenStyles[slot]);
+						shuttleRes.doors[slot] = _addSectorDoor(layerInFront(layerIndex),
+							y, globalX, stopDoorOptions, true);
+					}
 				}
 
 		vector<LiftStop> stops;
@@ -2374,6 +2388,7 @@ namespace core
 		record.h = options.doorMask; record.p = options.allowPartialLandings;
 		record.x = options.minimumDwellSeconds; record.y = options.maximumBoardingSeconds;
 		record.values = options.stopOffsets;
+		record.overrides = options.doorOpenStyles;
 		recordConstruction(std::move(record));
 		return shuttleRes;
 	}
@@ -2712,7 +2727,8 @@ namespace core
 	}
 
 	bool Building::isShuttleOwnedDoor(shared_ptr<const SectorObject> const& object,
-		uint32_t* shuttleSectorIndex, uint32_t* stopIndex, uint32_t* carriageIndex) const
+		uint32_t* shuttleSectorIndex, uint32_t* stopIndex, uint32_t* carriageIndex,
+		uint32_t* doorIndex) const
 	{
 		auto doorObject = dynamic_pointer_cast<const DoorSectorObject>(object);
 		if (!doorObject) return false;
@@ -2727,6 +2743,33 @@ namespace core
 		if (shuttleSectorIndex) *shuttleSectorIndex = (uint32_t)coordinator->mLiftSector.value - 1;
 		if (stopIndex) *stopIndex = mapping->stopIndex;
 		if (carriageIndex) *carriageIndex = mapping->carriageIndex;
+		if (doorIndex)
+		{
+			// The doorIndex is the position of this Door's cell within the
+			// carriage's selected doorMask cells, matching the per-Door override
+			// grid used by setShuttleDoorOpenStyle.
+			*doorIndex = ~0u;
+			uint32_t producerIndex = 0;
+			for (auto const& record : mConstructionRecords)
+			{
+				if (!constructionTypeCreatesSector(record.type)) continue;
+				if (producerIndex++ != *shuttleSectorIndex) continue;
+				if (record.type != ConstructionType::Shuttle) break;
+				if (mapping->stopIndex >= record.values.size()
+					|| mapping->carriageIndex >= record.d) break;
+				auto const doorMask = record.h ? record.h : (1u << 1);
+				auto const doorOffsets = SimulationCoordinator::shuttleDoorOffsets(record.e, doorMask);
+				auto const base = record.b + record.values[mapping->stopIndex]
+					+ mapping->carriageIndex * (record.e + 1);
+				for (size_t d = 0; d < doorOffsets.size(); ++d)
+					if (base + doorOffsets[d] == doorObject->getCellX())
+					{
+						*doorIndex = static_cast<uint32_t>(d);
+						break;
+					}
+				break;
+			}
+		}
 		return true;
 	}
 
@@ -2807,7 +2850,8 @@ namespace core
 				if (transit && transit->getShuttle().get() == shuttle)
 				{
 					options = { record.d, record.e, record.values, record.f, record.g,
-						record.x, record.y, record.p, record.h ? record.h : (1u << 1) };
+						record.x, record.y, record.p, record.h ? record.h : (1u << 1),
+						record.overrides };
 					return true;
 				}
 			}
@@ -3066,6 +3110,78 @@ namespace core
 					&& doorY < mLayers[frontLayer]->getDecksHigh())
 				{
 					auto const& cell = mLayers[frontLayer]->getCellDefinition(lift->getCellX(), doorY);
+					if (cell.sectorObjectType == SectorObjectType::Door
+						&& cell.sectorIndex < mSectors.size() && mSectors[cell.sectorIndex])
+					{
+						auto const sector = mSectors[cell.sectorIndex];
+						if (cell.sectorObjectIndex < sector->getNumObjects())
+						{
+							auto doorObject = dynamic_pointer_cast<DoorSectorObject>(
+								sector->_getObject(cell.sectorObjectIndex));
+							if (doorObject && doorObject->getDoor())
+								doorObject->getDoor()->setOpenStyle(style);
+						}
+					}
+				}
+			}
+		}
+		modify();
+		if (diagnostic) diagnostic->clear();
+		return true;
+	}
+
+	bool Building::setShuttleDoorOpenStyle(uint32_t shuttleSectorIndex, uint32_t stopIndex,
+		uint32_t carriageIndex, uint32_t doorIndex, Door::OpenStyle style, std::string* diagnostic)
+	{
+		// A Shuttle's landing Doors have no Door records of their own; the Shuttle's
+		// producing record owns them.  The per-Door override therefore rides in
+		// that record, which is the persistence boundary: save/load and the
+		// editor's snapshot-based undo/redo carry the choice, and any later
+		// rebuild replays it.  The Shuttle's topology is not touched, and the
+		// override addresses one cell of the fixed stop/carriage/door grid, so
+		// no sibling Door at the same or another stop is reached.
+		uint32_t producerIndex = 0;
+		auto found = mConstructionRecords.end();
+		for (auto it = mConstructionRecords.begin(); it != mConstructionRecords.end(); ++it)
+		{
+			if (!constructionTypeCreatesSector(it->type)) continue;
+			if (producerIndex++ == shuttleSectorIndex) { found = it; break; }
+		}
+		if (found == mConstructionRecords.end() || found->type != ConstructionType::Shuttle)
+		{
+			if (diagnostic) *diagnostic = "The selected Shuttle no longer has an authored definition";
+			return false;
+		}
+		auto const doorMask = found->h ? found->h : (1u << 1);
+		auto const doorOffsets = SimulationCoordinator::shuttleDoorOffsets(found->e, doorMask);
+		if (stopIndex >= found->values.size() || carriageIndex >= found->d
+			|| doorIndex >= doorOffsets.size())
+		{
+			if (diagnostic)
+				*diagnostic = "The selected Door is outside the Shuttle's authored topology";
+			return false;
+		}
+		auto const totalSlots = found->values.size() * found->d * doorOffsets.size();
+		found->overrides.resize(totalSlots, ~0u);
+		auto const slot = (stopIndex * found->d + carriageIndex) * doorOffsets.size() + doorIndex;
+		found->overrides[slot] = static_cast<uint32_t>(style);
+
+		// The live landing Door rides with its record so the viewport and the
+		// Selection panel show the new style without a rebuild.  The Door is
+		// authored on the Layer in front of the Shuttle, at the stop's column.
+		if (shuttleSectorIndex < mSectors.size() && mSectors[shuttleSectorIndex])
+		{
+			auto const transit = dynamic_pointer_cast<const ShuttleTransit>(mSectors[shuttleSectorIndex]);
+			if (transit && transit->getLayerIndex() > 0)
+			{
+				auto const frontLayer = layerInFront(transit->getLayerIndex());
+				auto const doorX = found->b + found->values[stopIndex]
+					+ carriageIndex * (found->e + 1) + doorOffsets[doorIndex];
+				if (frontLayer < mLayers.size() && mLayers[frontLayer]
+					&& doorX < mLayers[frontLayer]->getCellsWide()
+					&& found->a < mLayers[frontLayer]->getDecksHigh())
+				{
+					auto const& cell = mLayers[frontLayer]->getCellDefinition(doorX, found->a);
 					if (cell.sectorObjectType == SectorObjectType::Door
 						&& cell.sectorIndex < mSectors.size() && mSectors[cell.sectorIndex])
 					{

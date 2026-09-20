@@ -198,6 +198,13 @@ namespace core
 			bool allowPartialLandings{ false };
 			// Bit N selects carriage cell N as a one-cell-wide door.
 			uint32_t doorMask{ 1u << 1 };
+			// Per-Door opening style overrides across the fixed stop/carriage/door
+			// grid, indexed (stop * numCars + carriage) * doorCount + door where
+			// doorCount is the number of selected doorMask cells.  ~0u means "no
+			// override": the generated Door keeps its owner default (OpenUp for a
+			// Shuttle).  The Shuttle's topology stays fixed; only the authored
+			// style varies per Door.
+			std::vector<uint32_t> doorOpenStyles{};
 		};
 
 		struct CreateShuttleResult
@@ -517,7 +524,8 @@ namespace core
 			bool p{ false }, q{ false };
 			std::vector<uint32_t> values{};
 			// Lift: per-stop landing-Door opening style overrides, parallel to
-			// values (stopOffsets).  ~0u means "no override"; a record whose
+			// values (stopOffsets).  Shuttle: per-Door overrides across the fixed
+			// stop/carriage/door grid.  ~0u means "no override"; a record whose
 			// overrides are all defaults persists none of them.
 			std::vector<uint32_t> overrides{};
 		};
@@ -1098,9 +1106,12 @@ namespace core
 		bool isLiftOwnedControl(std::shared_ptr<const SectorObject> const& object,
 			uint32_t* liftSectorIndex = nullptr, uint32_t* stopIndex = nullptr) const;
 
+		// The optional doorIndex is the position within the carriage's selected
+		// doorMask cells, matching the per-Door override grid of
+		// setShuttleDoorOpenStyle.
 		bool isShuttleOwnedDoor(std::shared_ptr<const SectorObject> const& object,
 			uint32_t* shuttleSectorIndex = nullptr, uint32_t* stopIndex = nullptr,
-			uint32_t* carriageIndex = nullptr) const;
+			uint32_t* carriageIndex = nullptr, uint32_t* doorIndex = nullptr) const;
 
 		bool isShuttleOwnedControl(std::shared_ptr<const SectorObject> const& object,
 			uint32_t* shuttleSectorIndex = nullptr, uint32_t* stopIndex = nullptr) const;
@@ -1138,6 +1149,19 @@ namespace core
 		// Stops without an override keep the generated OpenApart default.
 		// Transport-managed geometry, controls, timing, and traversal are untouched.
 		bool setLiftStopDoorOpenStyle(uint32_t liftSectorIndex, uint32_t stopIndex,
+			Door::OpenStyle style, std::string* diagnostic = nullptr);
+
+		// Re-authors one Shuttle landing Door's opening style while the Shuttle's
+		// topology stays fixed.  The override lives in the Shuttle's own record,
+		// not in a Door record, so editing one Door affects no sibling Door at the
+		// same or another stop; save/load and snapshot-based undo/redo carry the
+		// choice.  stopIndex, carriageIndex, and doorIndex address the Door within
+		// the fixed stop/carriage/door grid (doorIndex counts the carriage's
+		// selected doorMask cells).  Doors without an override keep the generated
+		// OpenUp default.  Transport-managed geometry, controls, timing, and
+		// traversal are untouched.
+		bool setShuttleDoorOpenStyle(uint32_t shuttleSectorIndex, uint32_t stopIndex,
+			uint32_t carriageIndex, uint32_t doorIndex,
 			Door::OpenStyle style, std::string* diagnostic = nullptr);
 
 		CreateDoorResult addSectorDoor(uint32_t layerIndex, uint32_t y, uint32_t x);
