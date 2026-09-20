@@ -1,4 +1,5 @@
 #include "core/Building.h"
+#include "core/AgentGroup.h"
 #include "core/SerializationException.h"
 #include "core/Exceptions.h"
 #include "core/Transit.h"
@@ -355,11 +356,12 @@ namespace core
 	void Building::serializeImpl(Serializer& serializer, SerializationWorkData& workData) const
 	{
 		serializer.beginMap("building");
-		// Version 8 is the first schema that persists a regular Door's physical height.
-		// Version 7 is the first schema that persists Door opening styles. Older
-		// readers cap out at version 6, so they refuse these files instead of
-		// silently dropping the authored style fields.
-		serializer.writeUint32("version", 8);
+		// Version 9 is the first schema that persists Agent groups. Version 8 is
+		// the first that persists a regular Door's physical height, and version 7
+		// the first that persists Door opening styles. Older readers cap out at
+		// their own version, so they refuse these files instead of silently
+		// dropping fields they do not know.
+		serializer.writeUint32("version", 9);
 		serializer.writeString("name", mName);
 		serializer.writeUint32("cellsWide", mCellsWide);
 		serializer.writeUint32("decksHigh", mDecksHigh);
@@ -374,6 +376,20 @@ namespace core
 		{
 			serializer.beginMap("");
 			serializeConstructionRecord(serializer, record);
+			serializer.endMap();
+		}
+		serializer.endArray();
+
+		// Agent groups are written as an ordered array of {id, name} ahead of the
+		// Agents that will one day reference them, so a reader meets every
+		// definition before any use of it. The ID travels with the name because
+		// identity is never derived from the name (ADR 0006).
+		serializer.beginArray("agentGroups");
+		for (auto const& [id, group] : mAgentGroups.entries())
+		{
+			serializer.beginMap("");
+			serializer.writeUint64("id", id.value);
+			serializer.writeString("name", group->getName());
 			serializer.endMap();
 		}
 		serializer.endArray();
@@ -669,8 +685,9 @@ namespace core
 		auto const version = serializer.readUint32("version");
 		// Versions 1 through 6 predate Door opening styles; their records replay
 		// through the owner-sensitive defaults (OpenUp for ordinary and
-		// Shuttle-owned Doors, OpenApart for Lift-owned Doors).
-		if (version < 1 || version > 8)
+		// Shuttle-owned Doors, OpenApart for Lift-owned Doors). Version 9 is the
+		// first to carry Agent groups; versions 1 through 8 load with none.
+		if (version < 1 || version > 9)
 		{
 			throw SerializationException("Unsupported Building serialization version");
 		}
@@ -726,7 +743,56 @@ namespace core
 		if (!normalizeRoomLadderRecords(records, ladderDiagnostic))
 			throw SerializationException(ladderDiagnostic);
 
+		// Agent groups are version-9 authored data. Every entry is read and
+		// judged here, before the Building is reset, so a malformed group list
+		// refuses the whole file without leaving partial groups behind: nothing
+		// above has touched the live Building, and nothing below runs.
+		std::vector<std::pair<AgentGroupId, std::string>> agentGroups;
+		if (version >= 9 && serializer.hasField("agentGroups"))
+		{
+			set<AgentGroupId> seenIds;
+			set<string> seenNames;
+			serializer.beginArray("agentGroups");
+			while (serializer.nextArrayItem())
+			{
+				serializer.beginMap("");
+				auto const id = AgentGroupId{ serializer.readUint64("id") };
+				auto const rawName = serializer.readString("name");
+				serializer.endMap();
+
+				if (!id)
+					throw SerializationException("Serialized Agent group ID cannot be zero");
+				if (!seenIds.insert(id).second)
+					throw SerializationException(format(
+						"Serialized Agent group IDs must be unique ({} appears twice)", id.value));
+
+				// The same trim-and-check rule the editor applies on creation, so
+				// a file cannot smuggle in a name the Building would refuse.
+				auto const trimmed = AgentGroup::trimName(rawName);
+				string nameDiagnostic;
+				if (!AgentGroup::nameIsValid(trimmed, &nameDiagnostic))
+					throw SerializationException(
+						"Serialized Agent group name is invalid: " + nameDiagnostic);
+				// Case-sensitive, exactly as the editor's uniqueness rule is.
+				if (!seenNames.insert(trimmed).second)
+					throw SerializationException(format(
+						"Serialized Agent group names must be unique (\"{}\" appears twice)", trimmed));
+
+				agentGroups.emplace_back(id, trimmed);
+			}
+			serializer.endArray();
+		}
+
 		resetForDeserialization(std::move(name), cellsWide, decksHigh);
+		// resetForDeserialization deliberately leaves Agent groups alone: the
+		// reset-and-replay paths (Layer deletion, Room resize, and the rest) reuse
+		// it and must carry the authored groups across. A load starts from the
+		// file, so it clears them here before restoring what was read.
+		mAgentGroups = {};
+		for (auto const& [id, group] : agentGroups)
+		{
+			mAgentGroups.restore(id, AgentGroup::create(group));
+		}
 		mDeserializingConstruction = true;
 		try
 		{
@@ -905,6 +971,12 @@ namespace core
 		}
 		mAgents = {};
 		mAgentIds.clear();
+		// Agent groups are deliberately not cleared here. Every reset-and-replay
+		// path below reuses this reset to rebuild the world from its own
+		// construction records, and those records say nothing about Agent groups:
+		// clearing here would silently drop the user's group definitions on a Layer
+		// deletion or a Room resize. The one path that must start from the file -
+		// deserializeImpl - clears them itself before restoring.
 		mInteractionPoints = {};
 		mInteractionRequests = {};
 		mDeviceOperations = {};

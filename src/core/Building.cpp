@@ -5423,6 +5423,123 @@ namespace core
 		return mSimulationCoordinator.removeAgent(id);
 	}
 
+	// Agent groups are authored Building data, not simulation state (ADR 0006).
+	// They live in the Building's own registry and never reach the coordinator,
+	// so creating and renaming need no pause, dirty no topology, and leave every
+	// runtime snapshot and simulation event exactly as it was.
+
+	bool Building::agentGroupNameTaken(std::string const& trimmed, AgentGroupId except) const
+	{
+		// Case-sensitive by design: names differing only by case are distinct
+		// groups, so "Night shift" and "night shift" may coexist.
+		for (auto const& [id, group] : mAgentGroups.entries())
+		{
+			if (id == except) continue;
+			if (group && group->getName() == trimmed) return true;
+		}
+		return false;
+	}
+
+	uint32_t Building::getAgentGroupCount() const
+	{
+		return static_cast<uint32_t>(mAgentGroups.entries().size());
+	}
+
+	std::vector<AgentGroupId> Building::getAgentGroupIds() const
+	{
+		// The registry is keyed by the monotonically allocated ID, so this is
+		// creation order and a rename cannot disturb it.
+		std::vector<AgentGroupId> ids;
+		ids.reserve(mAgentGroups.entries().size());
+		for (auto const& [id, group] : mAgentGroups.entries())
+		{
+			(void)group;
+			ids.push_back(id);
+		}
+		return ids;
+	}
+
+	EntityLookup<AgentGroup const> Building::lookupAgentGroup(AgentGroupId id) const
+	{
+		EntityLookup<AgentGroup const> lookup;
+		auto const* group = mAgentGroups.find(id);
+		if (!group)
+		{
+			lookup.diagnostic = format("Agent group {} is not defined in this Building", id.value);
+			return lookup;
+		}
+		lookup.entity = group;
+		return lookup;
+	}
+
+	std::string const& Building::getAgentGroupName(AgentGroupId id) const
+	{
+		auto const lookup = lookupAgentGroup(id);
+		if (!lookup) throw BuildingException(this, lookup.diagnostic);
+		return lookup.entity->getName();
+	}
+
+	bool Building::canAddAgentGroup(std::string const& name, std::string* diagnostic) const
+	{
+		if (diagnostic) diagnostic->clear();
+
+		auto const trimmed = AgentGroup::trimName(name);
+		if (!AgentGroup::nameIsValid(trimmed, diagnostic)) return false;
+		if (agentGroupNameTaken(trimmed))
+		{
+			if (diagnostic) *diagnostic = format("The Agent group \"{}\" already exists", trimmed);
+			return false;
+		}
+		return true;
+	}
+
+	AgentGroupId Building::addAgentGroup(std::string const& name)
+	{
+		string diagnostic;
+		if (!canAddAgentGroup(name, &diagnostic))
+			throw BuildingException(this, diagnostic);
+
+		// Nothing above mutates, so the group is created only once its name has
+		// passed: a refused add leaves the Building exactly as it was found.
+		auto const id = mAgentGroups.add(AgentGroup::create(AgentGroup::trimName(name)));
+		modify();
+		return id;
+	}
+
+	bool Building::canRenameAgentGroup(AgentGroupId id, std::string const& name,
+		std::string* diagnostic) const
+	{
+		if (diagnostic) diagnostic->clear();
+
+		if (!lookupAgentGroup(id))
+		{
+			if (diagnostic) *diagnostic = format("Agent group {} is not defined in this Building", id.value);
+			return false;
+		}
+
+		auto const trimmed = AgentGroup::trimName(name);
+		if (!AgentGroup::nameIsValid(trimmed, diagnostic)) return false;
+		if (agentGroupNameTaken(trimmed, id))
+		{
+			if (diagnostic) *diagnostic = format("The Agent group \"{}\" already exists", trimmed);
+			return false;
+		}
+		return true;
+	}
+
+	bool Building::renameAgentGroup(AgentGroupId id, std::string const& name,
+		std::string* diagnostic)
+	{
+		if (!canRenameAgentGroup(id, name, diagnostic)) return false;
+
+		// Identity and position are untouched: only the name moves, and it moves
+		// in place inside the same registry entry.
+		auto* group = mAgentGroups.find(id);
+		group->setName(AgentGroup::trimName(name));
+		modify();
+		return true;
+	}
+
 	// Interaction and device-operation orchestration - the InteractionPoint and
 	// InteractionRequest lifecycles, the DeviceOperation lifecycle, pressing
 	// physical controls, and the per-tick interaction phases - lives in

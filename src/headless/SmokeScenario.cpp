@@ -44,6 +44,7 @@
 #endif
 
 void runSerializationSmokeChecks();
+void runAgentGroupSmokeChecks();
 void runShuttleDoorQuerySmokeChecks();
 void runRenderOrderSmokeChecks();
 void runDoorOpenApartRenderSmokeChecks();
@@ -4967,6 +4968,7 @@ int main(int argc, char** argv)
 		}
 
 		runSerializationSmokeChecks();
+		runAgentGroupSmokeChecks();
 		runRenderOrderSmokeChecks();
 		runDoorOpenApartRenderSmokeChecks();
 		runDoorOpenLeftRenderSmokeChecks();

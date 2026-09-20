@@ -28,6 +28,7 @@
 #include "PaletteLayout.h"
 #include "DocumentEdit.h"
 #include "DoorPanel.h"
+#include "AgentGroupsPanel.h"
 
 #if defined(_WIN32)
 #include <nfd.h>
@@ -2227,6 +2228,7 @@ namespace
 		gShuttleDraft.reset();
 		gShuttleDoorCandidates.clear();
 		gLayerNameEdits.clear();
+		resetAgentGroupsPanelState();
 		gUISettings.worldPaused = false;
 		if (clearHistory)
 		{
@@ -6670,6 +6672,9 @@ void renderBuildingPanel(shared_ptr<core::Building> building)
 
 	if (ImGui::CollapsingHeader("Agents"))
 	{
+		// Groups are defined here, above the Agents they will classify, so the
+		// definitions read before the rows that use them.
+		renderAgentGroupsPanel(building);
 		renderAgentView(building);
 	}
 

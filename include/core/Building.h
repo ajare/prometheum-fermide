@@ -9,6 +9,7 @@
 
 
 #include "core/Defines.h"
+#include "core/AgentGroup.h"
 #include "core/Background.h"
 #include "core/Facade.h"
 #include "core/Layer.h"
@@ -431,6 +432,18 @@ namespace core
 		// Legacy pointer-facing APIs use this reverse index only to recover an ID;
 		// the registry above remains the sole owner.
 		std::map<Agent const*, AgentId> mAgentIds;
+
+		// Authored Agent group definitions (ADR 0006). Registry keys are
+		// allocated monotonically and never reused, so iterating the registry
+		// enumerates the groups in creation order - before and after a rename,
+		// and across save/load, which restores each group under its own ID.
+		EntityRegistry<AgentGroupId, AgentGroup> mAgentGroups;
+
+		// Case-sensitive name lookup across the groups this Building owns, with
+		// one group optionally excluded so a group renaming itself to the name
+		// it already carries is not its own collision.
+		bool agentGroupNameTaken(std::string const& trimmed,
+			AgentGroupId except = AgentGroupId{}) const;
 
 		EntityRegistry<InteractionPointId, InteractionPoint> mInteractionPoints;
 
@@ -1502,6 +1515,41 @@ namespace core
 		EntityLookup<Agent const> lookupAgent(AgentId id) const;
 
 		EntityRemovalResult removeAgent(AgentId id);
+
+		// Agent groups - authored, Building-scoped classifications (ADR 0006).
+		// These are the only way in: the registry itself is never handed out, so
+		// no caller can rename or drop a group around the validation below.
+		// Groups enumerate in creation order; renaming never disturbs it.
+		//
+		// Grouping is editor-only metadata, not topology, so creating and
+		// renaming a group do not require a paused simulation and never dirty
+		// the traversal graph.
+		uint32_t getAgentGroupCount() const;
+
+		// Group IDs in creation order, which is ascending ID order.
+		std::vector<AgentGroupId> getAgentGroupIds() const;
+
+		EntityLookup<AgentGroup const> lookupAgentGroup(AgentGroupId id) const;
+
+		// Throws if the ID is not one this Building issued.
+		std::string const& getAgentGroupName(AgentGroupId id) const;
+
+		bool canAddAgentGroup(std::string const& name, std::string* diagnostic = nullptr) const;
+
+		// Creates the group under the trimmed name and returns its new stable
+		// ID. Throws with the canAddAgentGroup() diagnostic if the name is
+		// blank, overlong, or already taken in this Building.
+		AgentGroupId addAgentGroup(std::string const& name);
+
+		bool canRenameAgentGroup(AgentGroupId id, std::string const& name,
+			std::string* diagnostic = nullptr) const;
+
+		// Renames in place, keeping the group's ID and its position in the
+		// creation order. Returns false and changes nothing when the group is
+		// unknown or the name is not acceptable, reporting why through
+		// `diagnostic`.
+		bool renameAgentGroup(AgentGroupId id, std::string const& name,
+			std::string* diagnostic = nullptr);
 
 		InteractionPointId createInteractionPoint(std::string const& name);
 
