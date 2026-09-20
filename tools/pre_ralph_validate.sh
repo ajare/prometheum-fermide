@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Validate that a labelled GitHub issue frontier is ready for ralph-loop.sh.
+# Validate that a labelled GitHub issue frontier is ready for ralph_loop.sh.
 set -uo pipefail
 
 usage() {

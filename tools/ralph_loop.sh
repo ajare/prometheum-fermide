@@ -3,33 +3,33 @@
 #
 # Examples:
 #   Run tickets for a feature label on its matching branch:
-#     tools/ralph-loop.sh --agent pi --labels feature:platform-lifts \
+#     tools/ralph_loop.sh --agent pi --labels feature:platform-lifts \
 #       --use-branch feature/platform-lifts
 #
 #   Run the same feature loop, then hunt for bugs:
-#     tools/ralph-loop.sh --agent pi --labels feature:platform-lifts \
+#     tools/ralph_loop.sh --agent pi --labels feature:platform-lifts \
 #       --use-branch feature/platform-lifts \
 #       --bug-hunt openai-codex/gpt-5.6-sol:high
 #
 #   Run the feature loop, hunt for bugs, then fix matching bug tickets:
-#     tools/ralph-loop.sh --agent pi --labels feature:platform-lifts \
+#     tools/ralph_loop.sh --agent pi --labels feature:platform-lifts \
 #       --use-branch feature/platform-lifts \
 #       --bug-hunt openai-codex/gpt-5.6-sol:high --fix-bugs
 #
 #   Override selected difficulties while retaining fixed defaults (may be repeated):
-#     tools/ralph-loop.sh --agent pi \
+#     tools/ralph_loop.sh --agent pi \
 #       --model openai-codex/gpt-5.6-sol --effort medium \
 #       --difficulty-override easy=openai-codex/gpt-5.6-terra:high \
 #       --difficulty-override hard=openai-codex/gpt-5.6-sol:xhigh
 #
 #   Pin the model and effort for every ticket instead of using adaptive selection:
-#     tools/ralph-loop.sh --agent pi --model openai-codex/gpt-5.6-sol \
+#     tools/ralph_loop.sh --agent pi --model openai-codex/gpt-5.6-sol \
 #       --effort high
 set -uo pipefail
 
 usage() {
     cat <<'EOF'
-Usage: ralph-loop.sh --agent {pi|claude} [options]
+Usage: ralph_loop.sh --agent {pi|claude} [options]
 
 Options:
   --agent NAME                      pi or claude (required)
