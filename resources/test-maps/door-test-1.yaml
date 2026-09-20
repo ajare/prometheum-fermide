@@ -1,4 +1,4 @@
-version: 8
+version: 9
 name: Untitled
 cellsWide: 16
 decksHigh: 6
@@ -275,6 +275,12 @@ construction:
     sectorIndex: 3
     deckIndex: 0
     xOffset: 15.5
+  - type: removeWall
+    sectorIndex: 6
+    deckIndex: 0
+    side: left
+agentGroups:
+  []
 agents:
   - id: 1
     agent:
@@ -444,5 +450,5 @@ agents:
       name: Agent 15
       flags: 0
     sector: 6
-    localX: 1.609375
+    localX: 1.484375
     localY: 0
