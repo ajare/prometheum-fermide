@@ -4190,7 +4190,7 @@ void handleWorldInteraction(shared_ptr<core::Building> building,
 				}
 				else
 				{
-					core::addLogMessage("Agent path", 0, core::LogLevel::Error,
+					reportEditorError("Agent path",
 						"No path is available to the selected vertex");
 				}
 			}

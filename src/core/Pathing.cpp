@@ -105,7 +105,19 @@ namespace core
             auto const inferredSource = !source;
             if (inferredSource)
             {
-                source = graph->getClosestVertexInSector(agent->getSector(), agent->getGlobalPosition());
+                // A Sector the Graph serves no vertices for - an isolated
+                // Location with no traversable threshold - offers no route at
+                // all. That is an ordinary "no path" outcome, not a
+                // pathfinding error, so report it the same way as any other
+                // unreachable target: no Path.
+                try
+                {
+                    source = graph->getClosestVertexInSector(agent->getSector(), agent->getGlobalPosition());
+                }
+                catch (GraphException const&)
+                {
+                    return nullptr;
+                }
             }
 
             frontier.put(source, 0.0f);
