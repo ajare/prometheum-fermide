@@ -3198,6 +3198,7 @@ namespace
 		{
 		case core::Door::OpenStyle::OpenUp: return "OpenUp";
 		case core::Door::OpenStyle::OpenLeft: return "OpenLeft";
+		case core::Door::OpenStyle::OpenRight: return "OpenRight";
 		}
 		return "OpenUp";
 	}
@@ -3208,6 +3209,7 @@ namespace
 		{
 		case core::Door::OpenStyle::OpenUp: return "Open Up";
 		case core::Door::OpenStyle::OpenLeft: return "Open Left";
+		case core::Door::OpenStyle::OpenRight: return "Open Right";
 		}
 		return "Open Up";
 	}
@@ -3446,6 +3448,7 @@ namespace
 				auto style = object["openStyle"].as<std::string>();
 				if (style == "OpenUp") definition.door.openStyle = core::Door::OpenStyle::OpenUp;
 				else if (style == "OpenLeft") definition.door.openStyle = core::Door::OpenStyle::OpenLeft;
+				else if (style == "OpenRight") definition.door.openStyle = core::Door::OpenStyle::OpenRight;
 				else throw runtime_error("Door openStyle is invalid");
 			}
 			else definition.door.openStyle = core::Door::OpenStyle::OpenUp;
@@ -5294,13 +5297,25 @@ void renderDoorPanel(shared_ptr<core::Building> const& building,
 	}
 
 	ImGui::BeginDisabled(!building->isSimulationPaused() || liftOwned || shuttleOwned);
-	int openStyleIndex = door->getOpenStyle() == core::Door::OpenStyle::OpenLeft ? 1 : 0;
+	// The combo index is the position in this list, not the enum value, so the
+	// styles can be offered in any order the editor prefers.
+	core::Door::OpenStyle const openStyleChoices[] =
+	{
+		core::Door::OpenStyle::OpenUp,
+		core::Door::OpenStyle::OpenLeft,
+		core::Door::OpenStyle::OpenRight
+	};
 	char const* const openStyleItems[] =
 	{
-		doorOpenStyleLabel(core::Door::OpenStyle::OpenUp),
-		doorOpenStyleLabel(core::Door::OpenStyle::OpenLeft)
+		doorOpenStyleLabel(openStyleChoices[0]),
+		doorOpenStyleLabel(openStyleChoices[1]),
+		doorOpenStyleLabel(openStyleChoices[2])
 	};
-	if (ImGui::Combo("Opening", &openStyleIndex, openStyleItems, 2))
+	int openStyleIndex = 0;
+	for (size_t i = 0; i < sizeof(openStyleChoices) / sizeof(openStyleChoices[0]); ++i)
+		if (openStyleChoices[i] == door->getOpenStyle()) openStyleIndex = static_cast<int>(i);
+	if (ImGui::Combo("Opening", &openStyleIndex, openStyleItems,
+		static_cast<int>(sizeof(openStyleItems) / sizeof(openStyleItems[0]))))
 	{
 		auto undo = captureDocumentSnapshot(building);
 		try
@@ -5309,8 +5324,7 @@ void renderDoorPanel(shared_ptr<core::Building> const& building,
 			std::string diagnostic;
 			if (!building->setSectorDoorOpenStyle(door->getFrontSector()->getLayerIndex(),
 				object->getCellY(), object->getCellX(), door->getCellsWide(),
-				openStyleIndex == 1 ? core::Door::OpenStyle::OpenLeft
-					: core::Door::OpenStyle::OpenUp,
+				openStyleChoices[openStyleIndex],
 				&diagnostic))
 				throw runtime_error(diagnostic.empty()
 					? "Could not change the Door's opening style" : diagnostic);

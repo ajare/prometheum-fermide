@@ -207,6 +207,7 @@ namespace core
 			{
 			case Door::OpenStyle::OpenUp: return "openUp";
 			case Door::OpenStyle::OpenLeft: return "openLeft";
+			case Door::OpenStyle::OpenRight: return "openRight";
 			}
 			throw SerializationException("Cannot serialize an unknown Door opening style");
 		};
@@ -460,6 +461,7 @@ namespace core
 			auto const value = serializer.readString(field);
 			if (value == "openUp") return static_cast<int32_t>(Door::OpenStyle::OpenUp);
 			if (value == "openLeft") return static_cast<int32_t>(Door::OpenStyle::OpenLeft);
+			if (value == "openRight") return static_cast<int32_t>(Door::OpenStyle::OpenRight);
 			throw SerializationException(format("Unknown Door opening style: {}", value));
 		};
 		auto readStops = [&]

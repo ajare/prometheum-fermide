@@ -551,6 +551,55 @@ void renderDoorOpenLeft(shared_ptr<const core::Door> door, uint32_t layer, Layer
 }
 
 
+void renderDoorOpenRight(shared_ptr<const core::Door> door, uint32_t layer, LayerRenderStyle style, bool /* selected */, ImDrawList* drawList)
+{
+	core::Vector2 bounds0, bounds1, bounds2;
+
+	door->getFullShape(bounds0, bounds2);
+
+	// The leaf slides toward increasing world X: its left edge tracks the open
+	// percentage, so the aperture is vacated from the left edge and the back
+	// Sector is revealed left-to-right.
+	bounds1 = bounds0;
+	bounds1.x += door->getOpenPercentage() * (bounds2.x - bounds0.x);
+
+	transformPosition(bounds0);
+	transformPosition(bounds1);
+	transformPosition(bounds2);
+
+	if (style == LayerRenderStyle::Solid)
+	{
+		auto doorColour = ImColor(64, 192, 255);
+		drawList->AddRectFilled({ bounds1.x, bounds0.y }, { bounds2.x, bounds2.y }, doorColour);
+
+		drawList->AddDrawCmd();
+
+		// The back Sector shows only through the vacated region: from the
+		// aperture's left edge to the leaf's left edge, over the full aperture
+		// height. ImGui clipping expects ascending Y coordinates, but we have
+		// flipped them for rendering.
+		drawList->PushClipRect({ bounds0.x, bounds2.y }, { bounds1.x, bounds0.y }, true);
+
+		// A Door is authored on the front Layer of its pair, so index 1 is the
+		// Sector on the Layer directly behind.
+		auto backSector = door->getBackSector();
+		if (backSector)
+		{
+			renderSector(backSector, core::layerBehind(layer), LayerRenderStyle::Aperture, false,
+				BackLocationColour, drawList);
+		}
+
+		drawList->PopClipRect();
+		drawList->AddDrawCmd();
+	}
+	else if (style == LayerRenderStyle::Wireframe)
+	{
+		// Only the remaining leaf is outlined; the aperture carries no solid fill.
+		drawList->AddRect({ bounds1.x, bounds0.y }, { bounds2.x, bounds2.y }, ImColor(0, 0, 0));
+	}
+}
+
+
 void renderDoor(shared_ptr<const core::Door> door, uint32_t layer, LayerRenderStyle style, bool selected, ImDrawList* drawList)
 {
 	if (style == LayerRenderStyle::Hidden)
@@ -568,6 +617,10 @@ void renderDoor(shared_ptr<const core::Door> door, uint32_t layer, LayerRenderSt
 
 	case core::Door::OpenStyle::OpenLeft:
 		renderDoorOpenLeft(door, layer, style, selected, drawList);
+		break;
+
+	case core::Door::OpenStyle::OpenRight:
+		renderDoorOpenRight(door, layer, style, selected, drawList);
 		break;
 	}
 
