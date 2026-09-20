@@ -24,6 +24,7 @@
 //   the real panel renders inside a CPU-side ImGui context without leaking a
 //   disabled scope, paused or running
 
+#include <bit>
 #include <cstdint>
 #include <cstring>
 #include <format>
@@ -577,7 +578,11 @@ namespace
 				"The Agent groups panel left a disabled scope open");
 			require(GImGui->CurrentItemFlags == flagsOnEntry,
 				"The Agent groups panel changed the current item flags");
-			require(GImGui->Style.Alpha == alphaOnEntry,
+			// Compared as bits, not as floats: the question is whether the value
+			// is exactly the one stored, which is what "unchanged" means here
+			// and what -Wfloat-equal objects to otherwise.
+			require(std::bit_cast<uint32_t>(GImGui->Style.Alpha)
+				== std::bit_cast<uint32_t>(alphaOnEntry),
 				"The Agent groups panel changed the global alpha");
 
 			ImGui::End();
