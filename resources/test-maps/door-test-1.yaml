@@ -31,8 +31,8 @@ construction:
     name: Room 2
     layer: 1
     y: 1
-    x: 4
-    cellsWide: 8
+    x: 0
+    cellsWide: 16
     decksHigh: 1
     topDeckHeight: 0.9
   - type: objectTombstone
@@ -119,10 +119,8 @@ construction:
     sectorIndex: 3
     deckIndex: 0
     xOffset: 0.5625
-  - type: marker
+  - type: objectTombstone
     sectorIndex: 3
-    deckIndex: 0
-    xOffset: 7.328125
   - type: marker
     sectorIndex: 2
     deckIndex: 0
@@ -231,5 +229,220 @@ construction:
     traversable: false
     initialState: closed
     style: clear
+  - type: marker
+    sectorIndex: 9
+    deckIndex: 0
+    xOffset: 3.3125
+  - type: marker
+    sectorIndex: 9
+    deckIndex: 0
+    xOffset: 0.5625
+  - type: window
+    layer: 0
+    y: 4
+    x: 9
+    cellsWide: 1
+    decksHigh: 1
+    traversable: false
+    initialState: closed
+    style: clear
+  - type: window
+    layer: 0
+    y: 4
+    x: 6
+    cellsWide: 1
+    decksHigh: 1
+    traversable: false
+    initialState: closed
+    style: clear
+  - type: marker
+    sectorIndex: 8
+    deckIndex: 0
+    xOffset: 13.75
+  - type: marker
+    sectorIndex: 8
+    deckIndex: 0
+    xOffset: 1.9375
+  - type: marker
+    sectorIndex: 1
+    deckIndex: 0
+    xOffset: 2.71875
+  - type: marker
+    sectorIndex: 1
+    deckIndex: 0
+    xOffset: 13.34375
+  - type: marker
+    sectorIndex: 3
+    deckIndex: 0
+    xOffset: 15.5
 agents:
-  []
+  - id: 1
+    agent:
+      name: Agent 1
+      flags: 0
+    sector: 0
+    localX: 0.921875
+    localY: 0
+    path:
+      destinationSector: 2
+      destinationLocalX: 0.640625
+      destinationLocalY: 0
+      active: true
+  - id: 2
+    agent:
+      name: Agent 2
+      flags: 0
+    sector: 0
+    localX: 2.1875
+    localY: 0
+    path:
+      destinationSector: 2
+      destinationLocalX: 7.5
+      destinationLocalY: 0
+      active: true
+  - id: 3
+    agent:
+      name: Agent 3
+      flags: 0
+    sector: 0
+    localX: 14.8125
+    localY: 0
+    path:
+      destinationSector: 2
+      destinationLocalX: 0.640625
+      destinationLocalY: 0
+      active: true
+  - id: 4
+    agent:
+      name: Agent 4
+      flags: 0
+    sector: 0
+    localX: 12.71875
+    localY: 0
+    path:
+      destinationSector: 2
+      destinationLocalX: 7.5
+      destinationLocalY: 0
+      active: true
+  - id: 5
+    agent:
+      name: Agent 5
+      flags: 0
+    sector: 0
+    localX: 13.640625
+    localY: 0
+    path:
+      destinationSector: 2
+      destinationLocalX: 0.640625
+      destinationLocalY: 0
+      active: true
+  - id: 6
+    agent:
+      name: Agent 6
+      flags: 0
+    sector: 9
+    localX: 2.640625
+    localY: 0
+  - id: 7
+    agent:
+      name: Agent 7
+      flags: 0
+    sector: 1
+    localX: 14.4375
+    localY: 0
+    path:
+      destinationSector: 3
+      destinationLocalX: 15.5
+      destinationLocalY: 0
+      active: true
+  - id: 8
+    agent:
+      name: Agent 8
+      flags: 0
+    sector: 1
+    localX: 15.359375
+    localY: 0
+    path:
+      destinationSector: 3
+      destinationLocalX: 0.5625
+      destinationLocalY: 0
+      active: true
+  - id: 9
+    agent:
+      name: Agent 9
+      flags: 0
+    sector: 1
+    localX: 0.984375
+    localY: 0
+    path:
+      destinationSector: 3
+      destinationLocalX: 0.5625
+      destinationLocalY: 0
+      active: true
+  - id: 10
+    agent:
+      name: Agent 10
+      flags: 0
+    sector: 1
+    localX: 1.75
+    localY: 0
+    path:
+      destinationSector: 3
+      destinationLocalX: 15.5
+      destinationLocalY: 0
+      active: true
+  - id: 11
+    agent:
+      name: Agent 11
+      flags: 0
+    sector: 3
+    localX: 14.328125
+    localY: 0
+    path:
+      destinationSector: 1
+      destinationLocalX: 2.71875
+      destinationLocalY: 0
+      active: true
+  - id: 12
+    agent:
+      name: Agent 12
+      flags: 0
+    sector: 3
+    localX: 13.203125
+    localY: 0
+    path:
+      destinationSector: 1
+      destinationLocalX: 13.34375
+      destinationLocalY: 0
+      active: true
+  - id: 13
+    agent:
+      name: Agent 13
+      flags: 0
+    sector: 3
+    localX: 1.359375
+    localY: 0
+    path:
+      destinationSector: 1
+      destinationLocalX: 2.71875
+      destinationLocalY: 0
+      active: true
+  - id: 14
+    agent:
+      name: Agent 14
+      flags: 0
+    sector: 3
+    localX: 2.328125
+    localY: 0
+    path:
+      destinationSector: 1
+      destinationLocalX: 13.34375
+      destinationLocalY: 0
+      active: true
+  - id: 15
+    agent:
+      name: Agent 15
+      flags: 0
+    sector: 6
+    localX: 1.609375
+    localY: 0

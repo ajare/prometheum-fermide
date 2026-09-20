@@ -1,0 +1,142 @@
+version: 9
+name: Untitled
+cellsWide: 16
+decksHigh: 6
+layers: 2
+layerNames:
+  - Layer 0
+  - Layer 1
+construction:
+  - type: corridor
+    layer: 0
+    y: 1
+    x: 1
+    cellsWide: 6
+    decksHigh: 1
+  - type: corridor
+    layer: 0
+    y: 2
+    x: 1
+    cellsWide: 6
+    decksHigh: 1
+  - type: corridor
+    layer: 0
+    y: 3
+    x: 1
+    cellsWide: 6
+    decksHigh: 1
+  - type: ladder
+    layer: 1
+    y: 1
+    x: 2
+    decksHigh: 3
+    extensible: false
+    startExtended: true
+    directionalBatchLimit: 4
+  - type: marker
+    sectorIndex: 2
+    deckIndex: 0
+    xOffset: 5.78125
+  - type: marker
+    sectorIndex: 0
+    deckIndex: 0
+    xOffset: 5.78125
+agentGroups:
+  []
+agents:
+  - id: 1
+    agent:
+      name: Agent 1
+      flags: 0
+    sector: 2
+    localX: 4.734375
+    localY: 0
+    path:
+      destinationSector: 0
+      destinationLocalX: 5.78125
+      destinationLocalY: 0
+      active: true
+  - id: 2
+    agent:
+      name: Agent 2
+      flags: 0
+    sector: 2
+    localX: 3.859375
+    localY: 0
+    path:
+      destinationSector: 0
+      destinationLocalX: 5.78125
+      destinationLocalY: 0
+      active: true
+  - id: 3
+    agent:
+      name: Agent 3
+      flags: 0
+    sector: 2
+    localX: 3.03125
+    localY: 0
+    path:
+      destinationSector: 0
+      destinationLocalX: 5.78125
+      destinationLocalY: 0
+      active: true
+  - id: 4
+    agent:
+      name: Agent 4
+      flags: 0
+    sector: 0
+    localX: 3.890625
+    localY: 0
+    path:
+      destinationSector: 2
+      destinationLocalX: 5.78125
+      destinationLocalY: 0
+      active: true
+  - id: 5
+    agent:
+      name: Agent 5
+      flags: 0
+    sector: 0
+    localX: 4.59375
+    localY: 0
+    path:
+      destinationSector: 2
+      destinationLocalX: 5.78125
+      destinationLocalY: 0
+      active: true
+  - id: 6
+    agent:
+      name: Agent 6
+      flags: 0
+    sector: 0
+    localX: 5.265625
+    localY: 0
+    path:
+      destinationSector: 2
+      destinationLocalX: 5.78125
+      destinationLocalY: 0
+      active: true
+  - id: 7
+    agent:
+      name: Agent 7
+      flags: 0
+    sector: 0
+    localX: 3.28125
+    localY: 0
+    path:
+      destinationSector: 2
+      destinationLocalX: 5.78125
+      destinationLocalY: 0
+      active: true
+  - id: 8
+    agent:
+      name: Agent 8
+      flags: 0
+    sector: 2
+    localX: 5.390625
+    localY: 0
+    path:
+      destinationSector: 0
+      destinationLocalX: 5.78125
+      destinationLocalY: 0
+      active: true
