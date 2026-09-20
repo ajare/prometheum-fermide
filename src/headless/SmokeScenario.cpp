@@ -54,6 +54,7 @@ void runBackgroundPaintSmokeChecks();
 void runBackgroundPlacementSmokeChecks();
 void runBackgroundCascadeDeleteSmokeChecks();
 void runBackgroundSelectionPanelSmokeChecks();
+void runDoorPanelScopeSmokeChecks();
 void runThresholdRefusalSmokeChecks();
 void runWindowIntoBackgroundSmokeChecks();
 void runWindowMultiBackgroundSmokeChecks();
@@ -4565,6 +4566,7 @@ int main(int argc, char** argv)
 		runBackgroundPlacementSmokeChecks();
 		runBackgroundCascadeDeleteSmokeChecks();
 		runBackgroundSelectionPanelSmokeChecks();
+		runDoorPanelScopeSmokeChecks();
 		runThresholdRefusalSmokeChecks();
 		runWindowIntoBackgroundSmokeChecks();
 		runWindowMultiBackgroundSmokeChecks();

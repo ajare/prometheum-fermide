@@ -177,8 +177,11 @@ set_target_properties(prometheum-fermide-core PROPERTIES
 add_executable(prometheum-fermide-headless
     # The real renderer, linked headless so #49 can exercise renderSector's
     # actual draw-call order. ImGui is compiled CPU-side only; the GUI-owned
-    # globals are stubbed in RenderGuiStubs.cpp.
+    # globals are stubbed in RenderGuiStubs.cpp. The Door panel is compiled in
+    # too (#99) so its disabled-scope balance is checked against the real panel.
     src/Render.cpp
+    src/DocumentEdit.cpp
+    src/DoorPanel.cpp
     src/imgui/imgui.cpp
     src/imgui/imgui_draw.cpp
     src/imgui/imgui_tables.cpp
@@ -187,6 +190,7 @@ add_executable(prometheum-fermide-headless
     src/headless/BackgroundPlacementSmokeChecks.cpp
     src/headless/BackgroundCascadeDeleteSmokeChecks.cpp
     src/headless/BackgroundSelectionPanelSmokeChecks.cpp
+    src/headless/DoorPanelScopeSmokeChecks.cpp
     src/headless/BackgroundSectorSmokeChecks.cpp
     src/headless/EditorLayerSmokeChecks.cpp
     src/headless/DoorOpenApartRenderSmokeChecks.cpp
@@ -237,6 +241,8 @@ if(PF_BUILD_GUI)
         src/Main.cpp
         src/Render.cpp
         src/UI.cpp
+        src/DocumentEdit.cpp
+        src/DoorPanel.cpp
         ${PF_IMGUI_SOURCES}
     )
     target_compile_features(imgui PRIVATE cxx_std_20)
