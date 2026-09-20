@@ -191,7 +191,7 @@ fi
 
 [[ -n "$repo" ]] || repo=$(gh repo view --json nameWithOwner --jq .nameWithOwner) || exit 1
 current_user=$(gh api user --jq .login) || exit 1
-log_directory="${TMPDIR:-/tmp}/$agent-ralph-loop"
+log_directory="${TMPDIR:-/tmp}/$agent-ralph_loop"
 mkdir -p "$log_directory"
 
 priority_of() {
