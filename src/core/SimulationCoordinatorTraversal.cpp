@@ -288,11 +288,15 @@ namespace core
 			&& agent.mTraversalTask->request == requestId
 			&& agent.mTraversalTask->pathNodesConsumed > 1
 			&& agent.getGlobalPosition().distanceTo(destination->getPosition()) <= 0.001f;
+		// A Door crossing is executed in place at the Agent's current position, so
+		// the layer change does not depend on the far-side Door vertex being a
+		// movement target the Agent had to reach.
+		auto const commitsInPlace = request && request->mEdgeType == EdgeType::Door;
 		if (!request || !permit || !destination || request->mOwner != owner || permit->mOwner != owner
 			|| permit->mRequest != requestId || request->mPermit != permitId
 			|| request->mState != TraversalRequestState::Granted
 			|| permit->mState != TraversalPermitState::Active
-			|| (!commitsAtQueueBoundary && !commitsAfterSkippedVertex
+			|| (!commitsAtQueueBoundary && !commitsAfterSkippedVertex && !commitsInPlace
 				&& agent.getGlobalPosition().distanceTo(request->mDestinationEndpoint) > 0.001f))
 		{
 			return false;
@@ -337,9 +341,21 @@ namespace core
 		// point movement changed only the source-relative position.
 		if (sourceSector != destinationSector.get())
 		{
+			auto const inPlaceGlobal = agent.getGlobalPosition();
 			sourceSector->exitAgent(&agent);
-			destinationSector->enterAgent(&agent,
-				SectorPosition(destinationSector.get(), destination->getSectorOffset()), false);
+			if (commitsInPlace)
+			{
+				// Commit the layer change in place: the Agent keeps the global
+				// position it crossed from, expressed in the destination Sector's
+				// local frame, rather than snapping to the far-side vertex.
+				auto const local = inPlaceGlobal - destinationSector->getPosition();
+				destinationSector->enterAgent(&agent, SectorPosition(destinationSector.get(), local), false);
+			}
+			else
+			{
+				destinationSector->enterAgent(&agent,
+					SectorPosition(destinationSector.get(), destination->getSectorOffset()), false);
+			}
 		}
 
 		if (auto landing = mBuilding.mTraversalResources.find(request->mResource);

@@ -549,10 +549,11 @@ namespace core
 			}
 			// Inter-layer thresholds have coincident 2D endpoints. Keep the
 			// locomotion task visible for a short deterministic crossing instead
-			// of committing in the permit-allocation tick.
+			// of committing in the permit-allocation tick. The crossing runs in
+			// place at the Agent's current position; the far-side Door vertex is
+			// never a movement target.
 			mTraversalTask->traversalTicksRemaining =
-				requestLookup.entity->getEdgeType() == EdgeType::Door
-				&& getGlobalPosition().distanceTo(mTraversalTask->destinationVertex->getPosition()) < 0.001f ? 6 : 0;
+				requestLookup.entity->getEdgeType() == EdgeType::Door ? 6 : 0;
 			mState = State::TraversingEdge;
 		}
 	}
@@ -730,6 +731,14 @@ namespace core
 			}
 			if (mTraversalTask)
 			{
+				// A Door crossing is a scripted layer change executed in place at
+				// the Agent's current position. It never walks toward the far-side
+				// Door vertex; the commit places the Agent where it already stands.
+				if (mTraversalTask->edge->getType() == EdgeType::Door)
+				{
+					mState = State::AwaitingTraversalCommit;
+					break;
+				}
 				float traversalSpeed = mTraversalTask->edge->getTraversalSpeed(this);
 				if (traversalSpeed <= 0.0f)
 					traversalSpeed = mTraversalTask->edge->getType() == EdgeType::Ladder
