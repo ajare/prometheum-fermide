@@ -30,6 +30,7 @@
 #include "DoorPanel.h"
 #include "AgentGroupsPanel.h"
 #include "AgentGroupAssignmentPanel.h"
+#include "AgentClipboard.h"
 
 #if defined(_WIN32)
 #include <nfd.h>
@@ -166,8 +167,11 @@ namespace
 		float floorY{ 0.0f };
 		float velocity{ 0.0f };
 		uint64_t nextAgentNumber{ 1 };
-		string pastedAgentName;
-		uint32_t pastedAgentFlags{ 0 };
+		// A pasted Agent is carried here while it falls. The placement is a
+		// payload rather than a couple of loose fields because it may never
+		// land: cancelling a paste drops the struct, and with it the only
+		// thing that could have written an Agent or an Agent group.
+		PendingAgentPlacement pastedAgent;
 	};
 
 	PaletteDropState gPegman;
@@ -1161,8 +1165,7 @@ namespace
 		gPegman.item = PaletteItem::None;
 		gPegman.sector.reset();
 		gPegman.velocity = 0.0f;
-		gPegman.pastedAgentName.clear();
-		gPegman.pastedAgentFlags = 0;
+		gPegman.pastedAgent.cancel();
 	}
 
 	void setWorldPaused(shared_ptr<core::Building> const& building, bool paused)
@@ -1396,18 +1399,29 @@ namespace
 	{
 		if (gUISettings.worldPaused && locationHasCapacity(gPegman.sector))
 		{
-			auto undo = captureDocumentSnapshot(building);
-			auto const name = gPegman.pastedAgentName.empty()
-				? nextAgentName(building) : gPegman.pastedAgentName;
-			auto id = building->createAgent(name, gPegman.sector->getIndex(),
-				gPegman.deckOffset, gPegman.localX);
-			auto created = building->lookupAgent(id).entity;
-			if (created) created->setFlags(gPegman.pastedAgentFlags);
-			setSelectionMode(UISettings::SelectionMode::Object);
-			gSelectedAgent = created;
-			gSelectedSector.reset();
-			gSelectedSectorObject.reset();
-			commitDocumentEdit(std::move(undo));
+			core::AgentId placed{};
+			string diagnostic;
+			// A pasted Agent lands with the Agent group its clipboard payload
+			// named; one dragged off the palette lands with none. Both land
+			// through the same single-edit placement, so neither can leave a
+			// half-written document behind, and a placement that is refused
+			// says so instead of taking the crash silently.
+			auto const landed = gPegman.pastedAgent.armed()
+				? commitPendingAgentPlacement(gPegman.pastedAgent, building, placed, diagnostic)
+				: commitAgentPlacement(building,
+					AgentClipboardPayload{ nextAgentName(building), 0, nullopt },
+					gPegman.sector, gPegman.deckOffset, gPegman.localX, placed, diagnostic);
+			if (!landed)
+			{
+				reportEditorError("Agent editor", diagnostic);
+			}
+			else
+			{
+				setSelectionMode(UISettings::SelectionMode::Object);
+				gSelectedAgent = building->lookupAgent(placed).entity;
+				gSelectedSector.reset();
+				gSelectedSectorObject.reset();
+			}
 		}
 		resetPegman();
 	}
@@ -3105,8 +3119,7 @@ namespace
 	{
 		ClipboardObjectType type{};
 		bool cut{ false };
-		string name;
-		uint32_t flags{ 0 };
+		AgentClipboardPayload agent;
 		core::Building::CreateDoorOptions door;
 		core::Building::CreateBulkheadDoorOptions bulkheadDoor;
 		core::Building::CreateWindowOptions window;
@@ -3224,11 +3237,12 @@ namespace
 		{
 			auto name = cut ? gSelectedAgent->getName()
 				: uniqueAgentName(building, gSelectedAgent->getName() + " copy");
-			output << YAML::Key << "type" << YAML::Value << "Agent"
-				<< YAML::Key << "object" << YAML::Value << YAML::BeginMap
-				<< YAML::Key << "name" << YAML::Value << name
-				<< YAML::Key << "flags" << YAML::Value << gSelectedAgent->getFlags()
-				<< YAML::EndMap;
+			// The Agent group crosses the clipboard by name, never by its
+			// Building-local AgentGroupId: the next Building has never issued
+			// that ID and could not honour it (ADR 0006).
+			return makeAgentClipboardText(
+				makeAgentClipboardPayload(*building,
+					building->getAgentId(gSelectedAgent), name), cut);
 		}
 		else if (gSelectedSectorObject->getObjectType() == core::SectorObjectType::Door)
 		{
@@ -3379,9 +3393,9 @@ namespace
 		if (type == "Agent")
 		{
 			definition.type = ClipboardObjectType::Agent;
-			definition.name = requiredYaml<string>(object, "name");
-			definition.flags = requiredYaml<uint32_t>(object, "flags");
-			if (definition.name.empty()) throw runtime_error("Agent name cannot be empty");
+			string diagnostic;
+			if (!readAgentClipboardObject(object, definition.agent, diagnostic))
+				throw runtime_error(diagnostic);
 		}
 		else if (type == "Door")
 		{
@@ -3523,13 +3537,13 @@ namespace
 			auto id = building->getAgentId(gSelectedAgent);
 			if (!id) return false;
 			auto selected = gSelectedAgent;
-			selected->clearPath();
-			// Ticket #57: an Agent which still owns a capacity resource is refused
-			// rather than deleted with the ownership left behind. Say why.
-			auto const removal = building->removeAgent(id);
-			if (!removal.removed)
+			// Ticket #113: the cut takes the Agent and nothing else. Its Agent
+			// group stays defined behind it, which is what lets the clipboard
+			// payload it just wrote name a group the source Building still has.
+			string diagnostic;
+			if (!cutAgent(building, id, diagnostic))
 			{
-				reportEditorError("Agent editor", removal.diagnostic);
+				reportEditorError("Agent editor", diagnostic);
 				return false;
 			}
 			if (gHoveredAgent == selected) gHoveredAgent = nullptr;
@@ -3684,18 +3698,28 @@ namespace
 				if (y < sector->getCellY() || y >= sector->getCellY() + sector->getDecksHigh())
 					throw runtime_error("Agent deck is outside the sector");
 				bool consumedCut = definition.cut && clipboardText == gConsumedCutClipboard;
+				auto payload = definition.agent;
 				if (definition.cut && !consumedCut)
 				{
-					auto unique = uniqueAgentName(building, definition.name);
-					if (unique != definition.name) throw runtime_error("An Agent with this name already exists");
+					auto unique = uniqueAgentName(building, payload.name);
+					if (unique != payload.name) throw runtime_error("An Agent with this name already exists");
 				}
-				else definition.name = uniqueAgentName(building,
-					consumedCut ? definition.name + " copy" : definition.name);
-				if (!building->isSimulationPaused()) building->pauseSimulation();
-				gUISettings.worldPaused = true;
+				else payload.name = uniqueAgentName(building,
+					consumedCut ? payload.name + " copy" : payload.name);
 				float halfWidth = CORE_AGENT_MAX_WIDTH * 0.5f;
 				float localX = clamp(world.x - sector->getPosition().x, halfWidth,
 					max(halfWidth, sector->getSize().x - halfWidth));
+				// Arming judges the Agent group name before anything is deferred,
+				// so an unusable payload is refused while the cursor is still where
+				// the user put it and the simulation is still as they left it.
+				// Nothing is written by arming: the Agent and its Agent group only
+				// exist if the fall is allowed to land.
+				string diagnostic;
+				if (!armAgentPlacement(gPegman.pastedAgent, payload, sector,
+					y - sector->getCellY(), localX, diagnostic))
+					throw runtime_error(diagnostic);
+				if (!building->isSimulationPaused()) building->pauseSimulation();
+				gUISettings.worldPaused = true;
 				gPegman.phase = PalettePhase::Falling;
 				gPegman.item = PaletteItem::Agent;
 				gPegman.sector = sector;
@@ -3704,8 +3728,6 @@ namespace
 				gPegman.feetY = world.y;
 				gPegman.floorY = static_cast<float>(y);
 				gPegman.velocity = 0.0f;
-				gPegman.pastedAgentName = definition.name;
-				gPegman.pastedAgentFlags = definition.flags;
 				if (definition.cut) gConsumedCutClipboard = clipboardText;
 				if (gPegman.feetY <= gPegman.floorY) landPegman(building);
 				return;
