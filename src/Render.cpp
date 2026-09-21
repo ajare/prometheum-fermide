@@ -956,15 +956,24 @@ void renderWindow(shared_ptr<const core::Window> window, uint32_t layer, LayerRe
 
 void renderPhysicalControl(shared_ptr<const core::Button> button, uint32_t /* layer */, LayerRenderStyle style, bool /* selected */, ImDrawList* drawList)
 {
-	if (style != LayerRenderStyle::Solid) return;
-
 	core::Vector2 bounds0, bounds1;
 	button->getFullShape(bounds0, bounds1);
 	transformPosition(bounds0);
 	transformPosition(bounds1);
 
 	auto colour = button->isEnabled() ? ImColor(0, 255, 128) : ImColor(192, 128, 128);
-	drawList->AddRectFilled({ bounds0.x, bounds0.y }, { bounds1.x, bounds1.y }, colour);
+
+	// A Button seen from the Layer its controlling threshold was authored on is
+	// filled solid; from every other Layer it contributes the outline only,
+	// exactly like the Door it stands beside.
+	if (style == LayerRenderStyle::Solid)
+	{
+		drawList->AddRectFilled({ bounds0.x, bounds0.y }, { bounds1.x, bounds1.y }, colour);
+	}
+	else
+	{
+		drawList->AddRect({ bounds0.x, bounds0.y }, { bounds1.x, bounds1.y }, colour);
+	}
 }
 
 
@@ -1307,10 +1316,21 @@ void renderSectorObjects(shared_ptr<const core::Sector> sector, uint32_t layer, 
 			break;
 
 		case core::SectorObjectType::InteractionPoint:
-			if (flags & RENDER_SECTOR_OBJECTS_INFRONT)
+			// Physical controls draw with the thresholds, not the in-front objects:
+			// a Door Button renders exactly like its Door - solid on the Layer the
+			// Door was authored on, an outline from every other Layer - so the
+			// Button on the far side of a Door is never solid and shows through in
+			// the wireframe overlay pass. Ordinary controls carry no threshold
+			// Layer and stay solid wherever their own Layer is drawn, but a
+			// non-solid pass contributes outlines only, never a fill.
+			if (flags & RENDER_SECTOR_OBJECTS_BEHIND)
 			{
 				auto button = static_pointer_cast<const core::Button>(object->_getObject());
-				renderPhysicalControl(button, layer, style, selected, drawList);
+				auto const thresholdLayer = button->getThresholdLayer();
+				auto controlStyle = thresholdLayer == ~0u || thresholdLayer == layer
+					? LayerRenderStyle::Solid : LayerRenderStyle::Wireframe;
+				if (style != LayerRenderStyle::Solid) controlStyle = LayerRenderStyle::Wireframe;
+				renderPhysicalControl(button, layer, controlStyle, selected, drawList);
 			}
 			break;
 
@@ -1382,7 +1402,10 @@ void renderThresholdsControlsAndAgentsAboveTransit(vector<shared_ptr<const core:
 			if (!object || object->getObjectType() != core::SectorObjectType::InteractionPoint)
 				continue;
 			auto button = static_pointer_cast<const core::Button>(object->_getObject());
-			renderPhysicalControl(button, layer, LayerRenderStyle::Solid,
+			auto const thresholdLayer = button->getThresholdLayer();
+			auto const controlStyle = thresholdLayer == ~0u || thresholdLayer == layer
+				? LayerRenderStyle::Solid : LayerRenderStyle::Wireframe;
+			renderPhysicalControl(button, layer, controlStyle,
 				object == gSelectedSectorObject, drawList);
 		}
 	}

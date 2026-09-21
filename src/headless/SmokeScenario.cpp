@@ -66,6 +66,7 @@ void runBackgroundPlacementSmokeChecks();
 void runBackgroundCascadeDeleteSmokeChecks();
 void runBackgroundSelectionPanelSmokeChecks();
 void runDoorPanelScopeSmokeChecks();
+void runDoorTwoSidedButtonSmokeChecks();
 void runThresholdRefusalSmokeChecks();
 void runThresholdLayerOverlapSmokeChecks();
 void runWindowIntoBackgroundSmokeChecks();
@@ -4997,6 +4998,7 @@ int main(int argc, char** argv)
 		runBackgroundCascadeDeleteSmokeChecks();
 		runBackgroundSelectionPanelSmokeChecks();
 		runDoorPanelScopeSmokeChecks();
+		runDoorTwoSidedButtonSmokeChecks();
 		runShuttleDoorQuerySmokeChecks();
 		runThresholdRefusalSmokeChecks();
 		runThresholdLayerOverlapSmokeChecks();

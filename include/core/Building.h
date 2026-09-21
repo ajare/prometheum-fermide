@@ -16,6 +16,7 @@
 #include "core/Location.h"
 #include "core/SectorType.h"
 #include "core/Door.h"
+#include "core/DoorSectorObject.h"
 #include "core/Window.h"
 #include "core/WindowSectorObject.h"
 #include "core/Graph.h"
@@ -547,6 +548,11 @@ namespace core
 			int32_t i{ 0 }, j{ 0 };
 			float x{ 0.0f }, y{ 0.0f }, z{ 0.0f };
 			bool p{ false }, q{ false };
+			// Door: the activation mode the Door had before the editor's Buttons
+			// option first gave it Buttons, or -1 when the Buttons were loaded as
+			// part of the authored definition. Removal restores a recorded mode and
+			// otherwise falls back to manual activation.
+			int32_t preButtonActivationMode{ -1 };
 			std::vector<uint32_t> values{};
 			// Lift: per-stop landing-Door opening style overrides, parallel to
 			// values (stopOffsets).  Shuttle: per-Door overrides across the fixed
@@ -1254,9 +1260,32 @@ namespace core
 
 		CreateDoorResult addSectorDoor(uint32_t layerIndex, uint32_t y, uint32_t x, CreateDoorOptions const& options);
 
-		// Adds a physical open control in the selected Door's owning Location.
-		// Placement against the left or right edge is derived from the Door and Location geometry.
-		CreateObjectResult addSectorDoorButton(uint32_t sectorIndex, uint32_t objectIndex);
+		// Gives the selected Door physical open controls on both sides of the
+		// threshold: any side already carrying a Button keeps it, the missing
+		// side(s) gain one, and the edit refuses - before changing anything -
+		// when a side that lacks a Button has no space for one. Both Buttons
+		// bind idempotent open-only commands to the Door's single traversal
+		// resource, so pressing either one opens the Door and neither can close
+		// it. The Door's pre-Button activation mode is recorded the first time
+		// Buttons are added so removeSectorDoorButton can restore it.
+		void addSectorDoorButton(uint32_t sectorIndex, uint32_t objectIndex);
+
+		// True when the selected Door is an ordinary sector Door whose record
+		// still has a side without a Button. The Door panel uses this to disable
+		// its Add Door Button action.
+		bool canAddSectorDoorButton(uint32_t sectorIndex, uint32_t objectIndex) const;
+
+		// Removes every Door Button from the selected Door and returns the rebuilt
+		// Door object (the caller's selection handles go stale across the rebuild).
+		// The activation mode recorded when Buttons were added in the editor is
+		// restored; existing authored/YAML Buttons fall back to manual activation.
+		// Null on failure.
+		std::shared_ptr<const DoorSectorObject> removeSectorDoorButton(uint32_t sectorIndex,
+			uint32_t objectIndex);
+
+		// True when removeSectorDoorButton will accept the selected ordinary Door:
+		// its construction record currently carries at least one Button.
+		bool canRemoveSectorDoorButton(uint32_t sectorIndex, uint32_t objectIndex) const;
 
 		bool removeSectorDoor(uint32_t sectorIndex, uint32_t objectIndex);
 

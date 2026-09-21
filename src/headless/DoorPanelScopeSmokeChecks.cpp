@@ -158,6 +158,31 @@ namespace
 			"An ordinary Door selection, simulation paused");
 	}
 
+	void checkExistingButtonsCanBeRemoved()
+	{
+		auto building = std::make_shared<core::Building>("Door button checkbox", 12, 3);
+		building->addRoom("Fore", 0, 0, 0, 11, 2);
+		building->addRoom("Aft", 1, 0, 0, 11, 2);
+		core::Building::CreateDoorOptions options;
+		options.controls[0] = true;
+		options.controls[1] = true;
+		options.activationMode = core::DoorActivationMode::RemoteControlled;
+		auto const created = building->addSectorDoor(0, 0, 7, options);
+		building->finishBuild();
+		building->pauseSimulation();
+		auto const object = doorObjectAt(created.door);
+
+		ImGui::NewFrame();
+		ImGui::Begin("Selection");
+		renderDoorPanel(building, object);
+		require(GImGui->LastItemData.ID == ImGui::GetID("Buttons"),
+			"The Door panel's final control is not the Buttons checkbox");
+		require(!(GImGui->LastItemData.InFlags & ImGuiItemFlags_Disabled),
+			"A paused ordinary Door with Buttons cannot have them unchecked");
+		ImGui::End();
+		ImGui::Render();
+	}
+
 	void checkLiftOwnedDoor()
 	{
 		auto building = std::make_shared<core::Building>("Lift door panel", 16, 3);
@@ -213,6 +238,7 @@ void runDoorPanelScopeSmokeChecks()
 {
 	ImGuiGuard guard;
 	checkOrdinaryDoor();
+	checkExistingButtonsCanBeRemoved();
 	checkLiftOwnedDoor();
 	checkShuttleOwnedDoor();
 }

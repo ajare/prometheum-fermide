@@ -186,7 +186,7 @@ construction:
     width: 1
     height: regular
     foreControl: true
-    backControl: false
+    backControl: true
     activationMode: remoteControlled
     holdOpenSeconds: 5
     crossingLanes: 0

@@ -24,6 +24,7 @@
 using namespace std;
 
 extern UISettings gUISettings;
+extern std::shared_ptr<const core::SectorObject> gSelectedSectorObject;
 
 namespace
 {
@@ -42,7 +43,7 @@ namespace
 
 // Extracted verbatim from UI.cpp (ticket #99), with that ticket's fix: the
 // opening-style selector's disabled scope is closed immediately after the
-// selector, before the Add Door Button opens its own scope. The two scopes
+// selector, before the Buttons checkbox opens its own scope. The two scopes
 // must nest as siblings, never as an unbalanced outer pair.
 void renderDoorPanel(shared_ptr<core::Building> const& building,
 	shared_ptr<const core::SectorObject> object)
@@ -196,27 +197,49 @@ void renderDoorPanel(shared_ptr<core::Building> const& building,
 	ImGui::EndDisabled();
 
 	ImGui::Separator();
-	ImGui::BeginDisabled(!building->isSimulationPaused() || liftOwned || shuttleOwned);
-	if (ImGui::Button("Add Door Button"))
+	// Resolve the selected Door's index in its owning Sector once: both the
+	// editability queries and the actions below need it.
+	auto owner = object->getSector();
+	uint32_t ownerObjectIndex{ ~0u };
+	for (uint32_t i = 0; i < owner->getNumObjects(); ++i)
+	{
+		if (owner->getObject(i) == object)
+		{
+			ownerObjectIndex = i;
+			break;
+		}
+	}
+	bool const canEditButtons = ownerObjectIndex != ~0u;
+	bool const canAddButtons = canEditButtons
+		&& building->canAddSectorDoorButton(owner->getIndex(), ownerObjectIndex);
+	bool const canRemoveButtons = canEditButtons
+		&& building->canRemoveSectorDoorButton(owner->getIndex(), ownerObjectIndex);
+	// A checked box means that both sides carry a Button. A legacy one-sided
+	// Door is shown unchecked so selecting it completes the pair.
+	bool buttons = !canAddButtons;
+	bool const canChangeButtons = buttons ? canRemoveButtons : canAddButtons;
+	ImGui::BeginDisabled(!building->isSimulationPaused() || liftOwned || shuttleOwned
+		|| !canChangeButtons);
+	if (ImGui::Checkbox("Buttons", &buttons))
 	{
 		auto undo = captureDocumentSnapshot(building);
 		try
 		{
 			gUISettings.worldPaused = true;
-			auto owner = object->getSector();
-			uint32_t objectIndex{ ~0u };
-			for (uint32_t i = 0; i < owner->getNumObjects(); ++i)
+			if (buttons)
 			{
-				if (owner->getObject(i) == object)
-				{
-					objectIndex = i;
-					break;
-				}
+				building->addSectorDoorButton(owner->getIndex(), ownerObjectIndex);
+				building->finishBuild();
 			}
-			if (objectIndex == ~0u)
-				throw runtime_error("The selected Door no longer exists");
-			building->addSectorDoorButton(owner->getIndex(), objectIndex);
-			building->finishBuild();
+			else
+			{
+				// Removal replays the construction records, so every object - this
+				// Door included - is rebuilt and the caller's selection handle goes
+				// stale. Re-select the rebuilt Door the action returns.
+				auto rebuilt = building->removeSectorDoorButton(owner->getIndex(),
+					ownerObjectIndex);
+				if (rebuilt) gSelectedSectorObject = rebuilt;
+			}
 			commitDocumentEdit(std::move(undo));
 		}
 		catch (core::Exception const& error)

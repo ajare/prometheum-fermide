@@ -288,7 +288,16 @@ namespace core
 			serializer.writeBool("foreControl", record.p);
 			serializer.writeBool("backControl", record.q); serializer.writeString("activationMode", activationName(record.i));
 			serializer.writeFloat("holdOpenSeconds", record.x); serializer.writeUint32("crossingLanes", record.d);
-			serializer.writeString("openStyle", openStyleName(record.j)); break;
+			serializer.writeString("openStyle", openStyleName(record.j));
+			// Only a Door whose Buttons were added in the editor carries the mode
+			// removal restores. Authored control layouts need no extra field; their
+			// removal falls back to manual activation.
+			if (record.preButtonActivationMode >= 0)
+			{
+				serializer.writeString("preButtonActivation",
+					activationName(record.preButtonActivationMode));
+			}
+			break;
 		case ConstructionType::Window:
 		{
 			static char const* states[] = { "open", "opening", "closed", "closing", "broken", "frosted", "frosting", "unfrosting", "tinted", "tinting", "untinting" };
@@ -612,6 +621,11 @@ namespace core
 			else record.e = static_cast<uint32_t>(Door::Height::Regular);
 			record.p = serializer.readBool("foreControl");
 			record.q = serializer.readBool("backControl"); record.i = readActivation("activationMode");
+			// A record whose Buttons predate the field, or were authored with the
+			// Door, has nothing to restore and reads as -1; removal then falls back
+			// to manual activation.
+			record.preButtonActivationMode = serializer.hasField("preButtonActivation")
+				? readActivation("preButtonActivation") : -1;
 			record.x = serializer.readFloat("holdOpenSeconds"); record.d = serializer.readUint32("crossingLanes");
 			record.j = readOpenStyle("openStyle"); break;
 		case ConstructionType::Window:
