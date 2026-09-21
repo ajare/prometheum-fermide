@@ -69,6 +69,7 @@ void runDoorPanelScopeSmokeChecks();
 void runDoorTwoSidedButtonSmokeChecks();
 void runDocumentHistorySmokeChecks();
 void runAgentTagRegistrySmokeChecks();
+void runAgentTagAssignmentSmokeChecks();
 void runThresholdRefusalSmokeChecks();
 void runThresholdLayerOverlapSmokeChecks();
 void runWindowIntoBackgroundSmokeChecks();
@@ -5003,6 +5004,7 @@ int main(int argc, char** argv)
 		runDoorTwoSidedButtonSmokeChecks();
 		runDocumentHistorySmokeChecks();
 		runAgentTagRegistrySmokeChecks();
+		runAgentTagAssignmentSmokeChecks();
 		runShuttleDoorQuerySmokeChecks();
 		runThresholdRefusalSmokeChecks();
 		runThresholdLayerOverlapSmokeChecks();

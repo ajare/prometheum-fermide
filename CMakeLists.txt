@@ -186,6 +186,7 @@ add_executable(prometheum-fermide-headless
     src/DoorPanel.cpp
     src/AgentGroupsPanel.cpp
     src/AgentGroupAssignmentPanel.cpp
+    src/AgentTagAssignmentPanel.cpp
     src/TagsPanel.cpp
     src/AgentClipboard.cpp
     src/imgui/imgui.cpp
@@ -208,6 +209,7 @@ add_executable(prometheum-fermide-headless
     src/headless/DoorTwoSidedButtonSmokeChecks.cpp
     src/headless/DocumentHistorySmokeChecks.cpp
     src/headless/AgentTagRegistrySmokeChecks.cpp
+    src/headless/AgentTagAssignmentSmokeChecks.cpp
     src/headless/BackgroundSectorSmokeChecks.cpp
     src/headless/EditorLayerSmokeChecks.cpp
     src/headless/DoorOpenApartRenderSmokeChecks.cpp
@@ -266,6 +268,7 @@ if(PF_BUILD_GUI)
         src/DoorPanel.cpp
         src/AgentGroupsPanel.cpp
         src/AgentGroupAssignmentPanel.cpp
+        src/AgentTagAssignmentPanel.cpp
         src/TagsPanel.cpp
         src/AgentClipboard.cpp
         ${PF_IMGUI_SOURCES}

@@ -374,7 +374,9 @@ namespace core
 		// two arrived together because one is meaningless without the other: an
 		// assignment references a group the same document defines. Version 8 is
 		// the first that persists a regular Door's physical height, and version
-		// 7 the first that persists Door opening styles. Older readers cap out
+		// 7 the first that persists Door opening styles. Version 10 also carries
+		// each Agent's stable-ID tag assignment set when a registry is referenced.
+		// Older readers cap out
 		// at their own version, so they refuse these files instead of silently
 		// dropping fields they do not know.
 		//
@@ -729,7 +731,7 @@ namespace core
 		// Shuttle-owned Doors, OpenApart for Lift-owned Doors). Version 9 is the
 		// first to carry Agent groups and the Agent assignments that reference
 		// them; versions 1 through 8 load with neither. Version 10 adds the
-		// optional Agent tag registry reference.
+		// optional Agent tag registry reference and Agent tag assignments.
 		if (version < 1 || version > 10)
 		{
 			throw SerializationException("Unsupported Building serialization version");
@@ -991,6 +993,12 @@ namespace core
 				throw SerializationException(format(
 					"Serialized Agent '{}' is assigned to Agent group {}, which this Building does not define",
 					agent->getName(), groupId.value));
+			}
+			if (!agent->getAgentTagIds().empty() && !mAgentTagRegistryReference)
+			{
+				throw SerializationException(format(
+					"Serialized Agent '{}' has Agent tag assignments but the Building has no Agent tag registry",
+					agent->getName()));
 			}
 
 			auto sector = _getSector(sectorIndex);
@@ -1438,7 +1446,7 @@ namespace core
 			if (!sector) continue;
 			carried.push_back(CarriedAgent{ id, agent->getName(), agent->getFlags(),
 				sector->getIndex(), sector->getLayerIndex(), agent->getGlobalPosition(),
-				agent->getAgentGroupId(), agent->isActive() });
+				agent->getAgentGroupId(), agent->getAgentTagIds(), agent->isActive() });
 		}
 		return carried;
 	}
@@ -1467,6 +1475,10 @@ namespace core
 			// Building still owns the group: an Agent pointing at a group that is
 			// gone would be a dangling reference the save/load check refuses.
 			raw->setAgentGroupId(lookupAgentGroup(saved.agentGroup) ? saved.agentGroup : AgentGroupId{});
+			// A replay is internal preservation, not a new assignment. Keep exactly
+			// the stable IDs captured from this Building; attachment validation
+			// guarantees they still belong to its registry.
+			raw->setAgentTags(saved.agentTags);
 			_getSector(sector->getIndex())->mAgents.insert(raw);
 			mAgents.restore(saved.id, std::move(agent));
 			mAgentIds.emplace(raw, saved.id);

@@ -30,6 +30,7 @@
 #include "DoorPanel.h"
 #include "AgentGroupsPanel.h"
 #include "AgentGroupAssignmentPanel.h"
+#include "AgentTagAssignmentPanel.h"
 #include "TagsPanel.h"
 #include "AgentClipboard.h"
 
@@ -2246,6 +2247,7 @@ namespace
 		gShuttleDoorCandidates.clear();
 		gLayerNameEdits.clear();
 		resetAgentGroupsPanelState();
+		resetAgentTagAssignmentPanelState();
 		resetTagsPanelState();
 		gUISettings.worldPaused = false;
 		if (clearHistory) gBuildingDocumentHistory.clear();
@@ -6607,6 +6609,8 @@ void renderSelectedAgentPanel(shared_ptr<core::Building> building)
 	{
 		ImGui::SetTooltip("Pause the simulation to activate or deactivate an Agent");
 	}
+
+	renderAgentTagAssignmentChecklist(building, id);
 
 	if (gSelectingAgentPathDestination)
 	{

@@ -159,6 +159,9 @@ namespace core
 		{
 			throw invalid_argument("Cannot attach an invalid Agent tag registry");
 		}
+		string diagnostic;
+		if (!agentTagAssignmentsAreValid(*registry, &diagnostic))
+			throw invalid_argument(diagnostic);
 		mAgentTagRegistryReference = AgentTagRegistryReference{
 			std::move(filename), registry->getUuid() };
 		mAgentTagRegistry = std::move(registry);
@@ -177,7 +180,33 @@ namespace core
 				"Agent tag registry UUID mismatch: Building expects {}, file contains {}",
 				mAgentTagRegistryReference->expectedUuid, registry->getUuid()));
 		}
+		string diagnostic;
+		if (!agentTagAssignmentsAreValid(*registry, &diagnostic))
+			throw runtime_error(diagnostic);
 		mAgentTagRegistry = std::move(registry);
+	}
+
+	bool Building::agentTagAssignmentsAreValid(AgentTagRegistry const& registry,
+		string* diagnostic) const
+	{
+		if (diagnostic) diagnostic->clear();
+		for (auto const& [agentId, agent] : mAgents.entries())
+		{
+			(void)agentId;
+			if (!agent) continue;
+			for (auto const tag : agent->getAgentTagIds())
+			{
+				if (registry.lookupAgentTag(tag)) continue;
+				if (diagnostic)
+				{
+					*diagnostic = format(
+						"Agent '{}' is assigned to Agent tag {}, which the attached registry does not define",
+						agent->getName(), tag.value);
+				}
+				return false;
+			}
+		}
+		return true;
 	}
 
 	uint32_t Building::getCellsWide() const
@@ -5856,6 +5885,79 @@ namespace core
 		auto const lookup = lookupAgent(agent);
 		if (!lookup) throw BuildingException(this, lookup.diagnostic);
 		return lookup.entity->getAgentGroupId();
+	}
+
+	bool Building::canAssignAgentTag(AgentId agent, AgentTagId tag,
+		string* diagnostic) const
+	{
+		if (diagnostic) diagnostic->clear();
+		auto reject = [diagnostic](string reason)
+		{
+			if (diagnostic) *diagnostic = std::move(reason);
+			return false;
+		};
+
+		auto const agentLookup = lookupAgent(agent);
+		if (!agentLookup) return reject(agentLookup.diagnostic);
+		if (!mSimulationPaused)
+			return reject("Pause the simulation before assigning an Agent tag");
+		if (!mAgentTagRegistry)
+			return reject("This Building has no attached Agent tag registry");
+		if (!tag || !mAgentTagRegistry->lookupAgentTag(tag))
+			return reject(format("Agent tag {} is not defined in the attached registry", tag.value));
+		if (agentLookup.entity->hasAgentTag(tag))
+			return reject(format("Agent '{}' is already assigned to Agent tag #{}",
+				agentLookup.entity->getName(), mAgentTagRegistry->getAgentTagName(tag)));
+		return true;
+	}
+
+	bool Building::assignAgentTag(AgentId agent, AgentTagId tag,
+		string* diagnostic)
+	{
+		if (!canAssignAgentTag(agent, tag, diagnostic)) return false;
+		mAgents.find(agent)->assignAgentTag(tag);
+		modify();
+		return true;
+	}
+
+	bool Building::canRemoveAgentTag(AgentId agent, AgentTagId tag,
+		string* diagnostic) const
+	{
+		if (diagnostic) diagnostic->clear();
+		auto reject = [diagnostic](string reason)
+		{
+			if (diagnostic) *diagnostic = std::move(reason);
+			return false;
+		};
+
+		auto const agentLookup = lookupAgent(agent);
+		if (!agentLookup) return reject(agentLookup.diagnostic);
+		if (!mSimulationPaused)
+			return reject("Pause the simulation before removing an Agent tag");
+		if (!mAgentTagRegistry)
+			return reject("This Building has no attached Agent tag registry");
+		if (!tag || !mAgentTagRegistry->lookupAgentTag(tag))
+			return reject(format("Agent tag {} is not defined in the attached registry", tag.value));
+		if (!agentLookup.entity->hasAgentTag(tag))
+			return reject(format("Agent '{}' is not assigned to Agent tag #{}",
+				agentLookup.entity->getName(), mAgentTagRegistry->getAgentTagName(tag)));
+		return true;
+	}
+
+	bool Building::removeAgentTag(AgentId agent, AgentTagId tag,
+		string* diagnostic)
+	{
+		if (!canRemoveAgentTag(agent, tag, diagnostic)) return false;
+		mAgents.find(agent)->removeAgentTag(tag);
+		modify();
+		return true;
+	}
+
+	set<AgentTagId> const& Building::getAgentTags(AgentId agent) const
+	{
+		auto const lookup = lookupAgent(agent);
+		if (!lookup) throw BuildingException(this, lookup.diagnostic);
+		return lookup.entity->getAgentTagIds();
 	}
 
 	uint32_t Building::getAgentGroupMemberCount(AgentGroupId id) const

@@ -465,6 +465,12 @@ namespace core
 		std::optional<AgentTagRegistryReference> mAgentTagRegistryReference;
 		std::shared_ptr<AgentTagRegistry> mAgentTagRegistry;
 
+		// Checks every assigned stable ID against a prospective registry before
+		// that registry is attached. This keeps attachment and document opening
+		// transactional: no Agent assignment is rewritten or silently dropped.
+		bool agentTagAssignmentsAreValid(AgentTagRegistry const& registry,
+			std::string* diagnostic = nullptr) const;
+
 		// Case-sensitive name lookup across the groups this Building owns, with
 		// one group optionally excluded so a group renaming itself to the name
 		// it already carries is not its own collision.
@@ -688,6 +694,7 @@ namespace core
 			uint32_t layer{ 0 };
 			Vector2 position{};
 			AgentGroupId agentGroup{};
+			std::set<AgentTagId> agentTags;
 			bool active{ true };
 		};
 
@@ -1691,6 +1698,24 @@ namespace core
 		// The Agent group assigned to an Agent, or an empty AgentGroupId when
 		// it has none. Throws if the Agent is not one this Building owns.
 		AgentGroupId getAgentGroup(AgentId agent) const;
+
+		// Agent tag assignments reference stable IDs from this Building's one
+		// attached Agent tag registry. Assignment and removal are paused-only
+		// authored edits. Every refusal validates before mutation, so an unknown
+		// Agent, absent registry, unknown tag, duplicate assignment, or removal of
+		// an unassigned tag changes nothing.
+		bool canAssignAgentTag(AgentId agent, AgentTagId tag,
+			std::string* diagnostic = nullptr) const;
+		bool assignAgentTag(AgentId agent, AgentTagId tag,
+			std::string* diagnostic = nullptr);
+		bool canRemoveAgentTag(AgentId agent, AgentTagId tag,
+			std::string* diagnostic = nullptr) const;
+		bool removeAgentTag(AgentId agent, AgentTagId tag,
+			std::string* diagnostic = nullptr);
+
+		// The assigned tag set in stable numeric order. Throws when `agent` is
+		// not owned by this Building.
+		std::set<AgentTagId> const& getAgentTags(AgentId agent) const;
 
 		// How many of this Building's Agents are assigned to the Agent group.
 		// The count is derived from the Agents themselves on every call rather

@@ -4,6 +4,8 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <set>
+#include <utility>
 
 #include "core/SectorPosition.h"
 #include "core/Shape.h"
@@ -77,6 +79,12 @@ namespace core
 		// capacity or traversal decision.
 		AgentGroupId mAgentGroup{};
 
+		// Agent tag assignments are Building-authored references into the one
+		// attached Agent tag registry. A set makes duplicate assignment
+		// structurally impossible in memory and gives persistence a stable numeric
+		// order. New Agents start with the empty set.
+		std::set<AgentTagId> mAgentTags;
+
 		// Activation is authored state (#118): an activated Agent is simulated,
 		// a deactivated one keeps its authored position and route but no tick
 		// acts on it. Every Agent starts activated, and so does every Agent
@@ -135,6 +143,12 @@ namespace core
 		// judged both the Agent and the Agent group against this Building.
 		void setAgentGroupId(AgentGroupId id) { mAgentGroup = id; }
 
+		// Assignment mutation belongs to Building, which validates the Agent,
+		// registry, tag, duplicate state, and paused simulation before calling.
+		void assignAgentTag(AgentTagId id) { mAgentTags.insert(id); }
+		void removeAgentTag(AgentTagId id) { mAgentTags.erase(id); }
+		void setAgentTags(std::set<AgentTagId> tags) { mAgentTags = std::move(tags); }
+
 		void setPosition(SectorPosition pos, bool authored = true);
 
 		void attachToBuilding(Building* building);
@@ -191,6 +205,12 @@ namespace core
 		// The Agent group this Agent is assigned to. An empty AgentGroupId
 		// means no Agent group.
 		AgentGroupId getAgentGroupId() const { return mAgentGroup; }
+
+		// Stable IDs of the Agent tags assigned to this Agent, in ascending
+		// numeric order. The referenced definitions live in the Building's
+		// attached Agent tag registry.
+		std::set<AgentTagId> const& getAgentTagIds() const { return mAgentTags; }
+		bool hasAgentTag(AgentTagId id) const { return mAgentTags.contains(id); }
 
 		// Whether this Agent is simulated. Deactivation changes no authored
 		// state: position and route stay as they are until an activated tick
