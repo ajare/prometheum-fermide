@@ -429,7 +429,7 @@ namespace
 		original.serialize(*writer, workData);
 		writer->serialize();
 		auto const yaml = writer->getSerializedString();
-		require(yaml.find("version: 9") != std::string::npos
+		require(yaml.find("version: 10") != std::string::npos
 			&& yaml.find("layers: 2") != std::string::npos
 			&& yaml.find("layerNames:") != std::string::npos
 			&& yaml.find("- Layer 0") != std::string::npos
@@ -2932,7 +2932,7 @@ agents: []
 			("A Lift stop style override was refused: " + diagnostic).c_str());
 
 		auto const yaml = serialize(authored);
-		require(yaml.find("version: 9") != std::string::npos,
+		require(yaml.find("version: 10") != std::string::npos,
 			"A map with authored Door styles was not written at the current schema version");
 		require(yaml.find("version: 6") == std::string::npos,
 			"A map with authored Door styles still carries version 6");
@@ -3017,7 +3017,7 @@ agents: []
 			"A legacy Shuttle-owned Door");
 
 		// The current reader still refuses anything above its own ceiling.
-		auto const futureYaml = std::string("version: 10")
+		auto const futureYaml = std::string("version: 11")
 			+ defaultsYaml.substr(defaultsYaml.find("\n"));
 		bool refusedFuture{ false };
 		try
@@ -3032,7 +3032,7 @@ agents: []
 		{
 			refusedFuture = true;
 		}
-		require(refusedFuture, "A version-10 map was accepted by the current reader");
+		require(refusedFuture, "A version-11 map was accepted by the current reader");
 	}
 
 	// Ticket #85: each Door at a Lift stop carries an individually authored

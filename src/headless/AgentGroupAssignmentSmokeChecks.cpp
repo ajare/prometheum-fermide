@@ -413,8 +413,8 @@ namespace
 	{
 		auto const fixture = assignmentFixture();
 
-		require(fixture.yaml.find("version: 9") != std::string::npos,
-			"Agent group assignments were written without a version 9 schema");
+		require(fixture.yaml.find("version: 10") != std::string::npos,
+			"Agent group assignments were not written under the current Building schema");
 		require(fixture.yaml.find("group: 1") != std::string::npos
 			&& fixture.yaml.find("group: 2") != std::string::npos,
 			"The Agent group assignments were not persisted by ID");

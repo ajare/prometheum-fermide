@@ -640,8 +640,8 @@ namespace
 			"The round-trip fixture is not what the check expects: " + before);
 
 		auto const yaml = serializeBuilding(building);
-		require(yaml.find("version: 9") != std::string::npos,
-			"The count document was written without a version 9 schema");
+		require(yaml.find("version: 10") != std::string::npos,
+			"The count document was not written under the current Building schema");
 
 		// Neither half of the document writes the number down. The groups say
 		// what they are called, the Agents say which one they belong to, and

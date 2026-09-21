@@ -97,6 +97,22 @@ _Avoid_: Lift, when distinguishing the open room object from an enclosed lift tr
 **Agent**:
 A simulated person with a position, destination path, and current movement state.
 
+**Agent tag**:
+A named reusable set of Agent properties that may be assigned to many Agents.
+_Avoid_: Agent group, label
+
+**Agent property**:
+One typed appearance or behaviour value supplied by an Agent tag.
+_Avoid_: Agent attribute, when referring to a value supplied by a tag
+
+**Agent tag registry**:
+A collection of Agent tags that forms one shared tag namespace for the Buildings that reference it.
+_Avoid_: Tag list, Agent group registry
+
+**Agent tag assignment**:
+An association between one Agent and one Agent tag.
+_Avoid_: Agent group membership
+
 **Agent group**:
 A named, Building-scoped classification that may be assigned to an Agent for administrative organisation. An Agent group retains its identity when renamed; deleting it leaves its Agents with no Agent group. It has no effect on movement, pathfinding, capacity, or other simulation behaviour.
 _Avoid_: Group, when the broader term could be ambiguous

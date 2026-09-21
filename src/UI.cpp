@@ -30,6 +30,7 @@
 #include "DoorPanel.h"
 #include "AgentGroupsPanel.h"
 #include "AgentGroupAssignmentPanel.h"
+#include "TagsPanel.h"
 #include "AgentClipboard.h"
 
 #if defined(_WIN32)
@@ -65,6 +66,7 @@
 #include "core/Exceptions.h"
 #include "core/SerializationWorkData.h"
 #include "core/YamlSerializer.h"
+#include "core/AgentTagRegistryDocument.h"
 
 #include "Main.h"
 #include "RecentFiles.h"
@@ -2264,7 +2266,9 @@ namespace
 				auto serializer = core::YamlSerializer::fromString(target.yaml);
 				serializer->deserialize();
 				core::SerializationWorkData workData;
-				return loaded->deserialize(*serializer, workData);
+				if (!loaded->deserialize(*serializer, workData)) return false;
+				core::loadAndAttachAgentTagRegistry(*loaded, gBuildingFilepath);
+				return true;
 			};
 			auto const restored = redo
 				? gBuildingDocumentHistory.redo(std::move(current), restore)
@@ -2377,6 +2381,7 @@ namespace
 			serializer->deserialize();
 			core::SerializationWorkData workData;
 			loaded->deserialize(*serializer, workData);
+			core::loadAndAttachAgentTagRegistry(*loaded, normalized);
 			building = std::move(loaded);
 			gBuildingFilepath = normalized;
 			addRecentFile(gBuildingFilepath);
@@ -6772,6 +6777,15 @@ void renderLayersPanel(shared_ptr<core::Building> const& building)
 
 void renderBuildingPanel(shared_ptr<core::Building> building)
 {
+	if (ImGui::CollapsingHeader("Tags"))
+	{
+		// Creation writes the registry first, then attaches it. Persist the new
+		// Building reference immediately so close/reopen needs no second manual
+		// save after the user has already chosen a Building location.
+		if (renderTagsPanel(building, gBuildingFilepath))
+			saveBuilding(building, false);
+	}
+
 	if (ImGui::CollapsingHeader("Objects"))
 	{
 		renderObjectView(building);

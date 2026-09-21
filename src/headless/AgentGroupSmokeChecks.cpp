@@ -97,10 +97,10 @@ namespace
 	// the cheap way to ask what an older reader would be handed.
 	std::string withVersion(std::string const& yaml, uint32_t version)
 	{
-		auto const found = yaml.find("version: 9");
-		require(found != std::string::npos, "The serialised Building carried no version 9 field");
+		auto const found = yaml.find("version: 10");
+		require(found != std::string::npos, "The serialised Building carried no version 10 field");
 		return yaml.substr(0, found) + "version: " + std::to_string(version)
-			+ yaml.substr(found + std::strlen("version: 9"));
+			+ yaml.substr(found + std::strlen("version: 10"));
 	}
 
 	std::string replaceOnce(std::string const& yaml, std::string const& find,
@@ -334,8 +334,8 @@ namespace
 			("Renaming before the round trip was refused: " + diagnostic).c_str());
 
 		auto const yaml = serializeBuilding(building);
-		require(yaml.find("version: 9") != std::string::npos,
-			"Agent groups were written without raising the schema to version 9");
+		require(yaml.find("version: 10") != std::string::npos,
+			"Agent groups were not written under the current Building schema");
 		require(yaml.find("agentGroups") != std::string::npos,
 			"The Agent group collection was not persisted");
 

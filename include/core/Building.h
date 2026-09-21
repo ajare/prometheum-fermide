@@ -6,6 +6,7 @@
 #include <set>
 #include <memory>
 #include <map>
+#include <optional>
 
 
 #include "core/Defines.h"
@@ -30,6 +31,8 @@
 
 namespace core
 {
+
+	class AgentTagRegistry;
 
 	class Building : public Serializable
 	{
@@ -449,6 +452,18 @@ namespace core
 		// enumerates the groups in creation order - before and after a rename,
 		// and across save/load, which restores each group under its own ID.
 		EntityRegistry<AgentGroupId, AgentGroup> mAgentGroups;
+
+		struct AgentTagRegistryReference
+		{
+			std::string filename;
+			std::string expectedUuid;
+		};
+
+		// Agent tag definitions are an independent external document (ADR 0007).
+		// The Building persists only this basename/UUID reference. The loaded
+		// registry is deliberately not a child for dirty-state purposes.
+		std::optional<AgentTagRegistryReference> mAgentTagRegistryReference;
+		std::shared_ptr<AgentTagRegistry> mAgentTagRegistry;
 
 		// Case-sensitive name lookup across the groups this Building owns, with
 		// one group optionally excluded so a group renaming itself to the name
@@ -1033,6 +1048,18 @@ namespace core
 		virtual ~Building();
 
 		std::string const& getName() const;
+
+		// A Building references zero or one adjacent Agent tag registry by
+		// basename and expected UUID. Attaching is an authored Building change;
+		// resolving a reference during open is not.
+		bool hasAgentTagRegistryReference() const;
+		bool hasAttachedAgentTagRegistry() const;
+		std::string const& getAgentTagRegistryFilename() const;
+		std::string const& getExpectedAgentTagRegistryUuid() const;
+		std::shared_ptr<AgentTagRegistry> const& getAgentTagRegistry() const;
+		void attachAgentTagRegistry(std::string filename,
+			std::shared_ptr<AgentTagRegistry> registry);
+		void resolveAgentTagRegistry(std::shared_ptr<AgentTagRegistry> registry);
 
 		uint32_t getCellsWide() const;
 

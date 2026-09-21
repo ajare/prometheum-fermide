@@ -1,5 +1,6 @@
 #include "core/Building.h"
 #include "core/AgentGroup.h"
+#include "core/AgentTagRegistry.h"
 #include "core/SerializationException.h"
 #include "core/Exceptions.h"
 #include "core/Transit.h"
@@ -24,6 +25,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 #include <format>
 #include <limits>
 #include <set>
@@ -366,6 +368,7 @@ namespace core
 	void Building::serializeImpl(Serializer& serializer, SerializationWorkData& workData) const
 	{
 		serializer.beginMap("building");
+		// Version 10 adds the optional external Agent tag registry reference.
 		// Version 9 is the first schema that persists Agent groups, and with
 		// them each Agent's optional Agent group assignment (ticket #110). The
 		// two arrived together because one is meaningless without the other: an
@@ -379,7 +382,7 @@ namespace core
 		// allocator's high-water mark (#123). It is an added field rather than a
 		// new version: a reader that predates it still opens these files and
 		// falls back to deriving the next ID from the groups that survive.
-		serializer.writeUint32("version", 9);
+		serializer.writeUint32("version", 10);
 		serializer.writeString("name", mName);
 		serializer.writeUint32("cellsWide", mCellsWide);
 		serializer.writeUint32("decksHigh", mDecksHigh);
@@ -388,6 +391,14 @@ namespace core
 		serializer.beginArray("layerNames");
 		for (auto const& name : mLayerNames) serializer.writeString("", name);
 		serializer.endArray();
+
+		if (mAgentTagRegistryReference)
+		{
+			serializer.beginMap("agentTagRegistry");
+			serializer.writeString("filename", mAgentTagRegistryReference->filename);
+			serializer.writeString("expectedUuid", mAgentTagRegistryReference->expectedUuid);
+			serializer.endMap();
+		}
 
 		serializer.beginArray("construction");
 		for (auto const& record : mConstructionRecords)
@@ -717,8 +728,9 @@ namespace core
 		// through the owner-sensitive defaults (OpenUp for ordinary and
 		// Shuttle-owned Doors, OpenApart for Lift-owned Doors). Version 9 is the
 		// first to carry Agent groups and the Agent assignments that reference
-		// them; versions 1 through 8 load with neither.
-		if (version < 1 || version > 9)
+		// them; versions 1 through 8 load with neither. Version 10 adds the
+		// optional Agent tag registry reference.
+		if (version < 1 || version > 10)
 		{
 			throw SerializationException("Unsupported Building serialization version");
 		}
@@ -728,6 +740,31 @@ namespace core
 		if (cellsWide == 0 || decksHigh == 0)
 		{
 			throw SerializationException("Building dimensions must be positive");
+		}
+
+		optional<AgentTagRegistryReference> agentTagRegistryReference;
+		if (version >= 10 && serializer.hasField("agentTagRegistry"))
+		{
+			serializer.beginMap("agentTagRegistry");
+			auto filename = serializer.readString("filename");
+			auto expectedUuid = serializer.readString("expectedUuid");
+			serializer.endMap();
+
+			filesystem::path const path(filename);
+			if (filename.empty() || path.is_absolute() || path.has_parent_path()
+				|| path.filename().string() != filename
+				|| !filename.ends_with(".tags.yaml"))
+			{
+				throw SerializationException(
+					"An Agent tag registry reference must be a .tags.yaml basename");
+			}
+			if (!AgentTagRegistry::uuidIsValid(expectedUuid))
+			{
+				throw SerializationException(
+					"The expected Agent tag registry UUID is invalid");
+			}
+			agentTagRegistryReference = AgentTagRegistryReference{
+				std::move(filename), std::move(expectedUuid) };
 		}
 
 		auto const layerCount = serializer.readUint32("layers", true, 2);
@@ -845,6 +882,8 @@ namespace core
 		}
 
 		resetForDeserialization(std::move(name), cellsWide, decksHigh);
+		mAgentTagRegistryReference = std::move(agentTagRegistryReference);
+		mAgentTagRegistry.reset();
 		// resetForDeserialization deliberately leaves Agent groups alone: the
 		// reset-and-replay paths (Layer deletion, Room resize, and the rest) reuse
 		// it and must carry the authored groups across. A load starts from the
@@ -1042,6 +1081,7 @@ namespace core
 	{
 		auto const wasModified = isModified();
 		auto const wasPaused = mSimulationPaused;
+		auto const agentTagRegistry = mAgentTagRegistry;
 
 		auto output = YamlSerializer::toString();
 		SerializationWorkData writeData;
@@ -1053,6 +1093,8 @@ namespace core
 		input->deserialize();
 		SerializationWorkData readData;
 		deserialize(*input, readData);
+		if (agentTagRegistry && mAgentTagRegistryReference)
+			resolveAgentTagRegistry(agentTagRegistry);
 		if (wasModified) markModified();
 		if (wasPaused) pauseSimulation();
 	}

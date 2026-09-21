@@ -1,11 +1,14 @@
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
+#include <format>
 #include <set>
 #include <stdexcept>
 #include <utility>
 
 #include "core/Defines.h"
 #include "core/Building.h"
+#include "core/AgentTagRegistry.h"
 #include "core/Background.h"
 #include "core/Location.h"
 #include "core/SectorType.h"
@@ -110,6 +113,71 @@ namespace core
 	string const& Building::getName() const
 	{
 		return mName;
+	}
+
+	bool Building::hasAgentTagRegistryReference() const
+	{
+		return mAgentTagRegistryReference.has_value();
+	}
+
+	bool Building::hasAttachedAgentTagRegistry() const
+	{
+		return mAgentTagRegistry != nullptr;
+	}
+
+	string const& Building::getAgentTagRegistryFilename() const
+	{
+		if (!mAgentTagRegistryReference)
+			throw runtime_error("The Building has no Agent tag registry reference");
+		return mAgentTagRegistryReference->filename;
+	}
+
+	string const& Building::getExpectedAgentTagRegistryUuid() const
+	{
+		if (!mAgentTagRegistryReference)
+			throw runtime_error("The Building has no Agent tag registry reference");
+		return mAgentTagRegistryReference->expectedUuid;
+	}
+
+	shared_ptr<AgentTagRegistry> const& Building::getAgentTagRegistry() const
+	{
+		return mAgentTagRegistry;
+	}
+
+	void Building::attachAgentTagRegistry(string filename,
+		shared_ptr<AgentTagRegistry> registry)
+	{
+		filesystem::path const path(filename);
+		if (filename.empty() || path.is_absolute() || path.has_parent_path()
+			|| path.filename().string() != filename
+			|| !filename.ends_with(".tags.yaml"))
+		{
+			throw invalid_argument(
+				"An Agent tag registry reference must be a .tags.yaml basename");
+		}
+		if (!registry || !AgentTagRegistry::uuidIsValid(registry->getUuid()))
+		{
+			throw invalid_argument("Cannot attach an invalid Agent tag registry");
+		}
+		mAgentTagRegistryReference = AgentTagRegistryReference{
+			std::move(filename), registry->getUuid() };
+		mAgentTagRegistry = std::move(registry);
+		modify();
+	}
+
+	void Building::resolveAgentTagRegistry(shared_ptr<AgentTagRegistry> registry)
+	{
+		if (!mAgentTagRegistryReference)
+			throw invalid_argument("The Building has no Agent tag registry reference to resolve");
+		if (!registry)
+			throw invalid_argument("Cannot resolve a null Agent tag registry");
+		if (registry->getUuid() != mAgentTagRegistryReference->expectedUuid)
+		{
+			throw runtime_error(format(
+				"Agent tag registry UUID mismatch: Building expects {}, file contains {}",
+				mAgentTagRegistryReference->expectedUuid, registry->getUuid()));
+		}
+		mAgentTagRegistry = std::move(registry);
 	}
 
 	uint32_t Building::getCellsWide() const
