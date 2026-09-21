@@ -22,11 +22,17 @@
 //   operation commits none
 //   the real Group cell renders inside a CPU-side ImGui context without
 //   leaking a disabled scope, paused or running
+//   a group name carrying "##" - embedded, leading, or tripled - reaches the
+//   screen in full, in the list and in the preview, and its row is still the
+//   control for its own Agent group (#124)
 //   grouping an Agent changes nothing about how it moves, what its runtime
 //   snapshot says, or what events its run publishes
 
+#include <algorithm>
 #include <bit>
+#include <cmath>
 #include <cstdint>
+#include <functional>
 #include <iomanip>
 #include <memory>
 #include <sstream>
@@ -148,8 +154,25 @@ namespace
 		building.finishBuild();
 	}
 
+	// ImGui writes its render-time text log to the clipboard on the frame the
+	// logged window ends. The clipboard here is a vector in this process, so
+	// capturing what was drawn never reaches the desktop and never blocks.
+	void captureClipboardText(void* userData, char const* text)
+	{
+		if (auto* writes = static_cast<std::vector<std::string>*>(userData))
+			writes->emplace_back(text ? text : "");
+	}
+
+	char const* readCapturedClipboardText(void*)
+	{
+		return nullptr;
+	}
+
 	struct ImGuiGuard
 	{
+		// Everything the clipboard was handed, one entry per logged window.
+		std::vector<std::string> clipboardWrites;
+
 		ImGuiGuard()
 		{
 			ImGui::CreateContext();
@@ -157,9 +180,70 @@ namespace
 			io.DisplaySize = ImVec2(800.0f, 600.0f);
 			io.Fonts->AddFontDefault();
 			io.Fonts->Build();
+			clipboardWrites.clear();
+			io.SetClipboardTextFn = &captureClipboardText;
+			io.GetClipboardTextFn = &readCapturedClipboardText;
+			io.ClipboardUserData = &clipboardWrites;
 		}
 		~ImGuiGuard() { ImGui::DestroyContext(); }
 	};
+
+	// One frame of the Group cell, drawn inside a table the way the Agents
+	// section draws it. Passing a vector captures that frame's visible text.
+	using FrameRender = std::function<void(std::vector<std::string>*)>;
+
+	// Press and release a frame apart, which is what a click-release widget -
+	// a combobox, a list row - takes as a click.
+	void clickAt(float x, float y, FrameRender const& renderFrame)
+	{
+		auto& io = ImGui::GetIO();
+		io.AddMousePosEvent(x, y);
+		renderFrame(nullptr);
+		io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+		renderFrame(nullptr);
+		io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+		renderFrame(nullptr);
+	}
+
+	// The rows of the open list, top to bottom, each as the y of a point
+	// inside it. Found by hovering down from the combobox: a row is the band
+	// of screen over which ImGui reports one and the same hovered item, so the
+	// list's own layout decides where its rows are rather than a guess here.
+	std::vector<float> scanChoiceRows(float x, float fromY, float toY,
+		FrameRender const& renderFrame)
+	{
+		std::vector<float> rows;
+		ImGuiID previous{ 0 };
+		float bandStart{ fromY };
+
+		for (float y = fromY; y <= toY; y += 1.0f)
+		{
+			ImGui::GetIO().AddMousePosEvent(x, y);
+			renderFrame(nullptr);
+			auto const hovered = ImGui::GetHoveredID();
+			if (hovered == previous) continue;
+
+			if (previous != 0) rows.push_back((bandStart + y) * 0.5f);
+			bandStart = y;
+			previous = hovered;
+		}
+		if (previous != 0) rows.push_back((bandStart + toY) * 0.5f);
+
+		return rows;
+	}
+
+	// Every string in the capture, in the order they were drawn.
+	bool drawnInOrder(std::string const& haystack, std::vector<std::string> const& needles)
+	{
+		size_t from{ 0 };
+		for (auto const& needle : needles)
+		{
+			auto const found = haystack.find(needle, from);
+			if (found == std::string::npos) return false;
+			from = found;
+		}
+		return true;
+	}
 
 	void resetUndoHistory()
 	{
@@ -610,6 +694,192 @@ namespace
 		}
 	}
 
+	// A group name may legally hold "##", which ImGui reads in a widget label
+	// as the start of an invisible ID suffix - and then hides, along with
+	// everything after it. "Crew##Day" would read as "Crew", and a name that
+	// opens with the pair would read as nothing at all. What is checked here is
+	// the text ImGui actually put on the screen, captured through ImGui's own
+	// render-time text log rather than the string the panel handed to a
+	// widget, and the row that shows a name is clicked to show it is still
+	// that name's own control.
+	void agentGroupNamesCarryingHashPairsReachTheScreenInFull()
+	{
+		resetUndoHistory();
+		ImGuiGuard guard;
+
+		auto const building = std::make_shared<core::Building>("Hash pair names", 12, 3);
+		buildWorld(*building);
+
+		// Every shape the pair can take in an otherwise valid name: embedded,
+		// leading, and a tripled run.
+		auto const crewDay = building->addAgentGroup("Crew##Day");
+		auto const crewNight = building->addAgentGroup("Crew##Night");
+		auto const leadingHashes = building->addAgentGroup("##Night shift");
+		auto const tripleHash = building->addAgentGroup("Trip###le");
+
+		auto const alice = building->createAgent("Alice", 0);
+		std::string diagnostic;
+		require(building->setAgentGroup(alice, crewNight, &diagnostic),
+			("Assigning a group whose name carries ## failed: " + diagnostic).c_str());
+
+		ImVec2 cellMin{};
+		ImVec2 cellMax{};
+		bool cellRectRecorded{ false };
+
+		FrameRender const frame = [&](std::vector<std::string>* capture)
+		{
+			ImGui::NewFrame();
+			ImGui::Begin("Building");
+			if (capture) ImGui::LogToClipboard();
+
+			ImGuiTableFlags const flags =
+				ImGuiTableFlags_SizingStretchSame |
+				ImGuiTableFlags_BordersOuter |
+				ImGuiTableFlags_BordersV;
+			require(ImGui::BeginTable("Agents", 5, flags),
+				"The test Agents table could not be opened");
+			ImGui::TableSetupColumn("Name");
+			ImGui::TableSetupColumn("Group");
+			ImGui::TableSetupColumn("Sector");
+			ImGui::TableSetupColumn("State");
+			ImGui::TableSetupColumn("Path");
+			ImGui::TableHeadersRow();
+
+			ImGui::TableNextRow();
+			ImGui::TableSetColumnIndex(1);
+			renderAgentGroupAssignmentCell(building, alice);
+
+			// Recorded on the first, closed frame, while the cell's own item is
+			// still the last one ImGui laid out.
+			if (!cellRectRecorded)
+			{
+				cellMin = ImGui::GetItemRectMin();
+				cellMax = ImGui::GetItemRectMax();
+				cellRectRecorded = true;
+				require(cellMax.x - cellMin.x > 1.0f && cellMax.y - cellMin.y > 1.0f,
+					"The Group cell drew no frame to click");
+			}
+
+			ImGui::EndTable();
+			ImGui::End();
+			ImGui::Render();
+		};
+
+		// The preview: the assigned name, whole, before anything is opened.
+		guard.clipboardWrites.clear();
+		frame(&guard.clipboardWrites);
+		require(guard.clipboardWrites.size() == 1,
+			"The closed Group cell logged " + std::to_string(guard.clipboardWrites.size())
+				+ " windows of visible text, expected one");
+		require(guard.clipboardWrites.front().find("Crew##Night") != std::string::npos,
+			"The selected preview hides part of the name: ["
+				+ guard.clipboardWrites.front() + "]");
+
+		// Open the list. The preview area is clicked, never the arrow button.
+		float const clickX = cellMin.x + 4.0f;
+		float const clickY = (cellMin.y + cellMax.y) * 0.5f;
+		clickAt(clickX, clickY, frame);
+		require(ImGui::IsPopupOpen(ImGuiID{}, ImGuiPopupFlags_AnyPopup),
+			"Clicking the Group cell never opened the list");
+
+		// Every name, in full, in the order the list shows them: `<none>`
+		// first, then creation order.
+		guard.clipboardWrites.clear();
+		frame(&guard.clipboardWrites);
+		std::string visible;
+		for (auto const& write : guard.clipboardWrites) visible += write;
+
+		for (auto const name : { "Crew##Day", "Crew##Night", "##Night shift", "Trip###le" })
+			require(visible.find(name) != std::string::npos,
+				(std::string("A choice hides part of its name: ") + name
+					+ " is not in [" + visible + "]").c_str());
+
+		require(drawnInOrder(visible, { "<none>", "Crew##Day", "Crew##Night",
+			"##Night shift", "Trip###le" }),
+			"The choices are not drawn in the order the list is meant to show them: ["
+				+ visible + "]");
+
+		// The rows, as the list itself lays them out: one for `<none>` plus one
+		// for each group the Building defines.
+		size_t const expectedRows = 1 + 4;
+		auto const rows = scanChoiceRows(clickX, cellMax.y + 1.0f,
+			cellMax.y + 400.0f, frame);
+		require(rows.size() == expectedRows,
+			"The open list presented " + std::to_string(rows.size())
+				+ " clickable rows, expected " + std::to_string(expectedRows));
+
+		// Close the list before the picks, which each open it in turn.
+		clickAt(clickX, clickY, frame);
+		require(!ImGui::IsPopupOpen(ImGuiID{}, ImGuiPopupFlags_AnyPopup),
+			"The Group list did not close when its cell was clicked again");
+
+		// Each row is its own control: clicking the row that shows a name
+		// assigns exactly that Agent group, and the preview that follows shows
+		// the whole name again.
+		struct Pick
+		{
+			size_t row;
+			core::AgentGroupId group;
+			std::string name;
+		};
+
+		std::vector<Pick> const picks{
+			{ 1, crewDay, "Crew##Day" },
+			{ 3, leadingHashes, "##Night shift" },
+			{ 4, tripleHash, "Trip###le" },
+			{ 2, crewNight, "Crew##Night" },
+		};
+
+		for (auto const& pick : picks)
+		{
+			// The list is closed between picks, because that is what picking does:
+			// one choice, one assignment, the list back out of the way.
+			clickAt(clickX, clickY, frame);
+			require(ImGui::IsPopupOpen(ImGuiID{}, ImGuiPopupFlags_AnyPopup),
+				"The Group list did not reopen for the next pick");
+
+			clickAt(clickX, rows[pick.row], frame);
+			require(!ImGui::IsPopupOpen(ImGuiID{}, ImGuiPopupFlags_AnyPopup),
+				"Picking " + pick.name + " left the list open");
+			require(building->getAgentGroup(alice) == pick.group,
+				"Clicking the row showing " + pick.name + " assigned "
+					+ std::to_string(building->getAgentGroup(alice).value)
+					+ " instead of " + std::to_string(pick.group.value));
+
+			guard.clipboardWrites.clear();
+			frame(&guard.clipboardWrites);
+			require(guard.clipboardWrites.size() == 1,
+				"The closed Group cell did not log exactly one window of visible text");
+			require(guard.clipboardWrites.front().find(pick.name) != std::string::npos,
+				"The preview does not show the whole name just chosen: ["
+					+ guard.clipboardWrites.front() + "]");
+		}
+
+		// And the `<none>` row at the head of the list still clears, with the
+		// same one-edit-per-pick accounting the plain names get.
+		clickAt(clickX, clickY, frame);
+		clickAt(clickX, rows[0], frame);
+		require(!building->getAgentGroup(alice),
+			"The <none> row did not clear the assignment");
+		// One edit per pick, the clearing included: five choices made, five
+		// entries on the stack, no more.
+		require(gUndoHistory.size() == picks.size() + 1,
+			"The hash-pair picks committed " + std::to_string(gUndoHistory.size())
+				+ " undoable edits, expected " + std::to_string(picks.size() + 1));
+
+		// A rename that adds another pair shows up in the preview whole, the
+		// same way a freshly chosen name does: the cell reads the name through
+		// the Building and draws it literally either way.
+		require(building->setAgentGroup(alice, crewDay, &diagnostic)
+			&& building->renameAgentGroup(crewDay, "Crew##Day##Night", &diagnostic),
+			("Renaming a hash-pair group failed: " + diagnostic).c_str());
+		guard.clipboardWrites.clear();
+		frame(&guard.clipboardWrites);
+		require(guard.clipboardWrites.front().find("Crew##Day##Night") != std::string::npos,
+			"The preview does not follow a rename that added a second pair: ["
+				+ guard.clipboardWrites.front() + "]");
+	}
+
 	// A deterministic little walk: one Agent crossing a Corridor to a Marker.
 	// The trace is the tick, every Agent snapshot, and every event the run
 	// published, rendered as text so two runs can be compared as wholes.
@@ -707,5 +977,6 @@ void runAgentGroupAssignmentSmokeChecks()
 	assignmentEditsRunAlongsideTheSimulationAndCommitOneUndoEach();
 	theGroupCellLabelShowsTheAssignment();
 	theGroupCellRendersWithoutLeakingImGuiState();
+	agentGroupNamesCarryingHashPairsReachTheScreenInFull();
 	groupingAnAgentChangesNothingInTheSimulation();
 }

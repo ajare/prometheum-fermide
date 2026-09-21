@@ -41,6 +41,8 @@ std::string agentGroupAssignmentLabel(core::Building const& building, core::Agen
 
 // Renders one Group cell: `<none>` first, then every defined Agent group in
 // creation order. Re-choosing the group an Agent already holds is not an
-// edit and commits nothing.
+// edit and commits nothing. Names are drawn as literal display text, never as
+// widget labels, so a name carrying "##" - which ImGui would otherwise read
+// as the start of an invisible ID suffix - still shows whole (#124).
 void renderAgentGroupAssignmentCell(
 	std::shared_ptr<core::Building> const& building, core::AgentId agent);
