@@ -53,6 +53,7 @@ void runAgentGroupClipboardSmokeChecks();
 void runAgentGroupTopologySmokeChecks();
 void runShuttleDoorQuerySmokeChecks();
 void runRenderOrderSmokeChecks();
+void runWallRenderSmokeChecks();
 void runDoorOpenApartRenderSmokeChecks();
 void runDoorOpenLeftRenderSmokeChecks();
 void runDoorOpenRightRenderSmokeChecks();
@@ -5005,6 +5006,7 @@ int main(int argc, char** argv)
 		runFacadeEditorSmokeChecks();
 		runPaletteTraySmokeChecks();
 		runOnboardAgentDeletionSmokeChecks();
+		runWallRenderSmokeChecks();
 		runViewportCullingSmokeChecks();
 		runZeroSizeLocationSmokeChecks();
 		runIsolatedSectorPathingSmokeChecks();

@@ -56,6 +56,11 @@ extern std::shared_ptr<const core::SectorObject> gHoveredSectorObject, gSelected
 //
 static std::shared_ptr<const core::Building> gRenderBuilding;
 
+void setRenderBuilding(std::shared_ptr<const core::Building> building)
+{
+	gRenderBuilding = std::move(building);
+}
+
 extern ImFont* gAgentIconFont;
 
 using namespace std;
@@ -1608,6 +1613,18 @@ void renderSector(shared_ptr<const core::Sector> sector, uint32_t layer, LayerRe
 		drawList->AddLine({ bounds0.x, bounds0.y }, { bounds1.x, bounds0.y }, ImColor(0, 0, 0), 2.0f);
 
 		// Render walls
+		//
+		// An open end takes away only the stretch of wall the neighbouring
+		// Location actually shares, never the whole deck: a Room deck standing
+		// taller than the Corridor it opens into keeps the wall above the
+		// Corridor's ceiling, or the two Locations read as open to the void
+		// above their own connection.
+		//
+		// The wireframe overlay passes the viewed Layer through too, so a wall on
+		// the Layer behind does not draw across an opening the selected Layer
+		// has made - otherwise the removed wall comes back as the Sector behind
+		// it, and the connection reads as closed again.
+		int const viewLayer{ std::max(0, gUISettings.visibleLayer) };
 		float height{ 0.0f };
 
 		for (uint32_t y = 0; y < sector->getDecksHigh(); ++y)
@@ -1621,17 +1638,19 @@ void renderSector(shared_ptr<const core::Sector> sector, uint32_t layer, LayerRe
 			wallBounds0.y += height;
 			wallBounds1.y = wallBounds0.y + deckHeight;
 
-			transformPosition(wallBounds0);
-			transformPosition(wallBounds1);
-
-			if (sector->getEndType(y, CORE_SIDE_LEFT) == core::SectorEndType::Wall)
+			for (int const side : { CORE_SIDE_LEFT, CORE_SIDE_RIGHT })
 			{
-				drawList->AddLine({ wallBounds0.x, wallBounds0.y }, { wallBounds0.x, wallBounds1.y }, ImColor(0, 0, 0), 2.0f);
-			}
+				auto const x = side == CORE_SIDE_LEFT ? wallBounds0.x : wallBounds1.x;
 
-			if (sector->getEndType(y, CORE_SIDE_RIGHT) == core::SectorEndType::Wall)
-			{
-				drawList->AddLine({ wallBounds1.x, wallBounds0.y }, { wallBounds1.x, wallBounds1.y }, ImColor(0, 0, 0), 2.0f);
+				for (auto const& span : wallSpansToDraw(gRenderBuilding, *sector, y, side, viewLayer))
+				{
+					core::Vector2 from{ x, span.y0 }, to{ x, span.y1 };
+
+					transformPosition(from);
+					transformPosition(to);
+
+					drawList->AddLine({ from.x, from.y }, { to.x, to.y }, ImColor(0, 0, 0), 2.0f);
+				}
 			}
 
 			height += deckHeight;
@@ -1802,7 +1821,7 @@ void renderBuilding(shared_ptr<const core::Building> building)
 {
 	// The cell-grid lookup a multi-Background aperture composites from (#37)
 	// needs the Building; the sector-rendering chain does not carry one.
-	gRenderBuilding = building;
+	setRenderBuilding(building);
 
 	auto drawList = ImGui::GetWindowDrawList();
 

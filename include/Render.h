@@ -348,6 +348,276 @@ inline bool shouldHighlightSelectedSector(LayerRenderStyle style, uint32_t secto
 	return sectorSelectionMode && style == LayerRenderStyle::Solid && sectorLayer == viewLayer;
 }
 
+//
+// One vertical stretch of a Sector deck's side wall that the viewport draws.
+//
+// World units, y0 the lower end and y1 the upper, so the pair reads the same
+// way up as the Sector's own deck spans rather than in flipped screen space.
+//
+struct WallSpan
+{
+	float y0;
+	float y1;
+
+	[[nodiscard]] bool empty() const { return y1 - y0 <= 0.0f; }
+};
+
+//
+// The world-y of one Sector deck's floor: the Sector's own base plus every deck
+// under it. Deck heights differ between Locations - a Corridor deck is
+// CORE_CORRIDOR_HEIGHT, a Room deck stands taller - so a deck's height is not
+// its row, and the two cannot be used interchangeably here.
+//
+inline float deckFloorY(core::Sector const& sector, uint32_t deckIndex)
+{
+	core::Vector2 lo, hi;
+	sector.getBounds(lo, hi);
+
+	float y = lo.y;
+
+	for (uint32_t d = 0; d < deckIndex && d < sector.getDecksHigh(); ++d)
+	{
+		y += sector.getDeckHeight(d);
+	}
+
+	return y;
+}
+
+//
+// The Location, if any, sharing one Sector's side boundary on a given deck.
+//
+// Looked up geometrically - the cell just outside the Sector's own footprint on
+// the deck's global row - because that cell is the boundary the wall would
+// stand in.
+//
+inline std::shared_ptr<const core::Sector> boundarySector(
+	core::Building const& building,
+	core::Sector const& sector,
+	uint32_t deckIndex,
+	int side)
+{
+	int const boundaryX = side == CORE_SIDE_LEFT
+		? static_cast<int>(sector.getCellX()) - 1
+		: static_cast<int>(sector.getCellX()) + static_cast<int>(sector.getCellsWide());
+	int const globalY = static_cast<int>(sector.getCellY()) + static_cast<int>(deckIndex);
+
+	if (boundaryX < 0 || boundaryX >= static_cast<int>(building.getCellsWide())
+		|| globalY < 0 || globalY >= static_cast<int>(building.getDecksHigh()))
+	{
+		return nullptr;
+	}
+
+	return building.getSectorAtPosition(sector.getLayerIndex(),
+		static_cast<float>(boundaryX) + 0.5f, static_cast<float>(globalY) + 0.5f);
+}
+
+//
+// The stretch of a boundary the viewed Layer leaves open, found from the far
+// side of it.
+//
+// The wireframe overlay x-rays the Layer directly behind the selection. A
+// behind-Layer wall drawn straight across an opening the selected Layer has
+// made reads as a wall across that opening, and the connection the player just
+// authored disappears. The caller subtracts this stretch from the behind wall;
+// only the intersection goes, the rest of the wall still stands.
+//
+// Returns false when the Sector is not behind the viewed Layer, when the Layer
+// in front has no Location pair straddling this boundary, or when that pair is
+// not open.
+//
+inline bool frontLayerOpening(std::shared_ptr<const core::Building> const& building,
+	int viewLayer, core::Sector const& sector, uint32_t deckIndex, int side,
+	float& openFrom, float& openTo)
+{
+	openFrom = openTo = 0.0f;
+
+	if (!building || viewLayer < 0 || sector.getLayerIndex() <= static_cast<uint32_t>(viewLayer))
+	{
+		return false;
+	}
+
+	// The boundary line this Sector's wall stands on, and the two cells of the
+	// viewed Layer which straddle it.
+	int const boundaryX = side == CORE_SIDE_LEFT
+		? static_cast<int>(sector.getCellX())
+		: static_cast<int>(sector.getCellX()) + static_cast<int>(sector.getCellsWide());
+	int const globalY = static_cast<int>(sector.getCellY()) + static_cast<int>(deckIndex);
+
+	if (boundaryX <= 0 || boundaryX >= static_cast<int>(building->getCellsWide())
+		|| globalY < 0 || globalY >= static_cast<int>(building->getDecksHigh()))
+	{
+		return false;
+	}
+
+	auto const left = building->getSectorAtPosition(static_cast<uint32_t>(viewLayer),
+		static_cast<float>(boundaryX) - 0.5f, static_cast<float>(globalY) + 0.5f);
+	auto const right = building->getSectorAtPosition(static_cast<uint32_t>(viewLayer),
+		static_cast<float>(boundaryX) + 0.5f, static_cast<float>(globalY) + 0.5f);
+
+	if (!left || !right)
+	{
+		return false;
+	}
+
+	auto const leftDeck = globalY - static_cast<int>(left->getCellY());
+	auto const rightDeck = globalY - static_cast<int>(right->getCellY());
+
+	if (leftDeck < 0 || leftDeck >= static_cast<int>(left->getDecksHigh())
+		|| rightDeck < 0 || rightDeck >= static_cast<int>(right->getDecksHigh()))
+	{
+		return false;
+	}
+
+	if (left->getEndType(static_cast<uint32_t>(leftDeck), CORE_SIDE_RIGHT) != core::SectorEndType::None
+		|| right->getEndType(static_cast<uint32_t>(rightDeck), CORE_SIDE_LEFT) != core::SectorEndType::None)
+	{
+		return false;
+	}
+
+	auto const leftFloor = deckFloorY(*left, static_cast<uint32_t>(leftDeck));
+	auto const rightFloor = deckFloorY(*right, static_cast<uint32_t>(rightDeck));
+
+	openFrom = std::max(leftFloor, rightFloor);
+	openTo = std::min(leftFloor + left->getDeckHeight(static_cast<uint32_t>(leftDeck)),
+		rightFloor + right->getDeckHeight(static_cast<uint32_t>(rightDeck)));
+
+	return openTo > openFrom;
+}
+
+//
+// The part of one span left after another is taken out of it.
+//
+inline std::vector<WallSpan> subtractSpan(WallSpan const& span, float from, float to)
+{
+	std::vector<WallSpan> spans;
+
+	if (span.empty() || to <= span.y0 || from >= span.y1)
+	{
+		if (!span.empty()) spans.push_back(span);
+		return spans;
+	}
+
+	if (auto const below = WallSpan{ span.y0, std::max(std::min(from, span.y1), span.y0) }; !below.empty())
+	{
+		spans.push_back(below);
+	}
+
+	if (auto const above = WallSpan{ std::min(std::max(to, span.y0), span.y1), span.y1 }; !above.empty())
+	{
+		spans.push_back(above);
+	}
+
+	return spans;
+}
+
+//
+// The stretches of one Location deck's side wall the viewport should draw.
+//
+// A closed (Wall) end draws its whole deck; a BulkheadDoor end draws no plain
+// wall line, exactly as before.
+//
+// An open end removes only the boundary it actually shares: the vertical
+// overlap between this Sector's deck span and the neighbouring Sector's deck
+// span at the same global row. A Room deck standing 1.0 tall beside a
+// 0.7-tall Corridor therefore keeps the 0.3 of wall above the Corridor's
+// ceiling - the opening is the intersection, never the whole deck. Two decks
+// of equal height overlap completely, so their shared wall vanishes entirely
+// and the two Locations read as connected.
+//
+// With no Building to ask, or no Sector on the boundary, an open end removes
+// its whole deck: with nothing to intersect there is no shared boundary to
+// leave standing, and this is how an open end has always rendered.
+//
+// `viewLayer` is the Layer the viewport is showing. A Sector drawn from behind
+// it - the wireframe overlay - also loses the stretch that the viewed Layer's
+// own opening covers, so a behind-Layer wall cannot masquerade as the wall the
+// player just removed. Pass a negative viewLayer to skip that second cut.
+//
+inline std::vector<WallSpan> wallSpansToDraw(std::shared_ptr<const core::Building> const& building,
+	core::Sector const& sector, uint32_t deckIndex, int side, int viewLayer = -1)
+{
+	std::vector<WallSpan> spans;
+
+	if (deckIndex >= sector.getDecksHigh())
+	{
+		return spans;
+	}
+
+	auto const y0 = deckFloorY(sector, deckIndex);
+	auto const y1 = y0 + sector.getDeckHeight(deckIndex);
+
+	auto const endType = sector.getEndType(deckIndex, side);
+
+	if (endType != core::SectorEndType::None)
+	{
+		if (endType == core::SectorEndType::Wall)
+		{
+			spans.push_back({ y0, y1 });
+		}
+	}
+	else
+	{
+		auto const neighbour = building
+			? boundarySector(*building, sector, deckIndex, side)
+			: nullptr;
+
+		if (!neighbour)
+		{
+			return spans;
+		}
+
+		auto const neighbourDeck = static_cast<int>(deckIndex) + static_cast<int>(sector.getCellY())
+			- static_cast<int>(neighbour->getCellY());
+		if (neighbourDeck < 0 || neighbourDeck >= static_cast<int>(neighbour->getDecksHigh()))
+		{
+			return spans;
+		}
+
+		auto const neighbourFloor = deckFloorY(*neighbour, static_cast<uint32_t>(neighbourDeck));
+		auto const neighbourTop = neighbourFloor
+			+ neighbour->getDeckHeight(static_cast<uint32_t>(neighbourDeck));
+
+		auto const openFrom = std::max(y0, neighbourFloor);
+		auto const openTo = std::min(y1, neighbourTop);
+
+		// Decks on the same global row always meet, but a neighbour that somehow
+		// misses this one leaves no opening to cut, and the wall stands whole.
+		if (openTo <= openFrom)
+		{
+			spans.push_back({ y0, y1 });
+		}
+		else
+		{
+			if (auto const below = WallSpan{ y0, openFrom }; !below.empty())
+			{
+				spans.push_back(below);
+			}
+
+			if (auto const above = WallSpan{ openTo, y1 }; !above.empty())
+			{
+				spans.push_back(above);
+			}
+		}
+	}
+
+	float openingFrom{ 0.0f }, openingTo{ 0.0f };
+	if (!frontLayerOpening(building, viewLayer, sector, deckIndex, side, openingFrom, openingTo))
+	{
+		return spans;
+	}
+
+	std::vector<WallSpan> trimmed;
+	for (auto const& span : spans)
+	{
+		for (auto const& kept : subtractSpan(span, openingFrom, openingTo))
+		{
+			trimmed.push_back(kept);
+		}
+	}
+
+	return trimmed;
+}
+
 // Transit geometry is drawn by the selected Layer's passes. The wireframe overlay
 // contributes outlines, never the Transit's own filled geometry, which would
 // otherwise paint over the selected Layer.
@@ -586,6 +856,17 @@ inline bool shouldRenderSectorAgents(core::SectorType /* sectorType */, LayerRen
 void renderGraph(std::shared_ptr<const core::Graph> graph, std::shared_ptr<const core::Building> building);
 
 void renderBuilding(std::shared_ptr<const core::Building> building);
+
+//
+// Publishes the Building the viewport is rendering.
+//
+// renderBuilding() calls this on entry. The Sector-level passes read the
+// Building back from here because their call chain carries no Building pointer,
+// which is the same route #37 opened for the multi-Background aperture
+// composite. An open wall needs it too: the stretch of wall a removed end
+// takes away is the overlap with the Sector on the far side of that boundary.
+//
+void setRenderBuilding(std::shared_ptr<const core::Building> building);
 
 //
 // The Sectors of one Layer that the current viewport sees: culled from the
