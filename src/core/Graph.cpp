@@ -1015,6 +1015,7 @@ namespace core
 				uint32_t prevSectorIndex{ ~0u };
 
 				row.segments.emplace_back();
+				row.sectors.emplace_back();
 
 				for (uint32_t x = 0; x < cellsWide; ++x)
 				{
@@ -1025,10 +1026,14 @@ namespace core
 						// Close off the run built so far and open the next one.
 						row.flushSector.push_back(prevSectorIndex);
 						row.segments.emplace_back();
+						row.sectors.emplace_back();
 						++segment;
 					}
 
 					row.segmentOfCell[x] = segment;
+					if (sectorIndex != ~0u && (row.sectors[segment].empty()
+						|| row.sectors[segment].back() != sectorIndex))
+						row.sectors[segment].push_back(sectorIndex);
 					prevSectorIndex = sectorIndex;
 				}
 
@@ -1056,6 +1061,35 @@ namespace core
 		for (size_t segment = 0; segment < row.segments.size(); ++segment)
 		{
 			auto& entries = row.segments[segment];
+
+			// A Location joined to another through an open wall may have no Marker,
+			// threshold, or other authored topology of its own. Give each such
+			// Location one boundary Vertex. Otherwise it is absent from
+			// mSectorVertexLookup and inferred pathing cannot start there, even
+			// though the row has deliberately merged it with its neighbour.
+			set<uint32_t> representedSectors;
+			for (auto const& entry : entries)
+				if (!entry.standalone)
+					representedSectors.insert(entry.vertex->getSector()->getIndex());
+			vector<uint32_t> locationSectors;
+			for (auto const sectorIndex : row.sectors[segment])
+				if (isLocationLike(mwBuilding->getSector(sectorIndex)->getType()))
+					locationSectors.push_back(sectorIndex);
+			if (locationSectors.size() > 1)
+			{
+				for (size_t i = 0; i < locationSectors.size(); ++i)
+				{
+					auto const sectorIndex = locationSectors[i];
+					if (representedSectors.contains(sectorIndex)) continue;
+					auto sector = mwBuilding->_getSector(sectorIndex);
+					// Prefer the left shared boundary; the left-most Sector instead
+					// uses its right boundary, which is the side joining the run.
+					float const xOffset = i == 0 ? (float)sector->getCellsWide() : 0.0f;
+					float const yOffset = (float)(row.y - sector->getCellY());
+					entries.push_back({ sector->getCellX(), SlotFloor, false,
+						make_shared<SectorMarkerVertex>(sector, xOffset, yOffset) });
+				}
+			}
 
 			stable_sort(entries.begin(), entries.end(), [](RowVertex const& a, RowVertex const& b) {
 				if (a.x != b.x) return a.x < b.x;

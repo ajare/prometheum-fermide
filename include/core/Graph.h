@@ -76,8 +76,11 @@ namespace core
 			// Sector reported when the matching Segment is flushed.
 			std::vector<uint32_t> flushSector;
 
-			// Vertices collected per Segment.
+			// Vertices and the ordered Sectors collected per Segment. A Sector with
+			// no authored topology still needs a synthetic Vertex when an open wall
+			// merges it into a run, so inferred routes can start there.
 			std::vector<std::vector<RowVertex>> segments;
+			std::vector<std::vector<uint32_t>> sectors;
 		};
 
 		// Every row of every Layer, indexed [layerIndex][deck].

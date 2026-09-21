@@ -21,6 +21,43 @@ namespace
 	// path-set flow and terminated the editor. An isolated Location offers no
 	// route at all; that is an ordinary "no path" outcome and must come back
 	// as no Path, the same as any unreachable target.
+	void pathingAcrossAnOpenSharedWallFindsAPath()
+	{
+		// Minimal reproduction of Agent 15 in door-test-1.yaml: the Agent starts
+		// in the right-hand Corridor, whose left wall is open into the adjacent
+		// Room containing the destination Marker.
+		core::Building building("Open shared wall", 16, 6);
+		auto const room = building.addRoom("Destination room", 0, 2, 6, 4, 1);
+		auto const corridor = building.addCorridor(0, 2, 10, 6, 1);
+		uint32_t markerIdentifier = 0;
+		building.addSectorMarker(room, 0, 0.5625f, &markerIdentifier);
+		building.pauseSimulation();
+		building.removeLocationWall(corridor, 0, CORE_SIDE_LEFT);
+		building.finishBuild();
+		building.resumeSimulation();
+
+		auto const agentId = building.createAgent("Agent 15", corridor, 0, 1.484375f);
+		auto const agent = building.lookupAgent(agentId).entity;
+		auto const destination = building.getGraph()->getVertexByIdentifier(markerIdentifier);
+		require(agent != nullptr && destination != nullptr,
+			"The open-wall pathing fixture was not constructed");
+
+		auto const path = building.getGraph()->calculatePath(agent, destination);
+		require(path && path->nodes.size() >= 2,
+			"Agent 15 cannot path from the Corridor through its open wall to the Room Marker");
+		require(path->nodes.front().targetVertex->getSector()->getIndex() == corridor
+			&& path->nodes.back().targetVertex->getSector()->getIndex() == room,
+			"The open-wall route does not cross from the Corridor into the Room");
+
+		agent->setPath(path, true);
+		for (uint32_t tick = 0; tick < 1000 && agent->getState() != core::Agent::State::Idle; ++tick)
+			building.advanceTick();
+		require(agent->getState() == core::Agent::State::Idle
+			&& agent->getSector()->getIndex() == room
+			&& agent->getGlobalPosition().distanceTo(destination->getPosition()) < 0.001f,
+			"Agent 15 did not traverse the open wall and reach the Room Marker");
+	}
+
 	void pathingFromAnIsolatedLocationReturnsNoPath()
 	{
 		core::Building building("Isolated corridor", 12, 1);
@@ -62,5 +99,6 @@ namespace
 
 void runIsolatedSectorPathingSmokeChecks()
 {
+	pathingAcrossAnOpenSharedWallFindsAPath();
 	pathingFromAnIsolatedLocationReturnsNoPath();
 }
