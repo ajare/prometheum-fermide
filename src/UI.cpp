@@ -4228,7 +4228,7 @@ void handleWorldInteraction(shared_ptr<core::Building> building,
 				}
 				else
 				{
-					core::addLogMessage("Agent path", 0, core::LogLevel::Error,
+					reportEditorError("Agent path",
 						"No path is available to the selected vertex");
 				}
 			}
@@ -5952,6 +5952,24 @@ void renderAgentView(shared_ptr<core::Building> building)
 					if (path)
 					{
 						ImGui::Text("%u/%zu vertices", agent->getPathTargetNodeIndex(), path->nodes.size());
+					}
+					else if (building->isSimulationPaused())
+					{
+						// Pausing tears down live traversal, so the Agent's path pointer is
+						// cleared. Its retained destination still tells us where it resumes.
+						core::Building::TopologyPathIntent intent;
+						if (building->getPausedPathIntent(*agent, intent))
+						{
+							auto destination = intent.destinationSector
+								? building->getSector((uint32_t)intent.destinationSector.value - 1)
+								: nullptr;
+							ImGui::TextDisabled("to %s (paused)",
+								destination ? destination->getDescription().c_str() : "<unknown>");
+						}
+						else
+						{
+							ImGui::TextUnformatted("");
+						}
 					}
 					else
 					{
@@ -8000,10 +8018,14 @@ void renderWorldWindow(shared_ptr<core::Building> building, shared_ptr<const cor
 		gLastWorldCursor = mousePos;
 		// Hit-test in reverse visual order. Graph vertices are rendered over agents,
 		// agents over sector objects, and sector objects over their owning sector.
+		// While picking an agent's path destination only vertices are selectable,
+		// with a slightly enlarged target radius to make them easier to pick.
+		float vertexRadius = RENDER_VERTEX_SIZE / (float)CORE_DECK_HEIGHT_PIXELS;
+		if (gSelectingAgentPathDestination) vertexRadius *= 1.5f;
 		if (gUISettings.renderGraph)
 			gHoveredVertex = graph->getVertexAtPosition(gUISettings.visibleLayer, mousePos.x,
-				mousePos.y, RENDER_VERTEX_SIZE / (float)CORE_DECK_HEIGHT_PIXELS);
-		if (!gHoveredVertex)
+				mousePos.y, vertexRadius);
+		if (!gSelectingAgentPathDestination && !gHoveredVertex)
 			gHoveredAgent = building->getAgentAtPosition(gUISettings.visibleLayer,
 				mousePos.x, mousePos.y);
 		if (!gHoveredVertex && !gHoveredAgent)
@@ -8030,7 +8052,8 @@ void renderWorldWindow(shared_ptr<core::Building> building, shared_ptr<const cor
 					gHoveredInteractionPoint = button->getInteractionPointId();
 			}
 		}
-		if (!gHoveredVertex && !gHoveredAgent && !gHoveredSectorObject)
+		if (!gSelectingAgentPathDestination && !gHoveredVertex && !gHoveredAgent
+			&& !gHoveredSectorObject)
 		{
 			auto sector = building->getSectorAtPosition(gUISettings.visibleLayer,
 				mousePos.x, mousePos.y);

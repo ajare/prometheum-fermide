@@ -401,6 +401,16 @@ namespace core
 			[[nodiscard]] bool requiresConfirmation() const { return !consequences.empty(); }
 		};
 
+		// A route destination retained when pauseSimulation tears down live
+		// traversal. Each Agent that had a path keeps one until resumeSimulation
+		// replays it onto the rebuilt graph.
+		struct TopologyPathIntent
+		{
+			SectorId destinationSector;
+			Vector2 destinationPosition;
+			bool wasPathing{ false };
+		};
+
 	public:
 
 		static CreateDoorOptions ManualDoor1Options, RemoteControlledDoor1Options, UnavailableDoor1Options;
@@ -483,12 +493,6 @@ namespace core
 		uint64_t mTopologyGeneration{ 0 };
 		std::string mTopologyDiagnostic;
 
-		struct TopologyPathIntent
-		{
-			SectorId destinationSector;
-			Vector2 destinationPosition;
-			bool wasPathing{ false };
-		};
 		std::map<AgentId, TopologyPathIntent> mPausedPathIntents;
 
 		Log mBuildLog;
@@ -1522,6 +1526,9 @@ namespace core
 		bool resumeSimulation();
 
 		bool isSimulationPaused() const { return mSimulationPaused; }
+
+		// Returns false when the Agent has no paused path intent.
+		bool getPausedPathIntent(Agent const& agent, TopologyPathIntent& intent) const;
 
 		bool isTraversalTopologyDirty() const { return mTopologyDirty; }
 

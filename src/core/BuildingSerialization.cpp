@@ -2519,6 +2519,11 @@ namespace core
 			found->d = plan.options.directionalBatchLimit;
 		}
 
+		// Replay Locations before Transits regardless of the order they were
+		// authored in: an extended Ladder may land on a Location that was
+		// painted after it (mirrors prepareLiftEdit).
+		records = canonicalConstructionRecords(std::move(records));
+
 		try
 		{
 			auto candidate = makeCandidateBuilding();
@@ -2780,6 +2785,10 @@ namespace core
 			found->a = plan.y; found->b = plan.x; found->c = plan.options.cellsWide; found->i = plan.options.riseSide;
 			found->x = plan.options.speed;
 		}
+		// Replay Locations before Transits regardless of the order they were
+		// authored in: a moved Staircase may land on a Location that was painted
+		// after it (mirrors prepareLiftEdit).
+		records = canonicalConstructionRecords(std::move(records));
 		auto old = mSectors[plan.sectorIndex];
 		// The rebuilt Staircase keeps the Layer it was authored on; read the answer
 		// back from there rather than from a fixed Back Layer.
@@ -2837,6 +2846,11 @@ namespace core
 			found->i = plan.options.mountSide; found->d = plan.options.directionalCapacity;
 			found->e = plan.options.directionalBatchLimit;
 		}
+
+		// Replay Locations before Transits regardless of the order they were
+		// authored in: an extended Stairwell may land on a Location that was
+		// painted after it (mirrors prepareLiftEdit).
+		records = canonicalConstructionRecords(std::move(records));
 
 		try
 		{
