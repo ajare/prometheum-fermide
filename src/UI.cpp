@@ -2376,12 +2376,7 @@ namespace
 		try
 		{
 			auto const normalized = normalizedFilepath(filepath);
-			auto loaded = make_shared<core::Building>("Loading", 1, 1);
-			auto serializer = core::YamlSerializer::fromFile(normalized);
-			serializer->deserialize();
-			core::SerializationWorkData workData;
-			loaded->deserialize(*serializer, workData);
-			core::loadAndAttachAgentTagRegistry(*loaded, normalized);
+			auto loaded = core::loadBuildingDocument(normalized);
 			building = std::move(loaded);
 			gBuildingFilepath = normalized;
 			addRecentFile(gBuildingFilepath);
@@ -2413,6 +2408,25 @@ namespace
 		}
 
 		openBuilding(building, selectedPath.get());
+	}
+
+	optional<string> chooseAgentTagRegistryPath()
+	{
+		nfdu8char_t* selectedPathRaw{ nullptr };
+		nfdu8filteritem_t const filters[] = { { "Agent tag registry", "yaml" } };
+		filesystem::path const buildingPath(gBuildingFilepath);
+		auto const directory = buildingPath.parent_path().string();
+		auto const result = NFD_OpenDialogU8(&selectedPathRaw, filters, 1,
+			directory.empty() ? nullptr : directory.c_str());
+		unique_ptr<nfdu8char_t, decltype(&NFD_FreePathU8)> selectedPath(
+			selectedPathRaw, NFD_FreePathU8);
+		if (result == NFD_CANCEL) return nullopt;
+		if (result == NFD_ERROR)
+		{
+			throw runtime_error(string("Could not choose an Agent tag registry: ")
+				+ (NFD_GetError() ? NFD_GetError() : "unknown native dialog error"));
+		}
+		return string(selectedPath.get());
 	}
 
 	void executeFileAction(PendingFileAction action, shared_ptr<core::Building>& building)
@@ -6779,10 +6793,10 @@ void renderBuildingPanel(shared_ptr<core::Building> building)
 {
 	if (ImGui::CollapsingHeader("Tags"))
 	{
-		// Creation writes the registry first, then attaches it. Persist the new
-		// Building reference immediately so close/reopen needs no second manual
-		// save after the user has already chosen a Building location.
-		if (renderTagsPanel(building, gBuildingFilepath))
+		// Persist a newly created or selected registry reference immediately, so
+		// close/reopen needs no second manual save after attachment.
+		if (renderTagsPanel(building, gBuildingFilepath,
+			[] { return chooseAgentTagRegistryPath(); }))
 			saveBuilding(building, false);
 	}
 
