@@ -42,6 +42,12 @@ struct AgentClipboardPayload
 	std::string name;
 	std::uint32_t flags{ 0 };
 
+	// Whether the Agent is simulated. Every Agent starts activated, and so
+	// does every payload written before the key existed: an absent `active`
+	// reads back as activated, so the payload an older build wrote for a
+	// deactivated Agent reads as activated rather than refusing (#118).
+	bool active{ true };
+
 	// The Agent's Agent group, by name. nullopt means no Agent group, and is
 	// written as no `group` key at all rather than an empty one: an
 	// ungrouped Agent's payload is then what a build from before Agent

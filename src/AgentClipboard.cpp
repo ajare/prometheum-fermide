@@ -35,7 +35,9 @@ namespace
 	// The clipboard envelope, shared with every other clipboard object type.
 	// Version 1 covers an optional `group`: an older reader ignores a key it
 	// does not know, and this reader treats an absent key as "no Agent group",
-	// so the field needs no new version of its own.
+	// so the field needs no new version of its own. The optional `active` key
+	// added with Agent activation (#118) behaves the same way: absent reads
+	// back as activated, and an older reader ignores it.
 	char const* const ClipboardKey{ "prometheumClipboard" };
 	uint32_t const ClipboardVersion{ 1 };
 
@@ -59,6 +61,7 @@ AgentClipboardPayload makeAgentClipboardPayload(core::Building const& building,
 	if (!lookup) return payload;
 
 	payload.flags = lookup.entity->getFlags();
+	payload.active = lookup.entity->isActive();
 
 	// The group's name crosses; its ID stays home. An Agent holding an ID the
 	// Building cannot resolve reads back as ungrouped rather than inventing a
@@ -89,6 +92,10 @@ string makeAgentClipboardText(AgentClipboardPayload const& payload, bool cut)
 	// No group, no key: the payload says nothing about a classification
 	// rather than saying "the empty one".
 	if (payload.group) output << YAML::Key << "group" << YAML::Value << *payload.group;
+	// Same shape for activation: an activated Agent writes no `active` key,
+	// so a payload written before activation existed reads back activated
+	// (#118).
+	if (!payload.active) output << YAML::Key << "active" << YAML::Value << false;
 	output << YAML::EndMap << YAML::EndMap << YAML::EndMap;
 
 	if (!output.good()) throw runtime_error(output.GetLastError());
@@ -134,6 +141,21 @@ bool readAgentClipboardObject(YAML::Node const& object,
 	{
 		diagnostic = "Clipboard field 'flags' has an invalid value";
 		return false;
+	}
+
+	// An absent `active` is an activated Agent, which is exactly how a
+	// payload written before activation existed reads. A present one has to
+	// be a boolean: a value of any other shape is refused rather than coerced,
+	// because a silently-activated paste of a deactivated Agent would start
+	// simulating someone the author had parked (#118).
+	if (object["active"])
+	{
+		try { payload.active = object["active"].as<bool>(); }
+		catch (exception const&)
+		{
+			diagnostic = "Clipboard field 'active' must be a boolean";
+			return false;
+		}
 	}
 
 	// An absent `group` is an ungrouped Agent, which is exactly how a
@@ -286,6 +308,11 @@ bool commitAgentPlacement(shared_ptr<core::Building> const& building,
 			return false;
 		}
 		created->setFlags(payload.flags);
+		// Activation travels with the payload's other authored state. The
+		// setter is the raw Agent seam, like setFlags above: placement is
+		// allowed while the simulation runs, and a pasted Agent the payload
+		// deactivated must land deactivated rather than be refused (#118).
+		created->setActive(payload.active);
 
 		if (groupName)
 		{

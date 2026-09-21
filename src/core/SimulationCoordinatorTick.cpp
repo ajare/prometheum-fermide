@@ -406,6 +406,7 @@ namespace core
 			for (auto const& [id, agent] : mBuilding.mAgents.entries())
 			{
 				(void)id;
+				if (!agent->isActive()) continue;
 				agent->collectTraversalIntent();
 			}
 			break;
@@ -414,6 +415,7 @@ namespace core
 			for (auto const& [id, agent] : mBuilding.mAgents.entries())
 			{
 				(void)id;
+				if (!agent->isActive()) continue;
 				agent->allocateTraversal();
 			}
 			allocateInteractions();
@@ -423,6 +425,10 @@ namespace core
 			for (auto const& [id, agent] : mBuilding.mAgents.entries())
 			{
 				(void)id;
+				// A deactivated Agent is not simulated (#118): no phase of the
+				// tick moves it, commits for it, or cleans up traversal on its
+				// behalf, and its queued door presses are not pressed.
+				if (!agent->isActive()) continue;
 				auto const movementStart = agent->getGlobalPosition();
 				auto const approachingDoor = agent->getState() == Agent::State::MovingToVertex
 					|| (agent->getState() == Agent::State::TraversingEdge && agent->mTraversalTask
@@ -439,6 +445,7 @@ namespace core
 			for (auto const& [id, agent] : mBuilding.mAgents.entries())
 			{
 				(void)id;
+				if (!agent->isActive()) continue;
 				agent->commitTraversal();
 			}
 			break;
@@ -448,6 +455,7 @@ namespace core
 			for (auto const& [id, agent] : mBuilding.mAgents.entries())
 			{
 				(void)id;
+				if (!agent->isActive()) continue;
 				agent->cleanupTraversal();
 			}
 			updateInteractionResults();
@@ -494,6 +502,7 @@ namespace core
 				|| current.localPosition != previous.localPosition
 				|| current.globalPosition != previous.globalPosition
 				|| current.state != previous.state
+				|| current.active != previous.active
 				|| current.hasPath != previous.hasPath
 				|| current.targetPathNode != previous.targetPathNode
 				|| current.pathNodeCount != previous.pathNodeCount
@@ -650,7 +659,11 @@ namespace core
 		for (auto const& [id, intent] : mBuilding.mPausedPathIntents)
 		{
 			auto agent = mBuilding.mAgents.find(id);
-			if (!agent || !agent->getSector() || !intent.destinationSector
+			// A deactivated Agent is not simulated (#118): its retained route must
+			// not be replayed onto the graph. The intent still drops with the map,
+			// so reactivation later does not resurrect a route the pause had
+			// already torn down.
+			if (!agent || !agent->isActive() || !agent->getSector() || !intent.destinationSector
 				|| intent.destinationSector.value > mBuilding.mSectors.size()) continue;
 			try
 			{

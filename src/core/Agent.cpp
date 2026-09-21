@@ -35,6 +35,10 @@ namespace core
 		// the same convention as an Agent with no path, which writes no `path`
 		// map - so a missing field reads back as "no Agent group".
 		if (mAgentGroup) serializer.writeUint64("group", mAgentGroup.value);
+		// An activated Agent writes no `active` key at all - the same convention
+		// as an Agent with no path writing no `path` map - so a document written
+		// before activation existed reads back with every Agent activated (#118).
+		if (!mActive) serializer.writeBool("active", false);
 		serializer.endMap();
 	}
 
@@ -47,6 +51,9 @@ namespace core
 		// names a group this Building owns is the Building's call, made before
 		// the Agent is taken in.
 		mAgentGroup = AgentGroupId{ serializer.readUint64("group", true, 0) };
+		// Absent means activated: the default for every newly created Agent and
+		// for every Agent loaded from a document that predates activation (#118).
+		mActive = serializer.readBool("active", true, true);
 		serializer.endMap();
 
 		mState = State::Idle;
@@ -159,6 +166,15 @@ namespace core
 		if (updated != mFlags)
 		{
 			mFlags = updated;
+			modify();
+		}
+	}
+
+	void Agent::setActive(bool active)
+	{
+		if (active != mActive)
+		{
+			mActive = active;
 			modify();
 		}
 	}

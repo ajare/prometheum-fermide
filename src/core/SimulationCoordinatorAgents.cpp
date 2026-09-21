@@ -109,8 +109,35 @@ namespace core
 		for (auto const& [id, agent] : mBuilding.mAgents.entries())
 		{
 			(void)id;
+			// A deactivated Agent is not simulated, so waking the world must not
+			// restart its locomotion (#118).
+			if (!agent->isActive()) continue;
 			agent->wake();
 		}
+	}
+
+	bool SimulationCoordinator::canSetAgentActive(AgentId id, bool /* active */, string* diagnostic) const
+	{
+		auto found = lookupAgent(id);
+		if (!found)
+		{
+			if (diagnostic) *diagnostic = found.diagnostic;
+			return false;
+		}
+		if (!mBuilding.mSimulationPaused)
+		{
+			if (diagnostic)
+				*diagnostic = "Agents cannot be activated or deactivated while the simulation is running";
+			return false;
+		}
+		return true;
+	}
+
+	bool SimulationCoordinator::setAgentActive(AgentId id, bool active, string* diagnostic)
+	{
+		if (!canSetAgentActive(id, active, diagnostic)) return false;
+		mBuilding.mAgents.find(id)->setActive(active);
+		return true;
 	}
 
 	EntityLookup<Agent> SimulationCoordinator::lookupAgent(AgentId id)

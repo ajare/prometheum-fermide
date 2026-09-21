@@ -27,6 +27,10 @@ namespace core
 		Vector2 localPosition;
 		Vector2 globalPosition;
 		AgentPathState state{ AgentPathState::Idle };
+		// Whether the Agent is simulated. Deactivated Agents keep their last
+		// sector and positions; every movement-state field below stays frozen
+		// at whatever it held when the Agent was deactivated (#118).
+		bool active{ true };
 		bool hasPath{ false };
 		uint32_t targetPathNode{ 0 };
 		uint32_t pathNodeCount{ 0 };

@@ -653,9 +653,11 @@ namespace core
 		// What a reset/replay path keeps of a live Agent so the Agent can be put
 		// back once the replay is done. The Agent group assignment belongs to what
 		// is kept: an edit that keeps an Agent keeps how it is classified (#122).
-		// The Sector the Agent was standing in travels with it because the edits
-		// decide which Agents they shift or drop by where those Agents were, not
-		// by where they land afterwards.
+		// Activation belongs to what is kept for the same reason: an edit that
+		// keeps an Agent keeps whether it is simulated (#118). The Sector the
+		// Agent was standing in travels with it because the edits decide which
+		// Agents they shift or drop by where those Agents were, not by where they
+		// land afterwards.
 		struct CarriedAgent
 		{
 			AgentId id;
@@ -665,6 +667,7 @@ namespace core
 			uint32_t layer{ 0 };
 			Vector2 position{};
 			AgentGroupId agentGroup{};
+			bool active{ true };
 		};
 
 		// Captures every Agent that stands in a Sector. A path adjusts the carried
@@ -1559,6 +1562,22 @@ namespace core
 		EntityLookup<Agent const> lookupAgent(AgentId id) const;
 
 		EntityRemovalResult removeAgent(AgentId id);
+
+		// Agent activation (#118). An activated Agent is simulated; a deactivated
+		// one keeps its authored position and route but no tick acts on it.
+		// Activation is judged before it is written: the only refusals are an
+		// Agent the Building does not own and a running simulation, since an
+		// activation change mid-run would strand whatever traversal the Agent was
+		// in the middle of. Like the Agent group assignment this is authored
+		// state: it persists through save/load, reset, undo, and clipboard
+		// placement, and it never dirties the traversal topology.
+		bool canSetAgentActive(AgentId agent, bool active,
+			std::string* diagnostic = nullptr) const;
+
+		// Returns false and changes nothing when canSetAgentActive refuses,
+		// reporting the reason through `diagnostic`.
+		bool setAgentActive(AgentId agent, bool active,
+			std::string* diagnostic = nullptr);
 
 		// Agent groups - authored, Building-scoped classifications (ADR 0006).
 		// These are the only way in: the registry itself is never handed out, so

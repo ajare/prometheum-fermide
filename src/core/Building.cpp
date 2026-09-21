@@ -5436,6 +5436,18 @@ namespace core
 		return mSimulationCoordinator.removeAgent(id);
 	}
 
+	// Agent activation is judged and written in SimulationCoordinator, where the
+	// rest of the Agent lifecycle lives (ADR 0004); these forward.
+	bool Building::canSetAgentActive(AgentId id, bool active, string* diagnostic) const
+	{
+		return mSimulationCoordinator.canSetAgentActive(id, active, diagnostic);
+	}
+
+	bool Building::setAgentActive(AgentId id, bool active, string* diagnostic)
+	{
+		return mSimulationCoordinator.setAgentActive(id, active, diagnostic);
+	}
+
 	// Agent groups are authored Building data, not simulation state (ADR 0006).
 	// They live in the Building's own registry and never reach the coordinator,
 	// so creating and renaming need no pause, dirty no topology, and leave every

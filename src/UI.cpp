@@ -1409,7 +1409,7 @@ namespace
 			auto const landed = gPegman.pastedAgent.armed()
 				? commitPendingAgentPlacement(gPegman.pastedAgent, building, placed, diagnostic)
 				: commitAgentPlacement(building,
-					AgentClipboardPayload{ nextAgentName(building), 0, nullopt },
+					AgentClipboardPayload{ nextAgentName(building), 0, true, nullopt },
 					gPegman.sector, gPegman.deckOffset, gPegman.localX, placed, diagnostic);
 			if (!landed)
 			{
@@ -5861,9 +5861,10 @@ void renderAgentView(shared_ptr<core::Building> building)
 		ImGuiTableFlags_BordersV |
 		ImGuiTableFlags_ContextMenuInBody;
 
-	if (ImGui::BeginTable("Agents", 5, flags))
+	if (ImGui::BeginTable("Agents", 6, flags))
 	{
 		ImGui::TableSetupColumn("Name");
+		ImGui::TableSetupColumn("Active");
 		ImGui::TableSetupColumn("Group");
 		ImGui::TableSetupColumn("Sector");
 		ImGui::TableSetupColumn("State");
@@ -5902,22 +5903,60 @@ void renderAgentView(shared_ptr<core::Building> building)
 					}
 
 					ImGui::SameLine();
-					ImGui::Text("%s", agent->getName().c_str());
+					if (agent->isActive()) ImGui::Text("%s", agent->getName().c_str());
+					else ImGui::TextDisabled("%s", agent->getName().c_str());
+
+					// Active: an activated Agent is simulated, a deactivated one is not
+					// (#118). Activation changes are refused while the simulation runs,
+					// so the control is disabled in step with the rest of the
+					// paused-only editing UI.
+					ImGui::TableSetColumnIndex(1);
+					ImGui::BeginDisabled(!building->isSimulationPaused());
+					if (ImGui::Button(agent->isActive() ? ICON_FA_EYE : ICON_FA_EYE_SLASH,
+						ImVec2(ImGui::GetFrameHeight(), 0.0f)))
+					{
+						string diagnostic;
+						if (!building->setAgentActive(building->getAgentId(agent),
+							!agent->isActive(), &diagnostic))
+						{
+							core::addLogMessage("Agents", 0, core::LogLevel::Warning, diagnostic);
+						}
+					}
+					ImGui::EndDisabled();
+					if (ImGui::IsItemHovered())
+					{
+						if (!building->isSimulationPaused())
+						{
+							ImGui::SetTooltip("Pause the simulation to activate or deactivate this Agent");
+						}
+						else if (agent->isActive())
+						{
+							ImGui::SetTooltip("Deactivate this Agent: it keeps its position and route but is not simulated");
+						}
+						else
+						{
+							ImGui::SetTooltip("Activate this Agent: the simulation drives it again");
+						}
+					}
 
 					// Group: the Agent group this Agent is assigned to, edited in
 					// place. The cell shows the group's current name rather than a
 					// copy of it, so a rename is reflected here the next frame.
-					ImGui::TableSetColumnIndex(1);
+					ImGui::TableSetColumnIndex(2);
 					renderAgentGroupAssignmentCell(building, building->getAgentId(agent));
 
 					// Sector
-					ImGui::TableSetColumnIndex(2);
+					ImGui::TableSetColumnIndex(3);
 					ImGui::TextUnformatted(sector->getDescription().c_str());
 
 					// State
-					ImGui::TableSetColumnIndex(3);
+					ImGui::TableSetColumnIndex(4);
 
-					switch (agent->getState())
+					if (!agent->isActive())
+					{
+						ImGui::TextDisabled("Inactive");
+					}
+					else switch (agent->getState())
 					{
 					case core::Agent::State::Idle:
 						ImGui::Text("Idle");
@@ -5945,7 +5984,7 @@ void renderAgentView(shared_ptr<core::Building> building)
 					}
 
 					// Path
-					ImGui::TableSetColumnIndex(4);
+					ImGui::TableSetColumnIndex(5);
 					
 					auto const& path = agent->getPath();
 					
@@ -6491,7 +6530,7 @@ void renderSelectedObjectPanel(shared_ptr<core::Building> const& building)
 }
 
 
-void renderSelectedAgentPanel(shared_ptr<const core::Building> building)
+void renderSelectedAgentPanel(shared_ptr<core::Building> building)
 {
 	if (!gSelectedAgent || !ImGui::CollapsingHeader("Selection")) return;
 
@@ -6506,6 +6545,25 @@ void renderSelectedAgentPanel(shared_ptr<const core::Building> building)
 	if (sector) ImGui::Text("Layer: %u", sector->getLayerIndex());
 	ImGui::Text("Local position: %.2f, %.2f", localPosition.x, localPosition.y);
 	ImGui::Text("World position: %.2f, %.2f", globalPosition.x, globalPosition.y);
+
+	// Activation (#118): a deactivated Agent keeps its authored position and
+	// route but no tick acts on it. The change is refused while the simulation
+	// runs, so the button is disabled in step with the rest of the
+	// paused-only editing UI.
+	ImGui::BeginDisabled(!building->isSimulationPaused());
+	if (ImGui::Button(gSelectedAgent->isActive() ? "Deactivate" : "Activate"))
+	{
+		string diagnostic;
+		if (!building->setAgentActive(id, !gSelectedAgent->isActive(), &diagnostic))
+		{
+			core::addLogMessage("Agents", 0, core::LogLevel::Warning, diagnostic);
+		}
+	}
+	ImGui::EndDisabled();
+	if (!building->isSimulationPaused() && ImGui::IsItemHovered())
+	{
+		ImGui::SetTooltip("Pause the simulation to activate or deactivate an Agent");
+	}
 
 	if (gSelectingAgentPathDestination)
 	{
@@ -6526,6 +6584,12 @@ void renderSelectedAgentPanel(shared_ptr<const core::Building> building)
 	case core::Agent::State::WaitingForTraversal: state = "Waiting for traversal"; break;
 	case core::Agent::State::TraversingEdge: state = "Traversing edge"; break;
 	case core::Agent::State::AwaitingTraversalCommit: state = "Awaiting traversal commit"; break;
+	}
+	if (!gSelectedAgent->isActive())
+	{
+		// A deactivated Agent is not simulated, so its movement state is
+		// frozen history rather than something the run is doing (#118).
+		state = "Inactive (not simulated)";
 	}
 	ImGui::Text("State: %s", state);
 

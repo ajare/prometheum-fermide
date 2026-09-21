@@ -77,6 +77,14 @@ namespace core
 		// capacity or traversal decision.
 		AgentGroupId mAgentGroup{};
 
+		// Activation is authored state (#118): an activated Agent is simulated,
+		// a deactivated one keeps its authored position and route but no tick
+		// acts on it. Every Agent starts activated, and so does every Agent
+		// loaded from a document that predates the field. The running-simulation
+		// gate lives on Building's setAgentActive seam, not here: direct Agent
+		// mutation is the unchecked editor seam setFlags already uses.
+		bool mActive{ true };
+
 		Building* mBuilding{ nullptr };
 
 		SectorPosition mPosition;
@@ -183,6 +191,13 @@ namespace core
 		// The Agent group this Agent is assigned to. An empty AgentGroupId
 		// means no Agent group.
 		AgentGroupId getAgentGroupId() const { return mAgentGroup; }
+
+		// Whether this Agent is simulated. Deactivation changes no authored
+		// state: position and route stay as they are until an activated tick
+		// or a reset works on them.
+		bool isActive() const { return mActive; }
+
+		void setActive(bool active);
 
 		State getState() const;
 

@@ -43,6 +43,7 @@ namespace core
 		result.sectorId = SectorId{ agent->getSector() ? (uint64_t)agent->getSector()->getIndex() + 1 : 0 };
 		result.localPosition = agent->getLocalPosition();
 		result.globalPosition = agent->getGlobalPosition();
+		result.active = agent->isActive();
 		result.hasPath = (bool)agent->getPath();
 		result.targetPathNode = agent->getPathTargetNodeIndex();
 		result.pathNodeCount = result.hasPath ? (uint32_t)agent->getPath()->nodes.size() : 0;

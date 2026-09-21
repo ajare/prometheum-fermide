@@ -84,8 +84,19 @@ namespace core
 		// before the entity itself goes. A refusal leaves the Agent untouched.
 		EntityRemovalResult removeAgent(AgentId id);
 
-		// Wakes every Agent the Building owns.
+		// Wakes every activated Agent the Building owns. A deactivated Agent is
+		// not simulated (#118), so waking must not restart its locomotion.
 		void wakeAllAgents();
+
+		// Activation is judged before it is written (#118). The target state is
+		// always a legal value; the only refusals are an Agent the Building does
+		// not own and a running simulation, since activating or deactivating an
+		// Agent mid-run would strand whatever traversal it was in the middle of.
+		bool canSetAgentActive(AgentId id, bool active, std::string* diagnostic = nullptr) const;
+
+		// Returns false and changes nothing when canSetAgentActive refuses,
+		// reporting the reason through `diagnostic`.
+		bool setAgentActive(AgentId id, bool active, std::string* diagnostic = nullptr);
 
 		// Traversal-ownership release. An Agent's claims on a traversal
 		// resource - a manifest slot, a stop request, an occupant lease -

@@ -1382,7 +1382,7 @@ namespace core
 			if (!sector) continue;
 			carried.push_back(CarriedAgent{ id, agent->getName(), agent->getFlags(),
 				sector->getIndex(), sector->getLayerIndex(), agent->getGlobalPosition(),
-				agent->getAgentGroupId() });
+				agent->getAgentGroupId(), agent->isActive() });
 		}
 		return carried;
 	}
@@ -1403,6 +1403,7 @@ namespace core
 			}
 			auto agent = make_unique<Agent>(saved.name);
 			agent->setFlags(saved.flags);
+			agent->setActive(saved.active);
 			auto* raw = agent.get();
 			raw->attachToBuilding(this);
 			raw->mPosition = SectorPosition(sector.get(), saved.position - sector->getPosition());
