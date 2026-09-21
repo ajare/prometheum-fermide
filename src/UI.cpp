@@ -2246,6 +2246,7 @@ namespace
 		gShuttleDoorCandidates.clear();
 		gLayerNameEdits.clear();
 		resetAgentGroupsPanelState();
+		resetTagsPanelState();
 		gUISettings.worldPaused = false;
 		if (clearHistory) gBuildingDocumentHistory.clear();
 	}
@@ -2291,7 +2292,9 @@ namespace
 
 	bool isDocumentStale(shared_ptr<core::Building> const& building)
 	{
-		return building && (building->isModified() || gBuildingDocumentHistory.isModified());
+		return building && (building->isModified()
+			|| gBuildingDocumentHistory.isModified()
+			|| attachedAgentTagRegistryIsModified(building));
 	}
 
 	void reportFileError(string message)
@@ -2333,6 +2336,21 @@ namespace
 
 		try
 		{
+			// Registry state is an independent document. Save a dirty dependency
+			// first so a successful Building save never points at an older registry.
+			if (building->hasAttachedAgentTagRegistry()
+				&& attachedAgentTagRegistryIsModified(building))
+			{
+				if (gBuildingFilepath.empty())
+					throw runtime_error("The attached Agent tag registry has no saved location");
+				auto const registryPath = filesystem::path(gBuildingFilepath).parent_path()
+					/ building->getAgentTagRegistryFilename();
+				string registryDiagnostic;
+				if (!saveAgentTagRegistry(building->getAgentTagRegistry(),
+					registryPath.string(), &registryDiagnostic))
+					throw runtime_error(registryDiagnostic);
+			}
+
 			// #63: the Building only becomes clean once saveTo has fully written
 			// and replaced the destination; any error leaves it dirty.
 			building->saveTo(filepath);
@@ -2377,7 +2395,12 @@ namespace
 		{
 			auto const normalized = normalizedFilepath(filepath);
 			auto loaded = core::loadBuildingDocument(normalized);
+			auto previousRegistry = building && building->hasAttachedAgentTagRegistry()
+				? building->getAgentTagRegistry() : nullptr;
 			building = std::move(loaded);
+			if (previousRegistry) forgetAgentTagRegistryDocument(previousRegistry);
+			if (building->hasAttachedAgentTagRegistry())
+				(void)agentTagRegistryDocumentHistory(building->getAgentTagRegistry());
 			gBuildingFilepath = normalized;
 			addRecentFile(gBuildingFilepath);
 			clearDocumentState();
@@ -2447,6 +2470,8 @@ namespace
 			break;
 		}
 		case PendingFileAction::Close:
+			if (building && building->hasAttachedAgentTagRegistry())
+				forgetAgentTagRegistryDocument(building->getAgentTagRegistry());
 			building.reset();
 			gBuildingFilepath.clear();
 			clearDocumentState();
@@ -2784,7 +2809,9 @@ namespace
 		}
 		if (ImGui::BeginPopupModal("Unsaved changes", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
 		{
-			ImGui::TextUnformatted("Save changes to the current Building?");
+			ImGui::TextUnformatted(building && building->hasAttachedAgentTagRegistry()
+				? "Save changes to the current Building and Agent tag registry?"
+				: "Save changes to the current Building?");
 			if (ImGui::Button("Save"))
 			{
 				if (saveBuilding(building, false))
@@ -2827,6 +2854,8 @@ namespace
 				&& gNewBuildingWidth > 0 && gNewBuildingDecks > 0;
 			if (ImGui::Button("Create") && valid)
 			{
+				if (building && building->hasAttachedAgentTagRegistry())
+					forgetAgentTagRegistryDocument(building->getAgentTagRegistry());
 				building = make_shared<core::Building>(gNewBuildingName,
 					static_cast<uint32_t>(gNewBuildingWidth),
 					static_cast<uint32_t>(gNewBuildingDecks));

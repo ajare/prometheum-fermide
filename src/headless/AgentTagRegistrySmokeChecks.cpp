@@ -63,6 +63,16 @@ namespace
 		return writer->getSerializedString();
 	}
 
+	std::string serializeRegistry(core::AgentTagRegistry const& registry)
+	{
+		auto writer = core::YamlSerializer::toString();
+		core::SerializationWorkData workData;
+		workData.markSerializedUnmodified = false;
+		registry.serialize(*writer, workData);
+		writer->serialize();
+		return writer->getSerializedString();
+	}
+
 	std::shared_ptr<core::Building> loadBuilding(std::filesystem::path const& path)
 	{
 		auto loaded = std::make_shared<core::Building>("Loading", 1, 1);
@@ -465,6 +475,157 @@ namespace
 		require(!building.hasAgentTagRegistryReference(),
 			"A failed registry creation attached a nonexistent registry");
 	}
+
+	void tagNamesIdentityOrderingAndNoOpEdits()
+	{
+		TemporaryDirectory temporary;
+		auto registry = core::AgentTagRegistry::create();
+		auto const path = temporary.path / "names.tags.yaml";
+		registry->saveTo(path.string());
+		auto& history = agentTagRegistryDocumentHistory(registry);
+		require(!history.isModified() && !registry->isModified(),
+			"A newly saved registry did not start clean");
+
+		std::string diagnostic;
+		require(core::AgentTag::nameIsValid("abcdefghijkl", &diagnostic),
+			"A valid twelve-character Agent tag name was refused");
+		auto const cleanYaml = serializeRegistry(*registry);
+		require(!commitAgentTagAdd(registry, "#invalid", diagnostic)
+			&& serializeRegistry(*registry) == cleanYaml
+			&& !history.canUndo() && !history.isModified() && !registry->isModified(),
+			"A refused tag submission dirtied a clean registry or created history");
+
+		auto const crew = commitAgentTagAdd(registry, "crew", diagnostic);
+		auto const night = commitAgentTagAdd(registry, "night-shift", diagnostic);
+		require(crew.value == 1 && night.value == 2
+			&& registry->getNextAgentTagId() == 3,
+			"Agent tags did not receive monotonic non-zero IDs");
+		require(history.undoCount() == 2 && agentTagRegistryIsModified(registry),
+			"Accepted tag additions did not dirty only the registry history");
+
+		auto const beforeRefusals = serializeRegistry(*registry);
+		auto const undoBeforeRefusals = history.undoCount();
+		for (auto const* invalid : { "", "#crew", "Crew", "crew_2", "-crew",
+			"crew-", "night--crew", "abcdefghijklm" })
+		{
+			require(!commitAgentTagAdd(registry, invalid, diagnostic),
+				"An invalid Agent tag name was accepted");
+		}
+		require(!commitAgentTagAdd(registry, "crew", diagnostic),
+			"A duplicate Agent tag name was accepted");
+		require(!commitAgentTagRename(registry, crew, "crew", diagnostic),
+			"An unchanged Agent tag rename was accepted");
+		require(!commitAgentTagRename(registry, crew, "#crew", diagnostic),
+			"An invalid Agent tag rename was accepted");
+		require(!commitAgentTagRename(registry, crew, "night-shift", diagnostic),
+			"A duplicate Agent tag rename was accepted");
+		require(!commitAgentTagRename(registry, core::AgentTagId{ 99 }, "ghost", diagnostic),
+			"An unknown Agent tag was renamed");
+		require(serializeRegistry(*registry) == beforeRefusals
+			&& history.undoCount() == undoBeforeRefusals,
+			"A refused or unchanged tag submission mutated state or history");
+
+		require(commitAgentTagRename(registry, crew, "zulu", diagnostic),
+			"A valid Agent tag rename was refused");
+		require(registry->getAgentTagName(crew) == "zulu"
+			&& registry->getNextAgentTagId() == 3,
+			"Rename changed an Agent tag's identity or allocator");
+		auto const alphabetical = registry->getAgentTagIdsAlphabetically();
+		require(alphabetical.size() == 2 && alphabetical[0] == night
+			&& alphabetical[1] == crew,
+			"Agent tags were not presented alphabetically");
+
+		auto const yaml = serializeRegistry(*registry);
+		auto const idOne = yaml.find("id: 1");
+		auto const idTwo = yaml.find("id: 2");
+		require(idOne != std::string::npos && idTwo != std::string::npos && idOne < idTwo,
+			"Registry serialization followed display order instead of identity order");
+
+		require(restoreAgentTagRegistrySnapshot(registry, false, &diagnostic)
+			&& registry->getAgentTagName(crew) == "crew",
+			"Registry undo did not restore the pre-rename name and identity");
+		require(restoreAgentTagRegistrySnapshot(registry, true, &diagnostic)
+			&& registry->getAgentTagName(crew) == "zulu",
+			"Registry redo did not restore the renamed tag");
+		forgetAgentTagRegistryDocument(registry);
+	}
+
+	void tagsPersistAndDeletedIdsAreNeverReused()
+	{
+		TemporaryDirectory temporary;
+		auto const path = temporary.path / "manual.tags.yaml";
+		auto registry = core::AgentTagRegistry::create();
+		registry->saveTo(path.string());
+		(void)agentTagRegistryDocumentHistory(registry);
+
+		std::string diagnostic;
+		auto const crew = commitAgentTagAdd(registry, "crew", diagnostic);
+		auto const night = commitAgentTagAdd(registry, "night-shift", diagnostic);
+		require(commitAgentTagRename(registry, crew, "day-crew", diagnostic),
+			"The manual-validation rename was refused");
+		require(saveAgentTagRegistry(registry, path.string(), &diagnostic),
+			"The edited Agent tag registry did not save");
+		require(!agentTagRegistryIsModified(registry),
+			"Saving a registry did not clear its independent dirty state");
+
+		auto reopened = core::AgentTagRegistry::loadFrom(path.string());
+		require(reopened->getAgentTagName(crew) == "day-crew"
+			&& reopened->getAgentTagName(night) == "night-shift"
+			&& reopened->getNextAgentTagId() == 3,
+			"Tag names, identities, or allocator did not survive save/load");
+		auto const alphabetical = reopened->getAgentTagIdsAlphabetically();
+		require(alphabetical.size() == 2 && alphabetical[0] == crew
+			&& alphabetical[1] == night,
+			"Reopened tags were not alphabetically presented");
+
+		require(commitAgentTagDelete(reopened, crew, diagnostic),
+			"The deletion used to test ID non-reuse was refused");
+		require(saveAgentTagRegistry(reopened, path.string(), &diagnostic),
+			"The registry did not save after deletion");
+		auto afterDelete = core::AgentTagRegistry::loadFrom(path.string());
+		require(afterDelete->getNextAgentTagId() == 3,
+			"Deleting and reopening moved the tag allocator backwards");
+		auto const replacement = afterDelete->addAgentTag("reserve");
+		require(replacement.value == 3 && replacement != crew,
+			"A deleted AgentTagId was reused");
+
+		forgetAgentTagRegistryDocument(registry);
+		forgetAgentTagRegistryDocument(reopened);
+	}
+
+	void registryDirtyStateAndCloseWarningStayIndependent()
+	{
+		TemporaryDirectory temporary;
+		auto building = std::make_shared<core::Building>("Independent", 4, 2);
+		auto const buildingPath = temporary.path / "independent.yaml";
+		building->saveTo(buildingPath.string());
+		auto registry = core::createAndAttachAgentTagRegistry(*building, buildingPath);
+		building->saveTo(buildingPath.string());
+		auto& history = agentTagRegistryDocumentHistory(registry);
+		require(!history.isModified() && !building->isModified(),
+			"Saved Building and registry documents did not start independently clean");
+
+		std::string diagnostic;
+		auto const tag = commitAgentTagAdd(registry, "crew", diagnostic);
+		require(tag && attachedAgentTagRegistryIsModified(building)
+			&& !building->isModified(),
+			"A registry edit dirtied the Building or failed to arm its close warning");
+		require(restoreAgentTagRegistrySnapshot(registry, false, &diagnostic)
+			&& !attachedAgentTagRegistryIsModified(building)
+			&& !building->isModified(),
+			"Registry undo did not return independently to its saved state");
+		require(restoreAgentTagRegistrySnapshot(registry, true, &diagnostic)
+			&& attachedAgentTagRegistryIsModified(building)
+			&& !building->isModified(),
+			"Registry redo leaked dirty state into the Building");
+
+		auto const registryPath = temporary.path / "independent.tags.yaml";
+		require(saveAgentTagRegistry(registry, registryPath.string(), &diagnostic)
+			&& !attachedAgentTagRegistryIsModified(building)
+			&& !building->isModified(),
+			"Registry Save did not operate independently from the Building");
+		forgetAgentTagRegistryDocument(registry);
+	}
 }
 
 void runAgentTagRegistrySmokeChecks()
@@ -476,4 +637,7 @@ void runAgentTagRegistrySmokeChecks()
 	duplicateUuidAndInvalidDocumentsAreTransactional();
 	refusedBuildingLoadKeepsCurrentStateAndUnloadsCandidateRegistry();
 	failedAtomicCreationLeavesNoReferenceOrFile();
+	tagNamesIdentityOrderingAndNoOpEdits();
+	tagsPersistAndDeletedIdsAreNeverReused();
+	registryDirtyStateAndCloseWarningStayIndependent();
 }
