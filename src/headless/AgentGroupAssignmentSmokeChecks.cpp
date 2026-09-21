@@ -247,11 +247,7 @@ namespace
 
 	void resetUndoHistory()
 	{
-		gUndoHistory.clear();
-		gRedoHistory.clear();
-		gCurrentStateId = 0;
-		gNextStateId = 1;
-		gSavedStateId.reset();
+		gBuildingDocumentHistory.clear();
 	}
 
 	// ---------------------------------------------------------------- checks
@@ -544,9 +540,9 @@ namespace
 			"The panel seam did not assign the Agent");
 		require(building->isModified(),
 			"Assigning an Agent to an Agent group did not mark the document modified");
-		require(gUndoHistory.size() == 1,
+		require(gBuildingDocumentHistory.undoCount() == 1,
 			"Assigning an Agent did not commit exactly one undoable document edit");
-		require(gRedoHistory.empty(), "Assigning an Agent produced a redo entry");
+		require(!gBuildingDocumentHistory.canRedo(), "Assigning an Agent produced a redo entry");
 		require(!building->isSimulationPaused(),
 			"Assigning an Agent paused the simulation");
 		require(building->getTopologyGeneration() == topologyBefore,
@@ -554,27 +550,27 @@ namespace
 
 		require(commitAgentGroupAssignment(building, alice, nightShift, diagnostic),
 			("Reassigning through the panel seam failed: " + diagnostic).c_str());
-		require(gUndoHistory.size() == 2,
+		require(gBuildingDocumentHistory.undoCount() == 2,
 			"Reassigning an Agent did not commit exactly one undoable document edit");
 
 		require(commitAgentGroupAssignment(building, alice, {}, diagnostic),
 			("Clearing through the panel seam failed: " + diagnostic).c_str());
 		require(!building->getAgentGroup(alice),
 			"Clearing through the panel seam left the Agent assigned");
-		require(gUndoHistory.size() == 3,
+		require(gBuildingDocumentHistory.undoCount() == 3,
 			"Clearing an Agent did not commit exactly one undoable document edit");
 
 		// Refused operations leave the history exactly where it was.
 		require(!commitAgentGroupAssignment(building, core::AgentId{ 4242 }, crew, diagnostic),
 			"Assigning an unknown Agent succeeded through the panel seam");
-		require(gUndoHistory.size() == 3,
+		require(gBuildingDocumentHistory.undoCount() == 3,
 			"A refused assignment committed an undo entry");
 		require(!diagnostic.empty(),
 			"An assignment refused through the panel seam failed without a diagnostic");
 
 		require(!commitAgentGroupAssignment(building, alice, core::AgentGroupId{ 31337 }, diagnostic),
 			"Assigning to an unknown Agent group succeeded through the panel seam");
-		require(gUndoHistory.size() == 3,
+		require(gBuildingDocumentHistory.undoCount() == 3,
 			"An assignment to an unknown group committed an undo entry");
 		require(!building->getAgentGroup(alice),
 			"A refused assignment changed the live Agent");
@@ -582,11 +578,11 @@ namespace
 		// Undo is a snapshot restore, so the entries themselves are the
 		// history: the newest holds the state with the assignment still on,
 		// the oldest the state before the first assignment was made.
-		require(gUndoHistory.size() == 3, "The undo stack is not the three edits made");
-		auto const beforeClear = loadBuilding(gUndoHistory.back().yaml);
+		require(gBuildingDocumentHistory.undoCount() == 3, "The undo stack is not the three edits made");
+		auto const beforeClear = loadBuilding(gBuildingDocumentHistory.undoEntries().back().yaml);
 		require(beforeClear->getAgentGroup(alice) == nightShift,
 			"The newest undo snapshot did not hold the state before the clearing");
-		auto const beforeFirst = loadBuilding(gUndoHistory.front().yaml);
+		auto const beforeFirst = loadBuilding(gBuildingDocumentHistory.undoEntries().front().yaml);
 		require(!beforeFirst->getAgentGroup(alice),
 			"The oldest undo snapshot already carried the first assignment");
 
@@ -863,8 +859,8 @@ namespace
 			"The <none> row did not clear the assignment");
 		// One edit per pick, the clearing included: five choices made, five
 		// entries on the stack, no more.
-		require(gUndoHistory.size() == picks.size() + 1,
-			"The hash-pair picks committed " + std::to_string(gUndoHistory.size())
+		require(gBuildingDocumentHistory.undoCount() == picks.size() + 1,
+			"The hash-pair picks committed " + std::to_string(gBuildingDocumentHistory.undoCount())
 				+ " undoable edits, expected " + std::to_string(picks.size() + 1));
 
 		// A rename that adds another pair shows up in the preview whole, the

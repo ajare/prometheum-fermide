@@ -2245,38 +2245,33 @@ namespace
 		gLayerNameEdits.clear();
 		resetAgentGroupsPanelState();
 		gUISettings.worldPaused = false;
-		if (clearHistory)
-		{
-			gUndoHistory.clear();
-			gRedoHistory.clear();
-			gCurrentStateId = 0;
-			gNextStateId = 1;
-			gSavedStateId.reset();
-		}
+		if (clearHistory) gBuildingDocumentHistory.clear();
 	}
 
 	bool restoreDocumentSnapshot(shared_ptr<core::Building>& building, bool redo)
 	{
-		auto& source = redo ? gRedoHistory : gUndoHistory;
-		auto& destination = redo ? gUndoHistory : gRedoHistory;
-		if (!building || source.empty()) return false;
+		if (!building || (redo ? !gBuildingDocumentHistory.canRedo()
+			: !gBuildingDocumentHistory.canUndo())) return false;
 
 		auto current = captureDocumentSnapshot(building);
 		if (!current) return false;
 		try
 		{
-			auto const& target = source.back();
-			auto loaded = make_shared<core::Building>("Loading", 1, 1);
-			auto serializer = core::YamlSerializer::fromString(target.yaml);
-			serializer->deserialize();
-			core::SerializationWorkData workData;
-			loaded->deserialize(*serializer, workData);
-			if (!gSavedStateId || target.stateId != *gSavedStateId) loaded->markModified();
+			shared_ptr<core::Building> loaded;
+			auto restore = [&loaded](DocumentSnapshot const& target)
+			{
+				loaded = make_shared<core::Building>("Loading", 1, 1);
+				auto serializer = core::YamlSerializer::fromString(target.yaml);
+				serializer->deserialize();
+				core::SerializationWorkData workData;
+				return loaded->deserialize(*serializer, workData);
+			};
+			auto const restored = redo
+				? gBuildingDocumentHistory.redo(std::move(current), restore)
+				: gBuildingDocumentHistory.undo(std::move(current), restore);
+			if (!restored) return false;
+			if (gBuildingDocumentHistory.isModified()) loaded->markModified();
 
-			destination.push_back(std::move(*current));
-			if (destination.size() > MaximumUndoHistory) destination.pop_front();
-			gCurrentStateId = target.stateId;
-			source.pop_back();
 			building = std::move(loaded);
 			clearDocumentState(false);
 			setWorldPaused(building, true);
@@ -2292,7 +2287,7 @@ namespace
 
 	bool isDocumentStale(shared_ptr<core::Building> const& building)
 	{
-		return building && building->isModified();
+		return building && (building->isModified() || gBuildingDocumentHistory.isModified());
 	}
 
 	void reportFileError(string message)
@@ -2338,7 +2333,7 @@ namespace
 			// and replaced the destination; any error leaves it dirty.
 			building->saveTo(filepath);
 			gBuildingFilepath = std::move(filepath);
-			gSavedStateId = gCurrentStateId;
+			gBuildingDocumentHistory.markSaved();
 			core::addLogMessage("File", 0, core::LogLevel::Info,
 				"Saved Building to " + gBuildingFilepath);
 			return true;
@@ -2386,7 +2381,7 @@ namespace
 			gBuildingFilepath = normalized;
 			addRecentFile(gBuildingFilepath);
 			clearDocumentState();
-			gSavedStateId = gCurrentStateId;
+			gBuildingDocumentHistory.markSaved();
 			setWorldPaused(building, true);
 			core::addLogMessage("File", 0, core::LogLevel::Info,
 				"Opened Building from " + gBuildingFilepath);
@@ -4466,10 +4461,10 @@ void renderMenu(shared_ptr<core::Building>& building)
 		if (ImGui::BeginMenu("Edit"))
 		{
 			if (ImGui::MenuItem("Undo", "Ctrl+Z", false,
-				building != nullptr && !gUndoHistory.empty()))
+				building != nullptr && gBuildingDocumentHistory.canUndo()))
 				restoreDocumentSnapshot(building, false);
 			if (ImGui::MenuItem("Redo", "Ctrl+Y", false,
-				building != nullptr && !gRedoHistory.empty()))
+				building != nullptr && gBuildingDocumentHistory.canRedo()))
 				restoreDocumentSnapshot(building, true);
 			ImGui::Separator();
 			bool const canCopy = building != nullptr && hasClipboardSelection();
@@ -4599,13 +4594,13 @@ void renderDocumentToolbar(shared_ptr<core::Building>& building)
 	ImGui::EndDisabled();
 
 	ImGui::SameLine(0.0f, style.ItemSpacing.x * 2.0f);
-	ImGui::BeginDisabled(building == nullptr || gUndoHistory.empty());
+	ImGui::BeginDisabled(building == nullptr || !gBuildingDocumentHistory.canUndo());
 	if (ImGui::Button(ICON_FA_UNDO "##Undo")) restoreDocumentSnapshot(building, false);
 	if (ImGui::IsItemHovered()) ImGui::SetTooltip("Undo (Ctrl+Z)");
 	ImGui::EndDisabled();
 
 	ImGui::SameLine();
-	ImGui::BeginDisabled(building == nullptr || gRedoHistory.empty());
+	ImGui::BeginDisabled(building == nullptr || !gBuildingDocumentHistory.canRedo());
 	if (ImGui::Button(ICON_FA_REDO "##Redo")) restoreDocumentSnapshot(building, true);
 	if (ImGui::IsItemHovered()) ImGui::SetTooltip("Redo (Ctrl+Y)");
 	ImGui::EndDisabled();

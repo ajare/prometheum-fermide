@@ -136,11 +136,7 @@ namespace
 
 	void resetUndoHistory()
 	{
-		gUndoHistory.clear();
-		gRedoHistory.clear();
-		gCurrentStateId = 0;
-		gNextStateId = 1;
-		gSavedStateId.reset();
+		gBuildingDocumentHistory.clear();
 	}
 
 	// ---------------------------------------------------------------- checks
@@ -502,9 +498,9 @@ namespace
 			"The panel seam did not trim the new Agent group name");
 		require(building->isModified(),
 			"Adding an Agent group did not mark the document modified");
-		require(gUndoHistory.size() == 1,
+		require(gBuildingDocumentHistory.undoCount() == 1,
 			"Adding an Agent group did not commit exactly one undoable document edit");
-		require(gRedoHistory.empty(), "Adding an Agent group produced a redo entry");
+		require(!gBuildingDocumentHistory.canRedo(), "Adding an Agent group produced a redo entry");
 		require(!building->isSimulationPaused(),
 			"Adding an Agent group paused the simulation");
 		require(building->getTopologyGeneration() == topologyBefore,
@@ -512,34 +508,34 @@ namespace
 
 		require(commitAgentGroupRename(building, added, "Response", diagnostic),
 			("Renaming an Agent group through the panel seam failed: " + diagnostic).c_str());
-		require(gUndoHistory.size() == 2,
+		require(gBuildingDocumentHistory.undoCount() == 2,
 			"Renaming an Agent group did not commit exactly one undoable document edit");
 
 		// Refused operations leave the history exactly where it was.
 		require(!commitAgentGroupAdd(building, "Response", diagnostic),
 			"A duplicate Agent group name was accepted through the panel seam");
-		require(gUndoHistory.size() == 2,
+		require(gBuildingDocumentHistory.undoCount() == 2,
 			"A refused Agent group add committed an undo entry");
 
 		require(!commitAgentGroupRename(building, core::AgentGroupId{ 4242 }, "Ghost", diagnostic),
 			"Renaming an unknown Agent group succeeded through the panel seam");
-		require(gUndoHistory.size() == 2,
+		require(gBuildingDocumentHistory.undoCount() == 2,
 			"A refused Agent group rename committed an undo entry");
 
 		require(!commitAgentGroupAdd(building, "   ", diagnostic),
 			"A blank Agent group name was accepted through the panel seam");
-		require(gUndoHistory.size() == 2,
+		require(gBuildingDocumentHistory.undoCount() == 2,
 			"A blank Agent group add committed an undo entry");
 
 		// Undo is a snapshot restore, so the entries themselves are the
 		// history: the newest holds the state before the rename, the oldest
 		// the state before the group existed at all.
-		require(gUndoHistory.size() == 2, "The undo stack is not the two edits made");
-		auto const beforeRename = loadBuilding(gUndoHistory.back().yaml);
+		require(gBuildingDocumentHistory.undoCount() == 2, "The undo stack is not the two edits made");
+		auto const beforeRename = loadBuilding(gBuildingDocumentHistory.undoEntries().back().yaml);
 		require(beforeRename->getAgentGroupCount() == 1
 			&& beforeRename->getAgentGroupName(added) == "Response team",
 			"The undo snapshot did not hold the state before the rename");
-		auto const beforeAdd = loadBuilding(gUndoHistory.front().yaml);
+		auto const beforeAdd = loadBuilding(gBuildingDocumentHistory.undoEntries().front().yaml);
 		require(beforeAdd->getAgentGroupCount() == 0,
 			"The oldest undo snapshot still carried the added Agent group");
 

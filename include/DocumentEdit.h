@@ -1,37 +1,23 @@
 #pragma once
 
-// Document-level undo/redo edit state, shared between the GUI and the headless
-// smoke checks. Ticket #99: the Door panel moved into DoorPanel.cpp is compiled
-// into both the GUI executable and the headless binary, and it commits its
-// edits through captureDocumentSnapshot()/commitDocumentEdit(); those, and the
-// history they append to, live here rather than in UI.cpp's anonymous namespace
-// so both links see the same definitions.
+// Building snapshot integration for the reusable per-document history. The GUI
+// currently owns one Building document; external editor documents can own
+// separate DocumentHistory instances without sharing stacks or saved state.
 
-#include <cstddef>
-#include <cstdint>
-#include <deque>
 #include <memory>
 #include <optional>
-#include <string>
+
+#include "DocumentHistory.h"
 
 namespace core
 {
 	class Building;
 }
 
-struct DocumentSnapshot
-{
-	std::string yaml;
-	uint64_t stateId{ 0 };
-};
-
-constexpr size_t MaximumUndoHistory{ 100 };
-extern std::deque<DocumentSnapshot> gUndoHistory;
-extern std::deque<DocumentSnapshot> gRedoHistory;
-extern uint64_t gCurrentStateId;
-extern uint64_t gNextStateId;
-extern std::optional<uint64_t> gSavedStateId;
+extern DocumentHistory gBuildingDocumentHistory;
 
 std::optional<DocumentSnapshot> captureDocumentSnapshot(
-	std::shared_ptr<const core::Building> const& building);
-void commitDocumentEdit(std::optional<DocumentSnapshot> snapshot);
+	std::shared_ptr<const core::Building> const& building,
+	DocumentHistory const& history = gBuildingDocumentHistory);
+void commitDocumentEdit(std::optional<DocumentSnapshot> snapshot,
+	DocumentHistory& history = gBuildingDocumentHistory);

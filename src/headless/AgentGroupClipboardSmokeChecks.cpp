@@ -71,15 +71,11 @@ namespace
 		if (!condition) throw std::runtime_error(message);
 	}
 
-	// The editor's undo stacks are process-wide, so every check starts from a
-	// clean pair rather than whatever the check before it left.
+	// The shared Building history outlives each check, so every check starts
+	// from a clean instance rather than whatever the check before it left.
 	void resetUndoHistory()
 	{
-		gUndoHistory.clear();
-		gRedoHistory.clear();
-		gCurrentStateId = 0;
-		gNextStateId = 1;
-		gSavedStateId.reset();
+		gBuildingDocumentHistory.clear();
 	}
 
 	// The editor's own undo and redo, the same shape as UI.cpp's
@@ -87,24 +83,23 @@ namespace
 	// and the newest snapshot on the source stack becomes the live Building.
 	void restoreDocument(std::shared_ptr<core::Building>& building, bool redo)
 	{
-		auto& source = redo ? gRedoHistory : gUndoHistory;
-		auto& destination = redo ? gUndoHistory : gRedoHistory;
-		require(!source.empty(), redo ? "There is no redo entry to restore"
-			: "There is no undo entry to restore");
-
 		auto const current = captureDocumentSnapshot(building);
 		require(current.has_value(), "The live document could not be captured");
 
-		auto const target = source.back();
-		source.pop_back();
-		destination.push_back(std::move(*current));
-		gCurrentStateId = target.stateId;
-
-		auto loaded = std::make_shared<core::Building>("Restored Building", 1, 1);
-		core::SerializationWorkData workData;
-		auto reader = core::YamlSerializer::fromString(target.yaml);
-		reader->deserialize();
-		require(loaded->deserialize(*reader, workData), "The undo snapshot did not reload");
+		std::shared_ptr<core::Building> loaded;
+		auto restore = [&loaded](DocumentSnapshot const& target)
+		{
+			loaded = std::make_shared<core::Building>("Restored Building", 1, 1);
+			core::SerializationWorkData workData;
+			auto reader = core::YamlSerializer::fromString(target.yaml);
+			reader->deserialize();
+			return loaded->deserialize(*reader, workData);
+		};
+		auto const restored = redo
+			? gBuildingDocumentHistory.redo(current, restore)
+			: gBuildingDocumentHistory.undo(current, restore);
+		require(restored, redo ? "There is no redo entry to restore"
+			: "There is no undo entry to restore");
 		building = std::move(loaded);
 	}
 
@@ -394,7 +389,7 @@ namespace
 			"A refused clipboard payload placed an Agent");
 		require(world.building->getAgentGroupCount() == 0,
 			"A refused clipboard payload created an Agent group");
-		require(gUndoHistory.empty(),
+		require(!gBuildingDocumentHistory.canUndo(),
 			"A refused clipboard payload committed an undo entry");
 	}
 
@@ -426,7 +421,7 @@ namespace
 			"The destination ended up with two groups named Crew");
 		require(world.building->getAgentGroupMemberCount(crew) == 2,
 			"The reused group does not count the pasted Agent");
-		require(gUndoHistory.size() == 1,
+		require(gBuildingDocumentHistory.undoCount() == 1,
 			"A paste is one document edit");
 	}
 
@@ -485,7 +480,7 @@ namespace
 			"The paste did not add exactly one Agent");
 		require(world.building->lookupAgent(placed).entity->getFlags() == 3,
 			"The pasted Agent lost the flags its payload carried");
-		require(gUndoHistory.size() == 1,
+		require(gBuildingDocumentHistory.undoCount() == 1,
 			"A paste that creates a group is one document edit, not several");
 	}
 
@@ -511,7 +506,7 @@ namespace
 			"Arming a paste created an Agent");
 		require(world.building->getAgentGroupCount() == 0,
 			"Arming a paste created an Agent group");
-		require(gUndoHistory.empty(), "Arming a paste committed an undo entry");
+		require(!gBuildingDocumentHistory.canUndo(), "Arming a paste committed an undo entry");
 	}
 
 	// A cancelled fall is a dropped struct: there is nothing left that could
@@ -539,7 +534,7 @@ namespace
 			"Cancelling a paste created an Agent");
 		require(world.building->getAgentGroupCount() == 0,
 			"Cancelling a paste created an Agent group");
-		require(gUndoHistory.empty(), "Cancelling a paste committed an undo entry");
+		require(!gBuildingDocumentHistory.canUndo(), "Cancelling a paste committed an undo entry");
 
 		core::AgentId placed{};
 		require(!commitPendingAgentPlacement(pending, world.building, placed, diagnostic),
@@ -549,7 +544,7 @@ namespace
 			"Landing a cancelled placement created an Agent");
 		require(world.building->getAgentGroupCount() == 0,
 			"Landing a cancelled placement created an Agent group");
-		require(gUndoHistory.empty(), "Landing a cancelled placement committed an undo entry");
+		require(!gBuildingDocumentHistory.canUndo(), "Landing a cancelled placement committed an undo entry");
 	}
 
 	// A placement that cannot be performed is refused whole. The Agent is
@@ -576,14 +571,14 @@ namespace
 			"A failed placement added an Agent anyway");
 		require(world.building->getAgentGroupCount() == 0,
 			"A failed placement created the Agent group the payload named");
-		require(gUndoHistory.empty(), "A failed placement committed an undo entry");
+		require(!gBuildingDocumentHistory.canUndo(), "A failed placement committed an undo entry");
 
 		// The same refusal for a placement with nothing to place into.
 		resetUndoHistory();
 		require(!commitAgentPlacement(world.building, payload, nullptr, 0, 1.0f,
 			placed, diagnostic), "A placement with no sector was accepted");
 		require(!diagnostic.empty(), "A placement with no sector reported no reason");
-		require(gUndoHistory.empty(),
+		require(!gBuildingDocumentHistory.canUndo(),
 			"A placement with no sector committed an undo entry");
 
 		resetUndoHistory();
@@ -639,7 +634,7 @@ namespace
 			"An invalid clipboard Agent group name created a group anyway");
 		require(agentCount(*world.building) == 0,
 			"A refused Agent group name still placed an Agent");
-		require(gUndoHistory.empty(),
+		require(!gBuildingDocumentHistory.canUndo(),
 			"An invalid clipboard Agent group name committed an undo entry");
 	}
 
@@ -659,7 +654,7 @@ namespace
 		auto const placed = place(world.building, payload,
 			world.building->getSector(world.room), 0, 1.5f);
 		auto const created = findGroupNamed(*world.building, "Welders");
-		require(gUndoHistory.size() == 1, "The paste committed one undo entry");
+		require(gBuildingDocumentHistory.undoCount() == 1, "The paste committed one undo entry");
 
 		restoreDocument(world.building, false);
 

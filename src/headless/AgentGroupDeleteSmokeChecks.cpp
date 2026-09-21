@@ -231,11 +231,7 @@ namespace
 
 	void resetUndoHistory()
 	{
-		gUndoHistory.clear();
-		gRedoHistory.clear();
-		gCurrentStateId = 0;
-		gNextStateId = 1;
-		gSavedStateId.reset();
+		gBuildingDocumentHistory.clear();
 	}
 
 	// ---------------------------------------------------------------- world
@@ -308,25 +304,25 @@ namespace
 	// the newest snapshot on the source stack becomes the live Building.
 	void restoreDocument(std::shared_ptr<core::Building>& building, bool redo)
 	{
-		auto& source = redo ? gRedoHistory : gUndoHistory;
-		auto& destination = redo ? gUndoHistory : gRedoHistory;
-		require(!source.empty(), redo ? "There is no redo entry to restore"
-			: "There is no undo entry to restore");
-
 		auto const current = captureDocumentSnapshot(building);
 		require(current.has_value(), "The live document could not be captured");
 
-		auto const target = source.back();
-		source.pop_back();
-		destination.push_back(std::move(*current));
-		gCurrentStateId = target.stateId;
-
-		auto loaded = std::make_shared<core::Building>("Restored Building", 1, 1);
-		core::SerializationWorkData workData;
-		auto reader = core::YamlSerializer::fromString(target.yaml);
-		reader->deserialize();
-		require(loaded->deserialize(*reader, workData), "The undo snapshot did not reload");
-		loaded->markModified();
+		std::shared_ptr<core::Building> loaded;
+		auto restore = [&loaded](DocumentSnapshot const& target)
+		{
+			loaded = std::make_shared<core::Building>("Restored Building", 1, 1);
+			core::SerializationWorkData workData;
+			auto reader = core::YamlSerializer::fromString(target.yaml);
+			reader->deserialize();
+			if (!loaded->deserialize(*reader, workData)) return false;
+			loaded->markModified();
+			return true;
+		};
+		auto const restored = redo
+			? gBuildingDocumentHistory.redo(current, restore)
+			: gBuildingDocumentHistory.undo(current, restore);
+		require(restored, redo ? "There is no redo entry to restore"
+			: "There is no undo entry to restore");
 		building = std::move(loaded);
 		// The same reset the editor performs when the document underneath the
 		// panels is replaced.
@@ -615,9 +611,9 @@ namespace
 			"An empty Agent group asked for through the panel seam was not deleted");
 		require(!agentGroupDeletePending(),
 			"Deleting an empty Agent group left a confirmation armed");
-		require(gUndoHistory.size() == 1,
+		require(gBuildingDocumentHistory.undoCount() == 1,
 			"Deleting an empty Agent group did not commit exactly one document edit");
-		require(gRedoHistory.empty(),
+		require(!gBuildingDocumentHistory.canRedo(),
 			"Deleting an empty Agent group produced a redo entry");
 		require(groupSummary(*building) == "2:Crew=4;3:Delta=0;",
 			"Deleting an empty Agent group disturbed the others: " + groupSummary(*building));
@@ -644,7 +640,7 @@ namespace
 
 		auto const groupsBefore = groupSummary(*building);
 		auto const assignmentsBefore = assignmentSummary(*building);
-		auto const historyBefore = gUndoHistory.size();
+		auto const historyBefore = gBuildingDocumentHistory.undoCount();
 
 		requestAgentGroupDelete(building, fixture.crew);
 
@@ -667,9 +663,9 @@ namespace
 			"Arming a confirmation changed the member count");
 		require(!building->isModified(),
 			"Arming a confirmation marked the document modified");
-		require(gUndoHistory.size() == historyBefore,
+		require(gBuildingDocumentHistory.undoCount() == historyBefore,
 			"Arming a confirmation committed a document edit");
-		require(gRedoHistory.empty(),
+		require(!gBuildingDocumentHistory.canRedo(),
 			"Arming a confirmation produced a redo entry");
 	}
 
@@ -708,11 +704,11 @@ namespace
 		}
 		require(!building->isModified(),
 			"Cancelling an Agent group deletion marked the document modified");
-		require(gUndoHistory.empty(),
+		require(!gBuildingDocumentHistory.canUndo(),
 			"Cancelling an Agent group deletion committed an undo entry");
-		require(gRedoHistory.empty(),
+		require(!gBuildingDocumentHistory.canRedo(),
 			"Cancelling an Agent group deletion committed a redo entry");
-		require(gCurrentStateId == 0,
+		require(gBuildingDocumentHistory.currentStateId() == 0,
 			"Cancelling an Agent group deletion moved the document's state id");
 
 		// And the panel is clean enough to ask again, with the same answer.
@@ -720,7 +716,7 @@ namespace
 		require(agentGroupDeletePending(),
 			"A second Agent group delete could not be armed after a cancel");
 		cancelPendingAgentGroupDelete();
-		require(gUndoHistory.empty(),
+		require(!gBuildingDocumentHistory.canUndo(),
 			"A second cancelled Agent group deletion committed an undo entry");
 	}
 
@@ -745,9 +741,9 @@ namespace
 			"The confirmation stayed armed after it was answered with a delete");
 		require(!building->lookupAgentGroup(fixture.crew),
 			"The confirmed Agent group is still in the Building");
-		require(gUndoHistory.size() == 1,
+		require(gBuildingDocumentHistory.undoCount() == 1,
 			"A confirmed Agent group deletion was not exactly one document edit");
-		require(gRedoHistory.empty(),
+		require(!gBuildingDocumentHistory.canRedo(),
 			"A confirmed Agent group deletion produced a redo entry");
 		require(building->isModified(),
 			"A confirmed Agent group deletion did not mark the document modified");
@@ -767,7 +763,7 @@ namespace
 		// The newest - and only - undo snapshot is the state with the group
 		// and its four members still in place, which is what makes the whole
 		// deletion one step to step back.
-		auto const before = loadBuilding(gUndoHistory.back().yaml);
+		auto const before = loadBuilding(gBuildingDocumentHistory.undoEntries().back().yaml);
 		require(before->getAgentGroupCount() == 3,
 			"The undo snapshot did not hold the state before the deletion: "
 			+ groupSummary(*before));
@@ -794,7 +790,7 @@ namespace
 		require(groupSummary(*building) == before,
 			"A confirmation with nothing armed changed the groups: "
 			+ groupSummary(*building));
-		require(gUndoHistory.empty(),
+		require(!gBuildingDocumentHistory.canUndo(),
 			"A confirmation with nothing armed committed an undo entry");
 	}
 
@@ -819,7 +815,7 @@ namespace
 			"Committing a delete for the empty AgentGroupId succeeded");
 		require(groupSummary(*building) == before,
 			"A refused delete changed the groups: " + groupSummary(*building));
-		require(gUndoHistory.empty(),
+		require(!gBuildingDocumentHistory.canUndo(),
 			"A refused delete committed an undo entry");
 		require(!building->isModified(),
 			"A refused delete marked the document modified");
@@ -837,7 +833,7 @@ namespace
 			"Confirming after the request was dropped reported a deletion");
 		require(groupSummary(*building) == before,
 			"A dropped delete request changed the groups: " + groupSummary(*building));
-		require(gUndoHistory.empty(),
+		require(!gBuildingDocumentHistory.canUndo(),
 			"A dropped delete request committed an undo entry");
 	}
 
@@ -1184,7 +1180,7 @@ namespace
 		std::string diagnostic;
 		require(commitAgentGroupDelete(building, fixture.crew, diagnostic),
 			("Committing the Agent group delete to undo failed: " + diagnostic).c_str());
-		require(gUndoHistory.size() == 1,
+		require(gBuildingDocumentHistory.undoCount() == 1,
 			"The delete is not one undo entry, so undo cannot restore one step");
 		auto const postDeleteYaml = serializeBuilding(*building);
 

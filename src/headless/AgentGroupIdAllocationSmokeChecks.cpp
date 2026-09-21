@@ -210,11 +210,7 @@ namespace
 
 	void resetUndoHistory()
 	{
-		gUndoHistory.clear();
-		gRedoHistory.clear();
-		gCurrentStateId = 0;
-		gNextStateId = 1;
-		gSavedStateId.reset();
+		gBuildingDocumentHistory.clear();
 	}
 
 	// The editor's own undo and redo, the same shape as UI.cpp's
@@ -222,21 +218,21 @@ namespace
 	// the newest snapshot on the source stack becomes the live Building.
 	void stepDocument(std::shared_ptr<core::Building>& building, bool redo)
 	{
-		auto& source = redo ? gRedoHistory : gUndoHistory;
-		auto& destination = redo ? gUndoHistory : gRedoHistory;
-		require(!source.empty(), redo ? "There is no redo entry to restore"
-			: "There is no undo entry to restore");
-
 		auto const current = captureDocumentSnapshot(building);
 		require(current.has_value(), "The live document could not be captured");
 
-		auto const target = source.back();
-		source.pop_back();
-		destination.push_back(std::move(*current));
-		gCurrentStateId = target.stateId;
-
-		auto loaded = loadBuilding(target.yaml);
-		loaded->markModified();
+		std::shared_ptr<core::Building> loaded;
+		auto restore = [&loaded](DocumentSnapshot const& target)
+		{
+			loaded = loadBuilding(target.yaml);
+			loaded->markModified();
+			return true;
+		};
+		auto const restored = redo
+			? gBuildingDocumentHistory.redo(current, restore)
+			: gBuildingDocumentHistory.undo(current, restore);
+		require(restored, redo ? "There is no redo entry to restore"
+			: "There is no undo entry to restore");
 		building = std::move(loaded);
 		resetAgentGroupsPanelState();
 	}
@@ -679,14 +675,14 @@ namespace
 		auto building = loadBuilding(exhaustedDocument());
 		auto const before = groupSummary(*building);
 		building->markSaved();
-		auto const historyBefore = gUndoHistory.size();
+		auto const historyBefore = gBuildingDocumentHistory.undoCount();
 
 		std::string diagnostic;
 		auto const refused = commitAgentGroupAdd(building, "Too many", diagnostic);
 		require(!static_cast<bool>(refused),
 			"The panel created an Agent group in an exhausted Building");
 		require(!diagnostic.empty(), "The panel refused an Agent group without a diagnostic");
-		require(gUndoHistory.size() == historyBefore,
+		require(gBuildingDocumentHistory.undoCount() == historyBefore,
 			"A refused Agent group still reached the undo history");
 		require(groupSummary(*building) == before,
 			"A refused Agent group changed the Building: " + groupSummary(*building));

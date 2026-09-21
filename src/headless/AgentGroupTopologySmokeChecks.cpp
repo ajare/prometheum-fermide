@@ -226,31 +226,27 @@ namespace
 	// the newest snapshot on the source stack becomes the live Building.
 	void restoreDocument(std::shared_ptr<core::Building>& building, bool redo)
 	{
-		auto& source = redo ? gRedoHistory : gUndoHistory;
-		auto& destination = redo ? gUndoHistory : gRedoHistory;
-		require(!source.empty(), redo ? "There is no redo entry to restore"
-			: "There is no undo entry to restore");
-
 		auto const current = captureDocumentSnapshot(building);
 		require(current.has_value(), "The live document could not be captured");
 
-		auto const target = source.back();
-		source.pop_back();
-		destination.push_back(std::move(*current));
-		gCurrentStateId = target.stateId;
-
-		auto loaded = loadBuilding(target.yaml);
-		loaded->markModified();
+		std::shared_ptr<core::Building> loaded;
+		auto restore = [&loaded](DocumentSnapshot const& target)
+		{
+			loaded = loadBuilding(target.yaml);
+			loaded->markModified();
+			return true;
+		};
+		auto const restored = redo
+			? gBuildingDocumentHistory.redo(current, restore)
+			: gBuildingDocumentHistory.undo(current, restore);
+		require(restored, redo ? "There is no redo entry to restore"
+			: "There is no undo entry to restore");
 		building = std::move(loaded);
 	}
 
 	void resetUndoHistory()
 	{
-		gUndoHistory.clear();
-		gRedoHistory.clear();
-		gCurrentStateId = 0;
-		gNextStateId = 1;
-		gSavedStateId.reset();
+		gBuildingDocumentHistory.clear();
 	}
 
 	// ---------------------------------------------------------------- checks
@@ -532,8 +528,8 @@ namespace
 		require(plan.valid, "The Location move plan was refused: " + plan.diagnostic);
 		building->applyLocationEdit(plan);
 		commitDocumentEdit(snapshot);
-		require(gUndoHistory.size() == 1, "The topology edit did not commit one undo entry");
-		require(gRedoHistory.empty(), "The topology edit produced a redo entry");
+		require(gBuildingDocumentHistory.undoCount() == 1, "The topology edit did not commit one undo entry");
+		require(!gBuildingDocumentHistory.canRedo(), "The topology edit produced a redo entry");
 		expectAssignments(*building, expectedOf(crew), bothGroups(crew),
 			"after the edit, before undoing it");
 

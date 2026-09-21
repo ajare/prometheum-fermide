@@ -158,6 +158,8 @@ add_library(prometheum-fermide-core STATIC
     ${PF_CORE_HEADERS}
     src/RecentFiles.cpp
     include/RecentFiles.h
+    src/DocumentHistory.cpp
+    include/DocumentHistory.h
 )
 target_compile_features(prometheum-fermide-core PUBLIC cxx_std_20)
 target_compile_definitions(prometheum-fermide-core PUBLIC YAML_CPP_STATIC_DEFINE)
@@ -203,6 +205,7 @@ add_executable(prometheum-fermide-headless
     src/headless/AgentActivationSmokeChecks.cpp
     src/headless/DoorPanelScopeSmokeChecks.cpp
     src/headless/DoorTwoSidedButtonSmokeChecks.cpp
+    src/headless/DocumentHistorySmokeChecks.cpp
     src/headless/BackgroundSectorSmokeChecks.cpp
     src/headless/EditorLayerSmokeChecks.cpp
     src/headless/DoorOpenApartRenderSmokeChecks.cpp

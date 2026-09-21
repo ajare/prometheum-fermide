@@ -1,4 +1,4 @@
-// Document-level undo/redo edit state; see include/DocumentEdit.h.
+// Building snapshot integration; see include/DocumentEdit.h.
 
 #include "DocumentEdit.h"
 
@@ -11,14 +11,10 @@
 
 using namespace std;
 
-deque<DocumentSnapshot> gUndoHistory;
-deque<DocumentSnapshot> gRedoHistory;
-uint64_t gCurrentStateId{ 0 };
-uint64_t gNextStateId{ 1 };
-optional<uint64_t> gSavedStateId;
+DocumentHistory gBuildingDocumentHistory;
 
 optional<DocumentSnapshot> captureDocumentSnapshot(
-	shared_ptr<const core::Building> const& building)
+	shared_ptr<const core::Building> const& building, DocumentHistory const& history)
 {
 	if (!building) return nullopt;
 	try
@@ -28,7 +24,7 @@ optional<DocumentSnapshot> captureDocumentSnapshot(
 		workData.markSerializedUnmodified = false;
 		building->serialize(*serializer, workData);
 		serializer->serialize();
-		return DocumentSnapshot{ serializer->getSerializedString(), gCurrentStateId };
+		return history.capture(serializer->getSerializedString());
 	}
 	catch (std::exception const& error)
 	{
@@ -38,11 +34,7 @@ optional<DocumentSnapshot> captureDocumentSnapshot(
 	}
 }
 
-void commitDocumentEdit(optional<DocumentSnapshot> snapshot)
+void commitDocumentEdit(optional<DocumentSnapshot> snapshot, DocumentHistory& history)
 {
-	if (!snapshot) return;
-	gUndoHistory.push_back(std::move(*snapshot));
-	if (gUndoHistory.size() > MaximumUndoHistory) gUndoHistory.pop_front();
-	gRedoHistory.clear();
-	gCurrentStateId = gNextStateId++;
+	history.commit(std::move(snapshot));
 }
