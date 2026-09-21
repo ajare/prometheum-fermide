@@ -646,6 +646,43 @@ namespace core
 		void rebuildFromConstructionRecords(std::vector<ConstructionRecord> records,
 			uint32_t movedSectorIndex = ~0u, int deltaX = 0, int deltaY = 0);
 
+		// What a reset/replay path keeps of a live Agent so the Agent can be put
+		// back once the replay is done. The Agent group assignment belongs to what
+		// is kept: an edit that keeps an Agent keeps how it is classified (#122).
+		// The Sector the Agent was standing in travels with it because the edits
+		// decide which Agents they shift or drop by where those Agents were, not
+		// by where they land afterwards.
+		struct CarriedAgent
+		{
+			AgentId id;
+			std::string name;
+			uint32_t flags{ 0 };
+			uint32_t sectorIndex{ 0 };
+			uint32_t layer{ 0 };
+			Vector2 position{};
+			AgentGroupId agentGroup{};
+		};
+
+		// Captures every Agent that stands in a Sector. A path adjusts the carried
+		// Layer, position or membership for the edit it is about to replay, then
+		// hands the result to restoreCarriedAgents().
+		std::vector<CarriedAgent> captureAgentsForReplay() const;
+
+		// Puts carried Agents back into the rebuilt Building. One that no longer
+		// has somewhere legal to stand is left behind - that is the edit's own
+		// casualty, and it stops counting towards its group - and one that comes
+		// back comes back assigned to the same Agent group, provided this Building
+		// still owns that group, so no replay can leave a dangling assignment.
+		//
+		// `landingChecked` re-judges the floor under each Agent before it is put
+		// back. Edits that move or remove floor beneath the Building (Layer
+		// deletion, Room and Background editing) ask for it; edits inside an
+		// unchanged footprint (Door/Window removal, object movement, plain
+		// record replay) do not, which is what each of those paths did before
+		// they shared this seam.
+		void restoreCarriedAgents(std::vector<CarriedAgent> const& carried,
+			bool landingChecked);
+
 		static std::string defaultLayerName(uint32_t layer);
 
 		struct LayerDeleteImpact

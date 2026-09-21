@@ -49,6 +49,7 @@ void runAgentGroupAssignmentSmokeChecks();
 void runAgentGroupCountSmokeChecks();
 void runAgentGroupDeleteSmokeChecks();
 void runAgentGroupClipboardSmokeChecks();
+void runAgentGroupTopologySmokeChecks();
 void runShuttleDoorQuerySmokeChecks();
 void runRenderOrderSmokeChecks();
 void runDoorOpenApartRenderSmokeChecks();
@@ -4977,6 +4978,7 @@ int main(int argc, char** argv)
 		runAgentGroupCountSmokeChecks();
 		runAgentGroupDeleteSmokeChecks();
 		runAgentGroupClipboardSmokeChecks();
+		runAgentGroupTopologySmokeChecks();
 		runRenderOrderSmokeChecks();
 		runDoorOpenApartRenderSmokeChecks();
 		runDoorOpenLeftRenderSmokeChecks();

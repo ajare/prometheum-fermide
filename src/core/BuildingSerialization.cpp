@@ -1316,6 +1316,49 @@ namespace core
 		return true;
 	}
 
+	std::vector<Building::CarriedAgent> Building::captureAgentsForReplay() const
+	{
+		vector<CarriedAgent> carried;
+		for (auto const& [id, agent] : mAgents.entries())
+		{
+			auto const* sector = agent->getSector();
+			if (!sector) continue;
+			carried.push_back(CarriedAgent{ id, agent->getName(), agent->getFlags(),
+				sector->getIndex(), sector->getLayerIndex(), agent->getGlobalPosition(),
+				agent->getAgentGroupId() });
+		}
+		return carried;
+	}
+
+	void Building::restoreCarriedAgents(std::vector<CarriedAgent> const& carried, bool landingChecked)
+	{
+		for (auto const& saved : carried)
+		{
+			auto sector = getSectorAtPosition(saved.layer, saved.position.x, saved.position.y);
+			if (!sector) continue;
+			if (landingChecked)
+			{
+				auto cellX = (uint32_t)floor(saved.position.x);
+				auto cellY = (uint32_t)floor(saved.position.y);
+				if (cellX >= mCellsWide || cellY >= mDecksHigh) continue;
+				if (isLocationLike(sector->getType())
+					&& !mLayers[saved.layer]->getCellDefinition(cellX, cellY).isTraversableOnFoot()) continue;
+			}
+			auto agent = make_unique<Agent>(saved.name);
+			agent->setFlags(saved.flags);
+			auto* raw = agent.get();
+			raw->attachToBuilding(this);
+			raw->mPosition = SectorPosition(sector.get(), saved.position - sector->getPosition());
+			// The assignment comes back with the Agent (#122), and only while this
+			// Building still owns the group: an Agent pointing at a group that is
+			// gone would be a dangling reference the save/load check refuses.
+			raw->setAgentGroupId(lookupAgentGroup(saved.agentGroup) ? saved.agentGroup : AgentGroupId{});
+			_getSector(sector->getIndex())->mAgents.insert(raw);
+			mAgents.restore(saved.id, std::move(agent));
+			mAgentIds.emplace(raw, saved.id);
+		}
+	}
+
 	void Building::rebuildFromConstructionRecords(vector<ConstructionRecord> records,
 		uint32_t movedSectorIndex, int deltaX, int deltaY)
 	{
@@ -1359,15 +1402,11 @@ namespace core
 		catch (Exception const&) { throw; }
 		catch (exception const& error) { throw BuildingException(this, error.what()); }
 
-		struct SavedAgent { AgentId id; string name; uint32_t flags; uint32_t layer; Vector2 position; };
-		vector<SavedAgent> agents;
-		for (auto const& [id, agent] : mAgents.entries())
+		auto agents = captureAgentsForReplay();
+		for (auto& carried : agents)
 		{
-			auto position = agent->getGlobalPosition();
-			if (agent->getSector() && agent->getSector()->getIndex() == movedSectorIndex)
-				position += Vector2{ (float)deltaX, (float)deltaY };
-			agents.push_back({ id, agent->getName(), agent->getFlags(),
-				agent->getSector()->getLayerIndex(), position });
+			if (carried.sectorIndex == movedSectorIndex)
+				carried.position += Vector2{ (float)deltaX, (float)deltaY };
 		}
 		resetForDeserialization(mName, mCellsWide, mDecksHigh);
 		mDeserializingConstruction = true;
@@ -1381,19 +1420,7 @@ namespace core
 		mConstructionRecords = std::move(records);
 		mSimulationPaused = true;
 		modify();
-		for (auto const& saved : agents)
-		{
-			auto sector = getSectorAtPosition(saved.layer, saved.position.x, saved.position.y);
-			if (!sector) continue;
-			auto agent = make_unique<Agent>(saved.name);
-			agent->setFlags(saved.flags);
-			auto* raw = agent.get();
-			raw->attachToBuilding(this);
-			raw->mPosition = SectorPosition(sector.get(), saved.position - sector->getPosition());
-			_getSector(sector->getIndex())->mAgents.insert(raw);
-			mAgents.restore(saved.id, std::move(agent));
-			mAgentIds.emplace(raw, saved.id);
-		}
+		restoreCarriedAgents(agents, false);
 	}
 
 	set<uint32_t> Building::thresholdLayers(SectorObjectType type, uint32_t x, uint32_t y) const
@@ -1719,25 +1746,15 @@ namespace core
 		LayerDeleteImpact impact;
 		auto records = recordsWithoutLayer(plan.layerIndex, impact);
 
-		struct SavedAgent
+		// Agents standing on the deleted Layer go with it; the rest carry forward
+		// one Layer shallower, assignments included (#122).
+		vector<CarriedAgent> agents;
+		for (auto carried : captureAgentsForReplay())
 		{
-			AgentId id;
-			string name;
-			uint32_t flags;
-			uint32_t layer;
-			Vector2 position;
-		};
-		vector<SavedAgent> agents;
-		for (auto const& [id, agent] : mAgents.entries())
-		{
-			auto const* sector = agent->getSector();
-			if (!sector) continue;
-			auto const index = sector->getIndex();
-			if (index < impact.sectorRemoved.size() && impact.sectorRemoved[index]) continue;
-			auto layer = sector->getLayerIndex();
-			if (layer > plan.layerIndex) layer -= 1;
-			agents.push_back({ id, agent->getName(), agent->getFlags(), layer,
-				agent->getGlobalPosition() });
+			if (carried.sectorIndex < impact.sectorRemoved.size()
+				&& impact.sectorRemoved[carried.sectorIndex]) continue;
+			if (carried.layer > plan.layerIndex) carried.layer -= 1;
+			agents.push_back(carried);
 		}
 
 		// Compact the Layer storage before the reset so the surviving Layers are
@@ -1758,24 +1775,7 @@ namespace core
 		mSimulationPaused = true;
 		modify();
 
-		for (auto const& saved : agents)
-		{
-			auto sector = getSectorAtPosition(saved.layer, saved.position.x, saved.position.y);
-			if (!sector) continue;
-			auto cellX = (uint32_t)floor(saved.position.x);
-			auto cellY = (uint32_t)floor(saved.position.y);
-			if (cellX >= mCellsWide || cellY >= mDecksHigh) continue;
-			if (isLocationLike(sector->getType())
-				&& !mLayers[saved.layer]->getCellDefinition(cellX, cellY).isTraversableOnFoot()) continue;
-			auto agent = make_unique<Agent>(saved.name);
-			agent->setFlags(saved.flags);
-			auto* raw = agent.get();
-			raw->attachToBuilding(this);
-			raw->mPosition = SectorPosition(sector.get(), saved.position - sector->getPosition());
-			_getSector(sector->getIndex())->mAgents.insert(raw);
-			mAgents.restore(saved.id, std::move(agent));
-			mAgentIds.emplace(raw, saved.id);
-		}
+		restoreCarriedAgents(agents, true);
 
 		return true;
 	}
@@ -3895,18 +3895,7 @@ namespace core
 			}
 		}
 
-		struct SavedAgent
-		{
-			AgentId id;
-			string name;
-			uint32_t flags;
-			uint32_t layer;
-			Vector2 position;
-		};
-		vector<SavedAgent> agents;
-		for (auto const& [id, agent] : mAgents.entries())
-			agents.push_back({ id, agent->getName(), agent->getFlags(),
-				agent->getSector()->getLayerIndex(), agent->getGlobalPosition() });
+		auto const agents = captureAgentsForReplay();
 
 		resetForDeserialization(mName, mCellsWide, mDecksHigh);
 		mDeserializingConstruction = true;
@@ -3924,19 +3913,7 @@ namespace core
 		mConstructionRecords = std::move(records);
 		mSimulationPaused = true;
 		modify();
-		for (auto const& saved : agents)
-		{
-			auto sector = getSectorAtPosition(saved.layer, saved.position.x, saved.position.y);
-			if (!sector) continue;
-			auto agent = make_unique<Agent>(saved.name);
-			agent->setFlags(saved.flags);
-			auto* raw = agent.get();
-			raw->attachToBuilding(this);
-			raw->mPosition = SectorPosition(sector.get(), saved.position - sector->getPosition());
-			_getSector(sector->getIndex())->mAgents.insert(raw);
-			mAgents.restore(saved.id, std::move(agent));
-			mAgentIds.emplace(raw, saved.id);
-		}
+		restoreCarriedAgents(agents, false);
 		return true;
 	}
 
@@ -4701,18 +4678,7 @@ namespace core
 			}
 		}
 
-		struct SavedAgent
-		{
-			AgentId id;
-			string name;
-			uint32_t flags;
-			uint32_t layer;
-			Vector2 position;
-		};
-		vector<SavedAgent> agents;
-		for (auto const& [id, agent] : mAgents.entries())
-			agents.push_back({ id, agent->getName(), agent->getFlags(),
-				agent->getSector()->getLayerIndex(), agent->getGlobalPosition() });
+		auto const agents = captureAgentsForReplay();
 
 		resetForDeserialization(mName, mCellsWide, mDecksHigh);
 		mDeserializingConstruction = true;
@@ -4730,19 +4696,7 @@ namespace core
 		mConstructionRecords = std::move(records);
 		mSimulationPaused = true;
 		modify();
-		for (auto const& saved : agents)
-		{
-			auto sector = getSectorAtPosition(saved.layer, saved.position.x, saved.position.y);
-			if (!sector) continue;
-			auto agent = make_unique<Agent>(saved.name);
-			agent->setFlags(saved.flags);
-			auto* raw = agent.get();
-			raw->attachToBuilding(this);
-			raw->mPosition = SectorPosition(sector.get(), saved.position - sector->getPosition());
-			_getSector(sector->getIndex())->mAgents.insert(raw);
-			mAgents.restore(saved.id, std::move(agent));
-			mAgentIds.emplace(raw, saved.id);
-		}
+		restoreCarriedAgents(agents, false);
 		return true;
 	}
 
@@ -4876,18 +4830,7 @@ namespace core
 		if (!prepareObjectMove(plan, records, newSectorIndex, newObjectIndex, diagnostic))
 			throw BuildingException(this, diagnostic);
 
-		struct SavedAgent
-		{
-			AgentId id;
-			string name;
-			uint32_t flags;
-			uint32_t layer;
-			Vector2 position;
-		};
-		vector<SavedAgent> agents;
-		for (auto const& [id, agent] : mAgents.entries())
-			agents.push_back({ id, agent->getName(), agent->getFlags(),
-				agent->getSector()->getLayerIndex(), agent->getGlobalPosition() });
+		auto const agents = captureAgentsForReplay();
 
 		resetForDeserialization(mName, mCellsWide, mDecksHigh);
 		mDeserializingConstruction = true;
@@ -4905,19 +4848,7 @@ namespace core
 		mConstructionRecords = std::move(records);
 		mSimulationPaused = true;
 		modify();
-		for (auto const& saved : agents)
-		{
-			auto sector = getSectorAtPosition(saved.layer, saved.position.x, saved.position.y);
-			if (!sector) continue;
-			auto agent = make_unique<Agent>(saved.name);
-			agent->setFlags(saved.flags);
-			auto* raw = agent.get();
-			raw->attachToBuilding(this);
-			raw->mPosition = SectorPosition(sector.get(), saved.position - sector->getPosition());
-			_getSector(sector->getIndex())->mAgents.insert(raw);
-			mAgents.restore(saved.id, std::move(agent));
-			mAgentIds.emplace(raw, saved.id);
-		}
+		restoreCarriedAgents(agents, false);
 		return getSector(newSectorIndex)->getObject(newObjectIndex);
 	}
 
@@ -5235,25 +5166,19 @@ namespace core
 		if (!prepareLocationEdit(plan, records, newSectorIndex, diagnostic))
 			throw BuildingException(this, diagnostic);
 
-		struct SavedAgent
+		// Agents standing in the Room being moved follow it. Every Agent carries
+		// its Agent group across the replay (#122).
+		auto agents = captureAgentsForReplay();
+		if (plan.move)
 		{
-			AgentId id;
-			string name;
-			uint32_t flags;
-			uint32_t layer;
-			Vector2 position;
-		};
-		vector<SavedAgent> agents;
-		for (auto const& [id, agent] : mAgents.entries())
-		{
-			auto position = agent->getGlobalPosition();
-			if (plan.move && agent->getSector()->getIndex() == plan.sectorIndex)
+			auto const deltaX = (float)plan.x - (float)mSectors[plan.sectorIndex]->getCellX();
+			auto const deltaY = (float)plan.y - (float)mSectors[plan.sectorIndex]->getCellY();
+			for (auto& carried : agents)
 			{
-				position.x += (float)plan.x - (float)mSectors[plan.sectorIndex]->getCellX();
-				position.y += (float)plan.y - (float)mSectors[plan.sectorIndex]->getCellY();
+				if (carried.sectorIndex != plan.sectorIndex) continue;
+				carried.position.x += deltaX;
+				carried.position.y += deltaY;
 			}
-			agents.push_back({ id, agent->getName(), agent->getFlags(),
-				agent->getSector()->getLayerIndex(), position });
 		}
 
 		resetForDeserialization(mName, mCellsWide, mDecksHigh);
@@ -5273,24 +5198,7 @@ namespace core
 		mSimulationPaused = true;
 		modify();
 
-		for (auto const& saved : agents)
-		{
-			auto sector = getSectorAtPosition(saved.layer, saved.position.x, saved.position.y);
-			if (!sector) continue;
-			auto cellX = (uint32_t)floor(saved.position.x);
-			auto cellY = (uint32_t)floor(saved.position.y);
-			if (cellX >= mCellsWide || cellY >= mDecksHigh) continue;
-			if (isLocationLike(sector->getType())
-				&& !mLayers[saved.layer]->getCellDefinition(cellX, cellY).isTraversableOnFoot()) continue;
-			auto agent = make_unique<Agent>(saved.name);
-			agent->setFlags(saved.flags);
-			auto* raw = agent.get();
-			raw->attachToBuilding(this);
-			raw->mPosition = SectorPosition(sector.get(), saved.position - sector->getPosition());
-			_getSector(sector->getIndex())->mAgents.insert(raw);
-			mAgents.restore(saved.id, std::move(agent));
-			mAgentIds.emplace(raw, saved.id);
-		}
+		restoreCarriedAgents(agents, true);
 		return newSectorIndex;
 	}
 
@@ -5473,22 +5381,9 @@ namespace core
 			throw BuildingException(this, diagnostic);
 
 		// Nothing walks a Background, but every other Agent in the Building is
-		// rebuilt with it and has to come back to the same place.
-		struct SavedAgent
-		{
-			AgentId id;
-			string name;
-			uint32_t flags;
-			uint32_t layer;
-			Vector2 position;
-		};
-		vector<SavedAgent> agents;
-		for (auto const& [id, agent] : mAgents.entries())
-		{
-			if (!agent->getSector()) continue;
-			agents.push_back({ id, agent->getName(), agent->getFlags(),
-				agent->getSector()->getLayerIndex(), agent->getGlobalPosition() });
-		}
+		// rebuilt with it and has to come back to the same place, and in the same
+		// Agent group (#122).
+		auto const agents = captureAgentsForReplay();
 
 		resetForDeserialization(mName, mCellsWide, mDecksHigh);
 		mDeserializingConstruction = true;
@@ -5503,24 +5398,7 @@ namespace core
 		mSimulationPaused = true;
 		modify();
 
-		for (auto const& saved : agents)
-		{
-			auto sector = getSectorAtPosition(saved.layer, saved.position.x, saved.position.y);
-			if (!sector) continue;
-			auto cellX = (uint32_t)floor(saved.position.x);
-			auto cellY = (uint32_t)floor(saved.position.y);
-			if (cellX >= mCellsWide || cellY >= mDecksHigh) continue;
-			if (isLocationLike(sector->getType())
-				&& !mLayers[saved.layer]->getCellDefinition(cellX, cellY).isTraversableOnFoot()) continue;
-			auto agent = make_unique<Agent>(saved.name);
-			agent->setFlags(saved.flags);
-			auto* raw = agent.get();
-			raw->attachToBuilding(this);
-			raw->mPosition = SectorPosition(sector.get(), saved.position - sector->getPosition());
-			_getSector(sector->getIndex())->mAgents.insert(raw);
-			mAgents.restore(saved.id, std::move(agent));
-			mAgentIds.emplace(raw, saved.id);
-		}
+		restoreCarriedAgents(agents, true);
 		return newSectorIndex;
 	}
 
