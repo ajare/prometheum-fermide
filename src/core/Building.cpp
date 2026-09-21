@@ -5490,6 +5490,16 @@ namespace core
 			if (diagnostic) *diagnostic = format("The Agent group \"{}\" already exists", trimmed);
 			return false;
 		}
+		// The ID space can be spent. A loaded document may legitimately carry a
+		// group at the very top of the range, and the ID past that is zero - the
+		// null handle, which is no group at all: it cannot be assigned to an
+		// Agent, and a save that wrote one could never be read back (#123).
+		if (mAgentGroups.exhausted())
+		{
+			if (diagnostic) *diagnostic =
+				"This Building has issued every Agent group ID and cannot create another";
+			return false;
+		}
 		return true;
 	}
 
@@ -5501,9 +5511,17 @@ namespace core
 
 		// Nothing above mutates, so the group is created only once its name has
 		// passed: a refused add leaves the Building exactly as it was found.
-		auto const id = mAgentGroups.add(AgentGroup::create(AgentGroup::trimName(name)));
+		// tryAdd rather than add, because a spent ID space is a refusal the
+		// Building can report rather than an identity it hands out blind: what
+		// comes back from here is always a live, nonzero AgentGroupId.
+		auto const id = mAgentGroups.tryAdd(AgentGroup::create(AgentGroup::trimName(name)));
+		if (!id)
+		{
+			throw BuildingException(this,
+				"This Building has issued every Agent group ID and cannot create another");
+		}
 		modify();
-		return id;
+		return *id;
 	}
 
 	bool Building::canRenameAgentGroup(AgentGroupId id, std::string const& name,

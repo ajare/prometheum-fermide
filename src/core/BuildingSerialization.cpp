@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <cmath>
 #include <format>
+#include <limits>
 #include <set>
 #include <utility>
 
@@ -364,6 +365,11 @@ namespace core
 		// 7 the first that persists Door opening styles. Older readers cap out
 		// at their own version, so they refuse these files instead of silently
 		// dropping fields they do not know.
+		//
+		// A version-9 document also carries `nextAgentGroupId`, the Agent-group
+		// allocator's high-water mark (#123). It is an added field rather than a
+		// new version: a reader that predates it still opens these files and
+		// falls back to deriving the next ID from the groups that survive.
 		serializer.writeUint32("version", 9);
 		serializer.writeString("name", mName);
 		serializer.writeUint32("cellsWide", mCellsWide);
@@ -396,6 +402,13 @@ namespace core
 			serializer.endMap();
 		}
 		serializer.endArray();
+		// The allocator's high-water mark travels with the groups it issued.
+		// The live {id, name} entries cannot express it between them: deleting
+		// the highest group erases the evidence, and a reader that inferred the
+		// next ID from the survivors alone would hand that deleted identity to
+		// the next group created (#123). Zero here is not an ID - it is the
+		// marker that the range is spent and this Building can issue no more.
+		serializer.writeUint64("nextAgentGroupId", mAgentGroups.nextId());
 
 		serializer.beginArray("agents");
 		for (auto const& [id, agent] : mAgents.entries())
@@ -752,6 +765,7 @@ namespace core
 		// refuses the whole file without leaving partial groups behind: nothing
 		// above has touched the live Building, and nothing below runs.
 		std::vector<std::pair<AgentGroupId, std::string>> agentGroups;
+		uint64_t highestAgentGroupId{ 0 };
 		if (version >= 9 && serializer.hasField("agentGroups"))
 		{
 			set<AgentGroupId> seenIds;
@@ -782,9 +796,38 @@ namespace core
 					throw SerializationException(format(
 						"Serialized Agent group names must be unique (\"{}\" appears twice)", trimmed));
 
+				if (id.value > highestAgentGroupId) highestAgentGroupId = id.value;
 				agentGroups.emplace_back(id, trimmed);
 			}
 			serializer.endArray();
+		}
+
+		// The allocator's high-water mark: the next ID the writing Building
+		// would have issued, or 0 for a Building whose range is spent. A file
+		// written before the mark was persisted says nothing, so the safest
+		// value derivable from its survivors - one past the highest ID still
+		// named in the file - stands in. What is never derived, guessed or let
+		// through is an ID that has already been issued: the whole point of the
+		// mark is that the sequence does not run backwards (#123).
+		uint64_t nextAgentGroupId{ 1 };
+		if (version >= 9 && serializer.hasField("nextAgentGroupId"))
+		{
+			nextAgentGroupId = serializer.readUint64("nextAgentGroupId");
+			if (nextAgentGroupId != 0 && nextAgentGroupId <= highestAgentGroupId)
+			{
+				throw SerializationException(format(
+					"Serialized next Agent group ID {} does not come after Agent group {}, the highest this document defines",
+					nextAgentGroupId, highestAgentGroupId));
+			}
+		}
+		else if (highestAgentGroupId != 0)
+		{
+			// At the very top of the range there is no "one past" that is still
+			// an ID, so the derived state is the exhausted one rather than a
+			// wrap-around onto the null handle.
+			nextAgentGroupId = highestAgentGroupId == std::numeric_limits<uint64_t>::max()
+				? 0
+				: highestAgentGroupId + 1;
 		}
 
 		resetForDeserialization(std::move(name), cellsWide, decksHigh);
@@ -795,7 +838,21 @@ namespace core
 		mAgentGroups = {};
 		for (auto const& [id, group] : agentGroups)
 		{
-			mAgentGroups.restore(id, AgentGroup::create(group));
+			if (!mAgentGroups.restore(id, AgentGroup::create(group)))
+			{
+				throw SerializationException(format(
+					"Serialized Agent group {} could not be taken in", id.value));
+			}
+		}
+		// The mark is adopted last, over the restored identities, so a document
+		// cannot leave the Building holding a group the allocator would hand out
+		// again. A refusal here means the file contradicted itself; nothing has
+		// been left half-loaded, because the whole group list was read and judged
+		// before the reset above ran.
+		if (!mAgentGroups.restoreNextId(nextAgentGroupId))
+		{
+			throw SerializationException(format(
+				"Serialized next Agent group ID {} cannot be adopted by this Building", nextAgentGroupId));
 		}
 		mDeserializingConstruction = true;
 		try
