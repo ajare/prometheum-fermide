@@ -2,6 +2,7 @@
 #include <cmath>
 #include <filesystem>
 #include <format>
+#include <limits>
 #include <set>
 #include <stdexcept>
 #include <utility>
@@ -1614,7 +1615,8 @@ namespace core
 		};
 	}
 
-	Building::CreateObjectResult Building::createMarker(uint32_t layerIndex, uint32_t x, uint32_t y, float xOffset, uint32_t* vertexIdentifier)
+	Building::CreateObjectResult Building::createMarker(uint32_t layerIndex, uint32_t x,
+		uint32_t y, float xOffset, MarkerId id, string name, uint32_t* vertexIdentifier)
 	{
 		string caller = format("Building::createMarker({}, {}, {}, {})", layerIndex, x, y, xOffset);
 
@@ -1630,7 +1632,7 @@ namespace core
 		auto sector = _getSector(cellDef.sectorIndex);
 
 		return {
-			sector->createMarker(sector, x, y, xPos - x, vertexIdentifier),
+			sector->createMarker(sector, id, std::move(name), x, y, xPos - x, vertexIdentifier),
 			SectorObjectType::Marker,
 			sector
 		};
@@ -4766,13 +4768,140 @@ namespace core
 		return true;
 	}
 
+	bool Building::markerNameTaken(string const& trimmed, MarkerId except) const
+	{
+		for (auto const id : getMarkerIds())
+		{
+			if (id == except) continue;
+			auto marker = lookupMarker(id);
+			if (marker && marker->getName() == trimmed) return true;
+		}
+		return false;
+	}
+
+	string Building::nextGeneratedMarkerName() const
+	{
+		for (uint64_t suffix = 1; suffix != 0; ++suffix)
+		{
+			auto candidate = format("Marker {}", suffix);
+			if (!markerNameTaken(candidate)) return candidate;
+		}
+		throw BuildingException(this, "No unique generated Marker name is available");
+	}
+
+	shared_ptr<Marker> Building::mutableMarker(MarkerId id) const
+	{
+		for (auto const& sector : mSectors)
+		{
+			if (!sector) continue;
+			for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
+			{
+				auto object = dynamic_pointer_cast<MarkerSectorObject>(sector->getObject(i));
+				if (!object) continue;
+				auto marker = const_pointer_cast<Marker>(object->getMarker());
+				if (marker->getId() == id) return marker;
+			}
+		}
+		return nullptr;
+	}
+
+	vector<MarkerId> Building::getMarkerIds() const
+	{
+		vector<MarkerId> result;
+		for (auto const& sector : mSectors)
+		{
+			if (!sector) continue;
+			for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
+			{
+				auto object = dynamic_pointer_cast<MarkerSectorObject>(sector->getObject(i));
+				if (object) result.push_back(object->getMarker()->getId());
+			}
+		}
+		sort(result.begin(), result.end());
+		return result;
+	}
+
+	shared_ptr<const Marker> Building::lookupMarker(MarkerId id) const
+	{
+		return mutableMarker(id);
+	}
+
+	bool Building::canRenameMarker(MarkerId id, string const& name, string* diagnostic) const
+	{
+		auto reject = [diagnostic](string reason)
+		{
+			if (diagnostic) *diagnostic = std::move(reason);
+			return false;
+		};
+		if (!id || !lookupMarker(id)) return reject("Marker does not exist");
+		auto const trimmed = Marker::trimName(name);
+		string reason;
+		if (!Marker::nameIsValid(trimmed, &reason)) return reject(std::move(reason));
+		if (markerNameTaken(trimmed, id)) return reject("A Marker with this name already exists");
+		if (diagnostic) diagnostic->clear();
+		return true;
+	}
+
+	bool Building::renameMarker(MarkerId id, string const& name, string* diagnostic)
+	{
+		if (!canRenameMarker(id, name, diagnostic)) return false;
+		auto const trimmed = Marker::trimName(name);
+		auto marker = mutableMarker(id);
+		if (marker->getName() == trimmed) return true;
+		auto record = find_if(mConstructionRecords.begin(), mConstructionRecords.end(),
+			[id](ConstructionRecord const& candidate)
+			{
+				return candidate.type == ConstructionType::Marker
+					&& candidate.markerId == id;
+			});
+		if (record == mConstructionRecords.end())
+			throw BuildingException(this, "renameMarker - Marker has no authored record");
+		marker->setName(trimmed);
+		record->name = trimmed;
+		modify();
+		return true;
+	}
+
 	Building::CreateObjectResult Building::addSectorMarker(uint32_t sectorIndex,
 		uint32_t deckIndex, float xOffset, uint32_t* vertexIdentifier)
 	{
-		string caller = format("Building::addSectorMarker({}, {}, {})", sectorIndex, deckIndex, xOffset);
+		return addSectorMarker(sectorIndex, deckIndex, xOffset,
+			nextGeneratedMarkerName(), vertexIdentifier);
+	}
+
+	Building::CreateObjectResult Building::addSectorMarker(uint32_t sectorIndex,
+		uint32_t deckIndex, float xOffset, string const& name, uint32_t* vertexIdentifier)
+	{
 		string diagnostic;
 		if (!canAddSectorMarker(sectorIndex, deckIndex, xOffset, &diagnostic))
-			throw BuildingException(this, format("{} - {}", caller, diagnostic));
+			throw BuildingException(this, "Building::addSectorMarker - " + diagnostic);
+		auto const trimmed = Marker::trimName(name);
+		if (!Marker::nameIsValid(trimmed, &diagnostic))
+			throw BuildingException(this, "Building::addSectorMarker - " + diagnostic);
+		if (markerNameTaken(trimmed))
+			throw BuildingException(this, "Building::addSectorMarker - A Marker with this name already exists");
+		if (mNextMarkerId == 0)
+			throw BuildingException(this, "Building::addSectorMarker - Marker ID space is exhausted");
+		auto const id = MarkerId{ mNextMarkerId };
+		mNextMarkerId = mNextMarkerId == numeric_limits<uint64_t>::max() ? 0 : mNextMarkerId + 1;
+		return addSectorMarkerRestored(sectorIndex, deckIndex, xOffset, id, trimmed,
+			vertexIdentifier);
+	}
+
+	Building::CreateObjectResult Building::addSectorMarkerRestored(uint32_t sectorIndex,
+		uint32_t deckIndex, float xOffset, MarkerId id, string name,
+		uint32_t* vertexIdentifier)
+	{
+		string diagnostic;
+		if (!id) throw BuildingException(this, "Marker ID cannot be zero");
+		if (lookupMarker(id)) throw BuildingException(this, "Marker ID is already in use");
+		if (!canAddSectorMarker(sectorIndex, deckIndex, xOffset, &diagnostic))
+			throw BuildingException(this, "Building::addSectorMarker - " + diagnostic);
+		name = Marker::trimName(name);
+		if (!Marker::nameIsValid(name, &diagnostic))
+			throw BuildingException(this, "Building::addSectorMarker - " + diagnostic);
+		if (markerNameTaken(name))
+			throw BuildingException(this, "Building::addSectorMarker - A Marker with this name already exists");
 		beginStructuralEdit("addSectorMarker");
 
 		auto sector = _getSector(sectorIndex);
@@ -4781,10 +4910,11 @@ namespace core
 		auto& cellDef = layer->getCellDefinition(sector->getCellX() + (uint32_t)xOffset,
 			sector->getCellY() + deckIndex);
 		auto createdMarker = createMarker(layerIndex, sector->getCellX(),
-			sector->getCellY() + deckIndex, xOffset, vertexIdentifier);
+			sector->getCellY() + deckIndex, xOffset, id, name, vertexIdentifier);
 		cellDef.markers.push_back(createdMarker.index);
 		ConstructionRecord record{ ConstructionType::Marker };
 		record.a = sectorIndex; record.b = deckIndex; record.x = xOffset;
+		record.markerId = id; record.name = std::move(name);
 		recordConstruction(std::move(record));
 		return createdMarker;
 	}
@@ -4810,6 +4940,7 @@ namespace core
 		ConstructionRecord record{ ConstructionType::RemoveMarker };
 		record.a = sectorIndex;
 		record.b = objectIndex;
+		record.markerId = marker->getId();
 		recordConstruction(std::move(record));
 		return true;
 	}

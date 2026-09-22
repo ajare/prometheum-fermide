@@ -80,7 +80,9 @@ namespace core
 
 		uint32_t createWalkway(std::shared_ptr<const Sector> sector, uint32_t x, uint32_t y, uint32_t* vertexIdentifier = nullptr);
 
-		uint32_t createMarker(std::shared_ptr<const Sector> sector, uint32_t x, uint32_t y, float xOffset, uint32_t* vertexIdentifier = nullptr);
+		uint32_t createMarker(std::shared_ptr<const Sector> sector, MarkerId id,
+			std::string name, uint32_t x, uint32_t y, float xOffset,
+			uint32_t* vertexIdentifier = nullptr);
 
 		bool removeSectorObject(uint32_t index);
 

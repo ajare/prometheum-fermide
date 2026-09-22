@@ -52,6 +52,7 @@ void runAgentGroupIdAllocationSmokeChecks();
 void runAgentGroupClipboardSmokeChecks();
 void runAgentGroupTopologySmokeChecks();
 void runAgentActivationSmokeChecks();
+void runMarkerIdentitySmokeChecks();
 void runShuttleDoorQuerySmokeChecks();
 void runRenderOrderSmokeChecks();
 void runWallRenderSmokeChecks();
@@ -4999,6 +5000,7 @@ int main(int argc, char** argv)
 		runAgentGroupClipboardSmokeChecks();
 		runAgentGroupTopologySmokeChecks();
 		runAgentActivationSmokeChecks();
+		runMarkerIdentitySmokeChecks();
 		runRenderOrderSmokeChecks();
 		runDoorOpenApartRenderSmokeChecks();
 		runDoorOpenLeftRenderSmokeChecks();

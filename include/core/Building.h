@@ -15,6 +15,7 @@
 #include "core/Facade.h"
 #include "core/Layer.h"
 #include "core/Location.h"
+#include "core/Marker.h"
 #include "core/SectorType.h"
 #include "core/Door.h"
 #include "core/DoorSectorObject.h"
@@ -454,6 +455,10 @@ namespace core
 		// and across save/load, which restores each group under its own ID.
 		EntityRegistry<AgentGroupId, AgentGroup> mAgentGroups;
 
+		// Marker identity is carried by the authored Marker itself. The high-water
+		// mark remains after deletion, so an identity is never issued twice.
+		uint64_t mNextMarkerId{ 1 };
+
 		struct AgentTagRegistryReference
 		{
 			std::string filename;
@@ -516,6 +521,11 @@ namespace core
 		// it already carries is not its own collision.
 		bool agentGroupNameTaken(std::string const& trimmed,
 			AgentGroupId except = AgentGroupId{}) const;
+
+		bool markerNameTaken(std::string const& trimmed,
+			MarkerId except = MarkerId{}) const;
+		std::string nextGeneratedMarkerName() const;
+		std::shared_ptr<Marker> mutableMarker(MarkerId id) const;
 
 		EntityRegistry<InteractionPointId, InteractionPoint> mInteractionPoints;
 
@@ -620,6 +630,9 @@ namespace core
 			// stop/carriage/door grid.  ~0u means "no override"; a record whose
 			// overrides are all defaults persists none of them.
 			std::vector<uint32_t> overrides{};
+			// Marker / RemoveMarker: stable Building-local identity. Marker also
+			// uses name above. Zero occurs only while migrating versions 1-10.
+			MarkerId markerId{};
 		};
 
 		std::vector<ConstructionRecord> mConstructionRecords;
@@ -921,7 +934,12 @@ namespace core
 
 		CreateObjectResult createWalkway(uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t* vertexIdentifier = nullptr);
 
-		CreateObjectResult createMarker(uint32_t layerIndex, uint32_t x, uint32_t y, float xOffset, uint32_t* vertexIdentifier = nullptr);
+		CreateObjectResult createMarker(uint32_t layerIndex, uint32_t x, uint32_t y,
+			float xOffset, MarkerId id, std::string name,
+			uint32_t* vertexIdentifier = nullptr);
+		CreateObjectResult addSectorMarkerRestored(uint32_t sectorIndex,
+			uint32_t deckIndex, float xOffset, MarkerId id, std::string name,
+			uint32_t* vertexIdentifier = nullptr);
 
 		CreateObjectResult createForceBridge(uint32_t layerIndex, uint32_t x, uint32_t y, CreateForceBridgeOptions const& options);
 
@@ -1508,6 +1526,18 @@ namespace core
 
 		CreateObjectResult addSectorMarker(uint32_t sectorIndex, uint32_t deckIndex, float xOffset,
 			uint32_t* vertexIdentifier = nullptr);
+
+		// Explicit naming follows the same validation as rename. The legacy
+		// overload above generates a deterministic unique name for editor placement.
+		CreateObjectResult addSectorMarker(uint32_t sectorIndex, uint32_t deckIndex,
+			float xOffset, std::string const& name, uint32_t* vertexIdentifier = nullptr);
+
+		std::vector<MarkerId> getMarkerIds() const;
+		std::shared_ptr<const Marker> lookupMarker(MarkerId id) const;
+		bool canRenameMarker(MarkerId id, std::string const& name,
+			std::string* diagnostic = nullptr) const;
+		bool renameMarker(MarkerId id, std::string const& name,
+			std::string* diagnostic = nullptr);
 
 		bool removeSectorMarker(uint32_t sectorIndex, uint32_t objectIndex);
 

@@ -14,7 +14,9 @@ namespace core
 	{
 	public:
 
-		MarkerSectorObject(uint32_t cellX, uint32_t cellY, std::shared_ptr<const Sector> sector, float xOffset, uint32_t* vertexIdentifer = nullptr);
+		MarkerSectorObject(MarkerId id, std::string name, uint32_t cellX, uint32_t cellY,
+			std::shared_ptr<const Sector> sector, float xOffset,
+			uint32_t* vertexIdentifer = nullptr);
 
 		~MarkerSectorObject() = default;
 

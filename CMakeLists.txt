@@ -232,6 +232,7 @@ add_executable(prometheum-fermide-headless
     src/headless/GraphicsStartupSmokeChecks.cpp
     src/headless/InteractionApiCompileCheck.cpp
     src/headless/IsolatedSectorPathingSmokeChecks.cpp
+    src/headless/MarkerIdentitySmokeChecks.cpp
     src/headless/OnboardAgentDeletionSmokeChecks.cpp
     src/headless/PaletteTraySmokeChecks.cpp
     src/headless/RenderGuiStubs.cpp

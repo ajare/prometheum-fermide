@@ -126,7 +126,7 @@ namespace
 		// through the same core workflow used by the GUI.
 		building->saveTo(buildingPath.string());
 		auto const buildingYaml = readText(buildingPath);
-		require(buildingYaml.find("version: 10") != std::string::npos
+		require(buildingYaml.find("version: 11") != std::string::npos
 			&& buildingYaml.find("filename: station.tags.yaml") != std::string::npos
 			&& buildingYaml.find("expectedUuid: " + registry->getUuid()) != std::string::npos,
 			"The Building did not persist its version-10 registry reference");
@@ -162,9 +162,9 @@ namespace
 	{
 		core::Building source("Legacy", 4, 2);
 		auto yaml = serializeBuilding(source);
-		auto const version = yaml.find("version: 10");
-		require(version != std::string::npos, "The current Building schema was not version 10");
-		yaml.replace(version, std::string("version: 10").size(), "version: 9");
+		auto const version = yaml.find("version: 11");
+		require(version != std::string::npos, "The current Building schema was not version 11");
+		yaml.replace(version, std::string("version: 11").size(), "version: 9");
 
 		auto loaded = std::make_shared<core::Building>("Loading", 1, 1);
 		auto reader = core::YamlSerializer::fromString(yaml);

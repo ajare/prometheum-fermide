@@ -339,12 +339,15 @@ namespace core
 			serializer.writeUint32("xOffset", record.c); break;
 		case ConstructionType::Marker:
 			serializer.writeUint32("sectorIndex", record.a); serializer.writeUint32("deckIndex", record.b);
-			serializer.writeFloat("xOffset", record.x); break;
+			serializer.writeFloat("xOffset", record.x);
+			serializer.writeUint64("id", record.markerId.value);
+			serializer.writeString("name", record.name); break;
 		case ConstructionType::RemoveWall:
 			serializer.writeUint32("sectorIndex", record.a); serializer.writeUint32("deckIndex", record.b);
 			serializer.writeString("side", sideName(record.i)); break;
 		case ConstructionType::RemoveMarker:
-			serializer.writeUint32("sectorIndex", record.a); serializer.writeUint32("objectIndex", record.b); break;
+			serializer.writeUint32("sectorIndex", record.a); serializer.writeUint32("objectIndex", record.b);
+			serializer.writeUint64("id", record.markerId.value); break;
 		case ConstructionType::ObjectTombstone:
 			serializer.writeUint32("sectorIndex", record.a); break;
 		case ConstructionType::Background:
@@ -368,6 +371,7 @@ namespace core
 	void Building::serializeImpl(Serializer& serializer, SerializationWorkData& workData) const
 	{
 		serializer.beginMap("building");
+		// Version 11 gives every Marker stable identity and a Building-unique name.
 		// Version 10 adds the optional external Agent tag registry reference.
 		// Version 9 is the first schema that persists Agent groups, and with
 		// them each Agent's optional Agent group assignment (ticket #110). The
@@ -384,7 +388,7 @@ namespace core
 		// allocator's high-water mark (#123). It is an added field rather than a
 		// new version: a reader that predates it still opens these files and
 		// falls back to deriving the next ID from the groups that survive.
-		serializer.writeUint32("version", 10);
+		serializer.writeUint32("version", 11);
 		serializer.writeString("name", mName);
 		serializer.writeUint32("cellsWide", mCellsWide);
 		serializer.writeUint32("decksHigh", mDecksHigh);
@@ -424,6 +428,7 @@ namespace core
 			serializer.endMap();
 		}
 		serializer.endArray();
+		serializer.writeUint64("nextMarkerId", mNextMarkerId);
 		// The allocator's high-water mark travels with the groups it issued.
 		// The live {id, name} entries cannot express it between them: deleting
 		// the highest group erases the evidence, and a reader that inferred the
@@ -688,12 +693,20 @@ namespace core
 			record.c = serializer.readUint32("xOffset"); break;
 		case ConstructionType::Marker:
 			record.a = serializer.readUint32("sectorIndex"); record.b = serializer.readUint32("deckIndex");
-			record.x = serializer.readFloat("xOffset"); break;
+			record.x = serializer.readFloat("xOffset");
+			if (version >= 11)
+			{
+				record.markerId = MarkerId{ serializer.readUint64("id") };
+				record.name = serializer.readString("name");
+			}
+			break;
 		case ConstructionType::RemoveWall:
 			record.a = serializer.readUint32("sectorIndex"); record.b = serializer.readUint32("deckIndex");
 			record.i = readSide("side"); break;
 		case ConstructionType::RemoveMarker:
-			record.a = serializer.readUint32("sectorIndex"); record.b = serializer.readUint32("objectIndex"); break;
+			record.a = serializer.readUint32("sectorIndex"); record.b = serializer.readUint32("objectIndex");
+			if (version >= 11) record.markerId = MarkerId{ serializer.readUint64("id") };
+			break;
 		case ConstructionType::ObjectTombstone:
 			record.a = serializer.readUint32("sectorIndex"); break;
 		case ConstructionType::Background:
@@ -732,7 +745,7 @@ namespace core
 		// first to carry Agent groups and the Agent assignments that reference
 		// them; versions 1 through 8 load with neither. Version 10 adds the
 		// optional Agent tag registry reference and Agent tag assignments.
-		if (version < 1 || version > 10)
+		if (version < 1 || version > 11)
 		{
 			throw SerializationException("Unsupported Building serialization version");
 		}
@@ -813,6 +826,66 @@ namespace core
 		if (!normalizeRoomLadderRecords(records, ladderDiagnostic))
 			throw SerializationException(ladderDiagnostic);
 
+		// Version 11 carries identity on every Marker-producing and Marker-removal
+		// record. Older documents are migrated in serialized order: that order is
+		// stable, so the same input always receives the same IDs and names.
+		uint64_t highestMarkerId = 0;
+		if (version <= 10)
+		{
+			uint64_t next = 1;
+			for (auto& record : records)
+				if (record.type == ConstructionType::Marker)
+				{
+					record.markerId = MarkerId{ next };
+					record.name = format("Marker {}", next);
+					highestMarkerId = next++;
+				}
+		}
+		else
+		{
+			set<MarkerId> issued;
+			map<MarkerId, string> live;
+			set<string> liveNames;
+			for (auto const& record : records)
+			{
+				if (record.type == ConstructionType::Marker)
+				{
+					if (!record.markerId)
+						throw SerializationException("Serialized Marker ID cannot be zero");
+					if (!issued.insert(record.markerId).second)
+						throw SerializationException("Serialized Marker IDs must be unique");
+					auto const trimmed = Marker::trimName(record.name);
+					string reason;
+					if (trimmed != record.name || !Marker::nameIsValid(trimmed, &reason))
+						throw SerializationException("Serialized Marker name is invalid: "
+							+ (trimmed != record.name ? string("it must be trimmed") : reason));
+					if (!liveNames.insert(trimmed).second)
+						throw SerializationException("Serialized live Marker names must be unique");
+					live.emplace(record.markerId, trimmed);
+					highestMarkerId = max(highestMarkerId, record.markerId.value);
+				}
+				else if (record.type == ConstructionType::RemoveMarker)
+				{
+					if (!record.markerId)
+						throw SerializationException("Serialized removed Marker ID cannot be zero");
+					auto found = live.find(record.markerId);
+					if (found == live.end())
+						throw SerializationException("Serialized Marker removal has a dangling identity");
+					liveNames.erase(found->second);
+					live.erase(found);
+				}
+			}
+		}
+
+		uint64_t nextMarkerId = highestMarkerId == numeric_limits<uint64_t>::max()
+			? 0 : highestMarkerId + 1;
+		if (version >= 11)
+		{
+			nextMarkerId = serializer.readUint64("nextMarkerId");
+			if (nextMarkerId != 0 && nextMarkerId <= highestMarkerId)
+				throw SerializationException("Serialized next Marker ID does not follow issued Marker IDs");
+		}
+
 		// Agent groups are version-9 authored data. Every entry is read and
 		// judged here, before the Building is reset, so a malformed group list
 		// refuses the whole file without leaving partial groups behind: nothing
@@ -883,7 +956,39 @@ namespace core
 				: highestAgentGroupId + 1;
 		}
 
+		// Replay once into a disposable Building before touching this one. Besides
+		// ordinary topology validation, this proves that every removal's identity
+		// names the Marker in the referenced object slot. Legacy removals acquire
+		// that identity from the deterministic replay and will write it on save.
+		try
+		{
+			Building candidate(name, cellsWide, decksHigh);
+			while (candidate.getLayerCount() < layerCount) candidate.addLayer();
+			candidate.mDeserializingConstruction = true;
+			for (auto& record : records)
+			{
+				if (record.type == ConstructionType::RemoveMarker && !record.markerId)
+				{
+					if (record.a >= candidate.mSectors.size() || !candidate.mSectors[record.a]
+						|| record.b >= candidate.mSectors[record.a]->getNumObjects())
+						throw SerializationException("Legacy Marker removal is dangling");
+					auto object = dynamic_pointer_cast<MarkerSectorObject>(
+						candidate.mSectors[record.a]->getObject(record.b));
+					if (!object) throw SerializationException("Legacy Marker removal is dangling");
+					record.markerId = object->getMarker()->getId();
+				}
+				candidate.applyConstructionRecord(record);
+			}
+			candidate.finishBuild();
+		}
+		catch (SerializationException const&) { throw; }
+		catch (exception const& error)
+		{
+			throw SerializationException(string("Invalid Building construction: ") + error.what());
+		}
+
 		resetForDeserialization(std::move(name), cellsWide, decksHigh);
+		mNextMarkerId = nextMarkerId;
 		mAgentTagRegistryReference = std::move(agentTagRegistryReference);
 		if (mAgentTagRegistry) mAgentTagRegistry->unregisterBuilding(*this);
 		mAgentTagRegistry.reset();
@@ -1270,15 +1375,25 @@ namespace core
 			addSectorWalkway(record.a, record.b, record.c);
 			break;
 		case ConstructionType::Marker:
-			addSectorMarker(record.a, record.b, record.x);
+			addSectorMarkerRestored(record.a, record.b, record.x,
+				record.markerId, record.name);
 			break;
 		case ConstructionType::RemoveWall:
 			removeLocationWall(record.a, record.b, record.i);
 			break;
 		case ConstructionType::RemoveMarker:
+		{
+			if (record.a >= mSectors.size() || !mSectors[record.a]
+				|| record.b >= mSectors[record.a]->getNumObjects())
+				throw SerializationException("Could not replay Marker deletion");
+			auto object = dynamic_pointer_cast<MarkerSectorObject>(
+				mSectors[record.a]->getObject(record.b));
+			if (!object || object->getMarker()->getId() != record.markerId)
+				throw SerializationException("Marker deletion identity does not match its object");
 			if (!removeSectorMarker(record.a, record.b))
 				throw SerializationException("Could not replay Marker deletion");
 			break;
+		}
 		case ConstructionType::ObjectTombstone:
 			_getSector(record.a)->addSectorObject(nullptr);
 			break;

@@ -22,8 +22,11 @@ namespace core
 
 	- cellX and cellY are global, not relative to the Location that it's in.
 	*/
-	MarkerSectorObject::MarkerSectorObject(uint32_t cellX, uint32_t cellY, shared_ptr<const Sector> sector, float xOffset, uint32_t* vertexIdentifer)
-		: SectorObject(SectorObjectType::Marker, sector, cellX, cellY, 1, 1, make_shared<Marker>(cellX, cellY, xOffset), vertexIdentifer)
+	MarkerSectorObject::MarkerSectorObject(MarkerId id, string name, uint32_t cellX,
+		uint32_t cellY, shared_ptr<const Sector> sector, float xOffset, uint32_t* vertexIdentifer)
+		: SectorObject(SectorObjectType::Marker, sector, cellX, cellY, 1, 1,
+			shared_ptr<Marker>(new Marker(id, std::move(name), cellX, cellY, xOffset)),
+			vertexIdentifer)
 	{
 	}
 

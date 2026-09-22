@@ -252,11 +252,13 @@ namespace core
 		return addSectorObject(walkway);
 	}
 
-	uint32_t Sector::createMarker(shared_ptr<const Sector> sector, uint32_t x, uint32_t y, float xOffset, uint32_t* vertexIdentifier)
+	uint32_t Sector::createMarker(shared_ptr<const Sector> sector, MarkerId id,
+		string name, uint32_t x, uint32_t y, float xOffset, uint32_t* vertexIdentifier)
 	{
 		ASSERT_PTR_EQ_THIS(sector);
 
-		auto marker = make_shared<MarkerSectorObject>(x, y, sector, xOffset, vertexIdentifier);
+		auto marker = make_shared<MarkerSectorObject>(id, std::move(name), x, y,
+			sector, xOffset, vertexIdentifier);
 
 		return addSectorObject(marker);
 	}
