@@ -10,6 +10,7 @@
 #include "core/SectorPosition.h"
 #include "core/Shape.h"
 #include "core/Path.h"
+#include "core/AgentTag.h"
 #include "core/EntityId.h"
 #include "core/Serializable.h"
 
@@ -28,6 +29,13 @@ namespace core
 		{
 			return !path || targetNode >= (uint32_t)path->nodes.size();
 		}
+	};
+
+	struct EffectiveAgentColour
+	{
+		AgentColour value{ EditorDefaultAgentColour };
+		// Empty means the editor fallback rather than an inherited property.
+		AgentTagId sourceTag{};
 	};
 
 	class Agent : public Serializable
@@ -211,6 +219,10 @@ namespace core
 		// attached Agent tag registry.
 		std::set<AgentTagId> const& getAgentTagIds() const { return mAgentTags; }
 		bool hasAgentTag(AgentTagId id) const { return mAgentTags.contains(id); }
+
+		// Resolves Colour through this Agent's assigned tags. Valid Building state
+		// has at most one source; an uncoloured Agent receives the editor default.
+		EffectiveAgentColour getEffectiveColour() const;
 
 		// Whether this Agent is simulated. Deactivation changes no authored
 		// state: position and route stay as they are until an activated tick

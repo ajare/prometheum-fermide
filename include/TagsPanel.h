@@ -7,6 +7,7 @@
 #include <string>
 
 #include "DocumentHistory.h"
+#include "core/AgentTag.h"
 #include "core/EntityId.h"
 
 namespace core
@@ -39,6 +40,15 @@ core::AgentTagId commitAgentTagAdd(
 bool commitAgentTagRename(
 	std::shared_ptr<core::AgentTagRegistry> const& registry, core::AgentTagId id,
 	std::string const& name, std::string& diagnostic);
+bool commitAgentTagColourAdd(
+	std::shared_ptr<core::AgentTagRegistry> const& registry, core::AgentTagId id,
+	std::string& diagnostic);
+bool commitAgentTagColourEdit(
+	std::shared_ptr<core::AgentTagRegistry> const& registry, core::AgentTagId id,
+	core::AgentColour colour, std::string& diagnostic);
+bool commitAgentTagColourRemove(
+	std::shared_ptr<core::AgentTagRegistry> const& registry, core::AgentTagId id,
+	std::string& diagnostic);
 
 // Deletes a tag and every assignment in loaded dependent Buildings as one
 // registry-history transaction. A refusal changes neither registry nor

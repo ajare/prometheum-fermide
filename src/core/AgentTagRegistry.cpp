@@ -4,6 +4,7 @@
 #include <array>
 #include <cctype>
 #include <format>
+#include <limits>
 #include <random>
 #include <set>
 #include <stdexcept>
@@ -128,6 +129,15 @@ namespace core
 		return tag->getName();
 	}
 
+	AgentColourProperty const* AgentTagRegistry::getAgentTagColour(AgentTagId id) const
+	{
+		auto const* tag = mTags.find(id);
+		if (!tag)
+			throw std::out_of_range(std::format(
+				"Agent tag {} is not defined in this registry", id.value));
+		return tag->getColour();
+	}
+
 	void AgentTagRegistry::registerBuilding(Building& building)
 	{
 		mLoadedBuildings.insert(&building);
@@ -173,6 +183,55 @@ namespace core
 		{
 			if (id != except && tag->getName() == name) return false;
 		}
+		return true;
+	}
+
+	uint64_t AgentTagRegistry::allocatePropertyRevision()
+	{
+		// Zero is reserved as "no revision". As with stable entity IDs, refuse
+		// exhaustion rather than wrapping and reusing a value.
+		if (mNextPropertyRevision == 0
+			|| mNextPropertyRevision == std::numeric_limits<uint64_t>::max())
+		{
+			throw std::overflow_error(
+				"This registry has issued every Agent property revision");
+		}
+		return mNextPropertyRevision++;
+	}
+
+	bool AgentTagRegistry::colourAdditionIsValid(AgentTagId id,
+		std::string* diagnostic) const
+	{
+		auto reject = [diagnostic](std::string reason)
+		{
+			if (diagnostic) *diagnostic = std::move(reason);
+			return false;
+		};
+		auto const* target = mTags.find(id);
+		if (!target)
+			return reject(std::format(
+				"Agent tag {} is not defined in this registry", id.value));
+
+		for (auto const* building : mLoadedBuildings)
+		{
+			if (!building) continue;
+			for (auto const& [agentId, agent] : building->mAgents.entries())
+			{
+				(void)agentId;
+				if (!agent || !agent->hasAgentTag(id)) continue;
+				for (auto const assigned : agent->getAgentTagIds())
+				{
+					if (assigned == id) continue;
+					auto const* source = mTags.find(assigned);
+					if (!source || !source->getColour()) continue;
+					return reject(std::format(
+						"Cannot add Colour to Agent tag #{}: Agent '{}' in Building '{}' already inherits Colour from #{}",
+						target->getName(), agent->getName(), building->getName(),
+						source->getName()));
+				}
+			}
+		}
+		if (diagnostic) diagnostic->clear();
 		return true;
 	}
 
@@ -252,6 +311,98 @@ namespace core
 		return true;
 	}
 
+	bool AgentTagRegistry::addAgentTagColour(AgentTagId id, std::string* diagnostic)
+	{
+		auto reject = [diagnostic](std::string reason)
+		{
+			if (diagnostic) *diagnostic = std::move(reason);
+			return false;
+		};
+		auto* tag = mTags.find(id);
+		if (!tag)
+			return reject(std::format(
+				"Agent tag {} is not defined in this registry", id.value));
+		if (tag->getColour())
+			return reject(std::format("Agent tag #{} already has Colour", tag->getName()));
+		if (!colourAdditionIsValid(id, diagnostic)) return false;
+
+		try
+		{
+			tag->setColour({ EditorDefaultAgentColour, allocatePropertyRevision() });
+		}
+		catch (std::exception const& error)
+		{
+			return reject(error.what());
+		}
+		modify();
+		if (diagnostic) diagnostic->clear();
+		return true;
+	}
+
+	bool AgentTagRegistry::setAgentTagColour(AgentTagId id, AgentColour colour,
+		std::string* diagnostic)
+	{
+		auto reject = [diagnostic](std::string reason)
+		{
+			if (diagnostic) *diagnostic = std::move(reason);
+			return false;
+		};
+		auto* tag = mTags.find(id);
+		if (!tag)
+			return reject(std::format(
+				"Agent tag {} is not defined in this registry", id.value));
+		auto const* current = tag->getColour();
+		if (!current)
+			return reject(std::format("Agent tag #{} has no Colour", tag->getName()));
+		if (current->value == colour)
+			return reject("The Agent Colour is unchanged");
+
+		try
+		{
+			tag->setColour({ colour, allocatePropertyRevision() });
+		}
+		catch (std::exception const& error)
+		{
+			return reject(error.what());
+		}
+		modify();
+		if (diagnostic) diagnostic->clear();
+		return true;
+	}
+
+	bool AgentTagRegistry::removeAgentTagColour(AgentTagId id,
+		std::string* diagnostic)
+	{
+		auto reject = [diagnostic](std::string reason)
+		{
+			if (diagnostic) *diagnostic = std::move(reason);
+			return false;
+		};
+		auto* tag = mTags.find(id);
+		if (!tag)
+			return reject(std::format(
+				"Agent tag {} is not defined in this registry", id.value));
+		if (!tag->getColour())
+			return reject(std::format("Agent tag #{} has no Colour", tag->getName()));
+		tag->removeColour();
+		modify();
+		if (diagnostic) diagnostic->clear();
+		return true;
+	}
+
+	bool AgentTagRegistry::loadedBuildingAssignmentsAreValid(
+		AgentTagRegistry const& definitions, std::string* diagnostic) const
+	{
+		for (auto const* building : mLoadedBuildings)
+		{
+			if (building
+				&& !building->agentTagAssignmentsAreValid(definitions, diagnostic))
+				return false;
+		}
+		if (diagnostic) diagnostic->clear();
+		return true;
+	}
+
 	bool AgentTagRegistry::childrenModified() const
 	{
 		return false;
@@ -276,6 +427,18 @@ namespace core
 			serializer.beginMap("");
 			serializer.writeUint64("id", id.value);
 			serializer.writeString("name", tag->getName());
+			if (auto const* colour = tag->getColour())
+			{
+				serializer.beginArray("properties");
+				serializer.beginMap("");
+				serializer.writeString("type", "colour");
+				serializer.writeUint64("revision", colour->revision);
+				serializer.writeUint8("r", colour->value.r);
+				serializer.writeUint8("g", colour->value.g);
+				serializer.writeUint8("b", colour->value.b);
+				serializer.endMap();
+				serializer.endArray();
+			}
 			serializer.endMap();
 		}
 		serializer.endArray();
@@ -304,12 +467,46 @@ namespace core
 
 		EntityRegistry<AgentTagId, AgentTag> tags;
 		std::set<std::string> names;
+		std::set<uint64_t> propertyRevisions;
+		uint64_t greatestPropertyRevision{ 0 };
 		serializer.beginArray("tags");
 		while (serializer.nextArrayItem())
 		{
 			serializer.beginMap("");
 			auto const id = AgentTagId{ serializer.readUint64("id") };
 			auto name = serializer.readString("name");
+			auto tag = AgentTag::create(name);
+			if (serializer.hasField("properties"))
+			{
+				bool hasColour{ false };
+				serializer.beginArray("properties");
+				while (serializer.nextArrayItem())
+				{
+					serializer.beginMap("");
+					auto const type = serializer.readString("type");
+					if (type != "colour")
+						throw SerializationException(std::format(
+							"Unsupported Agent property type '{}'", type));
+					if (hasColour)
+						throw SerializationException(std::format(
+							"Serialized Agent tag #{} contains more than one Colour", name));
+					auto const revision = serializer.readUint64("revision");
+					if (revision == 0)
+						throw SerializationException(
+							"Serialized Agent property revision cannot be zero");
+					AgentColour const colour{
+						serializer.readUint8("r"), serializer.readUint8("g"),
+						serializer.readUint8("b") };
+					serializer.endMap();
+					if (!propertyRevisions.insert(revision).second)
+						throw SerializationException(std::format(
+							"Serialized Agent property revision {} is reused", revision));
+					greatestPropertyRevision = std::max(greatestPropertyRevision, revision);
+					tag->setColour({ colour, revision });
+					hasColour = true;
+				}
+				serializer.endArray();
+			}
 			serializer.endMap();
 
 			if (!id) throw SerializationException("Serialized Agent tag ID cannot be zero");
@@ -319,7 +516,7 @@ namespace core
 			if (!names.insert(name).second)
 				throw SerializationException(std::format(
 					"Serialized Agent tag names must be unique (#{} appears twice)", name));
-			if (!tags.restore(id, AgentTag::create(std::move(name))))
+			if (!tags.restore(id, std::move(tag)))
 				throw SerializationException(std::format(
 					"Serialized Agent tag IDs must be unique ({} appears twice)", id.value));
 		}
@@ -330,6 +527,11 @@ namespace core
 		{
 			throw SerializationException(
 				"Agent tag allocator must be above every serialized Agent tag ID");
+		}
+		if (greatestPropertyRevision >= nextPropertyRevision)
+		{
+			throw SerializationException(
+				"Agent property revision allocator must be above every serialized property revision");
 		}
 
 		// Commit only after the complete document has passed validation. This is

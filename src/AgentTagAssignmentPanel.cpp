@@ -68,6 +68,37 @@ void resetAgentTagAssignmentPanelState()
 	gSearchAgent = {};
 }
 
+void renderAgentEffectiveProperties(shared_ptr<core::Building> const& building,
+	core::AgentId agent)
+{
+	ImGui::SeparatorText("Effective Agent properties");
+	if (!building) return;
+	auto const lookup = building->lookupAgent(agent);
+	if (!lookup)
+	{
+		ImGui::TextDisabled("The selected Agent is no longer available.");
+		return;
+	}
+
+	auto const effective = lookup.entity->getEffectiveColour();
+	if (effective.sourceTag && building->hasAttachedAgentTagRegistry())
+	{
+		auto const& registry = building->getAgentTagRegistry();
+		ImGui::Text("Colour: RGB (%u, %u, %u) from #%s",
+			static_cast<unsigned>(effective.value.r),
+			static_cast<unsigned>(effective.value.g),
+			static_cast<unsigned>(effective.value.b),
+			registry->getAgentTagName(effective.sourceTag).c_str());
+	}
+	else
+	{
+		ImGui::Text("Colour: RGB (%u, %u, %u) (editor default)",
+			static_cast<unsigned>(effective.value.r),
+			static_cast<unsigned>(effective.value.g),
+			static_cast<unsigned>(effective.value.b));
+	}
+}
+
 void renderAgentTagAssignmentChecklist(shared_ptr<core::Building> const& building,
 	core::AgentId agent)
 {
@@ -107,8 +138,12 @@ void renderAgentTagAssignmentChecklist(shared_ptr<core::Building> const& buildin
 		anyVisible = true;
 
 		bool assigned = agentLookup.entity->hasAgentTag(tag);
+		string assignmentDiagnostic;
+		bool const compatible = assigned
+			|| building->canAssignAgentTag(agent, tag, &assignmentDiagnostic);
+		bool const disabled = !building->isSimulationPaused() || !compatible;
 		ImGui::PushID(tag.value);
-		ImGui::BeginDisabled(!building->isSimulationPaused());
+		ImGui::BeginDisabled(disabled);
 		bool const toggled = ImGui::Checkbox("##agentTagAssigned", &assigned);
 		ImGui::EndDisabled();
 		bool const hovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
@@ -116,6 +151,8 @@ void renderAgentTagAssignmentChecklist(shared_ptr<core::Building> const& buildin
 		ImGui::Text("#%s", name.c_str());
 		if (hovered && !building->isSimulationPaused())
 			ImGui::SetTooltip("Pause the simulation to edit Agent tag assignments");
+		else if (hovered && !compatible)
+			ImGui::SetTooltip("%s", assignmentDiagnostic.c_str());
 
 		if (toggled)
 		{

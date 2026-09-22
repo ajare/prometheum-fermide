@@ -1419,6 +1419,13 @@ void renderThresholdsControlsAndAgentsAboveTransit(vector<shared_ptr<const core:
 }
 
 
+ImU32 agentRenderColour(core::Agent const& agent, bool selected)
+{
+	auto const colour = selected
+		? core::SelectedAgentColour : agent.getEffectiveColour().value;
+	return ImU32(ImColor(colour.r, colour.g, colour.b));
+}
+
 void renderAgent(core::Agent const* agent, ImDrawList* drawList)
 {
 	auto bounds = agent->getBounds();
@@ -1430,7 +1437,7 @@ void renderAgent(core::Agent const* agent, ImDrawList* drawList)
 	transformPosition(pos0);
 	transformPosition(pos1);
 
-	auto colour = gSelectedAgent == agent ? ImColor(251, 188, 4) : ImColor(0.7f, 0.3f, 0.3f);
+	auto const colour = agentRenderColour(*agent, gSelectedAgent == agent);
 	ImFont* font = gAgentIconFont ? gAgentIconFont : ImGui::GetFont();
 	float sourceSize = font->FontSize;
 	auto sourceBounds = font->CalcTextSizeA(sourceSize, FLT_MAX, 0.0f, ICON_FA_MALE);

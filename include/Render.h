@@ -855,6 +855,11 @@ inline bool shouldRenderSectorAgents(core::SectorType /* sectorType */, LayerRen
 
 void renderGraph(std::shared_ptr<const core::Graph> graph, std::shared_ptr<const core::Building> building);
 
+// Ordinary Agents use their effective inherited Colour (or the editor
+// fallback); selection always wins with its fixed gold highlight.
+ImU32 agentRenderColour(core::Agent const& agent, bool selected);
+void renderAgent(core::Agent const* agent, ImDrawList* drawList);
+
 void renderBuilding(std::shared_ptr<const core::Building> building);
 
 //

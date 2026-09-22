@@ -201,14 +201,32 @@ namespace core
 		{
 			(void)agentId;
 			if (!agent) continue;
+			AgentTagId colourSource{};
 			for (auto const tag : agent->getAgentTagIds())
 			{
-				if (registry.lookupAgentTag(tag)) continue;
+				auto const* definition = registry.lookupAgentTag(tag);
+				if (!definition)
+				{
+					if (diagnostic)
+					{
+						*diagnostic = format(
+							"Agent '{}' is assigned to Agent tag {}, which the attached registry does not define",
+							agent->getName(), tag.value);
+					}
+					return false;
+				}
+				if (!definition->getColour()) continue;
+				if (!colourSource)
+				{
+					colourSource = tag;
+					continue;
+				}
 				if (diagnostic)
 				{
 					*diagnostic = format(
-						"Agent '{}' is assigned to Agent tag {}, which the attached registry does not define",
-						agent->getName(), tag.value);
+						"Agent '{}' inherits Colour from both #{} and #{}",
+						agent->getName(), registry.getAgentTagName(colourSource),
+						definition->getName());
 				}
 				return false;
 			}
@@ -5939,6 +5957,20 @@ namespace core
 		if (agentLookup.entity->hasAgentTag(tag))
 			return reject(format("Agent '{}' is already assigned to Agent tag #{}",
 				agentLookup.entity->getName(), mAgentTagRegistry->getAgentTagName(tag)));
+
+		auto const* assignedDefinition = mAgentTagRegistry->lookupAgentTag(tag);
+		if (assignedDefinition->getColour())
+		{
+			for (auto const existing : agentLookup.entity->getAgentTagIds())
+			{
+				auto const* source = mAgentTagRegistry->lookupAgentTag(existing);
+				if (!source || !source->getColour()) continue;
+				return reject(format(
+					"Agent '{}' cannot be assigned to #{} because Colour is already inherited from #{}",
+					agentLookup.entity->getName(), assignedDefinition->getName(),
+					source->getName()));
+			}
+		}
 		return true;
 	}
 

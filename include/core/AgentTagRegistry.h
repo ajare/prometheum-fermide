@@ -38,6 +38,8 @@ namespace core
 
 		explicit AgentTagRegistry(std::string uuid);
 		bool nameIsUnique(std::string const& name, AgentTagId except = {}) const;
+		uint64_t allocatePropertyRevision();
+		bool colourAdditionIsValid(AgentTagId id, std::string* diagnostic) const;
 		void registerBuilding(Building& building);
 		void unregisterBuilding(Building& building);
 
@@ -57,6 +59,7 @@ namespace core
 		std::vector<AgentTagId> getAgentTagIdsAlphabetically() const;
 		AgentTag const* lookupAgentTag(AgentTagId id) const;
 		std::string const& getAgentTagName(AgentTagId id) const;
+		AgentColourProperty const* getAgentTagColour(AgentTagId id) const;
 
 		// Live usage is derived from every loaded Building sharing this exact
 		// registry instance. Closed Buildings are deliberately unknowable.
@@ -68,6 +71,20 @@ namespace core
 		bool renameAgentTag(AgentTagId id, std::string const& name,
 			std::string* diagnostic = nullptr);
 		bool deleteAgentTag(AgentTagId id, std::string* diagnostic = nullptr);
+
+		// Colour is unique within a tag. Addition and assignment both preflight
+		// inherited-property conflicts across every loaded dependent Building.
+		// Revisions are registry-wide, monotonic, persisted, and consumed only by
+		// an accepted addition or real value change.
+		bool addAgentTagColour(AgentTagId id, std::string* diagnostic = nullptr);
+		bool setAgentTagColour(AgentTagId id, AgentColour colour,
+			std::string* diagnostic = nullptr);
+		bool removeAgentTagColour(AgentTagId id, std::string* diagnostic = nullptr);
+
+		// Used by registry undo/redo to reject a prospective definition set that
+		// would reinterpret any currently loaded Agent assignment.
+		bool loadedBuildingAssignmentsAreValid(AgentTagRegistry const& definitions,
+			std::string* diagnostic = nullptr) const;
 
 		void saveTo(std::string const& filepath);
 	};

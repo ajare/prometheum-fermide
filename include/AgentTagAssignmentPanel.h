@@ -24,9 +24,16 @@ bool commitAgentTagAssignment(
 	core::AgentId agent, core::AgentTagId tag, bool assigned,
 	std::string& diagnostic);
 
+// Reports the selected Agent's effective Colour and either its source tag or
+// the editor fallback. Kept separate so the headless ImGui seam exercises the
+// same read-only content as the Selection panel.
+void renderAgentEffectiveProperties(
+	std::shared_ptr<core::Building> const& building, core::AgentId agent);
+
 // Renders an alphabetical, searchable checklist of every tag in the attached
 // registry. Assigned rows use the same checkbox and remain removable while
-// paused. All assignment edits are disabled while simulation runs.
+// paused. Conflicting unassigned tags remain visible but disabled with the
+// core validation diagnostic. All assignment edits are disabled while running.
 void renderAgentTagAssignmentChecklist(
 	std::shared_ptr<core::Building> const& building, core::AgentId agent);
 

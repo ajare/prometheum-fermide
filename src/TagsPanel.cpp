@@ -37,6 +37,14 @@ namespace
 		string diagnostic;
 	};
 
+	struct TagColourEdit
+	{
+		array<float, 3> rgb{};
+		uint64_t loadedRevision{ 0 };
+		bool pending{ false };
+		string diagnostic;
+	};
+
 	struct RegistryBuildingSnapshot
 	{
 		core::Building* building{ nullptr };
@@ -63,6 +71,7 @@ namespace
 
 	map<string, DocumentHistory> gRegistryHistories;
 	map<uint64_t, TagNameEdit> gTagNameEdits;
+	map<uint64_t, TagColourEdit> gTagColourEdits;
 	array<char, SearchBufferSize> gTagSearch{};
 	PendingAgentTagDelete gPendingAgentTagDelete;
 	bool gAddingTag{ false };
@@ -223,6 +232,80 @@ namespace
 		ImGui::PopID();
 	}
 
+	void renderTagProperties(shared_ptr<core::AgentTagRegistry> const& registry,
+		core::AgentTagId id)
+	{
+		auto const* property = registry->getAgentTagColour(id);
+		if (!property)
+		{
+			if (ImGui::Button(ICON_FA_PLUS " Add Colour"))
+			{
+				string diagnostic;
+				if (!commitAgentTagColourAdd(registry, id, diagnostic))
+					core::addLogMessage("Tags", 0, core::LogLevel::Warning, diagnostic);
+				else gTagColourEdits.erase(id.value);
+			}
+			return;
+		}
+
+		auto& edit = gTagColourEdits[id.value];
+		if (!edit.pending && edit.loadedRevision != property->revision)
+		{
+			core::agentColourToFloats(property->value, edit.rgb.data());
+			edit.loadedRevision = property->revision;
+			edit.diagnostic.clear();
+		}
+
+		ImGui::SetNextItemWidth(-ImGui::GetFrameHeight() - ImGui::GetStyle().ItemSpacing.x);
+		if (ImGui::ColorEdit3("Colour", edit.rgb.data(),
+			ImGuiColorEditFlags_NoAlpha | ImGuiColorEditFlags_Uint8))
+		{
+			edit.pending = true;
+		}
+		auto const finished = ImGui::IsItemDeactivatedAfterEdit();
+		auto const cancelled = ImGui::IsItemDeactivated() && !finished;
+		if (edit.pending && finished)
+		{
+			string diagnostic;
+			if (!commitAgentTagColourEdit(registry, id,
+				core::agentColourFromFloats(edit.rgb.data()), diagnostic)
+				&& diagnostic != "The Agent Colour is unchanged")
+			{
+				edit.diagnostic = diagnostic;
+				core::addLogMessage("Tags", 0, core::LogLevel::Warning, diagnostic);
+			}
+			else edit.diagnostic.clear();
+			edit.pending = false;
+			property = registry->getAgentTagColour(id);
+			if (property) edit.loadedRevision = property->revision;
+		}
+		else if (edit.pending && cancelled)
+		{
+			core::agentColourToFloats(property->value, edit.rgb.data());
+			edit.pending = false;
+			edit.diagnostic.clear();
+		}
+		ImGui::SameLine();
+		if (ImGui::Button(ICON_FA_TIMES "##removeColour"))
+		{
+			string diagnostic;
+			if (!commitAgentTagColourRemove(registry, id, diagnostic))
+			{
+				edit.diagnostic = diagnostic;
+				core::addLogMessage("Tags", 0, core::LogLevel::Warning, diagnostic);
+			}
+			else
+			{
+				gTagColourEdits.erase(id.value);
+				return;
+			}
+		}
+		if (ImGui::IsItemHovered()) ImGui::SetTooltip("Remove Colour");
+		if (!edit.diagnostic.empty())
+			ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.45f, 1.0f), "%s",
+				edit.diagnostic.c_str());
+	}
+
 	void renderTagDeleteCell(shared_ptr<core::AgentTagRegistry> const& registry,
 		core::AgentTagId id)
 	{
@@ -346,9 +429,10 @@ namespace
 		ImGuiTableFlags const tableFlags = ImGuiTableFlags_SizingStretchSame
 			| ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersOuter
 			| ImGuiTableFlags_BordersV;
-		if (ImGui::BeginTable("AgentTags", 3, tableFlags))
+		if (ImGui::BeginTable("AgentTags", 4, tableFlags))
 		{
 			ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
+			ImGui::TableSetupColumn("Properties", ImGuiTableColumnFlags_WidthStretch);
 			ImGui::TableSetupColumn("Loaded Agents", ImGuiTableColumnFlags_WidthFixed);
 			ImGui::TableSetupColumn("Delete", ImGuiTableColumnFlags_WidthFixed, 40.0f);
 			ImGui::TableHeadersRow();
@@ -366,9 +450,11 @@ namespace
 					ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.45f, 1.0f), "%s",
 						found->second.diagnostic.c_str());
 				ImGui::TableSetColumnIndex(1);
+				renderTagProperties(registry, id);
+				ImGui::TableSetColumnIndex(2);
 				ImGui::Text("%llu", static_cast<unsigned long long>(
 					loadedAgentTagUsageCount(*registry, id)));
-				ImGui::TableSetColumnIndex(2);
+				ImGui::TableSetColumnIndex(3);
 				renderTagDeleteCell(registry, id);
 				ImGui::PopID();
 			}
@@ -557,6 +643,66 @@ bool commitAgentTagRename(shared_ptr<core::AgentTagRegistry> const& registry,
 	return true;
 }
 
+bool commitAgentTagColourAdd(shared_ptr<core::AgentTagRegistry> const& registry,
+	core::AgentTagId id, string& diagnostic)
+{
+	diagnostic.clear();
+	if (!registry)
+	{
+		diagnostic = "There is no Agent tag registry in which to add Colour";
+		return false;
+	}
+	auto undo = captureRegistrySnapshot(registry);
+	if (!undo)
+	{
+		diagnostic = "Could not capture the Agent tag registry before adding Colour";
+		return false;
+	}
+	if (!registry->addAgentTagColour(id, &diagnostic)) return false;
+	agentTagRegistryDocumentHistory(registry).commit(std::move(undo));
+	return true;
+}
+
+bool commitAgentTagColourEdit(shared_ptr<core::AgentTagRegistry> const& registry,
+	core::AgentTagId id, core::AgentColour colour, string& diagnostic)
+{
+	diagnostic.clear();
+	if (!registry)
+	{
+		diagnostic = "There is no Agent tag registry in which to edit Colour";
+		return false;
+	}
+	auto undo = captureRegistrySnapshot(registry);
+	if (!undo)
+	{
+		diagnostic = "Could not capture the Agent tag registry before editing Colour";
+		return false;
+	}
+	if (!registry->setAgentTagColour(id, colour, &diagnostic)) return false;
+	agentTagRegistryDocumentHistory(registry).commit(std::move(undo));
+	return true;
+}
+
+bool commitAgentTagColourRemove(shared_ptr<core::AgentTagRegistry> const& registry,
+	core::AgentTagId id, string& diagnostic)
+{
+	diagnostic.clear();
+	if (!registry)
+	{
+		diagnostic = "There is no Agent tag registry from which to remove Colour";
+		return false;
+	}
+	auto undo = captureRegistrySnapshot(registry);
+	if (!undo)
+	{
+		diagnostic = "Could not capture the Agent tag registry before removing Colour";
+		return false;
+	}
+	if (!registry->removeAgentTagColour(id, &diagnostic)) return false;
+	agentTagRegistryDocumentHistory(registry).commit(std::move(undo));
+	return true;
+}
+
 bool commitAgentTagDelete(shared_ptr<core::AgentTagRegistry> const& registry,
 	core::AgentTagId id, string& diagnostic)
 {
@@ -675,6 +821,14 @@ bool restoreAgentTagRegistrySnapshot(shared_ptr<core::AgentTagRegistry> const& r
 					throw runtime_error(deleteDiagnostic);
 			}
 
+			// Definition-only redo can become incompatible with assignments authored
+			// after its undo. Judge the prospective registry against every currently
+			// loaded Building before touching the shared live instance.
+			string validationDiagnostic;
+			if (!registry->loadedBuildingAssignmentsAreValid(
+				*replacement, &validationDiagnostic))
+				throw runtime_error(validationDiagnostic);
+
 			// Validation succeeded as a whole. Restore the registry first, then
 			// each dependent Building snapshot and reattach the same shared object.
 			auto liveReader = core::YamlSerializer::fromString(target.yaml);
@@ -758,6 +912,7 @@ bool attachedAgentTagRegistryIsModified(shared_ptr<const core::Building> const& 
 void resetTagsPanelState()
 {
 	gTagNameEdits.clear();
+	gTagColourEdits.clear();
 	gTagSearch.fill('\0');
 	cancelPendingAgentTagDelete();
 	gAddingTag = false;

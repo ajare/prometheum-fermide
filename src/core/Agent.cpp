@@ -3,6 +3,7 @@
 #include "core/Edge.h"
 #include "core/Location.h"
 #include "core/Path.h"
+#include "core/AgentTagRegistry.h"
 #include "core/Log.h"
 #include "core/Exceptions.h"
 #include "core/SerializationException.h"
@@ -96,6 +97,25 @@ namespace core
 	string const& Agent::getName() const
 	{
 		return mName;
+	}
+
+	EffectiveAgentColour Agent::getEffectiveColour() const
+	{
+		EffectiveAgentColour effective;
+		if (!mBuilding || !mBuilding->hasAttachedAgentTagRegistry()) return effective;
+
+		auto const& registry = mBuilding->getAgentTagRegistry();
+		for (auto const tag : mAgentTags)
+		{
+			auto const* definition = registry->lookupAgentTag(tag);
+			if (!definition) continue;
+			auto const* colour = definition->getColour();
+			if (!colour) continue;
+			effective.value = colour->value;
+			effective.sourceTag = tag;
+			break;
+		}
+		return effective;
 	}
 
 	Agent::State Agent::getState() const

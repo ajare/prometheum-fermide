@@ -6610,6 +6610,7 @@ void renderSelectedAgentPanel(shared_ptr<core::Building> building)
 		ImGui::SetTooltip("Pause the simulation to activate or deactivate an Agent");
 	}
 
+	renderAgentEffectiveProperties(building, id);
 	renderAgentTagAssignmentChecklist(building, id);
 
 	if (gSelectingAgentPathDestination)
