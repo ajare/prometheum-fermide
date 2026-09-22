@@ -203,7 +203,9 @@ namespace core
 			if (!agent) continue;
 			AgentTagId colourSource{};
 			AgentTagId walkSpeedSource{};
+			AgentTagId heightSource{};
 			AgentWalkSpeedModifierProperty const* walkSpeedProperty{ nullptr };
+			AgentHeightModifierProperty const* heightProperty{ nullptr };
 			for (auto const tag : agent->getAgentTagIds())
 			{
 				auto const* definition = registry.lookupAgentTag(tag);
@@ -221,13 +223,10 @@ namespace core
 				{
 					if (colourSource)
 					{
-						if (diagnostic)
-						{
-							*diagnostic = format(
-								"Agent '{}' inherits Colour from both #{} and #{}",
-								agent->getName(), registry.getAgentTagName(colourSource),
-								definition->getName());
-						}
+						if (diagnostic) *diagnostic = format(
+							"Agent '{}' inherits Colour from both #{} and #{}",
+							agent->getName(), registry.getAgentTagName(colourSource),
+							definition->getName());
 						return false;
 					}
 					colourSource = tag;
@@ -236,51 +235,69 @@ namespace core
 				{
 					if (walkSpeedSource)
 					{
-						if (diagnostic)
-						{
-							*diagnostic = format(
-								"Agent '{}' inherits Walk speed modifier from both #{} and #{}",
-								agent->getName(), registry.getAgentTagName(walkSpeedSource),
-								definition->getName());
-						}
+						if (diagnostic) *diagnostic = format(
+							"Agent '{}' inherits Walk speed modifier from both #{} and #{}",
+							agent->getName(), registry.getAgentTagName(walkSpeedSource),
+							definition->getName());
 						return false;
 					}
 					walkSpeedSource = tag;
 					walkSpeedProperty = property;
 				}
+				if (auto const* property = definition->getHeightModifier())
+				{
+					if (heightSource)
+					{
+						if (diagnostic) *diagnostic = format(
+							"Agent '{}' inherits Height modifier from both #{} and #{}",
+							agent->getName(), registry.getAgentTagName(heightSource),
+							definition->getName());
+						return false;
+					}
+					heightSource = tag;
+					heightProperty = property;
+				}
 			}
 
-			auto const& sample = agent->getWalkSpeedModifierSample();
-			if (!walkSpeedSource)
+			auto validateSample = [&](char const* name, SampledAgentPropertyType type,
+				AgentTagId source, AgentModifierRange const* range, uint64_t revision,
+				optional<AgentPropertySample> const& sample)
 			{
-				if (sample)
+				if (!source)
 				{
+					if (!sample) return true;
 					if (diagnostic) *diagnostic = format(
-						"Agent '{}' has a Walk speed modifier sample without an inherited property",
-						agent->getName());
+						"Agent '{}' has a {} sample without an inherited property",
+						agent->getName(), name);
 					return false;
 				}
-				continue;
-			}
-			if (!sample)
-			{
-				if (diagnostic) *diagnostic = format(
-					"Agent '{}' has no sample for Walk speed modifier from #{}",
-					agent->getName(), registry.getAgentTagName(walkSpeedSource));
-				return false;
-			}
-			if (sample->type != SampledAgentPropertyType::WalkSpeedModifier
-				|| sample->sourceTag != walkSpeedSource
-				|| sample->propertyRevision != walkSpeedProperty->revision
-				|| !isfinite(sample->value)
-				|| sample->value < walkSpeedProperty->range.minimum
-				|| sample->value > walkSpeedProperty->range.maximum)
-			{
-				if (diagnostic) *diagnostic = format(
-					"Agent '{}' has invalid Walk speed modifier sample provenance for #{}",
-					agent->getName(), registry.getAgentTagName(walkSpeedSource));
-				return false;
-			}
+				if (!sample)
+				{
+					if (diagnostic) *diagnostic = format(
+						"Agent '{}' has no sample for {} from #{}", agent->getName(), name,
+						registry.getAgentTagName(source));
+					return false;
+				}
+				if (sample->type != type || sample->sourceTag != source
+					|| sample->propertyRevision != revision || !isfinite(sample->value)
+					|| sample->value < range->minimum || sample->value > range->maximum)
+				{
+					if (diagnostic) *diagnostic = format(
+						"Agent '{}' has invalid {} sample provenance for #{}",
+						agent->getName(), name, registry.getAgentTagName(source));
+					return false;
+				}
+				return true;
+			};
+			if (!validateSample("Walk speed modifier",
+				SampledAgentPropertyType::WalkSpeedModifier, walkSpeedSource,
+				walkSpeedProperty ? &walkSpeedProperty->range : nullptr,
+				walkSpeedProperty ? walkSpeedProperty->revision : 0,
+				agent->getWalkSpeedModifierSample())) return false;
+			if (!validateSample("Height modifier", SampledAgentPropertyType::HeightModifier,
+				heightSource, heightProperty ? &heightProperty->range : nullptr,
+				heightProperty ? heightProperty->revision : 0,
+				agent->getHeightModifierSample())) return false;
 		}
 		return true;
 	}
@@ -307,6 +324,9 @@ namespace core
 			if (agent->getWalkSpeedModifierSample()
 				&& agent->getWalkSpeedModifierSample()->sourceTag == id)
 				agent->clearWalkSpeedModifierSample();
+			if (agent->getHeightModifierSample()
+				&& agent->getHeightModifierSample()->sourceTag == id)
+				agent->clearHeightModifierSample();
 			changed = true;
 		}
 		if (changed) modify();
@@ -337,6 +357,36 @@ namespace core
 			if (!agent || !agent->getWalkSpeedModifierSample()
 				|| agent->getWalkSpeedModifierSample()->sourceTag != id) continue;
 			agent->clearWalkSpeedModifierSample();
+			changed = true;
+		}
+		if (changed) modify();
+	}
+
+	void Building::addAgentTagHeightModifierSamples(AgentTagId id,
+		AgentHeightModifierProperty const& property)
+	{
+		bool changed{ false };
+		for (auto& [agentId, agent] : mAgents.entries())
+		{
+			(void)agentId;
+			if (!agent || !agent->hasAgentTag(id)) continue;
+			agent->setHeightModifierSample({
+				SampledAgentPropertyType::HeightModifier, id, property.revision,
+				sampleAgentModifier(property.range) });
+			changed = true;
+		}
+		if (changed) modify();
+	}
+
+	void Building::clearAgentTagHeightModifierSamples(AgentTagId id)
+	{
+		bool changed{ false };
+		for (auto& [agentId, agent] : mAgents.entries())
+		{
+			(void)agentId;
+			if (!agent || !agent->getHeightModifierSample()
+				|| agent->getHeightModifierSample()->sourceTag != id) continue;
+			agent->clearHeightModifierSample();
 			changed = true;
 		}
 		if (changed) modify();
@@ -6062,6 +6112,13 @@ namespace core
 					agentLookup.entity->getName(), assignedDefinition->getName(),
 					source->getName()));
 			}
+			if (assignedDefinition->getHeightModifier() && source->getHeightModifier())
+			{
+				return reject(format(
+					"Agent '{}' cannot be assigned to #{} because Height modifier is already inherited from #{}",
+					agentLookup.entity->getName(), assignedDefinition->getName(),
+					source->getName()));
+			}
 		}
 		return true;
 	}
@@ -6073,14 +6130,22 @@ namespace core
 		auto* target = mAgents.find(agent);
 		auto const* definition = mAgentTagRegistry->lookupAgentTag(tag);
 		optional<AgentPropertySample> walkSpeedSample;
+		optional<AgentPropertySample> heightSample;
 		if (auto const* property = definition->getWalkSpeedModifier())
 		{
 			walkSpeedSample = AgentPropertySample{
 				SampledAgentPropertyType::WalkSpeedModifier, tag, property->revision,
 				sampleAgentModifier(property->range) };
 		}
+		if (auto const* property = definition->getHeightModifier())
+		{
+			heightSample = AgentPropertySample{
+				SampledAgentPropertyType::HeightModifier, tag, property->revision,
+				sampleAgentModifier(property->range) };
+		}
 		target->assignAgentTag(tag);
 		if (walkSpeedSample) target->setWalkSpeedModifierSample(*walkSpeedSample);
+		if (heightSample) target->setHeightModifierSample(*heightSample);
 		modify();
 		return true;
 	}
@@ -6118,6 +6183,9 @@ namespace core
 		if (target->getWalkSpeedModifierSample()
 			&& target->getWalkSpeedModifierSample()->sourceTag == tag)
 			target->clearWalkSpeedModifierSample();
+		if (target->getHeightModifierSample()
+			&& target->getHeightModifierSample()->sourceTag == tag)
+			target->clearHeightModifierSample();
 		modify();
 		return true;
 	}

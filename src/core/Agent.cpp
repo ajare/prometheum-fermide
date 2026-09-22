@@ -48,16 +48,23 @@ namespace core
 			for (auto const id : mAgentTags) serializer.writeUint64("", id.value);
 			serializer.endArray();
 		}
-		if (mWalkSpeedModifierSample)
+		if (mWalkSpeedModifierSample || mHeightModifierSample)
 		{
 			serializer.beginArray("propertySamples");
-			serializer.beginMap("");
-			serializer.writeString("type", "walkSpeedModifier");
-			serializer.writeUint64("sourceTag", mWalkSpeedModifierSample->sourceTag.value);
-			serializer.writeUint64("propertyRevision",
-				mWalkSpeedModifierSample->propertyRevision);
-			serializer.writeFloat("value", mWalkSpeedModifierSample->value);
-			serializer.endMap();
+			auto writeSample = [&serializer](char const* type,
+				AgentPropertySample const& sample)
+			{
+				serializer.beginMap("");
+				serializer.writeString("type", type);
+				serializer.writeUint64("sourceTag", sample.sourceTag.value);
+				serializer.writeUint64("propertyRevision", sample.propertyRevision);
+				serializer.writeFloat("value", sample.value);
+				serializer.endMap();
+			};
+			if (mWalkSpeedModifierSample)
+				writeSample("walkSpeedModifier", *mWalkSpeedModifierSample);
+			if (mHeightModifierSample)
+				writeSample("heightModifier", *mHeightModifierSample);
 			serializer.endArray();
 		}
 		// An activated Agent writes no `active` key at all - the same convention
@@ -93,6 +100,7 @@ namespace core
 		}
 		mAgentTags = std::move(agentTags);
 		mWalkSpeedModifierSample.reset();
+		mHeightModifierSample.reset();
 		if (serializer.hasField("propertySamples"))
 		{
 			serializer.beginArray("propertySamples");
@@ -100,27 +108,43 @@ namespace core
 			{
 				serializer.beginMap("");
 				auto const type = serializer.readString("type");
-				if (type != "walkSpeedModifier")
+				AgentPropertySample sample;
+				std::optional<AgentPropertySample>* destination{ nullptr };
+				char const* displayName{ nullptr };
+				if (type == "walkSpeedModifier")
+				{
+					sample.type = SampledAgentPropertyType::WalkSpeedModifier;
+					destination = &mWalkSpeedModifierSample;
+					displayName = "Walk speed modifier";
+				}
+				else if (type == "heightModifier")
+				{
+					sample.type = SampledAgentPropertyType::HeightModifier;
+					destination = &mHeightModifierSample;
+					displayName = "Height modifier";
+				}
+				else
+				{
 					throw SerializationException(format(
 						"Unsupported sampled Agent property type '{}'", type));
-				if (mWalkSpeedModifierSample)
-					throw SerializationException(
-						"Serialized Agent contains more than one Walk speed modifier sample");
-				AgentPropertySample sample;
+				}
+				if (*destination)
+					throw SerializationException(format(
+						"Serialized Agent contains more than one {} sample", displayName));
 				sample.sourceTag = AgentTagId{ serializer.readUint64("sourceTag") };
 				sample.propertyRevision = serializer.readUint64("propertyRevision");
 				sample.value = serializer.readFloat("value");
 				serializer.endMap();
 				if (!sample.sourceTag || !mAgentTags.contains(sample.sourceTag))
-					throw SerializationException(
-						"Walk speed modifier sample source must be an assigned Agent tag");
+					throw SerializationException(format(
+						"{} sample source must be an assigned Agent tag", displayName));
 				if (sample.propertyRevision == 0)
 					throw SerializationException(
 						"Sampled Agent property revision cannot be zero");
 				if (!isfinite(sample.value))
-					throw SerializationException(
-						"Walk speed modifier sample must be finite");
-				mWalkSpeedModifierSample = sample;
+					throw SerializationException(format(
+						"{} sample must be finite", displayName));
+				*destination = sample;
 			}
 			serializer.endArray();
 		}
@@ -175,6 +199,16 @@ namespace core
 		return effective;
 	}
 
+	EffectiveAgentHeightModifier Agent::getEffectiveHeightModifier() const
+	{
+		EffectiveAgentHeightModifier effective;
+		if (!mHeightModifierSample) return effective;
+		effective.value = mHeightModifierSample->value;
+		effective.sourceTag = mHeightModifierSample->sourceTag;
+		effective.propertyRevision = mHeightModifierSample->propertyRevision;
+		return effective;
+	}
+
 	Agent::State Agent::getState() const
 	{
 		return mState;
@@ -207,7 +241,7 @@ namespace core
 
 	float Agent::getHeight() const
 	{
-		return CORE_AGENT_MAX_HEIGHT;
+		return CORE_AGENT_MAX_HEIGHT * getEffectiveHeightModifier().value;
 	}
 
 	Shape Agent::getBounds() const

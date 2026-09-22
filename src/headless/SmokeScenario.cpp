@@ -73,6 +73,7 @@ void runAgentTagAssignmentSmokeChecks();
 void runAgentTagDeleteSmokeChecks();
 void runAgentColourSmokeChecks();
 void runAgentWalkSpeedSmokeChecks();
+void runAgentHeightSmokeChecks();
 void runThresholdRefusalSmokeChecks();
 void runThresholdLayerOverlapSmokeChecks();
 void runWindowIntoBackgroundSmokeChecks();
@@ -5011,6 +5012,7 @@ int main(int argc, char** argv)
 		runAgentTagDeleteSmokeChecks();
 		runAgentColourSmokeChecks();
 		runAgentWalkSpeedSmokeChecks();
+		runAgentHeightSmokeChecks();
 		runShuttleDoorQuerySmokeChecks();
 		runThresholdRefusalSmokeChecks();
 		runThresholdLayerOverlapSmokeChecks();

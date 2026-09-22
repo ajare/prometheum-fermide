@@ -476,6 +476,9 @@ namespace core
 		void addAgentTagWalkSpeedModifierSamples(AgentTagId id,
 			AgentWalkSpeedModifierProperty const& property);
 		void clearAgentTagWalkSpeedModifierSamples(AgentTagId id);
+		void addAgentTagHeightModifierSamples(AgentTagId id,
+			AgentHeightModifierProperty const& property);
+		void clearAgentTagHeightModifierSamples(AgentTagId id);
 
 		// Case-sensitive name lookup across the groups this Building owns, with
 		// one group optionally excluded so a group renaming itself to the name
@@ -702,6 +705,7 @@ namespace core
 			AgentGroupId agentGroup{};
 			std::set<AgentTagId> agentTags;
 			std::optional<AgentPropertySample> walkSpeedModifierSample;
+			std::optional<AgentPropertySample> heightModifierSample;
 			bool active{ true };
 		};
 

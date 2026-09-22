@@ -1443,8 +1443,14 @@ void renderAgent(core::Agent const* agent, ImDrawList* drawList)
 	auto sourceBounds = font->CalcTextSizeA(sourceSize, FLT_MAX, 0.0f, ICON_FA_MALE);
 	float availableWidth = pos1.x - pos0.x;
 	float availableHeight = pos0.y - pos1.y;
+	// The authored modifier is visual height, not physical width. Establish the
+	// ordinary icon's fit against its unmodified bounds, then scale that icon
+	// uniformly by Height so a narrow glyph still visibly changes size instead
+	// of remaining pinned to the unchanged width constraint.
+	auto const heightModifier = agent->getEffectiveHeightModifier().value;
+	float standardAvailableHeight = availableHeight / heightModifier;
 	float scale = min(availableWidth / max(sourceBounds.x, 1.0f),
-		availableHeight / max(sourceBounds.y, 1.0f));
+		standardAvailableHeight / max(sourceBounds.y, 1.0f)) * heightModifier;
 	float fontSize = sourceSize * scale;
 	auto iconSize = font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, ICON_FA_MALE);
 	ImVec2 iconPosition{

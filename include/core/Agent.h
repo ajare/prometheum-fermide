@@ -40,7 +40,8 @@ namespace core
 
 	enum class SampledAgentPropertyType
 	{
-		WalkSpeedModifier
+		WalkSpeedModifier,
+		HeightModifier
 	};
 
 	struct AgentPropertySample
@@ -57,6 +58,14 @@ namespace core
 	{
 		float value{ 1.0f };
 		// Empty means that base walk speed is unmodified.
+		AgentTagId sourceTag{};
+		uint64_t propertyRevision{ 0 };
+	};
+
+	struct EffectiveAgentHeightModifier
+	{
+		float value{ 1.0f };
+		// Empty means that standard visual height is unmodified.
 		AgentTagId sourceTag{};
 		uint64_t propertyRevision{ 0 };
 	};
@@ -120,6 +129,7 @@ namespace core
 		// simulation state. Their source identity and property revision make the
 		// draw inspectable and let loading distinguish stable data from stale data.
 		std::optional<AgentPropertySample> mWalkSpeedModifierSample;
+		std::optional<AgentPropertySample> mHeightModifierSample;
 
 		// Activation is authored state (#118): an activated Agent is simulated,
 		// a deactivated one keeps its authored position and route but no tick
@@ -189,6 +199,11 @@ namespace core
 			mWalkSpeedModifierSample = sample;
 		}
 		void clearWalkSpeedModifierSample() { mWalkSpeedModifierSample.reset(); }
+		void setHeightModifierSample(AgentPropertySample sample)
+		{
+			mHeightModifierSample = sample;
+		}
+		void clearHeightModifierSample() { mHeightModifierSample.reset(); }
 
 		void setPosition(SectorPosition pos, bool authored = true);
 
@@ -263,6 +278,14 @@ namespace core
 		std::optional<AgentPropertySample> const& getWalkSpeedModifierSample() const
 		{
 			return mWalkSpeedModifierSample;
+		}
+
+		// The persisted per-Agent Height draw and its provenance. It scales only
+		// visual height and bounds; physical simulation dimensions stay fixed.
+		EffectiveAgentHeightModifier getEffectiveHeightModifier() const;
+		std::optional<AgentPropertySample> const& getHeightModifierSample() const
+		{
+			return mHeightModifierSample;
 		}
 
 		// Whether this Agent is simulated. Deactivation changes no authored

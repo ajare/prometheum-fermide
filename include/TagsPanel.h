@@ -58,6 +58,15 @@ bool commitAgentTagWalkSpeedModifierEdit(
 bool commitAgentTagWalkSpeedModifierRemove(
 	std::shared_ptr<core::AgentTagRegistry> const& registry, core::AgentTagId id,
 	std::string& diagnostic);
+bool commitAgentTagHeightModifierAdd(
+	std::shared_ptr<core::AgentTagRegistry> const& registry, core::AgentTagId id,
+	std::string& diagnostic);
+bool commitAgentTagHeightModifierEdit(
+	std::shared_ptr<core::AgentTagRegistry> const& registry, core::AgentTagId id,
+	core::AgentModifierRange range, std::string& diagnostic);
+bool commitAgentTagHeightModifierRemove(
+	std::shared_ptr<core::AgentTagRegistry> const& registry, core::AgentTagId id,
+	std::string& diagnostic);
 
 // Deletes a tag and every assignment in loaded dependent Buildings as one
 // registry-history transaction. A refusal changes neither registry nor

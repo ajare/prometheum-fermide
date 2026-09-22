@@ -53,6 +53,14 @@ namespace
 		string diagnostic;
 	};
 
+	struct TagHeightEdit
+	{
+		core::AgentModifierRange range{};
+		uint64_t loadedRevision{ 0 };
+		bool pending{ false };
+		string diagnostic;
+	};
+
 	struct RegistryBuildingSnapshot
 	{
 		core::Building* building{ nullptr };
@@ -81,6 +89,7 @@ namespace
 	map<uint64_t, TagNameEdit> gTagNameEdits;
 	map<uint64_t, TagColourEdit> gTagColourEdits;
 	map<uint64_t, TagWalkSpeedEdit> gTagWalkSpeedEdits;
+	map<uint64_t, TagHeightEdit> gTagHeightEdits;
 	array<char, SearchBufferSize> gTagSearch{};
 	PendingAgentTagDelete gPendingAgentTagDelete;
 	bool gAddingTag{ false };
@@ -371,6 +380,71 @@ namespace
 					edit.diagnostic.c_str());
 		}
 
+		auto const* height = registry->getAgentTagHeightModifier(id);
+		if (height)
+		{
+			auto& edit = gTagHeightEdits[id.value];
+			if (!edit.pending && edit.loadedRevision != height->revision)
+			{
+				edit.range = height->range;
+				edit.loadedRevision = height->revision;
+				edit.diagnostic.clear();
+			}
+			ImGui::SetNextItemWidth(-ImGui::GetFrameHeight() - ImGui::GetStyle().ItemSpacing.x);
+			if (ImGui::DragFloatRange2("Height", &edit.range.minimum,
+				&edit.range.maximum, 0.005f, core::AgentHeightModifierMinimum,
+				core::AgentHeightModifierMaximum, "Min %.3f", "Max %.3f",
+				ImGuiSliderFlags_AlwaysClamp))
+				edit.pending = true;
+			auto const finished = ImGui::IsItemDeactivatedAfterEdit();
+			auto const cancelled = ImGui::IsItemDeactivated() && !finished;
+			if (edit.pending && finished)
+			{
+				string diagnostic;
+				if (!commitAgentTagHeightModifierEdit(registry, id, edit.range, diagnostic)
+					&& diagnostic != "The Agent Height modifier range is unchanged")
+				{
+					edit.diagnostic = diagnostic;
+					core::addLogMessage("Tags", 0, core::LogLevel::Warning, diagnostic);
+				}
+				else edit.diagnostic.clear();
+				edit.pending = false;
+				height = registry->getAgentTagHeightModifier(id);
+				if (height)
+				{
+					edit.range = height->range;
+					edit.loadedRevision = height->revision;
+				}
+			}
+			else if (edit.pending && cancelled)
+			{
+				edit.range = height->range;
+				edit.pending = false;
+				edit.diagnostic.clear();
+			}
+			ImGui::SameLine();
+			bool removed{ false };
+			if (ImGui::Button(ICON_FA_TIMES "##removeHeight"))
+			{
+				string diagnostic;
+				if (!commitAgentTagHeightModifierRemove(registry, id, diagnostic))
+				{
+					edit.diagnostic = diagnostic;
+					core::addLogMessage("Tags", 0, core::LogLevel::Warning, diagnostic);
+				}
+				else
+				{
+					gTagHeightEdits.erase(id.value);
+					height = nullptr;
+					removed = true;
+				}
+			}
+			if (ImGui::IsItemHovered()) ImGui::SetTooltip("Remove Height modifier");
+			if (!removed && !edit.diagnostic.empty())
+				ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.45f, 1.0f), "%s",
+					edit.diagnostic.c_str());
+		}
+
 		if (!colour)
 		{
 			if (ImGui::Button(ICON_FA_PLUS " Add Colour"))
@@ -390,6 +464,17 @@ namespace
 				if (!commitAgentTagWalkSpeedModifierAdd(registry, id, diagnostic))
 					core::addLogMessage("Tags", 0, core::LogLevel::Warning, diagnostic);
 				else gTagWalkSpeedEdits.erase(id.value);
+			}
+		}
+		if (!height)
+		{
+			if (!colour || !walkSpeed) ImGui::SameLine();
+			if (ImGui::Button(ICON_FA_PLUS " Add Height modifier"))
+			{
+				string diagnostic;
+				if (!commitAgentTagHeightModifierAdd(registry, id, diagnostic))
+					core::addLogMessage("Tags", 0, core::LogLevel::Warning, diagnostic);
+				else gTagHeightEdits.erase(id.value);
 			}
 		}
 	}
@@ -893,6 +978,105 @@ bool commitAgentTagWalkSpeedModifierRemove(
 	return true;
 }
 
+bool commitAgentTagHeightModifierAdd(
+	shared_ptr<core::AgentTagRegistry> const& registry,
+	core::AgentTagId id, string& diagnostic)
+{
+	diagnostic.clear();
+	if (!registry)
+	{
+		diagnostic = "There is no Agent tag registry in which to add Height modifier";
+		return false;
+	}
+	vector<core::Building*> participants;
+	try
+	{
+		for (auto const& usage : registry->getLoadedAgentTagUsage(id))
+			if (usage.building && usage.agentCount > 0)
+				participants.push_back(const_cast<core::Building*>(usage.building));
+	}
+	catch (std::exception const& error)
+	{
+		diagnostic = error.what();
+		return false;
+	}
+	auto undo = captureRegistrySnapshot(registry, participants, id);
+	if (!undo)
+	{
+		diagnostic = "Could not capture the registry and loaded Buildings before adding Height modifier";
+		return false;
+	}
+	if (!registry->addAgentTagHeightModifier(id, &diagnostic)) return false;
+	agentTagRegistryDocumentHistory(registry).commit(std::move(undo));
+	return true;
+}
+
+bool commitAgentTagHeightModifierEdit(
+	shared_ptr<core::AgentTagRegistry> const& registry,
+	core::AgentTagId id, core::AgentModifierRange range, string& diagnostic)
+{
+	diagnostic.clear();
+	if (!registry)
+	{
+		diagnostic = "There is no Agent tag registry in which to edit Height modifier";
+		return false;
+	}
+	vector<core::Building*> participants;
+	try
+	{
+		for (auto const& usage : registry->getLoadedAgentTagUsage(id))
+			if (usage.building && usage.agentCount > 0)
+				participants.push_back(const_cast<core::Building*>(usage.building));
+	}
+	catch (std::exception const& error)
+	{
+		diagnostic = error.what();
+		return false;
+	}
+	auto undo = captureRegistrySnapshot(registry, participants, id);
+	if (!undo)
+	{
+		diagnostic = "Could not capture the registry and loaded Buildings before editing Height modifier";
+		return false;
+	}
+	if (!registry->setAgentTagHeightModifier(id, range, &diagnostic)) return false;
+	agentTagRegistryDocumentHistory(registry).commit(std::move(undo));
+	return true;
+}
+
+bool commitAgentTagHeightModifierRemove(
+	shared_ptr<core::AgentTagRegistry> const& registry,
+	core::AgentTagId id, string& diagnostic)
+{
+	diagnostic.clear();
+	if (!registry)
+	{
+		diagnostic = "There is no Agent tag registry from which to remove Height modifier";
+		return false;
+	}
+	vector<core::Building*> participants;
+	try
+	{
+		for (auto const& usage : registry->getLoadedAgentTagUsage(id))
+			if (usage.building && usage.agentCount > 0)
+				participants.push_back(const_cast<core::Building*>(usage.building));
+	}
+	catch (std::exception const& error)
+	{
+		diagnostic = error.what();
+		return false;
+	}
+	auto undo = captureRegistrySnapshot(registry, participants, id);
+	if (!undo)
+	{
+		diagnostic = "Could not capture the registry and loaded Buildings before removing Height modifier";
+		return false;
+	}
+	if (!registry->removeAgentTagHeightModifier(id, &diagnostic)) return false;
+	agentTagRegistryDocumentHistory(registry).commit(std::move(undo));
+	return true;
+}
+
 bool commitAgentTagDelete(shared_ptr<core::AgentTagRegistry> const& registry,
 	core::AgentTagId id, string& diagnostic)
 {
@@ -1119,6 +1303,7 @@ void resetTagsPanelState()
 	gTagNameEdits.clear();
 	gTagColourEdits.clear();
 	gTagWalkSpeedEdits.clear();
+	gTagHeightEdits.clear();
 	gTagSearch.fill('\0');
 	cancelPendingAgentTagDelete();
 	gAddingTag = false;

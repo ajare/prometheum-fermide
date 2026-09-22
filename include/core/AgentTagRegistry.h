@@ -42,6 +42,8 @@ namespace core
 		bool colourAdditionIsValid(AgentTagId id, std::string* diagnostic) const;
 		bool walkSpeedModifierAdditionIsValid(AgentTagId id,
 			std::string* diagnostic) const;
+		bool heightModifierAdditionIsValid(AgentTagId id,
+			std::string* diagnostic) const;
 		void registerBuilding(Building& building);
 		void unregisterBuilding(Building& building);
 
@@ -63,6 +65,8 @@ namespace core
 		std::string const& getAgentTagName(AgentTagId id) const;
 		AgentColourProperty const* getAgentTagColour(AgentTagId id) const;
 		AgentWalkSpeedModifierProperty const* getAgentTagWalkSpeedModifier(
+			AgentTagId id) const;
+		AgentHeightModifierProperty const* getAgentTagHeightModifier(
 			AgentTagId id) const;
 
 		// Live usage is derived from every loaded Building sharing this exact
@@ -93,6 +97,13 @@ namespace core
 		bool setAgentTagWalkSpeedModifier(AgentTagId id, AgentModifierRange range,
 			std::string* diagnostic = nullptr);
 		bool removeAgentTagWalkSpeedModifier(AgentTagId id,
+			std::string* diagnostic = nullptr);
+
+		bool addAgentTagHeightModifier(AgentTagId id,
+			std::string* diagnostic = nullptr);
+		bool setAgentTagHeightModifier(AgentTagId id, AgentModifierRange range,
+			std::string* diagnostic = nullptr);
+		bool removeAgentTagHeightModifier(AgentTagId id,
 			std::string* diagnostic = nullptr);
 
 		// Used by registry undo/redo to reject a prospective definition set that

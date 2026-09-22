@@ -106,6 +106,15 @@ void renderAgentEffectiveProperties(shared_ptr<core::Building> const& building,
 			registry->getAgentTagName(walkSpeed.sourceTag).c_str());
 	}
 	else ImGui::Text("Walk speed modifier: 1.000x (base default)");
+
+	auto const height = lookup.entity->getEffectiveHeightModifier();
+	if (height.sourceTag && building->hasAttachedAgentTagRegistry())
+	{
+		auto const& registry = building->getAgentTagRegistry();
+		ImGui::Text("Height modifier: %.3fx from #%s", static_cast<double>(height.value),
+			registry->getAgentTagName(height.sourceTag).c_str());
+	}
+	else ImGui::Text("Height modifier: 1.000x (visual default)");
 }
 
 void renderAgentTagAssignmentChecklist(shared_ptr<core::Building> const& building,

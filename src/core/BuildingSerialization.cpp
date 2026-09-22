@@ -1448,7 +1448,8 @@ namespace core
 			carried.push_back(CarriedAgent{ id, agent->getName(), agent->getFlags(),
 				sector->getIndex(), sector->getLayerIndex(), agent->getGlobalPosition(),
 				agent->getAgentGroupId(), agent->getAgentTagIds(),
-				agent->getWalkSpeedModifierSample(), agent->isActive() });
+				agent->getWalkSpeedModifierSample(), agent->getHeightModifierSample(),
+				agent->isActive() });
 		}
 		return carried;
 	}
@@ -1483,6 +1484,8 @@ namespace core
 			raw->setAgentTags(saved.agentTags);
 			if (saved.walkSpeedModifierSample)
 				raw->setWalkSpeedModifierSample(*saved.walkSpeedModifierSample);
+			if (saved.heightModifierSample)
+				raw->setHeightModifierSample(*saved.heightModifierSample);
 			_getSector(sector->getIndex())->mAgents.insert(raw);
 			mAgents.restore(saved.id, std::move(agent));
 			mAgentIds.emplace(raw, saved.id);

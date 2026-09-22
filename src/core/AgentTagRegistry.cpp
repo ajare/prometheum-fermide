@@ -148,6 +148,16 @@ namespace core
 		return tag->getWalkSpeedModifier();
 	}
 
+	AgentHeightModifierProperty const*
+	AgentTagRegistry::getAgentTagHeightModifier(AgentTagId id) const
+	{
+		auto const* tag = mTags.find(id);
+		if (!tag)
+			throw std::out_of_range(std::format(
+				"Agent tag {} is not defined in this registry", id.value));
+		return tag->getHeightModifier();
+	}
+
 	void AgentTagRegistry::registerBuilding(Building& building)
 	{
 		mLoadedBuildings.insert(&building);
@@ -272,6 +282,42 @@ namespace core
 					if (!source || !source->getWalkSpeedModifier()) continue;
 					return reject(std::format(
 						"Cannot add Walk speed modifier to Agent tag #{}: Agent '{}' in Building '{}' already inherits Walk speed modifier from #{}",
+						target->getName(), agent->getName(), building->getName(),
+						source->getName()));
+				}
+			}
+		}
+		if (diagnostic) diagnostic->clear();
+		return true;
+	}
+
+	bool AgentTagRegistry::heightModifierAdditionIsValid(AgentTagId id,
+		std::string* diagnostic) const
+	{
+		auto reject = [diagnostic](std::string reason)
+		{
+			if (diagnostic) *diagnostic = std::move(reason);
+			return false;
+		};
+		auto const* target = mTags.find(id);
+		if (!target)
+			return reject(std::format(
+				"Agent tag {} is not defined in this registry", id.value));
+
+		for (auto const* building : mLoadedBuildings)
+		{
+			if (!building) continue;
+			for (auto const& [agentId, agent] : building->mAgents.entries())
+			{
+				(void)agentId;
+				if (!agent || !agent->hasAgentTag(id)) continue;
+				for (auto const assigned : agent->getAgentTagIds())
+				{
+					if (assigned == id) continue;
+					auto const* source = mTags.find(assigned);
+					if (!source || !source->getHeightModifier()) continue;
+					return reject(std::format(
+						"Cannot add Height modifier to Agent tag #{}: Agent '{}' in Building '{}' already inherits Height modifier from #{}",
 						target->getName(), agent->getName(), building->getName(),
 						source->getName()));
 				}
@@ -523,6 +569,90 @@ namespace core
 		return true;
 	}
 
+	bool AgentTagRegistry::addAgentTagHeightModifier(AgentTagId id,
+		std::string* diagnostic)
+	{
+		auto reject = [diagnostic](std::string reason)
+		{
+			if (diagnostic) *diagnostic = std::move(reason);
+			return false;
+		};
+		auto* tag = mTags.find(id);
+		if (!tag)
+			return reject(std::format(
+				"Agent tag {} is not defined in this registry", id.value));
+		if (tag->getHeightModifier())
+			return reject(std::format(
+				"Agent tag #{} already has Height modifier", tag->getName()));
+		if (!heightModifierAdditionIsValid(id, diagnostic)) return false;
+
+		uint64_t revision{ 0 };
+		try { revision = allocatePropertyRevision(); }
+		catch (std::exception const& error) { return reject(error.what()); }
+		tag->setHeightModifier({ DefaultAgentHeightModifierRange, revision });
+		for (auto* building : mLoadedBuildings)
+			if (building) building->addAgentTagHeightModifierSamples(
+				id, *tag->getHeightModifier());
+		modify();
+		if (diagnostic) diagnostic->clear();
+		return true;
+	}
+
+	bool AgentTagRegistry::setAgentTagHeightModifier(AgentTagId id,
+		AgentModifierRange range, std::string* diagnostic)
+	{
+		auto reject = [diagnostic](std::string reason)
+		{
+			if (diagnostic) *diagnostic = std::move(reason);
+			return false;
+		};
+		auto* tag = mTags.find(id);
+		if (!tag)
+			return reject(std::format(
+				"Agent tag {} is not defined in this registry", id.value));
+		auto const* current = tag->getHeightModifier();
+		if (!current)
+			return reject(std::format(
+				"Agent tag #{} has no Height modifier", tag->getName()));
+		if (!agentHeightModifierRangeIsValid(range, diagnostic)) return false;
+		if (current->range == range)
+			return reject("The Agent Height modifier range is unchanged");
+
+		uint64_t revision{ 0 };
+		try { revision = allocatePropertyRevision(); }
+		catch (std::exception const& error) { return reject(error.what()); }
+		tag->setHeightModifier({ range, revision });
+		for (auto* building : mLoadedBuildings)
+			if (building) building->addAgentTagHeightModifierSamples(
+				id, *tag->getHeightModifier());
+		modify();
+		if (diagnostic) diagnostic->clear();
+		return true;
+	}
+
+	bool AgentTagRegistry::removeAgentTagHeightModifier(AgentTagId id,
+		std::string* diagnostic)
+	{
+		auto reject = [diagnostic](std::string reason)
+		{
+			if (diagnostic) *diagnostic = std::move(reason);
+			return false;
+		};
+		auto* tag = mTags.find(id);
+		if (!tag)
+			return reject(std::format(
+				"Agent tag {} is not defined in this registry", id.value));
+		if (!tag->getHeightModifier())
+			return reject(std::format(
+				"Agent tag #{} has no Height modifier", tag->getName()));
+		for (auto* building : mLoadedBuildings)
+			if (building) building->clearAgentTagHeightModifierSamples(id);
+		tag->removeHeightModifier();
+		modify();
+		if (diagnostic) diagnostic->clear();
+		return true;
+	}
+
 	bool AgentTagRegistry::loadedBuildingAssignmentsAreValid(
 		AgentTagRegistry const& definitions, std::string* diagnostic,
 		std::vector<Building const*> const& excludedBuildings) const
@@ -564,7 +694,8 @@ namespace core
 			serializer.writeString("name", tag->getName());
 			auto const* colour = tag->getColour();
 			auto const* walkSpeed = tag->getWalkSpeedModifier();
-			if (colour || walkSpeed)
+			auto const* height = tag->getHeightModifier();
+			if (colour || walkSpeed || height)
 			{
 				serializer.beginArray("properties");
 				if (colour)
@@ -577,15 +708,18 @@ namespace core
 					serializer.writeUint8("b", colour->value.b);
 					serializer.endMap();
 				}
-				if (walkSpeed)
+				auto writeModifier = [&serializer](char const* type,
+					auto const& modifier)
 				{
 					serializer.beginMap("");
-					serializer.writeString("type", "walkSpeedModifier");
-					serializer.writeUint64("revision", walkSpeed->revision);
-					serializer.writeFloat("min", walkSpeed->range.minimum);
-					serializer.writeFloat("max", walkSpeed->range.maximum);
+					serializer.writeString("type", type);
+					serializer.writeUint64("revision", modifier.revision);
+					serializer.writeFloat("min", modifier.range.minimum);
+					serializer.writeFloat("max", modifier.range.maximum);
 					serializer.endMap();
-				}
+				};
+				if (walkSpeed) writeModifier("walkSpeedModifier", *walkSpeed);
+				if (height) writeModifier("heightModifier", *height);
 				serializer.endArray();
 			}
 			serializer.endMap();
@@ -629,20 +763,28 @@ namespace core
 			{
 				bool hasColour{ false };
 				bool hasWalkSpeedModifier{ false };
+				bool hasHeightModifier{ false };
 				serializer.beginArray("properties");
 				while (serializer.nextArrayItem())
 				{
 					serializer.beginMap("");
 					auto const type = serializer.readString("type");
-					if (type != "colour" && type != "walkSpeedModifier")
+					if (type != "colour" && type != "walkSpeedModifier"
+						&& type != "heightModifier")
+					{
 						throw SerializationException(std::format(
 							"Unsupported Agent property type '{}'", type));
+					}
 					if (type == "colour" && hasColour)
 						throw SerializationException(std::format(
 							"Serialized Agent tag #{} contains more than one Colour", name));
 					if (type == "walkSpeedModifier" && hasWalkSpeedModifier)
 						throw SerializationException(std::format(
 							"Serialized Agent tag #{} contains more than one Walk speed modifier",
+							name));
+					if (type == "heightModifier" && hasHeightModifier)
+						throw SerializationException(std::format(
+							"Serialized Agent tag #{} contains more than one Height modifier",
 							name));
 					auto const revision = serializer.readUint64("revision");
 					if (revision == 0)
@@ -662,12 +804,24 @@ namespace core
 						AgentModifierRange const range{
 							serializer.readFloat("min"), serializer.readFloat("max") };
 						std::string rangeDiagnostic;
-						if (!agentWalkSpeedModifierRangeIsValid(range, &rangeDiagnostic))
-							throw SerializationException(
-								"Serialized Walk speed modifier range is invalid: "
-								+ rangeDiagnostic);
-						tag->setWalkSpeedModifier({ range, revision });
-						hasWalkSpeedModifier = true;
+						if (type == "walkSpeedModifier")
+						{
+							if (!agentWalkSpeedModifierRangeIsValid(range, &rangeDiagnostic))
+								throw SerializationException(
+									"Serialized Walk speed modifier range is invalid: "
+									+ rangeDiagnostic);
+							tag->setWalkSpeedModifier({ range, revision });
+							hasWalkSpeedModifier = true;
+						}
+						else
+						{
+							if (!agentHeightModifierRangeIsValid(range, &rangeDiagnostic))
+								throw SerializationException(
+									"Serialized Height modifier range is invalid: "
+									+ rangeDiagnostic);
+							tag->setHeightModifier({ range, revision });
+							hasHeightModifier = true;
+						}
 					}
 					serializer.endMap();
 					if (!propertyRevisions.insert(revision).second)

@@ -49,6 +49,29 @@ namespace core
 		return true;
 	}
 
+	bool agentHeightModifierRangeIsValid(AgentModifierRange const& range,
+		std::string* diagnostic)
+	{
+		auto reject = [diagnostic](std::string reason)
+		{
+			if (diagnostic) *diagnostic = std::move(reason);
+			return false;
+		};
+		if (!std::isfinite(range.minimum) || !std::isfinite(range.maximum))
+			return reject("Height modifier endpoints must be finite");
+		if (range.minimum < AgentHeightModifierMinimum
+			|| range.minimum > AgentHeightModifierMaximum
+			|| range.maximum < AgentHeightModifierMinimum
+			|| range.maximum > AgentHeightModifierMaximum)
+		{
+			return reject("Height modifier endpoints must be between 0.7 and 1.0");
+		}
+		if (range.minimum > range.maximum)
+			return reject("Height modifier minimum cannot exceed its maximum");
+		if (diagnostic) diagnostic->clear();
+		return true;
+	}
+
 	float sampleAgentModifier(AgentModifierRange const& range)
 	{
 		if (!(range.minimum < range.maximum)) return range.minimum;

@@ -42,6 +42,9 @@ namespace core
 	inline constexpr float AgentWalkSpeedModifierMinimum{ 0.8f };
 	inline constexpr float AgentWalkSpeedModifierMaximum{ 1.2f };
 	inline constexpr AgentModifierRange DefaultAgentWalkSpeedModifierRange{};
+	inline constexpr float AgentHeightModifierMinimum{ 0.7f };
+	inline constexpr float AgentHeightModifierMaximum{ 1.0f };
+	inline constexpr AgentModifierRange DefaultAgentHeightModifierRange{};
 
 	struct AgentWalkSpeedModifierProperty
 	{
@@ -51,9 +54,19 @@ namespace core
 		bool operator==(AgentWalkSpeedModifierProperty const& other) const = default;
 	};
 
+	struct AgentHeightModifierProperty
+	{
+		AgentModifierRange range{};
+		uint64_t revision{ 0 };
+
+		bool operator==(AgentHeightModifierProperty const& other) const = default;
+	};
+
 	void agentColourToFloats(AgentColour const& colour, float out[3]);
 	AgentColour agentColourFromFloats(float const in[3]);
 	bool agentWalkSpeedModifierRangeIsValid(AgentModifierRange const& range,
+		std::string* diagnostic = nullptr);
+	bool agentHeightModifierRangeIsValid(AgentModifierRange const& range,
 		std::string* diagnostic = nullptr);
 	float sampleAgentModifier(AgentModifierRange const& range);
 
@@ -66,6 +79,7 @@ namespace core
 		std::string mName;
 		std::optional<AgentColourProperty> mColour;
 		std::optional<AgentWalkSpeedModifierProperty> mWalkSpeedModifier;
+		std::optional<AgentHeightModifierProperty> mHeightModifier;
 
 		explicit AgentTag(std::string name)
 			: mName(std::move(name))
@@ -80,6 +94,11 @@ namespace core
 			mWalkSpeedModifier = property;
 		}
 		void removeWalkSpeedModifier() { mWalkSpeedModifier.reset(); }
+		void setHeightModifier(AgentHeightModifierProperty property)
+		{
+			mHeightModifier = property;
+		}
+		void removeHeightModifier() { mHeightModifier.reset(); }
 
 	public:
 		static constexpr size_t MaxNameCharacters{ 12 };
@@ -95,6 +114,10 @@ namespace core
 		AgentWalkSpeedModifierProperty const* getWalkSpeedModifier() const
 		{
 			return mWalkSpeedModifier ? &*mWalkSpeedModifier : nullptr;
+		}
+		AgentHeightModifierProperty const* getHeightModifier() const
+		{
+			return mHeightModifier ? &*mHeightModifier : nullptr;
 		}
 	};
 }
