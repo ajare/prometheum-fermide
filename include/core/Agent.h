@@ -38,6 +38,29 @@ namespace core
 		AgentTagId sourceTag{};
 	};
 
+	enum class SampledAgentPropertyType
+	{
+		WalkSpeedModifier
+	};
+
+	struct AgentPropertySample
+	{
+		SampledAgentPropertyType type{ SampledAgentPropertyType::WalkSpeedModifier };
+		AgentTagId sourceTag{};
+		uint64_t propertyRevision{ 0 };
+		float value{ 1.0f };
+
+		bool operator==(AgentPropertySample const& other) const = default;
+	};
+
+	struct EffectiveAgentWalkSpeedModifier
+	{
+		float value{ 1.0f };
+		// Empty means that base walk speed is unmodified.
+		AgentTagId sourceTag{};
+		uint64_t propertyRevision{ 0 };
+	};
+
 	class Agent : public Serializable
 	{
 		friend class Building;
@@ -92,6 +115,11 @@ namespace core
 		// structurally impossible in memory and gives persistence a stable numeric
 		// order. New Agents start with the empty set.
 		std::set<AgentTagId> mAgentTags;
+
+		// Modifier samples are authored per-Agent values rather than transient
+		// simulation state. Their source identity and property revision make the
+		// draw inspectable and let loading distinguish stable data from stale data.
+		std::optional<AgentPropertySample> mWalkSpeedModifierSample;
 
 		// Activation is authored state (#118): an activated Agent is simulated,
 		// a deactivated one keeps its authored position and route but no tick
@@ -156,6 +184,11 @@ namespace core
 		void assignAgentTag(AgentTagId id) { mAgentTags.insert(id); }
 		void removeAgentTag(AgentTagId id) { mAgentTags.erase(id); }
 		void setAgentTags(std::set<AgentTagId> tags) { mAgentTags = std::move(tags); }
+		void setWalkSpeedModifierSample(AgentPropertySample sample)
+		{
+			mWalkSpeedModifierSample = sample;
+		}
+		void clearWalkSpeedModifierSample() { mWalkSpeedModifierSample.reset(); }
 
 		void setPosition(SectorPosition pos, bool authored = true);
 
@@ -223,6 +256,14 @@ namespace core
 		// Resolves Colour through this Agent's assigned tags. Valid Building state
 		// has at most one source; an uncoloured Agent receives the editor default.
 		EffectiveAgentColour getEffectiveColour() const;
+
+		// The persisted per-Agent Walk speed draw and its provenance. An Agent
+		// without the property exposes the neutral modifier and no source tag.
+		EffectiveAgentWalkSpeedModifier getEffectiveWalkSpeedModifier() const;
+		std::optional<AgentPropertySample> const& getWalkSpeedModifierSample() const
+		{
+			return mWalkSpeedModifierSample;
+		}
 
 		// Whether this Agent is simulated. Deactivation changes no authored
 		// state: position and route stay as they are until an activated tick

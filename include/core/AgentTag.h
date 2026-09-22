@@ -31,8 +31,31 @@ namespace core
 		bool operator==(AgentColourProperty const& other) const = default;
 	};
 
+	struct AgentModifierRange
+	{
+		float minimum{ 1.0f };
+		float maximum{ 1.0f };
+
+		bool operator==(AgentModifierRange const& other) const = default;
+	};
+
+	inline constexpr float AgentWalkSpeedModifierMinimum{ 0.8f };
+	inline constexpr float AgentWalkSpeedModifierMaximum{ 1.2f };
+	inline constexpr AgentModifierRange DefaultAgentWalkSpeedModifierRange{};
+
+	struct AgentWalkSpeedModifierProperty
+	{
+		AgentModifierRange range{};
+		uint64_t revision{ 0 };
+
+		bool operator==(AgentWalkSpeedModifierProperty const& other) const = default;
+	};
+
 	void agentColourToFloats(AgentColour const& colour, float out[3]);
 	AgentColour agentColourFromFloats(float const in[3]);
+	bool agentWalkSpeedModifierRangeIsValid(AgentModifierRange const& range,
+		std::string* diagnostic = nullptr);
+	float sampleAgentModifier(AgentModifierRange const& range);
 
 	// A named reusable set of Agent properties. Property types are hardcoded;
 	// the optional values and their revisions are authored registry data.
@@ -42,6 +65,7 @@ namespace core
 
 		std::string mName;
 		std::optional<AgentColourProperty> mColour;
+		std::optional<AgentWalkSpeedModifierProperty> mWalkSpeedModifier;
 
 		explicit AgentTag(std::string name)
 			: mName(std::move(name))
@@ -51,6 +75,11 @@ namespace core
 		void setName(std::string name) { mName = std::move(name); }
 		void setColour(AgentColourProperty colour) { mColour = colour; }
 		void removeColour() { mColour.reset(); }
+		void setWalkSpeedModifier(AgentWalkSpeedModifierProperty property)
+		{
+			mWalkSpeedModifier = property;
+		}
+		void removeWalkSpeedModifier() { mWalkSpeedModifier.reset(); }
 
 	public:
 		static constexpr size_t MaxNameCharacters{ 12 };
@@ -62,6 +91,10 @@ namespace core
 		AgentColourProperty const* getColour() const
 		{
 			return mColour ? &*mColour : nullptr;
+		}
+		AgentWalkSpeedModifierProperty const* getWalkSpeedModifier() const
+		{
+			return mWalkSpeedModifier ? &*mWalkSpeedModifier : nullptr;
 		}
 	};
 }

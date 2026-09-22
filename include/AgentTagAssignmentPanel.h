@@ -24,9 +24,9 @@ bool commitAgentTagAssignment(
 	core::AgentId agent, core::AgentTagId tag, bool assigned,
 	std::string& diagnostic);
 
-// Reports the selected Agent's effective Colour and either its source tag or
-// the editor fallback. Kept separate so the headless ImGui seam exercises the
-// same read-only content as the Selection panel.
+// Reports the selected Agent's effective Colour and sampled Walk speed
+// modifier, including source tags or their respective defaults. Kept separate
+// so the headless ImGui seam exercises the Selection panel's read-only content.
 void renderAgentEffectiveProperties(
 	std::shared_ptr<core::Building> const& building, core::AgentId agent);
 

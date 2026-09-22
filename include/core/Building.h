@@ -473,6 +473,9 @@ namespace core
 			std::string* diagnostic = nullptr) const;
 		uint32_t countAgentTagAssignments(AgentTagId id) const;
 		void clearAgentTagAssignments(AgentTagId id);
+		void addAgentTagWalkSpeedModifierSamples(AgentTagId id,
+			AgentWalkSpeedModifierProperty const& property);
+		void clearAgentTagWalkSpeedModifierSamples(AgentTagId id);
 
 		// Case-sensitive name lookup across the groups this Building owns, with
 		// one group optionally excluded so a group renaming itself to the name
@@ -698,6 +701,7 @@ namespace core
 			Vector2 position{};
 			AgentGroupId agentGroup{};
 			std::set<AgentTagId> agentTags;
+			std::optional<AgentPropertySample> walkSpeedModifierSample;
 			bool active{ true };
 		};
 

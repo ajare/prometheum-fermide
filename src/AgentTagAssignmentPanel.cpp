@@ -97,6 +97,15 @@ void renderAgentEffectiveProperties(shared_ptr<core::Building> const& building,
 			static_cast<unsigned>(effective.value.g),
 			static_cast<unsigned>(effective.value.b));
 	}
+
+	auto const walkSpeed = lookup.entity->getEffectiveWalkSpeedModifier();
+	if (walkSpeed.sourceTag && building->hasAttachedAgentTagRegistry())
+	{
+		auto const& registry = building->getAgentTagRegistry();
+		ImGui::Text("Walk speed modifier: %.3fx from #%s", walkSpeed.value,
+			registry->getAgentTagName(walkSpeed.sourceTag).c_str());
+	}
+	else ImGui::Text("Walk speed modifier: 1.000x (base default)");
 }
 
 void renderAgentTagAssignmentChecklist(shared_ptr<core::Building> const& building,

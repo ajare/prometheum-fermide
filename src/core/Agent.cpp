@@ -1,4 +1,7 @@
 #include "core/Agent.h"
+
+#include <cmath>
+
 #include "core/Building.h"
 #include "core/Edge.h"
 #include "core/Location.h"
@@ -45,6 +48,18 @@ namespace core
 			for (auto const id : mAgentTags) serializer.writeUint64("", id.value);
 			serializer.endArray();
 		}
+		if (mWalkSpeedModifierSample)
+		{
+			serializer.beginArray("propertySamples");
+			serializer.beginMap("");
+			serializer.writeString("type", "walkSpeedModifier");
+			serializer.writeUint64("sourceTag", mWalkSpeedModifierSample->sourceTag.value);
+			serializer.writeUint64("propertyRevision",
+				mWalkSpeedModifierSample->propertyRevision);
+			serializer.writeFloat("value", mWalkSpeedModifierSample->value);
+			serializer.endMap();
+			serializer.endArray();
+		}
 		// An activated Agent writes no `active` key at all - the same convention
 		// as an Agent with no path writing no `path` map - so a document written
 		// before activation existed reads back with every Agent activated (#118).
@@ -77,6 +92,38 @@ namespace core
 			serializer.endArray();
 		}
 		mAgentTags = std::move(agentTags);
+		mWalkSpeedModifierSample.reset();
+		if (serializer.hasField("propertySamples"))
+		{
+			serializer.beginArray("propertySamples");
+			while (serializer.nextArrayItem())
+			{
+				serializer.beginMap("");
+				auto const type = serializer.readString("type");
+				if (type != "walkSpeedModifier")
+					throw SerializationException(format(
+						"Unsupported sampled Agent property type '{}'", type));
+				if (mWalkSpeedModifierSample)
+					throw SerializationException(
+						"Serialized Agent contains more than one Walk speed modifier sample");
+				AgentPropertySample sample;
+				sample.sourceTag = AgentTagId{ serializer.readUint64("sourceTag") };
+				sample.propertyRevision = serializer.readUint64("propertyRevision");
+				sample.value = serializer.readFloat("value");
+				serializer.endMap();
+				if (!sample.sourceTag || !mAgentTags.contains(sample.sourceTag))
+					throw SerializationException(
+						"Walk speed modifier sample source must be an assigned Agent tag");
+				if (sample.propertyRevision == 0)
+					throw SerializationException(
+						"Sampled Agent property revision cannot be zero");
+				if (!isfinite(sample.value))
+					throw SerializationException(
+						"Walk speed modifier sample must be finite");
+				mWalkSpeedModifierSample = sample;
+			}
+			serializer.endArray();
+		}
 		// Absent means activated: the default for every newly created Agent and
 		// for every Agent loaded from a document that predates activation (#118).
 		mActive = serializer.readBool("active", true, true);
@@ -115,6 +162,16 @@ namespace core
 			effective.sourceTag = tag;
 			break;
 		}
+		return effective;
+	}
+
+	EffectiveAgentWalkSpeedModifier Agent::getEffectiveWalkSpeedModifier() const
+	{
+		EffectiveAgentWalkSpeedModifier effective;
+		if (!mWalkSpeedModifierSample) return effective;
+		effective.value = mWalkSpeedModifierSample->value;
+		effective.sourceTag = mWalkSpeedModifierSample->sourceTag;
+		effective.propertyRevision = mWalkSpeedModifierSample->propertyRevision;
 		return effective;
 	}
 
@@ -172,7 +229,8 @@ namespace core
 
 	float Agent::getWalkSpeed() const
 	{
-		return (float)CORE_AGENT_BASE_WALK_SPEED;
+		return static_cast<float>(CORE_AGENT_BASE_WALK_SPEED)
+			* getEffectiveWalkSpeedModifier().value;
 	}
 
 	float Agent::getClimbSpeed() const

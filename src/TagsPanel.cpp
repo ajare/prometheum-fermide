@@ -45,6 +45,14 @@ namespace
 		string diagnostic;
 	};
 
+	struct TagWalkSpeedEdit
+	{
+		core::AgentModifierRange range{};
+		uint64_t loadedRevision{ 0 };
+		bool pending{ false };
+		string diagnostic;
+	};
+
 	struct RegistryBuildingSnapshot
 	{
 		core::Building* building{ nullptr };
@@ -72,6 +80,7 @@ namespace
 	map<string, DocumentHistory> gRegistryHistories;
 	map<uint64_t, TagNameEdit> gTagNameEdits;
 	map<uint64_t, TagColourEdit> gTagColourEdits;
+	map<uint64_t, TagWalkSpeedEdit> gTagWalkSpeedEdits;
 	array<char, SearchBufferSize> gTagSearch{};
 	PendingAgentTagDelete gPendingAgentTagDelete;
 	bool gAddingTag{ false };
@@ -235,8 +244,134 @@ namespace
 	void renderTagProperties(shared_ptr<core::AgentTagRegistry> const& registry,
 		core::AgentTagId id)
 	{
-		auto const* property = registry->getAgentTagColour(id);
-		if (!property)
+		auto const* colour = registry->getAgentTagColour(id);
+		if (colour)
+		{
+			auto& edit = gTagColourEdits[id.value];
+			if (!edit.pending && edit.loadedRevision != colour->revision)
+			{
+				core::agentColourToFloats(colour->value, edit.rgb.data());
+				edit.loadedRevision = colour->revision;
+				edit.diagnostic.clear();
+			}
+
+			ImGui::SetNextItemWidth(-ImGui::GetFrameHeight() - ImGui::GetStyle().ItemSpacing.x);
+			if (ImGui::ColorEdit3("Colour", edit.rgb.data(),
+				ImGuiColorEditFlags_NoAlpha | ImGuiColorEditFlags_Uint8))
+				edit.pending = true;
+			auto const finished = ImGui::IsItemDeactivatedAfterEdit();
+			auto const cancelled = ImGui::IsItemDeactivated() && !finished;
+			if (edit.pending && finished)
+			{
+				string diagnostic;
+				if (!commitAgentTagColourEdit(registry, id,
+					core::agentColourFromFloats(edit.rgb.data()), diagnostic)
+					&& diagnostic != "The Agent Colour is unchanged")
+				{
+					edit.diagnostic = diagnostic;
+					core::addLogMessage("Tags", 0, core::LogLevel::Warning, diagnostic);
+				}
+				else edit.diagnostic.clear();
+				edit.pending = false;
+				colour = registry->getAgentTagColour(id);
+				if (colour) edit.loadedRevision = colour->revision;
+			}
+			else if (edit.pending && cancelled)
+			{
+				core::agentColourToFloats(colour->value, edit.rgb.data());
+				edit.pending = false;
+				edit.diagnostic.clear();
+			}
+			ImGui::SameLine();
+			bool removed{ false };
+			if (ImGui::Button(ICON_FA_TIMES "##removeColour"))
+			{
+				string diagnostic;
+				if (!commitAgentTagColourRemove(registry, id, diagnostic))
+				{
+					edit.diagnostic = diagnostic;
+					core::addLogMessage("Tags", 0, core::LogLevel::Warning, diagnostic);
+				}
+				else
+				{
+					gTagColourEdits.erase(id.value);
+					colour = nullptr;
+					removed = true;
+				}
+			}
+			if (ImGui::IsItemHovered()) ImGui::SetTooltip("Remove Colour");
+			if (!removed && !edit.diagnostic.empty())
+				ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.45f, 1.0f), "%s",
+					edit.diagnostic.c_str());
+		}
+
+		auto const* walkSpeed = registry->getAgentTagWalkSpeedModifier(id);
+		if (walkSpeed)
+		{
+			auto& edit = gTagWalkSpeedEdits[id.value];
+			if (!edit.pending && edit.loadedRevision != walkSpeed->revision)
+			{
+				edit.range = walkSpeed->range;
+				edit.loadedRevision = walkSpeed->revision;
+				edit.diagnostic.clear();
+			}
+			ImGui::SetNextItemWidth(-ImGui::GetFrameHeight() - ImGui::GetStyle().ItemSpacing.x);
+			if (ImGui::DragFloatRange2("Walk speed", &edit.range.minimum,
+				&edit.range.maximum, 0.005f, core::AgentWalkSpeedModifierMinimum,
+				core::AgentWalkSpeedModifierMaximum, "Min %.3f", "Max %.3f",
+				ImGuiSliderFlags_AlwaysClamp))
+				edit.pending = true;
+			auto const finished = ImGui::IsItemDeactivatedAfterEdit();
+			auto const cancelled = ImGui::IsItemDeactivated() && !finished;
+			if (edit.pending && finished)
+			{
+				string diagnostic;
+				if (!commitAgentTagWalkSpeedModifierEdit(
+					registry, id, edit.range, diagnostic)
+					&& diagnostic != "The Agent Walk speed modifier range is unchanged")
+				{
+					edit.diagnostic = diagnostic;
+					core::addLogMessage("Tags", 0, core::LogLevel::Warning, diagnostic);
+				}
+				else edit.diagnostic.clear();
+				edit.pending = false;
+				walkSpeed = registry->getAgentTagWalkSpeedModifier(id);
+				if (walkSpeed)
+				{
+					edit.range = walkSpeed->range;
+					edit.loadedRevision = walkSpeed->revision;
+				}
+			}
+			else if (edit.pending && cancelled)
+			{
+				edit.range = walkSpeed->range;
+				edit.pending = false;
+				edit.diagnostic.clear();
+			}
+			ImGui::SameLine();
+			bool removed{ false };
+			if (ImGui::Button(ICON_FA_TIMES "##removeWalkSpeed"))
+			{
+				string diagnostic;
+				if (!commitAgentTagWalkSpeedModifierRemove(registry, id, diagnostic))
+				{
+					edit.diagnostic = diagnostic;
+					core::addLogMessage("Tags", 0, core::LogLevel::Warning, diagnostic);
+				}
+				else
+				{
+					gTagWalkSpeedEdits.erase(id.value);
+					walkSpeed = nullptr;
+					removed = true;
+				}
+			}
+			if (ImGui::IsItemHovered()) ImGui::SetTooltip("Remove Walk speed modifier");
+			if (!removed && !edit.diagnostic.empty())
+				ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.45f, 1.0f), "%s",
+					edit.diagnostic.c_str());
+		}
+
+		if (!colour)
 		{
 			if (ImGui::Button(ICON_FA_PLUS " Add Colour"))
 			{
@@ -245,65 +380,18 @@ namespace
 					core::addLogMessage("Tags", 0, core::LogLevel::Warning, diagnostic);
 				else gTagColourEdits.erase(id.value);
 			}
-			return;
 		}
-
-		auto& edit = gTagColourEdits[id.value];
-		if (!edit.pending && edit.loadedRevision != property->revision)
+		if (!walkSpeed)
 		{
-			core::agentColourToFloats(property->value, edit.rgb.data());
-			edit.loadedRevision = property->revision;
-			edit.diagnostic.clear();
-		}
-
-		ImGui::SetNextItemWidth(-ImGui::GetFrameHeight() - ImGui::GetStyle().ItemSpacing.x);
-		if (ImGui::ColorEdit3("Colour", edit.rgb.data(),
-			ImGuiColorEditFlags_NoAlpha | ImGuiColorEditFlags_Uint8))
-		{
-			edit.pending = true;
-		}
-		auto const finished = ImGui::IsItemDeactivatedAfterEdit();
-		auto const cancelled = ImGui::IsItemDeactivated() && !finished;
-		if (edit.pending && finished)
-		{
-			string diagnostic;
-			if (!commitAgentTagColourEdit(registry, id,
-				core::agentColourFromFloats(edit.rgb.data()), diagnostic)
-				&& diagnostic != "The Agent Colour is unchanged")
+			if (!colour) ImGui::SameLine();
+			if (ImGui::Button(ICON_FA_PLUS " Add Walk speed modifier"))
 			{
-				edit.diagnostic = diagnostic;
-				core::addLogMessage("Tags", 0, core::LogLevel::Warning, diagnostic);
-			}
-			else edit.diagnostic.clear();
-			edit.pending = false;
-			property = registry->getAgentTagColour(id);
-			if (property) edit.loadedRevision = property->revision;
-		}
-		else if (edit.pending && cancelled)
-		{
-			core::agentColourToFloats(property->value, edit.rgb.data());
-			edit.pending = false;
-			edit.diagnostic.clear();
-		}
-		ImGui::SameLine();
-		if (ImGui::Button(ICON_FA_TIMES "##removeColour"))
-		{
-			string diagnostic;
-			if (!commitAgentTagColourRemove(registry, id, diagnostic))
-			{
-				edit.diagnostic = diagnostic;
-				core::addLogMessage("Tags", 0, core::LogLevel::Warning, diagnostic);
-			}
-			else
-			{
-				gTagColourEdits.erase(id.value);
-				return;
+				string diagnostic;
+				if (!commitAgentTagWalkSpeedModifierAdd(registry, id, diagnostic))
+					core::addLogMessage("Tags", 0, core::LogLevel::Warning, diagnostic);
+				else gTagWalkSpeedEdits.erase(id.value);
 			}
 		}
-		if (ImGui::IsItemHovered()) ImGui::SetTooltip("Remove Colour");
-		if (!edit.diagnostic.empty())
-			ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.45f, 1.0f), "%s",
-				edit.diagnostic.c_str());
 	}
 
 	void renderTagDeleteCell(shared_ptr<core::AgentTagRegistry> const& registry,
@@ -703,6 +791,93 @@ bool commitAgentTagColourRemove(shared_ptr<core::AgentTagRegistry> const& regist
 	return true;
 }
 
+bool commitAgentTagWalkSpeedModifierAdd(
+	shared_ptr<core::AgentTagRegistry> const& registry,
+	core::AgentTagId id, string& diagnostic)
+{
+	diagnostic.clear();
+	if (!registry)
+	{
+		diagnostic = "There is no Agent tag registry in which to add Walk speed modifier";
+		return false;
+	}
+	vector<core::Building*> participants;
+	try
+	{
+		for (auto const& usage : registry->getLoadedAgentTagUsage(id))
+			if (usage.building && usage.agentCount > 0)
+				participants.push_back(const_cast<core::Building*>(usage.building));
+	}
+	catch (std::exception const& error)
+	{
+		diagnostic = error.what();
+		return false;
+	}
+	auto undo = captureRegistrySnapshot(registry, participants, id);
+	if (!undo)
+	{
+		diagnostic = "Could not capture the registry and loaded Buildings before adding Walk speed modifier";
+		return false;
+	}
+	if (!registry->addAgentTagWalkSpeedModifier(id, &diagnostic)) return false;
+	agentTagRegistryDocumentHistory(registry).commit(std::move(undo));
+	return true;
+}
+
+bool commitAgentTagWalkSpeedModifierEdit(
+	shared_ptr<core::AgentTagRegistry> const& registry,
+	core::AgentTagId id, core::AgentModifierRange range, string& diagnostic)
+{
+	diagnostic.clear();
+	if (!registry)
+	{
+		diagnostic = "There is no Agent tag registry in which to edit Walk speed modifier";
+		return false;
+	}
+	auto undo = captureRegistrySnapshot(registry);
+	if (!undo)
+	{
+		diagnostic = "Could not capture the Agent tag registry before editing Walk speed modifier";
+		return false;
+	}
+	if (!registry->setAgentTagWalkSpeedModifier(id, range, &diagnostic)) return false;
+	agentTagRegistryDocumentHistory(registry).commit(std::move(undo));
+	return true;
+}
+
+bool commitAgentTagWalkSpeedModifierRemove(
+	shared_ptr<core::AgentTagRegistry> const& registry,
+	core::AgentTagId id, string& diagnostic)
+{
+	diagnostic.clear();
+	if (!registry)
+	{
+		diagnostic = "There is no Agent tag registry from which to remove Walk speed modifier";
+		return false;
+	}
+	vector<core::Building*> participants;
+	try
+	{
+		for (auto const& usage : registry->getLoadedAgentTagUsage(id))
+			if (usage.building && usage.agentCount > 0)
+				participants.push_back(const_cast<core::Building*>(usage.building));
+	}
+	catch (std::exception const& error)
+	{
+		diagnostic = error.what();
+		return false;
+	}
+	auto undo = captureRegistrySnapshot(registry, participants, id);
+	if (!undo)
+	{
+		diagnostic = "Could not capture the registry and loaded Buildings before removing Walk speed modifier";
+		return false;
+	}
+	if (!registry->removeAgentTagWalkSpeedModifier(id, &diagnostic)) return false;
+	agentTagRegistryDocumentHistory(registry).commit(std::move(undo));
+	return true;
+}
+
 bool commitAgentTagDelete(shared_ptr<core::AgentTagRegistry> const& registry,
 	core::AgentTagId id, string& diagnostic)
 {
@@ -913,6 +1088,7 @@ void resetTagsPanelState()
 {
 	gTagNameEdits.clear();
 	gTagColourEdits.clear();
+	gTagWalkSpeedEdits.clear();
 	gTagSearch.fill('\0');
 	cancelPendingAgentTagDelete();
 	gAddingTag = false;

@@ -40,6 +40,8 @@ namespace core
 		bool nameIsUnique(std::string const& name, AgentTagId except = {}) const;
 		uint64_t allocatePropertyRevision();
 		bool colourAdditionIsValid(AgentTagId id, std::string* diagnostic) const;
+		bool walkSpeedModifierAdditionIsValid(AgentTagId id,
+			std::string* diagnostic) const;
 		void registerBuilding(Building& building);
 		void unregisterBuilding(Building& building);
 
@@ -60,6 +62,8 @@ namespace core
 		AgentTag const* lookupAgentTag(AgentTagId id) const;
 		std::string const& getAgentTagName(AgentTagId id) const;
 		AgentColourProperty const* getAgentTagColour(AgentTagId id) const;
+		AgentWalkSpeedModifierProperty const* getAgentTagWalkSpeedModifier(
+			AgentTagId id) const;
 
 		// Live usage is derived from every loaded Building sharing this exact
 		// registry instance. Closed Buildings are deliberately unknowable.
@@ -80,6 +84,15 @@ namespace core
 		bool setAgentTagColour(AgentTagId id, AgentColour colour,
 			std::string* diagnostic = nullptr);
 		bool removeAgentTagColour(AgentTagId id, std::string* diagnostic = nullptr);
+
+		bool addAgentTagWalkSpeedModifier(AgentTagId id,
+			std::string* diagnostic = nullptr);
+		// Range authoring is accepted before assignment. A range already inherited
+		// by loaded Agents is refused rather than leaving stale sample provenance.
+		bool setAgentTagWalkSpeedModifier(AgentTagId id, AgentModifierRange range,
+			std::string* diagnostic = nullptr);
+		bool removeAgentTagWalkSpeedModifier(AgentTagId id,
+			std::string* diagnostic = nullptr);
 
 		// Used by registry undo/redo to reject a prospective definition set that
 		// would reinterpret any currently loaded Agent assignment.

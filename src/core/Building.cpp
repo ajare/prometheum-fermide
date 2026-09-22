@@ -202,6 +202,8 @@ namespace core
 			(void)agentId;
 			if (!agent) continue;
 			AgentTagId colourSource{};
+			AgentTagId walkSpeedSource{};
+			AgentWalkSpeedModifierProperty const* walkSpeedProperty{ nullptr };
 			for (auto const tag : agent->getAgentTagIds())
 			{
 				auto const* definition = registry.lookupAgentTag(tag);
@@ -215,19 +217,68 @@ namespace core
 					}
 					return false;
 				}
-				if (!definition->getColour()) continue;
-				if (!colourSource)
+				if (definition->getColour())
 				{
+					if (colourSource)
+					{
+						if (diagnostic)
+						{
+							*diagnostic = format(
+								"Agent '{}' inherits Colour from both #{} and #{}",
+								agent->getName(), registry.getAgentTagName(colourSource),
+								definition->getName());
+						}
+						return false;
+					}
 					colourSource = tag;
-					continue;
 				}
-				if (diagnostic)
+				if (auto const* property = definition->getWalkSpeedModifier())
 				{
-					*diagnostic = format(
-						"Agent '{}' inherits Colour from both #{} and #{}",
-						agent->getName(), registry.getAgentTagName(colourSource),
-						definition->getName());
+					if (walkSpeedSource)
+					{
+						if (diagnostic)
+						{
+							*diagnostic = format(
+								"Agent '{}' inherits Walk speed modifier from both #{} and #{}",
+								agent->getName(), registry.getAgentTagName(walkSpeedSource),
+								definition->getName());
+						}
+						return false;
+					}
+					walkSpeedSource = tag;
+					walkSpeedProperty = property;
 				}
+			}
+
+			auto const& sample = agent->getWalkSpeedModifierSample();
+			if (!walkSpeedSource)
+			{
+				if (sample)
+				{
+					if (diagnostic) *diagnostic = format(
+						"Agent '{}' has a Walk speed modifier sample without an inherited property",
+						agent->getName());
+					return false;
+				}
+				continue;
+			}
+			if (!sample)
+			{
+				if (diagnostic) *diagnostic = format(
+					"Agent '{}' has no sample for Walk speed modifier from #{}",
+					agent->getName(), registry.getAgentTagName(walkSpeedSource));
+				return false;
+			}
+			if (sample->type != SampledAgentPropertyType::WalkSpeedModifier
+				|| sample->sourceTag != walkSpeedSource
+				|| sample->propertyRevision != walkSpeedProperty->revision
+				|| !isfinite(sample->value)
+				|| sample->value < walkSpeedProperty->range.minimum
+				|| sample->value > walkSpeedProperty->range.maximum)
+			{
+				if (diagnostic) *diagnostic = format(
+					"Agent '{}' has invalid Walk speed modifier sample provenance for #{}",
+					agent->getName(), registry.getAgentTagName(walkSpeedSource));
 				return false;
 			}
 		}
@@ -253,6 +304,39 @@ namespace core
 			(void)agentId;
 			if (!agent || !agent->hasAgentTag(id)) continue;
 			agent->removeAgentTag(id);
+			if (agent->getWalkSpeedModifierSample()
+				&& agent->getWalkSpeedModifierSample()->sourceTag == id)
+				agent->clearWalkSpeedModifierSample();
+			changed = true;
+		}
+		if (changed) modify();
+	}
+
+	void Building::addAgentTagWalkSpeedModifierSamples(AgentTagId id,
+		AgentWalkSpeedModifierProperty const& property)
+	{
+		bool changed{ false };
+		for (auto& [agentId, agent] : mAgents.entries())
+		{
+			(void)agentId;
+			if (!agent || !agent->hasAgentTag(id)) continue;
+			agent->setWalkSpeedModifierSample({
+				SampledAgentPropertyType::WalkSpeedModifier, id, property.revision,
+				sampleAgentModifier(property.range) });
+			changed = true;
+		}
+		if (changed) modify();
+	}
+
+	void Building::clearAgentTagWalkSpeedModifierSamples(AgentTagId id)
+	{
+		bool changed{ false };
+		for (auto& [agentId, agent] : mAgents.entries())
+		{
+			(void)agentId;
+			if (!agent || !agent->getWalkSpeedModifierSample()
+				|| agent->getWalkSpeedModifierSample()->sourceTag != id) continue;
+			agent->clearWalkSpeedModifierSample();
 			changed = true;
 		}
 		if (changed) modify();
@@ -5959,14 +6043,22 @@ namespace core
 				agentLookup.entity->getName(), mAgentTagRegistry->getAgentTagName(tag)));
 
 		auto const* assignedDefinition = mAgentTagRegistry->lookupAgentTag(tag);
-		if (assignedDefinition->getColour())
+		for (auto const existing : agentLookup.entity->getAgentTagIds())
 		{
-			for (auto const existing : agentLookup.entity->getAgentTagIds())
+			auto const* source = mAgentTagRegistry->lookupAgentTag(existing);
+			if (!source) continue;
+			if (assignedDefinition->getColour() && source->getColour())
 			{
-				auto const* source = mAgentTagRegistry->lookupAgentTag(existing);
-				if (!source || !source->getColour()) continue;
 				return reject(format(
 					"Agent '{}' cannot be assigned to #{} because Colour is already inherited from #{}",
+					agentLookup.entity->getName(), assignedDefinition->getName(),
+					source->getName()));
+			}
+			if (assignedDefinition->getWalkSpeedModifier()
+				&& source->getWalkSpeedModifier())
+			{
+				return reject(format(
+					"Agent '{}' cannot be assigned to #{} because Walk speed modifier is already inherited from #{}",
 					agentLookup.entity->getName(), assignedDefinition->getName(),
 					source->getName()));
 			}
@@ -5978,7 +6070,17 @@ namespace core
 		string* diagnostic)
 	{
 		if (!canAssignAgentTag(agent, tag, diagnostic)) return false;
-		mAgents.find(agent)->assignAgentTag(tag);
+		auto* target = mAgents.find(agent);
+		auto const* definition = mAgentTagRegistry->lookupAgentTag(tag);
+		optional<AgentPropertySample> walkSpeedSample;
+		if (auto const* property = definition->getWalkSpeedModifier())
+		{
+			walkSpeedSample = AgentPropertySample{
+				SampledAgentPropertyType::WalkSpeedModifier, tag, property->revision,
+				sampleAgentModifier(property->range) };
+		}
+		target->assignAgentTag(tag);
+		if (walkSpeedSample) target->setWalkSpeedModifierSample(*walkSpeedSample);
 		modify();
 		return true;
 	}
@@ -6011,7 +6113,11 @@ namespace core
 		string* diagnostic)
 	{
 		if (!canRemoveAgentTag(agent, tag, diagnostic)) return false;
-		mAgents.find(agent)->removeAgentTag(tag);
+		auto* target = mAgents.find(agent);
+		target->removeAgentTag(tag);
+		if (target->getWalkSpeedModifierSample()
+			&& target->getWalkSpeedModifierSample()->sourceTag == tag)
+			target->clearWalkSpeedModifierSample();
 		modify();
 		return true;
 	}
