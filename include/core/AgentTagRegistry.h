@@ -30,6 +30,11 @@ namespace core
 		std::string mUuid;
 		EntityRegistry<AgentTagId, AgentTag> mTags;
 		uint64_t mNextPropertyRevision{ 1 };
+		// Set by deserializeImpl when a parsed document predates intrinsic tag
+		// display Colours; loadFrom turns it into dirty state after the base
+		// deserialize clears the modified flag. Editor snapshots always carry
+		// the field, so undo/redo restores never set it.
+		bool mBackfilledDisplayColour{ false };
 		// The exact bytes last loaded or saved provide optimistic concurrency for
 		// this independently persisted document. A save never silently overwrites
 		// a different on-disk revision.
@@ -108,6 +113,15 @@ namespace core
 		bool renameAgentTag(AgentTagId id, std::string const& name,
 			std::string* diagnostic = nullptr);
 		bool deleteAgentTag(AgentTagId id, std::string* diagnostic = nullptr);
+
+		// The intrinsic display Colour used to render the tag itself (for example
+		// its Selection-panel chip). Every tag always has one, assigned at random
+		// from AgentTagColourPalette on creation and persisted with the tag. It is
+		// separate from the optional Agent Colour property below and never
+		// affects Agents.
+		AgentColour getAgentTagDisplayColour(AgentTagId id) const;
+		bool setAgentTagDisplayColour(AgentTagId id, AgentColour colour,
+			std::string* diagnostic = nullptr);
 
 		// Colour is unique within a tag. Addition and assignment both preflight
 		// inherited-property conflicts across every loaded dependent Building.

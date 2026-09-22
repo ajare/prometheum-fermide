@@ -308,7 +308,7 @@ namespace
 
 	char const* readCapturedClipboardText(void*) { return nullptr; }
 
-	void selectionChecklistRendersAllRegistryTagsWithoutLeakingDisabledState()
+	void selectionPanelRendersAssignedChipsWithoutLeakingDisabledState()
 	{
 		Fixture fixture;
 		fixture.building->pauseSimulation();
@@ -347,11 +347,13 @@ namespace
 			for (auto const& text : clipboardWrites) visible += text;
 			require(visible.find("Agent tags") != std::string::npos
 				&& visible.find("#crew") != std::string::npos
-				&& visible.find("#night-shift") != std::string::npos,
-				"The Selection checklist did not present every registry tag");
+				&& visible.find("Add tag...") != std::string::npos,
+				"The Selection panel did not present the assigned tag chip and add-tag combo");
+			require(visible.find("#night-shift") == std::string::npos,
+				"The Selection panel listed an unassigned tag outside the add-tag combo");
 			require(fixture.building->getAgentTags(fixture.alice)
 				== std::set<core::AgentTagId>{ fixture.crew },
-				"Merely rendering the checklist changed its assigned tag");
+				"Merely rendering the tag chips changed its assigned tag");
 		}
 		ImGui::DestroyContext();
 	}
@@ -364,6 +366,6 @@ void runAgentTagAssignmentSmokeChecks()
 	assignmentsSerializeInNumericOrderAndRejectMalformedInput();
 	saveReopenAndUnknownTagValidationUseStableIds();
 	editorCommitsOneBuildingUndoEntryPerAcceptedEdit();
-	selectionChecklistRendersAllRegistryTagsWithoutLeakingDisabledState();
+	selectionPanelRendersAssignedChipsWithoutLeakingDisabledState();
 	gBuildingDocumentHistory.clear();
 }

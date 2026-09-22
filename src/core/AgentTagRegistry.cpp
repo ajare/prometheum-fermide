@@ -79,6 +79,14 @@ namespace core
 		{
 			throw SerializationException("Could not deserialize Agent tag registry");
 		}
+		// Serializable::deserialize clears the modified flag even though a
+		// legacy document just gained backfilled display Colours. Surface that
+		// here so the user is prompted to persist them.
+		if (registry->mBackfilledDisplayColour)
+		{
+			registry->mBackfilledDisplayColour = false;
+			registry->modify();
+		}
 		registry->mDocumentPath = path;
 		registry->mSavedDocumentContents = std::move(contents);
 		return registry;
@@ -92,6 +100,7 @@ namespace core
 		for (auto const& [id, sourceTag] : source.mTags.entries())
 		{
 			auto tag = AgentTag::create(sourceTag->getName());
+			tag->setDisplayColour(sourceTag->getDisplayColour());
 			if (auto const* colour = sourceTag->getColour()) tag->setColour(*colour);
 			if (auto const* walkSpeed = sourceTag->getWalkSpeedModifier())
 				tag->setWalkSpeedModifier(*walkSpeed);
@@ -114,7 +123,8 @@ namespace core
 		for (auto const& [id, tag] : mTags.entries())
 		{
 			auto const* candidate = other.mTags.find(id);
-			if (!candidate || tag->getName() != candidate->getName()) return false;
+			if (!candidate || tag->getName() != candidate->getName()
+				|| tag->getDisplayColour() != candidate->getDisplayColour()) return false;
 			auto optionalPropertyMatches = [](auto const* left, auto const* right)
 			{
 				return (!left && !right) || (left && right && *left == *right);
@@ -197,6 +207,37 @@ namespace core
 		if (!tag)
 			throw std::out_of_range(std::format("Agent tag {} is not defined in this registry", id.value));
 		return tag->getName();
+	}
+
+	AgentColour AgentTagRegistry::getAgentTagDisplayColour(AgentTagId id) const
+	{
+		auto const* tag = mTags.find(id);
+		if (!tag)
+			throw std::out_of_range(std::format(
+				"Agent tag {} is not defined in this registry", id.value));
+		return tag->getDisplayColour();
+	}
+
+	bool AgentTagRegistry::setAgentTagDisplayColour(AgentTagId id, AgentColour colour,
+		std::string* diagnostic)
+	{
+		auto reject = [diagnostic](std::string reason)
+		{
+			if (diagnostic) *diagnostic = std::move(reason);
+			return false;
+		};
+		auto* tag = mTags.find(id);
+		if (!tag)
+			return reject(std::format(
+				"Agent tag {} is not defined in this registry", id.value));
+		if (tag->getDisplayColour() == colour)
+			return reject("The tag display Colour is unchanged");
+		if (!definitionEditsAreAllowed(diagnostic)) return false;
+
+		tag->setDisplayColour(colour);
+		modify();
+		if (diagnostic) diagnostic->clear();
+		return true;
 	}
 
 	AgentColourProperty const* AgentTagRegistry::getAgentTagColour(AgentTagId id) const
@@ -859,6 +900,11 @@ namespace core
 			serializer.beginMap("");
 			serializer.writeUint64("id", id.value);
 			serializer.writeString("name", tag->getName());
+			serializer.beginMap("displayColour");
+			serializer.writeUint8("r", tag->getDisplayColour().r);
+			serializer.writeUint8("g", tag->getDisplayColour().g);
+			serializer.writeUint8("b", tag->getDisplayColour().b);
+			serializer.endMap();
 			auto const* colour = tag->getColour();
 			auto const* walkSpeed = tag->getWalkSpeedModifier();
 			auto const* height = tag->getHeightModifier();
@@ -919,6 +965,7 @@ namespace core
 		std::set<std::string> names;
 		std::set<uint64_t> propertyRevisions;
 		uint64_t greatestPropertyRevision{ 0 };
+		bool backfilledDisplayColour{ false };
 		serializer.beginArray("tags");
 		while (serializer.nextArrayItem())
 		{
@@ -926,6 +973,20 @@ namespace core
 			auto const id = AgentTagId{ serializer.readUint64("id") };
 			auto name = serializer.readString("name");
 			auto tag = AgentTag::create(name);
+			// The display Colour is intrinsic tag data, not an Agent property: it
+			// has no revision and never participates in inheritance conflicts.
+			// Documents authored before it existed load without the field; those
+			// tags keep the random pastel assigned at creation and the registry is
+			// marked modified so the backfill is persisted. Editor snapshots and
+			// undo/redo always carry the field, so restores stay exact.
+			if (serializer.hasField("displayColour"))
+			{
+				serializer.beginMap("displayColour");
+				tag->setDisplayColour({ serializer.readUint8("r"),
+					serializer.readUint8("g"), serializer.readUint8("b") });
+				serializer.endMap();
+			}
+			else backfilledDisplayColour = true;
 			if (serializer.hasField("properties"))
 			{
 				bool hasColour{ false };
@@ -1034,6 +1095,7 @@ namespace core
 		// available again. Freshly loaded registries start at one, so ordinary load
 		// still adopts the persisted high-water mark exactly.
 		mNextPropertyRevision = std::max(mNextPropertyRevision, nextPropertyRevision);
+		if (backfilledDisplayColour) mBackfilledDisplayColour = true;
 		return true;
 	}
 

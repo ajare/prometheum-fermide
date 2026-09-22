@@ -26,6 +26,19 @@ namespace core
 		return { toByte(in[0]), toByte(in[1]), toByte(in[2]) };
 	}
 
+	AgentColour sampleAgentTagColour()
+	{
+		static thread_local std::mt19937 engine([]
+		{
+			std::random_device source;
+			std::seed_seq seed{ source(), source(), source(), source(), source(), source() };
+			return std::mt19937(seed);
+		}());
+		std::uniform_int_distribution<size_t> distribution(
+			0, AgentTagColourPalette.size() - 1);
+		return AgentTagColourPalette[distribution(engine)];
+	}
+
 	bool agentWalkSpeedModifierRangeIsValid(AgentModifierRange const& range,
 		std::string* diagnostic)
 	{
@@ -91,7 +104,11 @@ namespace core
 
 	std::unique_ptr<AgentTag> AgentTag::create(std::string name)
 	{
-		return std::unique_ptr<AgentTag>(new AgentTag(std::move(name)));
+		auto tag = std::unique_ptr<AgentTag>(new AgentTag(std::move(name)));
+		// Every tag carries a display Colour from birth. Pastels keep chip text
+		// readable; the draw need not be distinct from other tags.
+		tag->mDisplayColour = sampleAgentTagColour();
+		return tag;
 	}
 
 	bool AgentTag::nameIsValid(std::string const& name, std::string* diagnostic)

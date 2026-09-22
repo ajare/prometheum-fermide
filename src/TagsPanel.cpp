@@ -38,6 +38,15 @@ namespace
 		string diagnostic;
 	};
 
+	struct TagDisplayColourEdit
+	{
+		array<float, 3> rgb{};
+		core::AgentColour loaded{};
+		bool initialised{ false };
+		bool pending{ false };
+		string diagnostic;
+	};
+
 	struct TagColourEdit
 	{
 		array<float, 3> rgb{};
@@ -111,6 +120,7 @@ namespace
 
 	map<string, DocumentHistory> gRegistryHistories;
 	map<uint64_t, TagNameEdit> gTagNameEdits;
+	map<uint64_t, TagDisplayColourEdit> gTagDisplayColourEdits;
 	map<uint64_t, TagColourEdit> gTagColourEdits;
 	map<uint64_t, TagWalkSpeedEdit> gTagWalkSpeedEdits;
 	map<uint64_t, TagHeightEdit> gTagHeightEdits;
@@ -236,7 +246,8 @@ namespace
 
 		ImGui::TextUnformatted("#");
 		ImGui::SameLine(0.0f, 0.0f);
-		ImGui::SetNextItemWidth(-1.0f);
+		ImGui::SetNextItemWidth(
+			-(ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.x));
 		auto const submitted = ImGui::InputText("##agentTagName", edit.text.data(),
 			edit.text.size(), ImGuiInputTextFlags_EnterReturnsTrue);
 		if (!edit.editing)
@@ -270,8 +281,6 @@ namespace
 
 	void renderTagAddRow(shared_ptr<core::AgentTagRegistry> const& registry)
 	{
-		ImGui::TableNextRow();
-		ImGui::TableSetColumnIndex(0);
 		ImGui::PushID("addRow");
 		if (gFocusAddTag)
 		{
@@ -280,7 +289,8 @@ namespace
 		}
 		ImGui::TextUnformatted("#");
 		ImGui::SameLine(0.0f, 0.0f);
-		ImGui::SetNextItemWidth(-1.0f);
+		ImGui::SetNextItemWidth(-(2.0f * ImGui::GetFrameHeight()
+			+ 3.0f * ImGui::GetStyle().ItemSpacing.x));
 		auto const submitted = ImGui::InputText("##newAgentTagName", gNewTagName.data(),
 			gNewTagName.size(), ImGuiInputTextFlags_EnterReturnsTrue);
 		ImGui::SameLine();
@@ -316,6 +326,53 @@ namespace
 		ImGui::PopID();
 	}
 
+	// The intrinsic display Colour editor sits on the line directly after the
+	// tag name. It only changes how the tag itself is rendered (its chip);
+	// it never affects Agents, carries no revision, and cannot be removed.
+	void renderTagDisplayColourEditor(
+		shared_ptr<core::AgentTagRegistry> const& registry, core::AgentTagId id)
+	{
+		auto const value = registry->getAgentTagDisplayColour(id);
+		auto& edit = gTagDisplayColourEdits[id.value];
+		if (!edit.pending && (!edit.initialised || edit.loaded != value))
+		{
+			core::agentColourToFloats(value, edit.rgb.data());
+			edit.loaded = value;
+			edit.initialised = true;
+			edit.diagnostic.clear();
+		}
+
+		ImGui::SetNextItemWidth(256.0f);
+		if (ImGui::ColorEdit3("Tag Colour", edit.rgb.data(),
+			ImGuiColorEditFlags_NoAlpha | ImGuiColorEditFlags_Uint8))
+			edit.pending = true;
+		auto const finished = ImGui::IsItemDeactivatedAfterEdit();
+		auto const cancelled = ImGui::IsItemDeactivated() && !finished;
+		if (edit.pending && finished)
+		{
+			string diagnostic;
+			if (!commitAgentTagDisplayColourEdit(registry, id,
+				core::agentColourFromFloats(edit.rgb.data()), diagnostic)
+				&& diagnostic != "The tag display Colour is unchanged")
+			{
+				edit.diagnostic = diagnostic;
+				core::addLogMessage("Tags", 0, core::LogLevel::Warning, diagnostic);
+			}
+			else edit.diagnostic.clear();
+			edit.pending = false;
+			edit.loaded = registry->getAgentTagDisplayColour(id);
+		}
+		else if (edit.pending && cancelled)
+		{
+			core::agentColourToFloats(edit.loaded, edit.rgb.data());
+			edit.pending = false;
+			edit.diagnostic.clear();
+		}
+		if (!edit.diagnostic.empty())
+			ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.45f, 1.0f), "%s",
+				edit.diagnostic.c_str());
+	}
+
 	void renderTagProperties(shared_ptr<core::AgentTagRegistry> const& registry,
 		core::AgentTagId id)
 	{
@@ -330,7 +387,7 @@ namespace
 				edit.diagnostic.clear();
 			}
 
-			ImGui::SetNextItemWidth(-ImGui::GetFrameHeight() - ImGui::GetStyle().ItemSpacing.x);
+			ImGui::SetNextItemWidth(256.0f);
 			if (ImGui::ColorEdit3("Colour", edit.rgb.data(),
 				ImGuiColorEditFlags_NoAlpha | ImGuiColorEditFlags_Uint8))
 				edit.pending = true;
@@ -390,7 +447,7 @@ namespace
 				edit.loadedRevision = walkSpeed->revision;
 				edit.diagnostic.clear();
 			}
-			ImGui::SetNextItemWidth(-ImGui::GetFrameHeight() - ImGui::GetStyle().ItemSpacing.x);
+			ImGui::SetNextItemWidth(256.0f);
 			if (ImGui::DragFloatRange2("Walk speed", &edit.range.minimum,
 				&edit.range.maximum, 0.005f, core::AgentWalkSpeedModifierMinimum,
 				core::AgentWalkSpeedModifierMaximum, "Min %.3f", "Max %.3f",
@@ -456,7 +513,7 @@ namespace
 				edit.loadedRevision = height->revision;
 				edit.diagnostic.clear();
 			}
-			ImGui::SetNextItemWidth(-ImGui::GetFrameHeight() - ImGui::GetStyle().ItemSpacing.x);
+			ImGui::SetNextItemWidth(256.0f);
 			if (ImGui::DragFloatRange2("Height", &edit.range.minimum,
 				&edit.range.maximum, 0.005f, core::AgentHeightModifierMinimum,
 				core::AgentHeightModifierMaximum, "Min %.3f", "Max %.3f",
@@ -511,41 +568,51 @@ namespace
 					edit.diagnostic.c_str());
 		}
 
-		if (!colour)
+	}
+
+	void renderTagAddPropertyDropdown(shared_ptr<core::AgentTagRegistry> const& registry,
+		core::AgentTagId id)
+	{
+		auto const* colour = registry->getAgentTagColour(id);
+		auto const* walkSpeed = registry->getAgentTagWalkSpeedModifier(id);
+		auto const* height = registry->getAgentTagHeightModifier(id);
+		auto const anyMissing = !colour || !walkSpeed || !height;
+		ImGui::BeginDisabled(!anyMissing);
+		ImGui::SetNextItemWidth(-1.0f);
+		if (ImGui::BeginCombo("##addAgentTagProperty", ICON_FA_PLUS " Add property"))
 		{
-			if (ImGui::Button(ICON_FA_PLUS " Add Colour"))
+			if (!colour && ImGui::Selectable("Colour"))
 			{
 				string diagnostic;
 				if (!commitAgentTagColourAdd(registry, id, diagnostic))
 					core::addLogMessage("Tags", 0, core::LogLevel::Warning, diagnostic);
 				else gTagColourEdits.erase(id.value);
+				ImGui::CloseCurrentPopup();
 			}
-		}
-		if (!walkSpeed)
-		{
-			if (!colour) ImGui::SameLine();
-			if (ImGui::Button(ICON_FA_PLUS " Add Walk speed modifier"))
+			if (!walkSpeed && ImGui::Selectable("Walk speed modifier"))
 			{
 				string diagnostic;
 				if (!commitAgentTagWalkSpeedModifierAdd(registry, id, diagnostic))
 					core::addLogMessage("Tags", 0, core::LogLevel::Warning, diagnostic);
 				else gTagWalkSpeedEdits.erase(id.value);
+				ImGui::CloseCurrentPopup();
 			}
-		}
-		if (!height)
-		{
-			if (!colour || !walkSpeed) ImGui::SameLine();
-			if (ImGui::Button(ICON_FA_PLUS " Add Height modifier"))
+			if (!height && ImGui::Selectable("Height modifier"))
 			{
 				string diagnostic;
 				if (!commitAgentTagHeightModifierAdd(registry, id, diagnostic))
 					core::addLogMessage("Tags", 0, core::LogLevel::Warning, diagnostic);
 				else gTagHeightEdits.erase(id.value);
+				ImGui::CloseCurrentPopup();
 			}
+			ImGui::EndCombo();
 		}
+		ImGui::EndDisabled();
+		if (!anyMissing && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+			ImGui::SetTooltip("Every property is already added");
 	}
 
-	void renderTagDeleteCell(shared_ptr<core::AgentTagRegistry> const& registry,
+	void renderTagDeleteButton(shared_ptr<core::AgentTagRegistry> const& registry,
 		core::AgentTagId id)
 	{
 		if (ImGui::Button(ICON_FA_TRASH "##deleteAgentTag",
@@ -562,6 +629,26 @@ namespace
 					registry->getAgentTagName(id), count, count == 1 ? "" : "s");
 			ImGui::SetTooltip("%s", tooltip.c_str());
 		}
+	}
+
+	void renderTagSection(shared_ptr<core::AgentTagRegistry> const& registry,
+		core::AgentTagId id)
+	{
+		ImGui::PushID(id.value);
+		ImGui::SeparatorText(format("#{}", registry->getAgentTagName(id)).c_str());
+		renderTagNameEditor(registry, id);
+		ImGui::SameLine();
+		renderTagDeleteButton(registry, id);
+		renderTagDisplayColourEditor(registry, id);
+		auto const found = gTagNameEdits.find(id.value);
+		if (found != gTagNameEdits.end() && !found->second.diagnostic.empty())
+			ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.45f, 1.0f), "%s",
+				found->second.diagnostic.c_str());
+		renderTagProperties(registry, id);
+		renderTagAddPropertyDropdown(registry, id);
+		ImGui::TextDisabled("Loaded Agents: %llu", static_cast<unsigned long long>(
+			loadedAgentTagUsageCount(*registry, id)));
+		ImGui::PopID();
 	}
 
 	void renderTagDeleteConfirmation(
@@ -782,51 +869,7 @@ namespace
 		if (ImGui::IsItemHovered()) ImGui::SetTooltip("Redo registry edit");
 
 		ImGui::SeparatorText("Tags");
-		ImGui::SetNextItemWidth(-1.0f);
-		ImGui::InputTextWithHint("##agentTagRegistrySearch", "Search tags...",
-			gTagSearch.data(), gTagSearch.size());
-
-		auto const ids = registry->getAgentTagIdsAlphabetically();
-		bool anyVisible{ false };
 		ImGui::BeginDisabled(!definitionEditsAllowed);
-		ImGuiTableFlags const tableFlags = ImGuiTableFlags_SizingStretchSame
-			| ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersOuter
-			| ImGuiTableFlags_BordersV;
-		if (ImGui::BeginTable("AgentTags", 4, tableFlags))
-		{
-			ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
-			ImGui::TableSetupColumn("Properties", ImGuiTableColumnFlags_WidthStretch);
-			ImGui::TableSetupColumn("Loaded Agents", ImGuiTableColumnFlags_WidthFixed);
-			ImGui::TableSetupColumn("Delete", ImGuiTableColumnFlags_WidthFixed, 40.0f);
-			ImGui::TableHeadersRow();
-			for (auto const id : ids)
-			{
-				if (!agentTagNameMatchesFilter(registry->getAgentTagName(id),
-					gTagSearch.data())) continue;
-				anyVisible = true;
-				ImGui::TableNextRow();
-				ImGui::PushID(id.value);
-				ImGui::TableSetColumnIndex(0);
-				renderTagNameEditor(registry, id);
-				auto const found = gTagNameEdits.find(id.value);
-				if (found != gTagNameEdits.end() && !found->second.diagnostic.empty())
-					ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.45f, 1.0f), "%s",
-						found->second.diagnostic.c_str());
-				ImGui::TableSetColumnIndex(1);
-				renderTagProperties(registry, id);
-				ImGui::TableSetColumnIndex(2);
-				ImGui::Text("%llu", static_cast<unsigned long long>(
-					loadedAgentTagUsageCount(*registry, id)));
-				ImGui::TableSetColumnIndex(3);
-				renderTagDeleteCell(registry, id);
-				ImGui::PopID();
-			}
-			if (gAddingTag) renderTagAddRow(registry);
-			ImGui::EndTable();
-		}
-		if (!ids.empty() && !anyVisible)
-			ImGui::TextDisabled("No tags match the search.");
-
 		ImGui::BeginDisabled(gAddingTag);
 		if (ImGui::Button(ICON_FA_PLUS " Add Tag"))
 		{
@@ -836,10 +879,29 @@ namespace
 			loadIntoBuffer(gNewTagName, "");
 		}
 		ImGui::EndDisabled();
-		ImGui::EndDisabled();
 		ImGui::SameLine();
 		auto const count = registry->getAgentTagCount();
 		ImGui::TextDisabled("%u tag%s", count, count == 1 ? "" : "s");
+		if (gAddingTag) renderTagAddRow(registry);
+		ImGui::EndDisabled();
+
+		ImGui::SetNextItemWidth(-1.0f);
+		ImGui::InputTextWithHint("##agentTagRegistrySearch", "Search tags...",
+			gTagSearch.data(), gTagSearch.size());
+
+		auto const ids = registry->getAgentTagIdsAlphabetically();
+		bool anyVisible{ false };
+		ImGui::BeginDisabled(!definitionEditsAllowed);
+		for (auto const id : ids)
+		{
+			if (!agentTagNameMatchesFilter(registry->getAgentTagName(id),
+				gTagSearch.data())) continue;
+			anyVisible = true;
+			renderTagSection(registry, id);
+		}
+		if (!ids.empty() && !anyVisible)
+			ImGui::TextDisabled("No tags match the search.");
+		ImGui::EndDisabled();
 		if (!definitionEditsAllowed)
 			ImGui::TextColored(ImVec4(1.0f, 0.65f, 0.2f, 1.0f), "%s",
 				editDiagnostic.c_str());
@@ -1232,6 +1294,27 @@ bool commitAgentTagRename(shared_ptr<core::AgentTagRegistry> const& registry,
 		return false;
 	}
 	if (!registry->renameAgentTag(id, name, &diagnostic)) return false;
+	agentTagRegistryDocumentHistory(registry).commit(std::move(undo));
+	return true;
+}
+
+bool commitAgentTagDisplayColourEdit(
+	shared_ptr<core::AgentTagRegistry> const& registry,
+	core::AgentTagId id, core::AgentColour colour, string& diagnostic)
+{
+	diagnostic.clear();
+	if (!registry)
+	{
+		diagnostic = "There is no Agent tag registry in which to edit a tag display Colour";
+		return false;
+	}
+	auto undo = captureRegistrySnapshot(registry);
+	if (!undo)
+	{
+		diagnostic = "Could not capture the Agent tag registry before editing a tag display Colour";
+		return false;
+	}
+	if (!registry->setAgentTagDisplayColour(id, colour, &diagnostic)) return false;
 	agentTagRegistryDocumentHistory(registry).commit(std::move(undo));
 	return true;
 }
@@ -2035,6 +2118,7 @@ string unsavedDocumentPromptText(BuildingDocumentSaveTarget const& target)
 void resetTagsPanelState()
 {
 	gTagNameEdits.clear();
+	gTagDisplayColourEdits.clear();
 	gTagColourEdits.clear();
 	gTagWalkSpeedEdits.clear();
 	gTagHeightEdits.clear();

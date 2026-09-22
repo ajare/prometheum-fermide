@@ -69,6 +69,12 @@ core::AgentTagId commitAgentTagAdd(
 bool commitAgentTagRename(
 	std::shared_ptr<core::AgentTagRegistry> const& registry, core::AgentTagId id,
 	std::string const& name, std::string& diagnostic);
+
+// The intrinsic tag display Colour (chip colour) commits through the same
+// registry history as every other definition edit. It never affects Agents.
+bool commitAgentTagDisplayColourEdit(
+	std::shared_ptr<core::AgentTagRegistry> const& registry,
+	core::AgentTagId id, core::AgentColour colour, std::string& diagnostic);
 bool commitAgentTagColourAdd(
 	std::shared_ptr<core::AgentTagRegistry> const& registry, core::AgentTagId id,
 	std::string& diagnostic);
@@ -174,7 +180,8 @@ void forgetAgentTagRegistryDocument(
 	std::shared_ptr<core::AgentTagRegistry> const& registry);
 
 // Renders attached-registry status, independent save/undo controls, an
-// alphabetical create/rename editor, and create/select/detach/switch actions.
+// alphabetical stack of per-tag sections with rename/delete/property
+// controls, and create/select/detach/switch actions.
 // Returns true after the Building reference changed, allowing the caller to
 // persist the changed Building immediately.
 bool renderTagsPanel(std::shared_ptr<core::Building> const& building,

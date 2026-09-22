@@ -1,9 +1,10 @@
 #pragma once
 
-// The selected Agent's searchable Agent tag checklist (ticket #131). The
-// Building remains the sole assignment mutation boundary; this panel only
-// captures one pre-edit snapshot, asks the Building to assign or remove one
-// stable tag ID, and commits one Building-history entry on success.
+// The selected Agent's assigned Agent tags drawn as coloured chips with an
+// add-tag combo (ticket #131). The Building remains the sole assignment
+// mutation boundary; this panel only captures one pre-edit snapshot, asks the
+// Building to assign or remove one stable tag ID, and commits one
+// Building-history entry on success.
 
 #include <memory>
 #include <string>
@@ -30,13 +31,16 @@ bool commitAgentTagAssignment(
 void renderAgentEffectiveProperties(
 	std::shared_ptr<core::Building> const& building, core::AgentId agent);
 
-// Renders an alphabetical, searchable checklist of every tag in the attached
-// registry. Assigned rows use the same checkbox and remain removable while
-// paused. Conflicting unassigned tags remain visible but disabled with the
-// core validation diagnostic. All assignment edits are disabled while running.
+// Renders only the tags the selected Agent has as a wrapping group of
+// coloured chips (tag Colour property when present, neutral grey otherwise),
+// each showing just its name. Clicking a chip selects it; pressing Delete
+// while the panel is focused removes the selected tag. An "Add tag..." combo
+// below lists every unassigned tag in the attached registry; conflicting tags
+// remain visible but disabled with the core validation diagnostic. All
+// assignment edits are disabled while the simulation is running.
 void renderAgentTagAssignmentChecklist(
 	std::shared_ptr<core::Building> const& building, core::AgentId agent);
 
-// Clears the transient search whenever the selected Building document is
-// closed, replaced, or restored through undo.
+// Clears the transient chip selection whenever the selected Building document
+// is closed, replaced, or restored through undo.
 void resetAgentTagAssignmentPanelState();

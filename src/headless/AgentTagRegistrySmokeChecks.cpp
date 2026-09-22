@@ -536,8 +536,10 @@ namespace
 			"Agent tags were not presented alphabetically");
 
 		auto const yaml = serializeRegistry(*registry);
-		auto const idOne = yaml.find("id: 1");
-		auto const idTwo = yaml.find("id: 2");
+		// Match the sequence items, not the bare text: a UUID can begin with
+		// hex digits that make "id: 2" appear inside the uuid line first.
+		auto const idOne = yaml.find("- id: 1");
+		auto const idTwo = yaml.find("- id: 2");
 		require(idOne != std::string::npos && idTwo != std::string::npos && idOne < idTwo,
 			"Registry serialization followed display order instead of identity order");
 

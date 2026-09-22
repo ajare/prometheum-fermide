@@ -7,6 +7,9 @@
 #include "TagsPanel.h"
 #include "UISettings.h"
 
+#include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -33,6 +36,33 @@ namespace
 	void require(bool condition, std::string const& message)
 	{
 		if (!condition) throw std::runtime_error(message);
+	}
+
+	struct TemporaryDirectory
+	{
+		std::filesystem::path path;
+
+		explicit TemporaryDirectory(std::string const& purpose)
+		{
+			path = std::filesystem::temp_directory_path()
+				/ ("promethium-fermide-tag-colour-" + purpose + "-"
+					+ std::to_string(std::chrono::steady_clock::now()
+						.time_since_epoch().count()));
+			std::filesystem::create_directories(path);
+		}
+
+		~TemporaryDirectory()
+		{
+			std::error_code ignored;
+			std::filesystem::remove_all(path, ignored);
+		}
+	};
+
+	bool isPastelPaletteColour(core::AgentColour const& colour)
+	{
+		for (auto const& candidate : core::AgentTagColourPalette)
+			if (candidate == colour) return true;
+		return false;
 	}
 
 	std::string serializeRegistry(core::AgentTagRegistry const& registry)
@@ -395,11 +425,45 @@ namespace
 			"The Selection panel omitted the effective Colour, source tag, or editor default");
 		ImGui::DestroyContext();
 	}
+	void displayColourIsRandomAtCreationBackfilledAndPersisted()
+	{
+		auto registry = core::AgentTagRegistry::create();
+		auto const created = registry->addAgentTag("created");
+		require(isPastelPaletteColour(registry->getAgentTagDisplayColour(created)),
+			"A new tag did not receive a random pastel display Colour");
+		require(!registry->getAgentTagColour(created),
+			"A new tag's display Colour leaked into the inherited Agent Colour property");
+
+		TemporaryDirectory temporary("backfill");
+		auto const path = temporary.path / "legacy.tags.yaml";
+		auto document = YAML::Load(serializeRegistry(*registry));
+		document["tags"][0].remove("displayColour");
+		{
+			std::ofstream output(path, std::ios::binary);
+			require(static_cast<bool>(output),
+				"Could not write the legacy registry file");
+			output << YAML::Dump(document);
+		}
+
+		auto loaded = core::AgentTagRegistry::loadFrom(path.string());
+		auto const backfilled = loaded->getAgentTagDisplayColour(created);
+		require(isPastelPaletteColour(backfilled),
+			"A legacy tag without a display Colour was not backfilled with a pastel");
+		require(loaded->isModified(),
+			"Backfilling display Colours did not mark the registry modified for saving");
+
+		auto reopened = deserializeRegistry(serializeRegistry(*loaded));
+		require(reopened->getAgentTagDisplayColour(created) == backfilled,
+			"A backfilled display Colour did not survive persistence");
+		require(!reopened->isModified(),
+			"Re-deserializing a complete document backfilled or dirtied state");
+	}
 }
 
 void runAgentColourSmokeChecks()
 {
 	colourIsUniqueRevisionedAndPersisted();
+	displayColourIsRandomAtCreationBackfilledAndPersisted();
 	assignmentAndPropertyAdditionConflictsAreAtomic();
 	closedBuildingConflictsAreRejectedWhenTheRegistryIsResolved();
 	editorCommitsRevisionedColourAndUndoRedoExactly();

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -22,6 +23,28 @@ namespace core
 
 	inline constexpr AgentColour EditorDefaultAgentColour{};
 	inline constexpr AgentColour SelectedAgentColour{ 251, 188, 4 };
+
+	// The sixteen pastel Colours that intrinsic tag display Colours draw from.
+	// Draws need not be distinct; each draw is uniform and independent.
+	inline constexpr std::array<AgentColour, 16> AgentTagColourPalette
+	{
+		AgentColour{ 255, 179, 186 }, // pastel pink
+		AgentColour{ 255, 205, 178 }, // pastel peach
+		AgentColour{ 255, 223, 186 }, // pastel apricot
+		AgentColour{ 255, 239, 186 }, // pastel yellow
+		AgentColour{ 240, 255, 190 }, // pastel lime-yellow
+		AgentColour{ 202, 255, 191 }, // pastel lime
+		AgentColour{ 186, 255, 201 }, // pastel mint
+		AgentColour{ 186, 255, 235 }, // pastel aqua
+		AgentColour{ 186, 225, 255 }, // pastel sky
+		AgentColour{ 195, 198, 255 }, // pastel periwinkle
+		AgentColour{ 222, 194, 255 }, // pastel lavender
+		AgentColour{ 240, 190, 255 }, // pastel orchid
+		AgentColour{ 255, 196, 246 }, // pastel fuchsia
+		AgentColour{ 255, 214, 214 }, // pastel rose
+		AgentColour{ 226, 213, 198 }, // pastel sand
+		AgentColour{ 205, 218, 205 }, // pastel sage
+	};
 
 	struct AgentColourProperty
 	{
@@ -64,6 +87,11 @@ namespace core
 
 	void agentColourToFloats(AgentColour const& colour, float out[3]);
 	AgentColour agentColourFromFloats(float const in[3]);
+
+	// Draws one pastel from AgentTagColourPalette uniformly at random. Tag
+	// creation and legacy-load backfill share this so automatic Colours behave
+	// identically. The generator is never consulted by load or simulation reset.
+	AgentColour sampleAgentTagColour();
 	bool agentWalkSpeedModifierRangeIsValid(AgentModifierRange const& range,
 		std::string* diagnostic = nullptr);
 	bool agentHeightModifierRangeIsValid(AgentModifierRange const& range,
@@ -77,6 +105,10 @@ namespace core
 		friend class AgentTagRegistry;
 
 		std::string mName;
+		// The intrinsic display Colour used when rendering the tag itself (for
+		// example its Selection-panel chip). It is deliberately separate from
+		// the optional Agent Colour property below, which Agents inherit.
+		AgentColour mDisplayColour{};
 		std::optional<AgentColourProperty> mColour;
 		std::optional<AgentWalkSpeedModifierProperty> mWalkSpeedModifier;
 		std::optional<AgentHeightModifierProperty> mHeightModifier;
@@ -87,6 +119,7 @@ namespace core
 		}
 
 		void setName(std::string name) { mName = std::move(name); }
+		void setDisplayColour(AgentColour colour) { mDisplayColour = colour; }
 		void setColour(AgentColourProperty colour) { mColour = colour; }
 		void removeColour() { mColour.reset(); }
 		void setWalkSpeedModifier(AgentWalkSpeedModifierProperty property)
@@ -107,6 +140,7 @@ namespace core
 		static bool nameIsValid(std::string const& name, std::string* diagnostic = nullptr);
 
 		std::string const& getName() const { return mName; }
+		AgentColour getDisplayColour() const { return mDisplayColour; }
 		AgentColourProperty const* getColour() const
 		{
 			return mColour ? &*mColour : nullptr;

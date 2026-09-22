@@ -2,11 +2,11 @@
 
 #include <algorithm>
 #include <array>
-#include <cctype>
 #include <string>
 
 #include "DocumentEdit.h"
 #include "core/Agent.h"
+#include "core/AgentTag.h"
 #include "core/AgentTagRegistry.h"
 #include "core/Building.h"
 #include "core/Log.h"
@@ -16,20 +16,52 @@ using namespace std;
 
 namespace
 {
-	constexpr size_t SearchBufferSize{ 64 };
-	array<char, SearchBufferSize> gTagSearch{};
-	core::Building const* gSearchBuilding{ nullptr };
-	core::AgentId gSearchAgent{};
+	// The chip selection is transient per (Building, Agent) pair and clears when
+	// the selection changes or the panel state is reset.
+	core::AgentTagId gSelectedAssignedTag{};
+	core::Building const* gChipBuilding{ nullptr };
+	core::AgentId gChipAgent{};
 
-	bool matchesSearch(string const& name)
+	ImVec4 scaleColour(ImVec4 colour, float factor)
 	{
-		string needle(gTagSearch.data());
-		if (needle.empty()) return true;
-		string display = "#" + name;
-		auto lower = [](unsigned char value) { return static_cast<char>(std::tolower(value)); };
-		std::transform(needle.begin(), needle.end(), needle.begin(), lower);
-		std::transform(display.begin(), display.end(), display.begin(), lower);
-		return display.find(needle) != string::npos;
+		return ImVec4(std::min(colour.x * factor, 1.0f),
+			std::min(colour.y * factor, 1.0f), std::min(colour.z * factor, 1.0f),
+			colour.w);
+	}
+
+	// A single assigned tag drawn as a coloured chip showing just its name. The
+	// chip uses the tag's intrinsic display Colour, with the text shaded for
+	// contrast. Returns true when clicked.
+	bool renderAssignedTagChip(core::AgentTagRegistry const& registry,
+		core::AgentTagId tag, bool selected)
+	{
+		auto const& name = registry.getAgentTagName(tag);
+		float rgb[3];
+		core::agentColourToFloats(registry.getAgentTagDisplayColour(tag), rgb);
+		ImVec4 const base(rgb[0], rgb[1], rgb[2], 1.0f);
+		auto const luminance = 0.299f * rgb[0] + 0.587f * rgb[1] + 0.114f * rgb[2];
+		ImVec4 const text = luminance > 0.5f ? ImVec4(0.0f, 0.0f, 0.0f, 1.0f)
+			: ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
+
+		ImGui::PushID(tag.value);
+		ImGui::PushStyleColor(ImGuiCol_Button, base);
+		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, scaleColour(base, 1.25f));
+		ImGui::PushStyleColor(ImGuiCol_ButtonActive, scaleColour(base, 0.8f));
+		ImGui::PushStyleColor(ImGuiCol_Text, text);
+		if (selected)
+		{
+			ImGui::PushStyleColor(ImGuiCol_Border, text);
+			ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 2.0f);
+		}
+		auto const clicked = ImGui::SmallButton(("#" + name).c_str());
+		if (selected)
+		{
+			ImGui::PopStyleVar();
+			ImGui::PopStyleColor();
+		}
+		ImGui::PopStyleColor(4);
+		ImGui::PopID();
+		return clicked;
 	}
 }
 
@@ -63,9 +95,9 @@ bool commitAgentTagAssignment(shared_ptr<core::Building> const& building,
 
 void resetAgentTagAssignmentPanelState()
 {
-	gTagSearch.fill('\0');
-	gSearchBuilding = nullptr;
-	gSearchAgent = {};
+	gSelectedAssignedTag = {};
+	gChipBuilding = nullptr;
+	gChipAgent = {};
 }
 
 void renderAgentEffectiveProperties(shared_ptr<core::Building> const& building,
@@ -135,52 +167,89 @@ void renderAgentTagAssignmentChecklist(shared_ptr<core::Building> const& buildin
 		return;
 	}
 
-	if (gSearchBuilding != building.get() || gSearchAgent != agent)
+	if (gChipBuilding != building.get() || gChipAgent != agent)
 	{
-		gSearchBuilding = building.get();
-		gSearchAgent = agent;
-		gTagSearch.fill('\0');
+		gChipBuilding = building.get();
+		gChipAgent = agent;
+		gSelectedAssignedTag = {};
 	}
-
-	ImGui::SetNextItemWidth(-1.0f);
-	ImGui::InputTextWithHint("##agentTagSearch", "Search tags...",
-		gTagSearch.data(), gTagSearch.size());
 
 	auto const& registry = building->getAgentTagRegistry();
 	auto const ids = registry->getAgentTagIdsAlphabetically();
-	bool anyVisible{ false };
+	auto const paused = building->isSimulationPaused();
+
+	// Assigned tags only, drawn as a wrapping row of coloured chips.
+	bool anyAssigned{ false };
+	bool firstChip{ true };
 	for (auto const tag : ids)
 	{
-		auto const& name = registry->getAgentTagName(tag);
-		if (!matchesSearch(name)) continue;
-		anyVisible = true;
-
-		bool assigned = agentLookup.entity->hasAgentTag(tag);
-		string assignmentDiagnostic;
-		bool const compatible = assigned
-			|| building->canAssignAgentTag(agent, tag, &assignmentDiagnostic);
-		bool const disabled = !building->isSimulationPaused() || !compatible;
-		ImGui::PushID(tag.value);
-		ImGui::BeginDisabled(disabled);
-		bool const toggled = ImGui::Checkbox("##agentTagAssigned", &assigned);
-		ImGui::EndDisabled();
-		bool const hovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
-		ImGui::SameLine();
-		ImGui::Text("#%s", name.c_str());
-		if (hovered && !building->isSimulationPaused())
-			ImGui::SetTooltip("Pause the simulation to edit Agent tag assignments");
-		else if (hovered && !compatible)
-			ImGui::SetTooltip("%s", assignmentDiagnostic.c_str());
-
-		if (toggled)
-		{
-			string diagnostic;
-			if (!commitAgentTagAssignment(building, agent, tag, assigned, diagnostic))
-				core::addLogMessage("Agent tags", 0, core::LogLevel::Warning, diagnostic);
-		}
-		ImGui::PopID();
+		if (!agentLookup.entity->hasAgentTag(tag)) continue;
+		anyAssigned = true;
+		auto const chipWidth = ImGui::CalcTextSize(
+			("#" + registry->getAgentTagName(tag)).c_str()).x
+			+ 2.0f * ImGui::GetStyle().FramePadding.x;
+		auto const rowEndX = ImGui::GetWindowPos().x
+			+ ImGui::GetWindowContentRegionMax().x;
+		if (!firstChip && ImGui::GetCursorPosX() + chipWidth < rowEndX)
+			ImGui::SameLine();
+		firstChip = false;
+		if (renderAssignedTagChip(*registry, tag, gSelectedAssignedTag == tag))
+			gSelectedAssignedTag = gSelectedAssignedTag == tag
+				? core::AgentTagId{} : tag;
 	}
 
-	if (ids.empty()) ImGui::TextDisabled("The attached registry has no tags.");
-	else if (!anyVisible) ImGui::TextDisabled("No tags match the search.");
+	if (!anyAssigned) ImGui::TextDisabled("No tags assigned.");
+	else
+	{
+		ImGui::TextDisabled("Select a tag and press Delete to remove it.");
+		if (gSelectedAssignedTag
+			&& ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)
+			&& ImGui::IsKeyPressed(ImGuiKey_Delete))
+		{
+			string diagnostic;
+			if (!commitAgentTagAssignment(building, agent, gSelectedAssignedTag,
+				false, diagnostic))
+				core::addLogMessage("Agent tags", 0, core::LogLevel::Warning, diagnostic);
+			gSelectedAssignedTag = {};
+		}
+	}
+
+	// The combo lists every tag the Agent does not have yet. Conflicting tags
+	// stay visible but disabled with the core validation diagnostic.
+	ImGui::SetNextItemWidth(-1.0f);
+	ImGui::BeginDisabled(!paused);
+	if (ImGui::BeginCombo("##addAgentTagToAgent", "Add tag..."))
+	{
+		bool anyAddable{ false };
+		for (auto const tag : ids)
+		{
+			if (agentLookup.entity->hasAgentTag(tag)) continue;
+			anyAddable = true;
+			string assignmentDiagnostic;
+			bool const compatible
+				= building->canAssignAgentTag(agent, tag, &assignmentDiagnostic);
+			ImGui::PushID(tag.value);
+			ImGui::BeginDisabled(!compatible);
+			bool const chosen = ImGui::Selectable(
+				("#" + registry->getAgentTagName(tag)).c_str());
+			ImGui::EndDisabled();
+			if (!compatible
+				&& ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+				ImGui::SetTooltip("%s", assignmentDiagnostic.c_str());
+			ImGui::PopID();
+			if (chosen)
+			{
+				string diagnostic;
+				if (!commitAgentTagAssignment(building, agent, tag, true, diagnostic))
+					core::addLogMessage("Agent tags", 0, core::LogLevel::Warning, diagnostic);
+				ImGui::CloseCurrentPopup();
+			}
+		}
+		if (!anyAddable) ImGui::TextDisabled("Every tag is already assigned.");
+		ImGui::EndCombo();
+	}
+	ImGui::EndDisabled();
+	if (!paused
+		&& ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+		ImGui::SetTooltip("Pause the simulation to edit Agent tag assignments");
 }
