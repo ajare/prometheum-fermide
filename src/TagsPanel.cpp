@@ -1072,12 +1072,12 @@ string agentTagDeleteConfirmationText(core::AgentTagRegistry const& registry,
 		<< " this tag.";
 	for (auto const& entry : usage)
 	{
-		if (!entry.building || entry.agentCount == 0) continue;
+		if (!entry.building) continue;
 		text << "\n- " << entry.building->getName() << ": " << entry.agentCount
 			<< " Agent" << (entry.agentCount == 1 ? "" : "s");
 	}
-	text << "\nAll loaded assignments will be removed."
-		<< "\nClosed Buildings cannot be counted and may retain stale references.";
+	text << "\nAll loaded assignments and samples sourced from this tag will be removed."
+		<< "\nClosed Buildings cannot be counted. Any that retain this tag ID will be refused when loaded.";
 	return text.str();
 }
 
