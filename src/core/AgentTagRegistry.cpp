@@ -84,6 +84,50 @@ namespace core
 		return registry;
 	}
 
+	std::shared_ptr<AgentTagRegistry> AgentTagRegistry::copyWithNewUuid(
+		AgentTagRegistry const& source)
+	{
+		auto copy = create();
+		while (copy->mUuid == source.mUuid) copy = create();
+		for (auto const& [id, sourceTag] : source.mTags.entries())
+		{
+			auto tag = AgentTag::create(sourceTag->getName());
+			if (auto const* colour = sourceTag->getColour()) tag->setColour(*colour);
+			if (auto const* walkSpeed = sourceTag->getWalkSpeedModifier())
+				tag->setWalkSpeedModifier(*walkSpeed);
+			if (auto const* height = sourceTag->getHeightModifier())
+				tag->setHeightModifier(*height);
+			if (!copy->mTags.restore(id, std::move(tag)))
+				throw std::logic_error("Could not preserve an Agent tag ID while copying a registry");
+		}
+		if (!copy->mTags.restoreNextId(source.mTags.nextId()))
+			throw std::logic_error("Could not preserve the Agent tag allocator while copying a registry");
+		copy->mNextPropertyRevision = source.mNextPropertyRevision;
+		return copy;
+	}
+
+	bool AgentTagRegistry::hasEquivalentDefinitions(AgentTagRegistry const& other) const
+	{
+		if (mTags.nextId() != other.mTags.nextId()
+			|| mNextPropertyRevision != other.mNextPropertyRevision
+			|| mTags.entries().size() != other.mTags.entries().size()) return false;
+		for (auto const& [id, tag] : mTags.entries())
+		{
+			auto const* candidate = other.mTags.find(id);
+			if (!candidate || tag->getName() != candidate->getName()) return false;
+			auto optionalPropertyMatches = [](auto const* left, auto const* right)
+			{
+				return (!left && !right) || (left && right && *left == *right);
+			};
+			if (!optionalPropertyMatches(tag->getColour(), candidate->getColour())
+				|| !optionalPropertyMatches(tag->getWalkSpeedModifier(),
+					candidate->getWalkSpeedModifier())
+				|| !optionalPropertyMatches(tag->getHeightModifier(),
+					candidate->getHeightModifier())) return false;
+		}
+		return true;
+	}
+
 	bool AgentTagRegistry::uuidIsValid(std::string const& uuid)
 	{
 		if (uuid.size() != 36 || uuid[8] != '-' || uuid[13] != '-'

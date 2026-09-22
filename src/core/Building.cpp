@@ -295,6 +295,40 @@ namespace core
 		mAgentTagRegistry->registerBuilding(*this);
 	}
 
+	void Building::replaceAgentTagRegistryWithIndependentCopy(string filename,
+		shared_ptr<AgentTagRegistry> registry)
+	{
+		filesystem::path const path(filename);
+		if (filename.empty() || path.is_absolute() || path.has_parent_path()
+			|| path.filename().string() != filename
+			|| !filename.ends_with(".tags.yaml"))
+		{
+			throw invalid_argument(
+				"An Agent tag registry reference must be a .tags.yaml basename");
+		}
+		if (!mAgentTagRegistry || !mAgentTagRegistryReference)
+			throw invalid_argument("The Building has no attached Agent tag registry to copy");
+		if (!registry || !AgentTagRegistry::uuidIsValid(registry->getUuid()))
+			throw invalid_argument("Cannot attach an invalid Agent tag registry copy");
+		if (registry == mAgentTagRegistry
+			|| registry->getUuid() == mAgentTagRegistry->getUuid())
+			throw invalid_argument("An Agent tag registry copy must have a new UUID");
+		if (!mAgentTagRegistry->hasEquivalentDefinitions(*registry))
+			throw invalid_argument(
+				"An Agent tag registry copy must preserve every definition and allocator");
+
+		string diagnostic;
+		if (!agentTagAssignmentsAreValid(*registry, &diagnostic))
+			throw invalid_argument(diagnostic);
+
+		AgentTagRegistryReference replacement{ std::move(filename), registry->getUuid() };
+		registry->registerBuilding(*this);
+		mAgentTagRegistry->unregisterBuilding(*this);
+		mAgentTagRegistryReference = std::move(replacement);
+		mAgentTagRegistry = std::move(registry);
+		modify();
+	}
+
 	bool Building::inspectAgentTagAssignments(AgentTagRegistry const& registry,
 		bool allowSampleReconciliation, vector<AgentTagReconciliation>* repairs,
 		string* diagnostic) const

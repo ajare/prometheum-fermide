@@ -60,6 +60,13 @@ namespace core
 		static std::shared_ptr<AgentTagRegistry> create();
 		static std::shared_ptr<AgentTagRegistry> loadFrom(std::string const& filepath);
 
+		// Produces a separate namespace for Building Save As. Authored tag IDs,
+		// allocator high-water marks, property revisions, names, and values are
+		// copied exactly; only the registry document UUID changes.
+		static std::shared_ptr<AgentTagRegistry> copyWithNewUuid(
+			AgentTagRegistry const& source);
+		bool hasEquivalentDefinitions(AgentTagRegistry const& other) const;
+
 		static bool uuidIsValid(std::string const& uuid);
 
 		std::string const& getUuid() const;

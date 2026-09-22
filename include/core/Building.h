@@ -1123,6 +1123,12 @@ namespace core
 		void detachAgentTagRegistryAndClearAssignments();
 		void resolveAgentTagRegistry(std::shared_ptr<AgentTagRegistry> registry);
 
+		// Save As may move an intact Building into an equivalent, independent tag
+		// namespace. Unlike an ordinary switch, this preserves assignments and
+		// samples, and refuses any definition or allocator difference.
+		void replaceAgentTagRegistryWithIndependentCopy(std::string filename,
+			std::shared_ptr<AgentTagRegistry> registry);
+
 		uint32_t getCellsWide() const;
 
 		uint32_t getDecksHigh() const;

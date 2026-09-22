@@ -19,6 +19,14 @@ namespace core
 	std::shared_ptr<AgentTagRegistry> createAndAttachAgentTagRegistry(
 		Building& building, std::filesystem::path const& buildingFilepath);
 
+	// Creates an independent persisted copy at an unoccupied destination. The
+	// returned managed document has a new UUID and definitions exactly equivalent
+	// to source. Installation is no-clobber even if another writer races the
+	// initial collision check.
+	std::shared_ptr<AgentTagRegistry> copyAgentTagRegistryDocument(
+		AgentTagRegistry const& source,
+		std::filesystem::path const& destinationFilepath);
+
 	// Selects an existing registry. Both documents must resolve to regular files
 	// in the same canonical directory, and only the registry basename is stored.
 	std::shared_ptr<AgentTagRegistry> selectAndAttachAgentTagRegistry(

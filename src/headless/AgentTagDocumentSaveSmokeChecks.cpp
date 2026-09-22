@@ -1,4 +1,5 @@
-// Dependency-ordered Agent tag registry and Building saves, ticket #142.
+// Dependency-ordered saves and independent cross-directory Save As copies,
+// tickets #142 and #144.
 
 #include "TagsPanel.h"
 
@@ -47,6 +48,26 @@ namespace
 		std::ifstream input(path, std::ios::binary);
 		return { std::istreambuf_iterator<char>(input),
 			std::istreambuf_iterator<char>() };
+	}
+
+	std::string serializeRegistry(core::AgentTagRegistry const& registry)
+	{
+		auto serializer = core::YamlSerializer::toString();
+		core::SerializationWorkData work;
+		work.markSerializedUnmodified = false;
+		registry.serialize(*serializer, work);
+		serializer->serialize();
+		return serializer->getSerializedString();
+	}
+
+	std::string serializeBuilding(core::Building const& building)
+	{
+		auto serializer = core::YamlSerializer::toString();
+		core::SerializationWorkData work;
+		work.markSerializedUnmodified = false;
+		building.serialize(*serializer, work);
+		serializer->serialize();
+		return serializer->getSerializedString();
 	}
 
 	struct SavedFixture
@@ -181,6 +202,153 @@ namespace
 			"Save All wrote a Building before every dirty registry had succeeded");
 	}
 
+	void sameDirectorySaveAsRetainsRegistryReference()
+	{
+		SavedFixture fixture("same-directory");
+		auto const sourceRegistry = fixture.registry;
+		auto const sourceUuid = sourceRegistry->getUuid();
+		auto const sourceFilename = fixture.building->getAgentTagRegistryFilename();
+		auto const destination = fixture.temporary.path / "same-directory-copy.yaml";
+
+		std::string diagnostic;
+		require(saveBuildingDocument({ fixture.building, destination.string(),
+			fixture.registryPath.string(), &fixture.buildingHistory }, &diagnostic),
+			"Same-directory Save As failed: " + diagnostic);
+		require(fixture.building->getAgentTagRegistry() == sourceRegistry
+			&& fixture.building->getExpectedAgentTagRegistryUuid() == sourceUuid
+			&& fixture.building->getAgentTagRegistryFilename() == sourceFilename,
+			"Same-directory Save As changed the existing registry reference");
+
+		auto reopened = core::loadBuildingDocument(destination);
+		require(reopened->getAgentTagRegistry() == sourceRegistry
+			&& reopened->getExpectedAgentTagRegistryUuid() == sourceUuid,
+			"A same-directory Save As did not reopen against the shared source registry");
+	}
+
+	void crossDirectorySaveAsCopiesEquivalentIndependentRegistry()
+	{
+		SavedFixture fixture("cross-directory");
+		std::string diagnostic;
+		auto const retired = commitAgentTagAdd(fixture.registry, "retired", diagnostic);
+		require(static_cast<bool>(retired), diagnostic);
+		require(commitAgentTagColourAdd(fixture.registry, retired, diagnostic), diagnostic);
+		require(commitAgentTagDelete(fixture.registry, retired, diagnostic), diagnostic);
+		require(commitAgentTagColourAdd(fixture.registry, fixture.tag, diagnostic), diagnostic);
+		require(commitAgentTagColourEdit(fixture.registry, fixture.tag,
+			{ 12, 34, 56 }, diagnostic), diagnostic);
+		require(commitAgentTagWalkSpeedModifierEdit(fixture.registry, fixture.tag,
+			{ 1.1f, 1.1f }, diagnostic), diagnostic);
+		require(saveBuildingDocument(fixture.target(), &diagnostic), diagnostic);
+
+		auto const sourceRegistry = fixture.registry;
+		auto const sourceUuid = sourceRegistry->getUuid();
+		auto const sourceRegistryYaml = serializeRegistry(*sourceRegistry);
+		auto const sourceBuildingYaml = serializeBuilding(*fixture.building);
+		auto copiedBuilding = core::loadBuildingDocument(fixture.buildingPath);
+		copiedBuilding->pauseSimulation();
+		DocumentHistory copiedHistory;
+		copiedHistory.markSaved();
+
+		auto const destinationDirectory = fixture.temporary.path / "copy";
+		std::filesystem::create_directory(destinationDirectory);
+		auto const destinationBuilding = destinationDirectory / "renamed.yaml";
+		auto const destinationRegistry = destinationDirectory
+			/ fixture.building->getAgentTagRegistryFilename();
+		require(saveBuildingDocument({ copiedBuilding, destinationBuilding.string(),
+			fixture.registryPath.string(), &copiedHistory }, &diagnostic),
+			"Cross-directory Save As failed: " + diagnostic);
+
+		auto const copiedRegistry = copiedBuilding->getAgentTagRegistry();
+		require(copiedRegistry && copiedRegistry != sourceRegistry
+			&& copiedRegistry->getUuid() != sourceUuid,
+			"Cross-directory Save As did not attach an independent registry UUID");
+		require(std::filesystem::is_regular_file(destinationRegistry)
+			&& copiedBuilding->getAgentTagRegistryFilename()
+				== fixture.building->getAgentTagRegistryFilename()
+			&& copiedBuilding->getExpectedAgentTagRegistryUuid()
+				== copiedRegistry->getUuid(),
+			"The copied Building does not reference its adjacent registry copy");
+		require(copiedRegistry->hasEquivalentDefinitions(*sourceRegistry)
+			&& copiedRegistry->getAgentTagIds() == sourceRegistry->getAgentTagIds()
+			&& copiedRegistry->getNextAgentTagId()
+				== sourceRegistry->getNextAgentTagId()
+			&& copiedRegistry->getNextPropertyRevision()
+				== sourceRegistry->getNextPropertyRevision(),
+			"The registry copy lost tag identities, definitions, revisions, or allocator state");
+		require(copiedBuilding->getAgentTagAssignmentCount()
+			== fixture.building->getAgentTagAssignmentCount(),
+			"The copied Building lost Agent tag assignments");
+
+		auto reopenedCopy = core::loadBuildingDocument(destinationBuilding);
+		reopenedCopy->pauseSimulation();
+		require(reopenedCopy->getAgentTagRegistry() == copiedRegistry
+			&& reopenedCopy->getAgentTagAssignmentCount()
+				== copiedBuilding->getAgentTagAssignmentCount(),
+			"The copied Building and registry did not round-trip together");
+
+		require(commitAgentTagRename(copiedRegistry, fixture.tag,
+			"commuters", diagnostic), diagnostic);
+		require(commitAgentTagWalkSpeedModifierEdit(copiedRegistry, fixture.tag,
+			{ 1.2f, 1.2f }, diagnostic), diagnostic);
+		require(sourceRegistry->getAgentTagName(fixture.tag) == "walkers"
+			&& sourceRegistry->getAgentTagWalkSpeedModifier(fixture.tag)->range
+				== core::AgentModifierRange{ 1.1f, 1.1f }
+			&& serializeRegistry(*sourceRegistry) == sourceRegistryYaml
+			&& serializeBuilding(*fixture.building) == sourceBuildingYaml,
+			"Editing the copied registry affected the original registry or Building");
+	}
+
+	void registryCollisionLeavesSourceAndDestinationUnchanged()
+	{
+		SavedFixture fixture("collision");
+		std::string diagnostic;
+		require(commitAgentTagRename(fixture.registry, fixture.tag,
+			"commuters", diagnostic), diagnostic);
+		fixture.building->markModified();
+		fixture.buildingHistory.commit(
+			fixture.buildingHistory.capture("Building before collision Save As"));
+
+		auto const sourceRegistryOnDisk = readFile(fixture.registryPath);
+		auto const sourceBuildingOnDisk = readFile(fixture.buildingPath);
+		auto const sourceRegistryInMemory = serializeRegistry(*fixture.registry);
+		auto const sourceBuildingInMemory = serializeBuilding(*fixture.building);
+		auto const sourceRegistry = fixture.registry;
+		auto const sourceHistoryState = fixture.buildingHistory.currentStateId();
+
+		auto const destinationDirectory = fixture.temporary.path / "occupied";
+		std::filesystem::create_directory(destinationDirectory);
+		auto const destinationBuilding = destinationDirectory / "copy.yaml";
+		auto const destinationRegistry = destinationDirectory
+			/ fixture.building->getAgentTagRegistryFilename();
+		{
+			std::ofstream registryOutput(destinationRegistry, std::ios::binary);
+			registryOutput << "occupied registry";
+			std::ofstream buildingOutput(destinationBuilding, std::ios::binary);
+			buildingOutput << "occupied building";
+		}
+		auto const destinationRegistryBefore = readFile(destinationRegistry);
+		auto const destinationBuildingBefore = readFile(destinationBuilding);
+
+		require(!saveBuildingDocument({ fixture.building,
+			destinationBuilding.string(), fixture.registryPath.string(),
+			&fixture.buildingHistory }, &diagnostic),
+			"Save As unexpectedly overwrote an existing destination registry");
+		require(diagnostic.find("already exists") != std::string::npos,
+			"A destination registry collision did not produce a useful diagnostic");
+		require(readFile(destinationRegistry) == destinationRegistryBefore
+			&& readFile(destinationBuilding) == destinationBuildingBefore,
+			"A registry collision changed destination state");
+		require(readFile(fixture.registryPath) == sourceRegistryOnDisk
+			&& readFile(fixture.buildingPath) == sourceBuildingOnDisk
+			&& serializeRegistry(*fixture.registry) == sourceRegistryInMemory
+			&& serializeBuilding(*fixture.building) == sourceBuildingInMemory
+			&& fixture.building->getAgentTagRegistry() == sourceRegistry
+			&& fixture.buildingHistory.currentStateId() == sourceHistoryState
+			&& agentTagRegistryIsModified(fixture.registry)
+			&& fixture.buildingHistory.isModified(),
+			"A registry collision changed source disk, document, reference, or dirty state");
+	}
+
 	void closePromptNamesOnlyTheDirtyDocumentKinds()
 	{
 		SavedFixture fixture("prompt");
@@ -209,5 +377,8 @@ void runAgentTagDocumentSaveSmokeChecks()
 	buildingSaveWritesRegistryFirstAndCleansIndependently();
 	registryFailureBlocksBuildingAndPreservesDirtyState();
 	saveAllCompletesRegistryPhaseBeforeAnyBuilding();
+	sameDirectorySaveAsRetainsRegistryReference();
+	crossDirectorySaveAsCopiesEquivalentIndependentRegistry();
+	registryCollisionLeavesSourceAndDestinationUnchanged();
 	closePromptNamesOnlyTheDirtyDocumentKinds();
 }

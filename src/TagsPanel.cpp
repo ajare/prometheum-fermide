@@ -1796,8 +1796,19 @@ namespace
 			shared_ptr<core::AgentTagRegistry> registry;
 			filesystem::path path;
 		};
+		struct RegistryCopy
+		{
+			BuildingDocumentSaveTarget const* target{ nullptr };
+			shared_ptr<core::AgentTagRegistry> source;
+			shared_ptr<core::AgentTagRegistry> copy;
+			filesystem::path destination;
+			bool buildingWasModified{ false };
+			bool committed{ false };
+		};
 		vector<RegistrySave> registries;
 		map<core::AgentTagRegistry const*, size_t> registryIndices;
+		vector<RegistryCopy> copies;
+		map<filesystem::path, BuildingDocumentSaveTarget const*> copyDestinations;
 		vector<BuildingDocumentSaveTarget const*> buildings;
 		map<core::Building const*, filesystem::path> buildingPaths;
 
@@ -1807,9 +1818,28 @@ namespace
 			return false;
 		};
 
+		auto pathIsOccupied = [&refuse](filesystem::path const& path,
+			bool& occupied)
+		{
+			error_code error;
+			auto const status = filesystem::symlink_status(path, error);
+			if (!error)
+			{
+				occupied = status.type() != filesystem::file_type::not_found;
+				return true;
+			}
+			if (error == errc::no_such_file_or_directory)
+			{
+				occupied = false;
+				return true;
+			}
+			return refuse("Could not inspect Agent tag registry copy destination: "
+				+ error.message());
+		};
+
 		// Validate and plan the complete ordering before writing any document.
-		// In particular, a bad second registry path cannot allow an earlier
-		// Building to reach disk before that registry has been attempted.
+		// This includes every cross-directory copy collision, so a refused Save As
+		// cannot save the source registry or mutate either Building namespace.
 		for (auto const& target : targets)
 		{
 			if (!target.building) return refuse("There is no Building document to save");
@@ -1824,6 +1854,34 @@ namespace
 				if (!inserted && entry->second != path)
 					return refuse("The same Building was given more than one save path");
 				if (inserted) buildings.push_back(&target);
+
+				if (target.building->hasAttachedAgentTagRegistry())
+				{
+					auto const sourcePath = registrySavePath(target);
+					if (sourcePath.empty())
+						return refuse("The attached Agent tag registry has no file path");
+					auto const normalizedSource = normalizedSavePath(sourcePath);
+					auto const destination = path.parent_path()
+						/ target.building->getAgentTagRegistryFilename();
+					if (normalizedSource == path)
+						return refuse("The Building and its Agent tag registry cannot use the same file path");
+					if (normalizedSource.parent_path() != destination.parent_path())
+					{
+						if (destination == path)
+							return refuse("The Building and its Agent tag registry copy cannot use the same file path");
+						bool occupied{ false };
+						if (!pathIsOccupied(destination, occupied)) return false;
+						if (occupied)
+							return refuse("Agent tag registry copy already exists: "
+								+ destination.string());
+						if (!copyDestinations.emplace(destination, &target).second)
+							return refuse("More than one Agent tag registry copy targets "
+								+ destination.string());
+						copies.push_back({ &target,
+							target.building->getAgentTagRegistry(), {}, destination,
+							target.building->isModified(), false });
+					}
+				}
 			}
 
 			if (!target.building->hasAttachedAgentTagRegistry()
@@ -1841,29 +1899,106 @@ namespace
 				return refuse("The same Agent tag registry was given more than one save path");
 		}
 
-		// Save All is deliberately two-phase: no Building is written until every
-		// dirty registry has succeeded. Shared registries are written once.
+		// Save All is deliberately phased: no Building is written until every
+		// dirty source registry and every required independent copy has succeeded.
+		// Claim copy destinations before changing source save state, so even a
+		// destination created after preflight leaves the source untouched.
+		auto discardCopy = [](RegistryCopy& entry)
+		{
+			if (!entry.copy || entry.committed) return;
+			(void)core::unloadAgentTagRegistryDocumentIfUnused(entry.copy, true);
+			error_code ignored;
+			filesystem::remove(entry.destination, ignored);
+			entry.copy.reset();
+		};
+		auto discardUncommittedCopies = [&copies, &discardCopy]()
+		{
+			for (auto& entry : copies) discardCopy(entry);
+		};
+
+		for (auto& entry : copies)
+		{
+			try
+			{
+				entry.copy = core::copyAgentTagRegistryDocument(
+					*entry.source, entry.destination);
+			}
+			catch (std::exception const& error)
+			{
+				discardUncommittedCopies();
+				return refuse("Could not copy Agent tag registry: "
+					+ string(error.what()));
+			}
+		}
+
+		// Shared dirty source registries are written once, after all no-clobber
+		// copy installations have succeeded and before any dependent Building.
 		for (auto const& entry : registries)
 		{
 			string registryDiagnostic;
 			if (!saveAgentTagRegistry(entry.registry, entry.path.string(),
-				&registryDiagnostic)) return refuse(std::move(registryDiagnostic));
+				&registryDiagnostic))
+			{
+				discardUncommittedCopies();
+				return refuse(std::move(registryDiagnostic));
+			}
 		}
 
 		for (auto const* target : buildings)
 		{
+			auto copy = find_if(copies.begin(), copies.end(),
+				[target](RegistryCopy const& entry) { return entry.target == target; });
+			bool attachedCopy{ false };
 			try
 			{
+				if (copy != copies.end())
+				{
+					target->building->replaceAgentTagRegistryWithIndependentCopy(
+						copy->destination.filename().string(), copy->copy);
+					attachedCopy = true;
+				}
 				target->building->saveTo(target->buildingFilepath);
-				if (target->buildingHistory) target->buildingHistory->markSaved();
-				core::addLogMessage("File", 0, core::LogLevel::Info,
-					"Saved Building to " + target->buildingFilepath);
 			}
 			catch (std::exception const& error)
 			{
+				if (attachedCopy)
+				{
+					try
+					{
+						target->building->replaceAgentTagRegistryWithIndependentCopy(
+							target->building->getAgentTagRegistryFilename(), copy->source);
+						if (!copy->buildingWasModified) target->building->markSaved();
+					}
+					catch (...)
+					{
+						// Both registries were validated as equivalent before attachment;
+						// rollback is therefore non-refusing unless invariants are broken.
+					}
+				}
+				discardUncommittedCopies();
 				return refuse("Could not save Building: " + string(error.what()));
 			}
+
+			// Once the Building reaches disk, its adjacent copy is committed and
+			// must not be removed by cleanup for a later independent save failure.
+			if (copy != copies.end()) copy->committed = true;
+			if (target->buildingHistory)
+			{
+				// Earlier snapshots name the source registry UUID and cannot be
+				// restored beside the independent copy.
+				if (copy != copies.end()) target->buildingHistory->clear();
+				target->buildingHistory->markSaved();
+			}
+			if (copy != copies.end())
+			{
+				releaseRegistryIfUnused(copy->source);
+				core::addLogMessage("Tags", 0, core::LogLevel::Info,
+					"Copied Agent tag registry to " + copy->destination.string());
+			}
+			core::addLogMessage("File", 0, core::LogLevel::Info,
+				"Saved Building to " + target->buildingFilepath);
 		}
+		if (!copies.empty()) resetTagsPanelState();
 		return true;
 	}
 }

@@ -142,9 +142,9 @@ bool attachedAgentTagRegistryIsModified(
 	std::shared_ptr<const core::Building> const& building);
 
 // A Building save target carries the separately persisted dependency path and
-// each editor document's own saved-state marker. The registry path is explicit
-// so ordinary Save As can continue to save the source registry until the
-// independent-copy workflow is implemented.
+// each editor document's own saved-state marker. During Save As, the explicit
+// registry path identifies the source directory; a different Building target
+// directory receives an independent adjacent registry copy.
 struct BuildingDocumentSaveTarget
 {
 	std::shared_ptr<core::Building> building;

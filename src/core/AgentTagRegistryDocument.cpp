@@ -237,6 +237,85 @@ namespace core
 		return registry;
 	}
 
+	std::shared_ptr<AgentTagRegistry> copyAgentTagRegistryDocument(
+		AgentTagRegistry const& source,
+		std::filesystem::path const& destinationFilepath)
+	{
+		requireAgentTagRegistryFilename(destinationFilepath);
+		if (destinationFilepath.empty())
+			throw SerializationException("The Agent tag registry copy path is empty");
+
+		auto pathIsOccupied = [](std::filesystem::path const& path)
+		{
+			std::error_code error;
+			auto const status = std::filesystem::symlink_status(path, error);
+			if (!error) return status.type() != std::filesystem::file_type::not_found;
+			if (error == std::errc::no_such_file_or_directory) return false;
+			throw SerializationException(std::format(
+				"Could not inspect Agent tag registry copy destination {}: {}",
+				path.string(), error.message()));
+		};
+		if (pathIsOccupied(destinationFilepath))
+		{
+			throw SerializationException(std::format(
+				"Agent tag registry copy already exists: {}",
+				destinationFilepath.string()));
+		}
+
+		auto copy = AgentTagRegistry::copyWithNewUuid(source);
+		auto directory = destinationFilepath.parent_path();
+		if (directory.empty()) directory = ".";
+		auto const stagingPath = directory
+			/ (destinationFilepath.filename().string() + "." + copy->getUuid()
+				+ ".copying.tmp");
+		if (pathIsOccupied(stagingPath))
+		{
+			throw SerializationException(std::format(
+				"Agent tag registry copy staging file already exists: {}",
+				stagingPath.string()));
+		}
+
+		bool destinationInstalled{ false };
+		try
+		{
+			copy->saveTo(stagingPath.string());
+
+			// A hard-link installation is atomic and refuses an occupied name on all
+			// supported platforms. Unlike rename, it cannot overwrite a destination
+			// created after the collision preflight.
+			std::error_code error;
+			std::filesystem::create_hard_link(
+				stagingPath, destinationFilepath, error);
+			if (error)
+			{
+				throw SerializationException(std::format(
+					"Could not install Agent tag registry copy at {} without overwriting it: {}",
+					destinationFilepath.string(), error.message()));
+			}
+			destinationInstalled = true;
+			std::filesystem::remove(stagingPath, error);
+
+			auto persisted = readRegistry(requireCanonicalRegularFile(
+				destinationFilepath, "Agent tag registry copy"));
+			if (persisted->getUuid() == source.getUuid()
+				|| !persisted->hasEquivalentDefinitions(source))
+			{
+				throw SerializationException(
+					"The persisted Agent tag registry copy is not an independent equivalent registry");
+			}
+			registerCreatedRegistry(destinationFilepath, persisted);
+			return persisted;
+		}
+		catch (...)
+		{
+			std::error_code ignored;
+			std::filesystem::remove(stagingPath, ignored);
+			if (destinationInstalled)
+				std::filesystem::remove(destinationFilepath, ignored);
+			throw;
+		}
+	}
+
 	std::shared_ptr<AgentTagRegistry> selectAndAttachAgentTagRegistry(
 		Building& building, std::filesystem::path const& buildingFilepath,
 		std::filesystem::path const& registryFilepath)
