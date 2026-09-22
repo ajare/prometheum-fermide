@@ -2306,6 +2306,22 @@ namespace
 		core::addLogMessage("File", 0, core::LogLevel::Error, gFileError);
 	}
 
+	string currentAgentTagRegistryFilepath(
+		shared_ptr<core::Building> const& building)
+	{
+		if (!building || !building->hasAttachedAgentTagRegistry()
+			|| gBuildingFilepath.empty()) return {};
+		return (filesystem::path(gBuildingFilepath).parent_path()
+			/ building->getAgentTagRegistryFilename()).string();
+	}
+
+	BuildingDocumentSaveTarget currentDocumentSaveTarget(
+		shared_ptr<core::Building> const& building, string buildingFilepath)
+	{
+		return { building, std::move(buildingFilepath),
+			currentAgentTagRegistryFilepath(building), &gBuildingDocumentHistory };
+	}
+
 	bool saveBuilding(shared_ptr<core::Building> const& building, bool saveAs)
 	{
 		if (!building) return false;
@@ -2336,37 +2352,30 @@ namespace
 			if (!selected.has_extension()) filepath += ".yaml";
 		}
 
-		try
+		string diagnostic;
+		if (!saveBuildingDocument(currentDocumentSaveTarget(building, filepath),
+			&diagnostic))
 		{
-			// Registry state is an independent document. Save a dirty dependency
-			// first so a successful Building save never points at an older registry.
-			if (building->hasAttachedAgentTagRegistry()
-				&& attachedAgentTagRegistryIsModified(building))
-			{
-				if (gBuildingFilepath.empty())
-					throw runtime_error("The attached Agent tag registry has no saved location");
-				auto const registryPath = filesystem::path(gBuildingFilepath).parent_path()
-					/ building->getAgentTagRegistryFilename();
-				string registryDiagnostic;
-				if (!saveAgentTagRegistry(building->getAgentTagRegistry(),
-					registryPath.string(), &registryDiagnostic))
-					throw runtime_error(registryDiagnostic);
-			}
-
-			// #63: the Building only becomes clean once saveTo has fully written
-			// and replaced the destination; any error leaves it dirty.
-			building->saveTo(filepath);
-			gBuildingFilepath = std::move(filepath);
-			gBuildingDocumentHistory.markSaved();
-			core::addLogMessage("File", 0, core::LogLevel::Info,
-				"Saved Building to " + gBuildingFilepath);
-			return true;
-		}
-		catch (std::exception const& error)
-		{
-			reportFileError("Could not save Building: " + string(error.what()));
+			reportFileError(std::move(diagnostic));
 			return false;
 		}
+		gBuildingFilepath = std::move(filepath);
+		return true;
+	}
+
+	bool saveAllOpenDocuments(shared_ptr<core::Building> const& building)
+	{
+		if (!building) return false;
+		// An untitled Building still needs the ordinary Save location chooser.
+		if (gBuildingFilepath.empty()) return saveBuilding(building, false);
+		string diagnostic;
+		if (!saveAllDocuments(
+			{ currentDocumentSaveTarget(building, gBuildingFilepath) }, &diagnostic))
+		{
+			reportFileError(std::move(diagnostic));
+			return false;
+		}
+		return true;
 	}
 
 	string normalizedFilepath(string const& filepath)
@@ -2811,12 +2820,12 @@ namespace
 		}
 		if (ImGui::BeginPopupModal("Unsaved changes", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
 		{
-			ImGui::TextUnformatted(building && building->hasAttachedAgentTagRegistry()
-				? "Save changes to the current Building and Agent tag registry?"
-				: "Save changes to the current Building?");
-			if (ImGui::Button("Save"))
+			auto const prompt = unsavedDocumentPromptText(
+				currentDocumentSaveTarget(building, gBuildingFilepath));
+			ImGui::TextUnformatted(prompt.c_str());
+			if (ImGui::Button("Save All"))
 			{
-				if (saveBuilding(building, false))
+				if (saveAllOpenDocuments(building))
 				{
 					auto const action = gPendingFileAction;
 					gPendingFileAction = PendingFileAction::None;
@@ -4497,6 +4506,8 @@ void renderMenu(shared_ptr<core::Building>& building)
 			ImGui::Separator();
 			if (ImGui::MenuItem("Save", "Ctrl+S", false, isDocumentStale(building)))
 				saveBuilding(building, false);
+			if (ImGui::MenuItem("Save All", nullptr, false, isDocumentStale(building)))
+				saveAllOpenDocuments(building);
 			if (ImGui::MenuItem("Save As...", nullptr, false, building != nullptr))
 				saveBuilding(building, true);
 			if (ImGui::MenuItem("Close", nullptr, false, building != nullptr))

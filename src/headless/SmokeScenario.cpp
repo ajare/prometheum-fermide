@@ -70,6 +70,7 @@ void runDoorTwoSidedButtonSmokeChecks();
 void runDocumentHistorySmokeChecks();
 void runAgentTagRegistrySmokeChecks();
 void runAgentTagRegistryChangeSmokeChecks();
+void runAgentTagDocumentSaveSmokeChecks();
 void runAgentTagAssignmentSmokeChecks();
 void runAgentTagDeleteSmokeChecks();
 void runAgentTagCoordinationSmokeChecks();
@@ -5013,6 +5014,7 @@ int main(int argc, char** argv)
 		runDocumentHistorySmokeChecks();
 		runAgentTagRegistrySmokeChecks();
 		runAgentTagRegistryChangeSmokeChecks();
+		runAgentTagDocumentSaveSmokeChecks();
 		runAgentTagAssignmentSmokeChecks();
 		runAgentTagDeleteSmokeChecks();
 		runAgentTagCoordinationSmokeChecks();

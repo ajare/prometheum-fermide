@@ -1686,6 +1686,143 @@ bool attachedAgentTagRegistryIsModified(shared_ptr<const core::Building> const& 
 	return agentTagRegistryIsModified(building->getAgentTagRegistry());
 }
 
+namespace
+{
+	bool buildingDocumentIsModified(BuildingDocumentSaveTarget const& target)
+	{
+		return target.building && (target.building->isModified()
+			|| (target.buildingHistory && target.buildingHistory->isModified()));
+	}
+
+	filesystem::path registrySavePath(BuildingDocumentSaveTarget const& target)
+	{
+		if (!target.registryFilepath.empty()) return target.registryFilepath;
+		if (!target.building || target.buildingFilepath.empty()
+			|| !target.building->hasAgentTagRegistryReference()) return {};
+		return filesystem::path(target.buildingFilepath).parent_path()
+			/ target.building->getAgentTagRegistryFilename();
+	}
+
+	filesystem::path normalizedSavePath(filesystem::path path)
+	{
+		error_code error;
+		auto canonical = filesystem::weakly_canonical(path, error);
+		if (!error) return canonical;
+		auto absolute = filesystem::absolute(path, error);
+		if (!error) path = std::move(absolute);
+		return path.lexically_normal();
+	}
+
+	bool saveDocuments(vector<BuildingDocumentSaveTarget> const& targets,
+		bool forceBuildingSave, string* diagnostic)
+	{
+		if (diagnostic) diagnostic->clear();
+		struct RegistrySave
+		{
+			shared_ptr<core::AgentTagRegistry> registry;
+			filesystem::path path;
+		};
+		vector<RegistrySave> registries;
+		map<core::AgentTagRegistry const*, size_t> registryIndices;
+		vector<BuildingDocumentSaveTarget const*> buildings;
+		map<core::Building const*, filesystem::path> buildingPaths;
+
+		auto refuse = [diagnostic](string message)
+		{
+			if (diagnostic) *diagnostic = std::move(message);
+			return false;
+		};
+
+		// Validate and plan the complete ordering before writing any document.
+		// In particular, a bad second registry path cannot allow an earlier
+		// Building to reach disk before that registry has been attempted.
+		for (auto const& target : targets)
+		{
+			if (!target.building) return refuse("There is no Building document to save");
+			auto const saveBuilding = forceBuildingSave || buildingDocumentIsModified(target);
+			if (saveBuilding)
+			{
+				if (target.buildingFilepath.empty())
+					return refuse("The Building has no file path");
+				auto const path = normalizedSavePath(target.buildingFilepath);
+				auto const [entry, inserted] = buildingPaths.emplace(
+					target.building.get(), path);
+				if (!inserted && entry->second != path)
+					return refuse("The same Building was given more than one save path");
+				if (inserted) buildings.push_back(&target);
+			}
+
+			if (!target.building->hasAttachedAgentTagRegistry()
+				|| !attachedAgentTagRegistryIsModified(target.building)) continue;
+			auto const path = registrySavePath(target);
+			if (path.empty())
+				return refuse("The attached Agent tag registry has no file path");
+			auto const normalized = normalizedSavePath(path);
+			auto const& registry = target.building->getAgentTagRegistry();
+			auto const [entry, inserted] = registryIndices.emplace(
+				registry.get(), registries.size());
+			if (inserted)
+				registries.push_back({ registry, normalized });
+			else if (registries[entry->second].path != normalized)
+				return refuse("The same Agent tag registry was given more than one save path");
+		}
+
+		// Save All is deliberately two-phase: no Building is written until every
+		// dirty registry has succeeded. Shared registries are written once.
+		for (auto const& entry : registries)
+		{
+			string registryDiagnostic;
+			if (!saveAgentTagRegistry(entry.registry, entry.path.string(),
+				&registryDiagnostic)) return refuse(std::move(registryDiagnostic));
+		}
+
+		for (auto const* target : buildings)
+		{
+			try
+			{
+				target->building->saveTo(target->buildingFilepath);
+				if (target->buildingHistory) target->buildingHistory->markSaved();
+				core::addLogMessage("File", 0, core::LogLevel::Info,
+					"Saved Building to " + target->buildingFilepath);
+			}
+			catch (std::exception const& error)
+			{
+				return refuse("Could not save Building: " + string(error.what()));
+			}
+		}
+		return true;
+	}
+}
+
+bool saveBuildingDocument(BuildingDocumentSaveTarget const& target,
+	string* diagnostic)
+{
+	return saveDocuments({ target }, true, diagnostic);
+}
+
+bool saveAllDocuments(vector<BuildingDocumentSaveTarget> const& targets,
+	string* diagnostic)
+{
+	return saveDocuments(targets, false, diagnostic);
+}
+
+string unsavedDocumentPromptText(BuildingDocumentSaveTarget const& target)
+{
+	if (!target.building) return "There are no unsaved documents.";
+	ostringstream text;
+	text << "Save unsaved documents?";
+	if (buildingDocumentIsModified(target))
+	{
+		auto label = filesystem::path(target.buildingFilepath).filename().string();
+		if (label.empty()) label = target.building->getName() + " (not yet saved)";
+		text << "\n- Building: " << label;
+	}
+	if (attachedAgentTagRegistryIsModified(target.building))
+		text << "\n- Agent tag registry: "
+			<< target.building->getAgentTagRegistryFilename();
+	return text.str();
+}
+
 void resetTagsPanelState()
 {
 	gTagNameEdits.clear();

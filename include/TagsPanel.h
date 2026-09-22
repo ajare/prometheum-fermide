@@ -5,6 +5,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "DocumentHistory.h"
 #include "core/AgentTag.h"
@@ -134,6 +135,31 @@ bool agentTagRegistryIsModified(
 	std::shared_ptr<core::AgentTagRegistry> const& registry);
 bool attachedAgentTagRegistryIsModified(
 	std::shared_ptr<const core::Building> const& building);
+
+// A Building save target carries the separately persisted dependency path and
+// each editor document's own saved-state marker. The registry path is explicit
+// so ordinary Save As can continue to save the source registry until the
+// independent-copy workflow is implemented.
+struct BuildingDocumentSaveTarget
+{
+	std::shared_ptr<core::Building> building;
+	std::string buildingFilepath;
+	std::string registryFilepath;
+	DocumentHistory* buildingHistory{ nullptr };
+};
+
+// Save always writes a dirty attached registry before the requested Building.
+// Save All deduplicates shared registries, writes every dirty registry first,
+// and only then writes dirty Buildings. Any registry failure leaves every
+// Building untouched; successful documents advance only their own markers.
+bool saveBuildingDocument(BuildingDocumentSaveTarget const& target,
+	std::string* diagnostic = nullptr);
+bool saveAllDocuments(std::vector<BuildingDocumentSaveTarget> const& targets,
+	std::string* diagnostic = nullptr);
+
+// Close/exit confirmation text lists each independently dirty document rather
+// than describing an attached but clean registry as unsaved.
+std::string unsavedDocumentPromptText(BuildingDocumentSaveTarget const& target);
 
 // Drop transient editors and, when a document is closed or discarded, its
 // saved-state/undo bookkeeping. The registry object itself remains owned by
