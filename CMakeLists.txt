@@ -212,6 +212,7 @@ add_executable(prometheum-fermide-headless
     src/headless/AgentTagAssignmentSmokeChecks.cpp
     src/headless/AgentTagDeleteSmokeChecks.cpp
     src/headless/AgentTagCoordinationSmokeChecks.cpp
+    src/headless/AgentTagReconciliationSmokeChecks.cpp
     src/headless/AgentColourSmokeChecks.cpp
     src/headless/AgentWalkSpeedSmokeChecks.cpp
     src/headless/AgentHeightSmokeChecks.cpp

@@ -72,6 +72,7 @@ void runAgentTagRegistrySmokeChecks();
 void runAgentTagAssignmentSmokeChecks();
 void runAgentTagDeleteSmokeChecks();
 void runAgentTagCoordinationSmokeChecks();
+void runAgentTagReconciliationSmokeChecks();
 void runAgentColourSmokeChecks();
 void runAgentWalkSpeedSmokeChecks();
 void runAgentHeightSmokeChecks();
@@ -5012,6 +5013,7 @@ int main(int argc, char** argv)
 		runAgentTagAssignmentSmokeChecks();
 		runAgentTagDeleteSmokeChecks();
 		runAgentTagCoordinationSmokeChecks();
+		runAgentTagReconciliationSmokeChecks();
 		runAgentColourSmokeChecks();
 		runAgentWalkSpeedSmokeChecks();
 		runAgentHeightSmokeChecks();

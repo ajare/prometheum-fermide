@@ -185,21 +185,29 @@ namespace core
 				"Agent tag registry UUID mismatch: Building expects {}, file contains {}",
 				mAgentTagRegistryReference->expectedUuid, registry->getUuid()));
 		}
-		string diagnostic;
-		if (!agentTagAssignmentsAreValid(*registry, &diagnostic))
-			throw runtime_error(diagnostic);
+
+		// Reconciliation is completed before registration, so a refusal neither
+		// exposes this Building through the shared registry nor changes any Agent.
+		reconcileAgentTagAssignments(*registry);
 		if (mAgentTagRegistry) mAgentTagRegistry->unregisterBuilding(*this);
 		mAgentTagRegistry = std::move(registry);
 		mAgentTagRegistry->registerBuilding(*this);
 	}
 
-	bool Building::agentTagAssignmentsAreValid(AgentTagRegistry const& registry,
+	bool Building::inspectAgentTagAssignments(AgentTagRegistry const& registry,
+		bool allowSampleReconciliation, vector<AgentTagReconciliation>* repairs,
 		string* diagnostic) const
 	{
 		if (diagnostic) diagnostic->clear();
+		if (repairs) repairs->clear();
+		auto reject = [diagnostic](string message)
+		{
+			if (diagnostic) *diagnostic = std::move(message);
+			return false;
+		};
+
 		for (auto const& [agentId, agent] : mAgents.entries())
 		{
-			(void)agentId;
 			if (!agent) continue;
 			AgentTagId colourSource{};
 			AgentTagId walkSpeedSource{};
@@ -211,23 +219,18 @@ namespace core
 				auto const* definition = registry.lookupAgentTag(tag);
 				if (!definition)
 				{
-					if (diagnostic)
-					{
-						*diagnostic = format(
-							"Agent '{}' is assigned to Agent tag {}, which the attached registry does not define",
-							agent->getName(), tag.value);
-					}
-					return false;
+					return reject(format(
+						"Agent '{}' is assigned to Agent tag {}, which the attached registry does not define",
+						agent->getName(), tag.value));
 				}
 				if (definition->getColour())
 				{
 					if (colourSource)
 					{
-						if (diagnostic) *diagnostic = format(
+						return reject(format(
 							"Agent '{}' inherits Colour from both #{} and #{}",
 							agent->getName(), registry.getAgentTagName(colourSource),
-							definition->getName());
-						return false;
+							definition->getName()));
 					}
 					colourSource = tag;
 				}
@@ -235,11 +238,10 @@ namespace core
 				{
 					if (walkSpeedSource)
 					{
-						if (diagnostic) *diagnostic = format(
+						return reject(format(
 							"Agent '{}' inherits Walk speed modifier from both #{} and #{}",
 							agent->getName(), registry.getAgentTagName(walkSpeedSource),
-							definition->getName());
-						return false;
+							definition->getName()));
 					}
 					walkSpeedSource = tag;
 					walkSpeedProperty = property;
@@ -248,58 +250,152 @@ namespace core
 				{
 					if (heightSource)
 					{
-						if (diagnostic) *diagnostic = format(
+						return reject(format(
 							"Agent '{}' inherits Height modifier from both #{} and #{}",
 							agent->getName(), registry.getAgentTagName(heightSource),
-							definition->getName());
-						return false;
+							definition->getName()));
 					}
 					heightSource = tag;
 					heightProperty = property;
 				}
 			}
 
-			auto validateSample = [&](char const* name, SampledAgentPropertyType type,
+			AgentTagReconciliation repair;
+			repair.agent = agentId;
+			auto inspectSample = [&](char const* name, SampledAgentPropertyType type,
 				AgentTagId source, AgentModifierRange const* range, uint64_t revision,
-				optional<AgentPropertySample> const& sample)
+				optional<AgentPropertySample> const& sample,
+				AgentTagSampleRepairAction& action)
 			{
 				if (!source)
 				{
 					if (!sample) return true;
-					if (diagnostic) *diagnostic = format(
-						"Agent '{}' has a {} sample without an inherited property",
-						agent->getName(), name);
-					return false;
+					if (!allowSampleReconciliation)
+					{
+						return reject(format(
+							"Agent '{}' has a {} sample without an inherited property",
+							agent->getName(), name));
+					}
+					action = AgentTagSampleRepairAction::Clear;
+					return true;
 				}
 				if (!sample)
 				{
-					if (diagnostic) *diagnostic = format(
-						"Agent '{}' has no sample for {} from #{}", agent->getName(), name,
-						registry.getAgentTagName(source));
-					return false;
+					if (!allowSampleReconciliation)
+					{
+						return reject(format(
+							"Agent '{}' has no sample for {} from #{}", agent->getName(),
+							name, registry.getAgentTagName(source)));
+					}
+					action = AgentTagSampleRepairAction::Resample;
+					return true;
 				}
-				if (sample->type != type || sample->sourceTag != source
-					|| sample->propertyRevision != revision || !isfinite(sample->value)
-					|| sample->value < range->minimum || sample->value > range->maximum)
+				if (sample->type != type || sample->sourceTag != source)
 				{
-					if (diagnostic) *diagnostic = format(
-						"Agent '{}' has invalid {} sample provenance for #{}",
-						agent->getName(), name, registry.getAgentTagName(source));
-					return false;
+					auto const* sampledTag = registry.lookupAgentTag(sample->sourceTag);
+					auto const sampledSource = sampledTag
+						? "#" + sampledTag->getName()
+						: format("Agent tag {}", sample->sourceTag.value);
+					return reject(format(
+						"Agent '{}' has a {} sample from {}, but inherits that property from #{}",
+						agent->getName(), name, sampledSource,
+						registry.getAgentTagName(source)));
+				}
+				if (sample->propertyRevision != revision)
+				{
+					if (!allowSampleReconciliation)
+					{
+						return reject(format(
+							"Agent '{}' has a stale {} sample for #{}", agent->getName(),
+							name, registry.getAgentTagName(source)));
+					}
+					action = AgentTagSampleRepairAction::Resample;
+					return true;
+				}
+				if (!isfinite(sample->value))
+				{
+					return reject(format(
+						"Agent '{}' has a non-finite current-revision {} sample for #{}",
+						agent->getName(), name, registry.getAgentTagName(source)));
+				}
+				if (sample->value < range->minimum || sample->value > range->maximum)
+				{
+					return reject(format(
+						"Agent '{}' has current-revision {} sample {} outside #{} range [{}, {}]",
+						agent->getName(), name, sample->value,
+						registry.getAgentTagName(source), range->minimum, range->maximum));
 				}
 				return true;
 			};
-			if (!validateSample("Walk speed modifier",
+
+			if (!inspectSample("Walk speed modifier",
 				SampledAgentPropertyType::WalkSpeedModifier, walkSpeedSource,
 				walkSpeedProperty ? &walkSpeedProperty->range : nullptr,
 				walkSpeedProperty ? walkSpeedProperty->revision : 0,
-				agent->getWalkSpeedModifierSample())) return false;
-			if (!validateSample("Height modifier", SampledAgentPropertyType::HeightModifier,
+				agent->getWalkSpeedModifierSample(), repair.walkSpeedAction)) return false;
+			if (!inspectSample("Height modifier", SampledAgentPropertyType::HeightModifier,
 				heightSource, heightProperty ? &heightProperty->range : nullptr,
 				heightProperty ? heightProperty->revision : 0,
-				agent->getHeightModifierSample())) return false;
+				agent->getHeightModifierSample(), repair.heightAction)) return false;
+
+			if (repair.walkSpeedAction == AgentTagSampleRepairAction::Resample)
+			{
+				repair.walkSpeedSource = walkSpeedSource;
+				repair.walkSpeedProperty = *walkSpeedProperty;
+			}
+			if (repair.heightAction == AgentTagSampleRepairAction::Resample)
+			{
+				repair.heightSource = heightSource;
+				repair.heightProperty = *heightProperty;
+			}
+			if (repairs && (repair.walkSpeedAction != AgentTagSampleRepairAction::None
+				|| repair.heightAction != AgentTagSampleRepairAction::None))
+			{
+				repairs->push_back(repair);
+			}
 		}
 		return true;
+	}
+
+	bool Building::agentTagAssignmentsAreValid(AgentTagRegistry const& registry,
+		string* diagnostic) const
+	{
+		return inspectAgentTagAssignments(registry, false, nullptr, diagnostic);
+	}
+
+	void Building::reconcileAgentTagAssignments(AgentTagRegistry const& registry)
+	{
+		vector<AgentTagReconciliation> repairs;
+		string diagnostic;
+		if (!inspectAgentTagAssignments(registry, true, &repairs, &diagnostic))
+			throw runtime_error(diagnostic);
+
+		// Inspection above validates the entire Building before any sample changes.
+		// Sampling and application cannot refuse, so all repairs commit together.
+		for (auto const& repair : repairs)
+		{
+			auto* agent = mAgents.find(repair.agent);
+			if (repair.walkSpeedAction == AgentTagSampleRepairAction::Clear)
+				agent->clearWalkSpeedModifierSample();
+			else if (repair.walkSpeedAction == AgentTagSampleRepairAction::Resample)
+			{
+				agent->setWalkSpeedModifierSample({
+					SampledAgentPropertyType::WalkSpeedModifier, repair.walkSpeedSource,
+					repair.walkSpeedProperty.revision,
+					sampleAgentModifier(repair.walkSpeedProperty.range) });
+			}
+
+			if (repair.heightAction == AgentTagSampleRepairAction::Clear)
+				agent->clearHeightModifierSample();
+			else if (repair.heightAction == AgentTagSampleRepairAction::Resample)
+			{
+				agent->setHeightModifierSample({
+					SampledAgentPropertyType::HeightModifier, repair.heightSource,
+					repair.heightProperty.revision,
+					sampleAgentModifier(repair.heightProperty.range) });
+			}
+		}
+		if (!repairs.empty()) modify();
 	}
 
 	uint32_t Building::countAgentTagAssignments(AgentTagId id) const

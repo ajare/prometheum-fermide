@@ -1,7 +1,5 @@
 #include "core/Agent.h"
 
-#include <cmath>
-
 #include "core/Building.h"
 #include "core/Edge.h"
 #include "core/Location.h"
@@ -141,9 +139,9 @@ namespace core
 				if (sample.propertyRevision == 0)
 					throw SerializationException(
 						"Sampled Agent property revision cannot be zero");
-				if (!isfinite(sample.value))
-					throw SerializationException(format(
-						"{} sample must be finite", displayName));
+				// Finiteness and range are judged against the referenced property's
+				// current revision when the Building resolves its registry. A stale
+				// value is repairable even when its old draw is no longer meaningful.
 				*destination = sample;
 			}
 			serializer.endArray();

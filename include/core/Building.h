@@ -471,11 +471,34 @@ namespace core
 		// or mistaking a later Building allocated at the same address for it.
 		std::shared_ptr<void const> mLifetimeToken{ std::make_shared<uint8_t>(0) };
 
-		// Checks every assigned stable ID against a prospective registry before
-		// that registry is attached. This keeps attachment and document opening
-		// transactional: no Agent assignment is rewritten or silently dropped.
+		enum class AgentTagSampleRepairAction
+		{
+			None,
+			Clear,
+			Resample
+		};
+
+		struct AgentTagReconciliation
+		{
+			AgentId agent{};
+			AgentTagSampleRepairAction walkSpeedAction{ AgentTagSampleRepairAction::None };
+			AgentTagId walkSpeedSource{};
+			AgentWalkSpeedModifierProperty walkSpeedProperty{};
+			AgentTagSampleRepairAction heightAction{ AgentTagSampleRepairAction::None };
+			AgentTagId heightSource{};
+			AgentHeightModifierProperty heightProperty{};
+		};
+
+		// Checks every assigned stable ID and inherited property against a
+		// prospective registry. Opening may additionally plan repairs for samples
+		// whose definitions legitimately changed while the Building was closed.
+		bool inspectAgentTagAssignments(AgentTagRegistry const& registry,
+			bool allowSampleReconciliation,
+			std::vector<AgentTagReconciliation>* repairs,
+			std::string* diagnostic = nullptr) const;
 		bool agentTagAssignmentsAreValid(AgentTagRegistry const& registry,
 			std::string* diagnostic = nullptr) const;
+		void reconcileAgentTagAssignments(AgentTagRegistry const& registry);
 		uint32_t countAgentTagAssignments(AgentTagId id) const;
 		void clearAgentTagAssignments(AgentTagId id);
 		void addAgentTagWalkSpeedModifierSamples(AgentTagId id,
@@ -1074,8 +1097,9 @@ namespace core
 		std::weak_ptr<void const> getLifetimeToken() const { return mLifetimeToken; }
 
 		// A Building references zero or one adjacent Agent tag registry by
-		// basename and expected UUID. Attaching is an authored Building change;
-		// resolving a reference during open is not.
+		// basename and expected UUID. Attaching is an authored Building change.
+		// Resolving during open reconciles repairable modifier evolution and dirties
+		// the Building only when persisted samples need repair.
 		bool hasAgentTagRegistryReference() const;
 		bool hasAttachedAgentTagRegistry() const;
 		std::string const& getAgentTagRegistryFilename() const;

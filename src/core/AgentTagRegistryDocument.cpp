@@ -268,7 +268,19 @@ namespace core
 		}
 		auto registry = loadSharedRegistry(canonicalRegistry,
 			building.getExpectedAgentTagRegistryUuid());
-		building.resolveAgentTagRegistry(registry);
+		try
+		{
+			building.resolveAgentTagRegistry(registry);
+		}
+		catch (...)
+		{
+			// A registry first encountered by a refused Building open must not
+			// remain even as an expired manager entry. Existing shared registries
+			// retain their other owners and are therefore unaffected.
+			registry.reset();
+			discardUnreferencedRegistries();
+			throw;
+		}
 		return registry;
 	}
 
