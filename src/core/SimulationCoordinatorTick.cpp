@@ -459,6 +459,7 @@ namespace core
 				agent->cleanupTraversal();
 			}
 			updateInteractionResults();
+			updateMovementGoals();
 			break;
 
 		case SimulationPhase::None:
@@ -553,6 +554,7 @@ namespace core
 		if (mBuilding.mSimulationPaused) return;
 		auto before = getSimulationSnapshot();
 		++mBuilding.mSimulationTick;
+		updateMovementGoals();
 
 		runSimulationPhase(SimulationPhase::ResourceAdvancement);
 		runSimulationPhase(SimulationPhase::IntentCollection);

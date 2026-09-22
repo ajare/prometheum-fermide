@@ -286,6 +286,17 @@ namespace core
 		CleanupAndEventPublication
 	};
 
+	enum struct MovementCommandStatus
+	{
+		Accepted, NoOp, UnknownAgent, InactiveAgent, UnknownMarker, AgentBusy, TopologyUnavailable
+	};
+	enum struct RouteLossReason { None, Unreachable, TopologyChanged, DestinationRemoved };
+	struct MovementCommandResult
+	{
+		MovementCommandStatus status;
+		bool accepted() const { return status == MovementCommandStatus::Accepted || status == MovementCommandStatus::NoOp; }
+	};
+
 	enum struct SimulationEventType
 	{
 		AgentAdded,
@@ -311,7 +322,10 @@ namespace core
 		SimulationPaused,
 		TopologyRebuilt,
 		TopologyRebuildFailed,
-		SimulationResumed
+		SimulationResumed,
+		DestinationReached,
+		MovementCancelled,
+		RouteLost
 	};
 
 	// Events contain values only.  They are collected during a tick and become
@@ -331,6 +345,9 @@ namespace core
 		TraversalResourceSnapshot traversalResource;
 		TraversalRequestSnapshot traversalRequest;
 		TraversalPermitSnapshot traversalPermit;
+		// Semantic movement payload; consumers need not inspect traversal snapshots.
+		MarkerId destinationMarker{};
+		RouteLossReason routeLossReason{ RouteLossReason::None };
 		std::string diagnostic;
 	};
 

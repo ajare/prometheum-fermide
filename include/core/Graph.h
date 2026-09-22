@@ -206,6 +206,7 @@ namespace core
 		std::shared_ptr<const Vertex> getClosestVertexInSector(Sector const* sector, Vector2 const& pos) const;
 
 		std::shared_ptr<const Vertex> getVertexByIdentifier(uint32_t identifier) const;
+		std::shared_ptr<const Vertex> getVertexForObject(std::shared_ptr<SectorObject> const& object) const;
 
 		Log const& getBuildLog() const;
 

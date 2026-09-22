@@ -1272,6 +1272,7 @@ namespace core
 			mLayers[layer] = std::make_shared<Layer>(this, cellsWide, decksHigh, layer);
 		}
 		mGraph = std::make_shared<Graph>(this);
+		mMovementGoals.clear();
 		mSimulationTick = 0;
 		mNextEventSequence = 1;
 		mNextQueueTicketValue = 1;

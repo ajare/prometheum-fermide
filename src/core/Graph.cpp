@@ -140,6 +140,12 @@ namespace core
 		return closestVertex;
 	}
 
+	shared_ptr<const Vertex> Graph::getVertexForObject(shared_ptr<SectorObject> const& object) const
+	{
+		auto it = mSectorObjectVertexLookup.find(object);
+		return it == mSectorObjectVertexLookup.end() || it->second.empty() ? nullptr : it->second.front();
+	}
+
 	shared_ptr<const Vertex> Graph::getVertexByIdentifier(uint32_t identifier) const
 	{
 		auto it = mIdentifierVertexLookup.find(identifier);

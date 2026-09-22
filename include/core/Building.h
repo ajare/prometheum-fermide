@@ -458,6 +458,15 @@ namespace core
 		// Marker identity is carried by the authored Marker itself. The high-water
 		// mark remains after deletion, so an identity is never issued twice.
 		uint64_t mNextMarkerId{ 1 };
+		struct MovementGoal
+		{
+			MarkerId marker{};
+			Vector2 position;
+			bool cancelling{ false };
+			SectorId sector{};
+			bool unreachable{ false };
+		};
+		std::map<AgentId, MovementGoal> mMovementGoals;
 
 		struct AgentTagRegistryReference
 		{
@@ -1532,6 +1541,16 @@ namespace core
 		CreateObjectResult addSectorMarker(uint32_t sectorIndex, uint32_t deckIndex,
 			float xOffset, std::string const& name, uint32_t* vertexIdentifier = nullptr);
 
+		// Runtime-only movement seam: no Path/Vertex access is needed by callers.
+		// Accepted intent reports DestinationReached or RouteLost through simulation
+		// events (including initially unreachable Markers). Same goal is a NoOp;
+		// another goal is refused until completion or explicit cancellation.
+		MovementCommandResult moveAgentToMarker(AgentId agent, MarkerId marker);
+		// Never interrupts an in-flight threshold crossing or ejects an occupant.
+		// Transport passengers finish their scheduled journey before cancellation;
+		// wait for MovementCancelled before commanding a replacement destination.
+		// Idle/repeated cancellation is an accepted NoOp, without another event.
+		MovementCommandResult cancelAgentMovement(AgentId agent);
 		std::vector<MarkerId> getMarkerIds() const;
 		std::shared_ptr<const Marker> lookupMarker(MarkerId id) const;
 		bool canRenameMarker(MarkerId id, std::string const& name,

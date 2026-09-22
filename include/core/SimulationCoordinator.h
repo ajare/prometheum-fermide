@@ -83,6 +83,9 @@ namespace core
 		// resource, interaction request, and device operation that names it
 		// before the entity itself goes. A refusal leaves the Agent untouched.
 		EntityRemovalResult removeAgent(AgentId id);
+		MovementCommandResult moveAgentToMarker(AgentId agent, MarkerId marker);
+		MovementCommandResult cancelAgentMovement(AgentId agent);
+		void updateMovementGoals();
 
 		// Wakes every activated Agent the Building owns. A deactivated Agent is
 		// not simulated (#118), so waking must not restart its locomotion.

@@ -6,6 +6,10 @@
 #include "core/SimulationCoordinator.h"
 
 #include "core/Agent.h"
+#include "core/Graph.h"
+#include "core/MarkerSectorObject.h"
+#include "core/Path.h"
+#include "core/Vertex.h"
 #include "core/Building.h"
 #include "core/Coordination.h"
 #include "core/Exceptions.h"
@@ -262,6 +266,102 @@ namespace core
 		{
 			(void)resourceId;
 			releaseAgentFromResource(*resource, id);
+		}
+	}
+
+	MovementCommandResult SimulationCoordinator::moveAgentToMarker(AgentId id, MarkerId marker)
+	{
+		auto agent = mBuilding.mAgents.find(id);
+		if (!agent) return { MovementCommandStatus::UnknownAgent };
+		if (!agent->isActive()) return { MovementCommandStatus::InactiveAgent };
+		if (!mBuilding.lookupMarker(marker)) return { MovementCommandStatus::UnknownMarker };
+		if (auto it = mBuilding.mMovementGoals.find(id); it != mBuilding.mMovementGoals.end())
+			return { !it->second.cancelling && it->second.marker == marker
+				? MovementCommandStatus::NoOp : MovementCommandStatus::AgentBusy };
+		if (agent->mPath.path || mBuilding.mPausedPathIntents.contains(id) || holdsTraversalOwnership(id))
+			return { MovementCommandStatus::AgentBusy };
+		if (!mBuilding.mGraph || mBuilding.mTopologyDirty || !mBuilding.mTopologyValid)
+			return { MovementCommandStatus::TopologyUnavailable };
+		shared_ptr<const Vertex> target;
+		for (auto const& sector : mBuilding.mSectors)
+			for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
+				if (auto object = dynamic_pointer_cast<MarkerSectorObject>(sector->getObject(i));
+					object && object->getMarker()->getId() == marker)
+					target = mBuilding.mGraph->getVertexForObject(object);
+		auto path = target ? mBuilding.mGraph->calculatePath(agent, target) : nullptr;
+		mBuilding.mMovementGoals[id] = { marker, target ? target->getPosition() : Vector2::ZERO, false,
+			target ? SectorId{ (uint64_t)target->getSector()->getIndex() + 1 } : SectorId{},
+			!path || path->nodes.empty() };
+		if (path && !path->nodes.empty()) agent->assignPath(std::move(path), true, false);
+		return { MovementCommandStatus::Accepted };
+	}
+
+	MovementCommandResult SimulationCoordinator::cancelAgentMovement(AgentId id)
+	{
+		auto agent = mBuilding.mAgents.find(id);
+		if (!agent) return { MovementCommandStatus::UnknownAgent };
+		if (!agent->isActive()) return { MovementCommandStatus::InactiveAgent };
+		auto it = mBuilding.mMovementGoals.find(id);
+		if (it == mBuilding.mMovementGoals.end() && !agent->mPath.path && !holdsTraversalOwnership(id))
+			return { MovementCommandStatus::NoOp };
+		auto& goal = mBuilding.mMovementGoals[id];
+		if (goal.cancelling) return { MovementCommandStatus::NoOp };
+		goal.cancelling = true;
+		return { MovementCommandStatus::Accepted };
+	}
+
+	void SimulationCoordinator::updateMovementGoals()
+	{
+		for (auto it = mBuilding.mMovementGoals.begin(); it != mBuilding.mMovementGoals.end();)
+		{
+			auto id = it->first;
+			auto const& goal = it->second;
+			auto agent = mBuilding.mAgents.find(id);
+			if (!agent) { it = mBuilding.mMovementGoals.erase(it); continue; }
+			if (!agent->isActive()) { ++it; continue; }
+			if (goal.cancelling)
+			{
+				// Finish an in-flight crossing and any occupied resource journey first.
+				// Transport cancellation uses the already scheduled destination stop:
+				// do not release a manifest slot or strand a passenger in a Transit.
+				bool riding = false;
+				for (auto const& [resourceId, resource] : mBuilding.mTraversalResources.entries())
+				{
+					(void)resourceId;
+					if (find(resource->mOccupants.begin(), resource->mOccupants.end(), id) != resource->mOccupants.end()) riding = true;
+				}
+				bool crossing = agent->mTraversalTask && agent->mTraversalTask->destinationVertex
+					&& (agent->mTraversalTask->destinationVertex->getSector().get() != agent->getSector()
+						|| agent->mTraversalTask->edge->getTraversalResourceId());
+				if (riding || (crossing && (agent->mState == Agent::State::TraversingEdge
+					|| agent->mState == Agent::State::AwaitingTraversalCommit)))
+				{ ++it; continue; }
+				agent->clearRuntimePath();
+				releaseTraversalOwnership(id);
+				vector<InteractionRequestId> interactions;
+				for (auto const& [requestId, request] : mBuilding.mInteractionRequests.entries())
+					if (request->getActor() == id && request->getResult() == InteractionResult::Pending) interactions.push_back(requestId);
+				for (auto requestId : interactions) cancelInteraction(requestId);
+				for (auto const& [operationId, operation] : mBuilding.mDeviceOperations.entries())
+					if (operation->getRequesters().contains(id)) cancelDeviceOperation(operationId, id);
+			}
+			else if (agent->mPath.path) { ++it; continue; }
+			SimulationEvent event;
+			event.sequence = mBuilding.mNextEventSequence++;
+			event.tick = mBuilding.mSimulationTick;
+			event.phase = mBuilding.mCurrentPhase;
+			event.agent = makeAgentSnapshot(agent);
+			event.destinationMarker = goal.marker;
+			event.type = goal.cancelling ? SimulationEventType::MovementCancelled
+				: !goal.unreachable && mBuilding.lookupMarker(goal.marker) && agent->getSector()
+					&& SectorId{ (uint64_t)agent->getSector()->getIndex() + 1 } == goal.sector
+					&& agent->getGlobalPosition().distanceTo(goal.position) < 0.001f
+					? SimulationEventType::DestinationReached : SimulationEventType::RouteLost;
+			if (event.type == SimulationEventType::RouteLost)
+				event.routeLossReason = !mBuilding.lookupMarker(goal.marker) ? RouteLossReason::DestinationRemoved
+					: goal.unreachable ? RouteLossReason::Unreachable : RouteLossReason::TopologyChanged;
+			it = mBuilding.mMovementGoals.erase(it);
+			mBuilding.mEvents.push_back(std::move(event));
 		}
 	}
 

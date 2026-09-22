@@ -6225,6 +6225,16 @@ namespace core
 		return mSimulationCoordinator.getAgentId(agent);
 	}
 
+	MovementCommandResult Building::moveAgentToMarker(AgentId agent, MarkerId marker)
+	{
+		return mSimulationCoordinator.moveAgentToMarker(agent, marker);
+	}
+
+	MovementCommandResult Building::cancelAgentMovement(AgentId agent)
+	{
+		return mSimulationCoordinator.cancelAgentMovement(agent);
+	}
+
 	EntityLookup<Agent> Building::lookupAgent(AgentId id)
 	{
 		return mSimulationCoordinator.lookupAgent(id);
