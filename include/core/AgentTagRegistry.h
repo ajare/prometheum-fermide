@@ -87,17 +87,20 @@ namespace core
 
 		bool addAgentTagWalkSpeedModifier(AgentTagId id,
 			std::string* diagnostic = nullptr);
-		// Range authoring is accepted before assignment. A range already inherited
-		// by loaded Agents is refused rather than leaving stale sample provenance.
+		// A real range change allocates one new revision and replaces every loaded
+		// inheriting Agent's sample exactly once. Unchanged and invalid ranges leave
+		// definitions, samples, revisions, and dirty state untouched.
 		bool setAgentTagWalkSpeedModifier(AgentTagId id, AgentModifierRange range,
 			std::string* diagnostic = nullptr);
 		bool removeAgentTagWalkSpeedModifier(AgentTagId id,
 			std::string* diagnostic = nullptr);
 
 		// Used by registry undo/redo to reject a prospective definition set that
-		// would reinterpret any currently loaded Agent assignment.
+		// would reinterpret any currently loaded Agent assignment. Buildings whose
+		// coordinated snapshots have already been validated may be excluded.
 		bool loadedBuildingAssignmentsAreValid(AgentTagRegistry const& definitions,
-			std::string* diagnostic = nullptr) const;
+			std::string* diagnostic = nullptr,
+			std::vector<Building const*> const& excludedBuildings = {}) const;
 
 		void saveTo(std::string const& filepath);
 	};

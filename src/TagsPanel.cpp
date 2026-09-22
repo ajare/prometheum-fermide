@@ -834,10 +834,25 @@ bool commitAgentTagWalkSpeedModifierEdit(
 		diagnostic = "There is no Agent tag registry in which to edit Walk speed modifier";
 		return false;
 	}
-	auto undo = captureRegistrySnapshot(registry);
+	vector<core::Building*> participants;
+	try
+	{
+		for (auto const& usage : registry->getLoadedAgentTagUsage(id))
+			if (usage.building && usage.agentCount > 0)
+				participants.push_back(const_cast<core::Building*>(usage.building));
+	}
+	catch (std::exception const& error)
+	{
+		diagnostic = error.what();
+		return false;
+	}
+	// The definition and all samples are one history entry. Capturing before the
+	// core call also means validation failures and unchanged submissions commit
+	// neither a partial Building snapshot nor an undo entry.
+	auto undo = captureRegistrySnapshot(registry, participants, id);
 	if (!undo)
 	{
-		diagnostic = "Could not capture the Agent tag registry before editing Walk speed modifier";
+		diagnostic = "Could not capture the registry and loaded Buildings before editing Walk speed modifier";
 		return false;
 	}
 	if (!registry->setAgentTagWalkSpeedModifier(id, range, &diagnostic)) return false;
@@ -953,7 +968,9 @@ bool restoreAgentTagRegistrySnapshot(shared_ptr<core::AgentTagRegistry> const& r
 
 	try
 	{
-		auto restore = [&registry](DocumentSnapshot const& target)
+		bool propertyRevisionHighWaterAdvanced{ false };
+		auto restore = [&registry, &propertyRevisionHighWaterAdvanced](
+			DocumentSnapshot const& target)
 		{
 			// Parse and validate every document into temporary objects before the
 			// shared live instance or any loaded Building is changed.
@@ -1000,8 +1017,15 @@ bool restoreAgentTagRegistrySnapshot(shared_ptr<core::AgentTagRegistry> const& r
 			// after its undo. Judge the prospective registry against every currently
 			// loaded Building before touching the shared live instance.
 			string validationDiagnostic;
+			vector<core::Building const*> restoredBuildings;
+			if (context)
+			{
+				restoredBuildings.reserve(context->buildings.size());
+				for (auto const& entry : context->buildings)
+					restoredBuildings.push_back(entry.building);
+			}
 			if (!registry->loadedBuildingAssignmentsAreValid(
-				*replacement, &validationDiagnostic))
+				*replacement, &validationDiagnostic, restoredBuildings))
 				throw runtime_error(validationDiagnostic);
 
 			// Validation succeeded as a whole. Restore the registry first, then
@@ -1010,6 +1034,8 @@ bool restoreAgentTagRegistrySnapshot(shared_ptr<core::AgentTagRegistry> const& r
 			liveReader->deserialize();
 			core::SerializationWorkData liveRegistryWork;
 			if (!registry->deserialize(*liveReader, liveRegistryWork)) return false;
+			propertyRevisionHighWaterAdvanced = registry->getNextPropertyRevision()
+				> replacement->getNextPropertyRevision();
 			if (context)
 			{
 				for (auto const& entry : context->buildings)
@@ -1029,7 +1055,11 @@ bool restoreAgentTagRegistrySnapshot(shared_ptr<core::AgentTagRegistry> const& r
 			? history.redo(std::move(current), restore)
 			: history.undo(std::move(current), restore);
 		if (!restored) return false;
-		if (history.isModified()) registry->markModified();
+		// Returning to a saved visible definition can still retain a newly issued
+		// revision in the persisted allocator. That is a real registry change which
+		// must be saved if non-reuse is to survive reopening the document.
+		if (history.isModified() || propertyRevisionHighWaterAdvanced)
+			registry->markModified();
 		else registry->markUnmodified();
 		resetTagsPanelState();
 		return true;

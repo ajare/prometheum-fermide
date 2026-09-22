@@ -484,16 +484,17 @@ namespace core
 		if (!agentWalkSpeedModifierRangeIsValid(range, diagnostic)) return false;
 		if (current->range == range)
 			return reject("The Agent Walk speed modifier range is unchanged");
-		if (getLoadedAgentTagUsageCount(id) > 0)
-		{
-			return reject(
-				"Remove loaded Agent assignments before changing a Walk speed modifier range");
-		}
 
 		uint64_t revision{ 0 };
 		try { revision = allocatePropertyRevision(); }
 		catch (std::exception const& error) { return reject(error.what()); }
 		tag->setWalkSpeedModifier({ range, revision });
+		// Install the new definition before sampling so every replacement carries
+		// the same newly allocated provenance. Each loaded assigned Agent is visited
+		// once; Buildings with no such Agent remain untouched.
+		for (auto* building : mLoadedBuildings)
+			if (building) building->addAgentTagWalkSpeedModifierSamples(
+				id, *tag->getWalkSpeedModifier());
 		modify();
 		if (diagnostic) diagnostic->clear();
 		return true;
@@ -523,12 +524,14 @@ namespace core
 	}
 
 	bool AgentTagRegistry::loadedBuildingAssignmentsAreValid(
-		AgentTagRegistry const& definitions, std::string* diagnostic) const
+		AgentTagRegistry const& definitions, std::string* diagnostic,
+		std::vector<Building const*> const& excludedBuildings) const
 	{
 		for (auto const* building : mLoadedBuildings)
 		{
-			if (building
-				&& !building->agentTagAssignmentsAreValid(definitions, diagnostic))
+			if (!building || std::find(excludedBuildings.begin(), excludedBuildings.end(),
+				building) != excludedBuildings.end()) continue;
+			if (!building->agentTagAssignmentsAreValid(definitions, diagnostic))
 				return false;
 		}
 		if (diagnostic) diagnostic->clear();
@@ -705,7 +708,11 @@ namespace core
 		// also what makes undo restoration transactional on the shared instance.
 		mUuid = std::move(uuid);
 		mTags = std::move(tags);
-		mNextPropertyRevision = nextPropertyRevision;
+		// A history snapshot may legitimately restore an older property revision,
+		// but revisions already issued by this live registry must never become
+		// available again. Freshly loaded registries start at one, so ordinary load
+		// still adopts the persisted high-water mark exactly.
+		mNextPropertyRevision = std::max(mNextPropertyRevision, nextPropertyRevision);
 		return true;
 	}
 

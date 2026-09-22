@@ -280,8 +280,8 @@ namespace
 		require(restoreAgentTagRegistrySnapshot(registry, false, &diagnostic), diagnostic);
 		auto const* undone = registry->getAgentTagColour(tag);
 		require(undone && undone->value == core::EditorDefaultAgentColour
-			&& undone->revision == 1 && registry->getNextPropertyRevision() == 2,
-			"Undo did not restore the exact initial Colour and allocator");
+			&& undone->revision == 1 && registry->getNextPropertyRevision() == 3,
+			"Undo did not restore the exact initial Colour while retaining the revision high-water mark");
 		require(restoreAgentTagRegistrySnapshot(registry, true, &diagnostic), diagnostic);
 		require(*registry->getAgentTagColour(tag) == edited,
 			"Redo did not restore the exact edited Colour and revision");
