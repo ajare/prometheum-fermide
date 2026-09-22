@@ -18,6 +18,11 @@
 struct DocumentSnapshotContext
 {
 	virtual ~DocumentSnapshotContext() = default;
+
+	// Coordinated snapshots may depend on other live documents. Once one of
+	// those documents closes, crossing that history entry could only restore a
+	// partial transaction, so the owning history must discard it.
+	virtual bool isRestorable() const { return true; }
 };
 
 struct DocumentSnapshot
@@ -45,24 +50,26 @@ public:
 	void markSaved();
 
 	bool isModified() const;
-	bool canUndo() const { return !mUndo.empty(); }
-	bool canRedo() const { return !mRedo.empty(); }
-	size_t undoCount() const { return mUndo.size(); }
-	size_t redoCount() const { return mRedo.size(); }
+	bool canUndo() const;
+	bool canRedo() const;
+	size_t undoCount() const;
+	size_t redoCount() const;
 	uint64_t currentStateId() const { return mCurrentStateId; }
 
 	// Read-only access supports diagnostics and snapshot-focused smoke checks
 	// without allowing callers to splice one document's commands into another.
-	std::deque<DocumentSnapshot> const& undoEntries() const { return mUndo; }
-	std::deque<DocumentSnapshot> const& redoEntries() const { return mRedo; }
+	std::deque<DocumentSnapshot> const& undoEntries() const;
+	std::deque<DocumentSnapshot> const& redoEntries() const;
 
 private:
 	bool restore(std::optional<DocumentSnapshot> current, RestoreDocument const& restoreDocument,
 		bool redo);
 	static void append(std::deque<DocumentSnapshot>& history, DocumentSnapshot snapshot);
+	void discardUnrestorableEntries() const;
+	static void discardUnrestorableEntries(std::deque<DocumentSnapshot>& history);
 
-	std::deque<DocumentSnapshot> mUndo;
-	std::deque<DocumentSnapshot> mRedo;
+	mutable std::deque<DocumentSnapshot> mUndo;
+	mutable std::deque<DocumentSnapshot> mRedo;
 	uint64_t mCurrentStateId{ 0 };
 	uint64_t mNextStateId{ 1 };
 	std::optional<uint64_t> mSavedStateId;

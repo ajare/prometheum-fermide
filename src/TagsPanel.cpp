@@ -64,6 +64,7 @@ namespace
 	struct RegistryBuildingSnapshot
 	{
 		core::Building* building{ nullptr };
+		weak_ptr<void const> lifetime;
 		string yaml;
 		bool modified{ false };
 		bool paused{ false };
@@ -71,8 +72,19 @@ namespace
 
 	struct RegistryEditSnapshotContext : DocumentSnapshotContext
 	{
+		weak_ptr<core::AgentTagRegistry> registry;
 		core::AgentTagId affectedTag{};
 		vector<RegistryBuildingSnapshot> buildings;
+
+		bool isRestorable() const override
+		{
+			auto loadedRegistry = registry.lock();
+			if (!loadedRegistry) return false;
+			for (auto const& entry : buildings)
+				if (entry.lifetime.expired()
+					|| !loadedRegistry->hasLoadedBuilding(entry.building)) return false;
+			return true;
+		}
 	};
 
 	struct PendingAgentTagDelete
@@ -132,6 +144,7 @@ namespace
 			if (affectedTag || !participatingBuildings.empty())
 			{
 				auto context = make_shared<RegistryEditSnapshotContext>();
+				context->registry = registry;
 				context->affectedTag = affectedTag;
 				context->buildings.reserve(participatingBuildings.size());
 				for (auto* building : participatingBuildings)
@@ -139,8 +152,9 @@ namespace
 					if (!registry->hasLoadedBuilding(building))
 						throw runtime_error(
 							"A Building participating in the tag edit is no longer loaded");
-					context->buildings.push_back({ building, serializeBuilding(*building),
-						building->isModified(), building->isSimulationPaused() });
+					context->buildings.push_back({ building, building->getLifetimeToken(),
+						serializeBuilding(*building), building->isModified(),
+						building->isSimulationPaused() });
 				}
 				snapshot.context = std::move(context);
 			}
@@ -522,6 +536,10 @@ namespace
 		}
 		ImGui::TextUnformatted(gPendingAgentTagDelete.text.c_str());
 		ImGui::Separator();
+		string editDiagnostic;
+		auto const definitionEditsAllowed
+			= registry->definitionEditsAreAllowed(&editDiagnostic);
+		ImGui::BeginDisabled(!definitionEditsAllowed);
 		if (ImGui::Button(ICON_FA_TRASH " Delete"))
 		{
 			string diagnostic;
@@ -529,6 +547,10 @@ namespace
 				core::addLogMessage("Tags", 0, core::LogLevel::Warning, diagnostic);
 			ImGui::CloseCurrentPopup();
 		}
+		ImGui::EndDisabled();
+		if (!definitionEditsAllowed && ImGui::IsItemHovered(
+			ImGuiHoveredFlags_AllowWhenDisabled))
+			ImGui::SetTooltip("%s", editDiagnostic.c_str());
 		ImGui::SameLine();
 		if (ImGui::Button(ICON_FA_TIMES " Cancel"))
 		{
@@ -554,6 +576,9 @@ namespace
 		ImGui::TextDisabled("UUID %s", registry->getUuid().c_str());
 
 		auto& history = agentTagRegistryDocumentHistory(registry);
+		string editDiagnostic;
+		auto const definitionEditsAllowed
+			= registry->definitionEditsAreAllowed(&editDiagnostic);
 		if (agentTagRegistryIsModified(registry))
 		{
 			ImGui::SameLine();
@@ -570,7 +595,7 @@ namespace
 		}
 		ImGui::EndDisabled();
 		ImGui::SameLine();
-		ImGui::BeginDisabled(!history.canUndo());
+		ImGui::BeginDisabled(!history.canUndo() || !definitionEditsAllowed);
 		if (ImGui::Button(ICON_FA_UNDO "##undoAgentTag"))
 		{
 			string diagnostic;
@@ -581,7 +606,7 @@ namespace
 		ImGui::EndDisabled();
 		if (ImGui::IsItemHovered()) ImGui::SetTooltip("Undo registry edit");
 		ImGui::SameLine();
-		ImGui::BeginDisabled(!history.canRedo());
+		ImGui::BeginDisabled(!history.canRedo() || !definitionEditsAllowed);
 		if (ImGui::Button(ICON_FA_REDO "##redoAgentTag"))
 		{
 			string diagnostic;
@@ -599,6 +624,7 @@ namespace
 
 		auto const ids = registry->getAgentTagIdsAlphabetically();
 		bool anyVisible{ false };
+		ImGui::BeginDisabled(!definitionEditsAllowed);
 		ImGuiTableFlags const tableFlags = ImGuiTableFlags_SizingStretchSame
 			| ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersOuter
 			| ImGuiTableFlags_BordersV;
@@ -646,9 +672,13 @@ namespace
 			loadIntoBuffer(gNewTagName, "");
 		}
 		ImGui::EndDisabled();
+		ImGui::EndDisabled();
 		ImGui::SameLine();
 		auto const count = registry->getAgentTagCount();
 		ImGui::TextDisabled("%u tag%s", count, count == 1 ? "" : "s");
+		if (!definitionEditsAllowed)
+			ImGui::TextColored(ImVec4(1.0f, 0.65f, 0.2f, 1.0f), "%s",
+				editDiagnostic.c_str());
 		ImGui::TextDisabled("Closed Buildings cannot be counted and may retain stale tag references after deletion.");
 		renderTagDeleteConfirmation(registry);
 	}
@@ -1116,6 +1146,12 @@ bool restoreAgentTagRegistrySnapshot(shared_ptr<core::AgentTagRegistry> const& r
 	if (!registry)
 	{
 		if (diagnostic) *diagnostic = "There is no Agent tag registry to restore";
+		return false;
+	}
+	string pauseDiagnostic;
+	if (!registry->definitionEditsAreAllowed(&pauseDiagnostic))
+	{
+		if (diagnostic) *diagnostic = pauseDiagnostic;
 		return false;
 	}
 	auto& history = agentTagRegistryDocumentHistory(registry);

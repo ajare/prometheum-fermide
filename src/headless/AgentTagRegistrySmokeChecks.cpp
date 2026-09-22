@@ -601,6 +601,7 @@ namespace
 		building->saveTo(buildingPath.string());
 		auto registry = core::createAndAttachAgentTagRegistry(*building, buildingPath);
 		building->saveTo(buildingPath.string());
+		building->pauseSimulation();
 		auto& history = agentTagRegistryDocumentHistory(registry);
 		require(!history.isModified() && !building->isModified(),
 			"Saved Building and registry documents did not start independently clean");

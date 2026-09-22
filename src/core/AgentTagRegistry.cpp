@@ -197,6 +197,25 @@ namespace core
 		return building && mLoadedBuildings.contains(const_cast<Building*>(building));
 	}
 
+	bool AgentTagRegistry::definitionEditsAreAllowed(std::string* diagnostic) const
+	{
+		for (auto const* building : mLoadedBuildings)
+		{
+			if (building && !building->isSimulationPaused())
+			{
+				if (diagnostic)
+				{
+					*diagnostic = std::format(
+						"Pause Building '{}' before editing this Agent tag registry",
+						building->getName());
+				}
+				return false;
+			}
+		}
+		if (diagnostic) diagnostic->clear();
+		return true;
+	}
+
 	bool AgentTagRegistry::nameIsUnique(std::string const& name, AgentTagId except) const
 	{
 		for (auto const& [id, tag] : mTags.entries())
@@ -334,6 +353,8 @@ namespace core
 			throw std::invalid_argument(diagnostic);
 		if (!nameIsUnique(name))
 			throw std::invalid_argument(std::format("The Agent tag #{} already exists", name));
+		if (!definitionEditsAreAllowed(&diagnostic))
+			throw std::invalid_argument(diagnostic);
 		if (mTags.exhausted())
 			throw std::overflow_error("This registry has issued every Agent tag ID");
 
@@ -359,6 +380,7 @@ namespace core
 			return reject("The Agent tag name is unchanged");
 		if (!nameIsUnique(name, id))
 			return reject(std::format("The Agent tag #{} already exists", name));
+		if (!definitionEditsAreAllowed(diagnostic)) return false;
 
 		tag->setName(name);
 		modify();
@@ -378,19 +400,9 @@ namespace core
 			return reject(std::format(
 				"Agent tag {} is not defined in this registry", id.value));
 
-		// Judge every dependent Building before mutating any of them. Assignment
-		// changes are paused-only, and a shared delete must never clear one
-		// Building before discovering that another cannot participate.
-		for (auto const* building : mLoadedBuildings)
-		{
-			if (building && building->countAgentTagAssignments(id) > 0
-				&& !building->isSimulationPaused())
-			{
-				return reject(std::format(
-					"Pause Building '{}' before deleting Agent tag #{}",
-					building->getName(), tag->getName()));
-			}
-		}
+		// Judge every dependent Building before mutating any of them. Even a
+		// Building with no assignment depends on this shared definition document.
+		if (!definitionEditsAreAllowed(diagnostic)) return false;
 
 		// Every loaded assignment goes before the definition. From the first
 		// write onward no loaded Building can be left with a stale reference, and
@@ -416,6 +428,7 @@ namespace core
 				"Agent tag {} is not defined in this registry", id.value));
 		if (tag->getColour())
 			return reject(std::format("Agent tag #{} already has Colour", tag->getName()));
+		if (!definitionEditsAreAllowed(diagnostic)) return false;
 		if (!colourAdditionIsValid(id, diagnostic)) return false;
 
 		try
@@ -448,6 +461,7 @@ namespace core
 			return reject(std::format("Agent tag #{} has no Colour", tag->getName()));
 		if (current->value == colour)
 			return reject("The Agent Colour is unchanged");
+		if (!definitionEditsAreAllowed(diagnostic)) return false;
 
 		try
 		{
@@ -476,6 +490,7 @@ namespace core
 				"Agent tag {} is not defined in this registry", id.value));
 		if (!tag->getColour())
 			return reject(std::format("Agent tag #{} has no Colour", tag->getName()));
+		if (!definitionEditsAreAllowed(diagnostic)) return false;
 		tag->removeColour();
 		modify();
 		if (diagnostic) diagnostic->clear();
@@ -497,6 +512,7 @@ namespace core
 		if (tag->getWalkSpeedModifier())
 			return reject(std::format(
 				"Agent tag #{} already has Walk speed modifier", tag->getName()));
+		if (!definitionEditsAreAllowed(diagnostic)) return false;
 		if (!walkSpeedModifierAdditionIsValid(id, diagnostic)) return false;
 
 		uint64_t revision{ 0 };
@@ -530,6 +546,7 @@ namespace core
 		if (!agentWalkSpeedModifierRangeIsValid(range, diagnostic)) return false;
 		if (current->range == range)
 			return reject("The Agent Walk speed modifier range is unchanged");
+		if (!definitionEditsAreAllowed(diagnostic)) return false;
 
 		uint64_t revision{ 0 };
 		try { revision = allocatePropertyRevision(); }
@@ -561,6 +578,7 @@ namespace core
 		if (!tag->getWalkSpeedModifier())
 			return reject(std::format(
 				"Agent tag #{} has no Walk speed modifier", tag->getName()));
+		if (!definitionEditsAreAllowed(diagnostic)) return false;
 		for (auto* building : mLoadedBuildings)
 			if (building) building->clearAgentTagWalkSpeedModifierSamples(id);
 		tag->removeWalkSpeedModifier();
@@ -584,6 +602,7 @@ namespace core
 		if (tag->getHeightModifier())
 			return reject(std::format(
 				"Agent tag #{} already has Height modifier", tag->getName()));
+		if (!definitionEditsAreAllowed(diagnostic)) return false;
 		if (!heightModifierAdditionIsValid(id, diagnostic)) return false;
 
 		uint64_t revision{ 0 };
@@ -617,6 +636,7 @@ namespace core
 		if (!agentHeightModifierRangeIsValid(range, diagnostic)) return false;
 		if (current->range == range)
 			return reject("The Agent Height modifier range is unchanged");
+		if (!definitionEditsAreAllowed(diagnostic)) return false;
 
 		uint64_t revision{ 0 };
 		try { revision = allocatePropertyRevision(); }
@@ -645,6 +665,7 @@ namespace core
 		if (!tag->getHeightModifier())
 			return reject(std::format(
 				"Agent tag #{} has no Height modifier", tag->getName()));
+		if (!definitionEditsAreAllowed(diagnostic)) return false;
 		for (auto* building : mLoadedBuildings)
 			if (building) building->clearAgentTagHeightModifierSamples(id);
 		tag->removeHeightModifier();

@@ -75,6 +75,11 @@ namespace core
 		uint64_t getLoadedAgentTagUsageCount(AgentTagId id) const;
 		bool hasLoadedBuilding(Building const* building) const;
 
+		// Registry definitions are shared authored state. Editing them is safe only
+		// when every loaded dependent Building is paused, including Buildings that
+		// currently assign none of the edited tags.
+		bool definitionEditsAreAllowed(std::string* diagnostic = nullptr) const;
+
 		AgentTagId addAgentTag(std::string const& name);
 		bool renameAgentTag(AgentTagId id, std::string const& name,
 			std::string* diagnostic = nullptr);

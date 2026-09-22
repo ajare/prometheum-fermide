@@ -466,6 +466,11 @@ namespace core
 		std::optional<AgentTagRegistryReference> mAgentTagRegistryReference;
 		std::shared_ptr<AgentTagRegistry> mAgentTagRegistry;
 
+		// Coordinated external-document history keeps only a weak copy. It can
+		// therefore recognize that this exact Building closed without retaining it
+		// or mistaking a later Building allocated at the same address for it.
+		std::shared_ptr<void const> mLifetimeToken{ std::make_shared<uint8_t>(0) };
+
 		// Checks every assigned stable ID against a prospective registry before
 		// that registry is attached. This keeps attachment and document opening
 		// transactional: no Agent assignment is rewritten or silently dropped.
@@ -1066,6 +1071,7 @@ namespace core
 		virtual ~Building();
 
 		std::string const& getName() const;
+		std::weak_ptr<void const> getLifetimeToken() const { return mLifetimeToken; }
 
 		// A Building references zero or one adjacent Agent tag registry by
 		// basename and expected UUID. Attaching is an authored Building change;
