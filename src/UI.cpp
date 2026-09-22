@@ -3754,13 +3754,13 @@ namespace
 				float halfWidth = CORE_AGENT_MAX_WIDTH * 0.5f;
 				float localX = clamp(world.x - sector->getPosition().x, halfWidth,
 					max(halfWidth, sector->getSize().x - halfWidth));
-				// Arming judges the Agent group name before anything is deferred,
-				// so an unusable payload is refused while the cursor is still where
-				// the user put it and the simulation is still as they left it.
-				// Nothing is written by arming: the Agent and its Agent group only
-				// exist if the fall is allowed to land.
+				// Arming judges the Agent group and Agent tag registry identity before
+				// anything is deferred, so an unusable payload is refused while the
+				// cursor is still where the user put it and the simulation is still as
+				// they left it. Nothing is written by arming: the Agent, group and tag
+				// assignments only exist if the fall is allowed to land.
 				string diagnostic;
-				if (!armAgentPlacement(gPegman.pastedAgent, payload, sector,
+				if (!armAgentPlacement(gPegman.pastedAgent, *building, payload, sector,
 					y - sector->getCellY(), localX, diagnostic))
 					throw runtime_error(diagnostic);
 				if (!building->isSimulationPaused()) building->pauseSimulation();

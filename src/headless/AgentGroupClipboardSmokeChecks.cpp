@@ -316,7 +316,7 @@ namespace
 			core::AgentId placed{};
 			std::string diagnostic;
 			PendingAgentPlacement pending;
-			require(armAgentPlacement(pending, read.payload,
+			require(armAgentPlacement(pending, *world.building, read.payload,
 				world.building->getSector(world.corridor), 0, 3.0f, diagnostic),
 				"Arming an ungrouped paste failed: " + diagnostic);
 			require(commitPendingAgentPlacement(pending, world.building, placed, diagnostic),
@@ -498,7 +498,7 @@ namespace
 
 		PendingAgentPlacement pending;
 		std::string diagnostic;
-		require(armAgentPlacement(pending, payload,
+		require(armAgentPlacement(pending, *world.building, payload,
 			world.building->getSector(world.corridor), 0, 2.5f, diagnostic),
 			"Arming a valid deferred paste failed: " + diagnostic);
 		require(pending.armed(), "Arming a paste left no pending placement");
@@ -523,7 +523,7 @@ namespace
 
 		PendingAgentPlacement pending;
 		std::string diagnostic;
-		require(armAgentPlacement(pending, payload,
+		require(armAgentPlacement(pending, *world.building, payload,
 			world.building->getSector(world.corridor), 0, 2.5f, diagnostic),
 			"Arming a deferred paste failed: " + diagnostic);
 
@@ -610,7 +610,7 @@ namespace
 
 			std::string diagnostic;
 			PendingAgentPlacement pending;
-			require(!armAgentPlacement(pending, payload,
+			require(!armAgentPlacement(pending, *world.building, payload,
 				world.building->getSector(world.corridor), 0, 1.0f, diagnostic),
 				std::string("Arming ") + what + " was accepted");
 			require(!pending.armed(),

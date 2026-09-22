@@ -6286,6 +6286,136 @@ namespace core
 		return true;
 	}
 
+	bool Building::validateAgentTagAssignments(set<AgentTagId> const& tags,
+		optional<AgentPropertySample> const& walkSpeedSample,
+		optional<AgentPropertySample> const& heightSample,
+		string* diagnostic) const
+	{
+		if (diagnostic) diagnostic->clear();
+		auto reject = [diagnostic](string reason)
+		{
+			if (diagnostic) *diagnostic = std::move(reason);
+			return false;
+		};
+
+		if (tags.empty())
+		{
+			if (walkSpeedSample || heightSample)
+				return reject("An untagged Agent cannot carry modifier samples");
+			return true;
+		}
+		if (!mAgentTagRegistry)
+			return reject("This Building has no attached Agent tag registry");
+
+		AgentTagId colourSource{};
+		AgentTagId walkSpeedSource{};
+		AgentTagId heightSource{};
+		AgentWalkSpeedModifierProperty const* walkSpeedProperty{ nullptr };
+		AgentHeightModifierProperty const* heightProperty{ nullptr };
+		for (auto const tag : tags)
+		{
+			auto const* definition = mAgentTagRegistry->lookupAgentTag(tag);
+			if (!definition)
+				return reject(format("Agent tag {} is not defined in the attached registry",
+					tag.value));
+			if (definition->getColour())
+			{
+				if (colourSource)
+					return reject(format("Colour is inherited from both #{} and #{}",
+						mAgentTagRegistry->getAgentTagName(colourSource), definition->getName()));
+				colourSource = tag;
+			}
+			if (auto const* property = definition->getWalkSpeedModifier())
+			{
+				if (walkSpeedSource)
+					return reject(format(
+						"Walk speed modifier is inherited from both #{} and #{}",
+						mAgentTagRegistry->getAgentTagName(walkSpeedSource),
+						definition->getName()));
+				walkSpeedSource = tag;
+				walkSpeedProperty = property;
+			}
+			if (auto const* property = definition->getHeightModifier())
+			{
+				if (heightSource)
+					return reject(format("Height modifier is inherited from both #{} and #{}",
+						mAgentTagRegistry->getAgentTagName(heightSource), definition->getName()));
+				heightSource = tag;
+				heightProperty = property;
+			}
+		}
+
+		auto validateSample = [&](char const* name, SampledAgentPropertyType type,
+			AgentTagId source, AgentModifierRange const* range, uint64_t revision,
+			optional<AgentPropertySample> const& sample)
+		{
+			if (!source)
+			{
+				if (sample) return reject(format(
+					"The pasted Agent has a {} sample without an inherited property", name));
+				return true;
+			}
+			if (!sample)
+				return reject(format("The pasted Agent has no sample for {} from #{}", name,
+					mAgentTagRegistry->getAgentTagName(source)));
+			if (sample->type != type || sample->sourceTag != source)
+				return reject(format("The pasted Agent's {} sample has the wrong source", name));
+			if (sample->propertyRevision != revision)
+				return reject(format("The pasted Agent's {} sample is stale", name));
+			if (!isfinite(sample->value) || sample->value < range->minimum
+				|| sample->value > range->maximum)
+			{
+				return reject(format(
+					"The pasted Agent's {} sample is outside the current property range", name));
+			}
+			return true;
+		};
+
+		return validateSample("Walk speed modifier",
+			SampledAgentPropertyType::WalkSpeedModifier, walkSpeedSource,
+			walkSpeedProperty ? &walkSpeedProperty->range : nullptr,
+			walkSpeedProperty ? walkSpeedProperty->revision : 0, walkSpeedSample)
+			&& validateSample("Height modifier", SampledAgentPropertyType::HeightModifier,
+				heightSource, heightProperty ? &heightProperty->range : nullptr,
+				heightProperty ? heightProperty->revision : 0, heightSample);
+	}
+
+	bool Building::restoreAgentTagAssignments(AgentId agent,
+		set<AgentTagId> const& tags,
+		optional<AgentPropertySample> const& walkSpeedSample,
+		optional<AgentPropertySample> const& heightSample,
+		string* diagnostic)
+	{
+		if (diagnostic) diagnostic->clear();
+		auto const lookup = lookupAgent(agent);
+		if (!lookup)
+		{
+			if (diagnostic) *diagnostic = lookup.diagnostic;
+			return false;
+		}
+		if (!mSimulationPaused)
+		{
+			if (diagnostic)
+				*diagnostic = "Pause the simulation before restoring Agent tag assignments";
+			return false;
+		}
+		if (!validateAgentTagAssignments(tags, walkSpeedSample, heightSample, diagnostic))
+			return false;
+
+		auto* target = mAgents.find(agent);
+		if (target->getAgentTagIds() == tags
+			&& target->getWalkSpeedModifierSample() == walkSpeedSample
+			&& target->getHeightModifierSample() == heightSample) return true;
+
+		target->setAgentTags(tags);
+		if (walkSpeedSample) target->setWalkSpeedModifierSample(*walkSpeedSample);
+		else target->clearWalkSpeedModifierSample();
+		if (heightSample) target->setHeightModifierSample(*heightSample);
+		else target->clearHeightModifierSample();
+		modify();
+		return true;
+	}
+
 	set<AgentTagId> const& Building::getAgentTags(AgentId agent) const
 	{
 		auto const lookup = lookupAgent(agent);

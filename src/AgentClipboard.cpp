@@ -6,22 +6,30 @@
 // AgentGroupId is a receipt for one Building's registry and says nothing to
 // the next one, so it never crosses the clipboard at all (ADR 0006).
 //
+// Agent tag IDs cross only with their registry UUID. The complete assignment
+// set and exact revisioned samples travel together; a different or absent
+// destination registry refuses them, while an untagged Agent remains portable.
+//
 // Nothing is written until the placement lands. Arming a placement validates
 // and stores; a cancelled placement is a dropped struct, so it cannot leave
-// an Agent or a group behind because it never made either.
+// an Agent, group, or tag assignment behind because it never made one.
 //
 // What the placement does, it does once. The group (when the destination
-// does not already define that exact name), the Agent, and the assignment
+// does not already define that exact name), the Agent, and all assignments
 // are one document edit, and a refusal anywhere leaves none of them behind.
 
 #include "AgentClipboard.h"
 
+#include <cmath>
 #include <exception>
+#include <format>
+#include <stdexcept>
 #include <string>
 #include <utility>
 
 #include "core/Agent.h"
 #include "core/AgentGroup.h"
+#include "core/AgentTagRegistry.h"
 #include "core/Building.h"
 #include "core/Exceptions.h"
 #include "core/Sector.h"
@@ -49,6 +57,75 @@ namespace
 		trimmed = core::AgentGroup::trimName(written);
 		return core::AgentGroup::nameIsValid(trimmed, &diagnostic);
 	}
+
+	bool clipboardTagStateIsWellFormed(AgentClipboardPayload const& payload,
+		string& diagnostic)
+	{
+		auto reject = [&diagnostic](string reason)
+		{
+			diagnostic = std::move(reason);
+			return false;
+		};
+		if (payload.agentTags.empty())
+		{
+			if (payload.agentTagRegistryUuid || payload.walkSpeedModifierSample
+				|| payload.heightModifierSample)
+			{
+				return reject(
+					"An untagged Agent clipboard payload cannot carry registry or sample state");
+			}
+			return true;
+		}
+		if (!payload.agentTagRegistryUuid
+			|| !core::AgentTagRegistry::uuidIsValid(*payload.agentTagRegistryUuid))
+		{
+			return reject("A tagged Agent clipboard payload requires a valid registry UUID");
+		}
+		for (auto const tag : payload.agentTags)
+			if (!tag) return reject("Clipboard Agent tag IDs cannot be zero");
+
+		auto validateSample = [&](char const* name, core::SampledAgentPropertyType type,
+			optional<core::AgentPropertySample> const& sample)
+		{
+			if (!sample) return true;
+			if (sample->type != type)
+				return reject(format("Clipboard {} sample has the wrong type", name));
+			if (!sample->sourceTag || !payload.agentTags.contains(sample->sourceTag))
+				return reject(format(
+					"Clipboard {} sample source must be an assigned Agent tag", name));
+			if (sample->propertyRevision == 0)
+				return reject("Clipboard sampled Agent property revision cannot be zero");
+			if (!isfinite(sample->value))
+				return reject(format("Clipboard {} sample must be finite", name));
+			return true;
+		};
+		return validateSample("Walk speed modifier",
+			core::SampledAgentPropertyType::WalkSpeedModifier,
+			payload.walkSpeedModifierSample)
+			&& validateSample("Height modifier",
+				core::SampledAgentPropertyType::HeightModifier,
+				payload.heightModifierSample);
+	}
+
+	bool clipboardTagStateFitsBuilding(core::Building const& building,
+		AgentClipboardPayload const& payload, string& diagnostic)
+	{
+		if (!clipboardTagStateIsWellFormed(payload, diagnostic)) return false;
+		if (payload.agentTags.empty()) return true;
+		if (!building.hasAttachedAgentTagRegistry())
+		{
+			diagnostic = "Tagged Agents can only be pasted into a Building with the same attached Agent tag registry";
+			return false;
+		}
+		auto const& registry = building.getAgentTagRegistry();
+		if (registry->getUuid() != *payload.agentTagRegistryUuid)
+		{
+			diagnostic = "Tagged Agents can only be pasted into a Building using the same Agent tag registry UUID";
+			return false;
+		}
+		return building.validateAgentTagAssignments(payload.agentTags,
+			payload.walkSpeedModifierSample, payload.heightModifierSample, &diagnostic);
+	}
 }
 
 AgentClipboardPayload makeAgentClipboardPayload(core::Building const& building,
@@ -62,6 +139,16 @@ AgentClipboardPayload makeAgentClipboardPayload(core::Building const& building,
 
 	payload.flags = lookup.entity->getFlags();
 	payload.active = lookup.entity->isActive();
+	payload.agentTags = lookup.entity->getAgentTagIds();
+	payload.walkSpeedModifierSample = lookup.entity->getWalkSpeedModifierSample();
+	payload.heightModifierSample = lookup.entity->getHeightModifierSample();
+	if (!payload.agentTags.empty())
+	{
+		if (!building.hasAgentTagRegistryReference())
+			throw runtime_error(
+				"A tagged Agent's Building has no Agent tag registry identity");
+		payload.agentTagRegistryUuid = building.getExpectedAgentTagRegistryUuid();
+	}
 
 	// The group's name crosses; its ID stays home. An Agent holding an ID the
 	// Building cannot resolve reads back as ungrouped rather than inventing a
@@ -80,6 +167,10 @@ AgentClipboardPayload makeAgentClipboardPayload(core::Building const& building,
 
 string makeAgentClipboardText(AgentClipboardPayload const& payload, bool cut)
 {
+	string diagnostic;
+	if (!clipboardTagStateIsWellFormed(payload, diagnostic))
+		throw invalid_argument(diagnostic);
+
 	YAML::Emitter output;
 	output << YAML::BeginMap
 		<< YAML::Key << ClipboardKey << YAML::Value << YAML::BeginMap
@@ -96,6 +187,34 @@ string makeAgentClipboardText(AgentClipboardPayload const& payload, bool cut)
 	// so a payload written before activation existed reads back activated
 	// (#118).
 	if (!payload.active) output << YAML::Key << "active" << YAML::Value << false;
+	if (!payload.agentTags.empty())
+	{
+		output << YAML::Key << "agentTagRegistryUuid" << YAML::Value
+			<< *payload.agentTagRegistryUuid
+			<< YAML::Key << "tags" << YAML::Value << YAML::Flow << YAML::BeginSeq;
+		for (auto const tag : payload.agentTags) output << tag.value;
+		output << YAML::EndSeq;
+		if (payload.walkSpeedModifierSample || payload.heightModifierSample)
+		{
+			output << YAML::Key << "propertySamples" << YAML::Value << YAML::BeginSeq;
+			auto writeSample = [&output](char const* type,
+				core::AgentPropertySample const& sample)
+			{
+				output << YAML::BeginMap
+					<< YAML::Key << "type" << YAML::Value << type
+					<< YAML::Key << "sourceTag" << YAML::Value << sample.sourceTag.value
+					<< YAML::Key << "propertyRevision" << YAML::Value
+					<< sample.propertyRevision
+					<< YAML::Key << "value" << YAML::Value << sample.value
+					<< YAML::EndMap;
+			};
+			if (payload.walkSpeedModifierSample)
+				writeSample("walkSpeedModifier", *payload.walkSpeedModifierSample);
+			if (payload.heightModifierSample)
+				writeSample("heightModifier", *payload.heightModifierSample);
+			output << YAML::EndSeq;
+		}
+	}
 	output << YAML::EndMap << YAML::EndMap << YAML::EndMap;
 
 	if (!output.good()) throw runtime_error(output.GetLastError());
@@ -175,7 +294,105 @@ bool readAgentClipboardObject(YAML::Node const& object,
 		payload.group = value;
 	}
 
-	return true;
+	if (object["agentTagRegistryUuid"])
+	{
+		try { payload.agentTagRegistryUuid
+			= object["agentTagRegistryUuid"].as<string>(); }
+		catch (exception const&)
+		{
+			diagnostic = "Clipboard field 'agentTagRegistryUuid' must be a registry UUID";
+			return false;
+		}
+	}
+	if (object["tags"])
+	{
+		auto const tags = object["tags"];
+		if (!tags.IsSequence())
+		{
+			diagnostic = "Clipboard field 'tags' must be a sequence of Agent tag IDs";
+			return false;
+		}
+		for (auto const& entry : tags)
+		{
+			uint64_t value;
+			try { value = entry.as<uint64_t>(); }
+			catch (exception const&)
+			{
+				diagnostic = "Clipboard Agent tag IDs must be unsigned integers";
+				return false;
+			}
+			core::AgentTagId const id{ value };
+			if (!id)
+			{
+				diagnostic = "Clipboard Agent tag IDs cannot be zero";
+				return false;
+			}
+			if (!payload.agentTags.insert(id).second)
+			{
+				diagnostic = format(
+					"Clipboard Agent tag IDs must be unique ({} appears twice)", value);
+				return false;
+			}
+		}
+	}
+	if (object["propertySamples"])
+	{
+		auto const samples = object["propertySamples"];
+		if (!samples.IsSequence())
+		{
+			diagnostic = "Clipboard field 'propertySamples' must be a sequence";
+			return false;
+		}
+		for (auto const& entry : samples)
+		{
+			if (!entry.IsMap())
+			{
+				diagnostic = "Clipboard Agent property samples must be maps";
+				return false;
+			}
+			core::AgentPropertySample sample;
+			string type;
+			try
+			{
+				type = entry["type"].as<string>();
+				sample.sourceTag = core::AgentTagId{ entry["sourceTag"].as<uint64_t>() };
+				sample.propertyRevision = entry["propertyRevision"].as<uint64_t>();
+				sample.value = entry["value"].as<float>();
+			}
+			catch (exception const&)
+			{
+				diagnostic = "Clipboard Agent property sample has an invalid or missing field";
+				return false;
+			}
+
+			optional<core::AgentPropertySample>* destination{ nullptr };
+			if (type == "walkSpeedModifier")
+			{
+				sample.type = core::SampledAgentPropertyType::WalkSpeedModifier;
+				destination = &payload.walkSpeedModifierSample;
+			}
+			else if (type == "heightModifier")
+			{
+				sample.type = core::SampledAgentPropertyType::HeightModifier;
+				destination = &payload.heightModifierSample;
+			}
+			else
+			{
+				diagnostic = "Clipboard Agent property sample type is not supported";
+				return false;
+			}
+			if (*destination)
+			{
+				diagnostic = format(
+					"Clipboard Agent contains more than one {} sample",
+					type == "walkSpeedModifier" ? "Walk speed modifier" : "Height modifier");
+				return false;
+			}
+			*destination = sample;
+		}
+	}
+
+	return clipboardTagStateIsWellFormed(payload, diagnostic);
 }
 
 core::AgentGroupId findAgentGroupByName(core::Building const& building,
@@ -192,7 +409,7 @@ core::AgentGroupId findAgentGroupByName(core::Building const& building,
 }
 
 bool armAgentPlacement(PendingAgentPlacement& pending,
-	AgentClipboardPayload const& payload,
+	core::Building const& building, AgentClipboardPayload const& payload,
 	shared_ptr<const core::Sector> sector,
 	uint32_t deckOffset, float localX, string& diagnostic)
 {
@@ -218,6 +435,7 @@ bool armAgentPlacement(PendingAgentPlacement& pending,
 		string trimmed;
 		if (!groupNameUsable(*payload.group, trimmed, diagnostic)) return false;
 	}
+	if (!clipboardTagStateFitsBuilding(building, payload, diagnostic)) return false;
 
 	pending.payload = payload;
 	pending.sector = sector;
@@ -260,6 +478,12 @@ bool commitAgentPlacement(shared_ptr<core::Building> const& building,
 		string trimmed;
 		if (!groupNameUsable(*payload.group, trimmed, diagnostic)) return false;
 		groupName = trimmed;
+	}
+	if (!clipboardTagStateFitsBuilding(*building, payload, diagnostic)) return false;
+	if (!payload.agentTags.empty() && !building->isSimulationPaused())
+	{
+		diagnostic = "Pause the simulation before pasting a tagged Agent";
+		return false;
 	}
 
 	// Captured before the first write, so the undo entry holds the document
@@ -329,6 +553,18 @@ bool commitAgentPlacement(shared_ptr<core::Building> const& building,
 			if (!building->setAgentGroup(agentId, groupId, &assignDiagnostic))
 			{
 				diagnostic = "The pasted Agent could not be assigned to its Agent group: "
+					+ assignDiagnostic + rollBack();
+				return false;
+			}
+		}
+		if (!payload.agentTags.empty())
+		{
+			string assignDiagnostic;
+			if (!building->restoreAgentTagAssignments(agentId, payload.agentTags,
+				payload.walkSpeedModifierSample, payload.heightModifierSample,
+				&assignDiagnostic))
+			{
+				diagnostic = "The pasted Agent's tag assignments could not be restored: "
 					+ assignDiagnostic + rollBack();
 				return false;
 			}

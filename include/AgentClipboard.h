@@ -16,6 +16,12 @@
 // destination does not already define that name, the Agent, and the
 // assignment, all as exactly one document edit.
 //
+// Agent tags obey a different boundary: their stable IDs are meaningful only
+// under one external registry UUID. Tagged payloads therefore carry that UUID,
+// the complete assignment set, and exact modifier samples with provenance.
+// Only a Building with the same attached registry UUID may accept them;
+// untagged payloads omit all registry state and remain portable.
+//
 // This lives in its own translation unit - as the Agent group panels did in
 // #109 and #110 - so the headless smoke checks drive the same encode, parse
 // and place code the GUI calls rather than a mirrored copy, and UI.cpp's
@@ -24,10 +30,13 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
+#include <utility>
 
 #include <yaml-cpp/yaml.h>
 
+#include "core/Agent.h"
 #include "core/EntityId.h"
 
 namespace core
@@ -39,6 +48,14 @@ namespace core
 // What an Agent clipboard payload carries.
 struct AgentClipboardPayload
 {
+	AgentClipboardPayload() = default;
+	AgentClipboardPayload(std::string initialName, std::uint32_t initialFlags,
+		bool initiallyActive, std::optional<std::string> initialGroup)
+		: name(std::move(initialName)), flags(initialFlags), active(initiallyActive),
+		group(std::move(initialGroup))
+	{
+	}
+
 	std::string name;
 	std::uint32_t flags{ 0 };
 
@@ -54,6 +71,15 @@ struct AgentClipboardPayload
 	// grouping existed wrote, and a payload that simply omits the key reads
 	// back the same way.
 	std::optional<std::string> group;
+
+	// Agent tag IDs only have meaning in the registry identified by this UUID.
+	// All four fields are omitted for an untagged Agent, which keeps legacy and
+	// untagged payloads portable. A tagged payload carries the complete stable-ID
+	// assignment set and exact modifier samples, including source and revision.
+	std::optional<std::string> agentTagRegistryUuid;
+	std::set<core::AgentTagId> agentTags;
+	std::optional<core::AgentPropertySample> walkSpeedModifierSample;
+	std::optional<core::AgentPropertySample> heightModifierSample;
 };
 
 // The payload a copy of `agent` carries. `name` is the name the copy will
@@ -99,12 +125,13 @@ struct PendingAgentPlacement
 };
 
 // Accept `payload` for deferred placement at `sector`/`deckOffset`/`localX`.
-// The Agent group name is judged here - before anything is deferred - so an
-// unusable payload is reported at the keystroke rather than after a fall
-// that was always going to fail. Arming writes nothing to the Building and
-// commits no undo entry.
+// The Agent group and complete Agent tag state are judged here - before
+// anything is deferred - so an unusable payload or registry UUID mismatch is
+// reported at the keystroke rather than after a fall that was always going to
+// fail. Arming writes nothing to the Building or registry and commits no undo
+// entry.
 bool armAgentPlacement(PendingAgentPlacement& pending,
-	AgentClipboardPayload const& payload,
+	core::Building const& building, AgentClipboardPayload const& payload,
 	std::shared_ptr<const core::Sector> sector,
 	std::uint32_t deckOffset, float localX, std::string& diagnostic);
 
@@ -129,10 +156,10 @@ bool commitPendingAgentPlacement(PendingAgentPlacement& pending,
 	core::AgentId& placed, std::string& diagnostic);
 
 // The removal a cut performs: the Agent leaves the Building, and nothing
-// else leaves with it. Its Agent group in particular stays defined -
-// cutting one member of a group is not a way to delete the group, and the
-// group's other members keep their assignment - and a refusal changes
-// nothing and reports why. Ticket #57: an Agent which still owns a capacity
+// else leaves with it. Its Agent group and shared Agent tag definitions stay
+// defined - cutting one member is not a way to delete either classification,
+// and other Agents keep their assignments - and a refusal changes nothing
+// and reports why. Ticket #57: an Agent which still owns a capacity
 // resource is refused rather than deleted with the ownership left behind.
 bool cutAgent(std::shared_ptr<core::Building> const& building,
 	core::AgentId agent, std::string& diagnostic);

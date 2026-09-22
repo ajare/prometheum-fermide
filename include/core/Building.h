@@ -1754,6 +1754,25 @@ namespace core
 		bool removeAgentTag(AgentId agent, AgentTagId tag,
 			std::string* diagnostic = nullptr);
 
+		// Validates a complete authored assignment/sample state against this
+		// Building's attached registry without changing either document. This is
+		// the preflight used by same-registry Agent paste: every referenced tag,
+		// inherited-property constraint, sample source, revision and value must
+		// already be valid, so paste never silently resamples or drops state.
+		bool validateAgentTagAssignments(std::set<AgentTagId> const& tags,
+			std::optional<AgentPropertySample> const& walkSpeedSample,
+			std::optional<AgentPropertySample> const& heightSample,
+			std::string* diagnostic = nullptr) const;
+
+		// Restores one Agent's complete tag state after the preflight above.
+		// Like ordinary assignment this is paused-only. Validation completes
+		// before mutation, and the registry itself is never changed.
+		bool restoreAgentTagAssignments(AgentId agent,
+			std::set<AgentTagId> const& tags,
+			std::optional<AgentPropertySample> const& walkSpeedSample,
+			std::optional<AgentPropertySample> const& heightSample,
+			std::string* diagnostic = nullptr);
+
 		// The assigned tag set in stable numeric order. Throws when `agent` is
 		// not owned by this Building.
 		std::set<AgentTagId> const& getAgentTags(AgentId agent) const;
