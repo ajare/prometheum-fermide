@@ -49,19 +49,18 @@ namespace
 	string gAddDiagnostic;
 
 	// The Groups table's columns, in declaration order. The panel below sets
-	// up every column from this list, so the Agents count column and the
-	// Delete column are declared here once rather than being implied by a
-	// bare index somewhere.
+	// up every column from this list, so the Active toggle, Agents count and
+	// Delete columns are declared here once rather than being implied by bare
+	// indexes somewhere.
 	//
-	// The name column takes the stretch: it holds an editor. The count is a
-	// short read-only number and the delete is one icon, so both are fixed to
-	// their content and never crowd the name out when the panel is narrow -
-	// and the Delete control keeps the same width the Layers table gives its
-	// own, so the two tables read alike.
-	std::vector<std::string> const kAgentGroupColumns{ "Name", "Agents", "Delete" };
-	size_t const kMemberCountColumn{ 1 };
-	size_t const kDeleteColumn{ 2 };
-	float const kDeleteColumnWidth{ 40.0f };
+	// The name column takes the stretch: it holds an editor. Active and Delete
+	// each hold one icon, while the count is a short read-only number, so those
+	// columns stay fixed and never crowd the name out when the panel is narrow.
+	std::vector<std::string> const kAgentGroupColumns{ "Name", "Active", "Agents", "Delete" };
+	size_t const kActiveColumn{ 1 };
+	size_t const kMemberCountColumn{ 2 };
+	size_t const kDeleteColumn{ 3 };
+	float const kIconColumnWidth{ 40.0f };
 
 	// The confirmation's popup id. A plain string with no "##" decoration,
 	// so the window ImGui builds for it carries this exact name, which is how
@@ -371,6 +370,47 @@ std::vector<std::string> const& agentGroupsPanelColumns()
 	return kAgentGroupColumns;
 }
 
+void renderAgentGroupActivationCell(shared_ptr<core::Building> const& building,
+	core::AgentGroupId id)
+{
+	if (!building) return;
+
+	auto const memberCount = building->getAgentGroupMemberCount(id);
+	auto const active = building->isAgentGroupActive(id);
+	auto const editable = building->isSimulationPaused() && memberCount != 0;
+
+	ImGui::BeginDisabled(!editable);
+	ImGui::PushID("active");
+	if (ImGui::Button(active ? ICON_FA_EYE : ICON_FA_EYE_SLASH,
+		ImVec2(ImGui::GetFrameHeight(), 0.0f)))
+	{
+		string diagnostic;
+		if (!building->setAgentGroupActive(id, !active, &diagnostic))
+			core::addLogMessage("Agent groups", 0, core::LogLevel::Warning, diagnostic);
+	}
+	ImGui::PopID();
+	ImGui::EndDisabled();
+
+	if (ImGui::IsItemHovered())
+	{
+		if (!building->isSimulationPaused())
+		{
+			ImGui::SetTooltip("Pause the simulation to activate or deactivate this Agent group");
+		}
+		else if (memberCount == 0)
+		{
+			ImGui::SetTooltip("This Agent group has no Agents to activate or deactivate");
+		}
+		else
+		{
+			auto const tooltip = std::format("{} all {} Agent{} in the Agent group \"{}\"",
+				active ? "Deactivate" : "Activate", memberCount, memberCount == 1 ? "" : "s",
+				building->getAgentGroupName(id));
+			ImGui::SetTooltip("%s", tooltip.c_str());
+		}
+	}
+}
+
 std::string agentGroupMemberCountLabel(core::Building const& building, core::AgentGroupId id)
 {
 	// Straight through the Building, which derives the count from the Agents
@@ -481,13 +521,15 @@ void renderAgentGroupsPanel(shared_ptr<core::Building> const& building)
 		static_cast<int>(kAgentGroupColumns.size()), flags))
 	{
 		// The name column stretches, the count column keeps to its number, and
-		// the Delete column holds one icon per group.
+		// the Active and Delete columns hold one icon per group.
 		ImGui::TableSetupColumn(kAgentGroupColumns[0].c_str(),
 			ImGuiTableColumnFlags_WidthStretch);
+		ImGui::TableSetupColumn(kAgentGroupColumns[kActiveColumn].c_str(),
+			ImGuiTableColumnFlags_WidthFixed, kIconColumnWidth);
 		ImGui::TableSetupColumn(kAgentGroupColumns[kMemberCountColumn].c_str(),
 			ImGuiTableColumnFlags_WidthFixed);
 		ImGui::TableSetupColumn(kAgentGroupColumns[kDeleteColumn].c_str(),
-			ImGuiTableColumnFlags_WidthFixed, kDeleteColumnWidth);
+			ImGuiTableColumnFlags_WidthFixed, kIconColumnWidth);
 		ImGui::TableHeadersRow();
 
 		// Creation order, straight off the Building's registry key order.
@@ -497,6 +539,11 @@ void renderAgentGroupsPanel(shared_ptr<core::Building> const& building)
 			ImGui::PushID(id.value);
 			ImGui::TableSetColumnIndex(0);
 			renderAgentGroupNameEditor(building, id);
+
+			// Bulk activation changes the members' own flags. In a mixed group the
+			// eye remains open so one press can deactivate every active member.
+			ImGui::TableSetColumnIndex(static_cast<int>(kActiveColumn));
+			renderAgentGroupActivationCell(building, id);
 
 			// The group's live membership count: every Agent in the Building
 			// that carries this group's ID, wherever it is and whatever it is

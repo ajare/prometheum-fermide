@@ -260,6 +260,78 @@ namespace
 			== core::Agent::State::MovingToVertex, "Waking did not start the reactivated Agent");
 	}
 
+	void groupsToggleTheirCurrentMembersEnMasse()
+	{
+		core::Building building("Group activation", 6, 1);
+		auto const corridor = building.addCorridor(0, 0, 6);
+		building.finishBuild();
+
+		auto const crew = building.addAgentGroup("Crew");
+		auto const visitors = building.addAgentGroup("Visitors");
+		auto const empty = building.addAgentGroup("Empty");
+		auto const alice = building.createAgent("Alice", corridor, 0, 0.5f);
+		auto const bob = building.createAgent("Bob", corridor, 0, 1.5f);
+		auto const visitor = building.createAgent("Visitor", corridor, 0, 2.5f);
+		auto const ungrouped = building.createAgent("Ungrouped", corridor, 0, 3.5f);
+		std::string diagnostic;
+		require(building.setAgentGroup(alice, crew, &diagnostic)
+			&& building.setAgentGroup(bob, crew, &diagnostic)
+			&& building.setAgentGroup(visitor, visitors, &diagnostic),
+			"The activation fixture could not assign its Agent groups: " + diagnostic);
+
+		// A group is an aggregate view of its members' own flags. Empty groups
+		// have no active member, while every newly-created occupied group does.
+		require(building.isAgentGroupActive(crew),
+			"A group of activated Agents was not reported active");
+		require(!building.isAgentGroupActive(empty),
+			"An empty Agent group was reported active");
+
+		// The bulk operation has the same pause gate as one Agent and validates
+		// before touching anybody.
+		require(!building.setAgentGroupActive(crew, false, &diagnostic),
+			"A running simulation allowed an Agent group to be deactivated");
+		require(!diagnostic.empty(), "A refused group deactivation gave no reason");
+		require(building.lookupAgent(alice).entity->isActive()
+			&& building.lookupAgent(bob).entity->isActive(),
+			"A refused group deactivation changed some members");
+
+		building.pauseSimulation();
+		require(building.setAgentGroupActive(crew, false, &diagnostic),
+			"The paused group deactivation was refused: " + diagnostic);
+		require(!building.lookupAgent(alice).entity->isActive()
+			&& !building.lookupAgent(bob).entity->isActive(),
+			"Group deactivation did not deactivate every current member");
+		require(building.lookupAgent(visitor).entity->isActive()
+			&& building.lookupAgent(ungrouped).entity->isActive(),
+			"Group deactivation changed an Agent outside the group");
+		require(!building.isAgentGroupActive(crew),
+			"A wholly deactivated group was still reported active");
+
+		// The operation writes each Agent's ordinary flag rather than creating
+		// inheritance: one member can override it, producing a mixed group. The
+		// aggregate remains active while any member is active, so another group
+		// deactivation catches that remaining override in one press.
+		require(building.setAgentActive(alice, true, &diagnostic),
+			"An Agent could not override its group deactivation: " + diagnostic);
+		require(building.isAgentGroupActive(crew),
+			"A mixed group with one active member was not reported active");
+		require(building.setAgentGroupActive(crew, false, &diagnostic),
+			"The mixed group could not be deactivated again: " + diagnostic);
+		require(!building.lookupAgent(alice).entity->isActive()
+			&& !building.lookupAgent(bob).entity->isActive(),
+			"Deactivating a mixed group did not deactivate all its members");
+
+		require(building.setAgentGroupActive(crew, true, &diagnostic),
+			"The Agent group could not be reactivated: " + diagnostic);
+		require(building.lookupAgent(alice).entity->isActive()
+			&& building.lookupAgent(bob).entity->isActive(),
+			"Group activation did not activate every current member");
+
+		require(!building.canSetAgentGroupActive(core::AgentGroupId{ 999 }, false, &diagnostic),
+			"An unknown Agent group was accepted for bulk activation");
+		require(!diagnostic.empty(), "An unknown Agent group gave no refusal reason");
+	}
+
 	void activationSurvivesSerializationAndReset()
 	{
 		WalkFixture fixture;
@@ -391,6 +463,7 @@ void runAgentActivationSmokeChecks()
 	deactivatedAgentsAreNotSimulated();
 	reactivationWhilePausedPutsTheAgentBackUnderTheSimulation();
 	wakingSkipsDeactivatedAgents();
+	groupsToggleTheirCurrentMembersEnMasse();
 	activationSurvivesSerializationAndReset();
 	activationSurvivesTopologyEdits();
 	clipboardCarriesActivation();

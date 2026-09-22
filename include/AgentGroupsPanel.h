@@ -90,11 +90,19 @@ void cancelPendingAgentGroupDelete();
 void resetAgentGroupsPanelState();
 
 // The Groups table's column headers, in the order the panel declares them:
-// the group's name, its live membership count, then the row's Delete
-// control. The panel sets up its columns from this exact list, so the list a
-// check reads is the list the table is built with rather than a second copy
-// kept for testing.
+// the group's name, its aggregate Active toggle, its live membership count,
+// then the row's Delete control. The panel sets up its columns from this exact
+// list, so the list a check reads is the list the table is built with rather
+// than a second copy kept for testing.
 std::vector<std::string> const& agentGroupsPanelColumns();
+
+// Renders one group's eye toggle. The eye is open while any current member is
+// active: pressing it deactivates all members; when none are active, pressing
+// the slashed eye activates all members. This is a bulk edit of the Agents'
+// own flags, so a member may still be toggled individually afterwards. Empty
+// groups and all groups while the simulation runs have a disabled control.
+void renderAgentGroupActivationCell(
+	std::shared_ptr<core::Building> const& building, core::AgentGroupId id);
 
 // The text the Agents column shows for one group: how many of the Building's
 // Agents are assigned to it. The count is derived through the Building on
@@ -125,7 +133,8 @@ void renderAgentGroupDeleteConfirmation(
 	std::shared_ptr<core::Building> const& building);
 
 // Renders the Groups table for the Agents collapsible section: one inline
-// rename editor per group, in creation order, each with its live Agents
-// count and its Delete control, plus the add row and the deletion
-// confirmation. Available whether or not the simulation is running.
+// rename editor per group, in creation order, each with its Active eye, live
+// Agents count and Delete control, plus the add row and the deletion
+// confirmation. Group activation is editable only while the simulation is
+// paused; the rest of the panel remains available while it runs.
 void renderAgentGroupsPanel(std::shared_ptr<core::Building> const& building);

@@ -722,21 +722,22 @@ namespace
 			"A restored Building stopped counting: " + allCounts(*building));
 	}
 
-	// The panel's own column list is what the table is built from, and the
-	// Agents column is in it, after the name and before the Delete control.
+	// The panel's own column list is what the table is built from. Active is
+	// immediately after the group name, followed by Agents and Delete.
 	void theGroupsTableDeclaresAnAgentsColumn()
 	{
 		auto const& columns = agentGroupsPanelColumns();
-		require(columns.size() == 3,
-			("The Groups table does not have a name column, an Agents column and a "
-				"Delete column; it has "
+		require(columns.size() == 4,
+			("The Groups table does not have Name, Active, Agents and Delete columns; it has "
 				+ std::to_string(columns.size())).c_str());
 		require(columns[0] == "Name",
 			"The Groups table's first column is not the name column");
-		require(columns[1] == "Agents",
+		require(columns[1] == "Active",
+			"The Groups table's second column is not the Active toggle");
+		require(columns[2] == "Agents",
 			"The Groups table's count column is not called Agents");
-		require(columns[2] == "Delete",
-			"The Groups table's third column is not the Delete column");
+		require(columns[3] == "Delete",
+			"The Groups table's fourth column is not the Delete column");
 	}
 
 	// The real panel, rendered for real, with the count column in it. What

@@ -6318,6 +6318,63 @@ namespace core
 		return lookup.entity->getAgentGroupId();
 	}
 
+	bool Building::isAgentGroupActive(AgentGroupId group) const
+	{
+		auto const lookup = lookupAgentGroup(group);
+		if (!lookup) throw BuildingException(this, lookup.diagnostic);
+
+		// This is an aggregate view of the members' own flags, not state kept by
+		// the group. In a mixed group the open eye means that clicking it can
+		// deactivate every remaining active member in one operation.
+		for (auto const& [id, agent] : mAgents.entries())
+		{
+			(void)id;
+			if (agent && agent->getAgentGroupId() == group && agent->isActive())
+				return true;
+		}
+		return false;
+	}
+
+	bool Building::canSetAgentGroupActive(AgentGroupId group, bool /* active */,
+		std::string* diagnostic) const
+	{
+		if (diagnostic) diagnostic->clear();
+
+		auto const lookup = lookupAgentGroup(group);
+		if (!lookup)
+		{
+			if (diagnostic) *diagnostic = lookup.diagnostic;
+			return false;
+		}
+		if (!mSimulationPaused)
+		{
+			if (diagnostic)
+				*diagnostic = "Agent groups cannot be activated or deactivated while the simulation is running";
+			return false;
+		}
+		return true;
+	}
+
+	bool Building::setAgentGroupActive(AgentGroupId group, bool active,
+		std::string* diagnostic)
+	{
+		// Judge the group and the pause gate before changing the first member, so
+		// a refusal can never leave a partly toggled group.
+		if (!canSetAgentGroupActive(group, active, diagnostic)) return false;
+
+		for (auto const& [id, agent] : mAgents.entries())
+		{
+			if (agent && agent->getAgentGroupId() == group)
+			{
+				// The IDs came from the live registry and the pause gate was checked
+				// above, so the coordinator cannot refuse any member now. Keep the
+				// actual activation write on its Agent-lifecycle seam (ADR 0004).
+				(void)mSimulationCoordinator.setAgentActive(id, active);
+			}
+		}
+		return true;
+	}
+
 	bool Building::canAssignAgentTag(AgentId agent, AgentTagId tag,
 		string* diagnostic) const
 	{

@@ -114,7 +114,7 @@ An association between one Agent and one Agent tag.
 _Avoid_: Agent group membership
 
 **Agent group**:
-A named, Building-scoped classification that may be assigned to an Agent for administrative organisation. An Agent group retains its identity when renamed; deleting it leaves its Agents with no Agent group. It has no effect on movement, pathfinding, capacity, or other simulation behaviour.
+A named, Building-scoped classification that may be assigned to an Agent for administrative organisation. An Agent group retains its identity when renamed; deleting it leaves its Agents with no Agent group. It does not confer inherited simulation behaviour, but may be used to activate or deactivate all its current Agents at once; each Agent retains its own activation and may be changed individually afterwards.
 _Avoid_: Group, when the broader term could be ambiguous
 
 **Shared resource**:

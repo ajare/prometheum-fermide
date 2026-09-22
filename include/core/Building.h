@@ -1760,6 +1760,22 @@ namespace core
 		// it has none. Throws if the Agent is not one this Building owns.
 		AgentGroupId getAgentGroup(AgentId agent) const;
 
+		// Group activation is a bulk edit of the current members' own activation
+		// flags, not an inherited group property. A group is reported active while
+		// at least one member is active; an empty group is therefore inactive.
+		// Throws if the ID is not one this Building issued.
+		bool isAgentGroupActive(AgentGroupId group) const;
+
+		// Activates or deactivates every Agent currently assigned to `group`.
+		// Membership and activation remain independent afterwards, so any Agent
+		// can still be changed individually. As with per-Agent activation, the
+		// whole operation is refused while the simulation is running. Validation
+		// completes before any member is changed.
+		bool canSetAgentGroupActive(AgentGroupId group, bool active,
+			std::string* diagnostic = nullptr) const;
+		bool setAgentGroupActive(AgentGroupId group, bool active,
+			std::string* diagnostic = nullptr);
+
 		// Agent tag assignments reference stable IDs from this Building's one
 		// attached Agent tag registry. Assignment and removal are paused-only
 		// authored edits. Every refusal validates before mutation, so an unknown
