@@ -9,6 +9,7 @@
 
 #include "core/Defines.h"
 #include "core/Building.h"
+#include "core/AgentBehaviourRegistry.h"
 #include "core/AgentTagRegistry.h"
 #include "core/Background.h"
 #include "core/Location.h"
@@ -112,6 +113,7 @@ namespace core
 	Building::~Building()
 	{
 		if (mAgentTagRegistry) mAgentTagRegistry->unregisterBuilding(*this);
+		if (mAgentBehaviourRegistry) mAgentBehaviourRegistry->unregisterBuilding(*this);
 	}
 
 	string const& Building::getName() const
@@ -328,6 +330,100 @@ namespace core
 		mAgentTagRegistryReference = std::move(replacement);
 		mAgentTagRegistry = std::move(registry);
 		modify();
+	}
+
+	bool Building::hasAgentBehaviourRegistryReference() const
+	{
+		return mAgentBehaviourRegistryReference.has_value();
+	}
+
+	bool Building::hasAttachedAgentBehaviourRegistry() const
+	{
+		return mAgentBehaviourRegistry != nullptr;
+	}
+
+	string const& Building::getAgentBehaviourRegistryPackageName() const
+	{
+		if (!mAgentBehaviourRegistryReference)
+			throw runtime_error("The Building has no Agent behaviour registry reference");
+		return mAgentBehaviourRegistryReference->packageName;
+	}
+
+	string const& Building::getExpectedAgentBehaviourRegistryUuid() const
+	{
+		if (!mAgentBehaviourRegistryReference)
+			throw runtime_error("The Building has no Agent behaviour registry reference");
+		return mAgentBehaviourRegistryReference->expectedUuid;
+	}
+
+	shared_ptr<AgentBehaviourRegistry> const& Building::getAgentBehaviourRegistry() const
+	{
+		return mAgentBehaviourRegistry;
+	}
+
+	void Building::attachAgentBehaviourRegistry(string packageName,
+		shared_ptr<AgentBehaviourRegistry> registry)
+	{
+		if (!isSimulationPaused())
+			throw invalid_argument("Pause the Building before changing its Agent behaviour registry");
+		filesystem::path const path(packageName);
+		if (packageName.empty() || path.is_absolute() || path.has_parent_path()
+			|| path.filename().string() != packageName
+			|| !packageName.ends_with(".behaviours"))
+		{
+			throw invalid_argument(
+				"An Agent behaviour registry reference must be a .behaviours package directory basename");
+		}
+		if (!registry || !AgentBehaviourRegistry::uuidIsValid(registry->getUuid()))
+			throw invalid_argument("Cannot attach an invalid Agent behaviour registry");
+		if (mAgentBehaviourRegistryReference
+			&& mAgentBehaviourRegistryReference->packageName == packageName
+			&& mAgentBehaviourRegistryReference->expectedUuid == registry->getUuid()
+			&& mAgentBehaviourRegistry == registry) return;
+
+		AgentBehaviourRegistryReference replacement{ std::move(packageName), registry->getUuid() };
+		auto const registryChanges = mAgentBehaviourRegistry != registry;
+		if (registryChanges) registry->registerBuilding(*this);
+		if (registryChanges && mAgentBehaviourRegistry)
+			mAgentBehaviourRegistry->unregisterBuilding(*this);
+		mAgentBehaviourRegistryReference = std::move(replacement);
+		mAgentBehaviourRegistry = std::move(registry);
+		modify();
+	}
+
+	void Building::detachAgentBehaviourRegistry()
+	{
+		if (!mAgentBehaviourRegistryReference) return;
+		if (!isSimulationPaused())
+			throw invalid_argument("Pause the Building before detaching its Agent behaviour registry");
+		// Behaviour assignments do not exist in this schema generation, so no
+		// dependent state can block a detach. Later generations must refuse here
+		// while any assignment references this namespace, like Agent tags do.
+		if (mAgentBehaviourRegistry) mAgentBehaviourRegistry->unregisterBuilding(*this);
+		mAgentBehaviourRegistry.reset();
+		mAgentBehaviourRegistryReference.reset();
+		modify();
+	}
+
+	void Building::resolveAgentBehaviourRegistry(shared_ptr<AgentBehaviourRegistry> registry)
+	{
+		if (!mAgentBehaviourRegistryReference)
+			throw invalid_argument("The Building has no Agent behaviour registry reference to resolve");
+		if (!registry)
+			throw invalid_argument("Cannot resolve a null Agent behaviour registry");
+		if (registry->getUuid() != mAgentBehaviourRegistryReference->expectedUuid)
+		{
+			throw runtime_error(format(
+				"Agent behaviour registry UUID mismatch: Building expects {}, file contains {}",
+				mAgentBehaviourRegistryReference->expectedUuid, registry->getUuid()));
+		}
+
+		// No reconciliation exists yet: no Agent carries behaviour assignments or
+		// configurations in this schema generation, so resolving only points the
+		// Building at the shared validated registry.
+		if (mAgentBehaviourRegistry) mAgentBehaviourRegistry->unregisterBuilding(*this);
+		mAgentBehaviourRegistry = std::move(registry);
+		mAgentBehaviourRegistry->registerBuilding(*this);
 	}
 
 	bool Building::inspectAgentTagAssignments(AgentTagRegistry const& registry,

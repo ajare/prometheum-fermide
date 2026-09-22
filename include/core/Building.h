@@ -34,11 +34,13 @@ namespace core
 {
 
 	class AgentTagRegistry;
+	class AgentBehaviourRegistry;
 
 	class Building : public Serializable
 	{
 		friend class Agent;
 		friend class AgentTagRegistry;
+		friend class AgentBehaviourRegistry;
 		friend class Graph;
 		// The coordinator owns no entities; it drives the registries below and
 		// the private machinery beside them on the Building's behalf (ADR 0004).
@@ -479,6 +481,18 @@ namespace core
 		// registry is deliberately not a child for dirty-state purposes.
 		std::optional<AgentTagRegistryReference> mAgentTagRegistryReference;
 		std::shared_ptr<AgentTagRegistry> mAgentTagRegistry;
+
+		// Agent behaviour definitions are an independent external package
+		// document. The Building persists only this package-directory basename
+		// and expected UUID reference. The loaded registry is deliberately not a
+		// child for dirty-state purposes.
+		struct AgentBehaviourRegistryReference
+		{
+			std::string packageName;
+			std::string expectedUuid;
+		};
+		std::optional<AgentBehaviourRegistryReference> mAgentBehaviourRegistryReference;
+		std::shared_ptr<AgentBehaviourRegistry> mAgentBehaviourRegistry;
 
 		// Coordinated external-document history keeps only a weak copy. It can
 		// therefore recognize that this exact Building closed without retaining it
@@ -1155,6 +1169,21 @@ namespace core
 		// samples, and refuses any definition or allocator difference.
 		void replaceAgentTagRegistryWithIndependentCopy(std::string filename,
 			std::shared_ptr<AgentTagRegistry> registry);
+
+		// A Building references zero or one adjacent Agent behaviour registry
+		// package by directory basename and expected UUID. Attaching is an
+		// authored Building change. No Agent assignment of behaviour exists yet;
+		// detach is therefore always non-destructive in this schema generation.
+		bool hasAgentBehaviourRegistryReference() const;
+		bool hasAttachedAgentBehaviourRegistry() const;
+		std::string const& getAgentBehaviourRegistryPackageName() const;
+		std::string const& getExpectedAgentBehaviourRegistryUuid() const;
+		std::shared_ptr<AgentBehaviourRegistry> const& getAgentBehaviourRegistry() const;
+		void attachAgentBehaviourRegistry(std::string packageName,
+			std::shared_ptr<AgentBehaviourRegistry> registry);
+		void detachAgentBehaviourRegistry();
+		void resolveAgentBehaviourRegistry(
+			std::shared_ptr<AgentBehaviourRegistry> registry);
 
 		uint32_t getCellsWide() const;
 

@@ -1,4 +1,5 @@
 #include "core/Building.h"
+#include "core/AgentBehaviourRegistry.h"
 #include "core/AgentGroup.h"
 #include "core/AgentTagRegistry.h"
 #include "core/SerializationException.h"
@@ -371,7 +372,9 @@ namespace core
 	void Building::serializeImpl(Serializer& serializer, SerializationWorkData& workData) const
 	{
 		serializer.beginMap("building");
-		// Version 11 gives every Marker stable identity and a Building-unique name.
+		// Version 12 adds the optional external Agent behaviour registry package
+		// reference. Version 11 gives every Marker stable identity and a
+		// Building-unique name.
 		// Version 10 adds the optional external Agent tag registry reference.
 		// Version 9 is the first schema that persists Agent groups, and with
 		// them each Agent's optional Agent group assignment (ticket #110). The
@@ -388,7 +391,7 @@ namespace core
 		// allocator's high-water mark (#123). It is an added field rather than a
 		// new version: a reader that predates it still opens these files and
 		// falls back to deriving the next ID from the groups that survive.
-		serializer.writeUint32("version", 11);
+		serializer.writeUint32("version", 12);
 		serializer.writeString("name", mName);
 		serializer.writeUint32("cellsWide", mCellsWide);
 		serializer.writeUint32("decksHigh", mDecksHigh);
@@ -403,6 +406,14 @@ namespace core
 			serializer.beginMap("agentTagRegistry");
 			serializer.writeString("filename", mAgentTagRegistryReference->filename);
 			serializer.writeString("expectedUuid", mAgentTagRegistryReference->expectedUuid);
+			serializer.endMap();
+		}
+
+		if (mAgentBehaviourRegistryReference)
+		{
+			serializer.beginMap("agentBehaviourRegistry");
+			serializer.writeString("package", mAgentBehaviourRegistryReference->packageName);
+			serializer.writeString("expectedUuid", mAgentBehaviourRegistryReference->expectedUuid);
 			serializer.endMap();
 		}
 
@@ -745,7 +756,10 @@ namespace core
 		// first to carry Agent groups and the Agent assignments that reference
 		// them; versions 1 through 8 load with neither. Version 10 adds the
 		// optional Agent tag registry reference and Agent tag assignments.
-		if (version < 1 || version > 11)
+		// Version 12 adds the optional Agent behaviour registry package
+		// reference. Readers that predate it cap out at version 11 and refuse
+		// these files instead of silently dropping the reference they carry.
+		if (version < 1 || version > 12)
 		{
 			throw SerializationException("Unsupported Building serialization version");
 		}
@@ -780,6 +794,31 @@ namespace core
 			}
 			agentTagRegistryReference = AgentTagRegistryReference{
 				std::move(filename), std::move(expectedUuid) };
+		}
+
+		optional<AgentBehaviourRegistryReference> agentBehaviourRegistryReference;
+		if (version >= 12 && serializer.hasField("agentBehaviourRegistry"))
+		{
+			serializer.beginMap("agentBehaviourRegistry");
+			auto packageName = serializer.readString("package");
+			auto expectedBehaviourUuid = serializer.readString("expectedUuid");
+			serializer.endMap();
+
+			filesystem::path const packagePath(packageName);
+			if (packageName.empty() || packagePath.is_absolute() || packagePath.has_parent_path()
+				|| packagePath.filename().string() != packageName
+				|| !packageName.ends_with(".behaviours"))
+			{
+				throw SerializationException(
+					"An Agent behaviour registry reference must be a .behaviours package directory basename");
+			}
+			if (!AgentBehaviourRegistry::uuidIsValid(expectedBehaviourUuid))
+			{
+				throw SerializationException(
+					"The expected Agent behaviour registry UUID is invalid");
+			}
+			agentBehaviourRegistryReference = AgentBehaviourRegistryReference{
+				std::move(packageName), std::move(expectedBehaviourUuid) };
 		}
 
 		auto const layerCount = serializer.readUint32("layers", true, 2);
@@ -992,6 +1031,9 @@ namespace core
 		mAgentTagRegistryReference = std::move(agentTagRegistryReference);
 		if (mAgentTagRegistry) mAgentTagRegistry->unregisterBuilding(*this);
 		mAgentTagRegistry.reset();
+		mAgentBehaviourRegistryReference = std::move(agentBehaviourRegistryReference);
+		if (mAgentBehaviourRegistry) mAgentBehaviourRegistry->unregisterBuilding(*this);
+		mAgentBehaviourRegistry.reset();
 		// resetForDeserialization deliberately leaves Agent groups alone: the
 		// reset-and-replay paths (Layer deletion, Room resize, and the rest) reuse
 		// it and must carry the authored groups across. A load starts from the
@@ -1196,6 +1238,7 @@ namespace core
 		auto const wasModified = isModified();
 		auto const wasPaused = mSimulationPaused;
 		auto const agentTagRegistry = mAgentTagRegistry;
+		auto const behaviourRegistry = mAgentBehaviourRegistry;
 
 		auto output = YamlSerializer::toString();
 		SerializationWorkData writeData;
@@ -1209,6 +1252,8 @@ namespace core
 		deserialize(*input, readData);
 		if (agentTagRegistry && mAgentTagRegistryReference)
 			resolveAgentTagRegistry(agentTagRegistry);
+		if (behaviourRegistry && mAgentBehaviourRegistryReference)
+			resolveAgentBehaviourRegistry(behaviourRegistry);
 		if (wasModified) markModified();
 		if (wasPaused) pauseSimulation();
 	}

@@ -32,6 +32,7 @@
 #include "AgentGroupAssignmentPanel.h"
 #include "AgentTagAssignmentPanel.h"
 #include "TagsPanel.h"
+#include "BehavioursPanel.h"
 #include "AgentClipboard.h"
 
 #if defined(_WIN32)
@@ -68,6 +69,7 @@
 #include "core/SerializationWorkData.h"
 #include "core/YamlSerializer.h"
 #include "core/AgentTagRegistryDocument.h"
+#include "core/AgentBehaviourRegistryDocument.h"
 
 #include "Main.h"
 #include "RecentFiles.h"
@@ -2249,6 +2251,7 @@ namespace
 		resetAgentGroupsPanelState();
 		resetAgentTagAssignmentPanelState();
 		resetTagsPanelState();
+		resetBehavioursPanelState();
 		gUISettings.worldPaused = false;
 		if (clearHistory) gBuildingDocumentHistory.clear();
 	}
@@ -2271,6 +2274,7 @@ namespace
 				core::SerializationWorkData workData;
 				if (!loaded->deserialize(*serializer, workData)) return false;
 				core::loadAndAttachAgentTagRegistry(*loaded, gBuildingFilepath);
+				core::loadAndAttachAgentBehaviourRegistry(*loaded, gBuildingFilepath);
 				return true;
 			};
 			auto const restored = redo
@@ -2408,8 +2412,13 @@ namespace
 			auto loaded = core::loadBuildingDocument(normalized);
 			auto previousRegistry = building && building->hasAttachedAgentTagRegistry()
 				? building->getAgentTagRegistry() : nullptr;
+			auto previousBehaviourRegistry = building
+				&& building->hasAttachedAgentBehaviourRegistry()
+				? building->getAgentBehaviourRegistry() : nullptr;
 			building = std::move(loaded);
 			if (previousRegistry) forgetAgentTagRegistryDocument(previousRegistry);
+			if (previousBehaviourRegistry)
+				forgetAgentBehaviourRegistryDocument(previousBehaviourRegistry);
 			if (building->hasAttachedAgentTagRegistry())
 				(void)agentTagRegistryDocumentHistory(building->getAgentTagRegistry());
 			gBuildingFilepath = normalized;
@@ -2463,6 +2472,24 @@ namespace
 		return string(selectedPath.get());
 	}
 
+	optional<string> chooseAgentBehaviourRegistryPath()
+	{
+		nfdu8char_t* selectedPathRaw{ nullptr };
+		filesystem::path const buildingPath(gBuildingFilepath);
+		auto const directory = buildingPath.parent_path().string();
+		auto const result = NFD_PickFolderU8(
+			&selectedPathRaw, directory.empty() ? nullptr : directory.c_str());
+		unique_ptr<nfdu8char_t, decltype(&NFD_FreePathU8)> selectedPath(
+			selectedPathRaw, NFD_FreePathU8);
+		if (result == NFD_CANCEL) return nullopt;
+		if (result == NFD_ERROR)
+		{
+			throw runtime_error(string("Could not choose an Agent behaviour registry package: ")
+				+ (NFD_GetError() ? NFD_GetError() : "unknown native dialog error"));
+		}
+		return string(selectedPath.get());
+	}
+
 	void executeFileAction(PendingFileAction action, shared_ptr<core::Building>& building)
 	{
 		switch (action)
@@ -2483,6 +2510,8 @@ namespace
 		case PendingFileAction::Close:
 			if (building && building->hasAttachedAgentTagRegistry())
 				forgetAgentTagRegistryDocument(building->getAgentTagRegistry());
+			if (building && building->hasAttachedAgentBehaviourRegistry())
+				forgetAgentBehaviourRegistryDocument(building->getAgentBehaviourRegistry());
 			building.reset();
 			gBuildingFilepath.clear();
 			clearDocumentState();
@@ -2867,6 +2896,8 @@ namespace
 			{
 				if (building && building->hasAttachedAgentTagRegistry())
 					forgetAgentTagRegistryDocument(building->getAgentTagRegistry());
+				if (building && building->hasAttachedAgentBehaviourRegistry())
+					forgetAgentBehaviourRegistryDocument(building->getAgentBehaviourRegistry());
 				building = make_shared<core::Building>(gNewBuildingName,
 					static_cast<uint32_t>(gNewBuildingWidth),
 					static_cast<uint32_t>(gNewBuildingDecks));
@@ -6870,6 +6901,18 @@ void renderBuildingPanel(shared_ptr<core::Building> building)
 		if (renderTagsPanel(building, gBuildingFilepath,
 			[] { return chooseAgentTagRegistryPath(); }))
 			saveBuilding(building, false);
+	}
+
+	if (ImGui::CollapsingHeader("Behaviours"))
+	{
+		// Behaviour registry packages are inspected and reloaded here; their
+		// definitions are authored beside the Building and never executed or
+		// edited by the panel.
+		ImGui::PushID("AgentBehaviourRegistry");
+		if (renderBehavioursPanel(building, gBuildingFilepath,
+			[] { return chooseAgentBehaviourRegistryPath(); }))
+			saveBuilding(building, false);
+		ImGui::PopID();
 	}
 
 	if (ImGui::CollapsingHeader("Objects"))

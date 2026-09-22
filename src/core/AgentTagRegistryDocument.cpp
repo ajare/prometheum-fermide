@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "core/AgentTagRegistry.h"
+#include "core/AgentBehaviourRegistryDocument.h"
 #include "core/Building.h"
 #include "core/SerializationException.h"
 #include "core/YamlSerializer.h"
@@ -479,6 +480,10 @@ namespace core
 			throw SerializationException("Could not deserialize Building");
 		}
 		loadAndAttachAgentTagRegistry(*loaded, canonicalBuilding);
+		// A behaviour-registry refusal propagates without replacing the caller's
+		// state; the temporary Building unregisters from every shared registry
+		// in its destructor, so no dependent document keeps a stale pointer.
+		loadAndAttachAgentBehaviourRegistry(*loaded, canonicalBuilding);
 		return loaded;
 	}
 }
