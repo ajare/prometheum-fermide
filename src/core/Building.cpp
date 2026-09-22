@@ -108,7 +108,10 @@ namespace core
 		mGraph = make_shared<Graph>(this);
 	}
 
-	Building::~Building() = default;
+	Building::~Building()
+	{
+		if (mAgentTagRegistry) mAgentTagRegistry->unregisterBuilding(*this);
+	}
 
 	string const& Building::getName() const
 	{
@@ -162,9 +165,11 @@ namespace core
 		string diagnostic;
 		if (!agentTagAssignmentsAreValid(*registry, &diagnostic))
 			throw invalid_argument(diagnostic);
+		if (mAgentTagRegistry) mAgentTagRegistry->unregisterBuilding(*this);
 		mAgentTagRegistryReference = AgentTagRegistryReference{
 			std::move(filename), registry->getUuid() };
 		mAgentTagRegistry = std::move(registry);
+		mAgentTagRegistry->registerBuilding(*this);
 		modify();
 	}
 
@@ -183,7 +188,9 @@ namespace core
 		string diagnostic;
 		if (!agentTagAssignmentsAreValid(*registry, &diagnostic))
 			throw runtime_error(diagnostic);
+		if (mAgentTagRegistry) mAgentTagRegistry->unregisterBuilding(*this);
 		mAgentTagRegistry = std::move(registry);
+		mAgentTagRegistry->registerBuilding(*this);
 	}
 
 	bool Building::agentTagAssignmentsAreValid(AgentTagRegistry const& registry,
@@ -207,6 +214,30 @@ namespace core
 			}
 		}
 		return true;
+	}
+
+	uint32_t Building::countAgentTagAssignments(AgentTagId id) const
+	{
+		uint32_t count{ 0 };
+		for (auto const& [agentId, agent] : mAgents.entries())
+		{
+			(void)agentId;
+			if (agent && agent->hasAgentTag(id)) ++count;
+		}
+		return count;
+	}
+
+	void Building::clearAgentTagAssignments(AgentTagId id)
+	{
+		bool changed{ false };
+		for (auto& [agentId, agent] : mAgents.entries())
+		{
+			(void)agentId;
+			if (!agent || !agent->hasAgentTag(id)) continue;
+			agent->removeAgentTag(id);
+			changed = true;
+		}
+		if (changed) modify();
 	}
 
 	uint32_t Building::getCellsWide() const

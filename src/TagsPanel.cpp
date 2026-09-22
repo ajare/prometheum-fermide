@@ -1,10 +1,15 @@
 #include "TagsPanel.h"
 
+#include <algorithm>
 #include <array>
+#include <cctype>
 #include <cstring>
 #include <filesystem>
+#include <format>
 #include <map>
+#include <sstream>
 #include <utility>
+#include <vector>
 
 #include "DocumentEdit.h"
 #include "core/AgentTag.h"
@@ -21,6 +26,8 @@ using namespace std;
 namespace
 {
 	constexpr size_t NameBufferSize{ core::AgentTag::MaxNameCharacters + 1 };
+	constexpr size_t SearchBufferSize{ 64 };
+	char const* const DeletePopupId{ "Delete Agent tag?" };
 
 	struct TagNameEdit
 	{
@@ -30,8 +37,34 @@ namespace
 		string diagnostic;
 	};
 
+	struct RegistryBuildingSnapshot
+	{
+		core::Building* building{ nullptr };
+		string yaml;
+		bool modified{ false };
+		bool paused{ false };
+	};
+
+	struct RegistryEditSnapshotContext : DocumentSnapshotContext
+	{
+		core::AgentTagId affectedTag{};
+		vector<RegistryBuildingSnapshot> buildings;
+	};
+
+	struct PendingAgentTagDelete
+	{
+		weak_ptr<core::AgentTagRegistry> registry;
+		core::AgentTagId id{};
+		string text;
+		uint64_t loadedAgentCount{ 0 };
+		bool active{ false };
+		bool openRequested{ false };
+	};
+
 	map<string, DocumentHistory> gRegistryHistories;
 	map<uint64_t, TagNameEdit> gTagNameEdits;
+	array<char, SearchBufferSize> gTagSearch{};
+	PendingAgentTagDelete gPendingAgentTagDelete;
 	bool gAddingTag{ false };
 	bool gFocusAddTag{ false };
 	array<char, NameBufferSize> gNewTagName{};
@@ -43,8 +76,20 @@ namespace
 		buffer[buffer.size() - 1] = '\0';
 	}
 
+	string serializeBuilding(core::Building const& building)
+	{
+		auto serializer = core::YamlSerializer::toString();
+		core::SerializationWorkData workData;
+		workData.markSerializedUnmodified = false;
+		building.serialize(*serializer, workData);
+		serializer->serialize();
+		return serializer->getSerializedString();
+	}
+
 	optional<DocumentSnapshot> captureRegistrySnapshot(
-		shared_ptr<core::AgentTagRegistry> const& registry)
+		shared_ptr<core::AgentTagRegistry> const& registry,
+		vector<core::Building*> const& participatingBuildings = {},
+		core::AgentTagId affectedTag = {})
 	{
 		if (!registry) return nullopt;
 		try
@@ -54,8 +99,25 @@ namespace
 			workData.markSerializedUnmodified = false;
 			registry->serialize(*serializer, workData);
 			serializer->serialize();
-			return agentTagRegistryDocumentHistory(registry).capture(
+			auto snapshot = agentTagRegistryDocumentHistory(registry).capture(
 				serializer->getSerializedString());
+
+			if (affectedTag || !participatingBuildings.empty())
+			{
+				auto context = make_shared<RegistryEditSnapshotContext>();
+				context->affectedTag = affectedTag;
+				context->buildings.reserve(participatingBuildings.size());
+				for (auto* building : participatingBuildings)
+				{
+					if (!registry->hasLoadedBuilding(building))
+						throw runtime_error(
+							"A Building participating in the tag edit is no longer loaded");
+					context->buildings.push_back({ building, serializeBuilding(*building),
+						building->isModified(), building->isSimulationPaused() });
+				}
+				snapshot.context = std::move(context);
+			}
+			return snapshot;
 		}
 		catch (std::exception const& error)
 		{
@@ -115,6 +177,9 @@ namespace
 
 	void renderTagAddRow(shared_ptr<core::AgentTagRegistry> const& registry)
 	{
+		ImGui::TableNextRow();
+		ImGui::TableSetColumnIndex(0);
+		ImGui::PushID("addRow");
 		if (gFocusAddTag)
 		{
 			ImGui::SetKeyboardFocusHere(0);
@@ -155,6 +220,66 @@ namespace
 		if (!gAddTagDiagnostic.empty())
 			ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.45f, 1.0f), "%s",
 				gAddTagDiagnostic.c_str());
+		ImGui::PopID();
+	}
+
+	void renderTagDeleteCell(shared_ptr<core::AgentTagRegistry> const& registry,
+		core::AgentTagId id)
+	{
+		if (ImGui::Button(ICON_FA_TRASH "##deleteAgentTag",
+			ImVec2(ImGui::GetFrameHeight(), 0.0f)))
+		{
+			requestAgentTagDelete(registry, id);
+		}
+		if (ImGui::IsItemHovered())
+		{
+			auto const count = loadedAgentTagUsageCount(*registry, id);
+			auto const tooltip = count == 0
+				? format("Delete Agent tag #{}", registry->getAgentTagName(id))
+				: format("Delete Agent tag #{} and remove {} loaded Agent assignment{}",
+					registry->getAgentTagName(id), count, count == 1 ? "" : "s");
+			ImGui::SetTooltip("%s", tooltip.c_str());
+		}
+	}
+
+	void renderTagDeleteConfirmation(
+		shared_ptr<core::AgentTagRegistry> const& registry)
+	{
+		if (gPendingAgentTagDelete.openRequested)
+		{
+			ImGui::OpenPopup(DeletePopupId);
+			gPendingAgentTagDelete.openRequested = false;
+		}
+		if (gPendingAgentTagDelete.active && !ImGui::IsPopupOpen(DeletePopupId))
+		{
+			cancelPendingAgentTagDelete();
+			return;
+		}
+		if (!ImGui::BeginPopupModal(DeletePopupId, nullptr,
+			ImGuiWindowFlags_AlwaysAutoResize)) return;
+
+		if (!gPendingAgentTagDelete.active)
+		{
+			ImGui::CloseCurrentPopup();
+			ImGui::EndPopup();
+			return;
+		}
+		ImGui::TextUnformatted(gPendingAgentTagDelete.text.c_str());
+		ImGui::Separator();
+		if (ImGui::Button(ICON_FA_TRASH " Delete"))
+		{
+			string diagnostic;
+			if (!confirmPendingAgentTagDelete(registry, diagnostic))
+				core::addLogMessage("Tags", 0, core::LogLevel::Warning, diagnostic);
+			ImGui::CloseCurrentPopup();
+		}
+		ImGui::SameLine();
+		if (ImGui::Button(ICON_FA_TIMES " Cancel"))
+		{
+			cancelPendingAgentTagDelete();
+			ImGui::CloseCurrentPopup();
+		}
+		ImGui::EndPopup();
 	}
 
 	void renderAttachedRegistry(shared_ptr<core::Building> const& building,
@@ -212,18 +337,46 @@ namespace
 		if (ImGui::IsItemHovered()) ImGui::SetTooltip("Redo registry edit");
 
 		ImGui::SeparatorText("Tags");
-		for (auto const id : registry->getAgentTagIdsAlphabetically())
+		ImGui::SetNextItemWidth(-1.0f);
+		ImGui::InputTextWithHint("##agentTagRegistrySearch", "Search tags...",
+			gTagSearch.data(), gTagSearch.size());
+
+		auto const ids = registry->getAgentTagIdsAlphabetically();
+		bool anyVisible{ false };
+		ImGuiTableFlags const tableFlags = ImGuiTableFlags_SizingStretchSame
+			| ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersOuter
+			| ImGuiTableFlags_BordersV;
+		if (ImGui::BeginTable("AgentTags", 3, tableFlags))
 		{
-			auto const idScope = to_string(id.value);
-			ImGui::PushID(idScope.c_str());
-			renderTagNameEditor(registry, id);
-			auto const found = gTagNameEdits.find(id.value);
-			if (found != gTagNameEdits.end() && !found->second.diagnostic.empty())
-				ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.45f, 1.0f), "%s",
-					found->second.diagnostic.c_str());
-			ImGui::PopID();
+			ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
+			ImGui::TableSetupColumn("Loaded Agents", ImGuiTableColumnFlags_WidthFixed);
+			ImGui::TableSetupColumn("Delete", ImGuiTableColumnFlags_WidthFixed, 40.0f);
+			ImGui::TableHeadersRow();
+			for (auto const id : ids)
+			{
+				if (!agentTagNameMatchesFilter(registry->getAgentTagName(id),
+					gTagSearch.data())) continue;
+				anyVisible = true;
+				ImGui::TableNextRow();
+				ImGui::PushID(id.value);
+				ImGui::TableSetColumnIndex(0);
+				renderTagNameEditor(registry, id);
+				auto const found = gTagNameEdits.find(id.value);
+				if (found != gTagNameEdits.end() && !found->second.diagnostic.empty())
+					ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.45f, 1.0f), "%s",
+						found->second.diagnostic.c_str());
+				ImGui::TableSetColumnIndex(1);
+				ImGui::Text("%llu", static_cast<unsigned long long>(
+					loadedAgentTagUsageCount(*registry, id)));
+				ImGui::TableSetColumnIndex(2);
+				renderTagDeleteCell(registry, id);
+				ImGui::PopID();
+			}
+			if (gAddingTag) renderTagAddRow(registry);
+			ImGui::EndTable();
 		}
-		if (gAddingTag) renderTagAddRow(registry);
+		if (!ids.empty() && !anyVisible)
+			ImGui::TextDisabled("No tags match the search.");
 
 		ImGui::BeginDisabled(gAddingTag);
 		if (ImGui::Button(ICON_FA_PLUS " Add Tag"))
@@ -237,7 +390,114 @@ namespace
 		ImGui::SameLine();
 		auto const count = registry->getAgentTagCount();
 		ImGui::TextDisabled("%u tag%s", count, count == 1 ? "" : "s");
+		ImGui::TextDisabled("Closed Buildings cannot be counted and may retain stale tag references after deletion.");
+		renderTagDeleteConfirmation(registry);
 	}
+}
+
+bool agentTagNameMatchesFilter(string const& name, string const& filter)
+{
+	if (filter.empty()) return true;
+	auto display = "#" + name;
+	auto needle = filter;
+	auto lower = [](unsigned char value) { return static_cast<char>(tolower(value)); };
+	transform(display.begin(), display.end(), display.begin(), lower);
+	transform(needle.begin(), needle.end(), needle.begin(), lower);
+	return display.find(needle) != string::npos;
+}
+
+uint64_t loadedAgentTagUsageCount(core::AgentTagRegistry const& registry,
+	core::AgentTagId id)
+{
+	return registry.getLoadedAgentTagUsageCount(id);
+}
+
+bool agentTagDeleteRequiresConfirmation(core::AgentTagRegistry const& registry,
+	core::AgentTagId id)
+{
+	return loadedAgentTagUsageCount(registry, id) > 0;
+}
+
+string agentTagDeleteConfirmationText(core::AgentTagRegistry const& registry,
+	core::AgentTagId id)
+{
+	auto const usage = registry.getLoadedAgentTagUsage(id);
+	uint64_t total{ 0 };
+	for (auto const& entry : usage) total += entry.agentCount;
+
+	ostringstream text;
+	text << "Delete Agent tag #" << registry.getAgentTagName(id) << "?\n"
+		<< total << " loaded Agent" << (total == 1 ? " uses" : "s use")
+		<< " this tag.";
+	for (auto const& entry : usage)
+	{
+		if (!entry.building || entry.agentCount == 0) continue;
+		text << "\n- " << entry.building->getName() << ": " << entry.agentCount
+			<< " Agent" << (entry.agentCount == 1 ? "" : "s");
+	}
+	text << "\nAll loaded assignments will be removed."
+		<< "\nClosed Buildings cannot be counted and may retain stale references.";
+	return text.str();
+}
+
+void requestAgentTagDelete(shared_ptr<core::AgentTagRegistry> const& registry,
+	core::AgentTagId id)
+{
+	if (!registry) return;
+	try
+	{
+		if (!agentTagDeleteRequiresConfirmation(*registry, id))
+		{
+			string diagnostic;
+			if (!commitAgentTagDelete(registry, id, diagnostic))
+				core::addLogMessage("Tags", 0, core::LogLevel::Warning, diagnostic);
+			return;
+		}
+		gPendingAgentTagDelete.registry = registry;
+		gPendingAgentTagDelete.id = id;
+		gPendingAgentTagDelete.loadedAgentCount
+			= loadedAgentTagUsageCount(*registry, id);
+		gPendingAgentTagDelete.text = agentTagDeleteConfirmationText(*registry, id);
+		gPendingAgentTagDelete.active = true;
+		gPendingAgentTagDelete.openRequested = true;
+	}
+	catch (std::exception const& error)
+	{
+		core::addLogMessage("Tags", 0, core::LogLevel::Warning, error.what());
+	}
+}
+
+bool agentTagDeletePending(core::AgentTagId* id, uint64_t* loadedAgentCount)
+{
+	if (id) *id = gPendingAgentTagDelete.active
+		? gPendingAgentTagDelete.id : core::AgentTagId{};
+	if (loadedAgentCount) *loadedAgentCount = gPendingAgentTagDelete.active
+		? gPendingAgentTagDelete.loadedAgentCount : 0;
+	return gPendingAgentTagDelete.active;
+}
+
+bool confirmPendingAgentTagDelete(
+	shared_ptr<core::AgentTagRegistry> const& registry, string& diagnostic)
+{
+	if (!gPendingAgentTagDelete.active)
+	{
+		diagnostic = "No Agent tag deletion is awaiting confirmation";
+		return false;
+	}
+	auto const expectedRegistry = gPendingAgentTagDelete.registry.lock();
+	auto const id = gPendingAgentTagDelete.id;
+	cancelPendingAgentTagDelete();
+	if (!registry || registry != expectedRegistry)
+	{
+		diagnostic = "The pending Agent tag deletion belongs to another registry";
+		return false;
+	}
+	return commitAgentTagDelete(registry, id, diagnostic);
+}
+
+void cancelPendingAgentTagDelete()
+{
+	gPendingAgentTagDelete = PendingAgentTagDelete{};
 }
 
 DocumentHistory& agentTagRegistryDocumentHistory(
@@ -259,6 +519,11 @@ core::AgentTagId commitAgentTagAdd(shared_ptr<core::AgentTagRegistry> const& reg
 		return {};
 	}
 	auto undo = captureRegistrySnapshot(registry);
+	if (!undo)
+	{
+		diagnostic = "Could not capture the Agent tag registry before adding a tag";
+		return {};
+	}
 	try
 	{
 		auto const id = registry->addAgentTag(name);
@@ -282,6 +547,11 @@ bool commitAgentTagRename(shared_ptr<core::AgentTagRegistry> const& registry,
 		return false;
 	}
 	auto undo = captureRegistrySnapshot(registry);
+	if (!undo)
+	{
+		diagnostic = "Could not capture the Agent tag registry before renaming a tag";
+		return false;
+	}
 	if (!registry->renameAgentTag(id, name, &diagnostic)) return false;
 	agentTagRegistryDocumentHistory(registry).commit(std::move(undo));
 	return true;
@@ -296,7 +566,24 @@ bool commitAgentTagDelete(shared_ptr<core::AgentTagRegistry> const& registry,
 		diagnostic = "There is no Agent tag registry from which to delete a tag";
 		return false;
 	}
-	auto undo = captureRegistrySnapshot(registry);
+	vector<core::Building*> participants;
+	try
+	{
+		for (auto const& usage : registry->getLoadedAgentTagUsage(id))
+			if (usage.building && usage.agentCount > 0)
+				participants.push_back(const_cast<core::Building*>(usage.building));
+	}
+	catch (std::exception const& error)
+	{
+		diagnostic = error.what();
+		return false;
+	}
+	auto undo = captureRegistrySnapshot(registry, participants, id);
+	if (!undo)
+	{
+		diagnostic = "Could not capture the registry and loaded Buildings before deleting the Agent tag";
+		return false;
+	}
 	if (!registry->deleteAgentTag(id, &diagnostic)) return false;
 	agentTagRegistryDocumentHistory(registry).commit(std::move(undo));
 	return true;
@@ -311,17 +598,103 @@ bool restoreAgentTagRegistrySnapshot(shared_ptr<core::AgentTagRegistry> const& r
 		if (diagnostic) *diagnostic = "There is no Agent tag registry to restore";
 		return false;
 	}
-	auto current = captureRegistrySnapshot(registry);
-	if (!current) return false;
 	auto& history = agentTagRegistryDocumentHistory(registry);
+	auto const& source = redo ? history.redoEntries() : history.undoEntries();
+	if (source.empty()) return false;
+	auto targetContext = dynamic_pointer_cast<RegistryEditSnapshotContext>(
+		source.back().context);
+	vector<core::Building*> participants;
+	if (targetContext)
+	{
+		participants.reserve(targetContext->buildings.size());
+		for (auto const& entry : targetContext->buildings)
+			participants.push_back(entry.building);
+		// A tag restored by undo may have gained new loaded assignments before
+		// redo. Include those Buildings in the inverse snapshot so redo clears
+		// them and the following undo can restore them without stale references.
+		if (targetContext->affectedTag
+			&& registry->lookupAgentTag(targetContext->affectedTag))
+		{
+			for (auto const& usage : registry->getLoadedAgentTagUsage(
+				targetContext->affectedTag))
+			{
+				auto* loaded = const_cast<core::Building*>(usage.building);
+				if (loaded && usage.agentCount > 0
+					&& find(participants.begin(), participants.end(), loaded)
+						== participants.end())
+					participants.push_back(loaded);
+			}
+		}
+	}
+	auto current = captureRegistrySnapshot(registry, participants,
+		targetContext ? targetContext->affectedTag : core::AgentTagId{});
+	if (!current) return false;
+
 	try
 	{
 		auto restore = [&registry](DocumentSnapshot const& target)
 		{
-			auto serializer = core::YamlSerializer::fromString(target.yaml);
-			serializer->deserialize();
-			core::SerializationWorkData workData;
-			return registry->deserialize(*serializer, workData);
+			// Parse and validate every document into temporary objects before the
+			// shared live instance or any loaded Building is changed.
+			auto replacement = core::AgentTagRegistry::create();
+			auto registryReader = core::YamlSerializer::fromString(target.yaml);
+			registryReader->deserialize();
+			core::SerializationWorkData registryWork;
+			if (!replacement->deserialize(*registryReader, registryWork)) return false;
+
+			auto context = dynamic_pointer_cast<RegistryEditSnapshotContext>(
+				target.context);
+			vector<shared_ptr<core::Building>> validatedBuildings;
+			if (context)
+			{
+				validatedBuildings.reserve(context->buildings.size());
+				for (auto const& entry : context->buildings)
+				{
+					if (!registry->hasLoadedBuilding(entry.building))
+						throw runtime_error(
+							"A Building participating in this registry history entry is no longer loaded");
+					auto candidate = make_shared<core::Building>("Loading", 1, 1);
+					auto reader = core::YamlSerializer::fromString(entry.yaml);
+					reader->deserialize();
+					core::SerializationWorkData work;
+					if (!candidate->deserialize(*reader, work)) return false;
+					candidate->resolveAgentTagRegistry(replacement);
+					validatedBuildings.push_back(std::move(candidate));
+				}
+			}
+
+			// A redo may encounter assignments added since undo. Route the
+			// deletion through the core cascade before installing the exact target
+			// snapshots, so every currently loaded assignment is still removed.
+			if (context && context->affectedTag
+				&& registry->lookupAgentTag(context->affectedTag)
+				&& !replacement->lookupAgentTag(context->affectedTag))
+			{
+				string deleteDiagnostic;
+				if (!registry->deleteAgentTag(context->affectedTag, &deleteDiagnostic))
+					throw runtime_error(deleteDiagnostic);
+			}
+
+			// Validation succeeded as a whole. Restore the registry first, then
+			// each dependent Building snapshot and reattach the same shared object.
+			auto liveReader = core::YamlSerializer::fromString(target.yaml);
+			liveReader->deserialize();
+			core::SerializationWorkData liveRegistryWork;
+			if (!registry->deserialize(*liveReader, liveRegistryWork)) return false;
+			if (context)
+			{
+				for (auto const& entry : context->buildings)
+				{
+					auto reader = core::YamlSerializer::fromString(entry.yaml);
+					reader->deserialize();
+					core::SerializationWorkData work;
+					if (!entry.building->deserialize(*reader, work)) return false;
+					entry.building->resolveAgentTagRegistry(registry);
+					if (entry.modified) entry.building->markModified();
+					if (entry.paused) entry.building->pauseSimulation();
+				}
+			}
+			return true;
 		};
 		auto const restored = redo
 			? history.redo(std::move(current), restore)
@@ -385,6 +758,8 @@ bool attachedAgentTagRegistryIsModified(shared_ptr<const core::Building> const& 
 void resetTagsPanelState()
 {
 	gTagNameEdits.clear();
+	gTagSearch.fill('\0');
+	cancelPendingAgentTagDelete();
 	gAddingTag = false;
 	gFocusAddTag = false;
 	loadIntoBuffer(gNewTagName, "");

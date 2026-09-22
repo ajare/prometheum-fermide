@@ -9,6 +9,7 @@
 #include <stdexcept>
 #include <utility>
 
+#include "core/Building.h"
 #include "core/SerializationException.h"
 #include "core/YamlSerializer.h"
 
@@ -127,6 +128,45 @@ namespace core
 		return tag->getName();
 	}
 
+	void AgentTagRegistry::registerBuilding(Building& building)
+	{
+		mLoadedBuildings.insert(&building);
+	}
+
+	void AgentTagRegistry::unregisterBuilding(Building& building)
+	{
+		mLoadedBuildings.erase(&building);
+	}
+
+	std::vector<LoadedAgentTagUsage> AgentTagRegistry::getLoadedAgentTagUsage(
+		AgentTagId id) const
+	{
+		if (!mTags.find(id))
+			throw std::out_of_range(std::format(
+				"Agent tag {} is not defined in this registry", id.value));
+
+		std::vector<LoadedAgentTagUsage> usage;
+		usage.reserve(mLoadedBuildings.size());
+		for (auto const* building : mLoadedBuildings)
+		{
+			if (!building) continue;
+			usage.push_back({ building, building->countAgentTagAssignments(id) });
+		}
+		return usage;
+	}
+
+	uint64_t AgentTagRegistry::getLoadedAgentTagUsageCount(AgentTagId id) const
+	{
+		uint64_t count{ 0 };
+		for (auto const& entry : getLoadedAgentTagUsage(id)) count += entry.agentCount;
+		return count;
+	}
+
+	bool AgentTagRegistry::hasLoadedBuilding(Building const* building) const
+	{
+		return building && mLoadedBuildings.contains(const_cast<Building*>(building));
+	}
+
 	bool AgentTagRegistry::nameIsUnique(std::string const& name, AgentTagId except) const
 	{
 		for (auto const& [id, tag] : mTags.entries())
@@ -177,12 +217,35 @@ namespace core
 
 	bool AgentTagRegistry::deleteAgentTag(AgentTagId id, std::string* diagnostic)
 	{
-		if (!mTags.find(id))
+		auto reject = [diagnostic](std::string reason)
 		{
-			if (diagnostic)
-				*diagnostic = std::format("Agent tag {} is not defined in this registry", id.value);
+			if (diagnostic) *diagnostic = std::move(reason);
 			return false;
+		};
+		auto const* tag = mTags.find(id);
+		if (!tag)
+			return reject(std::format(
+				"Agent tag {} is not defined in this registry", id.value));
+
+		// Judge every dependent Building before mutating any of them. Assignment
+		// changes are paused-only, and a shared delete must never clear one
+		// Building before discovering that another cannot participate.
+		for (auto const* building : mLoadedBuildings)
+		{
+			if (building && building->countAgentTagAssignments(id) > 0
+				&& !building->isSimulationPaused())
+			{
+				return reject(std::format(
+					"Pause Building '{}' before deleting Agent tag #{}",
+					building->getName(), tag->getName()));
+			}
 		}
+
+		// Every loaded assignment goes before the definition. From the first
+		// write onward no loaded Building can be left with a stale reference, and
+		// no later step can refuse after the complete preflight above.
+		for (auto* building : mLoadedBuildings)
+			if (building) building->clearAgentTagAssignments(id);
 		mTags.remove(id);
 		modify();
 		if (diagnostic) diagnostic->clear();

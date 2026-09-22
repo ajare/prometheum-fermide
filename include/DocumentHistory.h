@@ -8,13 +8,23 @@
 #include <cstdint>
 #include <deque>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
+
+// Optional document-specific state lets an editor transaction coordinate
+// dependent documents while the reusable history remains unaware of their
+// concrete types. Ordinary Building snapshots leave this empty.
+struct DocumentSnapshotContext
+{
+	virtual ~DocumentSnapshotContext() = default;
+};
 
 struct DocumentSnapshot
 {
 	std::string yaml;
 	uint64_t stateId{ 0 };
+	std::shared_ptr<DocumentSnapshotContext> context;
 };
 
 class DocumentHistory

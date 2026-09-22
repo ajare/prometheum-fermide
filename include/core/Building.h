@@ -37,6 +37,7 @@ namespace core
 	class Building : public Serializable
 	{
 		friend class Agent;
+		friend class AgentTagRegistry;
 		friend class Graph;
 		// The coordinator owns no entities; it drives the registries below and
 		// the private machinery beside them on the Building's behalf (ADR 0004).
@@ -470,6 +471,8 @@ namespace core
 		// transactional: no Agent assignment is rewritten or silently dropped.
 		bool agentTagAssignmentsAreValid(AgentTagRegistry const& registry,
 			std::string* diagnostic = nullptr) const;
+		uint32_t countAgentTagAssignments(AgentTagId id) const;
+		void clearAgentTagAssignments(AgentTagId id);
 
 		// Case-sensitive name lookup across the groups this Building owns, with
 		// one group optionally excluded so a group renaming itself to the name

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -39,12 +40,33 @@ bool commitAgentTagRename(
 	std::shared_ptr<core::AgentTagRegistry> const& registry, core::AgentTagId id,
 	std::string const& name, std::string& diagnostic);
 
-// Deletion is not presented by this ticket's panel, but the registry operation
-// and editor transaction are available so ID non-reuse is enforceable and
-// testable before the confirmed deletion workflow is added.
+// Deletes a tag and every assignment in loaded dependent Buildings as one
+// registry-history transaction. A refusal changes neither registry nor
+// Building state and creates no history entry.
 bool commitAgentTagDelete(
 	std::shared_ptr<core::AgentTagRegistry> const& registry, core::AgentTagId id,
 	std::string& diagnostic);
+
+// Case-insensitive name filtering used by the Tags panel. The visible '#'
+// prefix participates in matching without becoming part of the stored name.
+bool agentTagNameMatchesFilter(std::string const& name, std::string const& filter);
+uint64_t loadedAgentTagUsageCount(core::AgentTagRegistry const& registry,
+	core::AgentTagId id);
+
+// Used tags are confirmed; unused tags delete immediately. Every confirmation
+// reports aggregate loaded usage and warns that closed Buildings are unknown.
+bool agentTagDeleteRequiresConfirmation(core::AgentTagRegistry const& registry,
+	core::AgentTagId id);
+std::string agentTagDeleteConfirmationText(core::AgentTagRegistry const& registry,
+	core::AgentTagId id);
+void requestAgentTagDelete(
+	std::shared_ptr<core::AgentTagRegistry> const& registry, core::AgentTagId id);
+bool agentTagDeletePending(core::AgentTagId* id = nullptr,
+	uint64_t* loadedAgentCount = nullptr);
+bool confirmPendingAgentTagDelete(
+	std::shared_ptr<core::AgentTagRegistry> const& registry,
+	std::string& diagnostic);
+void cancelPendingAgentTagDelete();
 
 bool restoreAgentTagRegistrySnapshot(
 	std::shared_ptr<core::AgentTagRegistry> const& registry, bool redo,

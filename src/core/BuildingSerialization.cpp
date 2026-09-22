@@ -885,6 +885,7 @@ namespace core
 
 		resetForDeserialization(std::move(name), cellsWide, decksHigh);
 		mAgentTagRegistryReference = std::move(agentTagRegistryReference);
+		if (mAgentTagRegistry) mAgentTagRegistry->unregisterBuilding(*this);
 		mAgentTagRegistry.reset();
 		// resetForDeserialization deliberately leaves Agent groups alone: the
 		// reset-and-replay paths (Layer deletion, Room resize, and the rest) reuse

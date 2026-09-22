@@ -6,7 +6,7 @@ using namespace std;
 
 DocumentSnapshot DocumentHistory::capture(string serializedDocument) const
 {
-	return { std::move(serializedDocument), mCurrentStateId };
+	return { std::move(serializedDocument), mCurrentStateId, nullptr };
 }
 
 void DocumentHistory::append(deque<DocumentSnapshot>& history, DocumentSnapshot snapshot)

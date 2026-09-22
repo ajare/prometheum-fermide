@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -12,6 +13,14 @@
 
 namespace core
 {
+	class Building;
+
+	struct LoadedAgentTagUsage
+	{
+		Building const* building{ nullptr };
+		uint32_t agentCount{ 0 };
+	};
+
 	// A separately persisted namespace for Agent tags. IDs belong to this
 	// registry, remain stable across rename, and are never reused.
 	class AgentTagRegistry : public Serializable
@@ -19,6 +28,9 @@ namespace core
 		std::string mUuid;
 		EntityRegistry<AgentTagId, AgentTag> mTags;
 		uint64_t mNextPropertyRevision{ 1 };
+		// Buildings register while this shared registry is attached. Raw pointers
+		// are safe here because Building unregisters before destruction.
+		std::set<Building*> mLoadedBuildings;
 
 		bool childrenModified() const override;
 		void serializeImpl(Serializer& serializer, SerializationWorkData& workData) const override;
@@ -26,6 +38,10 @@ namespace core
 
 		explicit AgentTagRegistry(std::string uuid);
 		bool nameIsUnique(std::string const& name, AgentTagId except = {}) const;
+		void registerBuilding(Building& building);
+		void unregisterBuilding(Building& building);
+
+		friend class Building;
 
 	public:
 		static std::shared_ptr<AgentTagRegistry> create();
@@ -41,6 +57,12 @@ namespace core
 		std::vector<AgentTagId> getAgentTagIdsAlphabetically() const;
 		AgentTag const* lookupAgentTag(AgentTagId id) const;
 		std::string const& getAgentTagName(AgentTagId id) const;
+
+		// Live usage is derived from every loaded Building sharing this exact
+		// registry instance. Closed Buildings are deliberately unknowable.
+		std::vector<LoadedAgentTagUsage> getLoadedAgentTagUsage(AgentTagId id) const;
+		uint64_t getLoadedAgentTagUsageCount(AgentTagId id) const;
+		bool hasLoadedBuilding(Building const* building) const;
 
 		AgentTagId addAgentTag(std::string const& name);
 		bool renameAgentTag(AgentTagId id, std::string const& name,
