@@ -209,6 +209,7 @@ add_executable(prometheum-fermide-headless
     src/headless/DoorTwoSidedButtonSmokeChecks.cpp
     src/headless/DocumentHistorySmokeChecks.cpp
     src/headless/AgentTagRegistrySmokeChecks.cpp
+    src/headless/AgentTagRegistryChangeSmokeChecks.cpp
     src/headless/AgentTagAssignmentSmokeChecks.cpp
     src/headless/AgentTagDeleteSmokeChecks.cpp
     src/headless/AgentTagCoordinationSmokeChecks.cpp

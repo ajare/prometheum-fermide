@@ -231,9 +231,10 @@ namespace core
 		Building& building, std::filesystem::path const& buildingFilepath,
 		std::filesystem::path const& registryFilepath)
 	{
-		if (building.hasAgentTagRegistryReference())
+		if (building.getAgentTagAssignmentCount() != 0)
 		{
-			throw SerializationException("The Building already references an Agent tag registry");
+			throw SerializationException(
+				"Cannot switch Agent tag registries while Agent tag assignments exist; use the confirmed destructive action to clear assignments and samples first");
 		}
 		requireAgentTagRegistryFilename(registryFilepath);
 		auto const savedBuilding = requireSavedBuildingPath(buildingFilepath);
@@ -248,6 +249,27 @@ namespace core
 
 		auto registry = loadSharedRegistry(canonicalRegistry);
 		building.attachAgentTagRegistry(canonicalRegistry.filename().string(), registry);
+		return registry;
+	}
+
+	std::shared_ptr<AgentTagRegistry> selectAndAttachAgentTagRegistryClearingAssignments(
+		Building& building, std::filesystem::path const& buildingFilepath,
+		std::filesystem::path const& registryFilepath)
+	{
+		requireAgentTagRegistryFilename(registryFilepath);
+		auto const savedBuilding = requireSavedBuildingPath(buildingFilepath);
+		auto const canonicalRegistry = requireCanonicalRegularFile(
+			registryFilepath, "Agent tag registry");
+		requireAgentTagRegistryFilename(canonicalRegistry);
+		if (canonicalRegistry.parent_path() != savedBuilding.parent_path())
+		{
+			throw SerializationException(
+				"An Agent tag registry must be in the same directory as its Building");
+		}
+
+		auto registry = loadSharedRegistry(canonicalRegistry);
+		building.attachAgentTagRegistryAndClearAssignments(
+			canonicalRegistry.filename().string(), registry);
 		return registry;
 	}
 

@@ -28,6 +28,7 @@ namespace
 	constexpr size_t NameBufferSize{ core::AgentTag::MaxNameCharacters + 1 };
 	constexpr size_t SearchBufferSize{ 64 };
 	char const* const DeletePopupId{ "Delete Agent tag?" };
+	char const* const RegistryChangePopupId{ "Clear Agent tags and change registry?" };
 
 	struct TagNameEdit
 	{
@@ -97,6 +98,17 @@ namespace
 		bool openRequested{ false };
 	};
 
+	struct PendingAgentTagRegistryChange
+	{
+		weak_ptr<core::Building> building;
+		string buildingFilepath;
+		string registryFilepath;
+		string consequence;
+		bool detach{ false };
+		bool active{ false };
+		bool openRequested{ false };
+	};
+
 	map<string, DocumentHistory> gRegistryHistories;
 	map<uint64_t, TagNameEdit> gTagNameEdits;
 	map<uint64_t, TagColourEdit> gTagColourEdits;
@@ -104,6 +116,7 @@ namespace
 	map<uint64_t, TagHeightEdit> gTagHeightEdits;
 	array<char, SearchBufferSize> gTagSearch{};
 	PendingAgentTagDelete gPendingAgentTagDelete;
+	PendingAgentTagRegistryChange gPendingAgentTagRegistryChange;
 	bool gAddingTag{ false };
 	bool gFocusAddTag{ false };
 	array<char, NameBufferSize> gNewTagName{};
@@ -174,6 +187,36 @@ namespace
 		if (buildingFilepath.empty() || !building.hasAgentTagRegistryReference()) return {};
 		return filesystem::path(buildingFilepath).parent_path()
 			/ building.getAgentTagRegistryFilename();
+	}
+
+	string registryChangeConsequence(core::Building const& building, bool detach,
+		string const& registryFilepath)
+	{
+		auto const assignments = building.getAgentTagAssignmentCount();
+		auto const agents = building.getAgentTagAssignedAgentCount();
+		auto const samples = building.getAgentTagSampleCount();
+		ostringstream text;
+		text << (detach ? "Detach" : "Switch") << " Agent tag registry?\n"
+			<< "This destructive action will:\n"
+			<< "- remove all " << assignments << " Agent tag assignment"
+			<< (assignments == 1 ? "" : "s") << " from " << agents << " Agent"
+			<< (agents == 1 ? "" : "s") << "\n"
+			<< "- clear all " << samples << " sampled Agent propert"
+			<< (samples == 1 ? "y" : "ies") << "\n";
+		if (detach)
+		{
+			text << "- detach " << building.getAgentTagRegistryFilename() << "\n"
+				<< "The registry file will not be deleted or renamed.";
+		}
+		else
+		{
+			text << "- detach " << building.getAgentTagRegistryFilename()
+				<< " and attach " << filesystem::path(registryFilepath).filename().string()
+				<< " as the replacement registry\n"
+				<< "Neither registry file will be deleted or renamed.\n"
+				<< "Agent tag IDs will not be reinterpreted.";
+		}
+		return text.str();
 	}
 
 	void renderTagNameEditor(shared_ptr<core::AgentTagRegistry> const& registry,
@@ -560,20 +603,113 @@ namespace
 		ImGui::EndPopup();
 	}
 
-	void renderAttachedRegistry(shared_ptr<core::Building> const& building,
-		string const& buildingFilepath)
+	bool renderRegistryChangeConfirmation()
+	{
+		if (gPendingAgentTagRegistryChange.openRequested)
+		{
+			ImGui::OpenPopup(RegistryChangePopupId);
+			gPendingAgentTagRegistryChange.openRequested = false;
+		}
+		if (gPendingAgentTagRegistryChange.active
+			&& !ImGui::IsPopupOpen(RegistryChangePopupId))
+		{
+			cancelPendingAgentTagRegistryChange();
+			return false;
+		}
+		if (!ImGui::BeginPopupModal(RegistryChangePopupId, nullptr,
+			ImGuiWindowFlags_AlwaysAutoResize)) return false;
+
+		if (!gPendingAgentTagRegistryChange.active)
+		{
+			ImGui::CloseCurrentPopup();
+			ImGui::EndPopup();
+			return false;
+		}
+		ImGui::TextUnformatted(gPendingAgentTagRegistryChange.consequence.c_str());
+		ImGui::Separator();
+		bool changed{ false };
+		if (ImGui::Button(ICON_FA_EXCLAMATION_TRIANGLE " Confirm destructive change"))
+		{
+			string diagnostic;
+			changed = confirmPendingAgentTagRegistryChange(diagnostic);
+			if (!changed && !diagnostic.empty())
+				core::addLogMessage("Tags", 0, core::LogLevel::Warning, diagnostic);
+			ImGui::CloseCurrentPopup();
+		}
+		ImGui::SameLine();
+		if (ImGui::Button(ICON_FA_TIMES " Cancel"))
+		{
+			cancelPendingAgentTagRegistryChange();
+			ImGui::CloseCurrentPopup();
+		}
+		ImGui::EndPopup();
+		return changed;
+	}
+
+	bool renderAttachedRegistry(shared_ptr<core::Building> const& building,
+		string const& buildingFilepath,
+		AgentTagRegistryPathSelector const& selectRegistryPath)
 	{
 		auto const& registry = building->getAgentTagRegistry();
 		if (!registry)
 		{
 			ImGui::TextDisabled("The referenced Agent tag registry is not loaded.");
-			return;
+			return false;
 		}
 
 		ImGui::TextUnformatted("Agent tag registry");
 		ImGui::SameLine();
 		ImGui::Text("%s", building->getAgentTagRegistryFilename().c_str());
 		ImGui::TextDisabled("UUID %s", registry->getUuid().c_str());
+
+		string switchDiagnostic;
+		auto canSwitch = canSelectAgentTagRegistry(
+			building, buildingFilepath, &switchDiagnostic);
+		if (!selectRegistryPath)
+		{
+			canSwitch = false;
+			switchDiagnostic = "Registry file selection is unavailable";
+		}
+		ImGui::BeginDisabled(!canSwitch);
+		auto const switchClicked = ImGui::Button("Switch registry");
+		ImGui::EndDisabled();
+		if (!canSwitch && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+			ImGui::SetTooltip("%s", switchDiagnostic.c_str());
+		ImGui::SameLine();
+		auto const detachClicked = ImGui::Button("Detach registry");
+
+		if (switchClicked)
+		{
+			auto selectedPath = selectRegistryPath();
+			if (selectedPath)
+			{
+				if (building->getAgentTagAssignmentCount() != 0)
+				{
+					requestAgentTagRegistrySwitch(
+						building, buildingFilepath, *selectedPath);
+				}
+				else
+				{
+					string diagnostic;
+					if (commitAgentTagRegistrySwitch(building, buildingFilepath,
+						*selectedPath, diagnostic)) return true;
+					if (!diagnostic.empty())
+						core::addLogMessage("Tags", 0, core::LogLevel::Warning, diagnostic);
+				}
+			}
+		}
+		if (detachClicked)
+		{
+			if (building->getAgentTagAssignmentCount() != 0)
+				requestAgentTagRegistryDetach(building);
+			else
+			{
+				string diagnostic;
+				if (commitAgentTagRegistryDetach(building, diagnostic)) return true;
+				if (!diagnostic.empty())
+					core::addLogMessage("Tags", 0, core::LogLevel::Warning, diagnostic);
+			}
+		}
 
 		auto& history = agentTagRegistryDocumentHistory(registry);
 		string editDiagnostic;
@@ -681,7 +817,223 @@ namespace
 				editDiagnostic.c_str());
 		ImGui::TextDisabled("Closed Buildings cannot be counted and may retain stale tag references after deletion.");
 		renderTagDeleteConfirmation(registry);
+		return renderRegistryChangeConfirmation();
 	}
+}
+
+bool commitAgentTagRegistryDetach(shared_ptr<core::Building> const& building,
+	string& diagnostic)
+{
+	diagnostic.clear();
+	if (!building || !building->hasAgentTagRegistryReference())
+	{
+		diagnostic = "There is no Agent tag registry to detach";
+		return false;
+	}
+	auto undo = captureDocumentSnapshot(building);
+	if (!undo)
+	{
+		diagnostic = "Could not capture the Building before detaching its Agent tag registry";
+		return false;
+	}
+	try
+	{
+		auto const filename = building->getAgentTagRegistryFilename();
+		building->detachAgentTagRegistry();
+		commitDocumentEdit(std::move(undo));
+		resetTagsPanelState();
+		core::addLogMessage("Tags", 0, core::LogLevel::Info,
+			"Detached Agent tag registry " + filename + " without changing its file");
+		return true;
+	}
+	catch (std::exception const& error)
+	{
+		diagnostic = error.what();
+		return false;
+	}
+}
+
+bool commitAgentTagRegistryDetachClearingAssignments(
+	shared_ptr<core::Building> const& building, string& diagnostic)
+{
+	diagnostic.clear();
+	if (!building || !building->hasAgentTagRegistryReference())
+	{
+		diagnostic = "There is no Agent tag registry to detach";
+		return false;
+	}
+	auto undo = captureDocumentSnapshot(building);
+	if (!undo)
+	{
+		diagnostic = "Could not capture the Building before clearing Agent tags and detaching the registry";
+		return false;
+	}
+	try
+	{
+		auto const filename = building->getAgentTagRegistryFilename();
+		building->detachAgentTagRegistryAndClearAssignments();
+		commitDocumentEdit(std::move(undo));
+		resetTagsPanelState();
+		core::addLogMessage("Tags", 0, core::LogLevel::Info,
+			"Cleared all Agent tag assignments and samples, then detached "
+			+ filename + " without changing its file");
+		return true;
+	}
+	catch (std::exception const& error)
+	{
+		diagnostic = error.what();
+		return false;
+	}
+}
+
+bool commitAgentTagRegistrySwitch(shared_ptr<core::Building> const& building,
+	string const& buildingFilepath, string const& registryFilepath,
+	string& diagnostic)
+{
+	diagnostic.clear();
+	if (!building)
+	{
+		diagnostic = "No Building is open";
+		return false;
+	}
+	auto undo = captureDocumentSnapshot(building);
+	if (!undo)
+	{
+		diagnostic = "Could not capture the Building before switching Agent tag registries";
+		return false;
+	}
+	try
+	{
+		auto const previousFilename = building->hasAgentTagRegistryReference()
+			? building->getAgentTagRegistryFilename() : string{};
+		auto const previousUuid = building->hasAgentTagRegistryReference()
+			? building->getExpectedAgentTagRegistryUuid() : string{};
+		auto registry = core::selectAndAttachAgentTagRegistry(
+			*building, buildingFilepath, registryFilepath);
+		if (building->getAgentTagRegistryFilename() == previousFilename
+			&& building->getExpectedAgentTagRegistryUuid() == previousUuid)
+		{
+			diagnostic = "The selected Agent tag registry is already attached";
+			return false;
+		}
+		commitDocumentEdit(std::move(undo));
+		(void)agentTagRegistryDocumentHistory(registry);
+		resetTagsPanelState();
+		core::addLogMessage("Tags", 0, core::LogLevel::Info,
+			"Switched to Agent tag registry " + building->getAgentTagRegistryFilename()
+				+ " (" + registry->getUuid() + ")");
+		return true;
+	}
+	catch (std::exception const& error)
+	{
+		diagnostic = error.what();
+		return false;
+	}
+}
+
+bool commitAgentTagRegistrySwitchClearingAssignments(
+	shared_ptr<core::Building> const& building, string const& buildingFilepath,
+	string const& registryFilepath, string& diagnostic)
+{
+	diagnostic.clear();
+	if (!building)
+	{
+		diagnostic = "No Building is open";
+		return false;
+	}
+	auto undo = captureDocumentSnapshot(building);
+	if (!undo)
+	{
+		diagnostic = "Could not capture the Building before clearing Agent tags and switching registries";
+		return false;
+	}
+	try
+	{
+		auto const previousFilename = building->hasAgentTagRegistryReference()
+			? building->getAgentTagRegistryFilename() : string{};
+		auto const previousUuid = building->hasAgentTagRegistryReference()
+			? building->getExpectedAgentTagRegistryUuid() : string{};
+		auto registry = core::selectAndAttachAgentTagRegistryClearingAssignments(
+			*building, buildingFilepath, registryFilepath);
+		if (building->getAgentTagRegistryFilename() == previousFilename
+			&& building->getExpectedAgentTagRegistryUuid() == previousUuid)
+		{
+			diagnostic = "The selected Agent tag registry is already attached";
+			return false;
+		}
+		commitDocumentEdit(std::move(undo));
+		(void)agentTagRegistryDocumentHistory(registry);
+		resetTagsPanelState();
+		core::addLogMessage("Tags", 0, core::LogLevel::Info,
+			"Cleared all Agent tag assignments and samples, then switched to "
+			+ building->getAgentTagRegistryFilename() + " (" + registry->getUuid() + ")");
+		return true;
+	}
+	catch (std::exception const& error)
+	{
+		diagnostic = error.what();
+		return false;
+	}
+}
+
+void requestAgentTagRegistryDetach(shared_ptr<core::Building> const& building)
+{
+	if (!building || !building->hasAgentTagRegistryReference()
+		|| building->getAgentTagAssignmentCount() == 0) return;
+	gPendingAgentTagRegistryChange.building = building;
+	gPendingAgentTagRegistryChange.consequence
+		= registryChangeConsequence(*building, true, {});
+	gPendingAgentTagRegistryChange.detach = true;
+	gPendingAgentTagRegistryChange.active = true;
+	gPendingAgentTagRegistryChange.openRequested = true;
+}
+
+void requestAgentTagRegistrySwitch(shared_ptr<core::Building> const& building,
+	string buildingFilepath, string registryFilepath)
+{
+	if (!building || !building->hasAgentTagRegistryReference()
+		|| building->getAgentTagAssignmentCount() == 0) return;
+	gPendingAgentTagRegistryChange.building = building;
+	gPendingAgentTagRegistryChange.buildingFilepath = std::move(buildingFilepath);
+	gPendingAgentTagRegistryChange.registryFilepath = std::move(registryFilepath);
+	gPendingAgentTagRegistryChange.consequence = registryChangeConsequence(
+		*building, false, gPendingAgentTagRegistryChange.registryFilepath);
+	gPendingAgentTagRegistryChange.detach = false;
+	gPendingAgentTagRegistryChange.active = true;
+	gPendingAgentTagRegistryChange.openRequested = true;
+}
+
+bool agentTagRegistryChangePending(string* consequence)
+{
+	if (consequence) *consequence = gPendingAgentTagRegistryChange.active
+		? gPendingAgentTagRegistryChange.consequence : string{};
+	return gPendingAgentTagRegistryChange.active;
+}
+
+bool confirmPendingAgentTagRegistryChange(string& diagnostic)
+{
+	if (!gPendingAgentTagRegistryChange.active)
+	{
+		diagnostic = "No Agent tag registry change is awaiting confirmation";
+		return false;
+	}
+	auto pending = gPendingAgentTagRegistryChange;
+	cancelPendingAgentTagRegistryChange();
+	auto building = pending.building.lock();
+	if (!building)
+	{
+		diagnostic = "The Building awaiting an Agent tag registry change is no longer open";
+		return false;
+	}
+	if (pending.detach)
+		return commitAgentTagRegistryDetachClearingAssignments(building, diagnostic);
+	return commitAgentTagRegistrySwitchClearingAssignments(building,
+		pending.buildingFilepath, pending.registryFilepath, diagnostic);
+}
+
+void cancelPendingAgentTagRegistryChange()
+{
+	gPendingAgentTagRegistryChange = PendingAgentTagRegistryChange{};
 }
 
 bool agentTagNameMatchesFilter(string const& name, string const& filter)
@@ -1342,6 +1694,7 @@ void resetTagsPanelState()
 	gTagHeightEdits.clear();
 	gTagSearch.fill('\0');
 	cancelPendingAgentTagDelete();
+	cancelPendingAgentTagRegistryChange();
 	gAddingTag = false;
 	gFocusAddTag = false;
 	loadIntoBuffer(gNewTagName, "");
@@ -1387,8 +1740,6 @@ bool canSelectAgentTagRegistry(shared_ptr<const core::Building> const& building,
 		return false;
 	};
 	if (!building) return refuse("No Building is open");
-	if (building->hasAgentTagRegistryReference())
-		return refuse("This Building already has an Agent tag registry");
 	if (buildingFilepath.empty())
 		return refuse("Save the Building before selecting an Agent tag registry");
 
@@ -1404,10 +1755,7 @@ bool renderTagsPanel(shared_ptr<core::Building> const& building,
 	AgentTagRegistryPathSelector const& selectRegistryPath)
 {
 	if (building->hasAgentTagRegistryReference())
-	{
-		renderAttachedRegistry(building, buildingFilepath);
-		return false;
-	}
+		return renderAttachedRegistry(building, buildingFilepath, selectRegistryPath);
 
 	ImGui::TextDisabled("No Agent tag registry attached.");
 	string createDiagnostic;

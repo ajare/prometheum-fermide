@@ -24,6 +24,12 @@ namespace core
 		Building& building, std::filesystem::path const& buildingFilepath,
 		std::filesystem::path const& registryFilepath);
 
+	// The explicit destructive switch validates and loads the replacement before
+	// atomically clearing every assignment/sample and changing the reference.
+	std::shared_ptr<AgentTagRegistry> selectAndAttachAgentTagRegistryClearingAssignments(
+		Building& building, std::filesystem::path const& buildingFilepath,
+		std::filesystem::path const& registryFilepath);
+
 	// Resolves a persisted Building reference beside the Building document,
 	// verifies the registry UUID, and attaches it. Registries are shared by
 	// canonical file identity. Returns null when the Building has no reference.

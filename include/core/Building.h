@@ -501,6 +501,7 @@ namespace core
 		void reconcileAgentTagAssignments(AgentTagRegistry const& registry);
 		uint32_t countAgentTagAssignments(AgentTagId id) const;
 		void clearAgentTagAssignments(AgentTagId id);
+		void clearAllAgentTagAssignmentsAndSamples();
 		void addAgentTagWalkSpeedModifierSamples(AgentTagId id,
 			AgentWalkSpeedModifierProperty const& property);
 		void clearAgentTagWalkSpeedModifierSamples(AgentTagId id);
@@ -1105,8 +1106,19 @@ namespace core
 		std::string const& getAgentTagRegistryFilename() const;
 		std::string const& getExpectedAgentTagRegistryUuid() const;
 		std::shared_ptr<AgentTagRegistry> const& getAgentTagRegistry() const;
+		uint64_t getAgentTagAssignmentCount() const;
+		uint32_t getAgentTagAssignedAgentCount() const;
+		uint64_t getAgentTagSampleCount() const;
+
+		// Direct namespace changes are safe only while no Agent carries tag state.
+		// The explicit clearing variants are the destructive transaction used after
+		// editor confirmation; registry documents themselves are never changed.
 		void attachAgentTagRegistry(std::string filename,
 			std::shared_ptr<AgentTagRegistry> registry);
+		void attachAgentTagRegistryAndClearAssignments(std::string filename,
+			std::shared_ptr<AgentTagRegistry> registry);
+		void detachAgentTagRegistry();
+		void detachAgentTagRegistryAndClearAssignments();
 		void resolveAgentTagRegistry(std::shared_ptr<AgentTagRegistry> registry);
 
 		uint32_t getCellsWide() const;

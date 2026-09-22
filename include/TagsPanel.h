@@ -21,10 +21,38 @@ namespace core
 bool canCreateAgentTagRegistry(std::shared_ptr<const core::Building> const& building,
 	std::string const& buildingFilepath, std::string* diagnostic = nullptr);
 
-// Selection, like creation, is available only after the Building has a saved
-// location and while it has no registry reference.
+// Selection requires a saved Building location. It attaches an initial registry
+// or switches directly when there are no assignments.
 bool canSelectAgentTagRegistry(std::shared_ptr<const core::Building> const& building,
 	std::string const& buildingFilepath, std::string* diagnostic = nullptr);
+
+// Building-reference edits own Building undo entries, never registry-history
+// entries. Direct switching is refused while assignments exist. The clearing
+// variants are reserved for an explicitly confirmed destructive action.
+bool commitAgentTagRegistryDetach(
+	std::shared_ptr<core::Building> const& building, std::string& diagnostic);
+bool commitAgentTagRegistryDetachClearingAssignments(
+	std::shared_ptr<core::Building> const& building, std::string& diagnostic);
+bool commitAgentTagRegistrySwitch(
+	std::shared_ptr<core::Building> const& building,
+	std::string const& buildingFilepath, std::string const& registryFilepath,
+	std::string& diagnostic);
+bool commitAgentTagRegistrySwitchClearingAssignments(
+	std::shared_ptr<core::Building> const& building,
+	std::string const& buildingFilepath, std::string const& registryFilepath,
+	std::string& diagnostic);
+
+// Confirmation is state-free until confirm: requesting and cancelling change no
+// document and create no undo entry. The exposed text lists everything confirm
+// will clear and the resulting detach or replacement attachment.
+void requestAgentTagRegistryDetach(
+	std::shared_ptr<core::Building> const& building);
+void requestAgentTagRegistrySwitch(
+	std::shared_ptr<core::Building> const& building,
+	std::string buildingFilepath, std::string registryFilepath);
+bool agentTagRegistryChangePending(std::string* consequence = nullptr);
+bool confirmPendingAgentTagRegistryChange(std::string& diagnostic);
+void cancelPendingAgentTagRegistryChange();
 
 using AgentTagRegistryPathSelector
 	= std::function<std::optional<std::string>()>;
@@ -115,9 +143,9 @@ void forgetAgentTagRegistryDocument(
 	std::shared_ptr<core::AgentTagRegistry> const& registry);
 
 // Renders attached-registry status, independent save/undo controls, an
-// alphabetical create/rename editor, and create/select attachment actions.
-// Returns true after a registry was attached, allowing the caller to persist
-// the changed Building immediately.
+// alphabetical create/rename editor, and create/select/detach/switch actions.
+// Returns true after the Building reference changed, allowing the caller to
+// persist the changed Building immediately.
 bool renderTagsPanel(std::shared_ptr<core::Building> const& building,
 	std::string const& buildingFilepath,
 	AgentTagRegistryPathSelector const& selectRegistryPath = {});

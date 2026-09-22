@@ -147,6 +147,41 @@ namespace core
 		return mAgentTagRegistry;
 	}
 
+	uint64_t Building::getAgentTagAssignmentCount() const
+	{
+		uint64_t count{ 0 };
+		for (auto const& [agentId, agent] : mAgents.entries())
+		{
+			(void)agentId;
+			if (agent) count += agent->getAgentTagIds().size();
+		}
+		return count;
+	}
+
+	uint32_t Building::getAgentTagAssignedAgentCount() const
+	{
+		uint32_t count{ 0 };
+		for (auto const& [agentId, agent] : mAgents.entries())
+		{
+			(void)agentId;
+			if (agent && !agent->getAgentTagIds().empty()) ++count;
+		}
+		return count;
+	}
+
+	uint64_t Building::getAgentTagSampleCount() const
+	{
+		uint64_t count{ 0 };
+		for (auto const& [agentId, agent] : mAgents.entries())
+		{
+			(void)agentId;
+			if (!agent) continue;
+			if (agent->getWalkSpeedModifierSample()) ++count;
+			if (agent->getHeightModifierSample()) ++count;
+		}
+		return count;
+	}
+
 	void Building::attachAgentTagRegistry(string filename,
 		shared_ptr<AgentTagRegistry> registry)
 	{
@@ -159,17 +194,83 @@ namespace core
 				"An Agent tag registry reference must be a .tags.yaml basename");
 		}
 		if (!registry || !AgentTagRegistry::uuidIsValid(registry->getUuid()))
-		{
 			throw invalid_argument("Cannot attach an invalid Agent tag registry");
+		if (mAgentTagRegistryReference
+			&& mAgentTagRegistryReference->filename == filename
+			&& mAgentTagRegistryReference->expectedUuid == registry->getUuid()
+			&& mAgentTagRegistry == registry) return;
+		if (getAgentTagAssignmentCount() != 0)
+		{
+			throw invalid_argument(
+				"Cannot switch Agent tag registries while Agent tag assignments exist; use the confirmed destructive action to clear assignments and samples first");
 		}
 		string diagnostic;
 		if (!agentTagAssignmentsAreValid(*registry, &diagnostic))
 			throw invalid_argument(diagnostic);
-		if (mAgentTagRegistry) mAgentTagRegistry->unregisterBuilding(*this);
-		mAgentTagRegistryReference = AgentTagRegistryReference{
-			std::move(filename), registry->getUuid() };
+
+		AgentTagRegistryReference replacement{ std::move(filename), registry->getUuid() };
+		auto const registryChanges = mAgentTagRegistry != registry;
+		if (registryChanges) registry->registerBuilding(*this);
+		if (registryChanges && mAgentTagRegistry)
+			mAgentTagRegistry->unregisterBuilding(*this);
+		mAgentTagRegistryReference = std::move(replacement);
 		mAgentTagRegistry = std::move(registry);
-		mAgentTagRegistry->registerBuilding(*this);
+		modify();
+	}
+
+	void Building::attachAgentTagRegistryAndClearAssignments(string filename,
+		shared_ptr<AgentTagRegistry> registry)
+	{
+		filesystem::path const path(filename);
+		if (filename.empty() || path.is_absolute() || path.has_parent_path()
+			|| path.filename().string() != filename
+			|| !filename.ends_with(".tags.yaml"))
+		{
+			throw invalid_argument(
+				"An Agent tag registry reference must be a .tags.yaml basename");
+		}
+		if (!registry || !AgentTagRegistry::uuidIsValid(registry->getUuid()))
+			throw invalid_argument("Cannot attach an invalid Agent tag registry");
+		if (mAgentTagRegistryReference
+			&& mAgentTagRegistryReference->filename == filename
+			&& mAgentTagRegistryReference->expectedUuid == registry->getUuid()
+			&& mAgentTagRegistry == registry) return;
+
+		// Construct and register the replacement before changing any authored state.
+		// Everything after registration is non-refusing, so clearing assignments,
+		// clearing samples, and changing namespace commit as one operation.
+		AgentTagRegistryReference replacement{ std::move(filename), registry->getUuid() };
+		auto const registryChanges = mAgentTagRegistry != registry;
+		if (registryChanges) registry->registerBuilding(*this);
+		clearAllAgentTagAssignmentsAndSamples();
+		if (registryChanges && mAgentTagRegistry)
+			mAgentTagRegistry->unregisterBuilding(*this);
+		mAgentTagRegistryReference = std::move(replacement);
+		mAgentTagRegistry = std::move(registry);
+		modify();
+	}
+
+	void Building::detachAgentTagRegistry()
+	{
+		if (!mAgentTagRegistryReference) return;
+		if (getAgentTagAssignmentCount() != 0 || getAgentTagSampleCount() != 0)
+		{
+			throw invalid_argument(
+				"Cannot detach the Agent tag registry while assignments or samples exist; use the confirmed destructive action to clear them first");
+		}
+		if (mAgentTagRegistry) mAgentTagRegistry->unregisterBuilding(*this);
+		mAgentTagRegistry.reset();
+		mAgentTagRegistryReference.reset();
+		modify();
+	}
+
+	void Building::detachAgentTagRegistryAndClearAssignments()
+	{
+		if (!mAgentTagRegistryReference) return;
+		clearAllAgentTagAssignmentsAndSamples();
+		if (mAgentTagRegistry) mAgentTagRegistry->unregisterBuilding(*this);
+		mAgentTagRegistry.reset();
+		mAgentTagRegistryReference.reset();
 		modify();
 	}
 
@@ -426,6 +527,18 @@ namespace core
 			changed = true;
 		}
 		if (changed) modify();
+	}
+
+	void Building::clearAllAgentTagAssignmentsAndSamples()
+	{
+		for (auto& [agentId, agent] : mAgents.entries())
+		{
+			(void)agentId;
+			if (!agent) continue;
+			agent->setAgentTags({});
+			agent->clearWalkSpeedModifierSample();
+			agent->clearHeightModifierSample();
+		}
 	}
 
 	void Building::addAgentTagWalkSpeedModifierSamples(AgentTagId id,
