@@ -54,6 +54,14 @@ _Avoid_: Stop, queue position
 An agent's planned sequence of vertices and edges. A path expresses route intent, not permission to traverse every edge immediately.
 _Avoid_: Reservation, traversal permit
 
+**Marker**:
+A named, Building-owned authored point in a Location with stable identity. A Marker may be selected as an Agent behaviour's destination, and its identity survives rename. Agent behaviours cannot choose arbitrary Vertices as destinations.
+_Avoid_: Vertex, destination vertex
+
+**Route loss**:
+The condition in which an Agent's selected destination has no valid Path, either when movement first begins or after the simulation attempts to replace an invalidated Path. An Agent behaviour may respond by choosing a new destination.
+_Avoid_: Replan, which recalculates a Path to the same destination
+
 **Skippable path vertex**:
 An intermediate waypoint that an agent need not physically visit when the agent and the next two physical vertices share a layer, those vertices lie horizontally on opposite sides of the agent at the same height, and no interaction or other specific action is required at the nearer vertex. Coincident topology-only vertices do not count as distinct physical waypoints.
 _Avoid_: Removing the vertex from the authored path
@@ -96,6 +104,22 @@ _Avoid_: Lift, when distinguishing the open room object from an enclosed lift tr
 
 **Agent**:
 A simulated person with a position, destination path, and current movement state.
+
+**Agent behaviour**:
+A reusable state-machine definition that may direct many Agents. Each assigned Agent runs an independent instance of the behaviour.
+_Avoid_: Agent group, Agent tag
+
+**Agent behaviour configuration**:
+Authored data supplied to one Agent's behaviour instance according to its Agent behaviour schema. Agents using the same Agent behaviour may have different configurations, such as different schedules.
+_Avoid_: Behaviour state, which is the instance's changing runtime state
+
+**Agent behaviour schema**:
+The named, typed fields an Agent behaviour requires in each Agent behaviour configuration. A Marker field is selected by name but retains the Marker's stable identity.
+_Avoid_: Behaviour configuration, behaviour state
+
+**Agent behaviour registry**:
+A collection of reusable Agent behaviours that forms one shared behaviour namespace for the Buildings that reference it.
+_Avoid_: Agent tag registry, script directory
 
 **Agent tag**:
 A named reusable set of Agent properties that may be assigned to many Agents.
