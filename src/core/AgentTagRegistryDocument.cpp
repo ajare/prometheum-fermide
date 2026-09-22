@@ -18,18 +18,22 @@ namespace core
 		struct LoadedAgentTagRegistry
 		{
 			std::filesystem::path canonicalPath;
-			std::weak_ptr<AgentTagRegistry> registry;
+			std::shared_ptr<AgentTagRegistry> registry;
 		};
 
-		// Weak ownership lets a clean registry loaded only for a failed operation
-		// disappear with that operation. Buildings (and, in later tickets, dirty
-		// registry documents) provide the strong ownership while it is in use.
+		// The manager keeps dirty unreferenced documents alive so detaching one
+		// Building cannot silently discard unsaved shared work. Clean documents are
+		// removed as soon as no loaded Building references them.
 		std::vector<LoadedAgentTagRegistry> gLoadedAgentTagRegistries;
 
 		void discardUnreferencedRegistries()
 		{
 			std::erase_if(gLoadedAgentTagRegistries,
-				[](LoadedAgentTagRegistry const& entry) { return entry.registry.expired(); });
+				[](LoadedAgentTagRegistry const& entry)
+				{
+					return !entry.registry || (!entry.registry->hasLoadedBuildings()
+						&& !entry.registry->isModified());
+				});
 		}
 
 		bool pathsReferToSameFile(std::filesystem::path const& left,
@@ -129,7 +133,7 @@ namespace core
 			discardUnreferencedRegistries();
 			for (auto const& entry : gLoadedAgentTagRegistries)
 			{
-				auto loaded = entry.registry.lock();
+				auto const& loaded = entry.registry;
 				if (!loaded || !pathsReferToSameFile(entry.canonicalPath, canonicalPath))
 					continue;
 				if (loaded->getUuid() != diskRegistry->getUuid())
@@ -138,12 +142,18 @@ namespace core
 						"Agent tag registry at {} was substituted: loaded UUID {}, file contains {}",
 						canonicalPath.string(), loaded->getUuid(), diskRegistry->getUuid()));
 				}
+				if (loaded->fileHasExternalChanges(canonicalPath.string()))
+				{
+					throw SerializationException(std::format(
+						"Agent tag registry {} changed outside the editor; reload it before attaching another Building",
+						canonicalPath.string()));
+				}
 				return loaded;
 			}
 
 			for (auto const& entry : gLoadedAgentTagRegistries)
 			{
-				auto loaded = entry.registry.lock();
+				auto const& loaded = entry.registry;
 				if (loaded && loaded->getUuid() == diskRegistry->getUuid())
 				{
 					throw SerializationException(std::format(
@@ -164,7 +174,7 @@ namespace core
 			discardUnreferencedRegistries();
 			for (auto const& entry : gLoadedAgentTagRegistries)
 			{
-				auto loaded = entry.registry.lock();
+				auto const& loaded = entry.registry;
 				if (!loaded) continue;
 				if (pathsReferToSameFile(entry.canonicalPath, canonicalPath))
 				{
@@ -304,6 +314,76 @@ namespace core
 			throw;
 		}
 		return registry;
+	}
+
+	bool reloadAgentTagRegistryDocument(
+		std::shared_ptr<AgentTagRegistry> const& registry,
+		std::filesystem::path const& registryFilepath,
+		std::string* diagnostic)
+	{
+		if (diagnostic) diagnostic->clear();
+		auto refuse = [diagnostic](std::string message)
+		{
+			if (diagnostic) *diagnostic = std::move(message);
+			return false;
+		};
+		if (!registry) return refuse("There is no Agent tag registry to reload");
+		if (registry->isModified())
+		{
+			return refuse(
+				"The Agent tag registry has unsaved changes; save or discard them before reloading");
+		}
+
+		try
+		{
+			requireAgentTagRegistryFilename(registryFilepath);
+			auto const canonicalPath = requireCanonicalRegularFile(
+				registryFilepath, "Agent tag registry");
+			requireAgentTagRegistryFilename(canonicalPath);
+
+			discardUnreferencedRegistries();
+			auto managed = std::find_if(gLoadedAgentTagRegistries.begin(),
+				gLoadedAgentTagRegistries.end(), [&registry](auto const& entry)
+				{
+					return entry.registry == registry;
+				});
+			if (managed != gLoadedAgentTagRegistries.end()
+				&& !pathsReferToSameFile(managed->canonicalPath, canonicalPath))
+			{
+				return refuse(std::format(
+					"Agent tag registry is loaded from {}, not {}",
+					managed->canonicalPath.string(), canonicalPath.string()));
+			}
+
+			auto replacement = readRegistry(canonicalPath);
+			requireExpectedUuid(*replacement, registry->getUuid());
+			std::string reloadDiagnostic;
+			if (!registry->replaceDefinitionsFrom(
+				std::move(*replacement), &reloadDiagnostic))
+				return refuse(std::move(reloadDiagnostic));
+
+			if (managed == gLoadedAgentTagRegistries.end())
+				gLoadedAgentTagRegistries.push_back({ canonicalPath, registry });
+			return true;
+		}
+		catch (std::exception const& error)
+		{
+			return refuse(std::format(
+				"Could not reload Agent tag registry: {}", error.what()));
+		}
+	}
+
+	bool unloadAgentTagRegistryDocumentIfUnused(
+		std::shared_ptr<AgentTagRegistry> const& registry, bool discardDirty)
+	{
+		if (!registry || registry->hasLoadedBuildings()) return false;
+		if (registry->isModified() && !discardDirty) return false;
+		std::erase_if(gLoadedAgentTagRegistries,
+			[&registry](LoadedAgentTagRegistry const& entry)
+			{
+				return entry.registry == registry;
+			});
+		return true;
 	}
 
 	std::shared_ptr<Building> loadBuildingDocument(

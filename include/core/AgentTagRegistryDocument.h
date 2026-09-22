@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <memory>
+#include <string>
 
 namespace core
 {
@@ -35,6 +36,21 @@ namespace core
 	// canonical file identity. Returns null when the Building has no reference.
 	std::shared_ptr<AgentTagRegistry> loadAndAttachAgentTagRegistry(
 		Building& building, std::filesystem::path const& buildingFilepath);
+
+	// Explicitly reloads a clean shared registry from disk. The replacement and
+	// every loaded Agent are validated before definitions or samples change; all
+	// dependent Buildings must already be paused.
+	bool reloadAgentTagRegistryDocument(
+		std::shared_ptr<AgentTagRegistry> const& registry,
+		std::filesystem::path const& registryFilepath,
+		std::string* diagnostic = nullptr);
+
+	// Removes a manager-owned registry only after its final Building detaches.
+	// Dirty registries stay loaded unless discardDirty is the user's explicit
+	// discard action.
+	bool unloadAgentTagRegistryDocumentIfUnused(
+		std::shared_ptr<AgentTagRegistry> const& registry,
+		bool discardDirty = false);
 
 	// Loads a complete Building document and its optional registry into temporary
 	// state. No caller-owned Building is changed when either document is refused.

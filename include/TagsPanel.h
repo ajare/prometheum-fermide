@@ -128,6 +128,11 @@ void cancelPendingAgentTagDelete();
 bool restoreAgentTagRegistrySnapshot(
 	std::shared_ptr<core::AgentTagRegistry> const& registry, bool redo,
 	std::string* diagnostic = nullptr);
+// Reload refuses dirty state, validates all loaded dependent Buildings before
+// committing, and clears history only after the transactional core reload.
+bool reloadAgentTagRegistry(
+	std::shared_ptr<core::AgentTagRegistry> const& registry,
+	std::string const& filepath, std::string* diagnostic = nullptr);
 bool saveAgentTagRegistry(
 	std::shared_ptr<core::AgentTagRegistry> const& registry,
 	std::string const& filepath, std::string* diagnostic = nullptr);

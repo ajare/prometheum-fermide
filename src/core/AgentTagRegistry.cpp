@@ -3,7 +3,9 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <filesystem>
 #include <format>
+#include <fstream>
 #include <limits>
 #include <random>
 #include <set>
@@ -18,6 +20,26 @@ namespace core
 {
 	namespace
 	{
+		std::filesystem::path normalizedDocumentPath(
+			std::filesystem::path const& filepath)
+		{
+			std::error_code error;
+			auto normalized = std::filesystem::weakly_canonical(filepath, error);
+			if (!error) return normalized;
+			normalized = std::filesystem::absolute(filepath, error);
+			return (error ? filepath : normalized).lexically_normal();
+		}
+
+		std::string readDocument(std::filesystem::path const& filepath)
+		{
+			std::ifstream input(filepath, std::ios::binary);
+			if (!input)
+				throw SerializationException(std::format(
+					"Could not read Agent tag registry {}", filepath.string()));
+			return { std::istreambuf_iterator<char>(input),
+				std::istreambuf_iterator<char>() };
+		}
+
 		std::string generateUuid()
 		{
 			std::random_device source;
@@ -47,14 +69,18 @@ namespace core
 
 	std::shared_ptr<AgentTagRegistry> AgentTagRegistry::loadFrom(std::string const& filepath)
 	{
+		auto const path = normalizedDocumentPath(filepath);
+		auto contents = readDocument(path);
 		auto registry = std::shared_ptr<AgentTagRegistry>(new AgentTagRegistry(""));
-		auto serializer = YamlSerializer::fromFile(filepath);
+		auto serializer = YamlSerializer::fromString(contents);
 		serializer->deserialize();
 		SerializationWorkData workData;
 		if (!registry->deserialize(*serializer, workData))
 		{
 			throw SerializationException("Could not deserialize Agent tag registry");
 		}
+		registry->mDocumentPath = path;
+		registry->mSavedDocumentContents = std::move(contents);
 		return registry;
 	}
 
@@ -195,6 +221,82 @@ namespace core
 	bool AgentTagRegistry::hasLoadedBuilding(Building const* building) const
 	{
 		return building && mLoadedBuildings.contains(const_cast<Building*>(building));
+	}
+
+	bool AgentTagRegistry::hasLoadedBuildings() const
+	{
+		return !mLoadedBuildings.empty();
+	}
+
+	bool AgentTagRegistry::fileHasExternalChanges(std::string const& filepath) const
+	{
+		if (!mDocumentPath) return false;
+		auto const path = normalizedDocumentPath(filepath);
+		if (path != *mDocumentPath)
+		{
+			throw SerializationException(std::format(
+				"Agent tag registry is loaded from {}, not {}",
+				mDocumentPath->string(), path.string()));
+		}
+		try
+		{
+			return readDocument(path) != mSavedDocumentContents;
+		}
+		catch (SerializationException const&)
+		{
+			return true;
+		}
+	}
+
+	bool AgentTagRegistry::replaceDefinitionsFrom(AgentTagRegistry&& replacement,
+		std::string* diagnostic)
+	{
+		auto reject = [diagnostic](std::string message)
+		{
+			if (diagnostic) *diagnostic = std::move(message);
+			return false;
+		};
+		if (replacement.mUuid != mUuid)
+		{
+			return reject(std::format(
+				"Agent tag registry UUID mismatch: loaded {}, file contains {}",
+				mUuid, replacement.mUuid));
+		}
+		if (!definitionEditsAreAllowed(diagnostic)) return false;
+
+		struct BuildingRepairs
+		{
+			Building* building{ nullptr };
+			std::vector<Building::AgentTagReconciliation> repairs;
+		};
+		std::vector<BuildingRepairs> transaction;
+		transaction.reserve(mLoadedBuildings.size());
+		for (auto* building : mLoadedBuildings)
+		{
+			if (!building) continue;
+			BuildingRepairs entry;
+			entry.building = building;
+			std::string validationDiagnostic;
+			if (!building->inspectAgentTagAssignments(replacement, true,
+				&entry.repairs, &validationDiagnostic))
+			{
+				return reject(std::format("Building '{}': {}",
+					building->getName(), validationDiagnostic));
+			}
+			transaction.push_back(std::move(entry));
+		}
+
+		// Every definition and every loaded Agent has passed validation. Moving the
+		// temporary state and applying precomputed repairs are non-refusing steps.
+		mTags = std::move(replacement.mTags);
+		mNextPropertyRevision = replacement.mNextPropertyRevision;
+		mDocumentPath = std::move(replacement.mDocumentPath);
+		mSavedDocumentContents = std::move(replacement.mSavedDocumentContents);
+		markUnmodified();
+		for (auto& entry : transaction)
+			entry.building->applyAgentTagReconciliations(entry.repairs);
+		if (diagnostic) diagnostic->clear();
+		return true;
 	}
 
 	bool AgentTagRegistry::definitionEditsAreAllowed(std::string* diagnostic) const
@@ -893,11 +995,33 @@ namespace core
 
 	void AgentTagRegistry::saveTo(std::string const& filepath)
 	{
-		auto serializer = YamlSerializer::toFile(filepath);
+		auto const path = normalizedDocumentPath(filepath);
+		if (mDocumentPath)
+		{
+			if (path != *mDocumentPath)
+			{
+				throw SerializationException(std::format(
+					"Agent tag registry is loaded from {}, not {}",
+					mDocumentPath->string(), path.string()));
+			}
+			if (fileHasExternalChanges(path.string()))
+			{
+				throw SerializationException(std::format(
+					"Agent tag registry {} changed outside the editor; reload it before saving",
+					path.string()));
+			}
+		}
+
+		auto serializer = YamlSerializer::toFile(path.string());
 		SerializationWorkData workData;
 		workData.markSerializedUnmodified = false;
 		serialize(*serializer, workData);
 		serializer->serialize();
+		// Record exactly what reached disk. If this read is refused, retain dirty
+		// state rather than claiming a revision that cannot be checked later.
+		auto contents = readDocument(path);
+		mDocumentPath = path;
+		mSavedDocumentContents = std::move(contents);
 		markUnmodified();
 	}
 }

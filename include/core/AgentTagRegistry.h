@@ -1,7 +1,9 @@
 #pragma once
 
 #include <cstdint>
+#include <filesystem>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -28,6 +30,11 @@ namespace core
 		std::string mUuid;
 		EntityRegistry<AgentTagId, AgentTag> mTags;
 		uint64_t mNextPropertyRevision{ 1 };
+		// The exact bytes last loaded or saved provide optimistic concurrency for
+		// this independently persisted document. A save never silently overwrites
+		// a different on-disk revision.
+		std::optional<std::filesystem::path> mDocumentPath;
+		std::string mSavedDocumentContents;
 		// Buildings register while this shared registry is attached. Raw pointers
 		// are safe here because Building unregisters before destruction.
 		std::set<Building*> mLoadedBuildings;
@@ -74,6 +81,16 @@ namespace core
 		std::vector<LoadedAgentTagUsage> getLoadedAgentTagUsage(AgentTagId id) const;
 		uint64_t getLoadedAgentTagUsageCount(AgentTagId id) const;
 		bool hasLoadedBuilding(Building const* building) const;
+		bool hasLoadedBuildings() const;
+
+		// Reports whether the tracked file's bytes differ from the revision loaded
+		// or saved by this document. Untracked new registries report no conflict.
+		bool fileHasExternalChanges(std::string const& filepath) const;
+
+		// Internal document-manager seam. The complete replacement and every loaded
+		// Agent are validated before this shared instance changes.
+		bool replaceDefinitionsFrom(AgentTagRegistry&& replacement,
+			std::string* diagnostic);
 
 		// Registry definitions are shared authored state. Editing them is safe only
 		// when every loaded dependent Building is paused, including Buildings that

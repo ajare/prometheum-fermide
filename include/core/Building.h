@@ -498,6 +498,8 @@ namespace core
 			std::string* diagnostic = nullptr) const;
 		bool agentTagAssignmentsAreValid(AgentTagRegistry const& registry,
 			std::string* diagnostic = nullptr) const;
+		void applyAgentTagReconciliations(
+			std::vector<AgentTagReconciliation> const& repairs);
 		void reconcileAgentTagAssignments(AgentTagRegistry const& registry);
 		uint32_t countAgentTagAssignments(AgentTagId id) const;
 		void clearAgentTagAssignments(AgentTagId id);

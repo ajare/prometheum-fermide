@@ -189,6 +189,15 @@ namespace
 			/ building.getAgentTagRegistryFilename();
 	}
 
+	void releaseRegistryIfUnused(
+		shared_ptr<core::AgentTagRegistry> const& registry, bool discardDirty = false)
+	{
+		if (!registry) return;
+		auto const uuid = registry->getUuid();
+		if (core::unloadAgentTagRegistryDocumentIfUnused(registry, discardDirty))
+			gRegistryHistories.erase(uuid);
+	}
+
 	string registryChangeConsequence(core::Building const& building, bool detach,
 		string const& registryFilepath)
 	{
@@ -731,6 +740,25 @@ namespace
 		}
 		ImGui::EndDisabled();
 		ImGui::SameLine();
+		ImGui::BeginDisabled(agentTagRegistryIsModified(registry)
+			|| !definitionEditsAllowed);
+		if (ImGui::Button(ICON_FA_SYNC " Reload registry"))
+		{
+			string diagnostic;
+			if (!reloadAgentTagRegistry(registry,
+				attachedRegistryPath(*building, buildingFilepath).string(), &diagnostic))
+				core::addLogMessage("Tags", 0, core::LogLevel::Error, diagnostic);
+		}
+		ImGui::EndDisabled();
+		if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+		{
+			if (agentTagRegistryIsModified(registry))
+				ImGui::SetTooltip("Save or discard registry changes before reloading");
+			else if (!definitionEditsAllowed)
+				ImGui::SetTooltip("%s", editDiagnostic.c_str());
+			else ImGui::SetTooltip("Reload external changes from disk");
+		}
+		ImGui::SameLine();
 		ImGui::BeginDisabled(!history.canUndo() || !definitionEditsAllowed);
 		if (ImGui::Button(ICON_FA_UNDO "##undoAgentTag"))
 		{
@@ -839,8 +867,10 @@ bool commitAgentTagRegistryDetach(shared_ptr<core::Building> const& building,
 	try
 	{
 		auto const filename = building->getAgentTagRegistryFilename();
+		auto registry = building->getAgentTagRegistry();
 		building->detachAgentTagRegistry();
 		commitDocumentEdit(std::move(undo));
+		releaseRegistryIfUnused(registry);
 		resetTagsPanelState();
 		core::addLogMessage("Tags", 0, core::LogLevel::Info,
 			"Detached Agent tag registry " + filename + " without changing its file");
@@ -871,8 +901,10 @@ bool commitAgentTagRegistryDetachClearingAssignments(
 	try
 	{
 		auto const filename = building->getAgentTagRegistryFilename();
+		auto registry = building->getAgentTagRegistry();
 		building->detachAgentTagRegistryAndClearAssignments();
 		commitDocumentEdit(std::move(undo));
+		releaseRegistryIfUnused(registry);
 		resetTagsPanelState();
 		core::addLogMessage("Tags", 0, core::LogLevel::Info,
 			"Cleared all Agent tag assignments and samples, then detached "
@@ -904,6 +936,8 @@ bool commitAgentTagRegistrySwitch(shared_ptr<core::Building> const& building,
 	}
 	try
 	{
+		auto previousRegistry = building->hasAttachedAgentTagRegistry()
+			? building->getAgentTagRegistry() : nullptr;
 		auto const previousFilename = building->hasAgentTagRegistryReference()
 			? building->getAgentTagRegistryFilename() : string{};
 		auto const previousUuid = building->hasAgentTagRegistryReference()
@@ -918,6 +952,7 @@ bool commitAgentTagRegistrySwitch(shared_ptr<core::Building> const& building,
 		}
 		commitDocumentEdit(std::move(undo));
 		(void)agentTagRegistryDocumentHistory(registry);
+		if (previousRegistry != registry) releaseRegistryIfUnused(previousRegistry);
 		resetTagsPanelState();
 		core::addLogMessage("Tags", 0, core::LogLevel::Info,
 			"Switched to Agent tag registry " + building->getAgentTagRegistryFilename()
@@ -949,6 +984,8 @@ bool commitAgentTagRegistrySwitchClearingAssignments(
 	}
 	try
 	{
+		auto previousRegistry = building->hasAttachedAgentTagRegistry()
+			? building->getAgentTagRegistry() : nullptr;
 		auto const previousFilename = building->hasAgentTagRegistryReference()
 			? building->getAgentTagRegistryFilename() : string{};
 		auto const previousUuid = building->hasAgentTagRegistryReference()
@@ -963,6 +1000,7 @@ bool commitAgentTagRegistrySwitchClearingAssignments(
 		}
 		commitDocumentEdit(std::move(undo));
 		(void)agentTagRegistryDocumentHistory(registry);
+		if (previousRegistry != registry) releaseRegistryIfUnused(previousRegistry);
 		resetTagsPanelState();
 		core::addLogMessage("Tags", 0, core::LogLevel::Info,
 			"Cleared all Agent tag assignments and samples, then switched to "
@@ -1644,6 +1682,41 @@ bool restoreAgentTagRegistrySnapshot(shared_ptr<core::AgentTagRegistry> const& r
 	}
 }
 
+bool reloadAgentTagRegistry(shared_ptr<core::AgentTagRegistry> const& registry,
+	string const& filepath, string* diagnostic)
+{
+	if (diagnostic) diagnostic->clear();
+	if (!registry)
+	{
+		if (diagnostic) *diagnostic = "There is no Agent tag registry to reload";
+		return false;
+	}
+	if (agentTagRegistryIsModified(registry))
+	{
+		if (diagnostic)
+			*diagnostic = "The Agent tag registry has unsaved changes; save or discard them before reloading";
+		return false;
+	}
+
+	string reloadDiagnostic;
+	if (!core::reloadAgentTagRegistryDocument(
+		registry, filepath, &reloadDiagnostic))
+	{
+		if (diagnostic) *diagnostic = std::move(reloadDiagnostic);
+		return false;
+	}
+
+	// Every old entry describes definitions that are no longer live. A reload is
+	// the new saved baseline, not an undoable editor command.
+	auto& history = agentTagRegistryDocumentHistory(registry);
+	history.clear();
+	history.markSaved();
+	resetTagsPanelState();
+	core::addLogMessage("Tags", 0, core::LogLevel::Info,
+		"Reloaded Agent tag registry from " + filepath);
+	return true;
+}
+
 bool saveAgentTagRegistry(shared_ptr<core::AgentTagRegistry> const& registry,
 	string const& filepath, string* diagnostic)
 {
@@ -1662,6 +1735,7 @@ bool saveAgentTagRegistry(shared_ptr<core::AgentTagRegistry> const& registry,
 	{
 		registry->saveTo(filepath);
 		agentTagRegistryDocumentHistory(registry).markSaved();
+		releaseRegistryIfUnused(registry);
 		core::addLogMessage("Tags", 0, core::LogLevel::Info,
 			"Saved Agent tag registry to " + filepath);
 		return true;
@@ -1840,7 +1914,14 @@ void resetTagsPanelState()
 
 void forgetAgentTagRegistryDocument(shared_ptr<core::AgentTagRegistry> const& registry)
 {
-	if (registry) gRegistryHistories.erase(registry->getUuid());
+	// Callers use this only after an explicit close/discard decision. Attached
+	// registries remain manager-owned through their Building; an unreferenced
+	// dirty registry may therefore be released here without pretending it saved.
+	if (registry)
+	{
+		gRegistryHistories.erase(registry->getUuid());
+		(void)core::unloadAgentTagRegistryDocumentIfUnused(registry, true);
+	}
 	resetTagsPanelState();
 }
 

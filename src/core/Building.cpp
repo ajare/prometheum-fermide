@@ -464,14 +464,10 @@ namespace core
 		return inspectAgentTagAssignments(registry, false, nullptr, diagnostic);
 	}
 
-	void Building::reconcileAgentTagAssignments(AgentTagRegistry const& registry)
+	void Building::applyAgentTagReconciliations(
+		vector<AgentTagReconciliation> const& repairs)
 	{
-		vector<AgentTagReconciliation> repairs;
-		string diagnostic;
-		if (!inspectAgentTagAssignments(registry, true, &repairs, &diagnostic))
-			throw runtime_error(diagnostic);
-
-		// Inspection above validates the entire Building before any sample changes.
+		// A caller validates the complete transaction before reaching this seam.
 		// Sampling and application cannot refuse, so all repairs commit together.
 		for (auto const& repair : repairs)
 		{
@@ -497,6 +493,15 @@ namespace core
 			}
 		}
 		if (!repairs.empty()) modify();
+	}
+
+	void Building::reconcileAgentTagAssignments(AgentTagRegistry const& registry)
+	{
+		vector<AgentTagReconciliation> repairs;
+		string diagnostic;
+		if (!inspectAgentTagAssignments(registry, true, &repairs, &diagnostic))
+			throw runtime_error(diagnostic);
+		applyAgentTagReconciliations(repairs);
 	}
 
 	uint32_t Building::countAgentTagAssignments(AgentTagId id) const
