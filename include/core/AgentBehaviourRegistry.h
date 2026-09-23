@@ -5,7 +5,6 @@
 #include <map>
 #include <memory>
 #include <optional>
-#include <set>
 #include <string>
 #include <vector>
 
@@ -18,6 +17,30 @@ namespace core
 {
 	class Building;
 	class AgentBehaviourRuntimeAdapter;
+
+	enum class AgentBehaviourReloadDiagnosticScope
+	{
+		Package,
+		Module,
+		Agent
+	};
+
+	// One item from an explicit reload preflight. Failed reload diagnostics are
+	// returned to the editor rather than written into the still-live registry,
+	// so reporting a candidate can never replace the previous working status.
+	struct AgentBehaviourReloadDiagnostic
+	{
+		AgentBehaviourReloadDiagnosticScope scope{
+			AgentBehaviourReloadDiagnosticScope::Package };
+		std::string buildingName;
+		std::string agentName;
+		AgentId agent{};
+		std::string behaviourName;
+		AgentBehaviourId behaviour{};
+		std::string moduleName;
+		std::string diagnostic;
+		std::string traceback;
+	};
 
 	// A separately persisted package namespace for reusable Agent behaviour
 	// definitions. IDs belong to this registry, remain stable across rename,
@@ -47,7 +70,9 @@ namespace core
 		std::string mSavedDocumentContents;
 		// Buildings register while this shared registry is attached. Raw pointers
 		// are safe here because Building unregisters before destruction.
-		std::set<Building*> mLoadedBuildings;
+		// Registration order is retained as the deterministic tie-breaker for
+		// same-named Buildings during coordinated reload preflight.
+		std::vector<Building*> mLoadedBuildings;
 
 		bool childrenModified() const override;
 		void serializeImpl(Serializer& serializer, SerializationWorkData& workData) const override;
@@ -96,7 +121,8 @@ namespace core
 		// Internal document-manager seam. The complete replacement is validated
 		// before this shared instance changes; UUID identity must match.
 		bool replaceDefinitionsFrom(AgentBehaviourRegistry&& replacement,
-			std::string* diagnostic);
+			std::string* diagnostic,
+			std::vector<AgentBehaviourReloadDiagnostic>* reloadDiagnostics = nullptr);
 
 		// Registry definitions are shared authored state. Editing them is safe
 		// only when every loaded dependent Building is paused.

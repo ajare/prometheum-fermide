@@ -354,17 +354,20 @@ namespace core
 
 	void AgentBehaviourRegistry::registerBuilding(Building& building)
 	{
-		mLoadedBuildings.insert(&building);
+		if (std::find(mLoadedBuildings.begin(), mLoadedBuildings.end(), &building)
+			== mLoadedBuildings.end())
+			mLoadedBuildings.push_back(&building);
 	}
 
 	void AgentBehaviourRegistry::unregisterBuilding(Building& building)
 	{
-		mLoadedBuildings.erase(&building);
+		std::erase(mLoadedBuildings, &building);
 	}
 
 	bool AgentBehaviourRegistry::hasLoadedBuilding(Building const* building) const
 	{
-		return building && mLoadedBuildings.contains(const_cast<Building*>(building));
+		return building && std::find(mLoadedBuildings.begin(), mLoadedBuildings.end(),
+			building) != mLoadedBuildings.end();
 	}
 
 	bool AgentBehaviourRegistry::hasLoadedBuildings() const
@@ -394,11 +397,16 @@ namespace core
 	}
 
 	bool AgentBehaviourRegistry::replaceDefinitionsFrom(AgentBehaviourRegistry&& replacement,
-		std::string* diagnostic)
+		std::string* diagnostic,
+		std::vector<AgentBehaviourReloadDiagnostic>* reloadDiagnostics)
 	{
-		auto reject = [diagnostic](std::string message)
+		if (reloadDiagnostics) reloadDiagnostics->clear();
+		auto reject = [diagnostic, reloadDiagnostics](std::string message)
 		{
-			if (diagnostic) *diagnostic = std::move(message);
+			if (diagnostic) *diagnostic = message;
+			if (reloadDiagnostics) reloadDiagnostics->push_back({
+				AgentBehaviourReloadDiagnosticScope::Package, {}, {}, {}, {}, {}, {},
+				message, {} });
 			return false;
 		};
 		if (replacement.mUuid != mUuid)
@@ -407,7 +415,14 @@ namespace core
 				"Agent behaviour registry UUID mismatch: loaded {}, file contains {}",
 				mUuid, replacement.mUuid));
 		}
-		if (!definitionEditsAreAllowed(diagnostic)) return false;
+		if (!definitionEditsAreAllowed(diagnostic))
+		{
+			if (reloadDiagnostics && diagnostic)
+				reloadDiagnostics->push_back({
+					AgentBehaviourReloadDiagnosticScope::Package, {}, {}, {}, {}, {}, {},
+					*diagnostic, {} });
+			return false;
+		}
 
 		if (replacement.mPackageRevision < mPackageRevision)
 			return reject("Agent behaviour registry package revision cannot move backwards on reload");
@@ -431,24 +446,105 @@ namespace core
 			: replacement.mBehaviours.nextId() != 0
 				&& replacement.mBehaviours.nextId() < mBehaviours.nextId())
 			return reject("Agent behaviour allocator cannot move backwards on reload");
-		for (auto const& [id, candidate] : replacement.mBehaviours.entries())
+		for (auto const& [id, candidateDefinition] : replacement.mBehaviours.entries())
 		{
 			auto const* previous = mBehaviours.find(id);
 			if (!previous && (mBehaviours.nextId() == 0 || id.value < mBehaviours.nextId()))
 				return reject("Agent behaviour reload cannot reuse a deleted ID");
-			if (previous && (candidate->getRevision() < previous->getRevision()
-				|| ((candidate->getSchema() != previous->getSchema()
-					|| candidate->getSourceModulePath() != previous->getSourceModulePath())
-					&& candidate->getRevision() == previous->getRevision())))
+			if (previous && (candidateDefinition->getRevision() < previous->getRevision()
+				|| ((candidateDefinition->getSchema() != previous->getSchema()
+					|| candidateDefinition->getSourceModulePath() != previous->getSourceModulePath())
+					&& candidateDefinition->getRevision() == previous->getRevision())))
 				return reject("Changed behaviour definitions require an increasing revision");
 		}
 
-		for (auto const* building : mLoadedBuildings)
+		std::vector<AgentBehaviourReloadDiagnostic> failures;
+		for (auto const& [name, helper] : replacement.mHelperModules)
 		{
-			if (building && !building->inspectAgentBehaviourAssignments(replacement,
-				diagnostic)) return false;
+			if (helper->getModuleStatus() != AgentBehaviourModuleStatus::Error) continue;
+			failures.push_back({ AgentBehaviourReloadDiagnosticScope::Module,
+				{}, {}, {}, {}, {}, helper->getSourceModulePath(),
+				helper->getModuleDiagnostic(), helper->getModuleTraceback() });
+		}
+		for (auto const& [id, behaviour] : replacement.mBehaviours.entries())
+		{
+			if (behaviour->getModuleStatus() != AgentBehaviourModuleStatus::Error) continue;
+			failures.push_back({ AgentBehaviourReloadDiagnosticScope::Module,
+				{}, {}, {}, behaviour->getName(), id,
+				behaviour->getSourceModulePath(), behaviour->getModuleDiagnostic(),
+				behaviour->getModuleTraceback() });
+		}
+		if (!failures.empty())
+		{
+			if (reloadDiagnostics) *reloadDiagnostics = std::move(failures);
+			if (diagnostic) *diagnostic = std::format(
+				"Agent behaviour reload preflight found {} module diagnostic(s)",
+				reloadDiagnostics ? reloadDiagnostics->size() : failures.size());
+			return false;
 		}
 
+		auto buildings = mLoadedBuildings;
+		std::stable_sort(buildings.begin(), buildings.end(),
+			[](Building const* left, Building const* right)
+			{
+				if (!left || !right) return left != nullptr;
+				return left->getName() < right->getName();
+			});
+		for (auto const* building : buildings)
+		{
+			if (!building) continue;
+			std::string assignmentDiagnostic;
+			if (building->inspectAgentBehaviourAssignments(replacement,
+				&assignmentDiagnostic)) continue;
+			failures.push_back({ AgentBehaviourReloadDiagnosticScope::Agent,
+				building->getName(), {}, {}, {}, {}, {}, assignmentDiagnostic, {} });
+		}
+		if (!failures.empty())
+		{
+			if (reloadDiagnostics) *reloadDiagnostics = std::move(failures);
+			if (diagnostic) *diagnostic = std::format(
+				"Agent behaviour reload preflight found {} Agent configuration diagnostic(s)",
+				reloadDiagnostics ? reloadDiagnostics->size() : failures.size());
+			return false;
+		}
+
+		struct PreparedBuilding
+		{
+			Building* building{ nullptr };
+			std::unique_ptr<AgentBehaviourRuntimeAdapter> runtime;
+		};
+		std::vector<PreparedBuilding> preparedBuildings;
+		preparedBuildings.reserve(buildings.size());
+		for (auto* building : buildings)
+		{
+			if (!building) continue;
+			std::unique_ptr<AgentBehaviourRuntimeAdapter> candidateRuntime;
+			std::vector<AgentBehaviourRuntimeDiagnostic> runtimeDiagnostics;
+			if (!AgentBehaviourRuntimeAdapter::prepareReload(*building, replacement,
+				candidateRuntime, runtimeDiagnostics))
+			{
+				for (auto const& runtimeDiagnostic : runtimeDiagnostics)
+					failures.push_back({ AgentBehaviourReloadDiagnosticScope::Agent,
+						building->getName(), runtimeDiagnostic.agentName,
+						runtimeDiagnostic.agent, runtimeDiagnostic.behaviourName,
+						runtimeDiagnostic.behaviour, runtimeDiagnostic.moduleName,
+						runtimeDiagnostic.diagnostic, runtimeDiagnostic.traceback });
+				continue;
+			}
+			preparedBuildings.push_back({ building, std::move(candidateRuntime) });
+		}
+		if (!failures.empty())
+		{
+			if (reloadDiagnostics) *reloadDiagnostics = std::move(failures);
+			if (diagnostic) *diagnostic = std::format(
+				"Agent behaviour reload preflight found {} per-Agent factory diagnostic(s)",
+				reloadDiagnostics ? reloadDiagnostics->size() : failures.size());
+			return false;
+		}
+
+		// No operation from here can veto the transaction. Definitions and every
+		// already-constructed candidate runtime become the new revision together;
+		// old instances receive only their read-only best-effort teardown first.
 		mPackageRevision = replacement.mPackageRevision;
 		mHelperModules = std::move(replacement.mHelperModules);
 		mBehaviours = std::move(replacement.mBehaviours);
@@ -456,19 +552,22 @@ namespace core
 		mPackageDirectory = std::move(replacement.mPackageDirectory);
 		mDocumentPath = std::move(replacement.mDocumentPath);
 		mSavedDocumentContents = std::move(replacement.mSavedDocumentContents);
-		// Reload always recreates live private state from authored configuration,
-		// even when only source bytes changed and manifest identities stayed put.
-		for (auto* building : mLoadedBuildings)
+		for (auto& prepared : preparedBuildings)
 		{
-			if (!building) continue;
+			auto* building = prepared.building;
 			building->mAgentBehaviourRuntime->teardownAll(*building,
 				AgentBehaviourTeardownReason::Reload);
+			auto teardownDiagnostics = building->mAgentBehaviourRuntime
+				->consumeDiagnostics();
+			prepared.runtime->appendDiagnostics(std::move(teardownDiagnostics));
+			building->mAgentBehaviourRuntime = std::move(prepared.runtime);
 			for (auto const& [agentId, agent] : building->mAgents.entries())
 				if (agent && agent->getBehaviourAssignment())
 					building->mSimulationCoordinator
 						.clearAgentMovementForBehaviourEdit(agentId);
 		}
 		markUnmodified();
+		if (reloadDiagnostics) reloadDiagnostics->clear();
 		if (diagnostic) diagnostic->clear();
 		return true;
 	}
@@ -571,9 +670,13 @@ namespace core
 		for (auto const& [id, behaviour] : mBehaviours.entries())
 		{
 			(void)id;
-			auto result = AgentBehaviourRuntimeAdapter::preflightModule(
-				packageName, behaviour->getSourceModulePath(),
-				mSourceCache.at(behaviour->getSourceModulePath()), helpers);
+			auto result = behaviour->getSchema().empty()
+				? AgentBehaviourRuntimeAdapter::preflightModule(
+					packageName, behaviour->getSourceModulePath(),
+					mSourceCache.at(behaviour->getSourceModulePath()), helpers)
+				: AgentBehaviourRuntimeAdapter::preflightModuleContract(
+					packageName, behaviour->getSourceModulePath(),
+					mSourceCache.at(behaviour->getSourceModulePath()), helpers);
 			behaviour->setModulePreflight(
 				result.loaded ? AgentBehaviourModuleStatus::Loaded
 					: AgentBehaviourModuleStatus::Error,

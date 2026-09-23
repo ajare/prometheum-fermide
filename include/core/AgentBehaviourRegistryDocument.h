@@ -3,11 +3,13 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace core
 {
 	class AgentBehaviourRegistry;
 	class Building;
+	struct AgentBehaviourReloadDiagnostic;
 
 	// An Agent behaviour registry package is a directory whose name ends with
 	// .behaviours and whose manifest is the fixed file behaviours.yaml inside
@@ -46,7 +48,8 @@ namespace core
 	bool reloadAgentBehaviourRegistryDocument(
 		std::shared_ptr<AgentBehaviourRegistry> const& registry,
 		std::filesystem::path const& packageDirectory,
-		std::string* diagnostic = nullptr);
+		std::string* diagnostic = nullptr,
+		std::vector<AgentBehaviourReloadDiagnostic>* reloadDiagnostics = nullptr);
 
 	// Removes a manager-owned registry only after its final Building detaches.
 	// Dirty registries stay loaded unless discardDirty is the user's explicit

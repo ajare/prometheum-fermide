@@ -338,12 +338,17 @@ namespace core
 	bool reloadAgentBehaviourRegistryDocument(
 		std::shared_ptr<AgentBehaviourRegistry> const& registry,
 		std::filesystem::path const& packageDirectory,
-		std::string* diagnostic)
+		std::string* diagnostic,
+		std::vector<AgentBehaviourReloadDiagnostic>* reloadDiagnostics)
 	{
 		if (diagnostic) diagnostic->clear();
-		auto refuse = [diagnostic](std::string message)
+		if (reloadDiagnostics) reloadDiagnostics->clear();
+		auto refuse = [diagnostic, reloadDiagnostics](std::string message)
 		{
-			if (diagnostic) *diagnostic = std::move(message);
+			if (diagnostic) *diagnostic = message;
+			if (reloadDiagnostics) reloadDiagnostics->push_back({
+				AgentBehaviourReloadDiagnosticScope::Package, {}, {}, {}, {}, {}, {},
+				std::move(message), {} });
 			return false;
 		};
 		if (!registry) return refuse("There is no Agent behaviour registry to reload");
@@ -352,6 +357,10 @@ namespace core
 			return refuse(
 				"The Agent behaviour registry has unsaved changes; save or discard them before reloading");
 		}
+
+		std::string pausedDiagnostic;
+		if (!registry->definitionEditsAreAllowed(&pausedDiagnostic))
+			return refuse(std::move(pausedDiagnostic));
 
 		try
 		{
@@ -377,8 +386,11 @@ namespace core
 			requireExpectedUuid(*replacement, registry->getUuid());
 			std::string reloadDiagnostic;
 			if (!registry->replaceDefinitionsFrom(
-				std::move(*replacement), &reloadDiagnostic))
-				return refuse(std::move(reloadDiagnostic));
+				std::move(*replacement), &reloadDiagnostic, reloadDiagnostics))
+			{
+				if (diagnostic) *diagnostic = std::move(reloadDiagnostic);
+				return false;
+			}
 
 			if (managed == gLoadedAgentBehaviourRegistries.end())
 				gLoadedAgentBehaviourRegistries.push_back({ canonicalDirectory, registry });

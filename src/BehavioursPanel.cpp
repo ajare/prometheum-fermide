@@ -4,6 +4,7 @@
 #include <string>
 #include <stdexcept>
 #include <utility>
+#include <vector>
 
 #include "DocumentEdit.h"
 #include "core/AgentBehaviourRegistry.h"
@@ -17,6 +18,8 @@ using namespace std;
 
 namespace
 {
+	vector<core::AgentBehaviourReloadDiagnostic> gReloadDiagnostics;
+
 	filesystem::path attachedPackagePath(core::Building const& building,
 		string const& buildingFilepath)
 	{
@@ -144,7 +147,36 @@ namespace
 				ImGui::SetTooltip("Save or discard registry changes before reloading");
 			else if (!definitionEditsAllowed)
 				ImGui::SetTooltip("%s", editDiagnostic.c_str());
-			else ImGui::SetTooltip("Reload definitions and preflight Lua modules without running Agent callbacks");
+			else ImGui::SetTooltip("Reload source and helpers atomically after preflighting every affected Agent");
+		}
+
+		if (!gReloadDiagnostics.empty())
+		{
+			ImGui::SeparatorText("Reload diagnostics");
+			ImGui::TextWrapped("The candidate package was not adopted (%u diagnostic%s).",
+				static_cast<unsigned>(gReloadDiagnostics.size()),
+				gReloadDiagnostics.size() == 1 ? "" : "s");
+			for (auto const& item : gReloadDiagnostics)
+			{
+				if (item.scope == core::AgentBehaviourReloadDiagnosticScope::Agent)
+				{
+					if (!item.agentName.empty())
+						ImGui::BulletText("Building %s / Agent %s (%llu) / %s",
+							item.buildingName.c_str(), item.agentName.c_str(),
+							static_cast<unsigned long long>(item.agent.value),
+							item.moduleName.c_str());
+					else ImGui::BulletText("Building %s", item.buildingName.c_str());
+				}
+				else if (item.scope == core::AgentBehaviourReloadDiagnosticScope::Module)
+					ImGui::BulletText("Module %s", item.moduleName.c_str());
+				else ImGui::BulletText("Package");
+				ImGui::Indent();
+				ImGui::TextWrapped("%s", item.diagnostic.c_str());
+				if (!item.traceback.empty()
+					&& item.traceback != item.diagnostic)
+					ImGui::TextWrapped("%s", item.traceback.c_str());
+				ImGui::Unindent();
+			}
 		}
 
 		auto const helperNames = registry->getHelperModuleNames();
@@ -329,7 +361,7 @@ bool reloadAgentBehaviourRegistry(
 	string const& packageDirectory, string* diagnostic)
 {
 	if (!core::reloadAgentBehaviourRegistryDocument(registry, packageDirectory,
-		diagnostic))
+		diagnostic, &gReloadDiagnostics))
 		return false;
 	resetBehavioursPanelState();
 	core::addLogMessage("Behaviours", 0, core::LogLevel::Info,
@@ -346,6 +378,7 @@ bool attachedAgentBehaviourRegistryIsModified(
 
 void resetBehavioursPanelState()
 {
+	gReloadDiagnostics.clear();
 }
 
 void forgetAgentBehaviourRegistryDocument(

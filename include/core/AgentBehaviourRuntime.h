@@ -11,6 +11,7 @@
 
 namespace core
 {
+	class AgentBehaviourRegistry;
 	class Building;
 	struct SimulationEvent;
 
@@ -102,8 +103,25 @@ namespace core
 	// at the boundary has returned.
 	class AgentBehaviourRuntimeAdapter
 	{
+		friend class AgentBehaviourRegistry;
+
 		struct Impl;
 		std::unique_ptr<Impl> mImpl;
+
+		// Builds every assigned instance in a fresh per-Building runtime without
+		// running callbacks or touching the live Building. A successful candidate
+		// can therefore be adopted only after all dependent Buildings preflight.
+		static bool prepareReload(Building& building,
+			AgentBehaviourRegistry const& registry,
+			std::unique_ptr<AgentBehaviourRuntimeAdapter>& candidate,
+			std::vector<AgentBehaviourRuntimeDiagnostic>& diagnostics);
+		void appendDiagnostics(
+			std::vector<AgentBehaviourRuntimeDiagnostic> diagnostics);
+		static AgentBehaviourModulePreflight preflightModule(
+			std::string_view packageName, std::string_view moduleName,
+			std::string_view source,
+			std::vector<AgentBehaviourHelperSource> const& helpers,
+			AgentBehaviourRuntimeLimits limits, bool invokeFactory);
 
 	public:
 		static constexpr uint32_t HostApiVersion{ 1 };
@@ -147,6 +165,14 @@ namespace core
 		void reset();
 
 		static AgentBehaviourModulePreflight preflightModule(
+			std::string_view packageName, std::string_view moduleName,
+			std::string_view source,
+			std::vector<AgentBehaviourHelperSource> const& helpers = {},
+			AgentBehaviourRuntimeLimits limits = {});
+		// Validates source, imports, and the API/module contract without inventing
+		// configuration. Reload validates the factory separately with each real
+		// affected Agent configuration.
+		static AgentBehaviourModulePreflight preflightModuleContract(
 			std::string_view packageName, std::string_view moduleName,
 			std::string_view source,
 			std::vector<AgentBehaviourHelperSource> const& helpers = {},

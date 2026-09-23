@@ -1,5 +1,6 @@
-// External Agent behaviour registry package document workflow checks for #148.
+// External Agent behaviour registry package workflow and atomic reload checks.
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -9,10 +10,12 @@
 #include <string>
 
 #include "BehavioursPanel.h"
+#include "DocumentEdit.h"
 #include "imgui/imgui.h"
 #include "core/AgentBehaviourRegistry.h"
 #include "core/AgentBehaviourRegistryDocument.h"
 #include "core/Building.h"
+#include "core/Log.h"
 #include "core/YamlSerializer.h"
 
 namespace
@@ -736,7 +739,8 @@ namespace
 		second->saveTo(secondPath.string());
 		auto registry = core::createAndAttachAgentBehaviourRegistry(*first, firstPath);
 		auto const packageDirectory = temporary.path / "first.behaviours";
-		writeText(packageDirectory / "schedule.lua", "-- v1\n");
+		writeText(packageDirectory / "schedule.lua",
+			"return { api_version = 1, factory = function() return {} end }\n");
 
 		first->pauseSimulation();
 		(void)registry->addAgentBehaviour("Schedule", "schedule.lua", {});
@@ -752,7 +756,8 @@ namespace
 		// External authoring adds a behaviour to the manifest; both dependents
 		// observe it only after the explicit managed reload.
 		auto const uuid = registry->getUuid();
-		writeText(packageDirectory / "wander.lua", "-- v2\n");
+		writeText(packageDirectory / "wander.lua",
+			"return { api_version = 1, factory = function() return {} end }\n");
 		writeText(manifestPath(packageDirectory), ""
 			"  version: 1\n"
 			"  uuid: " + uuid + "\n"
@@ -814,6 +819,270 @@ namespace
 			"A dirty registry was reloaded over");
 		require(registry->getBehaviourName(core::AgentBehaviourId{ 1 }) == "Edited",
 			"A refused reload changed live definitions");
+	}
+
+	void hotReloadIsAtomicAcrossSourceHelpersAndDependentBuildings()
+	{
+		TemporaryDirectory temporary;
+		auto const package = temporary.path / "atomic.behaviours";
+		std::filesystem::create_directories(package);
+		auto const uuid = std::string("123e4567-e89b-42d3-a456-426614174157");
+		auto const manifest = ""
+			"  version: 1\n"
+			"  uuid: " + uuid + "\n"
+			"  revision: 1\n"
+			"  modules:\n"
+			"    - name: helpers.reload\n"
+			"      source: helper.lua\n"
+			"  nextBehaviourId: 2\n"
+			"  behaviours:\n"
+			"    - id: 1\n"
+			"      name: Atomic\n"
+			"      revision: 1\n"
+			"      source: atomic.lua\n"
+			"      schema:\n"
+			"        - name: expected\n"
+			"          type: integer\n"
+			"        - name: code\n"
+			"          type: integer\n"
+			"        - name: destination\n"
+			"          type: marker\n";
+		auto behaviourSource = [](std::string const& sourceRevision)
+		{
+			return "local helper = require('helpers.reload')\n"
+				"local source_revision = '" + sourceRevision + "'\n"
+				"return { api_version = 1, factory = function(configuration)\n"
+				"  if configuration.expected ~= helper.expected then error('wrong expected value') end\n"
+				"  return {\n"
+				"    on_start = function(context)\n"
+				"      context.log('start:' .. source_revision .. ':' .. helper.generation .. ':' .. context.random_integer(1, 1000000))\n"
+				"      context.set_timer('preserved', 3)\n"
+				"      local moved = context.move_to(configuration.destination)\n"
+				"      if not moved.accepted then error(moved.status) end\n"
+				"    end,\n"
+				"    on_timer = function(name, context) context.log('timer:' .. source_revision .. ':' .. helper.generation .. ':' .. name) end,\n"
+				"    on_stop = function(reason, context) context.log('stop:' .. source_revision .. ':' .. reason) end\n"
+				"  }\n"
+				"end }\n";
+		};
+		writeText(manifestPath(package), manifest);
+		writeText(package / "helper.lua",
+			"return { expected = 7, generation = 'v1' }\n");
+		writeText(package / "atomic.lua", behaviourSource("v1"));
+
+		struct Fixture
+		{
+			std::shared_ptr<core::Building> building;
+			std::filesystem::path path;
+			std::vector<core::AgentId> agents;
+		};
+		auto makeBuilding = [&](std::string name, std::string filename,
+			unsigned agentCount)
+		{
+			Fixture fixture;
+			fixture.building = std::make_shared<core::Building>(std::move(name), 10, 2);
+			auto const room = fixture.building->addRoom("Room", 0, 0, 0, 10, 1);
+			fixture.building->addSectorMarker(room, 0, 8.5f, "Destination");
+			fixture.building->finishBuild();
+			for (unsigned index = 0; index < agentCount; ++index)
+				fixture.agents.push_back(fixture.building->createAgent(
+					"Agent " + std::to_string(index + 1), room, 0,
+					0.5f + static_cast<float>(index)));
+			fixture.building->pauseSimulation();
+			fixture.path = temporary.path / filename;
+			fixture.building->saveTo(fixture.path.string());
+			return fixture;
+		};
+		auto alpha = makeBuilding("Alpha", "alpha.yaml", 2);
+		auto zulu = makeBuilding("Zulu", "zulu.yaml", 1);
+
+		// Attach in reverse display order. Reload diagnostics must still use stable
+		// Building-name order and stable Agent-ID order.
+		auto registry = core::selectAndAttachAgentBehaviourRegistry(
+			*zulu.building, zulu.path, package);
+		require(core::selectAndAttachAgentBehaviourRegistry(
+				*alpha.building, alpha.path, package) == registry,
+			"Atomic reload dependents did not share one registry");
+		auto const behaviour = core::AgentBehaviourId{ 1 };
+		auto assign = [&](Fixture& fixture, uint64_t& code)
+		{
+			for (auto agent : fixture.agents)
+			{
+				require(fixture.building->setAgentBehaviourAssignment(agent, behaviour, 1, {
+					{ "expected", int64_t{ 7 } },
+					{ "code", static_cast<int64_t>(code++) },
+					{ "destination", fixture.building->getMarkerIds().front() }
+				}), "Could not assign an atomic reload fixture");
+			}
+			fixture.building->saveTo(fixture.path.string());
+		};
+		uint64_t code = 1;
+		assign(alpha, code);
+		assign(zulu, code);
+		require(!registry->isModified() && !alpha.building->isModified()
+			&& !zulu.building->isModified(),
+			"Atomic reload fixtures did not start with clean documents");
+
+		auto runStartBoundary = [&](Fixture& fixture)
+		{
+			require(fixture.building->resumeSimulation(),
+				"Could not resume an atomic reload fixture");
+			require(fixture.building->advanceTick(),
+				"A restarted atomic reload instance failed");
+			fixture.building->pauseSimulation();
+		};
+		runStartBoundary(alpha);
+		runStartBoundary(zulu);
+		(void)core::consumeLogMessages();
+
+		writeText(package / "helper.lua",
+			"return { expected = 7, generation = 'v2' }\n");
+		writeText(package / "atomic.lua", behaviourSource("v2"));
+		std::string diagnostic;
+		std::vector<core::AgentBehaviourReloadDiagnostic> reloadDiagnostics;
+
+		// One running dependent refuses the transaction before any scratch module
+		// executes or any live state changes.
+		require(zulu.building->resumeSimulation(),
+			"Could not run the dependent used by the reload refusal check");
+		require(!core::reloadAgentBehaviourRegistryDocument(registry, package,
+				&diagnostic, &reloadDiagnostics)
+			&& diagnostic.find("Zulu") != std::string::npos,
+			"A reload was not refused while a dependent Building was running");
+		zulu.building->pauseSimulation();
+
+		require(core::reloadAgentBehaviourRegistryDocument(registry, package,
+				&diagnostic, &reloadDiagnostics)
+			&& reloadDiagnostics.empty(),
+			"Valid source/helper reload did not commit atomically");
+		auto stopMessages = core::consumeLogMessages();
+		auto const stopCount = std::count_if(stopMessages.begin(), stopMessages.end(),
+			[](core::LogMessage const& message)
+			{
+				return message.msg == "stop:v1:reload";
+			});
+		require(stopCount == 3,
+			"Successful reload did not call read-only teardown on every old instance");
+		for (auto agent : alpha.agents)
+			require(!alpha.building->lookupAgent(agent).entity->getPath(),
+				"Successful reload retained old behaviour movement");
+
+		auto collectStarts = []
+		{
+			auto messages = core::consumeLogMessages();
+			std::vector<std::string> starts;
+			for (auto const& message : messages)
+				if (message.msg.starts_with("start:v2:v2:")) starts.push_back(message.msg);
+			return starts;
+		};
+		runStartBoundary(alpha);
+		runStartBoundary(zulu);
+		auto const firstRestart = collectStarts();
+		require(firstRestart.size() == 3,
+			"Reloaded instances were not recreated from all authored configurations");
+
+		auto const historyState = gBuildingDocumentHistory.currentStateId();
+		auto const undoCount = gBuildingDocumentHistory.undoCount();
+		auto const redoCount = gBuildingDocumentHistory.redoCount();
+		auto assertRollback = [&](std::string const& candidate,
+			core::AgentBehaviourReloadDiagnosticScope expectedScope)
+		{
+			writeText(package / "atomic.lua", candidate);
+			reloadDiagnostics.clear();
+			require(!core::reloadAgentBehaviourRegistryDocument(registry, package,
+					&diagnostic, &reloadDiagnostics)
+				&& !reloadDiagnostics.empty()
+				&& reloadDiagnostics.front().scope == expectedScope
+				&& registry->lookupAgentBehaviour(behaviour)->getModuleStatus()
+					== core::AgentBehaviourModuleStatus::Loaded
+				&& !registry->isModified() && !alpha.building->isModified()
+				&& !zulu.building->isModified()
+				&& gBuildingDocumentHistory.currentStateId() == historyState
+				&& gBuildingDocumentHistory.undoCount() == undoCount
+				&& gBuildingDocumentHistory.redoCount() == redoCount,
+				"A failed reload changed live registry/runtime document state or history");
+		};
+		assertRollback("return { api_version = 1, factory = function( }\n",
+			core::AgentBehaviourReloadDiagnosticScope::Module);
+		assertRollback("require('helpers.missing')\nreturn { api_version = 1, factory = function() return {} end }\n",
+			core::AgentBehaviourReloadDiagnosticScope::Module);
+		assertRollback("return { api_version = 2, factory = function() return {} end }\n",
+			core::AgentBehaviourReloadDiagnosticScope::Module);
+		assertRollback("while true do end\n",
+			core::AgentBehaviourReloadDiagnosticScope::Module);
+
+		writeText(package / "atomic.lua", behaviourSource("v2"));
+		writeText(package / "helper.lua", "return { broken = function( }\n");
+		reloadDiagnostics.clear();
+		require(!core::reloadAgentBehaviourRegistryDocument(registry, package,
+				&diagnostic, &reloadDiagnostics)
+			&& reloadDiagnostics.size() >= 2
+			&& std::all_of(reloadDiagnostics.begin(), reloadDiagnostics.end(),
+				[](core::AgentBehaviourReloadDiagnostic const& item)
+				{
+					return item.scope
+						== core::AgentBehaviourReloadDiagnosticScope::Module;
+				})
+			&& !registry->isModified() && !alpha.building->isModified()
+			&& !zulu.building->isModified(),
+			"Helper-graph failures were not aggregated without mutation");
+		writeText(package / "helper.lua",
+			"return { expected = 7, generation = 'v2' }\n");
+
+		writeText(package / "atomic.lua", ""
+			"return { api_version = 1, factory = function(configuration)\n"
+			"  error('factory rejected code ' .. configuration.code)\n"
+			"end }\n");
+		reloadDiagnostics.clear();
+		require(!core::reloadAgentBehaviourRegistryDocument(registry, package,
+				&diagnostic, &reloadDiagnostics)
+			&& reloadDiagnostics.size() == 3
+			&& reloadDiagnostics[0].scope
+				== core::AgentBehaviourReloadDiagnosticScope::Agent
+			&& reloadDiagnostics[0].buildingName == "Alpha"
+			&& reloadDiagnostics[0].agent == alpha.agents[0]
+			&& reloadDiagnostics[1].buildingName == "Alpha"
+			&& reloadDiagnostics[1].agent == alpha.agents[1]
+			&& reloadDiagnostics[2].buildingName == "Zulu"
+			&& reloadDiagnostics[2].agent == zulu.agents[0],
+			"Per-configuration factory failures were not aggregated in stable Building/Agent order");
+
+		// All failed attempts leave the v2 instances and their timers intact. A
+		// restart would emit start again and postpone these timers.
+		for (auto* fixture : { &alpha, &zulu })
+		{
+			require(fixture->building->resumeSimulation(),
+				"Could not resume after a refused reload");
+			require(fixture->building->advanceTicks(3),
+				"The previous runtime failed after a refused reload");
+			fixture->building->pauseSimulation();
+		}
+		auto retainedMessages = core::consumeLogMessages();
+		auto retainedTimers = std::count_if(retainedMessages.begin(), retainedMessages.end(),
+			[](core::LogMessage const& message)
+			{
+				return message.msg == "timer:v2:v2:preserved";
+			});
+		auto repeatedStarts = std::count_if(retainedMessages.begin(), retainedMessages.end(),
+			[](core::LogMessage const& message)
+			{
+				return message.msg.starts_with("start:");
+			});
+		require(retainedTimers == 3 && repeatedStarts == 0,
+			"Failed reload did not preserve the previous live instance state");
+
+		// Re-adopting the same valid revision restarts deterministic random streams
+		// and produces the same per-Agent startup outcomes.
+		writeText(package / "atomic.lua", behaviourSource("v2"));
+		require(core::reloadAgentBehaviourRegistryDocument(registry, package,
+				&diagnostic, &reloadDiagnostics),
+			"Could not recover from refused reload candidates");
+		(void)core::consumeLogMessages(); // successful-reload teardown
+		runStartBoundary(alpha);
+		runStartBoundary(zulu);
+		auto const secondRestart = collectStarts();
+		require(secondRestart == firstRestart,
+			"Repeated successful reloads produced nondeterministic restarted outcomes");
 	}
 
 	void packageContainmentAndLifecycle()
@@ -939,6 +1208,7 @@ void runAgentBehaviourRegistrySmokeChecks()
 	failedAndOccupiedCreationLeavesNoReferenceOrDirectory();
 	definitionsPersistWithSchemasRevisionsAndModulePaths();
 	reloadValidatesAndSharesReplacementAcrossDependents();
+	hotReloadIsAtomicAcrossSourceHelpersAndDependentBuildings();
 	unsavedBuildingDocumentRefusesManagedOperations();
 	packageContainmentAndLifecycle();
 }

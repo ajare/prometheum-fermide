@@ -6,6 +6,7 @@
 #include <exception>
 #include <format>
 #include <functional>
+#include <iterator>
 #include <limits>
 #include <map>
 #include <memory>
@@ -415,6 +416,24 @@ namespace core
 		std::vector<AgentBehaviourHelperSource> const& helpers,
 		AgentBehaviourRuntimeLimits limits)
 	{
+		return preflightModule(packageName, moduleName, source, helpers, limits, true);
+	}
+
+	AgentBehaviourModulePreflight AgentBehaviourRuntimeAdapter::preflightModuleContract(
+		std::string_view packageName, std::string_view moduleName,
+		std::string_view source,
+		std::vector<AgentBehaviourHelperSource> const& helpers,
+		AgentBehaviourRuntimeLimits limits)
+	{
+		return preflightModule(packageName, moduleName, source, helpers, limits, false);
+	}
+
+	AgentBehaviourModulePreflight AgentBehaviourRuntimeAdapter::preflightModule(
+		std::string_view packageName, std::string_view moduleName,
+		std::string_view source,
+		std::vector<AgentBehaviourHelperSource> const& helpers,
+		AgentBehaviourRuntimeLimits limits, bool invokeFactory)
+	{
 		auto const normalizedPackage = packageName.empty()
 			? std::string("<unknown package>") : std::string(packageName);
 		auto const normalizedModule = moduleName.empty()
@@ -515,6 +534,15 @@ namespace core
 				return failure(normalizedPackage, normalizedModule,
 					chunkName + ":1: module contract is missing its factory",
 					"module contract must provide a factory function");
+			}
+			// Registry package preflight validates the module/API contract only.
+			// Hot reload invokes this factory with every real authored
+			// configuration in fresh per-Building candidate runtimes.
+			if (!invokeFactory)
+			{
+				AgentBehaviourModulePreflight result;
+				result.loaded = true;
+				return result;
 			}
 
 			auto const configurationReference = createImmutableProxy(state, false);
@@ -1460,6 +1488,19 @@ namespace core
 			if (!lua_istable(lua, -1))
 				return conversionFailure(AgentBehaviourRuntimeStage::Factory,
 					"Agent behaviour factory must return an instance table");
+			auto const instanceTable = lua_gettop(lua);
+			for (auto const* callback : { "on_start", "on_event", "on_timer",
+				"on_route_lost", "on_stop" })
+			{
+				lua_pushstring(lua, callback);
+				lua_rawget(lua, instanceTable);
+				auto const valid = lua_isnil(lua, -1) || lua_isfunction(lua, -1);
+				lua_pop(lua, 1);
+				if (!valid)
+					return conversionFailure(AgentBehaviourRuntimeStage::Factory,
+						std::format("Agent behaviour instance field '{}' must be a function when present",
+							callback));
+			}
 			instance.instanceReference = luaL_ref(lua, LUA_REGISTRYINDEX);
 			lua_settop(lua, base);
 			return true;
@@ -2098,6 +2139,109 @@ namespace core
 	}
 
 	AgentBehaviourRuntimeAdapter::~AgentBehaviourRuntimeAdapter() = default;
+
+	bool AgentBehaviourRuntimeAdapter::prepareReload(Building& building,
+		AgentBehaviourRegistry const& registry,
+		std::unique_ptr<AgentBehaviourRuntimeAdapter>& candidate,
+		std::vector<AgentBehaviourRuntimeDiagnostic>& diagnostics)
+	{
+		candidate.reset();
+		diagnostics.clear();
+		try
+		{
+			auto prepared = std::make_unique<AgentBehaviourRuntimeAdapter>(
+				building.mAgentBehaviourRuntime->getLimits());
+			prepared->mImpl->currentTick = building.mSimulationTick;
+
+			std::vector<AgentBehaviourHelperSource> helpers;
+			helpers.reserve(registry.mHelperModules.size());
+			for (auto const& [name, helper] : registry.mHelperModules)
+			{
+				auto source = registry.mSourceCache.find(helper->getSourceModulePath());
+				if (source == registry.mSourceCache.end()) continue;
+				helpers.push_back({ name, helper->getSourceModulePath(), source->second });
+			}
+
+			std::vector<Impl::Definition> definitions;
+			for (auto const& [agentId, agent] : building.mAgents.entries())
+			{
+				if (!agent || !agent->getBehaviourAssignment()) continue;
+				auto const& assignment = *agent->getBehaviourAssignment();
+				auto const* behaviour = registry.lookupAgentBehaviour(
+					assignment.behaviour);
+				if (!behaviour) continue;
+				auto source = registry.mSourceCache.find(
+					behaviour->getSourceModulePath());
+				if (source == registry.mSourceCache.end()) continue;
+				definitions.push_back({ agentId, agent->getName(), behaviour->getName(),
+					assignment, agent->isActive(),
+					deriveRandomSeed(building.mRandomSeed, agentId, assignment.behaviour),
+					registry.getUuid(), registry.getPackageRevision(),
+					registry.mPackageDirectory
+						? registry.mPackageDirectory->filename().string()
+						: building.getAgentBehaviourRegistryPackageName(),
+					behaviour->getSourceModulePath(), source->second, helpers });
+			}
+
+			// EntityRegistry iteration is stable Agent-ID order. Unlike live
+			// synchronization, every factory is attempted so the editor can report
+			// all configuration-specific failures in one reload attempt.
+			for (auto const& definition : definitions)
+			{
+				Impl::Instance instance;
+				instance.assignment = definition.assignment;
+				instance.agentName = definition.agentName;
+				instance.behaviourName = definition.behaviourName;
+				instance.suspended = !definition.active;
+				instance.randomState = definition.randomSeed;
+				instance.registryUuid = definition.registryUuid;
+				instance.packageRevision = definition.packageRevision;
+				instance.packageName = definition.packageName;
+				instance.moduleName = definition.moduleName;
+				instance.scope.agent = definition.agent;
+				if (!prepared->mImpl->construct(definition, instance))
+				{
+					prepared->mImpl->release(instance);
+					(void)lua_gc(prepared->mImpl->state.get(), LUA_GCCOLLECT);
+					continue;
+				}
+				prepared->mImpl->instances.emplace(definition.agent,
+					std::move(instance));
+			}
+
+			diagnostics = prepared->mImpl->diagnostics;
+			if (!diagnostics.empty()) return false;
+			candidate = std::move(prepared);
+			return true;
+		}
+		catch (std::exception const& error)
+		{
+			diagnostics.push_back({ AgentBehaviourRuntimeFailure::ConversionError,
+				AgentBehaviourRuntimeStage::Factory, {}, {}, building.mSimulationTick,
+				{}, {}, building.hasAgentBehaviourRegistryReference()
+					? building.getAgentBehaviourRegistryPackageName() : std::string{},
+				{}, {}, error.what(), error.what() });
+			return false;
+		}
+		catch (...)
+		{
+			diagnostics.push_back({ AgentBehaviourRuntimeFailure::ConversionError,
+				AgentBehaviourRuntimeStage::Factory, {}, {}, building.mSimulationTick,
+				{}, {}, building.hasAgentBehaviourRegistryReference()
+					? building.getAgentBehaviourRegistryPackageName() : std::string{},
+				{}, {}, "Unknown Lua reload preflight failure",
+				"Unknown Lua reload preflight failure" });
+			return false;
+		}
+	}
+
+	void AgentBehaviourRuntimeAdapter::appendDiagnostics(
+		std::vector<AgentBehaviourRuntimeDiagnostic> diagnostics)
+	{
+		mImpl->diagnostics.insert(mImpl->diagnostics.end(),
+			std::make_move_iterator(diagnostics.begin()),
+			std::make_move_iterator(diagnostics.end()));
+	}
 
 	bool AgentBehaviourRuntimeAdapter::runBoundary(Building& building)
 	{

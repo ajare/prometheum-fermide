@@ -38,9 +38,10 @@ bool commitAgentBehaviourRegistrySwitch(
 	std::string const& buildingFilepath, std::string const& packageDirectory,
 	std::string& diagnostic);
 
-// Reload refuses dirty state and paused-dependent validation failures. Module
-// source is preflighted in scratch runtimes; no Agent callback executes. The
-// panel wrapper logs the core diagnostic.
+// Reload refuses dirty state and running dependents. Source/helper modules and
+// every affected authored Agent configuration are preflighted in fresh
+// budgeted runtimes before atomic adoption; no Agent callback executes. The
+// panel wrapper logs and renders the aggregated diagnostics.
 bool reloadAgentBehaviourRegistry(
 	std::shared_ptr<core::AgentBehaviourRegistry> const& registry,
 	std::string const& packageDirectory, std::string* diagnostic = nullptr);
