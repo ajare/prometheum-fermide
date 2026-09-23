@@ -7,6 +7,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -28,10 +29,27 @@ namespace core
 		struct ScratchBudget
 		{
 			size_t bytesUsed{ 0 };
-			size_t byteLimit{ AgentBehaviourRuntimeAdapter::PreflightMemoryBudgetBytes };
+			size_t byteLimit{ AgentBehaviourRuntimeAdapter::DefaultMemoryBudgetBytes };
+			uint32_t instructionLimit{
+				AgentBehaviourRuntimeAdapter::DefaultInstructionBudget };
 			uint32_t instructionsRemaining{
-				AgentBehaviourRuntimeAdapter::PreflightInstructionBudget };
+				AgentBehaviourRuntimeAdapter::DefaultInstructionBudget };
+			uint32_t hookInterval{ 1'000 };
+			bool memoryLimitExceeded{ false };
+			bool instructionLimitExceeded{ false };
+
+			explicit ScratchBudget(AgentBehaviourRuntimeLimits limits = {})
+				: byteLimit(limits.memoryBytes)
+				, instructionLimit(limits.instructionsPerCall)
+				, instructionsRemaining(limits.instructionsPerCall)
+			{
+			}
 		};
+
+		bool limitsAreValid(AgentBehaviourRuntimeLimits limits)
+		{
+			return limits.memoryBytes != 0 && limits.instructionsPerCall != 0;
+		}
 
 		struct StateCloser
 		{
@@ -79,7 +97,12 @@ namespace core
 			}
 			auto const growth = newSize > oldSize ? newSize - oldSize : 0;
 			if (growth > budget.byteLimit - std::min(budget.byteLimit, budget.bytesUsed))
+			{
+				// A refused growth leaves both the original block and accounting intact,
+				// exactly as Lua's allocator contract requires.
+				budget.memoryLimitExceeded = true;
 				return nullptr;
+			}
 			void* replacement = std::realloc(pointer, newSize);
 			if (!replacement) return nullptr;
 			if (newSize >= oldSize) budget.bytesUsed += newSize - oldSize;
@@ -92,21 +115,24 @@ namespace core
 			void* userData = nullptr;
 			(void)lua_getallocf(state, &userData);
 			auto& budget = *static_cast<ScratchBudget*>(userData);
-			constexpr uint32_t HookInterval{ 1'000 };
-			if (budget.instructionsRemaining <= HookInterval)
+			if (budget.instructionsRemaining <= budget.hookInterval)
 			{
 				budget.instructionsRemaining = 0;
-				luaL_error(state, "Agent behaviour preflight instruction budget exceeded");
+				budget.instructionLimitExceeded = true;
+				luaL_error(state, "Agent behaviour instruction budget exceeded");
 				return;
 			}
-			budget.instructionsRemaining -= HookInterval;
+			budget.instructionsRemaining -= budget.hookInterval;
 		}
 
 		void beginInstructionBudget(lua_State* state, ScratchBudget& budget)
 		{
-			budget.instructionsRemaining
-				= AgentBehaviourRuntimeAdapter::PreflightInstructionBudget;
-			lua_sethook(state, instructionHook, LUA_MASKCOUNT, 1'000);
+			budget.instructionsRemaining = budget.instructionLimit;
+			budget.hookInterval = std::min<uint32_t>(1'000, budget.instructionLimit);
+			budget.memoryLimitExceeded = false;
+			budget.instructionLimitExceeded = false;
+			lua_sethook(state, instructionHook, LUA_MASKCOUNT,
+				static_cast<int>(budget.hookInterval));
 		}
 
 		void endInstructionBudget(lua_State* state)
@@ -342,13 +368,25 @@ namespace core
 			return foundDigit && line != 0 ? line : 1;
 		}
 
+		AgentBehaviourRuntimeFailure failureKind(ScratchBudget const& budget,
+			AgentBehaviourRuntimeFailure fallback = AgentBehaviourRuntimeFailure::LuaError)
+		{
+			if (budget.instructionLimitExceeded)
+				return AgentBehaviourRuntimeFailure::InstructionBudgetExceeded;
+			if (budget.memoryLimitExceeded)
+				return AgentBehaviourRuntimeFailure::MemoryBudgetExceeded;
+			return fallback;
+		}
+
 		AgentBehaviourModulePreflight failure(std::string_view packageName,
 			std::string_view moduleName, std::string traceback,
-			std::string_view summary = {})
+			std::string_view summary = {},
+			AgentBehaviourRuntimeFailure kind = AgentBehaviourRuntimeFailure::LuaError)
 		{
 			auto const chunkName = std::format("{}/{}", packageName, moduleName);
 			auto const line = diagnosticLine(traceback, chunkName);
 			AgentBehaviourModulePreflight result;
+			result.failure = kind;
 			result.diagnostic = std::format("Agent behaviour package '{}', module '{}', line {}: {}",
 				packageName, moduleName, line,
 				summary.empty() ? std::string_view(traceback) : summary);
@@ -366,13 +404,20 @@ namespace core
 	AgentBehaviourModulePreflight AgentBehaviourRuntimeAdapter::preflightModule(
 		std::string_view packageName, std::string_view moduleName,
 		std::string_view source,
-		std::vector<AgentBehaviourHelperSource> const& helpers)
+		std::vector<AgentBehaviourHelperSource> const& helpers,
+		AgentBehaviourRuntimeLimits limits)
 	{
 		auto const normalizedPackage = packageName.empty()
 			? std::string("<unknown package>") : std::string(packageName);
 		auto const normalizedModule = moduleName.empty()
 			? std::string("<unknown module>") : std::string(moduleName);
 		auto const chunkName = normalizedPackage + "/" + normalizedModule;
+		if (!limitsAreValid(limits))
+		{
+			return failure(normalizedPackage, normalizedModule,
+				chunkName + ":1: Lua runtime limits must be nonzero", {},
+				AgentBehaviourRuntimeFailure::ConversionError);
+		}
 		if (!source.empty() && static_cast<unsigned char>(source.front()) == 0x1b)
 		{
 			return failure(normalizedPackage, normalizedModule,
@@ -380,7 +425,7 @@ namespace core
 				"precompiled Lua bytecode is not accepted; use text source");
 		}
 
-		ScratchBudget budget;
+		ScratchBudget budget(limits);
 		std::unique_ptr<lua_State, StateCloser> ownedState(
 			lua_newstate(budgetedAllocate, &budget));
 		if (!ownedState)
@@ -414,7 +459,8 @@ namespace core
 			if (!loaded.valid())
 			{
 				sol::error error = loaded;
-				return failure(normalizedPackage, normalizedModule, error.what());
+				return failure(normalizedPackage, normalizedModule, error.what(), {},
+					failureKind(budget));
 			}
 
 			sol::protected_function moduleChunk = loaded;
@@ -435,7 +481,8 @@ namespace core
 			if (!moduleResult.valid())
 			{
 				sol::error error = moduleResult;
-				return failure(normalizedPackage, normalizedModule, error.what());
+				return failure(normalizedPackage, normalizedModule, error.what(), {},
+					failureKind(budget));
 			}
 			sol::object exports = moduleResult.get<sol::object>();
 			if (exports.get_type() != sol::type::table)
@@ -475,7 +522,8 @@ namespace core
 			if (!factoryResult.valid())
 			{
 				sol::error error = factoryResult;
-				return failure(normalizedPackage, normalizedModule, error.what());
+				return failure(normalizedPackage, normalizedModule, error.what(), {},
+					failureKind(budget));
 			}
 			sol::object instanceObject = factoryResult.get<sol::object>();
 			if (instanceObject.get_type() != sol::type::table)
@@ -507,14 +555,24 @@ namespace core
 		{
 			endInstructionBudget(ownedState.get());
 			return failure(normalizedPackage, normalizedModule,
-				chunkName + ":1: " + error.what(), error.what());
+				chunkName + ":1: " + error.what(), error.what(),
+				failureKind(budget, AgentBehaviourRuntimeFailure::ConversionError));
+		}
+		catch (...)
+		{
+			endInstructionBudget(ownedState.get());
+			return failure(normalizedPackage, normalizedModule,
+				chunkName + ":1: unknown sol2 conversion failure",
+				"unknown sol2 conversion failure",
+				failureKind(budget, AgentBehaviourRuntimeFailure::ConversionError));
 		}
 	}
 
 	AgentBehaviourModulePreflight AgentBehaviourRuntimeAdapter::preflightHelperModule(
 		std::string_view packageName, std::string_view helperName,
 		std::string_view moduleName, std::string_view source,
-		std::vector<AgentBehaviourHelperSource> const& helpers)
+		std::vector<AgentBehaviourHelperSource> const& helpers,
+		AgentBehaviourRuntimeLimits limits)
 	{
 		std::vector<AgentBehaviourHelperSource> graph = helpers;
 		auto found = std::find_if(graph.begin(), graph.end(),
@@ -536,7 +594,7 @@ namespace core
 			"local helper = require(\"{}\")\n"
 			"return {{ api_version = 1, factory = function() return {{}} end }}\n",
 			helperName);
-		return preflightModule(packageName, moduleName, wrapper, graph);
+		return preflightModule(packageName, moduleName, wrapper, graph, limits);
 	}
 
 	namespace
@@ -722,27 +780,41 @@ namespace core
 			return 1;
 		}
 
-		bool protectedCall(lua_State* state, int argumentCount, int resultCount,
-			std::string* diagnostic = nullptr)
+		struct ProtectedCallResult
+		{
+			bool succeeded{ false };
+			AgentBehaviourRuntimeFailure failure{ AgentBehaviourRuntimeFailure::None };
+			std::string diagnostic;
+			std::string traceback;
+		};
+
+		ProtectedCallResult protectedCall(lua_State* state, ScratchBudget& budget,
+			int argumentCount, int resultCount)
 		{
 			auto const functionIndex = lua_gettop(state) - argumentCount;
 			lua_getglobal(state, "__prometheum_traceback");
 			lua_insert(state, functionIndex);
+			beginInstructionBudget(state, budget);
 			auto const status = lua_pcall(state, argumentCount, resultCount,
 				functionIndex);
+			endInstructionBudget(state);
 			if (status != LUA_OK)
 			{
-				if (diagnostic)
-				{
-					auto const* message = lua_tostring(state, -1);
-					*diagnostic = message ? message : "Lua callback failed";
-				}
+				auto const* message = lua_tostring(state, -1);
+				ProtectedCallResult result;
+				result.failure = status == LUA_ERRMEM
+					? AgentBehaviourRuntimeFailure::MemoryBudgetExceeded
+					: failureKind(budget);
+				result.diagnostic = message ? message : "Lua execution failed";
+				result.traceback = result.diagnostic;
 				lua_pop(state, 1);
 				lua_remove(state, functionIndex);
-				return false;
+				return result;
 			}
 			lua_remove(state, functionIndex);
-			return true;
+			ProtectedCallResult result;
+			result.succeeded = true;
+			return result;
 		}
 
 		void copyGlobal(lua_State* state, int environment, char const* name)
@@ -846,6 +918,8 @@ namespace core
 			AgentBehaviourAssignment assignment;
 			std::string registryUuid;
 			uint64_t packageRevision{ 0 };
+			std::string packageName;
+			std::string moduleName;
 			int environmentReference{ LUA_NOREF };
 			int configurationReference{ LUA_NOREF };
 			int instanceReference{ LUA_NOREF };
@@ -860,11 +934,13 @@ namespace core
 		std::unique_ptr<lua_State, StateCloser> state;
 		ModuleLoader hostLoader;
 		std::map<AgentId, Instance> instances;
+		std::vector<AgentBehaviourRuntimeDiagnostic> diagnostics;
 		uint64_t observedOutcomeCount{ 0 };
 		uint64_t lastObservedSequence{ 0 };
 
-		Impl()
-			: state(lua_newstate(budgetedAllocate, &budget))
+		explicit Impl(AgentBehaviourRuntimeLimits limits)
+			: budget(limits)
+			, state(lua_newstate(budgetedAllocate, &budget))
 		{
 			if (!state) throw std::runtime_error("Could not create Building Lua runtime");
 			sol::state_view lua(state.get());
@@ -879,6 +955,26 @@ namespace core
 			luaL_unref(state.get(), LUA_REGISTRYINDEX, instance.instanceReference);
 			luaL_unref(state.get(), LUA_REGISTRYINDEX, instance.configurationReference);
 			luaL_unref(state.get(), LUA_REGISTRYINDEX, instance.environmentReference);
+			instance.instanceReference = LUA_NOREF;
+			instance.configurationReference = LUA_NOREF;
+			instance.environmentReference = LUA_NOREF;
+			instance.moduleLoader.reset();
+		}
+
+		void record(Definition const& definition, AgentBehaviourRuntimeStage stage,
+			std::string_view callback, ProtectedCallResult const& result)
+		{
+			diagnostics.push_back({ result.failure, stage, definition.agent,
+				definition.packageName, definition.moduleName, std::string(callback),
+				result.diagnostic, result.traceback });
+		}
+
+		void record(Instance const& instance, AgentBehaviourRuntimeStage stage,
+			std::string_view callback, ProtectedCallResult const& result)
+		{
+			diagnostics.push_back({ result.failure, stage, instance.scope.agent,
+				instance.packageName, instance.moduleName, std::string(callback),
+				result.diagnostic, result.traceback });
 		}
 
 		void clear()
@@ -889,19 +985,42 @@ namespace core
 				release(instance);
 			}
 			instances.clear();
+			diagnostics.clear();
 			observedOutcomeCount = 0;
 			lastObservedSequence = 0;
+			(void)lua_gc(state.get(), LUA_GCCOLLECT);
 		}
 
 		bool construct(Definition const& definition, Instance& instance)
 		{
 			auto* lua = state.get();
 			auto const base = lua_gettop(lua);
+			auto conversionFailure = [&](AgentBehaviourRuntimeStage stage,
+				std::string message)
+			{
+				ProtectedCallResult result;
+				result.failure = AgentBehaviourRuntimeFailure::ConversionError;
+				result.diagnostic = std::move(message);
+				result.traceback = result.diagnostic;
+				record(definition, stage, {}, result);
+				lua_settop(lua, base);
+				return false;
+			};
 			auto const chunkName = "@" + definition.packageName + "/"
 				+ definition.moduleName;
-			if (luaL_loadbufferx(lua, definition.source.data(), definition.source.size(),
-				chunkName.c_str(), "t") != LUA_OK)
+			budget.memoryLimitExceeded = false;
+			auto const loadStatus = luaL_loadbufferx(lua, definition.source.data(),
+				definition.source.size(), chunkName.c_str(), "t");
+			if (loadStatus != LUA_OK)
 			{
+				ProtectedCallResult result;
+				result.failure = loadStatus == LUA_ERRMEM || budget.memoryLimitExceeded
+					? AgentBehaviourRuntimeFailure::MemoryBudgetExceeded
+					: AgentBehaviourRuntimeFailure::LuaError;
+				auto const* message = lua_tostring(lua, -1);
+				result.diagnostic = message ? message : "Lua module load failed";
+				result.traceback = result.diagnostic;
+				record(definition, AgentBehaviourRuntimeStage::ModuleLoad, {}, result);
 				lua_settop(lua, base);
 				return false;
 			}
@@ -922,44 +1041,49 @@ namespace core
 			lua_setfield(lua, environment, "require");
 			lua_pushvalue(lua, environment);
 			if (!lua_setupvalue(lua, chunk, 1))
-			{
-				lua_settop(lua, base);
-				return false;
-			}
+				return conversionFailure(AgentBehaviourRuntimeStage::ModuleLoad,
+					"Agent behaviour module has no isolated environment");
 			lua_remove(lua, environment);
 
 			instance.moduleLoader->dependencyChain.push_back(definition.moduleName);
-			auto const moduleLoaded = protectedCall(lua, 0, 1);
+			auto const moduleLoaded = protectedCall(lua, budget, 0, 1);
 			instance.moduleLoader->dependencyChain.clear();
-			if (!moduleLoaded || !lua_istable(lua, -1))
+			if (!moduleLoaded.succeeded)
 			{
+				record(definition, AgentBehaviourRuntimeStage::ModuleLoad, {}, moduleLoaded);
 				lua_settop(lua, base);
 				return false;
 			}
+			if (!lua_istable(lua, -1))
+				return conversionFailure(AgentBehaviourRuntimeStage::ModuleLoad,
+					"Agent behaviour module must return a contract table");
 			auto const contract = lua_gettop(lua);
-			lua_getfield(lua, contract, "api_version");
+			lua_pushliteral(lua, "api_version");
+			lua_rawget(lua, contract);
 			auto const apiVersion = lua_isinteger(lua, -1) ? lua_tointeger(lua, -1) : 0;
 			lua_pop(lua, 1);
 			if (apiVersion != HostApiVersion)
-			{
-				lua_settop(lua, base);
-				return false;
-			}
-			lua_getfield(lua, contract, "factory");
+				return conversionFailure(AgentBehaviourRuntimeStage::ModuleLoad,
+					"Agent behaviour module API version is invalid");
+			lua_pushliteral(lua, "factory");
+			lua_rawget(lua, contract);
 			if (!lua_isfunction(lua, -1))
-			{
-				lua_settop(lua, base);
-				return false;
-			}
+				return conversionFailure(AgentBehaviourRuntimeStage::Factory,
+					"Agent behaviour module factory is invalid");
 
 			pushConfiguration(lua, definition.assignment.configuration);
 			lua_pushvalue(lua, -1);
 			instance.configurationReference = luaL_ref(lua, LUA_REGISTRYINDEX);
-			if (!protectedCall(lua, 1, 1) || !lua_istable(lua, -1))
+			auto const factoryCalled = protectedCall(lua, budget, 1, 1);
+			if (!factoryCalled.succeeded)
 			{
+				record(definition, AgentBehaviourRuntimeStage::Factory, {}, factoryCalled);
 				lua_settop(lua, base);
 				return false;
 			}
+			if (!lua_istable(lua, -1))
+				return conversionFailure(AgentBehaviourRuntimeStage::Factory,
+					"Agent behaviour factory must return an instance table");
 			instance.instanceReference = luaL_ref(lua, LUA_REGISTRYINDEX);
 			lua_settop(lua, base);
 			return true;
@@ -993,10 +1117,16 @@ namespace core
 				instance.assignment = definition.assignment;
 				instance.registryUuid = definition.registryUuid;
 				instance.packageRevision = definition.packageRevision;
+				instance.packageName = definition.packageName;
+				instance.moduleName = definition.moduleName;
 				instance.scope.agent = definition.agent;
-				if (construct(definition, instance))
-					instances.emplace(definition.agent, std::move(instance));
-				else release(instance);
+				if (!construct(definition, instance))
+				{
+					instance.disabled = true;
+					release(instance);
+					(void)lua_gc(state.get(), LUA_GCCOLLECT);
+				}
+				instances.emplace(definition.agent, std::move(instance));
 			}
 		}
 
@@ -1044,23 +1174,29 @@ namespace core
 			};
 		}
 
-		bool finishCallback(Instance& instance, bool succeeded,
+		bool finishCallback(Instance& instance, std::string_view callback,
+			ProtectedCallResult const& result,
 			std::vector<PendingMovementCommand>& commands)
 		{
 			instance.scope.active = false;
-			if (succeeded)
+			if (result.succeeded)
 				commands.insert(commands.end(), instance.scope.commands.begin(),
 					instance.scope.commands.end());
-			else instance.disabled = true;
+			else
+			{
+				instance.disabled = true;
+				record(instance, AgentBehaviourRuntimeStage::Callback, callback, result);
+			}
 			instance.scope.commands.clear();
-			return succeeded;
+			return result.succeeded;
 		}
 
 		bool pushCallback(Instance& instance, char const* callback)
 		{
 			auto* lua = state.get();
 			lua_rawgeti(lua, LUA_REGISTRYINDEX, instance.instanceReference);
-			lua_getfield(lua, -1, callback);
+			lua_pushstring(lua, callback);
+			lua_rawget(lua, -2);
 			lua_remove(lua, -2);
 			if (lua_isnil(lua, -1))
 			{
@@ -1116,7 +1252,8 @@ namespace core
 						pushContext(instance);
 						lua_rawgeti(lua, LUA_REGISTRYINDEX,
 							instance.configurationReference);
-						finishCallback(instance, protectedCall(lua, 2, 0), commands);
+						auto const result = protectedCall(lua, budget, 2, 0);
+						finishCallback(instance, "on_start", result, commands);
 					}
 					lua_settop(lua, base);
 				}
@@ -1124,6 +1261,8 @@ namespace core
 				if (instance.disabled)
 				{
 					instance.outcomes.clear();
+					release(instance);
+					(void)lua_gc(state.get(), LUA_GCCOLLECT);
 					disabledAgents.push_back(agentId);
 					continue;
 				}
@@ -1143,7 +1282,8 @@ namespace core
 							auto const reason = routeLossReasonName(outcome.routeLossReason);
 							lua_pushlstring(lua, reason.data(), reason.size());
 							pushContext(instance);
-							finishCallback(instance, protectedCall(lua, 3, 0), commands);
+							auto const result = protectedCall(lua, budget, 3, 0);
+							finishCallback(instance, "on_route_lost", result, commands);
 						}
 					}
 					else if (pushCallback(instance, "on_event"))
@@ -1151,13 +1291,19 @@ namespace core
 						prepareScope(building, agentId, instance, commands);
 						pushSemanticEvent(outcome);
 						pushContext(instance);
-						finishCallback(instance, protectedCall(lua, 2, 0), commands);
+						auto const result = protectedCall(lua, budget, 2, 0);
+						finishCallback(instance, "on_event", result, commands);
 					}
 					lua_settop(lua, base);
 					if (instance.disabled) break;
 				}
 				instance.outcomes.clear();
-				if (instance.disabled) disabledAgents.push_back(agentId);
+				if (instance.disabled)
+				{
+					release(instance);
+					(void)lua_gc(state.get(), LUA_GCCOLLECT);
+					disabledAgents.push_back(agentId);
+				}
 			}
 
 			// Every callback above has returned and the phase marker is still None.
@@ -1178,9 +1324,12 @@ namespace core
 		}
 	};
 
-	AgentBehaviourRuntimeAdapter::AgentBehaviourRuntimeAdapter()
-		: mImpl(std::make_unique<Impl>())
+	AgentBehaviourRuntimeAdapter::AgentBehaviourRuntimeAdapter(
+		AgentBehaviourRuntimeLimits limits)
 	{
+		if (!limitsAreValid(limits))
+			throw std::invalid_argument("Agent behaviour runtime limits must be nonzero");
+		mImpl = std::make_unique<Impl>(limits);
 	}
 
 	AgentBehaviourRuntimeAdapter::~AgentBehaviourRuntimeAdapter() = default;
@@ -1217,8 +1366,45 @@ namespace core
 					behaviour->getSourceModulePath(), source->second, helpers });
 			}
 		}
-		mImpl->synchronize(definitions);
-		mImpl->runBoundaryCallbacks(building);
+		try
+		{
+			mImpl->synchronize(definitions);
+			mImpl->runBoundaryCallbacks(building);
+		}
+		catch (std::exception const& error)
+		{
+			// sol2 conversions and adapter-side Lua value marshaling are contained at
+			// the same boundary as protected Lua errors. The complete failure policy
+			// (pause/headless stop and module scope) is layered by ticket #159.
+			mImpl->diagnostics.push_back({
+				AgentBehaviourRuntimeFailure::ConversionError,
+				AgentBehaviourRuntimeStage::Callback, {}, {}, {}, {},
+				error.what(), error.what() });
+			for (auto& [agent, instance] : mImpl->instances)
+			{
+				(void)agent;
+				if (!instance.scope.active) continue;
+				instance.scope.active = false;
+				instance.scope.commands.clear();
+				instance.disabled = true;
+			}
+		}
+		catch (...)
+		{
+			mImpl->diagnostics.push_back({
+				AgentBehaviourRuntimeFailure::ConversionError,
+				AgentBehaviourRuntimeStage::Callback, {}, {}, {}, {},
+				"Unknown Lua adapter conversion failure",
+				"Unknown Lua adapter conversion failure" });
+			for (auto& [agent, instance] : mImpl->instances)
+			{
+				(void)agent;
+				if (!instance.scope.active) continue;
+				instance.scope.active = false;
+				instance.scope.commands.clear();
+				instance.disabled = true;
+			}
+		}
 	}
 
 	void AgentBehaviourRuntimeAdapter::observeOutcome(SimulationEvent const& event)
@@ -1247,6 +1433,19 @@ namespace core
 	{
 		auto found = mImpl->instances.find(agent);
 		return found != mImpl->instances.end() && found->second.disabled;
+	}
+
+	std::vector<AgentBehaviourRuntimeDiagnostic>
+	AgentBehaviourRuntimeAdapter::consumeDiagnostics()
+	{
+		auto result = std::move(mImpl->diagnostics);
+		mImpl->diagnostics.clear();
+		return result;
+	}
+
+	AgentBehaviourRuntimeLimits AgentBehaviourRuntimeAdapter::getLimits() const
+	{
+		return { mImpl->budget.byteLimit, mImpl->budget.instructionLimit };
 	}
 
 	void AgentBehaviourRuntimeAdapter::reset()

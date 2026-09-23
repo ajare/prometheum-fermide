@@ -80,11 +80,21 @@ Only text Lua source is accepted; precompiled bytecode is refused. The standard
 `package` library is not enabled. The custom `require` resolves exactly the
 immutable built-in `prometheum.v1` module and logical helper names declared in
 this manifest; it never derives a filesystem path and cannot load native modules.
-Undeclared, absolute, traversal, and path-like imports are refused. Import cycles
-are rejected during deterministic preflight with the complete dependency chain.
-A helper may return any Lua value; table exports (including nested tables) are
-immutable, and repeated imports within one Agent resolve through that Agent's
-private cache.
+Undeclared, absolute, traversal, and path-like imports are refused. I/O, OS,
+environment, filesystem, debug, coroutine, dynamic loading, entropy, and wall
+clock facilities are absent. Scripts receive only selected base operations and
+immutable `table`, `string`, `math`, and `utf8` libraries; `string.dump`,
+`math.random`, and `math.randomseed` are excluded. Import cycles are rejected
+during deterministic preflight with the complete dependency chain. A helper may
+return any Lua value; table exports (including nested tables) are immutable, and
+repeated imports within one Agent resolve through that Agent's private cache.
+
+Each Building has a custom-allocated Lua heap with a configurable 64 MiB default.
+Every protected module load, factory, and callback receives a fresh configurable
+100,000-instruction default budget. Lua errors, conversion errors, and either
+budget being exhausted disable the affected live instance through the same
+protected boundary and produce a structured runtime diagnostic; a refused heap
+growth does not invalidate the Building's Lua state.
 
 Behaviour modules obtain the immutable versioned host boundary through
 `require("prometheum.v1")` and must return this shape:

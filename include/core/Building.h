@@ -11,6 +11,7 @@
 
 #include "core/Defines.h"
 #include "core/AgentGroup.h"
+#include "core/AgentBehaviourRuntime.h"
 #include "core/Background.h"
 #include "core/Facade.h"
 #include "core/Layer.h"
@@ -35,7 +36,6 @@ namespace core
 
 	class AgentTagRegistry;
 	class AgentBehaviourRegistry;
-	class AgentBehaviourRuntimeAdapter;
 
 	class Building : public Serializable
 	{
@@ -1152,7 +1152,8 @@ namespace core
 
 	public:
 
-		Building(std::string const& name, uint32_t cellsWide, uint32_t decksHigh);
+		Building(std::string const& name, uint32_t cellsWide, uint32_t decksHigh,
+			AgentBehaviourRuntimeLimits behaviourRuntimeLimits = {});
 
 		virtual ~Building();
 
@@ -1222,6 +1223,11 @@ namespace core
 		// True while an enabled instance, or its safe movement teardown, owns the
 		// Agent's movement intent. Editor/manual path controls use this one gate.
 		bool agentBehaviourOwnsMovement(AgentId agent) const;
+		// Runtime failures are value diagnostics and are not authored or persisted.
+		// Consuming them does not consume the public simulation event queue.
+		std::vector<AgentBehaviourRuntimeDiagnostic>
+			consumeAgentBehaviourRuntimeDiagnostics();
+		AgentBehaviourRuntimeLimits getAgentBehaviourRuntimeLimits() const;
 
 		uint32_t getCellsWide() const;
 

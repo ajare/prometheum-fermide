@@ -121,6 +121,39 @@ return {
 			"A protected factory error lacked its source line and traceback");
 	}
 
+	void prohibitedHostSurfacesAreAbsent()
+	{
+		auto result = preflight(R"lua(
+local expected = {
+  "assert", "error", "ipairs", "next", "pairs", "pcall", "rawequal",
+  "rawget", "select", "tonumber", "tostring", "type", "xpcall",
+  "table", "string", "math", "utf8", "require"
+}
+for _, name in ipairs(expected) do
+  if _G[name] == nil then error("missing selected facility: " .. name) end
+end
+local prohibited = {
+  "io", "os", "package", "debug", "coroutine", "load", "loadfile",
+  "dofile", "collectgarbage", "getmetatable", "setmetatable", "rawset"
+}
+for _, name in ipairs(prohibited) do
+  if _G[name] ~= nil then error("prohibited host surface: " .. name) end
+end
+if string.dump ~= nil then error("precompiled bytecode facility is available") end
+if math.random ~= nil or math.randomseed ~= nil then
+  error("nondeterministic entropy is available")
+end
+for _, module in ipairs({ "io", "os", "debug", "package", "coroutine",
+    "socket", "lfs", "native.so" }) do
+  if pcall(require, module) then error("loaded prohibited module: " .. module) end
+end
+return { api_version = 1, factory = function() return {} end }
+)lua");
+		require(result.loaded,
+			"A prohibited host surface was visible, or a selected facility was absent: "
+				+ result.diagnostic);
+	}
+
 	void customLoaderIsReservedAndImmutable()
 	{
 		auto immutable = preflight(R"lua(
@@ -201,8 +234,15 @@ return { api_version = 1, factory = function() return {} end }
 
 	void scratchExecutionIsBudgeted()
 	{
+		core::AgentBehaviourRuntimeLimits defaults;
+		require(defaults.memoryBytes == 64u * 1024u * 1024u
+			&& defaults.instructionsPerCall == 100'000u,
+			"Lua containment defaults changed from 64 MiB/100,000 instructions");
+
 		auto runaway = preflight("while true do end\n");
 		require(!runaway.loaded
+			&& runaway.failure
+				== core::AgentBehaviourRuntimeFailure::InstructionBudgetExceeded
 			&& runaway.diagnostic.find("instruction budget") != std::string::npos,
 			"A runaway module escaped the scratch-state instruction budget");
 
@@ -211,8 +251,185 @@ local excessive = string.rep("x", 70 * 1024 * 1024)
 return { api_version = 1, factory = function() return {} end }
 )lua");
 		require(!excessiveAllocation.loaded
+			&& excessiveAllocation.failure
+				== core::AgentBehaviourRuntimeFailure::MemoryBudgetExceeded
 			&& excessiveAllocation.traceback.find("memory") != std::string::npos,
 			"A module escaped the scratch-state memory budget");
+
+		auto configured = core::AgentBehaviourRuntimeAdapter::preflightModule(
+			"headless.behaviours", "configured.lua", R"lua(
+local total = 0
+for i = 1, 1000 do total = total + i end
+return { api_version = 1, factory = function() return {} end }
+)lua", {}, { 2u * 1024u * 1024u, 100u });
+		require(!configured.loaded
+			&& configured.failure
+				== core::AgentBehaviourRuntimeFailure::InstructionBudgetExceeded,
+			"The application-configured scratch instruction budget was ignored");
+
+		auto recovered = preflight(
+			"return { api_version = 1, factory = function() return {} end }\n");
+		require(recovered.loaded,
+			"A refused scratch allocation corrupted later Lua state creation");
+	}
+
+	void liveLoadsFactoriesAndCallbacksAreContained()
+	{
+		TemporaryDirectory temporary;
+		auto const package = temporary.path / "abuse.behaviours";
+		std::filesystem::create_directories(package);
+		auto registry = core::AgentBehaviourRegistry::create();
+		registry->saveTo((package / "behaviours.yaml").string());
+		auto add = [&](std::string const& name, std::string const& filename,
+			std::string const& source)
+		{
+			writeText(package / filename, source);
+			auto const id = registry->addAgentBehaviour(name, filename, {});
+			require(registry->lookupAgentBehaviour(id)->getModuleStatus()
+					== core::AgentBehaviourModuleStatus::Loaded,
+				"An abuse fixture failed ordinary protected preflight: " + name);
+			return id;
+		};
+		auto const loadBudget = add("Load budget", "load-budget.lua", R"lua(
+local total = 0
+for i = 1, 5000 do total = total + i end
+return { api_version = 1, factory = function() return {} end }
+)lua");
+		auto const factoryBudget = add("Factory budget", "factory-budget.lua", R"lua(
+return { api_version = 1, factory = function()
+  local total = 0
+  for i = 1, 5000 do total = total + i end
+  return {}
+end }
+)lua");
+		auto const callbackBudget = add("Callback budget", "callback-budget.lua", R"lua(
+return { api_version = 1, factory = function()
+  return { on_start = function() while true do end end }
+end }
+)lua");
+		auto const memoryBudget = add("Memory budget", "memory-budget.lua", R"lua(
+return { api_version = 1, factory = function()
+  return { on_start = function()
+    local excessive = string.rep("x", 70 * 1024 * 1024)
+    if #excessive == 0 then error("unreachable") end
+  end }
+end }
+)lua");
+		auto const luaError = add("Lua error", "lua-error.lua", R"lua(
+return { api_version = 1, factory = function()
+  return { on_start = function() error("contained callback error") end }
+end }
+)lua");
+		auto const safe = add("Safe", "safe.lua", R"lua(
+return { api_version = 1, factory = function()
+  return { on_start = function(context)
+    local result = context.cancel_movement()
+    if not result.accepted or result.status ~= "no_op" then error(result.status) end
+  end }
+end }
+)lua");
+
+		auto runInstructionStage = [&](core::AgentBehaviourId behaviour,
+			core::AgentBehaviourRuntimeStage expectedStage)
+		{
+			core::Building building("Instruction containment", 6, 2,
+				{ 64u * 1024u * 1024u, 1'000u });
+			auto const room = building.addRoom("Room", 0, 0, 0, 6, 1);
+			building.finishBuild();
+			auto const agent = building.createAgent("Abusive", room, 0, 0.5f);
+			building.pauseSimulation();
+			building.attachAgentBehaviourRegistry("abuse.behaviours", registry);
+			require(building.setAgentBehaviourAssignment(agent, behaviour,
+				registry->lookupAgentBehaviour(behaviour)->getRevision(), {}),
+				"Could not assign an instruction abuse fixture");
+			require(building.getAgentBehaviourRuntimeLimits().instructionsPerCall == 1'000u,
+				"The per-Building instruction limit was not retained");
+			require(building.resumeSimulation(),
+				"Could not resume an instruction abuse fixture");
+			building.advanceTick();
+			auto diagnostics = building.consumeAgentBehaviourRuntimeDiagnostics();
+			require(diagnostics.size() == 1
+				&& diagnostics[0].failure
+					== core::AgentBehaviourRuntimeFailure::InstructionBudgetExceeded
+				&& diagnostics[0].stage == expectedStage
+				&& diagnostics[0].agent == agent
+				&& !building.agentBehaviourOwnsMovement(agent),
+				"Instruction exhaustion escaped, lacked structure, or retained ownership");
+		};
+		runInstructionStage(loadBudget,
+			core::AgentBehaviourRuntimeStage::ModuleLoad);
+		runInstructionStage(factoryBudget,
+			core::AgentBehaviourRuntimeStage::Factory);
+		runInstructionStage(callbackBudget,
+			core::AgentBehaviourRuntimeStage::Callback);
+
+		{
+			core::Building building("Memory recovery", 8, 2,
+				{ 2u * 1024u * 1024u, 100'000u });
+			auto const room = building.addRoom("Room", 0, 0, 0, 8, 1);
+			building.finishBuild();
+			auto const abusive = building.createAgent("Abusive", room, 0, 0.5f);
+			auto const healthy = building.createAgent("Healthy", room, 0, 1.5f);
+			building.pauseSimulation();
+			building.attachAgentBehaviourRegistry("abuse.behaviours", registry);
+			require(building.getAgentBehaviourRuntimeLimits().memoryBytes
+					== 2u * 1024u * 1024u,
+				"The per-Building heap limit was not retained");
+			require(building.setAgentBehaviourAssignment(abusive, memoryBudget,
+				registry->lookupAgentBehaviour(memoryBudget)->getRevision(), {})
+				&& building.setAgentBehaviourAssignment(healthy, safe,
+					registry->lookupAgentBehaviour(safe)->getRevision(), {}),
+				"Could not assign the live allocator recovery fixtures");
+			// The healthy callback exercises a host capability after the refused
+			// allocation while the failed instance releases its Lua heap graph.
+			require(building.resumeSimulation(),
+				"Could not resume the live allocator fixture");
+			building.advanceTick();
+			auto diagnostics = building.consumeAgentBehaviourRuntimeDiagnostics();
+			require(diagnostics.size() == 1
+				&& diagnostics[0].failure
+					== core::AgentBehaviourRuntimeFailure::MemoryBudgetExceeded
+				&& diagnostics[0].stage == core::AgentBehaviourRuntimeStage::Callback
+				&& diagnostics[0].callback == "on_start"
+				&& diagnostics[0].agent == abusive
+				&& !building.agentBehaviourOwnsMovement(abusive)
+				&& building.agentBehaviourOwnsMovement(healthy),
+				"Live heap exhaustion corrupted the state or disabled a healthy instance");
+
+			building.pauseSimulation();
+			require(building.clearAgentBehaviourAssignment(abusive),
+				"Could not remove the exhausted instance during recovery");
+			require(building.setAgentBehaviourAssignment(abusive, safe,
+				registry->lookupAgentBehaviour(safe)->getRevision(), {}),
+				"Could not create a replacement after refused allocation");
+			require(building.resumeSimulation(),
+				"Could not resume after refused allocation");
+			building.advanceTick();
+			require(building.consumeAgentBehaviourRuntimeDiagnostics().empty()
+				&& building.agentBehaviourOwnsMovement(abusive),
+				"The Building Lua state did not recover after a refused allocation");
+		}
+
+		{
+			core::Building building("Lua error containment", 6, 2);
+			auto const room = building.addRoom("Room", 0, 0, 0, 6, 1);
+			building.finishBuild();
+			auto const agent = building.createAgent("Abusive", room, 0, 0.5f);
+			building.pauseSimulation();
+			building.attachAgentBehaviourRegistry("abuse.behaviours", registry);
+			require(building.setAgentBehaviourAssignment(agent, luaError,
+				registry->lookupAgentBehaviour(luaError)->getRevision(), {}),
+				"Could not assign the protected Lua error fixture");
+			require(building.resumeSimulation(),
+				"Could not resume the protected Lua error fixture");
+			building.advanceTick();
+			auto diagnostics = building.consumeAgentBehaviourRuntimeDiagnostics();
+			require(diagnostics.size() == 1
+				&& diagnostics[0].failure == core::AgentBehaviourRuntimeFailure::LuaError
+				&& diagnostics[0].traceback.find("contained callback error")
+					!= std::string::npos,
+				"A Lua error unwound through the tick or lacked a structured diagnostic");
+		}
 	}
 
 	std::string runStartupMovement(
@@ -735,8 +952,10 @@ void runAgentBehaviourRuntimeSmokeChecks()
 {
 	validHostContractDoesNotRunCallbacks();
 	textAndContractFailuresCarryLocationAndTraceback();
+	prohibitedHostSurfacesAreAbsent();
 	customLoaderIsReservedAndImmutable();
 	scratchExecutionIsBudgeted();
+	liveLoadsFactoriesAndCallbacksAreContained();
 	independentStartupInstancesMoveDeterministically();
 	manifestHelpersHavePrivatePerAgentGraphs();
 	routeLossAndTopologyLifecycle();

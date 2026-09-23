@@ -95,14 +95,16 @@ namespace core
 
 	*/
 
-	Building::Building(string const& name, uint32_t cellsWide, uint32_t decksHigh)
+	Building::Building(string const& name, uint32_t cellsWide, uint32_t decksHigh,
+		AgentBehaviourRuntimeLimits behaviourRuntimeLimits)
 		: mName(name)
 		, mCellsWide(cellsWide)
 		, mDecksHigh(decksHigh)
 		, mLayers(2)
 		, mLayerNames{ defaultLayerName(0), defaultLayerName(1) }
 		, mSimulationCoordinator(*this)
-		, mAgentBehaviourRuntime(std::make_unique<AgentBehaviourRuntimeAdapter>())
+		, mAgentBehaviourRuntime(std::make_unique<AgentBehaviourRuntimeAdapter>(
+			behaviourRuntimeLimits))
 	{
 		for (uint32_t i = 0; i < mLayers.size(); ++i)
 		{
@@ -607,6 +609,17 @@ namespace core
 		// protocol before manual controls return.
 		auto goal = mMovementGoals.find(id);
 		return goal != mMovementGoals.end() && goal->second.behaviourOwned;
+	}
+
+	vector<AgentBehaviourRuntimeDiagnostic>
+	Building::consumeAgentBehaviourRuntimeDiagnostics()
+	{
+		return mAgentBehaviourRuntime->consumeDiagnostics();
+	}
+
+	AgentBehaviourRuntimeLimits Building::getAgentBehaviourRuntimeLimits() const
+	{
+		return mAgentBehaviourRuntime->getLimits();
 	}
 
 	bool Building::inspectAgentBehaviourAssignments(

@@ -7,17 +7,60 @@
 #include <string_view>
 #include <vector>
 
+#include "core/EntityId.h"
+
 namespace core
 {
 	class Building;
-	struct AgentId;
 	struct SimulationEvent;
+
+	// Application-owned limits. Behaviour code cannot inspect or alter them.
+	// One live allocator budget belongs to one Building; the instruction budget
+	// is restarted for each protected module load, factory, and callback.
+	struct AgentBehaviourRuntimeLimits
+	{
+		size_t memoryBytes{ 64u * 1024u * 1024u };
+		uint32_t instructionsPerCall{ 100'000u };
+	};
+
+	enum class AgentBehaviourRuntimeFailure
+	{
+		None,
+		LuaError,
+		MemoryBudgetExceeded,
+		InstructionBudgetExceeded,
+		ConversionError
+	};
+
+	enum class AgentBehaviourRuntimeStage
+	{
+		ModuleLoad,
+		Factory,
+		Callback
+	};
+
+	// Value-only failure record. Later failure-policy layers may decide how to
+	// present or stop a run; the Lua boundary always records the original scope
+	// and never lets a Lua/sol2 failure unwind through a simulation tick.
+	struct AgentBehaviourRuntimeDiagnostic
+	{
+		AgentBehaviourRuntimeFailure failure{ AgentBehaviourRuntimeFailure::None };
+		AgentBehaviourRuntimeStage stage{ AgentBehaviourRuntimeStage::Callback };
+		AgentId agent{};
+		std::string packageName;
+		std::string moduleName;
+		std::string callback;
+		std::string diagnostic;
+		std::string traceback;
+	};
+
 	// Ordinary C++ result returned by the Lua runtime boundary. Lua, sol2, and
 	// their implementation types are deliberately confined to the adapter's
 	// .cpp file and never enter authored-domain interfaces.
 	struct AgentBehaviourModulePreflight
 	{
 		bool loaded{ false };
+		AgentBehaviourRuntimeFailure failure{ AgentBehaviourRuntimeFailure::None };
 		std::string diagnostic;
 		std::string traceback;
 	};
@@ -43,10 +86,15 @@ namespace core
 
 	public:
 		static constexpr uint32_t HostApiVersion{ 1 };
-		static constexpr size_t PreflightMemoryBudgetBytes{ 64u * 1024u * 1024u };
-		static constexpr uint32_t PreflightInstructionBudget{ 100'000u };
+		static constexpr size_t DefaultMemoryBudgetBytes{ 64u * 1024u * 1024u };
+		static constexpr uint32_t DefaultInstructionBudget{ 100'000u };
+		// Compatibility names for the scratch preflight API; scratch and live
+		// runtimes intentionally use the same defaults.
+		static constexpr size_t PreflightMemoryBudgetBytes{ DefaultMemoryBudgetBytes };
+		static constexpr uint32_t PreflightInstructionBudget{ DefaultInstructionBudget };
 
-		AgentBehaviourRuntimeAdapter();
+		explicit AgentBehaviourRuntimeAdapter(
+			AgentBehaviourRuntimeLimits limits = {});
 		~AgentBehaviourRuntimeAdapter();
 		AgentBehaviourRuntimeAdapter(AgentBehaviourRuntimeAdapter const&) = delete;
 		AgentBehaviourRuntimeAdapter& operator=(AgentBehaviourRuntimeAdapter const&) = delete;
@@ -60,15 +108,19 @@ namespace core
 		// prevents a later boundary from delivering stale outcomes to a replacement.
 		void removeInstance(AgentId agent);
 		bool isInstanceDisabled(AgentId agent) const;
+		std::vector<AgentBehaviourRuntimeDiagnostic> consumeDiagnostics();
+		AgentBehaviourRuntimeLimits getLimits() const;
 		void reset();
 
 		static AgentBehaviourModulePreflight preflightModule(
 			std::string_view packageName, std::string_view moduleName,
 			std::string_view source,
-			std::vector<AgentBehaviourHelperSource> const& helpers = {});
+			std::vector<AgentBehaviourHelperSource> const& helpers = {},
+			AgentBehaviourRuntimeLimits limits = {});
 		static AgentBehaviourModulePreflight preflightHelperModule(
 			std::string_view packageName, std::string_view helperName,
 			std::string_view moduleName, std::string_view source,
-			std::vector<AgentBehaviourHelperSource> const& helpers);
+			std::vector<AgentBehaviourHelperSource> const& helpers,
+			AgentBehaviourRuntimeLimits limits = {});
 	};
 }
