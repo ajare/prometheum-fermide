@@ -72,7 +72,12 @@ Helper import names are case-sensitive dotted Lua identifiers such as
 Schema types are `boolean`, `integer`, `number`, `string`, `duration` (simulation
 ticks), `marker`, `list`, and `record`. Lists have exactly one child; records
 have at least one child with unique field names. Scalars have no children.
-Nesting is limited to 16 levels. Omit `schema` for no configuration fields.
+Nesting is limited to 16 levels and each configured List to 4,096 elements.
+Required and optional/default validation applies recursively and diagnostics use
+paths such as `schedule[2].destination`. Omit `schema` for no configuration
+fields. The generated editor presents Records as fields and Lists as ordered
+entries with add, remove, move, duration, and named Marker controls; IDs and raw
+YAML are not exposed.
 
 ## Lua module contract
 
@@ -134,7 +139,12 @@ with `accepted` and `status` fields. A different destination while busy reports
 `agent_busy`, and issuing more than one movement command in one callback disables
 that instance as a programming error without applying the callback's commands.
 Context capabilities expire when the callback returns, and queued movement is
-applied only after callbacks return.
+applied only after callbacks return. `context.random_integer(minimum, maximum)`
+returns an inclusive integer and `context.random_number()` returns a number in
+`[0, 1)`. Their private stream is derived from the authored Building random seed,
+Agent ID, and behaviour ID. Pause/resume retains stream position; reset, document
+reload, and registry reload recreate it. Lua's `math.random` and
+`math.randomseed` remain unavailable.
 
 `on_event` receives immutable `destination_reached` and `movement_cancelled`
 values in stable event-sequence order. Both carry `tick`, `sequence`, and an
@@ -146,10 +156,12 @@ not call Lua.
 
 ## Building persistence
 
-Building version **12** stores the package directory basename and expected UUID.
-Version 11 was already used for named Marker identity, so the behaviour reference
-uses a new version to prevent older readers silently discarding it. Versions
-1–11 continue to load without behaviour registries. UUID substitution and invalid
-packages refuse managed opening without replacing the current Building.
+Building version **14** stores the authored deterministic random seed and nested
+List/Record configuration values. Version 13 introduced scalar per-Agent
+assignments, version 12 the package directory basename and expected UUID, and
+version 11 named Marker identity. Older versions continue to load with a zero
+seed and with only the behaviour data their version supports. UUID substitution
+and invalid packages refuse managed opening without replacing the current
+Building. Live Lua state, timers, and random-stream position are never persisted.
 
 Package copying during Save As is tracked separately in #163.

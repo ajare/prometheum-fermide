@@ -63,38 +63,121 @@ namespace core
 		}
 
 		void serializeConfigurationValue(Serializer& serializer,
-			AgentBehaviourConfigurationValue const& value)
+			AgentBehaviourConfigurationValue const& value, string const& name)
 		{
 			visit([&](auto const& typed)
 			{
 				using T = decay_t<decltype(typed)>;
-				if constexpr (is_same_v<T, bool>) serializer.writeBool("default", typed);
-				else if constexpr (is_same_v<T, int64_t>) serializer.writeInt64("default", typed);
-				else if constexpr (is_same_v<T, double>) serializer.writeDouble("default", typed);
-				else if constexpr (is_same_v<T, string>) serializer.writeString("default", typed);
+				if constexpr (is_same_v<T, bool>) serializer.writeBool(name, typed);
+				else if constexpr (is_same_v<T, int64_t>) serializer.writeInt64(name, typed);
+				else if constexpr (is_same_v<T, double>) serializer.writeDouble(name, typed);
+				else if constexpr (is_same_v<T, string>) serializer.writeString(name, typed);
 				else if constexpr (is_same_v<T, AgentBehaviourDuration>)
-					serializer.writeUint64("default", typed.ticks);
-				else serializer.writeUint64("default", typed.value);
-			}, value);
+					serializer.writeUint64(name, typed.ticks);
+				else if constexpr (is_same_v<T, MarkerId>)
+					serializer.writeUint64(name, typed.value);
+				else if constexpr (is_same_v<T, AgentBehaviourConfigurationList>)
+				{
+					serializer.beginArray(name);
+					for (auto const& item : typed)
+					{
+						serializer.beginMap("");
+						serializer.writeString("type",
+							agentBehaviourConfigurationValueTypeName(item));
+						serializeConfigurationValue(serializer, item, "value");
+						serializer.endMap();
+					}
+					serializer.endArray();
+				}
+				else
+				{
+					serializer.beginArray(name);
+					for (auto const& [field, item] : typed)
+					{
+						serializer.beginMap("");
+						serializer.writeString("field", field);
+						serializer.writeString("type",
+							agentBehaviourConfigurationValueTypeName(item));
+						serializeConfigurationValue(serializer, item, "value");
+						serializer.endMap();
+					}
+					serializer.endArray();
+				}
+			}, value.value);
 		}
 
 		AgentBehaviourConfigurationValue deserializeConfigurationValue(
-			Serializer& serializer, AgentBehaviourSchemaType type)
+			Serializer& serializer, AgentBehaviourSchemaField const& field,
+			string const& name, size_t depth = 1)
 		{
-			switch (type)
-			{
-			case AgentBehaviourSchemaType::Boolean: return serializer.readBool("default");
-			case AgentBehaviourSchemaType::Integer: return serializer.readInt64("default");
-			case AgentBehaviourSchemaType::Number: return serializer.readDouble("default");
-			case AgentBehaviourSchemaType::String: return serializer.readString("default");
-			case AgentBehaviourSchemaType::Duration:
-				return AgentBehaviourDuration{ serializer.readUint64("default") };
-			case AgentBehaviourSchemaType::Marker:
-				return MarkerId{ serializer.readUint64("default") };
-			default:
+			if (depth > MaxAgentBehaviourConfigurationDepth)
 				throw SerializationException(
-					"List and Record schema fields cannot declare scalar defaults");
+					"Agent behaviour default configuration nesting exceeds 16 levels");
+			switch (field.type)
+			{
+			case AgentBehaviourSchemaType::Boolean: return serializer.readBool(name);
+			case AgentBehaviourSchemaType::Integer: return serializer.readInt64(name);
+			case AgentBehaviourSchemaType::Number: return serializer.readDouble(name);
+			case AgentBehaviourSchemaType::String: return serializer.readString(name);
+			case AgentBehaviourSchemaType::Duration:
+				return AgentBehaviourDuration{ serializer.readUint64(name) };
+			case AgentBehaviourSchemaType::Marker:
+				return MarkerId{ serializer.readUint64(name) };
+			case AgentBehaviourSchemaType::List:
+			{
+				if (field.children.size() != 1)
+					throw SerializationException(
+						"An Agent behaviour List default has no element schema");
+				AgentBehaviourConfigurationList list;
+				serializer.beginArray(name);
+				while (serializer.nextArrayItem())
+				{
+					if (list.size() >= MaxAgentBehaviourListElements)
+						throw SerializationException(
+							"An Agent behaviour List default exceeds 4096 elements");
+					serializer.beginMap("");
+					auto const type = serializer.readString("type");
+					if (type != agentBehaviourSchemaTypeName(field.children.front().type))
+						throw SerializationException("An Agent behaviour List default element has type '"
+							+ type + "', expected '"
+							+ agentBehaviourSchemaTypeName(field.children.front().type) + "'");
+					list.push_back(deserializeConfigurationValue(serializer,
+						field.children.front(), "value", depth + 1));
+					serializer.endMap();
+				}
+				serializer.endArray();
+				return list;
 			}
+			case AgentBehaviourSchemaType::Record:
+			{
+				AgentBehaviourConfigurationRecord record;
+				serializer.beginArray(name);
+				while (serializer.nextArrayItem())
+				{
+					serializer.beginMap("");
+					auto const nestedName = serializer.readString("field");
+					auto child = find_if(field.children.begin(), field.children.end(),
+						[&](auto const& candidate) { return candidate.name == nestedName; });
+					if (child == field.children.end())
+						throw SerializationException("An Agent behaviour Record default contains undeclared field '"
+							+ nestedName + "'");
+					auto const type = serializer.readString("type");
+					if (type != agentBehaviourSchemaTypeName(child->type))
+						throw SerializationException("Agent behaviour Record default field '"
+							+ nestedName + "' has type '" + type + "', expected '"
+							+ agentBehaviourSchemaTypeName(child->type) + "'");
+					auto value = deserializeConfigurationValue(serializer, *child,
+						"value", depth + 1);
+					serializer.endMap();
+					if (!record.emplace(nestedName, std::move(value)).second)
+						throw SerializationException("Agent behaviour Record default field '"
+							+ nestedName + "' appears twice");
+				}
+				serializer.endArray();
+				return record;
+			}
+			}
+			throw SerializationException("Unknown Agent behaviour configuration type");
 		}
 
 		void serializeSchemaField(Serializer& serializer,
@@ -104,7 +187,8 @@ namespace core
 			serializer.writeString("name", field.name);
 			serializer.writeString("type", agentBehaviourSchemaTypeName(field.type));
 			if (!field.required) serializer.writeBool("required", false);
-			if (field.defaultValue) serializeConfigurationValue(serializer, *field.defaultValue);
+			if (field.defaultValue)
+				serializeConfigurationValue(serializer, *field.defaultValue, "default");
 			if (!field.children.empty())
 			{
 				serializer.beginArray("children");
@@ -127,8 +211,6 @@ namespace core
 					"Unsupported Agent behaviour schema type '{}'", typeName));
 			}
 			field.required = serializer.readBool("required", true, true);
-			if (serializer.hasField("default"))
-				field.defaultValue = deserializeConfigurationValue(serializer, field.type);
 			if (serializer.hasField("children"))
 			{
 				serializer.beginArray("children");
@@ -136,6 +218,9 @@ namespace core
 					field.children.push_back(deserializeSchemaField(serializer, depth + 1));
 				serializer.endArray();
 			}
+			if (serializer.hasField("default"))
+				field.defaultValue = deserializeConfigurationValue(serializer, field,
+					"default", depth);
 			serializer.endMap();
 			return field;
 		}
@@ -371,6 +456,17 @@ namespace core
 		mPackageDirectory = std::move(replacement.mPackageDirectory);
 		mDocumentPath = std::move(replacement.mDocumentPath);
 		mSavedDocumentContents = std::move(replacement.mSavedDocumentContents);
+		// Reload always recreates live private state from authored configuration,
+		// even when only source bytes changed and manifest identities stayed put.
+		for (auto* building : mLoadedBuildings)
+		{
+			if (!building) continue;
+			building->mAgentBehaviourRuntime->reset();
+			for (auto const& [agentId, agent] : building->mAgents.entries())
+				if (agent && agent->getBehaviourAssignment())
+					building->mSimulationCoordinator
+						.clearAgentMovementForBehaviourEdit(agentId);
+		}
 		markUnmodified();
 		if (diagnostic) diagnostic->clear();
 		return true;

@@ -14,6 +14,7 @@
 #include "core/AgentBehaviourRegistry.h"
 #include "core/Building.h"
 #include "core/AgentBehaviourRuntime.h"
+#include "core/YamlSerializer.h"
 
 void runAgentBehaviourRuntimeSmokeChecks();
 
@@ -1149,6 +1150,203 @@ return {
 			"Timer callbacks or independently consumable public events were nondeterministic");
 	}
 
+	void configuredSchedulesAndRandomStreamsReplay()
+	{
+		TemporaryDirectory temporary;
+		auto const package = temporary.path / "schedule.behaviours";
+		std::filesystem::create_directories(package);
+		auto registry = core::AgentBehaviourRegistry::create();
+		registry->saveTo((package / "behaviours.yaml").string());
+		writeText(package / "schedule.lua", R"lua(
+local host = require("prometheum.v1")
+return {
+  api_version = host.api_version,
+  factory = function(configuration)
+    local index = 1
+    local reached = 0
+    local function move(context)
+      local result = context.move_to(configuration.schedule[index].destination)
+      if not result.accepted then error(result.status) end
+    end
+    return {
+      on_start = function(context)
+        local integer = context.random_integer(-7, 11)
+        local number = context.random_number()
+        if type(integer) ~= "number" or integer < -7 or integer > 11
+            or type(number) ~= "number" or number < 0 or number >= 1 then
+          error("deterministic random operation returned an invalid range")
+        end
+        move(context)
+      end,
+      on_event = function(event, context)
+        if event.type ~= "destination_reached" then return end
+        reached = reached + 1
+        local jitter = context.random_integer(0, 3)
+        local sample = context.random_number()
+        if sample < 0 or sample >= 1 then error("invalid random number") end
+        context.set_timer("advance", configuration.schedule[index].duration + jitter)
+      end,
+      on_timer = function(name, context)
+        if name ~= "advance" then error("unexpected schedule timer") end
+        index = index == 1 and 2 or 1
+        move(context)
+      end
+    }
+  end
+}
+)lua");
+		std::vector<core::AgentBehaviourSchemaField> entryFields{
+			{ "duration", core::AgentBehaviourSchemaType::Duration },
+			{ "destination", core::AgentBehaviourSchemaType::Marker }
+		};
+		auto const behaviour = registry->addAgentBehaviour("Schedule", "schedule.lua", {
+			{ "schedule", core::AgentBehaviourSchemaType::List, {
+				{ "entry", core::AgentBehaviourSchemaType::Record, entryFields }
+			} }
+		});
+		require(registry->lookupAgentBehaviour(behaviour)->getModuleStatus()
+				== core::AgentBehaviourModuleStatus::Loaded,
+			"The composite schedule fixture did not preflight");
+
+		struct ScheduleBuilding
+		{
+			std::shared_ptr<core::Building> building;
+			core::AgentId first;
+			core::AgentId second;
+		};
+		auto makeBuilding = [&](bool extra, uint64_t seed = 0x1545eedu)
+		{
+			ScheduleBuilding fixture;
+			fixture.building = std::make_shared<core::Building>("Schedules", 36, 2);
+			auto const room = fixture.building->addRoom("Room", 0, 0, 0, 36, 1);
+			fixture.building->addSectorMarker(room, 0, 4.5f, "Work");
+			fixture.building->addSectorMarker(room, 0, 10.5f, "Lunch");
+			fixture.building->addSectorMarker(room, 0, 17.5f, "Home");
+			fixture.building->addSectorMarker(room, 0, 24.5f, "Gym");
+			fixture.building->addSectorMarker(room, 0, 31.5f, "Park");
+			fixture.building->finishBuild();
+			fixture.first = fixture.building->createAgent("First", room, 0, 0.5f);
+			fixture.second = fixture.building->createAgent("Second", room, 0, 1.5f);
+			auto const third = extra
+				? fixture.building->createAgent("Noisy", room, 0, 2.5f)
+				: core::AgentId{};
+			fixture.building->pauseSimulation();
+			std::string diagnostic;
+			require(fixture.building->setRandomSeed(seed, &diagnostic),
+				"Could not author the Building random seed: " + diagnostic);
+			fixture.building->attachAgentBehaviourRegistry("schedule.behaviours", registry);
+			auto const markers = fixture.building->getMarkerIds();
+			auto schedule = [](core::MarkerId firstMarker, uint64_t firstDuration,
+				core::MarkerId secondMarker, uint64_t secondDuration)
+			{
+				return core::AgentBehaviourConfiguration{ { "schedule",
+					core::AgentBehaviourConfigurationList{
+						core::AgentBehaviourConfigurationRecord{
+							{ "duration", core::AgentBehaviourDuration{ firstDuration } },
+							{ "destination", firstMarker } },
+						core::AgentBehaviourConfigurationRecord{
+							{ "duration", core::AgentBehaviourDuration{ secondDuration } },
+							{ "destination", secondMarker } }
+					} } };
+			};
+			auto const revision = registry->lookupAgentBehaviour(behaviour)->getRevision();
+			require(fixture.building->setAgentBehaviourAssignment(fixture.first,
+				behaviour, revision, schedule(markers[0], 2, markers[1], 3), &diagnostic)
+				&& fixture.building->setAgentBehaviourAssignment(fixture.second,
+					behaviour, revision, schedule(markers[2], 4, markers[3], 1), &diagnostic),
+				"Could not assign distinct composite schedules: " + diagnostic);
+			if (third)
+				require(fixture.building->setAgentBehaviourAssignment(third,
+					behaviour, revision, schedule(markers[4], 1, markers[4], 1), &diagnostic),
+					"Could not assign the independent-stream noise Agent");
+			return fixture;
+		};
+
+		auto run = [](ScheduleBuilding const& fixture)
+		{
+			if (fixture.building->isSimulationPaused())
+				require(fixture.building->resumeSimulation(),
+					"Could not resume a schedule replay");
+			fixture.building->consumeSimulationEvents();
+			std::ostringstream digest;
+			unsigned firstReached = 0, secondReached = 0;
+			for (unsigned tick = 0; tick < 5000
+				&& (firstReached < 4 || secondReached < 4); ++tick)
+			{
+				if (tick == 10)
+				{
+					fixture.building->pauseSimulation();
+					require(fixture.building->resumeSimulation(),
+						"Pause/resume did not preserve schedule state");
+				}
+				fixture.building->advanceTick();
+				for (auto const& event : fixture.building->consumeSimulationEvents())
+				{
+					if (event.type != core::SimulationEventType::DestinationReached
+						|| (event.agent.id != fixture.first
+							&& event.agent.id != fixture.second)) continue;
+					if (event.agent.id == fixture.first)
+					{
+						if (firstReached >= 4) continue;
+						++firstReached;
+					}
+					else
+					{
+						if (secondReached >= 4) continue;
+						++secondReached;
+					}
+					digest << event.tick << ':' << event.agent.id.value << ':'
+						<< event.destinationMarker.value << '|';
+				}
+			}
+			auto diagnostics = fixture.building->consumeAgentBehaviourRuntimeDiagnostics();
+			std::string detail = " (first=" + std::to_string(firstReached)
+				+ ", second=" + std::to_string(secondReached) + ")";
+			if (!diagnostics.empty()) detail += ": " + diagnostics.front().diagnostic;
+			require(firstReached == 4 && secondReached == 4,
+				"The shared schedule module did not advance both private schedules" + detail);
+			require(diagnostics.empty(),
+				"A configured schedule or random operation failed" + detail);
+			return digest.str();
+		};
+
+		auto fixture = makeBuilding(false);
+		auto writer = core::YamlSerializer::toString();
+		core::SerializationWorkData writeWork;
+		writeWork.markSerializedUnmodified = false;
+		fixture.building->serialize(*writer, writeWork);
+		writer->serialize();
+		auto const authoredYaml = writer->getSerializedString();
+		require(authoredYaml.find("randomSeed: 22306541") != std::string::npos,
+			"The authored Building random seed was not persisted");
+
+		auto const first = run(fixture);
+		fixture.building->resetSimulation();
+		require(fixture.building->getRandomSeed() == 0x1545eedu,
+			"Simulation reset lost the authored Building random seed");
+		auto const afterReset = run(fixture);
+		require(first == afterReset,
+			"Simulation reset did not recreate schedule state and random streams");
+
+		auto reopened = std::make_shared<core::Building>("Loading", 1, 1);
+		auto reader = core::YamlSerializer::fromString(authoredYaml);
+		reader->deserialize();
+		core::SerializationWorkData readWork;
+		require(reopened->deserialize(*reader, readWork),
+			"The authored schedule Building did not reload");
+		reopened->resolveAgentBehaviourRegistry(registry);
+		ScheduleBuilding loaded{ reopened, fixture.first, fixture.second };
+		require(run(loaded) == first,
+			"Save/load did not reproduce configured schedule outcomes");
+
+		auto noisy = makeBuilding(true);
+		require(run(noisy) == first,
+			"Another Agent's callbacks altered an independent random stream");
+		auto differentSeed = makeBuilding(false, 0x1545eedu + 1u);
+		require(run(differentSeed) != first,
+			"The authored Building seed did not affect deterministic random streams");
+	}
+
 	void registryRetainsLoadedAndErrorStatus()
 	{
 		TemporaryDirectory temporary;
@@ -1192,5 +1390,6 @@ void runAgentBehaviourRuntimeSmokeChecks()
 	routeLossAndTopologyLifecycle();
 	programmingErrorDisablesMovementOwnership();
 	deterministicTimersExposeOnlySemanticState();
+	configuredSchedulesAndRandomStreamsReplay();
 	registryRetainsLoadedAndErrorStatus();
 }

@@ -373,7 +373,9 @@ namespace core
 	void Building::serializeImpl(Serializer& serializer, SerializationWorkData& workData) const
 	{
 		serializer.beginMap("building");
-		// Version 13 adds typed per-Agent behaviour assignments. Version 12 adds
+		// Version 14 adds the authored deterministic random seed and recursive
+		// List/Record behaviour configuration values. Version 13 adds typed
+		// per-Agent behaviour assignments. Version 12 adds
 		// the optional external Agent behaviour registry package reference.
 		// Version 11 gives every Marker stable identity and a
 		// Building-unique name.
@@ -393,8 +395,9 @@ namespace core
 		// allocator's high-water mark (#123). It is an added field rather than a
 		// new version: a reader that predates it still opens these files and
 		// falls back to deriving the next ID from the groups that survive.
-		serializer.writeUint32("version", 13);
+		serializer.writeUint32("version", 14);
 		serializer.writeString("name", mName);
+		serializer.writeUint64("randomSeed", mRandomSeed);
 		serializer.writeUint32("cellsWide", mCellsWide);
 		serializer.writeUint32("decksHigh", mDecksHigh);
 		serializer.writeUint32("layers", getLayerCount());
@@ -759,13 +762,16 @@ namespace core
 		// them; versions 1 through 8 load with neither. Version 10 adds the
 		// optional Agent tag registry reference and Agent tag assignments.
 		// Version 12 adds the optional Agent behaviour registry package
-		// reference; version 13 adds typed per-Agent assignments. Older versions
-		// load with no assignment.
-		if (version < 1 || version > 13)
+		// reference; version 13 adds typed per-Agent assignments, and version 14
+		// adds composite configuration plus the authored random seed. Older
+		// versions load with no assignment.
+		if (version < 1 || version > 14)
 		{
 			throw SerializationException("Unsupported Building serialization version");
 		}
 		auto name = serializer.readString("name");
+		auto const randomSeed = version >= 14
+			? serializer.readUint64("randomSeed") : uint64_t{ 0 };
 		auto const cellsWide = serializer.readUint32("cellsWide");
 		auto const decksHigh = serializer.readUint32("decksHigh");
 		if (cellsWide == 0 || decksHigh == 0)
@@ -1029,6 +1035,7 @@ namespace core
 		}
 
 		resetForDeserialization(std::move(name), cellsWide, decksHigh);
+		mRandomSeed = randomSeed;
 		mNextMarkerId = nextMarkerId;
 		mAgentTagRegistryReference = std::move(agentTagRegistryReference);
 		if (mAgentTagRegistry) mAgentTagRegistry->unregisterBuilding(*this);

@@ -1,6 +1,7 @@
 #include "core/AgentBehaviourRuntime.h"
 
 #include <algorithm>
+#include <bit>
 #include <cstdlib>
 #include <exception>
 #include <format>
@@ -639,6 +640,7 @@ namespace core
 			std::function<MovementCommandResult()> inspectCancel;
 			std::function<bool(std::string, uint64_t, std::string&)> setTimer;
 			std::function<bool(std::string const&)> cancelTimer;
+			std::function<uint64_t()> nextRandom;
 			std::vector<PendingMovementCommand> commands;
 		};
 
@@ -857,6 +859,55 @@ namespace core
 			return scope;
 		}
 
+		int randomNumber(lua_State* state)
+		{
+			auto* scope = activeTimerScope(state);
+			if (!scope) return 0;
+			// The high 53 bits map exactly onto the binary64 mantissa, yielding
+			// a deterministic value in [0, 1) without platform distributions.
+			auto const bits = scope->nextRandom() >> 11;
+			lua_pushnumber(state, static_cast<lua_Number>(bits)
+				* (1.0 / 9007199254740992.0));
+			return 1;
+		}
+
+		int randomInteger(lua_State* state)
+		{
+			auto* scope = activeTimerScope(state);
+			if (!scope) return 0;
+			lua_Integer bounds[2]{};
+			int count = 0;
+			for (int index = 1; index <= lua_gettop(state); ++index)
+			{
+				if (!lua_isinteger(state, index)) continue;
+				if (count == 2)
+					return luaL_error(state,
+						"random_integer requires exactly minimum and maximum integers");
+				bounds[count++] = lua_tointeger(state, index);
+			}
+			if (count != 2)
+				return luaL_error(state,
+					"random_integer requires exactly minimum and maximum integers");
+			if (bounds[0] > bounds[1])
+				return luaL_error(state,
+					"random_integer minimum cannot exceed maximum");
+			auto const minimum = static_cast<int64_t>(bounds[0]);
+			auto const maximum = static_cast<int64_t>(bounds[1]);
+			auto const span = static_cast<uint64_t>(maximum)
+				- static_cast<uint64_t>(minimum) + 1u;
+			uint64_t offset = scope->nextRandom();
+			if (span != 0)
+			{
+				auto const threshold = static_cast<uint64_t>(-span) % span;
+				while (offset < threshold) offset = scope->nextRandom();
+				offset %= span;
+			}
+			auto const resultBits = static_cast<uint64_t>(minimum) + offset;
+			lua_pushinteger(state, static_cast<lua_Integer>(
+				std::bit_cast<int64_t>(resultBits)));
+			return 1;
+		}
+
 		int setTimer(lua_State* state)
 		{
 			auto* scope = activeTimerScope(state);
@@ -979,31 +1030,70 @@ namespace core
 			lua_setfield(state, environment, "_G");
 		}
 
+		void pushConfigurationValue(lua_State* state,
+			AgentBehaviourConfigurationValue const& value)
+		{
+			std::visit([&](auto const& typed)
+			{
+				using T = std::decay_t<decltype(typed)>;
+				if constexpr (std::is_same_v<T, bool>)
+					lua_pushboolean(state, typed);
+				else if constexpr (std::is_same_v<T, int64_t>)
+					lua_pushinteger(state, static_cast<lua_Integer>(typed));
+				else if constexpr (std::is_same_v<T, double>)
+					lua_pushnumber(state, typed);
+				else if constexpr (std::is_same_v<T, std::string>)
+					lua_pushlstring(state, typed.data(), typed.size());
+				else if constexpr (std::is_same_v<T, AgentBehaviourDuration>)
+					lua_pushinteger(state, static_cast<lua_Integer>(typed.ticks));
+				else if constexpr (std::is_same_v<T, MarkerId>)
+					pushMarkerHandle(state, typed);
+				else if constexpr (std::is_same_v<T, AgentBehaviourConfigurationList>)
+				{
+					lua_newtable(state);
+					auto const backing = lua_gettop(state);
+					for (size_t index = 0; index < typed.size(); ++index)
+					{
+						pushConfigurationValue(state, typed[index]);
+						lua_rawseti(state, backing, static_cast<lua_Integer>(index + 1));
+					}
+					pushImmutableProxy(state);
+				}
+				else
+				{
+					lua_newtable(state);
+					auto const backing = lua_gettop(state);
+					for (auto const& [name, nested] : typed)
+					{
+						pushConfigurationValue(state, nested);
+						lua_setfield(state, backing, name.c_str());
+					}
+					pushImmutableProxy(state);
+				}
+			}, value.value);
+		}
+
 		void pushConfiguration(lua_State* state,
 			AgentBehaviourConfiguration const& configuration)
 		{
-			lua_newtable(state);
-			for (auto const& [name, value] : configuration)
-			{
-				std::visit([&](auto const& typed)
-				{
-					using T = std::decay_t<decltype(typed)>;
-					if constexpr (std::is_same_v<T, bool>)
-						lua_pushboolean(state, typed);
-					else if constexpr (std::is_same_v<T, int64_t>)
-						lua_pushinteger(state, static_cast<lua_Integer>(typed));
-					else if constexpr (std::is_same_v<T, double>)
-						lua_pushnumber(state, typed);
-					else if constexpr (std::is_same_v<T, std::string>)
-						lua_pushlstring(state, typed.data(), typed.size());
-					else if constexpr (std::is_same_v<T, AgentBehaviourDuration>)
-						lua_pushinteger(state, static_cast<lua_Integer>(typed.ticks));
-					else
-						pushMarkerHandle(state, typed);
-				}, value);
-				lua_setfield(state, -2, name.c_str());
-			}
-			pushImmutableProxy(state);
+			pushConfigurationValue(state,
+				AgentBehaviourConfigurationValue(configuration));
+		}
+
+		uint64_t mixRandomSeed(uint64_t value)
+		{
+			value = (value ^ (value >> 30)) * 0xbf58476d1ce4e5b9ull;
+			value = (value ^ (value >> 27)) * 0x94d049bb133111ebull;
+			return value ^ (value >> 31);
+		}
+
+		uint64_t deriveRandomSeed(uint64_t buildingSeed, AgentId agent,
+			AgentBehaviourId behaviour)
+		{
+			auto state = mixRandomSeed(buildingSeed + 0x9e3779b97f4a7c15ull);
+			state ^= mixRandomSeed(agent.value + 0x243f6a8885a308d3ull);
+			state ^= mixRandomSeed(behaviour.value + 0x13198a2e03707344ull);
+			return mixRandomSeed(state);
 		}
 	}
 
@@ -1024,6 +1114,7 @@ namespace core
 		{
 			AgentId agent;
 			AgentBehaviourAssignment assignment;
+			uint64_t randomSeed{ 0 };
 			std::string registryUuid;
 			uint64_t packageRevision{ 0 };
 			std::string packageName;
@@ -1045,6 +1136,7 @@ namespace core
 			std::unique_ptr<ModuleLoader> moduleLoader;
 			bool started{ false };
 			bool disabled{ false };
+			uint64_t randomState{ 0 };
 			CallbackScope scope;
 			std::map<std::string, uint64_t> timers;
 			std::vector<PendingOutcome> outcomes;
@@ -1237,6 +1329,7 @@ namespace core
 				if (instances.contains(definition.agent)) continue;
 				Instance instance;
 				instance.assignment = definition.assignment;
+				instance.randomState = definition.randomSeed;
 				instance.registryUuid = definition.registryUuid;
 				instance.packageRevision = definition.packageRevision;
 				instance.packageName = definition.packageName;
@@ -1355,6 +1448,12 @@ namespace core
 			lua_pushlightuserdata(lua, &instance.scope);
 			lua_pushcclosure(lua, cancelTimer, 1);
 			lua_setfield(lua, backing, "cancel_timer");
+			lua_pushlightuserdata(lua, &instance.scope);
+			lua_pushcclosure(lua, randomNumber, 1);
+			lua_setfield(lua, backing, "random_number");
+			lua_pushlightuserdata(lua, &instance.scope);
+			lua_pushcclosure(lua, randomInteger, 1);
+			lua_setfield(lua, backing, "random_integer");
 			pushImmutableProxy(lua);
 		}
 
@@ -1406,6 +1505,16 @@ namespace core
 			instance.scope.cancelTimer = [&instance](std::string const& name)
 			{
 				return instance.timers.erase(name) != 0;
+			};
+			instance.scope.nextRandom = [&instance]
+			{
+				// SplitMix64 has a completely specified integer transition and no
+				// process-global state. Each Agent instance owns this state.
+				instance.randomState += 0x9e3779b97f4a7c15ull;
+				auto value = instance.randomState;
+				value = (value ^ (value >> 30)) * 0xbf58476d1ce4e5b9ull;
+				value = (value ^ (value >> 27)) * 0x94d049bb133111ebull;
+				return value ^ (value >> 31);
 			};
 		}
 
@@ -1621,8 +1730,9 @@ namespace core
 				auto source = registry->mSourceCache.find(
 					behaviour->getSourceModulePath());
 				if (source == registry->mSourceCache.end()) continue;
-				definitions.push_back({ agentId, assignment, registry->getUuid(),
-					registry->getPackageRevision(),
+				definitions.push_back({ agentId, assignment,
+					deriveRandomSeed(building.mRandomSeed, agentId, assignment.behaviour),
+					registry->getUuid(), registry->getPackageRevision(),
 					registry->mPackageDirectory->filename().string(),
 					behaviour->getSourceModulePath(), source->second, helpers });
 			}

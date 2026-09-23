@@ -6,6 +6,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -39,13 +40,62 @@ namespace core
 		bool operator==(AgentBehaviourDuration const&) const = default;
 	};
 
-	// Ordinary authored values only. List and Record configuration are reserved
-	// for the later nested-schema ticket; their definitions may already exist in
-	// a registry, but this generation refuses to assign them.
-	using AgentBehaviourConfigurationValue = std::variant<bool, int64_t, double,
-		std::string, AgentBehaviourDuration, MarkerId>;
-	using AgentBehaviourConfiguration =
+	// Recursive, ordinary authored values. These wrappers keep Lua and serializer
+	// implementation types out of the domain model while allowing Lists of Lists
+	// and Records at any schema position.
+	struct AgentBehaviourConfigurationValue;
+	using AgentBehaviourConfigurationList =
+		std::vector<AgentBehaviourConfigurationValue>;
+	using AgentBehaviourConfigurationRecord =
 		std::map<std::string, AgentBehaviourConfigurationValue>;
+
+	struct AgentBehaviourConfigurationValue
+	{
+		using Storage = std::variant<bool, int64_t, double, std::string,
+			AgentBehaviourDuration, MarkerId, AgentBehaviourConfigurationList,
+			AgentBehaviourConfigurationRecord>;
+
+		Storage value{ false };
+
+		AgentBehaviourConfigurationValue() = default;
+		AgentBehaviourConfigurationValue(bool typed) : value(typed) {}
+		AgentBehaviourConfigurationValue(int64_t typed) : value(typed) {}
+		template<typename Integer,
+			std::enable_if_t<std::is_integral_v<Integer>
+				&& !std::is_same_v<std::remove_cv_t<Integer>, bool>
+				&& !std::is_same_v<std::remove_cv_t<Integer>, int64_t>, int> = 0>
+		AgentBehaviourConfigurationValue(Integer typed)
+			: value(static_cast<int64_t>(typed)) {}
+		AgentBehaviourConfigurationValue(double typed) : value(typed) {}
+		AgentBehaviourConfigurationValue(std::string typed) : value(std::move(typed)) {}
+		AgentBehaviourConfigurationValue(char const* typed) : value(std::string(typed)) {}
+		AgentBehaviourConfigurationValue(AgentBehaviourDuration typed) : value(typed) {}
+		AgentBehaviourConfigurationValue(MarkerId typed) : value(typed) {}
+		AgentBehaviourConfigurationValue(AgentBehaviourConfigurationList typed)
+			: value(std::move(typed)) {}
+		AgentBehaviourConfigurationValue(AgentBehaviourConfigurationRecord typed)
+			: value(std::move(typed)) {}
+
+		bool operator==(AgentBehaviourConfigurationValue const&) const = default;
+	};
+
+	template<typename T>
+	T const* agentBehaviourConfigurationGetIf(
+		AgentBehaviourConfigurationValue const* value)
+	{
+		return value ? std::get_if<T>(&value->value) : nullptr;
+	}
+
+	template<typename T>
+	T* agentBehaviourConfigurationGetIf(AgentBehaviourConfigurationValue* value)
+	{
+		return value ? std::get_if<T>(&value->value) : nullptr;
+	}
+
+	using AgentBehaviourConfiguration = AgentBehaviourConfigurationRecord;
+
+	inline constexpr size_t MaxAgentBehaviourConfigurationDepth{ 16 };
+	inline constexpr size_t MaxAgentBehaviourListElements{ 4'096 };
 
 	// One typed configuration field declared by an Agent behaviour schema.
 	// An optional field must provide a default. Required fields deliberately do

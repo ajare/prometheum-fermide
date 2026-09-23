@@ -413,7 +413,7 @@ namespace
 	{
 		auto const fixture = assignmentFixture();
 
-		require(fixture.yaml.find("version: 13") != std::string::npos,
+		require(fixture.yaml.find("version: 14") != std::string::npos,
 			"Agent group assignments were not written under the current Building schema");
 		require(fixture.yaml.find("group: 1") != std::string::npos
 			&& fixture.yaml.find("group: 2") != std::string::npos,

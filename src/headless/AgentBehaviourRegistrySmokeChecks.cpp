@@ -99,7 +99,8 @@ namespace
 		schema.push_back({ "stops", core::AgentBehaviourSchemaType::List,
 			{ { "stop", core::AgentBehaviourSchemaType::Record,
 				{ { "at", core::AgentBehaviourSchemaType::Marker, {} },
-					{ "forTicks", core::AgentBehaviourSchemaType::Duration, {} } } } } });
+					{ "forTicks", core::AgentBehaviourSchemaType::Duration, {} } } } },
+			false, core::AgentBehaviourConfigurationList{} });
 		return schema;
 	}
 
@@ -152,7 +153,7 @@ namespace
 		// through the same core workflow used by the GUI.
 		building->saveTo(buildingPath.string());
 		auto const buildingYaml = readText(buildingPath);
-		require(buildingYaml.find("version: 13") != std::string::npos
+		require(buildingYaml.find("version: 14") != std::string::npos
 			&& buildingYaml.find("package: station.behaviours") != std::string::npos
 			&& buildingYaml.find("expectedUuid: " + registry->getUuid()) != std::string::npos,
 			"The Building did not persist its version-12 registry reference");
@@ -187,9 +188,9 @@ namespace
 		core::Building source("Legacy", 4, 2);
 		source.pauseSimulation();
 		auto yaml = serializeBuilding(source);
-		auto const version = yaml.find("version: 13");
-		require(version != std::string::npos, "The current Building schema was not version 13");
-		yaml.replace(version, std::string("version: 13").size(), "version: 12");
+		auto const version = yaml.find("version: 14");
+		require(version != std::string::npos, "The current Building schema was not version 14");
+		yaml.replace(version, std::string("version: 14").size(), "version: 12");
 
 		auto loaded = std::make_shared<core::Building>("Loading", 1, 1);
 		loaded->pauseSimulation();
@@ -204,8 +205,8 @@ namespace
 		// Readers cap out at their own version, so a future document is refused
 		// at the version boundary instead of dropping fields it does not know.
 		auto future = serializeBuilding(source);
-		auto const futureVersion = future.find("version: 13");
-		future.replace(futureVersion, std::string("version: 13").size(), "version: 14");
+		auto const futureVersion = future.find("version: 14");
+		future.replace(futureVersion, std::string("version: 14").size(), "version: 15");
 		auto refused = std::make_shared<core::Building>("Loading", 1, 1);
 		refused->pauseSimulation();
 		auto futureReader = core::YamlSerializer::fromString(future);
@@ -700,7 +701,11 @@ namespace
 			&& restored->getSourceModulePath() == "schedule.lua"
 			&& restored->getSchema().size() == 3
 			&& restored->getSchema()[2].type == core::AgentBehaviourSchemaType::List
-			&& restored->getSchema()[2].children.front().children.size() == 2,
+			&& restored->getSchema()[2].children.front().children.size() == 2
+			&& restored->getSchema()[2].defaultValue
+			&& core::agentBehaviourConfigurationGetIf<
+				core::AgentBehaviourConfigurationList>(
+					&*restored->getSchema()[2].defaultValue),
 			"Behaviour identity, revision, module path, or schema did not survive save/load");
 		require(reopened->getNextBehaviourId() == 3,
 			"The behaviour allocator did not survive save/load");

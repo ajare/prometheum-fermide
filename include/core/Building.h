@@ -431,6 +431,11 @@ namespace core
 
 		std::string mName;
 
+		// Authored entropy root for deterministic per-Agent behaviour streams.
+		// Live stream positions remain runtime-only and are recreated from this
+		// value, Agent ID, and behaviour ID on reset or reload.
+		uint64_t mRandomSeed{ 0 };
+
 		uint32_t mCellsWide, mDecksHigh;
 
 		std::vector<std::shared_ptr<Layer>> mLayers;
@@ -1159,6 +1164,10 @@ namespace core
 
 		std::string const& getName() const;
 		std::weak_ptr<void const> getLifetimeToken() const { return mLifetimeToken; }
+
+		uint64_t getRandomSeed() const { return mRandomSeed; }
+		// Seed edits replace all live streams and are therefore paused-only.
+		bool setRandomSeed(uint64_t seed, std::string* diagnostic = nullptr);
 
 		// A Building references zero or one adjacent Agent tag registry by
 		// basename and expected UUID. Attaching is an authored Building change.

@@ -2,6 +2,7 @@
 #include <cmath>
 #include <filesystem>
 #include <format>
+#include <functional>
 #include <limits>
 #include <set>
 #include <stdexcept>
@@ -123,6 +124,29 @@ namespace core
 	string const& Building::getName() const
 	{
 		return mName;
+	}
+
+	bool Building::setRandomSeed(uint64_t seed, string* diagnostic)
+	{
+		if (diagnostic) diagnostic->clear();
+		if (!mSimulationPaused)
+		{
+			if (diagnostic) *diagnostic =
+				"Pause the simulation before changing the Building random seed";
+			return false;
+		}
+		if (mRandomSeed == seed)
+		{
+			if (diagnostic) *diagnostic = "The Building random seed is unchanged";
+			return false;
+		}
+		mRandomSeed = seed;
+		mAgentBehaviourRuntime->reset();
+		for (auto const& [agentId, agent] : mAgents.entries())
+			if (agent && agent->getBehaviourAssignment())
+				mSimulationCoordinator.clearAgentMovementForBehaviourEdit(agentId);
+		modify();
+		return true;
 	}
 
 	bool Building::hasAgentTagRegistryReference() const
@@ -367,6 +391,97 @@ namespace core
 
 	namespace
 	{
+		bool validateConfigurationRecord(Building const& building,
+			vector<AgentBehaviourSchemaField> const& fields,
+			AgentBehaviourConfigurationRecord& record, string const& path,
+			size_t depth, string* diagnostic);
+
+		bool validateConfigurationValue(Building const& building,
+			AgentBehaviourSchemaField const& field,
+			AgentBehaviourConfigurationValue& value, string const& path,
+			size_t depth, string* diagnostic)
+		{
+			auto reject = [diagnostic, &path](string message)
+			{
+				if (diagnostic) *diagnostic = format(
+					"Configuration field '{}': {}", path, message);
+				return false;
+			};
+			if (depth > MaxAgentBehaviourConfigurationDepth)
+				return reject("maximum nesting depth 16 exceeded");
+			auto const actual = string(agentBehaviourConfigurationValueTypeName(value));
+			if (actual != agentBehaviourSchemaTypeName(field.type))
+				return reject(format("has type {}, expected {}", actual,
+					agentBehaviourSchemaTypeName(field.type)));
+			if (auto const* number = agentBehaviourConfigurationGetIf<double>(&value);
+				number && !isfinite(*number))
+				return reject("must be a finite Number");
+			if (auto const* duration =
+				agentBehaviourConfigurationGetIf<AgentBehaviourDuration>(&value);
+				duration && duration->ticks == 0)
+				return reject("Duration must be at least one tick");
+			if (auto const* marker = agentBehaviourConfigurationGetIf<MarkerId>(&value);
+				marker && (!*marker || !building.lookupMarker(*marker)))
+				return reject(format("references unknown Marker {}", marker->value));
+			if (auto* list = agentBehaviourConfigurationGetIf<AgentBehaviourConfigurationList>(&value))
+			{
+				if (list->size() > MaxAgentBehaviourListElements)
+					return reject("contains more than 4096 List elements");
+				for (size_t index = 0; index < list->size(); ++index)
+					if (!validateConfigurationValue(building, field.children.front(),
+						(*list)[index], path + "[" + to_string(index) + "]",
+						depth + 1, diagnostic)) return false;
+			}
+			if (auto* nested = agentBehaviourConfigurationGetIf<AgentBehaviourConfigurationRecord>(&value))
+				return validateConfigurationRecord(building, field.children, *nested,
+					path, depth + 1, diagnostic);
+			return true;
+		}
+
+		bool validateConfigurationRecord(Building const& building,
+			vector<AgentBehaviourSchemaField> const& fields,
+			AgentBehaviourConfigurationRecord& record, string const& path,
+			size_t depth, string* diagnostic)
+		{
+			for (auto const& [name, value] : record)
+			{
+				(void)value;
+				auto found = find_if(fields.begin(), fields.end(),
+					[&](auto const& field) { return field.name == name; });
+				if (found == fields.end())
+				{
+					if (diagnostic) *diagnostic = format(
+						"Configuration field '{}{}{}' is not declared",
+						path, path.empty() ? "" : ".", name);
+					return false;
+				}
+			}
+			for (auto const& field : fields)
+			{
+				auto const fieldPath = path.empty() ? field.name : path + "." + field.name;
+				auto found = record.find(field.name);
+				if (found == record.end())
+				{
+					if (field.required)
+					{
+						if (diagnostic) *diagnostic = format(
+							"Required configuration field '{}' is missing", fieldPath);
+						return false;
+					}
+					if (!field.defaultValue)
+					{
+						if (diagnostic) *diagnostic = format(
+							"Optional configuration field '{}' has no default", fieldPath);
+						return false;
+					}
+					found = record.emplace(field.name, *field.defaultValue).first;
+				}
+				if (!validateConfigurationValue(building, field, found->second,
+					fieldPath, depth, diagnostic)) return false;
+			}
+			return true;
+		}
+
 		bool validateBehaviourConfiguration(Building const& building,
 			AgentBehaviourRegistry const& registry, AgentBehaviourId behaviourId,
 			uint64_t revision, AgentBehaviourConfiguration const& configuration,
@@ -387,45 +502,8 @@ namespace core
 					behaviour->getName(), revision, behaviour->getRevision()));
 
 			AgentBehaviourConfiguration candidate = configuration;
-			for (auto const& [name, value] : configuration)
-			{
-				auto const found = find_if(behaviour->getSchema().begin(), behaviour->getSchema().end(),
-					[&](AgentBehaviourSchemaField const& field) { return field.name == name; });
-				if (found == behaviour->getSchema().end())
-					return reject(format("Configuration field '{}' is not declared by Agent behaviour '{}'",
-						name, behaviour->getName()));
-				(void)value;
-			}
-			for (auto const& field : behaviour->getSchema())
-			{
-				if (field.type == AgentBehaviourSchemaType::List
-					|| field.type == AgentBehaviourSchemaType::Record)
-					return reject(format("Configuration field '{}' uses unsupported type {}",
-						field.name, agentBehaviourSchemaTypeName(field.type)));
-				auto found = candidate.find(field.name);
-				if (found == candidate.end())
-				{
-					if (field.required)
-						return reject(format("Required configuration field '{}' is missing", field.name));
-					if (!field.defaultValue)
-						return reject(format("Optional configuration field '{}' has no default", field.name));
-					found = candidate.emplace(field.name, *field.defaultValue).first;
-				}
-				auto const actual = string(agentBehaviourConfigurationValueTypeName(found->second));
-				if (actual != agentBehaviourSchemaTypeName(field.type))
-					return reject(format("Configuration field '{}' has type {}, expected {}",
-						field.name, actual, agentBehaviourSchemaTypeName(field.type)));
-				if (auto const* number = get_if<double>(&found->second); number && !isfinite(*number))
-					return reject(format("Configuration field '{}' must be a finite Number", field.name));
-				if (auto const* duration = get_if<AgentBehaviourDuration>(&found->second);
-					duration && duration->ticks == 0)
-					return reject(format("Configuration field '{}' Duration must be at least one tick",
-						field.name));
-				if (auto const* marker = get_if<MarkerId>(&found->second);
-					marker && (!*marker || !building.lookupMarker(*marker)))
-					return reject(format("Configuration field '{}' references unknown Marker {}",
-						field.name, marker->value));
-			}
+			if (!validateConfigurationRecord(building, behaviour->getSchema(),
+				candidate, {}, 1, diagnostic)) return false;
 			if (normalized) *normalized = std::move(candidate);
 			return true;
 		}
@@ -5248,17 +5326,39 @@ namespace core
 		if (!markerObject) return reject("The selected object is not a Marker");
 		auto const marker = markerObject->getMarker()->getId();
 		vector<string> references;
+		function<void(AgentBehaviourConfigurationValue const&, string const&,
+			AgentId, Agent const&)> collectReferences;
+		collectReferences = [&](AgentBehaviourConfigurationValue const& value,
+			string const& path, AgentId agentId, Agent const& agent)
+		{
+			if (auto const* referenced =
+				agentBehaviourConfigurationGetIf<MarkerId>(&value);
+				referenced && *referenced == marker)
+			{
+				references.push_back(format(
+					"Agent '{}' ({}) configuration field '{}'",
+					agent.getName(), agentId.value, path));
+			}
+			else if (auto const* list =
+				agentBehaviourConfigurationGetIf<AgentBehaviourConfigurationList>(&value))
+			{
+				for (size_t index = 0; index < list->size(); ++index)
+					collectReferences((*list)[index],
+						path + "[" + to_string(index) + "]", agentId, agent);
+			}
+			else if (auto const* record =
+				agentBehaviourConfigurationGetIf<AgentBehaviourConfigurationRecord>(&value))
+			{
+				for (auto const& [field, nested] : *record)
+					collectReferences(nested, path + "." + field, agentId, agent);
+			}
+		};
 		for (auto const& [agentId, agent] : mAgents.entries())
 		{
 			if (!agent || !agent->getBehaviourAssignment()) continue;
 			for (auto const& [field, value] :
 				agent->getBehaviourAssignment()->configuration)
-			{
-				auto const* referenced = get_if<MarkerId>(&value);
-				if (referenced && *referenced == marker)
-					references.push_back(format("Agent '{}' ({}) configuration field '{}'",
-						agent->getName(), agentId.value, field));
-			}
+				collectReferences(value, field, agentId, *agent);
 		}
 		if (!references.empty())
 		{

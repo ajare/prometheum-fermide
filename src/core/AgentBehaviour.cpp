@@ -15,24 +15,79 @@ namespace core
 
 	namespace
 	{
-		constexpr size_t MaxSchemaDepth{ 16 };
-
 		bool valueMatchesType(AgentBehaviourConfigurationValue const& value,
 			AgentBehaviourSchemaType type)
 		{
 			switch (type)
 			{
-			case AgentBehaviourSchemaType::Boolean: return holds_alternative<bool>(value);
-			case AgentBehaviourSchemaType::Integer: return holds_alternative<int64_t>(value);
-			case AgentBehaviourSchemaType::Number: return holds_alternative<double>(value);
-			case AgentBehaviourSchemaType::String: return holds_alternative<string>(value);
+			case AgentBehaviourSchemaType::Boolean:
+				return agentBehaviourConfigurationGetIf<bool>(&value) != nullptr;
+			case AgentBehaviourSchemaType::Integer:
+				return agentBehaviourConfigurationGetIf<int64_t>(&value) != nullptr;
+			case AgentBehaviourSchemaType::Number:
+				return agentBehaviourConfigurationGetIf<double>(&value) != nullptr;
+			case AgentBehaviourSchemaType::String:
+				return agentBehaviourConfigurationGetIf<string>(&value) != nullptr;
 			case AgentBehaviourSchemaType::Duration:
-				return holds_alternative<AgentBehaviourDuration>(value);
-			case AgentBehaviourSchemaType::Marker: return holds_alternative<MarkerId>(value);
+				return agentBehaviourConfigurationGetIf<AgentBehaviourDuration>(&value) != nullptr;
+			case AgentBehaviourSchemaType::Marker:
+				return agentBehaviourConfigurationGetIf<MarkerId>(&value) != nullptr;
 			case AgentBehaviourSchemaType::List:
-			case AgentBehaviourSchemaType::Record: return false;
+				return agentBehaviourConfigurationGetIf<AgentBehaviourConfigurationList>(&value) != nullptr;
+			case AgentBehaviourSchemaType::Record:
+				return agentBehaviourConfigurationGetIf<AgentBehaviourConfigurationRecord>(&value) != nullptr;
 			}
 			return false;
+		}
+
+		bool defaultMatchesSchema(AgentBehaviourConfigurationValue const& value,
+			AgentBehaviourSchemaField const& field, string const& path, size_t depth,
+			string* diagnostic)
+		{
+			auto reject = [diagnostic, &path](string reason)
+			{
+				if (diagnostic) *diagnostic = "Default for Agent behaviour schema field #"
+					+ path + " " + std::move(reason);
+				return false;
+			};
+			if (depth > MaxAgentBehaviourConfigurationDepth)
+				return reject("exceeds the maximum configuration depth of 16");
+			if (!valueMatchesType(value, field.type))
+				return reject("has type " + string(agentBehaviourConfigurationValueTypeName(value))
+					+ ", expected " + agentBehaviourSchemaTypeName(field.type));
+			if (auto const* number = agentBehaviourConfigurationGetIf<double>(&value);
+				number && !isfinite(*number))
+				return reject("must be a finite Number");
+			if (auto const* duration = agentBehaviourConfigurationGetIf<AgentBehaviourDuration>(&value);
+				duration && duration->ticks == 0)
+				return reject("Duration must be at least one tick");
+			if (auto const* list = agentBehaviourConfigurationGetIf<AgentBehaviourConfigurationList>(&value))
+			{
+				if (field.children.size() != 1)
+					return reject("belongs to a List without exactly one element schema");
+				if (list->size() > MaxAgentBehaviourListElements)
+					return reject("contains more than 4096 List elements");
+				for (size_t index = 0; index < list->size(); ++index)
+					if (!defaultMatchesSchema((*list)[index], field.children.front(),
+						path + "[" + to_string(index) + "]", depth + 1, diagnostic))
+						return false;
+			}
+			if (auto const* record = agentBehaviourConfigurationGetIf<AgentBehaviourConfigurationRecord>(&value))
+			{
+				for (auto const& [name, nested] : *record)
+				{
+					auto child = find_if(field.children.begin(), field.children.end(),
+						[&](auto const& candidate) { return candidate.name == name; });
+					if (child == field.children.end())
+						return reject("contains undeclared field '" + name + "'");
+					if (!defaultMatchesSchema(nested, *child, path + "." + name,
+						depth + 1, diagnostic)) return false;
+				}
+				for (auto const& child : field.children)
+					if (!record->contains(child.name) && child.required)
+						return reject("is missing required field '" + child.name + "'");
+			}
+			return true;
 		}
 
 		// Field names and behaviour names share the Marker naming rule set:
@@ -83,9 +138,9 @@ namespace core
 				if (diagnostic) *diagnostic = std::move(reason);
 				return false;
 			};
-			if (depth > MaxSchemaDepth)
+			if (depth > MaxAgentBehaviourConfigurationDepth)
 				return reject("Agent behaviour schemas cannot nest deeper than "
-					+ std::to_string(MaxSchemaDepth) + " levels");
+					+ std::to_string(MaxAgentBehaviourConfigurationDepth) + " levels");
 			std::vector<std::string> names;
 			for (auto const& field : fields)
 			{
@@ -103,21 +158,8 @@ namespace core
 				if (!field.required && !field.defaultValue)
 					return reject("Optional Agent behaviour schema field #" + field.name
 						+ " must declare a default");
-				if (field.defaultValue && !valueMatchesType(*field.defaultValue, field.type))
-					return reject("Default for Agent behaviour schema field #" + field.name
-						+ " has type " + agentBehaviourConfigurationValueTypeName(*field.defaultValue)
-						+ ", expected " + agentBehaviourSchemaTypeName(field.type));
-				if (field.defaultValue)
-				{
-					if (auto const* number = get_if<double>(&*field.defaultValue);
-						number && !isfinite(*number))
-						return reject("Default for Agent behaviour schema field #" + field.name
-							+ " must be a finite Number");
-					if (auto const* duration = get_if<AgentBehaviourDuration>(&*field.defaultValue);
-						duration && duration->ticks == 0)
-						return reject("Default for Agent behaviour schema field #" + field.name
-							+ " Duration must be at least one tick");
-				}
+				if (field.defaultValue && !defaultMatchesSchema(*field.defaultValue,
+					field, field.name, depth, diagnostic)) return false;
 				switch (field.type)
 				{
 				case AgentBehaviourSchemaType::List:
@@ -156,8 +198,10 @@ namespace core
 			else if constexpr (is_same_v<T, double>) return "number";
 			else if constexpr (is_same_v<T, string>) return "string";
 			else if constexpr (is_same_v<T, AgentBehaviourDuration>) return "duration";
-			else return "marker";
-		}, value);
+			else if constexpr (is_same_v<T, MarkerId>) return "marker";
+			else if constexpr (is_same_v<T, AgentBehaviourConfigurationList>) return "list";
+			else return "record";
+		}, value.value);
 	}
 
 	char const* agentBehaviourModuleStatusName(AgentBehaviourModuleStatus status)

@@ -32,13 +32,41 @@ namespace core
 				else if constexpr (is_same_v<T, string>) serializer.writeString("value", typed);
 				else if constexpr (is_same_v<T, AgentBehaviourDuration>)
 					serializer.writeUint64("value", typed.ticks);
-				else serializer.writeUint64("value", typed.value);
-			}, value);
+				else if constexpr (is_same_v<T, MarkerId>)
+					serializer.writeUint64("value", typed.value);
+				else if constexpr (is_same_v<T, AgentBehaviourConfigurationList>)
+				{
+					serializer.beginArray("value");
+					for (auto const& item : typed)
+					{
+						serializer.beginMap("");
+						serializeBehaviourValue(serializer, item);
+						serializer.endMap();
+					}
+					serializer.endArray();
+				}
+				else
+				{
+					serializer.beginArray("value");
+					for (auto const& [field, item] : typed)
+					{
+						serializer.beginMap("");
+						serializer.writeString("field", field);
+						serializeBehaviourValue(serializer, item);
+						serializer.endMap();
+					}
+					serializer.endArray();
+				}
+			}, value.value);
 		}
 
 		AgentBehaviourConfigurationValue deserializeBehaviourValue(
-			Serializer& serializer, string const& field)
+			Serializer& serializer, string const& field, size_t depth = 1)
 		{
+			if (depth > MaxAgentBehaviourConfigurationDepth)
+				throw SerializationException(format(
+					"Agent behaviour configuration field '{}' exceeds maximum nesting depth 16",
+					field));
 			auto const type = serializer.readString("type");
 			if (type == "boolean") return serializer.readBool("value");
 			if (type == "integer") return serializer.readInt64("value");
@@ -47,6 +75,47 @@ namespace core
 			if (type == "duration")
 				return AgentBehaviourDuration{ serializer.readUint64("value") };
 			if (type == "marker") return MarkerId{ serializer.readUint64("value") };
+			if (type == "list")
+			{
+				AgentBehaviourConfigurationList list;
+				serializer.beginArray("value");
+				while (serializer.nextArrayItem())
+				{
+					if (list.size() >= MaxAgentBehaviourListElements)
+						throw SerializationException(format(
+							"Agent behaviour configuration field '{}' exceeds 4096 List elements",
+							field));
+					serializer.beginMap("");
+					list.push_back(deserializeBehaviourValue(serializer,
+						field + "[" + to_string(list.size()) + "]", depth + 1));
+					serializer.endMap();
+				}
+				serializer.endArray();
+				return list;
+			}
+			if (type == "record")
+			{
+				AgentBehaviourConfigurationRecord record;
+				serializer.beginArray("value");
+				while (serializer.nextArrayItem())
+				{
+					serializer.beginMap("");
+					auto nestedField = serializer.readString("field");
+					if (nestedField.empty())
+						throw SerializationException(format(
+							"Agent behaviour configuration Record '{}' contains a blank field",
+							field));
+					auto nested = deserializeBehaviourValue(serializer,
+						field + "." + nestedField, depth + 1);
+					serializer.endMap();
+					if (!record.emplace(nestedField, std::move(nested)).second)
+						throw SerializationException(format(
+							"Agent behaviour configuration field '{}.{}' appears twice",
+							field, nestedField));
+				}
+				serializer.endArray();
+				return record;
+			}
 			throw SerializationException(format(
 				"Agent behaviour configuration field '{}' has unknown type '{}'", field, type));
 		}

@@ -96,7 +96,8 @@ namespace
 			"Valid assignment was refused: " + diagnostic);
 		auto assigned = fixture.building->getAgentBehaviourAssignment(fixture.first);
 		require(assigned && assigned->configuration.size() == 6
-			&& std::get<std::string>(assigned->configuration.at("label")) == "default",
+			&& *core::agentBehaviourConfigurationGetIf<std::string>(
+				&assigned->configuration.at("label")) == "default",
 			"Optional schema default was not materialized");
 
 		auto edited = assigned->configuration;
@@ -114,17 +115,19 @@ namespace
 		};
 		require(gBuildingDocumentHistory.undo(
 			gBuildingDocumentHistory.capture(serialize(*current)), restore), "Undo failed");
-		require(std::get<int64_t>(current->getAgentBehaviourAssignment(fixture.first)
-			->configuration.at("count")) == 3, "Undo did not restore configuration");
+		require(*core::agentBehaviourConfigurationGetIf<int64_t>(
+			&current->getAgentBehaviourAssignment(fixture.first)
+				->configuration.at("count")) == 3, "Undo did not restore configuration");
 		require(gBuildingDocumentHistory.redo(
 			gBuildingDocumentHistory.capture(serialize(*current)), restore), "Redo failed");
-		require(std::get<int64_t>(current->getAgentBehaviourAssignment(fixture.first)
-			->configuration.at("count")) == 9, "Redo did not restore configuration edit");
+		require(*core::agentBehaviourConfigurationGetIf<int64_t>(
+			&current->getAgentBehaviourAssignment(fixture.first)
+				->configuration.at("count")) == 9, "Redo did not restore configuration edit");
 
 		auto yaml = serialize(*current);
-		require(yaml.find("version: 13") != std::string::npos
+		require(yaml.find("version: 14") != std::string::npos
 			&& yaml.find("type: marker") != std::string::npos,
-			"Version-13 typed assignment was not persisted");
+			"Version-14 typed assignment was not persisted");
 		auto reopened = deserialize(yaml, fixture.registry);
 		require(reopened->getAgentBehaviourAssignment(fixture.first) ==
 			current->getAgentBehaviourAssignment(fixture.first),
@@ -170,6 +173,128 @@ namespace
 		fixture.building->pauseSimulation();
 	}
 
+	void compositeSchedulesValidatePersistAndUndo()
+	{
+		Fixture fixture;
+		std::vector<core::AgentBehaviourSchemaField> entryFields{
+			{ "duration", core::AgentBehaviourSchemaType::Duration },
+			{ "destination", core::AgentBehaviourSchemaType::Marker },
+			{ "label", core::AgentBehaviourSchemaType::String, {}, false,
+				std::string("stop") }
+		};
+		std::vector<core::AgentBehaviourSchemaField> schema{
+			{ "schedule", core::AgentBehaviourSchemaType::List, {
+				{ "entry", core::AgentBehaviourSchemaType::Record, entryFields }
+			} }
+		};
+		auto const scheduleBehaviour = fixture.registry->addAgentBehaviour(
+			"Composite schedule", "schedule.lua", schema);
+		auto const revision = fixture.registry->lookupAgentBehaviour(
+			scheduleBehaviour)->getRevision();
+		core::AgentBehaviourConfiguration configuration{
+			{ "schedule", core::AgentBehaviourConfigurationList{
+				core::AgentBehaviourConfigurationRecord{
+					{ "duration", core::AgentBehaviourDuration{ 3 } },
+					{ "destination", fixture.marker } },
+				core::AgentBehaviourConfigurationRecord{
+					{ "duration", core::AgentBehaviourDuration{ 7 } },
+					{ "destination", fixture.marker } }
+			} }
+		};
+		std::string diagnostic;
+		gBuildingDocumentHistory.clear();
+		require(commitAgentBehaviourAssignment(fixture.building, fixture.first,
+			scheduleBehaviour, revision, configuration, diagnostic),
+			"Nested schedule was refused: " + diagnostic);
+		auto normalized = fixture.building->getAgentBehaviourAssignment(
+			fixture.first)->configuration;
+		auto const* schedule = core::agentBehaviourConfigurationGetIf<
+			core::AgentBehaviourConfigurationList>(&normalized.at("schedule"));
+		auto const* firstRecord = schedule ? core::agentBehaviourConfigurationGetIf<
+			core::AgentBehaviourConfigurationRecord>(&schedule->front()) : nullptr;
+		require(schedule && schedule->size() == 2 && firstRecord
+			&& firstRecord->contains("label"),
+			"A nested optional default was not materialized at its precise Record field");
+
+		auto reordered = normalized;
+		auto* reorderedList = core::agentBehaviourConfigurationGetIf<
+			core::AgentBehaviourConfigurationList>(&reordered.at("schedule"));
+		std::swap((*reorderedList)[0], (*reorderedList)[1]);
+		require(commitAgentBehaviourAssignment(fixture.building, fixture.first,
+			scheduleBehaviour, revision, reordered, diagnostic),
+			"Reordering a schedule was not committed as an editor transaction");
+		auto current = fixture.building;
+		auto restore = [&](DocumentSnapshot const& snapshot)
+		{
+			try { current = deserialize(snapshot.yaml, fixture.registry); return true; }
+			catch (...) { return false; }
+		};
+		require(gBuildingDocumentHistory.undo(
+			gBuildingDocumentHistory.capture(serialize(*current)), restore)
+			&& current->getAgentBehaviourAssignment(fixture.first)->configuration
+				== normalized,
+			"Undo did not restore the authored schedule order");
+		require(gBuildingDocumentHistory.redo(
+			gBuildingDocumentHistory.capture(serialize(*current)), restore)
+			&& current->getAgentBehaviourAssignment(fixture.first)->configuration
+				== reordered,
+			"Redo did not restore the reordered authored schedule");
+		fixture.building = current;
+
+		auto malformed = configuration;
+		auto* malformedList = core::agentBehaviourConfigurationGetIf<
+			core::AgentBehaviourConfigurationList>(&malformed.at("schedule"));
+		auto* malformedRecord = core::agentBehaviourConfigurationGetIf<
+			core::AgentBehaviourConfigurationRecord>(&(*malformedList)[1]);
+		(*malformedRecord)["destination"] = std::string("not a Marker");
+		require(!fixture.building->setAgentBehaviourAssignment(fixture.second,
+			scheduleBehaviour, revision, malformed, &diagnostic)
+			&& diagnostic.find("schedule[1].destination") != std::string::npos,
+			"A nested type error lacked its exact List index and Record field path");
+
+		auto excessive = configuration;
+		auto* excessiveList = core::agentBehaviourConfigurationGetIf<
+			core::AgentBehaviourConfigurationList>(&excessive.at("schedule"));
+		excessiveList->resize(core::MaxAgentBehaviourListElements + 1,
+			excessiveList->front());
+		require(!fixture.building->setAgentBehaviourAssignment(fixture.second,
+			scheduleBehaviour, revision, excessive, &diagnostic)
+			&& diagnostic.find("4096") != std::string::npos,
+			"A schedule over 4096 entries was accepted");
+
+		std::vector<core::AgentBehaviourSchemaField> tooDeep{
+			{ "leaf", core::AgentBehaviourSchemaType::String }
+		};
+		for (unsigned level = 0; level < 16; ++level)
+			tooDeep = { { "nested", core::AgentBehaviourSchemaType::Record,
+				std::move(tooDeep) } };
+		require(!core::agentBehaviourSchemaFieldsAreValid(tooDeep, &diagnostic)
+			&& diagnostic.find("16") != std::string::npos,
+			"A schema deeper than 16 levels was accepted");
+
+		auto yaml = serialize(*fixture.building);
+		auto reopened = deserialize(yaml, fixture.registry);
+		require(reopened->getAgentBehaviourAssignment(fixture.first)
+			== fixture.building->getAgentBehaviourAssignment(fixture.first),
+			"A nested schedule did not survive save/load");
+		require(!fixture.building->removeSectorMarker(0, 0, &diagnostic)
+			&& diagnostic.find("schedule[0].destination") != std::string::npos,
+			"Nested Marker dependency diagnostics omitted the schedule path");
+
+		ImGui::CreateContext();
+		auto& io = ImGui::GetIO();
+		io.IniFilename = nullptr;
+		io.DisplaySize = ImVec2(800, 600);
+		unsigned char* pixels; int width, height;
+		io.Fonts->GetTexDataAsRGBA32(&pixels, &width, &height);
+		ImGui::NewFrame();
+		ImGui::Begin("Composite schedule panel smoke");
+		renderAgentBehaviourConfigurationPanel(fixture.building, fixture.first);
+		ImGui::End();
+		ImGui::Render();
+		ImGui::DestroyContext();
+	}
+
 	void markerDeletionReportsEveryReferenceAndPanelIsBalanced()
 	{
 		Fixture fixture;
@@ -208,5 +333,6 @@ void runAgentBehaviourAssignmentSmokeChecks()
 {
 	assignEditClearUndoRedoAndPersistence();
 	validationAndPausedGateAreAtomic();
+	compositeSchedulesValidatePersistAndUndo();
 	markerDeletionReportsEveryReferenceAndPanelIsBalanced();
 }
