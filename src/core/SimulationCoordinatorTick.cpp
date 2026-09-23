@@ -683,8 +683,6 @@ namespace core
 			auto goal = mWorld.mMovementGoals.find(id);
 			try
 			{
-				auto source = mWorld.mGraph->getClosestVertexInSector(
-					agent->getSector(), agent->getGlobalPosition());
 				shared_ptr<const Vertex> destination;
 				if (goal != mWorld.mMovementGoals.end())
 				{
@@ -713,7 +711,7 @@ namespace core
 					destination = mWorld.mGraph->getClosestVertexInSector(
 						destinationSector.get(), intent.destinationPosition);
 				}
-				auto path = mWorld.mGraph->calculatePath(agent, source, destination);
+				auto path = mWorld.mGraph->calculatePath(agent, destination);
 				if (path && !path->nodes.empty())
 				{
 					agent->assignPath(std::move(path), intent.wasPathing, false);

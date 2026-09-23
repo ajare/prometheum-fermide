@@ -1,11 +1,14 @@
 #include <cassert>
 #include <algorithm>
+#include <cmath>
+#include <limits>
 #include <set>
 
 #include "core/Defines.h"
 #include "core/Graph.h"
 #include "core/SectorType.h"
 #include "core/World.h"
+#include "core/Location.h"
 #include "core/Pathing.h"
 #include "core/Exceptions.h"
 #include "core/Vector2.h"
@@ -138,6 +141,51 @@ namespace core
 		}
 
 		return closestVertex;
+	}
+
+	shared_ptr<const Vertex> Graph::getPathSourceVertex(Sector const* sector, Vector2 const& pos) const
+	{
+		// Transit occupants use their transit-specific topology, not Location floor.
+		if (!dynamic_cast<Location const*>(sector)) return getClosestVertexInSector(sector, pos);
+		auto const found = mSectorVertexLookup.find(sector);
+		if (found == mSectorVertexLookup.end()) return nullptr;
+		shared_ptr<const Vertex> closest;
+		float distance = numeric_limits<float>::max();
+		for (auto const& vertex : found->second)
+		{
+			auto const target = vertex->getPosition();
+			if (abs(target.y - pos.y) > 0.001f) continue;
+			auto const candidateDistance = pos.distanceToSq(target);
+			if (candidateDistance >= distance) continue;
+			bool reachable = true;
+			// Inspect the open horizontal interval, so a vertex on the edge of a
+			// floor is reachable without treating the void beyond it as support.
+			for (int x = static_cast<int>(floor(min(pos.x, target.x)));
+				x < static_cast<int>(ceil(max(pos.x, target.x))); ++x)
+			{
+				if (x < 0 || x >= static_cast<int>(mwWorld->getCellsWide())
+					|| pos.y < 0 || pos.y >= mwWorld->getLevelsHigh())
+				{
+					reachable = false;
+					break;
+				}
+				auto const& cell = mwWorld->getLayer(sector->getLayerIndex())
+					->getCellDefinition(static_cast<uint32_t>(x), static_cast<uint32_t>(round(pos.y)));
+				if (cell.sectorIndex != sector->getIndex()
+					|| cell.floorType == CellFloorType::None
+					|| cell.floorType == CellFloorType::ForceBridge)
+				{
+					reachable = false;
+					break;
+				}
+			}
+			if (reachable)
+			{
+				distance = candidateDistance;
+				closest = vertex;
+			}
+		}
+		return closest;
 	}
 
 	shared_ptr<const Vertex> Graph::getVertexForObject(shared_ptr<SectorObject> const& object) const
@@ -315,7 +363,19 @@ namespace core
 			{
 				bool connectZ = vertices[i]->getSector()->getLayerIndex() != vertices[j]->getSector()->getLayerIndex();
 
-				if (vertexSubType0 == VertexSubType::BulkheadDoor && vertexSubType1 == VertexSubType::BulkheadDoor)
+				// A Marker can sort ahead of a gap-end vertex near a Walkway
+				// boundary. Vertex subtypes alone therefore cannot identify gaps.
+				bool crossesAir = false;
+				if (!connectZ)
+					for (auto x = static_cast<uint32_t>(floor(vertices[i]->getPosition().x));
+						x < static_cast<uint32_t>(ceil(vertices[j]->getPosition().x)); ++x)
+						if (!cellIsProcessable(layerIndex, x, y)) crossesAir = true;
+
+				if (crossesAir)
+				{
+					addEdge(make_shared<GapEdge>(), vertices[i], vertices[j], connectZ);
+				}
+				else if (vertexSubType0 == VertexSubType::BulkheadDoor && vertexSubType1 == VertexSubType::BulkheadDoor)
 				{
 					auto bulkheadVertex = dynamic_pointer_cast<BulkheadDoorVertex>(vertices[i]);
 					auto bulkheadDoor = bulkheadVertex->getBulkheadDoor();

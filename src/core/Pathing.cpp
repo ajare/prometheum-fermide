@@ -112,7 +112,7 @@ namespace core
                 // unreachable target: no Path.
                 try
                 {
-                    source = graph->getClosestVertexInSector(agent->getSector(), agent->getGlobalPosition());
+                    source = graph->getPathSourceVertex(agent->getSector(), agent->getGlobalPosition());
                 }
                 catch (GraphException const&)
                 {
@@ -120,6 +120,7 @@ namespace core
                 }
             }
 
+            if (!source) return nullptr;
             frontier.put(source, 0.0f);
 
             cameFrom[source] = source;
@@ -141,9 +142,9 @@ namespace core
                     auto nextVertex = edge->getOtherVertex(curVertex);
 
                     auto edgeCost = edge->getWeight(nextVertex, agent, true);
-                    if (!isfinite(edgeCost))
+                    if (!isfinite(edgeCost) || edgeCost >= CORE_GRAPH_EDGE_UNTRAVERSABLE)
                     {
-                        continue; // A conditional resource has no reachable preparation control.
+                        continue; // Gaps and resources without reachable preparation are not routes.
                     }
                     auto newCost = costSoFar[curVertex] + edgeCost;
 
@@ -160,9 +161,8 @@ namespace core
 
             auto path = reconstructPath(agent, graph, source, target, cameFrom, costSoFar, edgeMap);
 
-            // The nearest vertex can be behind the agent even though the route immediately
-            // continues toward a vertex in front of it. Since movement within a sector is
-            // unconstrained, start at the second vertex rather than making the agent double back.
+            // Skip a backwards approach only along ordinary horizontal floor.
+            // Sharing a Sector does not imply free movement between its levels.
             if (inferredSource && path && path->nodes.size() >= 2)
             {
                 auto const& agentPosition = agent->getGlobalPosition();
@@ -173,7 +173,10 @@ namespace core
                 auto const directionsAreOpposite =
                     firstDirection.x * secondDirection.x + firstDirection.y * secondDirection.y < 0.0f;
 
-                if (firstVertex->getSector() == secondVertex->getSector() && directionsAreOpposite)
+                if (firstVertex->getSector() == secondVertex->getSector() && directionsAreOpposite
+                    && abs(firstDirection.y) < 0.001f && abs(secondDirection.y) < 0.001f
+                    && firstVertex->getSubType() != VertexSubType::Interactable
+                    && path->nodes[1].edge && path->nodes[1].edge->getType() == EdgeType::Location)
                 {
                     auto const skippedCost = path->nodes[1].edgeWeight;
                     path->nodes.erase(path->nodes.begin());

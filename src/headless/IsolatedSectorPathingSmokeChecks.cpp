@@ -95,10 +95,88 @@ namespace
 		require(!path || path->nodes.empty(),
 			"A route was found out of an isolated Corridor with no traversable threshold");
 	}
+
+	void roomRoutesStayOnConnectedFloor()
+	{
+		core::World world("Multi-level route source", 8, 2);
+		auto room = world.addRoom("Room", 0, 0, 0, 8, 2);
+		for (uint32_t x = 2; x < 8; ++x) world.addSectorWalkway(room, 1, x);
+		uint32_t marker = 0;
+		world.addSectorMarker(room, 1, 2.75f, &marker);
+		world.addSectorLadder(room, 0, 6, { 2, false, true });
+		world.finishBuild();
+		auto agent = world.lookupAgent(world.createAgent("Agent 26", room, 0, 2.75f)).entity;
+		auto target = world.getGraph()->getVertexByIdentifier(marker);
+		auto path = world.getGraph()->calculatePath(agent, target);
+		require(path && path->nodes.front().targetVertex->getPosition().y == 0.0f,
+			"Room route starts on another level, bypassing the Ladder");
+		agent->setPath(path, true);
+		for (uint32_t tick = 0; tick < 4000 && agent->getState() != core::Agent::State::Idle; ++tick)
+		{
+			auto before = agent->getGlobalPosition();
+			world.advanceTick();
+			auto after = agent->getGlobalPosition();
+			require(after.y == before.y || after.x == before.x,
+				"Agent moves diagonally between levels instead of climbing the Ladder");
+		}
+		require(agent->getGlobalPosition().distanceTo(target->getPosition()) < 0.001f,
+			"Agent did not reach the destination using the Ladder");
+	}
+
+	void queuedClimbersReachTheMountBeforeClimbing()
+	{
+		core::World world("Queued Room Ladder", 8, 2);
+		auto room = world.addRoom("Room", 0, 0, 0, 8, 2);
+		for (uint32_t x = 0; x < 8; ++x) world.addSectorWalkway(room, 1, x);
+		uint32_t marker = 0;
+		world.addSectorMarker(room, 1, 7.5f, &marker);
+		world.addSectorLadder(room, 0, 3, { 2, false, true });
+		world.finishBuild();
+		std::vector<core::Agent*> agents;
+		for (uint32_t i = 0; i < 4; ++i)
+		{
+			auto agent = world.lookupAgent(world.createAgent("Climber", room, 0, 1.0f + i * 0.5f)).entity;
+			agents.push_back(agent);
+			agent->setPath(world.getGraph()->calculatePath(agent,
+				world.getGraph()->getVertexByIdentifier(marker)), true);
+		}
+		for (uint32_t tick = 0; tick < 4000; ++tick)
+		{
+			std::vector<core::Vector2> positions;
+			for (auto agent : agents) positions.push_back(agent->getGlobalPosition());
+			world.advanceTick();
+			for (size_t i = 0; i < agents.size(); ++i)
+			{
+				auto after = agents[i]->getGlobalPosition();
+				require(after.y == positions[i].y || after.x == positions[i].x,
+					"Queued Agent climbs diagonally from its queue position");
+			}
+		}
+		for (auto agent : agents)
+			require(agent->getGlobalPosition().distanceTo({ 7.5f, 1.0f }) < 0.001f,
+				"Queued climber did not reach the destination");
+	}
+
+	void roomRoutesCannotStartAcrossAWalkwayGap()
+	{
+		core::World world("Disconnected walkways", 8, 2);
+		auto room = world.addRoom("Room", 0, 0, 0, 8, 2);
+		world.addSectorWalkway(room, 1, 0);
+		world.addSectorWalkway(room, 1, 2);
+		uint32_t marker = 0;
+		world.addSectorMarker(room, 1, 2.1f, &marker);
+		world.finishBuild();
+		auto agent = world.lookupAgent(world.createAgent("Stranded", room, 1, 0.9f)).entity;
+		auto path = world.getGraph()->calculatePath(agent, world.getGraph()->getVertexByIdentifier(marker));
+		require(!path || path->nodes.empty(), "Agent route crosses a Walkway gap without a connection");
+	}
 }
 
 void runIsolatedSectorPathingSmokeChecks()
 {
+	roomRoutesStayOnConnectedFloor();
+	roomRoutesCannotStartAcrossAWalkwayGap();
+	queuedClimbersReachTheMountBeforeClimbing();
 	pathingAcrossAnOpenSharedWallFindsAPath();
 	pathingFromAnIsolatedLocationReturnsNoPath();
 }

@@ -205,6 +205,9 @@ namespace core
 
 		std::shared_ptr<const Vertex> getClosestVertexInSector(Sector const* sector, Vector2 const& pos) const;
 
+		// A route's unedged approach must stay on the Agent's connected floor.
+		std::shared_ptr<const Vertex> getPathSourceVertex(Sector const* sector, Vector2 const& pos) const;
+
 		std::shared_ptr<const Vertex> getVertexByIdentifier(uint32_t identifier) const;
 		std::shared_ptr<const Vertex> getVertexForObject(std::shared_ptr<SectorObject> const& object) const;
 

@@ -764,6 +764,7 @@ namespace core
 		auto const layer = getSector()->getLayerIndex();
 		if (nodeA.targetVertex->getSector()->getLayerIndex() != layer
 			|| nodeB.targetVertex->getSector()->getLayerIndex() != layer
+			|| abs(positionA.y - agentPosition.y) > 0.001f
 			|| abs(positionA.y - positionB.y) > 0.001f
 			|| abs(positionA.x - positionB.x) <= 0.001f) return vertexA;
 		auto const sideA = positionA.x - agentPosition.x;
@@ -1086,6 +1087,14 @@ namespace core
 				if (commitsInPlace)
 				{
 					mState = State::AwaitingTraversalCommit;
+					break;
+				}
+				// Admission can be granted while standing in an endpoint queue.
+				// Reach the mount horizontally before starting the vertical climb.
+				if (mTraversalTask->edge->getType() == EdgeType::Ladder
+					&& abs(getGlobalPosition().x - mTraversalTask->sourceVertex->getPosition().x) > 0.001f)
+				{
+					moveToPosition(mTraversalTask->sourceVertex->getPosition(), frameTime, getWalkSpeed());
 					break;
 				}
 				float traversalSpeed = mTraversalTask->edge->getTraversalSpeed(this);
