@@ -327,14 +327,33 @@ agents:
       name: Agent 1
       flags: 0
       group: 1
+      tags:
+        - 2
+      propertySamples:
+        - type: heightModifier
+          sourceTag: 2
+          propertyRevision: 8
+          value: 0.8076569
     sector: 0
     localX: 0.9375
     localY: 0
+    path:
+      destinationSector: 2
+      destinationLocalX: 0.640625
+      destinationLocalY: 0
+      active: true
   - id: 2
     agent:
       name: Agent 2
       flags: 0
       group: 1
+      tags:
+        - 1
+      propertySamples:
+        - type: heightModifier
+          sourceTag: 1
+          propertyRevision: 10
+          value: 0.8224067
     sector: 0
     localX: 2.1875
     localY: 0
@@ -348,6 +367,13 @@ agents:
       name: Agent 3
       flags: 0
       group: 1
+      tags:
+        - 2
+      propertySamples:
+        - type: heightModifier
+          sourceTag: 2
+          propertyRevision: 8
+          value: 0.77166843
     sector: 0
     localX: 14.8125
     localY: 0
@@ -361,6 +387,13 @@ agents:
       name: Agent 4
       flags: 0
       group: 1
+      tags:
+        - 1
+      propertySamples:
+        - type: heightModifier
+          sourceTag: 1
+          propertyRevision: 10
+          value: 0.8409062
     sector: 0
     localX: 12.71875
     localY: 0
@@ -374,6 +407,13 @@ agents:
       name: Agent 5
       flags: 0
       group: 1
+      tags:
+        - 2
+      propertySamples:
+        - type: heightModifier
+          sourceTag: 2
+          propertyRevision: 8
+          value: 0.7967757
     sector: 0
     localX: 13.640625
     localY: 0
@@ -387,14 +427,33 @@ agents:
       name: Agent 6
       flags: 0
       group: 4
+      tags:
+        - 1
+      propertySamples:
+        - type: heightModifier
+          sourceTag: 1
+          propertyRevision: 10
+          value: 0.8281603
     sector: 9
     localX: 2.640625
     localY: 0
+    path:
+      destinationSector: 8
+      destinationLocalX: 1.9375
+      destinationLocalY: 0
+      active: true
   - id: 7
     agent:
       name: Agent 7
       flags: 0
       group: 2
+      tags:
+        - 2
+      propertySamples:
+        - type: heightModifier
+          sourceTag: 2
+          propertyRevision: 8
+          value: 0.7787743
     sector: 1
     localX: 14.4375
     localY: 0
@@ -408,6 +467,13 @@ agents:
       name: Agent 8
       flags: 0
       group: 2
+      tags:
+        - 1
+      propertySamples:
+        - type: heightModifier
+          sourceTag: 1
+          propertyRevision: 10
+          value: 0.9208019
     sector: 1
     localX: 15.359375
     localY: 0
@@ -421,6 +487,13 @@ agents:
       name: Agent 9
       flags: 0
       group: 2
+      tags:
+        - 2
+      propertySamples:
+        - type: heightModifier
+          sourceTag: 2
+          propertyRevision: 8
+          value: 0.7400749
     sector: 1
     localX: 0.984375
     localY: 0
@@ -434,6 +507,13 @@ agents:
       name: Agent 10
       flags: 0
       group: 2
+      tags:
+        - 1
+      propertySamples:
+        - type: heightModifier
+          sourceTag: 1
+          propertyRevision: 10
+          value: 0.7889092
       behaviour:
         id: 1
         revision: 1
@@ -452,6 +532,13 @@ agents:
       name: Agent 11
       flags: 0
       group: 2
+      tags:
+        - 2
+      propertySamples:
+        - type: heightModifier
+          sourceTag: 2
+          propertyRevision: 8
+          value: 0.7927631
     sector: 3
     localX: 14.328125
     localY: 0
@@ -465,6 +552,13 @@ agents:
       name: Agent 12
       flags: 0
       group: 2
+      tags:
+        - 1
+      propertySamples:
+        - type: heightModifier
+          sourceTag: 1
+          propertyRevision: 10
+          value: 0.9973254
     sector: 3
     localX: 13.203125
     localY: 0
@@ -478,6 +572,13 @@ agents:
       name: Agent 13
       flags: 0
       group: 2
+      tags:
+        - 2
+      propertySamples:
+        - type: heightModifier
+          sourceTag: 2
+          propertyRevision: 8
+          value: 0.7986051
     sector: 3
     localX: 1.359375
     localY: 0
@@ -491,6 +592,13 @@ agents:
       name: Agent 14
       flags: 0
       group: 2
+      tags:
+        - 1
+      propertySamples:
+        - type: heightModifier
+          sourceTag: 1
+          propertyRevision: 10
+          value: 0.77850294
     sector: 3
     localX: 2.328125
     localY: 0
@@ -504,6 +612,56 @@ agents:
       name: Agent 15
       flags: 0
       group: 3
+      tags:
+        - 2
+      propertySamples:
+        - type: heightModifier
+          sourceTag: 2
+          propertyRevision: 8
+          value: 0.7967945
     sector: 6
     localX: 1.484375
     localY: 0
+    path:
+      destinationSector: 7
+      destinationLocalX: 3.53125
+      destinationLocalY: 0
+      active: true
+  - id: 16
+    agent:
+      name: Agent 16
+      flags: 0
+      tags:
+        - 1
+      propertySamples:
+        - type: heightModifier
+          sourceTag: 1
+          propertyRevision: 10
+          value: 0.92018723
+    sector: 8
+    localX: 0.71875
+    localY: 0
+    path:
+      destinationSector: 9
+      destinationLocalX: 0.5625
+      destinationLocalY: 0
+      active: true
+  - id: 17
+    agent:
+      name: Agent 17
+      flags: 0
+      tags:
+        - 2
+      propertySamples:
+        - type: heightModifier
+          sourceTag: 2
+          propertyRevision: 8
+          value: 0.7635957
+    sector: 8
+    localX: 15.046875
+    localY: 0
+    path:
+      destinationSector: 9
+      destinationLocalX: 3.3125
+      destinationLocalY: 0
+      active: true
