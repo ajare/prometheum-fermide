@@ -182,4 +182,8 @@ seed and with only the behaviour data their version supports. UUID substitution
 and invalid packages refuse managed opening without replacing the current
 Building. Live Lua state, timers, and random-stream position are never persisted.
 
-Package copying during Save As is tracked separately in #163.
+Save As copies the complete managed package (manifest, behaviour sources, and
+helper modules) beside the copied Building without clobbering an occupied
+destination. Clipboard portability and Save As verification are covered by #163;
+the complete release workflow and manual GUI checklist are recorded in
+`agent-behaviour-verification.md`.

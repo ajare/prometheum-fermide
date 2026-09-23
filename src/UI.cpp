@@ -34,6 +34,7 @@
 #include "AgentBehaviourAssignmentPanel.h"
 #include "TagsPanel.h"
 #include "BehavioursPanel.h"
+#include "MarkerPanel.h"
 #include "AgentClipboard.h"
 
 #if defined(_WIN32)
@@ -4895,37 +4896,10 @@ void renderStatusBar(shared_ptr<const core::Building> const& building)
 void renderMarkerPanel(shared_ptr<core::Building> const& building,
 	shared_ptr<const core::SectorObject> object)
 {
-	auto marker = static_pointer_cast<const core::MarkerSectorObject>(object)->getMarker();
-	static core::MarkerId editingId{};
-	static array<char, core::Marker::MaxNameBytes + 1> name{};
-	if (editingId != marker->getId())
+	renderMarkerEditorPanel(building, object, [](string const& diagnostic)
 	{
-		editingId = marker->getId();
-		std::strncpy(name.data(), marker->getName().c_str(), name.size() - 1);
-		name.back() = '\0';
-	}
-
-	ImGui::TextUnformatted("Marker");
-	ImGui::SetNextItemWidth(-1.0f);
-	bool submitted = ImGui::InputText("Name", name.data(), name.size(),
-		ImGuiInputTextFlags_EnterReturnsTrue);
-	if (submitted || ImGui::IsItemDeactivatedAfterEdit())
-	{
-		auto const trimmed = core::Marker::trimName(name.data());
-		if (trimmed != marker->getName())
-		{
-			auto undo = captureDocumentSnapshot(building);
-			string diagnostic;
-			if (building->renameMarker(marker->getId(), name.data(), &diagnostic))
-				commitDocumentEdit(std::move(undo));
-			else reportEditorError("Marker editor", diagnostic);
-		}
-		std::strncpy(name.data(), marker->getName().c_str(), name.size() - 1);
-		name.back() = '\0';
-	}
-	auto position = marker->getPosition();
-	position.x += marker->getOffset();
-	ImGui::Text("Position: %.2f, %.2f", position.x, position.y);
+		reportEditorError("Marker editor", diagnostic);
+	});
 }
 
 

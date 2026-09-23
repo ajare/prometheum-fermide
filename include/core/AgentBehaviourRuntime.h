@@ -165,6 +165,7 @@ namespace core
 				AgentBehaviourTeardownReason::Unassignment);
 		void teardownAll(Building& building, AgentBehaviourTeardownReason reason);
 		bool isInstanceDisabled(AgentId agent) const;
+		std::vector<AgentBehaviourRuntimeDiagnostic> getDiagnostics() const;
 		std::vector<AgentBehaviourRuntimeDiagnostic> consumeDiagnostics();
 		AgentBehaviourRuntimeLimits getLimits() const;
 		void reset();

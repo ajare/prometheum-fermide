@@ -2441,6 +2441,12 @@ namespace core
 	}
 
 	std::vector<AgentBehaviourRuntimeDiagnostic>
+	AgentBehaviourRuntimeAdapter::getDiagnostics() const
+	{
+		return mImpl->diagnostics;
+	}
+
+	std::vector<AgentBehaviourRuntimeDiagnostic>
 	AgentBehaviourRuntimeAdapter::consumeDiagnostics()
 	{
 		auto result = std::move(mImpl->diagnostics);

@@ -975,6 +975,12 @@ namespace core
 	}
 
 	vector<AgentBehaviourRuntimeDiagnostic>
+	Building::getAgentBehaviourRuntimeDiagnostics() const
+	{
+		return mAgentBehaviourRuntime->getDiagnostics();
+	}
+
+	vector<AgentBehaviourRuntimeDiagnostic>
 	Building::consumeAgentBehaviourRuntimeDiagnostics()
 	{
 		return mAgentBehaviourRuntime->consumeDiagnostics();

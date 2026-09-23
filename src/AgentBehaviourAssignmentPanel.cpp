@@ -62,6 +62,107 @@ namespace
 			core::addLogMessage("Agent behaviours", 0, core::LogLevel::Warning, diagnostic);
 	}
 
+	char const* runtimeFailureName(core::AgentBehaviourRuntimeFailure failure)
+	{
+		switch (failure)
+		{
+		case core::AgentBehaviourRuntimeFailure::LuaError: return "Lua error";
+		case core::AgentBehaviourRuntimeFailure::MemoryBudgetExceeded:
+			return "memory budget exceeded";
+		case core::AgentBehaviourRuntimeFailure::InstructionBudgetExceeded:
+			return "instruction budget exceeded";
+		case core::AgentBehaviourRuntimeFailure::ConversionError:
+			return "host conversion error";
+		case core::AgentBehaviourRuntimeFailure::None: return "diagnostic";
+		}
+		return "diagnostic";
+	}
+
+	char const* runtimeStageName(core::AgentBehaviourRuntimeStage stage)
+	{
+		switch (stage)
+		{
+		case core::AgentBehaviourRuntimeStage::ModuleLoad: return "module load";
+		case core::AgentBehaviourRuntimeStage::Factory: return "factory";
+		case core::AgentBehaviourRuntimeStage::Callback: return "callback";
+		}
+		return "runtime";
+	}
+
+	void renderRuntimeStatus(shared_ptr<core::Building> const& building,
+		core::AgentId agent)
+	{
+		auto const runtimeDiagnostics
+			= building->getAgentBehaviourRuntimeDiagnostics();
+		auto const lookup = building->lookupAgent(agent);
+		char const* status = "Unavailable";
+		ImVec4 colour(0.65f, 0.65f, 0.65f, 1.0f);
+		if (!building->agentBehaviourConfigurationsAreValid())
+		{
+			status = "Dependency unavailable";
+			colour = ImVec4(1.0f, 0.35f, 0.3f, 1.0f);
+		}
+		else if (lookup && !lookup.entity->isActive())
+		{
+			status = "Suspended";
+			colour = ImVec4(1.0f, 0.65f, 0.2f, 1.0f);
+		}
+		else if (!building->agentBehaviourOwnsMovement(agent))
+		{
+			status = "Disabled after failure";
+			colour = ImVec4(1.0f, 0.35f, 0.3f, 1.0f);
+		}
+		else if (building->isSimulationPaused())
+		{
+			status = "Ready (paused)";
+			colour = ImVec4(0.35f, 0.75f, 0.95f, 1.0f);
+		}
+		else
+		{
+			status = "Running";
+			colour = ImVec4(0.35f, 0.85f, 0.45f, 1.0f);
+		}
+		ImGui::TextUnformatted("Runtime status:");
+		ImGui::SameLine();
+		ImGui::TextColored(colour, "%s", status);
+		if (building->agentBehaviourOwnsMovement(agent))
+			ImGui::TextDisabled("Manual movement controls are disabled while this behaviour owns movement.");
+
+		if (runtimeDiagnostics.empty()) return;
+		ImGui::SeparatorText("Runtime diagnostics");
+		ImGui::SameLine();
+		if (ImGui::SmallButton("Clear##AgentBehaviourDiagnostics"))
+		{
+			(void)building->consumeAgentBehaviourRuntimeDiagnostics();
+			return;
+		}
+		for (size_t index = 0; index < runtimeDiagnostics.size(); ++index)
+		{
+			auto const& item = runtimeDiagnostics[index];
+			ImGui::PushID(static_cast<int>(index));
+			ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.3f, 1.0f),
+				"%s during %s at tick %llu", runtimeFailureName(item.failure),
+				runtimeStageName(item.stage),
+				static_cast<unsigned long long>(item.tick));
+			if (!item.agentName.empty())
+				ImGui::BulletText("Agent %s (%llu)", item.agentName.c_str(),
+					static_cast<unsigned long long>(item.agent.value));
+			if (!item.behaviourName.empty())
+				ImGui::BulletText("Behaviour %s / %s", item.behaviourName.c_str(),
+					item.callback.empty() ? item.moduleName.c_str() : item.callback.c_str());
+			ImGui::TextWrapped("%s", item.diagnostic.c_str());
+			if (!item.traceback.empty() && item.traceback != item.diagnostic)
+			{
+				if (ImGui::TreeNode("Traceback"))
+				{
+					ImGui::TextWrapped("%s", item.traceback.c_str());
+					ImGui::TreePop();
+				}
+			}
+			ImGui::PopID();
+		}
+	}
+
 	bool renderConfigurationValue(core::Building const& building,
 		core::AgentBehaviourSchemaField const& field,
 		core::AgentBehaviourConfigurationValue& value)
@@ -295,6 +396,7 @@ void renderAgentBehaviourConfigurationPanel(shared_ptr<core::Building> const& bu
 		return;
 	}
 	ImGui::TextDisabled("Revision %llu", static_cast<unsigned long long>(assignment->revision));
+	renderRuntimeStatus(building, agent);
 	ImGui::BeginDisabled(!building->isSimulationPaused());
 	auto edited = assignment->configuration;
 	bool changed = false;

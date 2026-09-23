@@ -1266,7 +1266,11 @@ namespace core
 		// Agent's movement intent. Editor/manual path controls use this one gate.
 		bool agentBehaviourOwnsMovement(AgentId agent) const;
 		// Runtime failures are value diagnostics and are not authored or persisted.
-		// Consuming them does not consume the public simulation event queue.
+		// Inspecting or consuming them does not consume the public simulation event
+		// queue. The non-consuming snapshot supports persistent editor presentation;
+		// consume is the explicit acknowledgement/clear operation.
+		std::vector<AgentBehaviourRuntimeDiagnostic>
+			getAgentBehaviourRuntimeDiagnostics() const;
 		std::vector<AgentBehaviourRuntimeDiagnostic>
 			consumeAgentBehaviourRuntimeDiagnostics();
 		AgentBehaviourRuntimeLimits getAgentBehaviourRuntimeLimits() const;
