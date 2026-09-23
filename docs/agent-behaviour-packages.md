@@ -5,7 +5,8 @@ A saved Building can create or select an adjacent `*.behaviours` directory in
 `behaviours.yaml` manifest and ordinary Lua source files. The panel lists names,
 revisions, source paths, and configuration schemas. Edit these files externally
 and use **Reload registry**; all loaded dependent Buildings must be paused.
-No Lua source is parsed or executed by this document workflow.
+Loading and reload execute each module and its factory in a fresh budgeted scratch
+state to validate the contract. Agent callbacks are never run during preflight.
 
 For `station.yaml`, Create makes `station.behaviours/behaviours.yaml`. Creation
 refuses an occupied destination, including a dangling symlink. Detach changes
@@ -62,8 +63,35 @@ Schema types are `boolean`, `integer`, `number`, `string`, `duration` (simulatio
 ticks), `marker`, `list`, and `record`. Lists have exactly one child; records
 have at least one child with unique field names. Scalars have no children.
 Nesting is limited to 16 levels. Omit `schema` for no configuration fields.
-Configuration assignment, defaults, runtime validation, and Lua execution are
-subsequent tickets, not part of this package-inspection workflow.
+
+## Lua module contract
+
+Only text Lua source is accepted; precompiled bytecode is refused. The standard
+`package` library is not enabled. Modules obtain the immutable versioned host
+boundary only through `require("prometheum.v1")` and must return this shape:
+
+```lua
+local prometheum = require("prometheum.v1")
+
+return {
+  api_version = prometheum.api_version,
+  factory = function(configuration)
+    return {
+      -- All callbacks are optional. Preflight validates but does not call them.
+      on_start = function(context) end,
+      on_event = function(event, context) end,
+      on_timer = function(name, context) end,
+      on_route_lost = function(reason, context) end,
+      on_stop = function(reason, context) end,
+    }
+  end,
+}
+```
+
+Preflight reports Loaded or Error per behaviour in the registry panel, including
+package/module/line diagnostics and protected-call tracebacks. Configuration
+assignment is authored separately; live instance execution begins in subsequent
+tickets.
 
 ## Building persistence
 

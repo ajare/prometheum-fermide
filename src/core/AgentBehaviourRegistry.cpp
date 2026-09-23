@@ -14,6 +14,7 @@
 #include <type_traits>
 #include <variant>
 
+#include "core/AgentBehaviourRuntime.h"
 #include "core/Building.h"
 #include "core/SerializationException.h"
 #include "core/YamlSerializer.h"
@@ -172,6 +173,7 @@ namespace core
 		{
 			(void)id;
 			registry->requireModuleFile(behaviour->getSourceModulePath(), packageDirectory);
+			registry->preflightModule(*behaviour, packageDirectory);
 		}
 		registry->mDocumentPath = path;
 		registry->mSavedDocumentContents = std::move(contents);
@@ -384,6 +386,28 @@ namespace core
 		}
 	}
 
+	void AgentBehaviourRegistry::preflightModule(AgentBehaviour& behaviour,
+		std::filesystem::path const& packageDirectory) const
+	{
+		auto const modulePath = packageDirectory / behaviour.getSourceModulePath();
+		std::ifstream input(modulePath, std::ios::binary);
+		if (!input)
+		{
+			behaviour.setModulePreflight(AgentBehaviourModuleStatus::Error,
+				std::format("Agent behaviour package '{}', module '{}', line 1: source could not be read",
+					packageDirectory.filename().string(), behaviour.getSourceModulePath()), {});
+			return;
+		}
+		std::string source{ std::istreambuf_iterator<char>(input),
+			std::istreambuf_iterator<char>() };
+		auto result = AgentBehaviourRuntimeAdapter::preflightModule(
+			packageDirectory.filename().string(), behaviour.getSourceModulePath(), source);
+		behaviour.setModulePreflight(
+			result.loaded ? AgentBehaviourModuleStatus::Loaded
+				: AgentBehaviourModuleStatus::Error,
+			std::move(result.diagnostic), std::move(result.traceback));
+	}
+
 	AgentBehaviourId AgentBehaviourRegistry::addAgentBehaviour(std::string const& rawName,
 		std::string const& sourceModulePath,
 		std::vector<AgentBehaviourSchemaField> schema)
@@ -408,6 +432,8 @@ namespace core
 		auto const id = mBehaviours.tryAdd(AgentBehaviour::create(
 			name, sourceModulePath, std::move(schema)));
 		if (!id) throw std::overflow_error("This registry has issued every Agent behaviour ID");
+		if (mPackageDirectory)
+			preflightModule(*mBehaviours.find(*id), *mPackageDirectory);
 		modify();
 		return *id;
 	}

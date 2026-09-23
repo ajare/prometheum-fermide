@@ -13,9 +13,9 @@ namespace core
 
 // The Behaviours panel inspects the external Agent behaviour registry package
 // a Building references. Definitions are authored in the package itself; this
-// panel never edits or executes Lua source. It creates, selects, attaches,
-// detaches, and reloads packages through the managed document seam and
-// displays registry identity, behaviour definitions, and diagnostics.
+// panel never edits Lua source or starts Agent callbacks. It creates, selects,
+// attaches, detaches, and reloads packages through the managed document seam
+// and displays registry identity, protected preflight status, and diagnostics.
 
 // The create action is available only for a Building with a saved file and no
 // registry reference. Exposed separately for headless editor checks.
@@ -38,8 +38,9 @@ bool commitAgentBehaviourRegistrySwitch(
 	std::string const& buildingFilepath, std::string const& packageDirectory,
 	std::string& diagnostic);
 
-// Reload refuses dirty state and paused-dependent validation failures; no Lua
-// source executes. The panel wrapper logs the core diagnostic.
+// Reload refuses dirty state and paused-dependent validation failures. Module
+// source is preflighted in scratch runtimes; no Agent callback executes. The
+// panel wrapper logs the core diagnostic.
 bool reloadAgentBehaviourRegistry(
 	std::shared_ptr<core::AgentBehaviourRegistry> const& registry,
 	std::string const& packageDirectory, std::string* diagnostic = nullptr);

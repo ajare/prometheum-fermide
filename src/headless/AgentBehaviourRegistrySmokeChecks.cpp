@@ -820,14 +820,17 @@ namespace
 		building->saveTo(path.string());
 		auto registry = core::createAndAttachAgentBehaviourRegistry(*building, path);
 		auto const package = core::defaultAgentBehaviourRegistryPackagePath(path);
-		writeText(package / "nested" / "source.lua", "error('must never execute')\n");
+		writeText(package / "nested" / "source.lua",
+			"return {api_version=1,factory=function() return {on_start=function() error('must never execute') end} end}\n");
 		auto id = registry->addAgentBehaviour("  Schedule  ", "nested/source.lua", {});
 		require(registry->getBehaviourName(id) == "Schedule", "Authored names were not trimmed");
 		registry->saveTo(manifestPath(package).string());
 		auto const valid = readText(manifestPath(package));
 		std::string diagnostic;
-		require(core::reloadAgentBehaviourRegistryDocument(registry, package, &diagnostic),
-			"Nested managed source was refused or executed");
+		require(core::reloadAgentBehaviourRegistryDocument(registry, package, &diagnostic)
+			&& registry->lookupAgentBehaviour(id)->getModuleStatus()
+				== core::AgentBehaviourModuleStatus::Loaded,
+			"Nested managed source was refused or an Agent callback executed");
 		building->saveTo(path.string());
 		building->resetSimulation();
 		require(building->getAgentBehaviourRegistry() == registry
@@ -846,7 +849,8 @@ namespace
 				&& registry->getBehaviourCount() == 1, "A symlink escaped the package");
 			std::filesystem::remove(package / "nested" / "source.lua");
 		}
-		writeText(package / "nested" / "source.lua", "-- restored\n");
+		writeText(package / "nested" / "source.lua",
+			"return {api_version=1,factory=function() return {} end}\n");
 		writeText(temporary.path / "outside.yaml", valid);
 		std::filesystem::remove(manifestPath(package));
 		error.clear();

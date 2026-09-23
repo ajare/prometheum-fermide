@@ -160,6 +160,17 @@ namespace core
 		}, value);
 	}
 
+	char const* agentBehaviourModuleStatusName(AgentBehaviourModuleStatus status)
+	{
+		switch (status)
+		{
+		case AgentBehaviourModuleStatus::NotLoaded: return "Not loaded";
+		case AgentBehaviourModuleStatus::Loaded: return "Loaded";
+		case AgentBehaviourModuleStatus::Error: return "Error";
+		}
+		return "Unknown";
+	}
+
 	char const* agentBehaviourSchemaTypeName(AgentBehaviourSchemaType type)
 	{
 		switch (type)

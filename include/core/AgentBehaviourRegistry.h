@@ -21,7 +21,8 @@ namespace core
 	// definitions. IDs belong to this registry, remain stable across rename,
 	// are never reused, and are allocated monotonically. The registry document
 	// is the package manifest; its source module paths name Lua files managed
-	// inside the package directory. No Lua source executes here.
+	// inside the package directory. Modules and factories are preflighted through
+	// the runtime adapter; Agent callbacks never execute in this document model.
 	class AgentBehaviourRegistry : public Serializable
 	{
 		std::string mUuid;
@@ -47,6 +48,8 @@ namespace core
 		// Resolves a registry-relative source module against the package
 		// directory and refuses anything that escapes it or is missing.
 		void requireModuleFile(std::string const& sourceModulePath,
+			std::filesystem::path const& packageDirectory) const;
+		void preflightModule(AgentBehaviour& behaviour,
 			std::filesystem::path const& packageDirectory) const;
 		void registerBuilding(Building& building);
 		void unregisterBuilding(Building& building);

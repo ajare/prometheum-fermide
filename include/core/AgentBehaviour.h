@@ -97,6 +97,15 @@ namespace core
 		std::vector<AgentBehaviourSchemaField> const& fields,
 		std::string* diagnostic = nullptr);
 
+	enum class AgentBehaviourModuleStatus
+	{
+		NotLoaded,
+		Loaded,
+		Error
+	};
+
+	char const* agentBehaviourModuleStatusName(AgentBehaviourModuleStatus status);
+
 	// A durable, reusable Agent behaviour definition owned by an Agent
 	// behaviour registry. Its ID is registry-local, stable across rename, and
 	// never reused. The revision increases monotonically whenever the authored
@@ -112,6 +121,12 @@ namespace core
 		uint64_t mRevision{ 1 };
 		std::string mSourceModulePath;
 		std::vector<AgentBehaviourSchemaField> mSchema;
+		// Runtime implementation details never enter this authored definition.
+		// Only the ordinary result of protected module preflight is retained for
+		// status reporting in the registry panel.
+		AgentBehaviourModuleStatus mModuleStatus{ AgentBehaviourModuleStatus::NotLoaded };
+		std::string mModuleDiagnostic;
+		std::string mModuleTraceback;
 
 		AgentBehaviour(std::string name, std::string sourceModulePath,
 			std::vector<AgentBehaviourSchemaField> schema, uint64_t revision)
@@ -131,6 +146,13 @@ namespace core
 		void setSchema(std::vector<AgentBehaviourSchemaField> schema)
 		{
 			mSchema = std::move(schema);
+		}
+		void setModulePreflight(AgentBehaviourModuleStatus status,
+			std::string diagnostic, std::string traceback)
+		{
+			mModuleStatus = status;
+			mModuleDiagnostic = std::move(diagnostic);
+			mModuleTraceback = std::move(traceback);
 		}
 
 	public:
@@ -152,5 +174,8 @@ namespace core
 		{
 			return mSchema;
 		}
+		AgentBehaviourModuleStatus getModuleStatus() const { return mModuleStatus; }
+		std::string const& getModuleDiagnostic() const { return mModuleDiagnostic; }
+		std::string const& getModuleTraceback() const { return mModuleTraceback; }
 	};
 }

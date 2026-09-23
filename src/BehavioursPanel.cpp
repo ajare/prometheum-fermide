@@ -142,7 +142,7 @@ namespace
 				ImGui::SetTooltip("Save or discard registry changes before reloading");
 			else if (!definitionEditsAllowed)
 				ImGui::SetTooltip("%s", editDiagnostic.c_str());
-			else ImGui::SetTooltip("Reload externally edited definitions from disk; no Lua executes");
+			else ImGui::SetTooltip("Reload definitions and preflight Lua modules without running Agent callbacks");
 		}
 
 		ImGui::SeparatorText("Behaviours");
@@ -163,10 +163,29 @@ namespace
 			auto const open = ImGui::TreeNode("##definition");
 			ImGui::SameLine();
 			ImGui::TextUnformatted(behaviour->getName().c_str());
+			ImGui::SameLine();
+			auto const status = behaviour->getModuleStatus();
+			auto const statusColour = status == core::AgentBehaviourModuleStatus::Loaded
+				? ImVec4(0.35f, 0.85f, 0.45f, 1.0f)
+				: status == core::AgentBehaviourModuleStatus::Error
+					? ImVec4(1.0f, 0.35f, 0.3f, 1.0f)
+					: ImVec4(0.65f, 0.65f, 0.65f, 1.0f);
+			ImGui::TextColored(statusColour, "%s",
+				core::agentBehaviourModuleStatusName(status));
 			if (open)
 			{
 				ImGui::BulletText("Revision %llu", (unsigned long long)behaviour->getRevision());
 				ImGui::BulletText("Source module %s", behaviour->getSourceModulePath().c_str());
+				if (!behaviour->getModuleDiagnostic().empty())
+				{
+					ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.3f, 1.0f), "Preflight diagnostic:");
+					ImGui::TextWrapped("%s", behaviour->getModuleDiagnostic().c_str());
+				}
+				if (!behaviour->getModuleTraceback().empty())
+				{
+					ImGui::TextUnformatted("Traceback:");
+					ImGui::TextWrapped("%s", behaviour->getModuleTraceback().c_str());
+				}
 				if (behaviour->getSchema().empty())
 					ImGui::BulletText("Configuration: none");
 				else
@@ -190,7 +209,7 @@ namespace
 			ImGui::TextColored(ImVec4(1.0f, 0.65f, 0.2f, 1.0f), "%s",
 				editDiagnostic.c_str());
 		ImGui::TextDisabled(
-			"Definitions are authored in the package and edited externally; Reload picks up changes.");
+			"Definitions and Lua source are edited externally; Reload re-runs protected preflight.");
 		return false;
 	}
 }
