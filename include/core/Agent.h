@@ -175,8 +175,11 @@ namespace core
 		std::optional<Vector2> mTraversalLocalGoal;
 
 		// Prevent repeated opportunistic presses while following the same immediate
-		// Door edge. This is transient locomotion state, not authored simulation data.
+		// Door edge. The saved interaction lets traversal preparation reuse a press
+		// made while passing instead of sending the Agent back from the threshold.
+		// This is transient locomotion state, not authored simulation data.
 		TraversalResourceId mEarlyDoorPressResource;
+		InteractionRequestId mEarlyDoorPressInteraction;
 		bool mEarlyDoorPressAttempted{ false };
 
 		// Set when locomotion stops at the outer edge of an available queue lane.

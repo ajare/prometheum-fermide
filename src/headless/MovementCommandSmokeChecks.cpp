@@ -1,7 +1,9 @@
 #include <algorithm>
+#include <cmath>
 #include <stdexcept>
 #include <vector>
 #include "core/Agent.h"
+#include "core/Graph.h"
 #include "core/World.h"
 
 namespace
@@ -118,6 +120,192 @@ namespace
 		require(reached == 1, "Door journey did not reach Marker");
 	}
 
+	void initialWaypointBeforeLiftCallIsSkipped()
+	{
+		core::World world("Initial waypoint skip", 6, 2);
+		auto lower = world.addCorridor(0, 0, 6);
+		auto upper = world.addCorridor(1, 0, 6);
+		core::World::CreateLiftOptions options;
+		options.cellsWide = 1;
+		options.stopOffsets = { 0, 1 };
+		world.addLift(1, 0, 2, options);
+		uint32_t sourceVertexId, destinationVertexId;
+		world.addSectorMarker(upper, 0, 5.5f, &sourceVertexId);
+		world.addSectorMarker(lower, 0, 5.5f, &destinationVertexId);
+		world.finishBuild();
+
+		auto id = world.createAgent("Passenger", upper, 0, 4.75f);
+		auto* agent = world.lookupAgent(id).entity;
+		auto graph = world.getGraph();
+		auto path = graph->calculatePath(agent,
+			graph->getVertexByIdentifier(sourceVertexId),
+			graph->getVertexByIdentifier(destinationVertexId));
+		require(path && path->nodes.size() >= 2, "Initial-waypoint fixture has no route");
+		auto const& first = path->nodes[0].targetVertex;
+		auto const& second = path->nodes[1].targetVertex;
+		require(first->getSubType() == core::VertexSubType::Marker
+			&& second->getSubType() == core::VertexSubType::Interactable
+			&& first->getSector()->getLayerIndex() == second->getSector()->getLayerIndex()
+			&& first->getPosition().y == second->getPosition().y
+			&& first->getPosition().x > 4.75f && second->getPosition().x < 4.75f,
+			"Initial-waypoint fixture does not straddle the Agent on one Layer and Level");
+		agent->setPath(path, true);
+
+		world.advanceTick();
+		require(agent->getGlobalPosition().x < 4.75f,
+			"Agent doubled back to an initial Marker instead of heading for the Lift call control");
+	}
+
+	void liftCallIsPressedWhilePassing()
+	{
+		core::World world("Passing Lift call", 6, 2);
+		auto lower = world.addCorridor(0, 0, 6);
+		auto upper = world.addCorridor(1, 0, 6);
+		core::World::CreateLiftOptions options;
+		options.cellsWide = 1;
+		options.stopOffsets = { 0, 1 };
+		world.addLift(1, 0, 2, options);
+		uint32_t destinationVertexId;
+		world.addSectorMarker(lower, 0, 5.5f, &destinationVertexId);
+		world.finishBuild();
+
+		auto id = world.createAgent("Passenger", upper, 0, 4.75f);
+		auto* agent = world.lookupAgent(id).entity;
+		auto graph = world.getGraph();
+		auto path = graph->calculatePath(agent,
+			graph->getVertexByIdentifier(destinationVertexId));
+		require(path && path->nodes.size() >= 2, "Passing-Lift-call fixture has no route");
+		require(path->nodes[0].targetVertex->getSubType() == core::VertexSubType::Interactable
+			&& path->nodes[0].targetVertex->getPosition().x == 3.0f
+			&& path->nodes[1].targetVertex->getPosition().x == 2.5f,
+			"Passing-Lift-call fixture does not put the Button before the Door");
+		agent->setPath(path, true);
+
+		float previousX = agent->getGlobalPosition().x;
+		float minimumX = previousX;
+		bool observedInteraction = false;
+		float firstInteractionX = 0.0f;
+		bool doubledBack = false;
+		for (unsigned tick = 0; tick < 1000 && agent->getSector()->getIndex() == upper; ++tick)
+		{
+			world.advanceTick();
+			auto x = agent->getGlobalPosition().x;
+			minimumX = std::min(minimumX, x);
+			if (x > previousX + 0.0001f && minimumX < 2.75f) doubledBack = true;
+			previousX = x;
+			auto snapshot = world.getSimulationSnapshot();
+			if (!observedInteraction && std::any_of(snapshot.interactionRequests.begin(),
+				snapshot.interactionRequests.end(), [&](auto const& request)
+					{ return request.actor == id; }))
+			{
+				observedInteraction = true;
+				firstInteractionX = x;
+			}
+		}
+		require(observedInteraction && firstInteractionX >= 2.85f,
+			"Agent did not press the Lift call while passing it");
+		require(!doubledBack, "Agent reached the Lift Door and doubled back to its call Button");
+	}
+
+	void liftPassengerWalksToExitAlignment()
+	{
+		core::World world("Lift exit alignment", 8, 2);
+		auto lower = world.addCorridor(0, 0, 8);
+		auto upper = world.addCorridor(1, 0, 8);
+		core::World::CreateLiftOptions options;
+		options.cellsWide = 2;
+		options.capacity = 2;
+		options.stopOffsets = { 0, 1 };
+		auto lift = world.addLift(1, 0, 2, options);
+		uint32_t destinationVertexId;
+		world.addSectorMarker(upper, 0, 7.5f, &destinationVertexId);
+		world.finishBuild();
+
+		auto id = world.createAgent("Passenger", lower, 0, 0.5f);
+		auto* agent = world.lookupAgent(id).entity;
+		auto graph = world.getGraph();
+		auto path = graph->calculatePath(agent,
+			graph->getVertexByIdentifier(destinationVertexId));
+		require(bool(path), "Lift-exit-alignment fixture has no route");
+		agent->setPath(path, true);
+
+		auto const liftSector = lift.lift.sector->getIndex();
+		auto const maximumStep = agent->getWalkSpeed() * world.getFixedTimestep() + 0.001f;
+		float previousX = agent->getGlobalPosition().x;
+		bool wasInLift = false;
+		bool walkedInside = false;
+		bool teleportedInside = false;
+		for (unsigned tick = 0; tick < 10000 && agent->getState() != core::Agent::State::Idle; ++tick)
+		{
+			world.advanceTick();
+			auto const inLift = agent->getSector()->getIndex() == liftSector;
+			auto const step = std::abs(agent->getGlobalPosition().x - previousX);
+			if (wasInLift && inLift)
+			{
+				walkedInside = walkedInside || step > 0.0001f;
+				teleportedInside = teleportedInside || step > maximumStep;
+			}
+			wasInLift = inLift;
+			previousX = agent->getGlobalPosition().x;
+		}
+		require(walkedInside, "Lift passenger did not approach the exit inside the car");
+		require(!teleportedInside,
+			"Lift passenger teleported to the Door vertex instead of approaching at walking speed");
+		require(agent->getSector()->getIndex() == upper,
+			"Lift passenger did not finish the exit journey");
+	}
+
+	void shuttleCallIsPressedWhilePassing()
+	{
+		core::World world("Passing Shuttle call", 12, 2);
+		auto left = world.addRoom("Left", 0, 0, 0, 3, 1);
+		auto right = world.addRoom("Right", 0, 0, 7, 3, 1);
+		core::World::CreateShuttleOptions options{ 1, 3, { 0, 7 }, 0 };
+		options.capacity = 2;
+		options.doorMask = 1;
+		world.addShuttle(1, 0, 0, 11, options);
+		uint32_t destinationVertexId;
+		world.addSectorMarker(right, 0, 1.5f, &destinationVertexId);
+		world.finishBuild();
+
+		auto id = world.createAgent("Passenger", left, 0, 2.5f);
+		auto* agent = world.lookupAgent(id).entity;
+		auto graph = world.getGraph();
+		auto path = graph->calculatePath(agent,
+			graph->getVertexByIdentifier(destinationVertexId));
+		require(path && path->nodes.size() >= 2, "Passing-Shuttle-call fixture has no route");
+		require(path->nodes[0].targetVertex->getSubType() == core::VertexSubType::Interactable
+			&& path->nodes[0].targetVertex->getPosition().x == 1.0f
+			&& path->nodes[1].targetVertex->getPosition().x == 0.5f,
+			"Passing-Shuttle-call fixture does not put the Button before the Door");
+		agent->setPath(path, true);
+
+		float previousX = agent->getGlobalPosition().x;
+		float minimumX = previousX;
+		bool observedInteraction = false;
+		float firstInteractionX = 0.0f;
+		bool doubledBack = false;
+		for (unsigned tick = 0; tick < 1000 && agent->getSector()->getIndex() == left; ++tick)
+		{
+			world.advanceTick();
+			auto x = agent->getGlobalPosition().x;
+			minimumX = std::min(minimumX, x);
+			if (x > previousX + 0.0001f && minimumX < 0.75f) doubledBack = true;
+			previousX = x;
+			auto snapshot = world.getSimulationSnapshot();
+			if (!observedInteraction && std::any_of(snapshot.interactionRequests.begin(),
+				snapshot.interactionRequests.end(), [&](auto const& request)
+					{ return request.actor == id; }))
+			{
+				observedInteraction = true;
+				firstInteractionX = x;
+			}
+		}
+		require(observedInteraction && firstInteractionX >= 0.85f,
+			"Agent did not press the Shuttle call while passing it");
+		require(!doubledBack, "Agent reached the Shuttle Door and doubled back to its call Button");
+	}
+
 	uint64_t cancelLiftJourney(unsigned boundary)
 	{
 		core::World world("Cancellation boundaries", 6, 4);
@@ -186,6 +374,10 @@ void runMovementCommandSmokeChecks()
 {
 	ordinaryCommands();
 	cancelDoorCrossing();
+	initialWaypointBeforeLiftCallIsSkipped();
+	liftCallIsPressedWhilePassing();
+	liftPassengerWalksToExitAlignment();
+	shuttleCallIsPressedWhilePassing();
 	for (unsigned boundary = 0; boundary < 4; ++boundary)
 		require(cancelLiftJourney(boundary) == cancelLiftJourney(boundary), "Cancellation was not deterministic");
 }

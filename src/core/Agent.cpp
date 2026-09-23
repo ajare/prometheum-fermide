@@ -614,6 +614,7 @@ namespace core
 	{
 		cancelTraversal();
 		mEarlyDoorPressResource = {};
+		mEarlyDoorPressInteraction = {};
 		mEarlyDoorPressAttempted = false;
 		mEarlyQueueApproachDirectionX = 0;
 		mPath.path = nullptr;
@@ -685,6 +686,7 @@ namespace core
 	{
 		cancelTraversal();
 		mEarlyDoorPressResource = {};
+		mEarlyDoorPressInteraction = {};
 		mEarlyDoorPressAttempted = false;
 		mEarlyQueueApproachDirectionX = 0;
 		mState = State::Idle;
@@ -750,9 +752,7 @@ namespace core
 		while (vertexB < mPath.path->nodes.size())
 		{
 			auto const& node = mPath.path->nodes[vertexB];
-			if (!node.targetVertex
-				|| node.targetVertex->getSubType() == VertexSubType::Interactable
-				|| requiresActionAtSource(node.edge)) return vertexA;
+			if (!node.targetVertex || requiresActionAtSource(node.edge)) return vertexA;
 			if (node.targetVertex->getPosition().distanceTo(positionA) > 0.001f) break;
 			++vertexB;
 		}
@@ -1071,9 +1071,17 @@ namespace core
 			if (mTraversalTask)
 			{
 				// A Door crossing is a scripted layer change executed in place at
-				// the Agent's current position. It never walks toward the far-side
-				// Door vertex; the commit places the Agent where it already stands.
-				if (mTraversalTask->edge->getType() == EdgeType::Door)
+				// the Agent's current position. An enclosed Lift ride likewise ends
+				// wherever the passenger stood in the car; disembark allocation then
+				// walks it into its reserved crossing lane at ordinary speed.
+				auto resource = mWorld
+					? mWorld->lookupTraversalResource(mTraversalTask->edge->getTraversalResourceId())
+					: EntityLookup<TraversalResource>{};
+				auto const commitsInPlace = mTraversalTask->edge->getType() == EdgeType::Door
+					|| (mTraversalTask->edge->getType() == EdgeType::Lift
+						&& resource && resource.entity->isLift()
+						&& !resource.entity->isOpenPlatformLift());
+				if (commitsInPlace)
 				{
 					mState = State::AwaitingTraversalCommit;
 					break;

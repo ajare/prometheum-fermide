@@ -187,9 +187,9 @@ namespace core
 		// reports, not a separate simulation of the device state.
 		void pressPhysicalControl(InteractionPointId point);
 
-		// An Agent walking towards a RemoteControlled Door presses its button
-		// early - while still moving, and only once per door - so the door is open
-		// by the time the threshold arrives.
+		// An Agent walking towards a regular, Lift, or Shuttle Door presses an
+		// applicable control early - while still moving, and only once per door -
+		// so it does not reach the threshold and double back to the control.
 		void tryPressUpcomingDoorButton(Agent& agent, Vector2 const& movementStart,
 			Vector2 const& movementEnd);
 

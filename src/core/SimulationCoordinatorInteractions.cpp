@@ -209,6 +209,14 @@ namespace core
 
 	InteractionRequestId SimulationCoordinator::requestInteractionForTraversal(InteractionPointId point, AgentId actor)
 	{
+		auto agent = mWorld.mAgents.find(actor);
+		if (agent && agent->mEarlyDoorPressInteraction)
+		{
+			auto const earlyId = agent->mEarlyDoorPressInteraction;
+			agent->mEarlyDoorPressInteraction = {};
+			auto early = mWorld.mInteractionRequests.find(earlyId);
+			if (early && early->mActor == actor && early->mPoint == point) return earlyId;
+		}
 		return requestInteraction(point, actor);
 	}
 
@@ -549,6 +557,7 @@ namespace core
 		if (!path || target + 1 >= path->nodes.size())
 		{
 			agent.mEarlyDoorPressResource = {};
+			agent.mEarlyDoorPressInteraction = {};
 			agent.mEarlyDoorPressAttempted = false;
 			return;
 		}
@@ -572,20 +581,31 @@ namespace core
 			if (node.targetVertex->getSector().get() != currentSector) break;
 		}
 		auto resource = mWorld.mTraversalResources.find(resourceId);
+		// Enclosed Lift and Shuttle landing Doors deliberately use the Unavailable
+		// Door activation mode: their transport coordinator, reached through the
+		// landing call control, owns opening and scheduling instead.
+		auto coordinator = resource
+			? mWorld.mTraversalResources.find(resource->mLiftCoordinator) : nullptr;
+		auto const liftDoor = coordinator && bool(coordinator->mLift);
+		auto const shuttleDoor = coordinator && bool(coordinator->mShuttle);
+		auto const regularDoor = !liftDoor && !shuttleDoor;
 		if (!resource || !resource->mDoor
-			|| resource->mDoorActivationMode != DoorActivationMode::RemoteControlled)
+			|| (regularDoor
+				&& resource->mDoorActivationMode != DoorActivationMode::RemoteControlled))
 		{
 			agent.mEarlyDoorPressResource = {};
+			agent.mEarlyDoorPressInteraction = {};
 			agent.mEarlyDoorPressAttempted = false;
 			return;
 		}
 		if (agent.mEarlyDoorPressResource != resourceId)
 		{
 			agent.mEarlyDoorPressResource = resourceId;
+			agent.mEarlyDoorPressInteraction = {};
 			agent.mEarlyDoorPressAttempted = false;
 		}
 		if (agent.mEarlyDoorPressAttempted || !resource->mEnabled
-			|| resource->mDoor->isOpen() || resource->mDoor->isOpening())
+			|| (regularDoor && (resource->mDoor->isOpen() || resource->mDoor->isOpening())))
 		{
 			return;
 		}
@@ -619,14 +639,16 @@ namespace core
 		{
 			auto point = mWorld.mInteractionPoints.find(pointId);
 			if (!point || point->mSector != sourceSector) continue;
-			bool opensDoor = any_of(point->mBindings.begin(), point->mBindings.end(),
+			bool preparesThreshold = any_of(point->mBindings.begin(), point->mBindings.end(),
 				[&](InteractionBinding const& binding)
 				{
+					if (liftDoor) return binding.command.type == DeviceCommandType::CallLift;
+					if (shuttleDoor) return binding.command.type == DeviceCommandType::CallShuttle;
 					return binding.command.type == DeviceCommandType::OpenDoor
 						&& binding.command.desiredState
 						&& binding.command.traversalResource == resourceId;
 				});
-			if (!opensDoor) continue;
+			if (!preparesThreshold) continue;
 			auto distance = distanceToSegment(point->mPosition);
 			if (distance > point->mReach) continue;
 			if (!selected || distance < selectedDistance - 0.001f
@@ -638,8 +660,11 @@ namespace core
 		}
 		if (!selected) return;
 
-		if (requestInteractionWhilePassing(selected, actorId))
+		if (auto interaction = requestInteractionWhilePassing(selected, actorId))
+		{
+			agent.mEarlyDoorPressInteraction = interaction;
 			agent.mEarlyDoorPressAttempted = true;
+		}
 	}
 
 	void SimulationCoordinator::allocateInteractions()

@@ -747,12 +747,6 @@ namespace core
 						if (destinationNode > actor->mPath.targetNode)
 							actor->mPath.targetNode = destinationNode - 1;
 					}
-					else
-					{
-						auto transit = mWorld.mSectors[(size_t)coordinator.mLiftSector.value - 1].get();
-						actor->setPosition({ transit,
-							request->mDestinationEndpoint - transit->getPosition() }, false);
-					}
 				}
 				grantTraversalRequest(requestId);
 			}
@@ -834,10 +828,11 @@ namespace core
 	// the stop the car is standing at. A shuttle passenger is first assigned the
 	// disembark door which serves its assigned carriage, then walks within the
 	// carriage to the shuttle-side node the remaining path selected before the
-	// Door crossing is granted; a lift passenger crosses the landing it asked to
-	// leave through. The stop enters its Disembarking phase, a door open lease
-	// holds the landing door open for the crossing, and the grant takes the first
-	// free crossing lane on the landing resource.
+	// Door crossing is granted. A lift passenger preserves its standing position
+	// when the ride completes, reserves a crossing lane, and walks at ordinary
+	// speed to the car-side Door endpoint. The stop enters its Disembarking phase,
+	// a door open lease holds the landing door open for the crossing, and the grant
+	// uses the reserved crossing lane on the landing resource.
 	void SimulationCoordinator::allocateLiftDisembarking(TraversalRequestId requestId,
 		TraversalResource& edgeResource, TraversalResource& coordinator, uint32_t stop)
 	{
@@ -876,10 +871,32 @@ namespace core
 			if (!disembarkLanding->mDoor->isOpening()) disembarkLanding->mDoor->requestOpen();
 			return;
 		}
-		auto lane = find(disembarkLanding->mCrossingOwners.begin(), disembarkLanding->mCrossingOwners.end(), TraversalRequestId{});
-		if (lane == disembarkLanding->mCrossingOwners.end()) return;
-		request->mCrossingLane = (uint32_t)distance(disembarkLanding->mCrossingOwners.begin(), lane);
-		*lane = requestId;
+		if (request->mCrossingLane == ~0u)
+		{
+			auto lane = find(disembarkLanding->mCrossingOwners.begin(),
+				disembarkLanding->mCrossingOwners.end(), TraversalRequestId{});
+			if (lane == disembarkLanding->mCrossingOwners.end()) return;
+			request->mCrossingLane = (uint32_t)distance(
+				disembarkLanding->mCrossingOwners.begin(), lane);
+			*lane = requestId;
+		}
+
+		if (coordinator.mLift)
+		{
+			// Reserve the crossing lane before approaching it. The Agent remains in
+			// WaitingForTraversal and therefore walks to the car-side Door endpoint at
+			// ordinary speed instead of being snapped there when the ride completes.
+			auto actor = mWorld.mAgents.find(request->mOwner);
+			if (!actor) return;
+			auto alignmentTarget = actor->getGlobalPosition();
+			alignmentTarget.x = request->mSourceEndpoint.x;
+			if (abs(actor->getGlobalPosition().x - alignmentTarget.x) > 0.001f)
+			{
+				actor->mTraversalLocalGoal = alignmentTarget;
+				return;
+			}
+			actor->mTraversalLocalGoal.reset();
+		}
 		coordinator.mLiftCarDoorOpen = true;
 		grantTraversalRequest(requestId);
 	}

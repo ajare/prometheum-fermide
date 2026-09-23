@@ -281,6 +281,8 @@ namespace core
 		auto request = mWorld.mTraversalRequests.find(requestId);
 		auto permit = mWorld.mTraversalPermits.find(permitId);
 		auto owner = getAgentId(&agent);
+		auto traversalResource = request
+			? mWorld.mTraversalResources.find(request->mResource) : nullptr;
 		auto const commitsAtQueueBoundary = request && agent.mQueuedTraversalTask
 			&& request->mEdgeType == EdgeType::Location
 			&& request->mSourceSector == request->mDestinationSector;
@@ -288,10 +290,13 @@ namespace core
 			&& agent.mTraversalTask->request == requestId
 			&& agent.mTraversalTask->pathNodesConsumed > 1
 			&& agent.getGlobalPosition().distanceTo(destination->getPosition()) <= 0.001f;
-		// A Door crossing is executed in place at the Agent's current position, so
-		// the layer change does not depend on the far-side Door vertex being a
-		// movement target the Agent had to reach.
-		auto const commitsInPlace = request && request->mEdgeType == EdgeType::Door;
+		// Door crossings and enclosed Lift rides commit at the Agent's current
+		// position. The Door preserves horizontal crossing-lane placement across a
+		// layer change; the Lift preserves the passenger's standing position until
+		// disembark allocation walks it into a crossing lane.
+		auto const commitsInPlace = request && (request->mEdgeType == EdgeType::Door
+			|| (request->mEdgeType == EdgeType::Lift && traversalResource
+				&& traversalResource->mLift && !traversalResource->mOpenPlatformLift));
 		if (!request || !permit || !destination || request->mOwner != owner || permit->mOwner != owner
 			|| permit->mRequest != requestId || request->mPermit != permitId
 			|| request->mState != TraversalRequestState::Granted
@@ -312,7 +317,7 @@ namespace core
 			return false;
 		}
 
-		auto ladderResource = mWorld.mTraversalResources.find(request->mResource);
+		auto ladderResource = traversalResource;
 		if (ladderResource && ladderResource->mOpenPlatformLift && request->mEdgeType == EdgeType::Lift
 			&& find(ladderResource->mOccupants.begin(), ladderResource->mOccupants.end(), owner)
 				== ladderResource->mOccupants.end()) return false;
