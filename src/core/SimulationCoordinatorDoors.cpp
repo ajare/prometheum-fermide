@@ -1,3 +1,6 @@
+#include <cmath>
+#include <limits>
+
 #include "core/SimulationCoordinator.h"
 
 #include "core/World.h"
@@ -226,10 +229,21 @@ namespace core
 
 		auto controlFor = [&](TraversalRequest const& candidate)
 		{
+			InteractionPointId selected;
+			float selectedDistance = numeric_limits<float>::max();
 			for (auto pointId : resource.mControls)
-				if (auto point = mWorld.mInteractionPoints.find(pointId); point && point->mSector == candidate.mSourceSector)
-					return pointId;
-			return InteractionPointId{};
+			{
+				auto point = mWorld.mInteractionPoints.find(pointId);
+				if (!point || point->mSector != candidate.mSourceSector) continue;
+				auto const distance = point->mPosition.distanceTo(candidate.mSourceEndpoint);
+				if (!selected || distance < selectedDistance - 0.001f
+					|| (abs(distance - selectedDistance) <= 0.001f && pointId < selected))
+				{
+					selected = pointId;
+					selectedDistance = distance;
+				}
+			}
+			return selected;
 		};
 		if (!controlFor(*request))
 		{

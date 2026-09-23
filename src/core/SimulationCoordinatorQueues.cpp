@@ -489,11 +489,48 @@ namespace core
 			return;
 		}
 
+		// A fully extended Force Bridge is floor, not a capacity-constrained
+		// threshold. Queueing is useful while it is being prepared, but once the
+		// span is complete every waiter may enter concurrently from either side.
+		if (resource.mForceBridge)
+		{
+			vector<TraversalRequestId> waiting;
+			for (auto const& lane : resource.mQueueLanes)
+				for (auto requestId : lane.queue)
+					if (find(waiting.begin(), waiting.end(), requestId) == waiting.end())
+						waiting.push_back(requestId);
+			sort(waiting.begin(), waiting.end(), [&](auto left, auto right)
+			{
+				auto lhs = mWorld.mTraversalRequests.find(left);
+				auto rhs = mWorld.mTraversalRequests.find(right);
+				if (!lhs || !rhs) return left < right;
+				return lhs->mQueuedAtTick != rhs->mQueuedAtTick
+					? lhs->mQueuedAtTick < rhs->mQueuedAtTick : lhs->mOwner < rhs->mOwner;
+			});
+			for (auto& lane : resource.mQueueLanes)
+			{
+				lane.queue.clear();
+				fill(lane.positionOwners.begin(), lane.positionOwners.end(), TraversalRequestId{});
+			}
+			for (auto& owner : resource.mCrossingOwners) owner = {};
+			for (auto requestId : waiting)
+			{
+				auto request = mWorld.mTraversalRequests.find(requestId);
+				if (!request || request->mState != TraversalRequestState::Pending) continue;
+				request->mQueuePosition = ~0u;
+				request->mCrossingLane = ~0u;
+				if (auto agent = mWorld.mAgents.find(request->mOwner))
+					agent->mTraversalLocalGoal.reset();
+				grantTraversalRequest(requestId);
+			}
+			return;
+		}
+
 		// Ticket #97: a plain Door's head-of-queue arrival check is the
 		// crossing-width band - within the door's crossing width in x of the
 		// vertex position, at the threshold row in y - instead of arrival at
-		// the exact assigned position. Force Bridges keep the exact-arrival
-		// check; lift landing doors are routed through the lift coordinator.
+		// the exact assigned position. Lift landing doors are routed through the
+		// lift coordinator.
 		bool const useCrossingBand = resource.mDoor && !resource.mLiftCoordinator;
 		float const crossingWidth = useCrossingBand
 			? CORE_DOOR_CROSSING_HALF_WIDTH(resource.mDoor->getCellsWide()) : 0.0f;

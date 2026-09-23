@@ -2615,6 +2615,122 @@ namespace
 		return false;
 	}
 
+	bool forceBridgePreparationUsesNearControl()
+	{
+		core::World world("Near Force Bridge control", 6, 4);
+		auto room = world.addRoom("Bridge room", 1, 0, 0, 5, 3);
+		world.addSectorWalkway(room, 1, 0);
+		world.addSectorWalkway(room, 1, 1);
+		world.addSectorWalkway(room, 1, 3);
+		world.addSectorWalkway(room, 1, 4);
+		core::World::CreateForceBridgeOptions options{ 1, CORE_SIDE_LEFT, true, false, 2 };
+		auto bridge = world.addSectorForceBridge(room, 1, 2, options);
+		world.finishBuild();
+
+		auto edgeIt = std::find_if(world.getGraph()->getEdges().begin(),
+			world.getGraph()->getEdges().end(), [&](auto const& candidate)
+				{ return candidate->getTraversalResourceId() == bridge.traversalResource; });
+		if (edgeIt == world.getGraph()->getEdges().end()) return false;
+		auto edge = *edgeIt;
+		auto left = edge->getVertex(0)->getPosition().x < edge->getVertex(1)->getPosition().x
+			? edge->getVertex(0) : edge->getVertex(1);
+		auto right = edge->getOtherVertex(left);
+		auto agentId = world.createAgent("Right-side operator", room, 1,
+			right->getSectorOffset().x);
+		world.lookupAgent(agentId).entity->setPath(twoNodePath(right, left, edge), true);
+
+		for (uint32_t tick = 0; tick < 10; ++tick)
+		{
+			world.advanceTick();
+			auto snapshot = world.getSimulationSnapshot();
+			auto interaction = std::find_if(snapshot.interactionRequests.begin(),
+				snapshot.interactionRequests.end(), [&](auto const& candidate)
+					{ return candidate.actor == agentId; });
+			if (interaction == snapshot.interactionRequests.end()) continue;
+			auto selected = std::find_if(snapshot.interactionPoints.begin(),
+				snapshot.interactionPoints.end(), [&](auto const& candidate)
+					{ return candidate.id == interaction->point; });
+			if (selected == snapshot.interactionPoints.end()) return false;
+			float nearestDistance = std::numeric_limits<float>::max();
+			for (auto const pointId : snapshot.traversalResources.front().controls)
+			{
+				auto point = std::find_if(snapshot.interactionPoints.begin(),
+					snapshot.interactionPoints.end(), [&](auto const& candidate)
+						{ return candidate.id == pointId; });
+				if (point != snapshot.interactionPoints.end())
+					nearestDistance = std::min(nearestDistance,
+						point->position.distanceTo(right->getPosition()));
+			}
+			return selected->position.distanceTo(right->getPosition())
+				<= nearestDistance + 0.001f;
+		}
+		return false;
+	}
+
+	bool extendedForceBridgeAllowsConcurrentTwoWayTraffic()
+	{
+		core::World world("Concurrent Force Bridge", 8, 4);
+		auto room = world.addRoom("Bridge room", 1, 0, 0, 6, 3);
+		world.addSectorWalkway(room, 1, 0);
+		world.addSectorWalkway(room, 1, 3);
+		world.addSectorWalkway(room, 1, 4);
+		world.addSectorWalkway(room, 1, 5);
+		core::World::CreateForceBridgeOptions options{ 2, CORE_SIDE_LEFT, true, true, 1 };
+		auto bridge = world.addSectorForceBridge(room, 1, 1, options);
+		world.finishBuild();
+
+		auto edgeIt = std::find_if(world.getGraph()->getEdges().begin(),
+			world.getGraph()->getEdges().end(), [&](auto const& candidate)
+				{ return candidate->getTraversalResourceId() == bridge.traversalResource; });
+		if (edgeIt == world.getGraph()->getEdges().end()) return false;
+		auto edge = *edgeIt;
+		auto left = edge->getVertex(0)->getPosition().x < edge->getVertex(1)->getPosition().x
+			? edge->getVertex(0) : edge->getVertex(1);
+		auto right = edge->getOtherVertex(left);
+
+		std::vector<core::AgentId> leftToRight;
+		std::vector<core::AgentId> rightToLeft;
+		for (uint32_t i = 0; i < 3; ++i)
+		{
+			auto forward = world.createAgent("Forward " + std::to_string(i), room, 1,
+				left->getSectorOffset().x);
+			auto reverse = world.createAgent("Reverse " + std::to_string(i), room, 1,
+				right->getSectorOffset().x);
+			world.lookupAgent(forward).entity->setPath(twoNodePath(left, right, edge), true);
+			world.lookupAgent(reverse).entity->setPath(twoNodePath(right, left, edge), true);
+			leftToRight.push_back(forward);
+			rightToLeft.push_back(reverse);
+		}
+
+		bool sawConcurrentTwoWayTraffic = false;
+		for (uint32_t tick = 0; tick < MaximumSimulationTicks; ++tick)
+		{
+			world.advanceTick();
+			auto snapshot = world.getSimulationSnapshot();
+			uint32_t forwardPermits = 0;
+			uint32_t reversePermits = 0;
+			for (auto const& permit : snapshot.traversalPermits)
+			{
+				if (std::find(leftToRight.begin(), leftToRight.end(), permit.owner) != leftToRight.end())
+					++forwardPermits;
+				if (std::find(rightToLeft.begin(), rightToLeft.end(), permit.owner) != rightToLeft.end())
+					++reversePermits;
+			}
+			sawConcurrentTwoWayTraffic = sawConcurrentTwoWayTraffic
+				|| (forwardPermits == leftToRight.size() && reversePermits == rightToLeft.size());
+			if (std::all_of(leftToRight.begin(), leftToRight.end(), [&](auto id)
+					{ return world.lookupAgent(id).entity->getState() == core::Agent::State::Idle; })
+				&& std::all_of(rightToLeft.begin(), rightToLeft.end(), [&](auto id)
+					{ return world.lookupAgent(id).entity->getState() == core::Agent::State::Idle; })) break;
+		}
+
+		return sawConcurrentTwoWayTraffic
+			&& std::all_of(leftToRight.begin(), leftToRight.end(), [&](auto id)
+				{ return world.lookupAgent(id).entity->getGlobalPosition().distanceTo(right->getPosition()) < 0.001f; })
+			&& std::all_of(rightToLeft.begin(), rightToLeft.end(), [&](auto id)
+				{ return world.lookupAgent(id).entity->getGlobalPosition().distanceTo(left->getPosition()) < 0.001f; });
+	}
+
 	bool extensibleForceBridgeCompletesThroughPhysicalControl()
 	{
 		core::World world("Extensible force bridge", 6, 4);
@@ -5672,6 +5788,16 @@ int main(int argc, char** argv)
 		if (!extensibleLadderUsesDesiredStateAndLeases())
 		{
 			std::cerr << "FAIL: extensible ladder preparation or leases failed\n";
+			return 1;
+		}
+		if (!forceBridgePreparationUsesNearControl())
+		{
+			std::cerr << "FAIL: Force Bridge preparation did not use the near control\n";
+			return 1;
+		}
+		if (!extendedForceBridgeAllowsConcurrentTwoWayTraffic())
+		{
+			std::cerr << "FAIL: extended Force Bridge did not allow concurrent two-way traffic\n";
 			return 1;
 		}
 		if (!extensibleForceBridgeCompletesThroughPhysicalControl())

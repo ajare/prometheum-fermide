@@ -104,6 +104,9 @@ A threshold, similar to a Door, that connects two adjacent layers and is authore
 **Walkway**:
 A traversable floor within a multi-level room, above that room's ground-level floor.
 
+**Force Bridge**:
+An extensible floor that spans a gap between two floor supports—a ground-level Floor, a Walkway, or one of each—within one Room. While fully extended it behaves as ordinary walkable floor: any number of Agents may traverse it concurrently in either direction.
+
 **Platform lift**:
 An open transport vehicle within one room. Its ground stop is mandatory, and selected walkway stops connect it to higher levels in the same column. Walkways in that column need not all be stops.
 _Avoid_: Lift, when distinguishing the open room object from an enclosed lift transit
