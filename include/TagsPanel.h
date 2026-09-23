@@ -195,8 +195,8 @@ void forgetAgentTagRegistryDocument(
 // Renders attached-registry status, independent save/undo controls, an
 // alphabetical stack of per-tag sections with rename/delete/property
 // controls, and create/select/detach/switch actions.
-// Returns true after the World reference changed, allowing the caller to
-// persist the changed World immediately.
+// Returns true after the World reference changed. The change is an unsaved,
+// undoable World edit; callers must not persist it implicitly.
 bool renderTagsPanel(std::shared_ptr<core::World> const& world,
 	std::string const& worldFilepath,
 	AgentTagRegistryPathSelector const& selectRegistryPath = {});

@@ -1333,8 +1333,9 @@ namespace
 				== "replacement.behaviours"
 			&& unresolved->getAgentBehaviourAssignmentCount() == 0
 			&& !unresolved->getAgentBehaviourAssignment(agent)
-			&& gWorldDocumentHistory.undoCount() == 1,
-			"Confirmed replacement did not atomically clear assignments and change reference");
+			&& gWorldDocumentHistory.undoCount() == 1
+			&& gWorldDocumentHistory.isModified(),
+			"Confirmed replacement did not leave one unsaved, undoable World edit while clearing assignments and changing reference");
 		require(sourceRegistry->hasLoadedWorld(shared.get())
 			&& !core::unloadAgentBehaviourRegistryDocumentIfUnused(sourceRegistry),
 			"Switching one World unloaded a registry still shared by another");

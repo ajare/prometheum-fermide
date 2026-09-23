@@ -107,8 +107,8 @@ using AgentBehaviourRegistryPathSelector
 
 // Renders attached-registry identity and behaviour definitions with
 // diagnostics, plus create/select/detach/switch/reload actions. Returns true
-// after the World reference changed, allowing the caller to persist the
-// changed World immediately.
+// after the World reference changed. The change is an unsaved, undoable World
+// edit; callers must not persist it implicitly.
 bool renderBehavioursPanel(std::shared_ptr<core::World> const& world,
 	std::string const& worldFilepath,
 	AgentBehaviourRegistryPathSelector const& selectPackageDirectory = {});

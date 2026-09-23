@@ -2494,7 +2494,7 @@ namespace
 	optional<string> chooseAgentTagRegistryPath()
 	{
 		nfdu8char_t* selectedPathRaw{ nullptr };
-		nfdu8filteritem_t const filters[] = { { "Agent tag registry", "yaml" } };
+		nfdu8filteritem_t const filters[] = { { "Agent tag registry", "tags.yaml" } };
 		filesystem::path const worldPath(gWorldFilepath);
 		auto const directory = worldPath.parent_path().string();
 		auto const result = NFD_OpenDialogU8(&selectedPathRaw, filters, 1,
@@ -6938,22 +6938,20 @@ void renderWorldPanel(shared_ptr<core::World> world)
 {
 	if (ImGui::CollapsingHeader("Tags"))
 	{
-		// Persist a newly created or selected registry reference immediately, so
-		// close/reopen needs no second manual save after attachment.
-		if (renderTagsPanel(world, gWorldFilepath,
-			[] { return chooseAgentTagRegistryPath(); }))
-			saveWorld(world, false);
+		// Registry reference changes remain ordinary unsaved World edits. Their
+		// panel commits create World-history entries; persistence is explicit.
+		(void)renderTagsPanel(world, gWorldFilepath,
+			[] { return chooseAgentTagRegistryPath(); });
 	}
 
 	if (ImGui::CollapsingHeader("Behaviours"))
 	{
 		// Behaviour registry packages are inspected and reloaded here; their
 		// definitions are authored beside the World and never executed or
-		// edited by the panel.
+		// edited by the panel. Reference changes remain unsaved World edits.
 		ImGui::PushID("AgentBehaviourRegistry");
-		if (renderBehavioursPanel(world, gWorldFilepath,
-			[] { return chooseAgentBehaviourRegistryPath(); }))
-			saveWorld(world, false);
+		(void)renderBehavioursPanel(world, gWorldFilepath,
+			[] { return chooseAgentBehaviourRegistryPath(); });
 		ImGui::PopID();
 	}
 

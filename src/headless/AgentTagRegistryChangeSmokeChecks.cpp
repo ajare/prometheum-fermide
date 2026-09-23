@@ -143,8 +143,9 @@ namespace
 			"An unused registry did not switch directly: " + diagnostic);
 		require(world->getAgentTagRegistryFilename() == "replacement.tags.yaml"
 			&& world->getAgentTagRegistry()->getUuid() != sourceUuid
-			&& gWorldDocumentHistory.undoCount() == 1,
-			"A direct registry switch changed the wrong reference or undo history");
+			&& gWorldDocumentHistory.undoCount() == 1
+			&& gWorldDocumentHistory.isModified(),
+			"A direct registry switch did not leave one unsaved, undoable World edit");
 		require(restoreWorldSnapshot(world, fixture.worldPath, false)
 			&& world->getExpectedAgentTagRegistryUuid() == sourceUuid,
 			"Undo did not restore the original unused registry reference");
@@ -247,8 +248,9 @@ namespace
 				->getWalkSpeedModifierSample()
 			&& !fixture.world->lookupAgent(fixture.secondAgent).entity
 				->getHeightModifierSample()
-			&& gWorldDocumentHistory.undoCount() == 1,
-			"The confirmed switch did not atomically clear every assignment and sample");
+			&& gWorldDocumentHistory.undoCount() == 1
+			&& gWorldDocumentHistory.isModified(),
+			"The confirmed switch did not leave one unsaved, undoable World edit while clearing every assignment and sample");
 		require(readText(fixture.sourcePath) == sourceText
 			&& readText(fixture.replacementPath) == replacementText,
 			"Switching rewrote one of the registry documents");
