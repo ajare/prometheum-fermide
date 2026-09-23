@@ -1,0 +1,602 @@
+version: 15
+name: Force Bridge Test 1
+randomSeed: 20250926
+cellsWide: 16
+levelsHigh: 4
+layers: 2
+layerNames:
+  - Layer 0
+  - Layer 1
+agentTagRegistry:
+  filename: test.tags.yaml
+  expectedUuid: 5e9a3a89-0519-4813-ae6d-3ca7362028de
+construction:
+  - type: room
+    name: Force Bridge Room
+    layer: 0
+    y: 0
+    x: 0
+    cellsWide: 16
+    levelsHigh: 4
+    topLevelHeight: 0.9
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 1
+    xOffset: 0
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 1
+    xOffset: 1
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 1
+    xOffset: 2
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 1
+    xOffset: 3
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 1
+    xOffset: 4
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 1
+    xOffset: 5
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 1
+    xOffset: 6
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 1
+    xOffset: 9
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 1
+    xOffset: 10
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 1
+    xOffset: 11
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 1
+    xOffset: 12
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 1
+    xOffset: 13
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 1
+    xOffset: 14
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 1
+    xOffset: 15
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 2
+    xOffset: 0
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 2
+    xOffset: 1
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 2
+    xOffset: 2
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 2
+    xOffset: 3
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 2
+    xOffset: 4
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 2
+    xOffset: 5
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 2
+    xOffset: 6
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 2
+    xOffset: 7
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 2
+    xOffset: 9
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 2
+    xOffset: 10
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 2
+    xOffset: 11
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 2
+    xOffset: 12
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 2
+    xOffset: 13
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 2
+    xOffset: 14
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 2
+    xOffset: 15
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 3
+    xOffset: 0
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 3
+    xOffset: 1
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 3
+    xOffset: 2
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 3
+    xOffset: 3
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 3
+    xOffset: 4
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 3
+    xOffset: 5
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 3
+    xOffset: 6
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 3
+    xOffset: 9
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 3
+    xOffset: 10
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 3
+    xOffset: 11
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 3
+    xOffset: 12
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 3
+    xOffset: 13
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 3
+    xOffset: 14
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 3
+    xOffset: 15
+  - type: forceBridge
+    sectorIndex: 0
+    levelIndex: 1
+    xOffset: 7
+    width: 2
+    fromSide: left
+    extensible: true
+    startExtended: false
+    controlCount: 2
+  - type: forceBridge
+    sectorIndex: 0
+    levelIndex: 2
+    xOffset: 8
+    width: 1
+    fromSide: left
+    extensible: true
+    startExtended: false
+    controlCount: 2
+  - type: forceBridge
+    sectorIndex: 0
+    levelIndex: 3
+    xOffset: 7
+    width: 2
+    fromSide: left
+    extensible: true
+    startExtended: false
+    controlCount: 2
+  - type: marker
+    sectorIndex: 0
+    levelIndex: 1
+    xOffset: 0.5
+    id: 1
+    name: Level 1 Left
+  - type: marker
+    sectorIndex: 0
+    levelIndex: 1
+    xOffset: 15.5
+    id: 2
+    name: Level 1 Right
+  - type: marker
+    sectorIndex: 0
+    levelIndex: 2
+    xOffset: 0.5
+    id: 3
+    name: Level 2 Left
+  - type: marker
+    sectorIndex: 0
+    levelIndex: 2
+    xOffset: 15.5
+    id: 4
+    name: Level 2 Right
+  - type: marker
+    sectorIndex: 0
+    levelIndex: 3
+    xOffset: 0.5
+    id: 5
+    name: Level 3 Left
+  - type: marker
+    sectorIndex: 0
+    levelIndex: 3
+    xOffset: 15.5
+    id: 6
+    name: Level 3 Right
+agentGroups: []
+nextMarkerId: 7
+nextAgentGroupId: 1
+agents:
+  - id: 1
+    agent:
+      name: Agent 1
+      flags: 0
+      tags:
+        - 1
+      propertySamples:
+        - type: heightModifier
+          sourceTag: 1
+          propertyRevision: 10
+          value: 0.88
+    sector: 0
+    localX: 0.5
+    localY: 1
+    path:
+      destinationSector: 0
+      destinationLocalX: 15.5
+      destinationLocalY: 1
+      active: true
+  - id: 2
+    agent:
+      name: Agent 2
+      flags: 0
+      tags:
+        - 1
+      propertySamples:
+        - type: heightModifier
+          sourceTag: 1
+          propertyRevision: 10
+          value: 0.88
+    sector: 0
+    localX: 1.25
+    localY: 1
+    path:
+      destinationSector: 0
+      destinationLocalX: 15.5
+      destinationLocalY: 1
+      active: true
+  - id: 3
+    agent:
+      name: Agent 3
+      flags: 0
+      tags:
+        - 1
+      propertySamples:
+        - type: heightModifier
+          sourceTag: 1
+          propertyRevision: 10
+          value: 0.88
+    sector: 0
+    localX: 2.0
+    localY: 1
+    path:
+      destinationSector: 0
+      destinationLocalX: 15.5
+      destinationLocalY: 1
+      active: true
+  - id: 4
+    agent:
+      name: Agent 4
+      flags: 0
+      tags:
+        - 1
+      propertySamples:
+        - type: heightModifier
+          sourceTag: 1
+          propertyRevision: 10
+          value: 0.88
+    sector: 0
+    localX: 15.5
+    localY: 1
+    path:
+      destinationSector: 0
+      destinationLocalX: 0.5
+      destinationLocalY: 1
+      active: true
+  - id: 5
+    agent:
+      name: Agent 5
+      flags: 0
+      tags:
+        - 1
+      propertySamples:
+        - type: heightModifier
+          sourceTag: 1
+          propertyRevision: 10
+          value: 0.88
+    sector: 0
+    localX: 14.75
+    localY: 1
+    path:
+      destinationSector: 0
+      destinationLocalX: 0.5
+      destinationLocalY: 1
+      active: true
+  - id: 6
+    agent:
+      name: Agent 6
+      flags: 0
+      tags:
+        - 2
+      propertySamples:
+        - type: heightModifier
+          sourceTag: 2
+          propertyRevision: 8
+          value: 0.76
+    sector: 0
+    localX: 14.0
+    localY: 1
+    path:
+      destinationSector: 0
+      destinationLocalX: 0.5
+      destinationLocalY: 1
+      active: true
+  - id: 7
+    agent:
+      name: Agent 7
+      flags: 0
+      tags:
+        - 2
+      propertySamples:
+        - type: heightModifier
+          sourceTag: 2
+          propertyRevision: 8
+          value: 0.76
+    sector: 0
+    localX: 0.5
+    localY: 2
+    path:
+      destinationSector: 0
+      destinationLocalX: 15.5
+      destinationLocalY: 2
+      active: true
+  - id: 8
+    agent:
+      name: Agent 8
+      flags: 0
+      tags:
+        - 2
+      propertySamples:
+        - type: heightModifier
+          sourceTag: 2
+          propertyRevision: 8
+          value: 0.76
+    sector: 0
+    localX: 1.25
+    localY: 2
+    path:
+      destinationSector: 0
+      destinationLocalX: 15.5
+      destinationLocalY: 2
+      active: true
+  - id: 9
+    agent:
+      name: Agent 9
+      flags: 0
+      tags:
+        - 1
+      propertySamples:
+        - type: heightModifier
+          sourceTag: 1
+          propertyRevision: 10
+          value: 0.88
+    sector: 0
+    localX: 2.0
+    localY: 2
+    path:
+      destinationSector: 0
+      destinationLocalX: 15.5
+      destinationLocalY: 2
+      active: true
+  - id: 10
+    agent:
+      name: Agent 10
+      flags: 0
+      tags:
+        - 1
+      propertySamples:
+        - type: heightModifier
+          sourceTag: 1
+          propertyRevision: 10
+          value: 0.88
+    sector: 0
+    localX: 15.5
+    localY: 2
+    path:
+      destinationSector: 0
+      destinationLocalX: 0.5
+      destinationLocalY: 2
+      active: true
+  - id: 11
+    agent:
+      name: Agent 11
+      flags: 0
+      tags:
+        - 2
+      propertySamples:
+        - type: heightModifier
+          sourceTag: 2
+          propertyRevision: 8
+          value: 0.76
+    sector: 0
+    localX: 14.75
+    localY: 2
+    path:
+      destinationSector: 0
+      destinationLocalX: 0.5
+      destinationLocalY: 2
+      active: true
+  - id: 12
+    agent:
+      name: Agent 12
+      flags: 0
+      tags:
+        - 1
+      propertySamples:
+        - type: heightModifier
+          sourceTag: 1
+          propertyRevision: 10
+          value: 0.88
+    sector: 0
+    localX: 14.0
+    localY: 2
+    path:
+      destinationSector: 0
+      destinationLocalX: 0.5
+      destinationLocalY: 2
+      active: true
+  - id: 13
+    agent:
+      name: Agent 13
+      flags: 0
+      tags:
+        - 2
+      propertySamples:
+        - type: heightModifier
+          sourceTag: 2
+          propertyRevision: 8
+          value: 0.76
+    sector: 0
+    localX: 0.5
+    localY: 3
+    path:
+      destinationSector: 0
+      destinationLocalX: 15.5
+      destinationLocalY: 3
+      active: true
+  - id: 14
+    agent:
+      name: Agent 14
+      flags: 0
+      tags:
+        - 2
+      propertySamples:
+        - type: heightModifier
+          sourceTag: 2
+          propertyRevision: 8
+          value: 0.76
+    sector: 0
+    localX: 1.25
+    localY: 3
+    path:
+      destinationSector: 0
+      destinationLocalX: 15.5
+      destinationLocalY: 3
+      active: true
+  - id: 15
+    agent:
+      name: Agent 15
+      flags: 0
+      tags:
+        - 2
+      propertySamples:
+        - type: heightModifier
+          sourceTag: 2
+          propertyRevision: 8
+          value: 0.76
+    sector: 0
+    localX: 2.0
+    localY: 3
+    path:
+      destinationSector: 0
+      destinationLocalX: 15.5
+      destinationLocalY: 3
+      active: true
+  - id: 16
+    agent:
+      name: Agent 16
+      flags: 0
+      tags:
+        - 2
+      propertySamples:
+        - type: heightModifier
+          sourceTag: 2
+          propertyRevision: 8
+          value: 0.76
+    sector: 0
+    localX: 15.5
+    localY: 3
+    path:
+      destinationSector: 0
+      destinationLocalX: 0.5
+      destinationLocalY: 3
+      active: true
+  - id: 17
+    agent:
+      name: Agent 17
+      flags: 0
+      tags:
+        - 2
+      propertySamples:
+        - type: heightModifier
+          sourceTag: 2
+          propertyRevision: 8
+          value: 0.76
+    sector: 0
+    localX: 14.75
+    localY: 3
+    path:
+      destinationSector: 0
+      destinationLocalX: 0.5
+      destinationLocalY: 3
+      active: true
+  - id: 18
+    agent:
+      name: Agent 18
+      flags: 0
+      tags:
+        - 1
+      propertySamples:
+        - type: heightModifier
+          sourceTag: 1
+          propertyRevision: 10
+          value: 0.88
+    sector: 0
+    localX: 14.0
+    localY: 3
+    path:
+      destinationSector: 0
+      destinationLocalX: 0.5
+      destinationLocalY: 3
+      active: true
