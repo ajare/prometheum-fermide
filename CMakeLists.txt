@@ -293,6 +293,7 @@ add_executable(prometheum-fermide-headless
     src/headless/AgentHeightSmokeChecks.cpp
     src/headless/AgentBehaviourRegistrySmokeChecks.cpp
     src/headless/AgentBehaviourAssignmentSmokeChecks.cpp
+    src/headless/AgentBehaviourSchemaReconciliationSmokeChecks.cpp
     src/headless/AgentBehaviourRuntimeSmokeChecks.cpp
     src/headless/BackgroundSectorSmokeChecks.cpp
     src/headless/EditorLayerSmokeChecks.cpp

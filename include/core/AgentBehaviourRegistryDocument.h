@@ -10,6 +10,8 @@ namespace core
 	class AgentBehaviourRegistry;
 	class Building;
 	struct AgentBehaviourReloadDiagnostic;
+	struct AgentBehaviourSchemaMigrationPreview;
+	struct AgentBehaviourConfigurationMigration;
 
 	// An Agent behaviour registry package is a directory whose name ends with
 	// .behaviours and whose manifest is the fixed file behaviours.yaml inside
@@ -45,9 +47,25 @@ namespace core
 	// replacement manifest and every managed source module are validated
 	// before definitions change; all dependent Buildings must already be
 	// paused.
+	bool previewAgentBehaviourRegistrySchemaMigration(
+		std::shared_ptr<AgentBehaviourRegistry> const& registry,
+		std::filesystem::path const& packageDirectory,
+		AgentBehaviourSchemaMigrationPreview& preview,
+		std::string* diagnostic = nullptr);
+
 	bool reloadAgentBehaviourRegistryDocument(
 		std::shared_ptr<AgentBehaviourRegistry> const& registry,
 		std::filesystem::path const& packageDirectory,
+		std::string* diagnostic = nullptr,
+		std::vector<AgentBehaviourReloadDiagnostic>* reloadDiagnostics = nullptr);
+
+	// Explicitly adopts an incompatible candidate only when every affected
+	// configuration has a complete validated C++ replacement. Preview and commit
+	// reread the same managed package and the commit remains all-or-nothing.
+	bool migrateAgentBehaviourRegistryDocument(
+		std::shared_ptr<AgentBehaviourRegistry> const& registry,
+		std::filesystem::path const& packageDirectory,
+		std::vector<AgentBehaviourConfigurationMigration> const& migrations,
 		std::string* diagnostic = nullptr,
 		std::vector<AgentBehaviourReloadDiagnostic>* reloadDiagnostics = nullptr);
 

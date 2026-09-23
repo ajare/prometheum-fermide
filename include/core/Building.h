@@ -501,11 +501,20 @@ namespace core
 		};
 		std::optional<AgentBehaviourRegistryReference> mAgentBehaviourRegistryReference;
 		std::shared_ptr<AgentBehaviourRegistry> mAgentBehaviourRegistry;
+		// An incompatible newer schema is a recoverable dependency state: authored
+		// values stay attached to their recorded revision, while simulation and
+		// registry save remain blocked until a coordinated migration repairs them.
+		std::string mAgentBehaviourDependencyDiagnostic;
 		// Every Building owns its own live Lua state. The adapter's pimpl keeps all
 		// Lua/sol2 types out of this domain header and its per-Agent environments
 		// prevent mutable module or instance state crossing assignments.
 		std::unique_ptr<AgentBehaviourRuntimeAdapter> mAgentBehaviourRuntime;
 
+		bool validateAgentBehaviourAssignmentAgainst(
+			AgentBehaviourRegistry const& registry, AgentBehaviourId behaviour,
+			uint64_t revision, AgentBehaviourConfiguration const& configuration,
+			AgentBehaviourConfiguration* normalized = nullptr,
+			std::string* diagnostic = nullptr) const;
 		bool inspectAgentBehaviourAssignments(AgentBehaviourRegistry const& registry,
 			std::string* diagnostic = nullptr) const;
 		uint32_t countAgentBehaviourAssignments() const;
@@ -1208,6 +1217,14 @@ namespace core
 		std::string const& getAgentBehaviourRegistryPackageName() const;
 		std::string const& getExpectedAgentBehaviourRegistryUuid() const;
 		std::shared_ptr<AgentBehaviourRegistry> const& getAgentBehaviourRegistry() const;
+		bool agentBehaviourConfigurationsAreValid() const
+		{
+			return mAgentBehaviourDependencyDiagnostic.empty();
+		}
+		std::string const& getAgentBehaviourDependencyDiagnostic() const
+		{
+			return mAgentBehaviourDependencyDiagnostic;
+		}
 		void attachAgentBehaviourRegistry(std::string packageName,
 			std::shared_ptr<AgentBehaviourRegistry> registry);
 		void detachAgentBehaviourRegistry();

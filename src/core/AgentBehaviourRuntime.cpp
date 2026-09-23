@@ -2143,7 +2143,8 @@ namespace core
 	bool AgentBehaviourRuntimeAdapter::prepareReload(Building& building,
 		AgentBehaviourRegistry const& registry,
 		std::unique_ptr<AgentBehaviourRuntimeAdapter>& candidate,
-		std::vector<AgentBehaviourRuntimeDiagnostic>& diagnostics)
+		std::vector<AgentBehaviourRuntimeDiagnostic>& diagnostics,
+		std::map<AgentId, AgentBehaviourAssignment> const* assignments)
 	{
 		candidate.reset();
 		diagnostics.clear();
@@ -2166,7 +2167,12 @@ namespace core
 			for (auto const& [agentId, agent] : building.mAgents.entries())
 			{
 				if (!agent || !agent->getBehaviourAssignment()) continue;
-				auto const& assignment = *agent->getBehaviourAssignment();
+				auto const overrideAssignment = assignments
+					? assignments->find(agentId) : std::map<AgentId,
+						AgentBehaviourAssignment>::const_iterator{};
+				auto const& assignment = assignments
+					&& overrideAssignment != assignments->end()
+					? overrideAssignment->second : *agent->getBehaviourAssignment();
 				auto const* behaviour = registry.lookupAgentBehaviour(
 					assignment.behaviour);
 				if (!behaviour) continue;

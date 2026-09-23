@@ -1043,6 +1043,7 @@ namespace core
 		mAgentBehaviourRegistryReference = std::move(agentBehaviourRegistryReference);
 		if (mAgentBehaviourRegistry) mAgentBehaviourRegistry->unregisterBuilding(*this);
 		mAgentBehaviourRegistry.reset();
+		mAgentBehaviourDependencyDiagnostic.clear();
 		// resetForDeserialization deliberately leaves Agent groups alone: the
 		// reset-and-replay paths (Layer deletion, Room resize, and the rest) reuse
 		// it and must carry the authored groups across. A load starts from the

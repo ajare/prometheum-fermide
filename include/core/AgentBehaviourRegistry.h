@@ -25,6 +25,54 @@ namespace core
 		Agent
 	};
 
+	enum class AgentBehaviourSchemaCompatibility
+	{
+		Unchanged,
+		Compatible,
+		Incompatible
+	};
+
+	struct AgentBehaviourSchemaFieldChange
+	{
+		std::string path;
+		AgentBehaviourSchemaCompatibility compatibility{
+			AgentBehaviourSchemaCompatibility::Unchanged };
+		std::string diagnostic;
+	};
+
+	// One affected authored configuration in a side-effect-free schema preview.
+	// Field paths use the same dotted Record and [] List notation as assignment
+	// validation, so nested migration work is never hidden behind an aggregate.
+	struct AgentBehaviourSchemaMigrationItem
+	{
+		Building* building{ nullptr };
+		std::string buildingName;
+		AgentId agent{};
+		std::string agentName;
+		AgentBehaviourId behaviour{};
+		std::string behaviourName;
+		uint64_t fromRevision{ 0 };
+		uint64_t toRevision{ 0 };
+		AgentBehaviourSchemaCompatibility compatibility{
+			AgentBehaviourSchemaCompatibility::Unchanged };
+		std::vector<AgentBehaviourSchemaFieldChange> fields;
+	};
+
+	struct AgentBehaviourSchemaMigrationPreview
+	{
+		std::vector<AgentBehaviourSchemaMigrationItem> configurations;
+		bool requiresExplicitMigration{ false };
+	};
+
+	// Explicit authored replacement for one incompatible configuration. The
+	// candidate schema validates this ordinary C++ value; Lua is not involved.
+	struct AgentBehaviourConfigurationMigration
+	{
+		Building* building{ nullptr };
+		AgentId agent{};
+		AgentBehaviourConfiguration configuration;
+	};
+
 	// One item from an explicit reload preflight. Failed reload diagnostics are
 	// returned to the editor rather than written into the still-live registry,
 	// so reporting a candidate can never replace the previous working status.
@@ -120,9 +168,13 @@ namespace core
 
 		// Internal document-manager seam. The complete replacement is validated
 		// before this shared instance changes; UUID identity must match.
+		bool previewDefinitionsFrom(AgentBehaviourRegistry& replacement,
+			AgentBehaviourSchemaMigrationPreview& preview,
+			std::string* diagnostic = nullptr) const;
 		bool replaceDefinitionsFrom(AgentBehaviourRegistry&& replacement,
 			std::string* diagnostic,
-			std::vector<AgentBehaviourReloadDiagnostic>* reloadDiagnostics = nullptr);
+			std::vector<AgentBehaviourReloadDiagnostic>* reloadDiagnostics = nullptr,
+			std::vector<AgentBehaviourConfigurationMigration> const& migrations = {});
 
 		// Registry definitions are shared authored state. Editing them is safe
 		// only when every loaded dependent Building is paused.

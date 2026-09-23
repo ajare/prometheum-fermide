@@ -45,6 +45,9 @@ bool commitAgentBehaviourRegistrySwitch(
 bool reloadAgentBehaviourRegistry(
 	std::shared_ptr<core::AgentBehaviourRegistry> const& registry,
 	std::string const& packageDirectory, std::string* diagnostic = nullptr);
+bool saveAgentBehaviourRegistry(
+	std::shared_ptr<core::AgentBehaviourRegistry> const& registry,
+	std::string const& packageDirectory, std::string* diagnostic = nullptr);
 
 bool attachedAgentBehaviourRegistryIsModified(
 	std::shared_ptr<const core::Building> const& building);

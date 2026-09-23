@@ -545,6 +545,7 @@ namespace core
 			mAgentBehaviourRegistry->unregisterBuilding(*this);
 		mAgentBehaviourRegistryReference = std::move(replacement);
 		mAgentBehaviourRegistry = std::move(registry);
+		mAgentBehaviourDependencyDiagnostic.clear();
 		modify();
 	}
 
@@ -559,6 +560,7 @@ namespace core
 		if (mAgentBehaviourRegistry) mAgentBehaviourRegistry->unregisterBuilding(*this);
 		mAgentBehaviourRegistry.reset();
 		mAgentBehaviourRegistryReference.reset();
+		mAgentBehaviourDependencyDiagnostic.clear();
 		modify();
 	}
 
@@ -574,12 +576,91 @@ namespace core
 				"Agent behaviour registry UUID mismatch: Building expects {}, file contains {}",
 				mAgentBehaviourRegistryReference->expectedUuid, registry->getUuid()));
 		}
-		string diagnostic;
-		if (!inspectAgentBehaviourAssignments(*registry, &diagnostic))
-			throw invalid_argument(diagnostic);
-		if (mAgentBehaviourRegistry) mAgentBehaviourRegistry->unregisterBuilding(*this);
-		mAgentBehaviourRegistry = std::move(registry);
-		mAgentBehaviourRegistry->registerBuilding(*this);
+		auto previousRegistry = mAgentBehaviourRegistry;
+		auto const registryChanges = previousRegistry != registry;
+		if (registryChanges) registry->registerBuilding(*this);
+		mAgentBehaviourRegistry = registry;
+		auto rollbackRegistry = [&]
+		{
+			if (registryChanges) registry->unregisterBuilding(*this);
+			mAgentBehaviourRegistry = previousRegistry;
+		};
+
+		AgentBehaviourSchemaMigrationPreview preview;
+		string previewDiagnostic;
+		if (!mAgentBehaviourRegistry->previewDefinitionsFrom(
+			*mAgentBehaviourRegistry, preview, &previewDiagnostic))
+		{
+			rollbackRegistry();
+			throw invalid_argument(previewDiagnostic);
+		}
+		vector<pair<AgentId, AgentBehaviourAssignment>> reconciled;
+		vector<string> mismatches;
+		for (auto const& item : preview.configurations)
+		{
+			if (item.building != this) continue;
+			if (item.fromRevision == item.toRevision)
+			{
+				// A malformed value at the claimed current revision is corruption,
+				// not schema evolution, and retains the existing atomic open refusal.
+				string details;
+				for (auto const& field : item.fields)
+					details += (details.empty() ? "" : "; ") + field.diagnostic;
+				rollbackRegistry();
+				throw invalid_argument(format("Agent '{}' ({}): {}",
+					item.agentName, item.agent.value, details));
+			}
+			if (item.compatibility == AgentBehaviourSchemaCompatibility::Incompatible)
+			{
+				string fields;
+				for (auto const& field : item.fields)
+					fields += (fields.empty() ? "" : ", ") + field.path
+						+ " (" + field.diagnostic + ")";
+				mismatches.push_back(format("Building '{}' / Agent '{}' ({}) / {}: {}",
+					getName(), item.agentName, item.agent.value,
+					item.behaviourName, fields));
+				continue;
+			}
+			auto const* agent = mAgents.find(item.agent);
+			auto const* definition = mAgentBehaviourRegistry->lookupAgentBehaviour(
+				item.behaviour);
+			if (!agent || !agent->getBehaviourAssignment() || !definition)
+			{
+				rollbackRegistry();
+				throw invalid_argument("An Agent behaviour reconciliation target disappeared");
+			}
+			AgentBehaviourConfiguration normalized;
+			string validation;
+			if (!validateAgentBehaviourAssignmentAgainst(*mAgentBehaviourRegistry,
+				item.behaviour, definition->getRevision(),
+				agent->getBehaviourAssignment()->configuration, &normalized, &validation))
+			{
+				rollbackRegistry();
+				throw invalid_argument(validation);
+			}
+			reconciled.push_back({ item.agent, AgentBehaviourAssignment{
+				item.behaviour, definition->getRevision(), std::move(normalized) } });
+		}
+		if (!mismatches.empty())
+		{
+			mAgentBehaviourDependencyDiagnostic.clear();
+			for (auto const& mismatch : mismatches)
+				mAgentBehaviourDependencyDiagnostic +=
+					(mAgentBehaviourDependencyDiagnostic.empty() ? "" : "\n") + mismatch;
+			mSimulationPaused = true;
+			if (registryChanges && previousRegistry)
+				previousRegistry->unregisterBuilding(*this);
+			return;
+		}
+		for (auto& [agentId, assignment] : reconciled)
+		{
+			auto* agent = mAgents.find(agentId);
+			if (agent) agent->setBehaviourAssignment(std::move(assignment));
+		}
+		if (!reconciled.empty()) modify();
+		mAgentBehaviourDependencyDiagnostic.clear();
+		if (registryChanges && previousRegistry)
+			previousRegistry->unregisterBuilding(*this);
 	}
 
 	bool Building::validateAgentBehaviourAssignment(AgentBehaviourId behaviour,
@@ -592,8 +673,17 @@ namespace core
 				"This Building has no attached Agent behaviour registry";
 			return false;
 		}
-		return validateBehaviourConfiguration(*this, *mAgentBehaviourRegistry,
+		return validateAgentBehaviourAssignmentAgainst(*mAgentBehaviourRegistry,
 			behaviour, revision, configuration, normalized, diagnostic);
+	}
+
+	bool Building::validateAgentBehaviourAssignmentAgainst(
+		AgentBehaviourRegistry const& registry, AgentBehaviourId behaviour,
+		uint64_t revision, AgentBehaviourConfiguration const& configuration,
+		AgentBehaviourConfiguration* normalized, string* diagnostic) const
+	{
+		return validateBehaviourConfiguration(*this, registry, behaviour, revision,
+			configuration, normalized, diagnostic);
 	}
 
 	bool Building::setAgentBehaviourAssignment(AgentId agentId,
@@ -716,7 +806,7 @@ namespace core
 			if (!agent || !agent->getBehaviourAssignment()) continue;
 			auto const& assignment = *agent->getBehaviourAssignment();
 			string fieldDiagnostic;
-			if (!validateBehaviourConfiguration(*this, registry, assignment.behaviour,
+			if (!validateAgentBehaviourAssignmentAgainst(registry, assignment.behaviour,
 				assignment.revision, assignment.configuration, nullptr, &fieldDiagnostic))
 			{
 				if (diagnostic) *diagnostic = format("Agent '{}' ({}): {}",
@@ -6346,6 +6436,11 @@ namespace core
 
 	bool Building::resumeSimulation()
 	{
+		if (!mAgentBehaviourDependencyDiagnostic.empty())
+		{
+			mSimulationPaused = true;
+			return false;
+		}
 		if (!mSimulationPaused) return true;
 		if (mTopologyDirty || !mTopologyValid)
 		{

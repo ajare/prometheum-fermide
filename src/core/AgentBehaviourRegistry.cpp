@@ -224,6 +224,88 @@ namespace core
 			serializer.endMap();
 			return field;
 		}
+
+		void appendSchemaChanges(
+			std::vector<AgentBehaviourSchemaField> const& previous,
+			std::vector<AgentBehaviourSchemaField> const& candidate,
+			std::string const& prefix,
+			std::vector<AgentBehaviourSchemaFieldChange>& changes,
+			bool& compatible)
+		{
+			auto add = [&](std::string path,
+				AgentBehaviourSchemaCompatibility classification,
+				std::string diagnostic)
+			{
+				changes.push_back({ std::move(path), classification,
+					std::move(diagnostic) });
+				if (classification == AgentBehaviourSchemaCompatibility::Incompatible)
+					compatible = false;
+			};
+			for (auto const& oldField : previous)
+			{
+				auto const path = prefix.empty() ? oldField.name
+					: prefix + "." + oldField.name;
+				auto found = std::find_if(candidate.begin(), candidate.end(),
+					[&](auto const& field) { return field.name == oldField.name; });
+				if (found == candidate.end())
+				{
+					add(path, AgentBehaviourSchemaCompatibility::Incompatible,
+						"field was removed");
+					continue;
+				}
+				if (found->type != oldField.type)
+				{
+					add(path, AgentBehaviourSchemaCompatibility::Incompatible,
+						std::format("type changed from {} to {}",
+							agentBehaviourSchemaTypeName(oldField.type),
+							agentBehaviourSchemaTypeName(found->type)));
+					continue;
+				}
+				if (found->required != oldField.required
+					|| found->defaultValue != oldField.defaultValue)
+				{
+					add(path, AgentBehaviourSchemaCompatibility::Incompatible,
+						found->required && !oldField.required
+							? "field became required"
+							: "field requirement or default changed");
+				}
+				if (oldField.type == AgentBehaviourSchemaType::Record)
+					appendSchemaChanges(oldField.children, found->children,
+						path, changes, compatible);
+				else if (oldField.type == AgentBehaviourSchemaType::List
+					&& oldField.children.size() == 1
+					&& found->children.size() == 1)
+				{
+					auto const& oldElement = oldField.children.front();
+					auto const& newElement = found->children.front();
+					auto const elementPath = path + "[]";
+					if (oldElement.type != newElement.type)
+						add(elementPath,
+							AgentBehaviourSchemaCompatibility::Incompatible,
+							std::format("element type changed from {} to {}",
+								agentBehaviourSchemaTypeName(oldElement.type),
+								agentBehaviourSchemaTypeName(newElement.type)));
+					else if (oldElement.type == AgentBehaviourSchemaType::Record
+						|| oldElement.type == AgentBehaviourSchemaType::List)
+						appendSchemaChanges(oldElement.children, newElement.children,
+							elementPath, changes, compatible);
+				}
+			}
+			for (auto const& newField : candidate)
+			{
+				auto found = std::find_if(previous.begin(), previous.end(),
+					[&](auto const& field) { return field.name == newField.name; });
+				if (found != previous.end()) continue;
+				auto const path = prefix.empty() ? newField.name
+					: prefix + "." + newField.name;
+				if (!newField.required && newField.defaultValue)
+					add(path, AgentBehaviourSchemaCompatibility::Compatible,
+						"optional field will be materialized from its default");
+				else
+					add(path, AgentBehaviourSchemaCompatibility::Incompatible,
+						"required field was introduced");
+			}
+		}
 	}
 
 	AgentBehaviourRegistry::AgentBehaviourRegistry(std::string uuid)
@@ -396,9 +478,130 @@ namespace core
 		}
 	}
 
+	bool AgentBehaviourRegistry::previewDefinitionsFrom(
+		AgentBehaviourRegistry& replacement,
+		AgentBehaviourSchemaMigrationPreview& preview,
+		std::string* diagnostic) const
+	{
+		preview = {};
+		auto reject = [diagnostic](std::string message)
+		{
+			if (diagnostic) *diagnostic = std::move(message);
+			return false;
+		};
+		if (replacement.mUuid != mUuid)
+			return reject(std::format(
+				"Agent behaviour registry UUID mismatch: loaded {}, file contains {}",
+				mUuid, replacement.mUuid));
+
+		// Carry trusted historical schemas forward before examining assignments.
+		// A candidate may omit history (external authors normally edit only the
+		// current schema), but it may never rewrite a history already known here.
+		for (auto const& [id, oldDefinition] : mBehaviours.entries())
+		{
+			auto* nextDefinition = replacement.mBehaviours.find(id);
+			if (!nextDefinition) continue;
+			for (auto const& [revision, schema] : oldDefinition->getSchemaHistory())
+			{
+				if (auto const* supplied = nextDefinition->getSchemaAtRevision(revision);
+					supplied && *supplied != schema)
+					return reject(std::format(
+						"Agent behaviour {} schema history revision {} was rewritten",
+						id.value, revision));
+				if (!nextDefinition->getSchemaAtRevision(revision))
+					nextDefinition->rememberSchema(revision, schema);
+			}
+		}
+
+		auto buildings = mLoadedBuildings;
+		std::stable_sort(buildings.begin(), buildings.end(),
+			[](Building const* left, Building const* right)
+			{
+				if (!left || !right) return left != nullptr;
+				return left->getName() < right->getName();
+			});
+		for (auto* building : buildings)
+		{
+			if (!building) continue;
+			for (auto const& [agentId, agent] : building->mAgents.entries())
+			{
+				if (!agent || !agent->getBehaviourAssignment()) continue;
+				auto const& assignment = *agent->getBehaviourAssignment();
+				auto const* next = replacement.lookupAgentBehaviour(
+					assignment.behaviour);
+				if (next && assignment.revision == next->getRevision())
+				{
+					std::string validation;
+					if (building->validateAgentBehaviourAssignmentAgainst(replacement,
+						assignment.behaviour, assignment.revision,
+						assignment.configuration, nullptr, &validation)) continue;
+				}
+
+				AgentBehaviourSchemaMigrationItem item;
+				item.building = building;
+				item.buildingName = building->getName();
+				item.agent = agentId;
+				item.agentName = agent->getName();
+				item.behaviour = assignment.behaviour;
+				item.fromRevision = assignment.revision;
+				item.toRevision = next ? next->getRevision() : 0;
+				item.behaviourName = next ? next->getName()
+					: std::format("{}", assignment.behaviour.value);
+				bool compatible = true;
+				if (!next)
+				{
+					compatible = false;
+					item.fields.push_back({ "$behaviour",
+						AgentBehaviourSchemaCompatibility::Incompatible,
+						"behaviour was removed" });
+				}
+				else if (assignment.revision > next->getRevision())
+				{
+					compatible = false;
+					item.fields.push_back({ "$revision",
+						AgentBehaviourSchemaCompatibility::Incompatible,
+						"candidate revision is older than the validated assignment" });
+				}
+				else if (auto const* previous = next->getSchemaAtRevision(
+					assignment.revision))
+				{
+					appendSchemaChanges(*previous, next->getSchema(), {},
+						item.fields, compatible);
+				}
+				else
+				{
+					compatible = false;
+					item.fields.push_back({ "$revision",
+						AgentBehaviourSchemaCompatibility::Incompatible,
+						"validated schema revision is not retained by the registry" });
+				}
+
+				AgentBehaviourConfiguration normalized;
+				std::string validation;
+				if (compatible && !building->validateAgentBehaviourAssignmentAgainst(
+					replacement, assignment.behaviour, next->getRevision(),
+					assignment.configuration, &normalized, &validation))
+				{
+					compatible = false;
+					item.fields.push_back({ "$configuration",
+						AgentBehaviourSchemaCompatibility::Incompatible,
+						std::move(validation) });
+				}
+				item.compatibility = compatible
+					? AgentBehaviourSchemaCompatibility::Compatible
+					: AgentBehaviourSchemaCompatibility::Incompatible;
+				preview.requiresExplicitMigration |= !compatible;
+				preview.configurations.push_back(std::move(item));
+			}
+		}
+		if (diagnostic) diagnostic->clear();
+		return true;
+	}
+
 	bool AgentBehaviourRegistry::replaceDefinitionsFrom(AgentBehaviourRegistry&& replacement,
 		std::string* diagnostic,
-		std::vector<AgentBehaviourReloadDiagnostic>* reloadDiagnostics)
+		std::vector<AgentBehaviourReloadDiagnostic>* reloadDiagnostics,
+		std::vector<AgentBehaviourConfigurationMigration> const& migrations)
 	{
 		if (reloadDiagnostics) reloadDiagnostics->clear();
 		auto reject = [diagnostic, reloadDiagnostics](std::string message)
@@ -483,6 +686,19 @@ namespace core
 			return false;
 		}
 
+		bool schemaHistoryNeedsSave{ false };
+		for (auto const& [id, previous] : mBehaviours.entries())
+		{
+			auto const* candidate = replacement.mBehaviours.find(id);
+			if (candidate && candidate->getRevision() > previous->getRevision()
+				&& candidate->getSchema() != previous->getSchema())
+				schemaHistoryNeedsSave = true;
+		}
+		AgentBehaviourSchemaMigrationPreview preview;
+		std::string previewDiagnostic;
+		if (!previewDefinitionsFrom(replacement, preview, &previewDiagnostic))
+			return reject(std::move(previewDiagnostic));
+
 		auto buildings = mLoadedBuildings;
 		std::stable_sort(buildings.begin(), buildings.end(),
 			[](Building const* left, Building const* right)
@@ -490,20 +706,78 @@ namespace core
 				if (!left || !right) return left != nullptr;
 				return left->getName() < right->getName();
 			});
-		for (auto const* building : buildings)
+		std::map<Building*, std::map<AgentId, AgentBehaviourAssignment>>
+			assignmentPlans;
+		std::set<std::pair<Building*, AgentId>> usedMigrations;
+		for (auto const& item : preview.configurations)
 		{
+			auto* building = item.building;
 			if (!building) continue;
+			auto const* agent = building->mAgents.find(item.agent);
+			if (!agent || !agent->getBehaviourAssignment())
+				return reject("An affected Agent closed during schema classification");
+			auto const* next = replacement.lookupAgentBehaviour(item.behaviour);
+
+			AgentBehaviourConfiguration sourceConfiguration
+				= agent->getBehaviourAssignment()->configuration;
+			if (item.compatibility == AgentBehaviourSchemaCompatibility::Incompatible)
+			{
+				auto migration = std::find_if(migrations.begin(), migrations.end(),
+					[&](auto const& candidate)
+					{
+						return candidate.building == building
+							&& candidate.agent == item.agent;
+					});
+				if (migration == migrations.end())
+				{
+					std::string fields;
+					for (auto const& field : item.fields)
+						fields += (fields.empty() ? "" : ", ") + field.path
+							+ " (" + field.diagnostic + ")";
+					failures.push_back({ AgentBehaviourReloadDiagnosticScope::Agent,
+						item.buildingName, item.agentName, item.agent,
+						item.behaviourName, item.behaviour, {},
+						"Explicit coordinated migration required for " + fields, {} });
+					continue;
+				}
+				if (!usedMigrations.emplace(building, item.agent).second)
+					return reject("An Agent configuration migration appears more than once");
+				sourceConfiguration = migration->configuration;
+			}
+			if (!next)
+			{
+				failures.push_back({ AgentBehaviourReloadDiagnosticScope::Agent,
+					item.buildingName, item.agentName, item.agent,
+					item.behaviourName, item.behaviour, {},
+					"A removed behaviour cannot receive a configuration migration", {} });
+				continue;
+			}
+			AgentBehaviourConfiguration normalized;
 			std::string assignmentDiagnostic;
-			if (building->inspectAgentBehaviourAssignments(replacement,
-				&assignmentDiagnostic)) continue;
-			failures.push_back({ AgentBehaviourReloadDiagnosticScope::Agent,
-				building->getName(), {}, {}, {}, {}, {}, assignmentDiagnostic, {} });
+			if (!building->validateAgentBehaviourAssignmentAgainst(replacement,
+				item.behaviour, next->getRevision(), sourceConfiguration,
+				&normalized, &assignmentDiagnostic))
+			{
+				failures.push_back({ AgentBehaviourReloadDiagnosticScope::Agent,
+					item.buildingName, item.agentName, item.agent,
+					item.behaviourName, item.behaviour, {},
+					std::move(assignmentDiagnostic), {} });
+				continue;
+			}
+			assignmentPlans[building][item.agent] = AgentBehaviourAssignment{
+				item.behaviour, next->getRevision(), std::move(normalized) };
+		}
+		for (auto const& migration : migrations)
+		{
+			if (!migration.building || !usedMigrations.contains(
+				{ migration.building, migration.agent }))
+				return reject("A supplied Agent configuration migration is not required by the preview");
 		}
 		if (!failures.empty())
 		{
 			if (reloadDiagnostics) *reloadDiagnostics = std::move(failures);
 			if (diagnostic) *diagnostic = std::format(
-				"Agent behaviour reload preflight found {} Agent configuration diagnostic(s)",
+				"Agent behaviour schema reconciliation found {} configuration diagnostic(s)",
 				reloadDiagnostics ? reloadDiagnostics->size() : failures.size());
 			return false;
 		}
@@ -512,6 +786,7 @@ namespace core
 		{
 			Building* building{ nullptr };
 			std::unique_ptr<AgentBehaviourRuntimeAdapter> runtime;
+			std::map<AgentId, AgentBehaviourAssignment> assignments;
 		};
 		std::vector<PreparedBuilding> preparedBuildings;
 		preparedBuildings.reserve(buildings.size());
@@ -520,8 +795,11 @@ namespace core
 			if (!building) continue;
 			std::unique_ptr<AgentBehaviourRuntimeAdapter> candidateRuntime;
 			std::vector<AgentBehaviourRuntimeDiagnostic> runtimeDiagnostics;
+			auto plan = assignmentPlans.find(building);
+			auto const* overrides = plan == assignmentPlans.end()
+				? nullptr : &plan->second;
 			if (!AgentBehaviourRuntimeAdapter::prepareReload(*building, replacement,
-				candidateRuntime, runtimeDiagnostics))
+				candidateRuntime, runtimeDiagnostics, overrides))
 			{
 				for (auto const& runtimeDiagnostic : runtimeDiagnostics)
 					failures.push_back({ AgentBehaviourReloadDiagnosticScope::Agent,
@@ -531,7 +809,10 @@ namespace core
 						runtimeDiagnostic.diagnostic, runtimeDiagnostic.traceback });
 				continue;
 			}
-			preparedBuildings.push_back({ building, std::move(candidateRuntime) });
+			preparedBuildings.push_back({ building, std::move(candidateRuntime),
+				plan == assignmentPlans.end()
+					? std::map<AgentId, AgentBehaviourAssignment>{}
+					: std::move(plan->second) });
 		}
 		if (!failures.empty())
 		{
@@ -561,12 +842,20 @@ namespace core
 				->consumeDiagnostics();
 			prepared.runtime->appendDiagnostics(std::move(teardownDiagnostics));
 			building->mAgentBehaviourRuntime = std::move(prepared.runtime);
+			for (auto& [agentId, assignment] : prepared.assignments)
+			{
+				auto* agent = building->mAgents.find(agentId);
+				if (agent) agent->setBehaviourAssignment(std::move(assignment));
+			}
+			if (!prepared.assignments.empty()) building->modify();
+			building->mAgentBehaviourDependencyDiagnostic.clear();
 			for (auto const& [agentId, agent] : building->mAgents.entries())
 				if (agent && agent->getBehaviourAssignment())
 					building->mSimulationCoordinator
 						.clearAgentMovementForBehaviourEdit(agentId);
 		}
-		markUnmodified();
+		if (schemaHistoryNeedsSave) modify();
+		else markUnmodified();
 		if (reloadDiagnostics) reloadDiagnostics->clear();
 		if (diagnostic) diagnostic->clear();
 		return true;
@@ -814,6 +1103,28 @@ namespace core
 					serializeSchemaField(serializer, field);
 				serializer.endArray();
 			}
+			bool hasHistoricalSchema{ false };
+			for (auto const& [revision, schema] : behaviour->getSchemaHistory())
+			{
+				(void)schema;
+				if (revision != behaviour->getRevision()) hasHistoricalSchema = true;
+			}
+			if (hasHistoricalSchema)
+			{
+				serializer.beginArray("schemaHistory");
+				for (auto const& [revision, schema] : behaviour->getSchemaHistory())
+				{
+					if (revision == behaviour->getRevision()) continue;
+					serializer.beginMap("");
+					serializer.writeUint64("revision", revision);
+					serializer.beginArray("schema");
+					for (auto const& field : schema)
+						serializeSchemaField(serializer, field);
+					serializer.endArray();
+					serializer.endMap();
+				}
+				serializer.endArray();
+			}
 			serializer.endMap();
 		}
 		serializer.endArray();
@@ -883,6 +1194,28 @@ namespace core
 					schema.push_back(deserializeSchemaField(serializer));
 				serializer.endArray();
 			}
+			std::map<uint64_t, std::vector<AgentBehaviourSchemaField>> schemaHistory;
+			if (serializer.hasField("schemaHistory"))
+			{
+				serializer.beginArray("schemaHistory");
+				while (serializer.nextArrayItem())
+				{
+					serializer.beginMap("");
+					auto const historicalRevision = serializer.readUint64("revision");
+					std::vector<AgentBehaviourSchemaField> historicalSchema;
+					serializer.beginArray("schema");
+					while (serializer.nextArrayItem())
+						historicalSchema.push_back(deserializeSchemaField(serializer));
+					serializer.endArray();
+					serializer.endMap();
+					if (!historicalRevision || historicalRevision >= revision
+						|| !schemaHistory.emplace(historicalRevision,
+							std::move(historicalSchema)).second)
+						throw SerializationException(
+							"Agent behaviour schema history revisions must be unique, nonzero, and older than the current revision");
+				}
+				serializer.endArray();
+			}
 			serializer.endMap();
 
 			if (!id) throw SerializationException("Serialized Agent behaviour ID cannot be zero");
@@ -903,8 +1236,20 @@ namespace core
 			if (!agentBehaviourSchemaFieldsAreValid(schema, &diagnostic))
 				throw SerializationException("Serialized Agent behaviour schema is invalid: "
 					+ diagnostic);
-			if (!behaviours.restore(id, AgentBehaviour::create(std::move(name),
-				std::move(source), std::move(schema), revision)))
+			for (auto const& [historicalRevision, historicalSchema] : schemaHistory)
+			{
+				(void)historicalRevision;
+				if (!agentBehaviourSchemaFieldsAreValid(historicalSchema, &diagnostic))
+					throw SerializationException(
+						"Serialized historical Agent behaviour schema is invalid: "
+						+ diagnostic);
+			}
+			auto definition = AgentBehaviour::create(std::move(name),
+				std::move(source), std::move(schema), revision);
+			for (auto& [historicalRevision, historicalSchema] : schemaHistory)
+				definition->rememberSchema(historicalRevision,
+					std::move(historicalSchema));
+			if (!behaviours.restore(id, std::move(definition)))
 			{
 				throw SerializationException(std::format(
 					"Serialized Agent behaviour IDs must be unique ({} appears twice)",
@@ -931,6 +1276,21 @@ namespace core
 
 	void AgentBehaviourRegistry::saveTo(std::string const& manifestFilepath)
 	{
+		for (auto const* building : mLoadedBuildings)
+		{
+			if (!building) continue;
+			std::string dependencyDiagnostic;
+			if (!building->agentBehaviourConfigurationsAreValid()
+				|| !building->inspectAgentBehaviourAssignments(*this,
+					&dependencyDiagnostic))
+			{
+				if (dependencyDiagnostic.empty())
+					dependencyDiagnostic = building->getAgentBehaviourDependencyDiagnostic();
+				throw SerializationException(std::format(
+					"Cannot save Agent behaviour registry while Building '{}' has an invalid dependent configuration: {}",
+					building->getName(), dependencyDiagnostic));
+			}
+		}
 		auto const path = normalizedDocumentPath(manifestFilepath);
 		if (mDocumentPath)
 		{

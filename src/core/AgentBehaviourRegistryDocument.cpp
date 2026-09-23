@@ -335,6 +335,41 @@ namespace core
 		return registry;
 	}
 
+	bool previewAgentBehaviourRegistrySchemaMigration(
+		std::shared_ptr<AgentBehaviourRegistry> const& registry,
+		std::filesystem::path const& packageDirectory,
+		AgentBehaviourSchemaMigrationPreview& preview,
+		std::string* diagnostic)
+	{
+		preview = {};
+		if (diagnostic) diagnostic->clear();
+		if (!registry)
+		{
+			if (diagnostic) *diagnostic = "There is no Agent behaviour registry to preview";
+			return false;
+		}
+		std::string pausedDiagnostic;
+		if (!registry->definitionEditsAreAllowed(&pausedDiagnostic))
+		{
+			if (diagnostic) *diagnostic = std::move(pausedDiagnostic);
+			return false;
+		}
+		try
+		{
+			auto const canonicalDirectory = requireCanonicalPackageDirectory(
+				packageDirectory);
+			auto replacement = readRegistry(canonicalDirectory);
+			requireExpectedUuid(*replacement, registry->getUuid());
+			return registry->previewDefinitionsFrom(*replacement, preview, diagnostic);
+		}
+		catch (std::exception const& error)
+		{
+			if (diagnostic) *diagnostic = std::format(
+				"Could not preview Agent behaviour schema migration: {}", error.what());
+			return false;
+		}
+	}
+
 	bool reloadAgentBehaviourRegistryDocument(
 		std::shared_ptr<AgentBehaviourRegistry> const& registry,
 		std::filesystem::path const& packageDirectory,
@@ -400,6 +435,51 @@ namespace core
 		{
 			return refuse(std::format(
 				"Could not reload Agent behaviour registry: {}", error.what()));
+		}
+	}
+
+	bool migrateAgentBehaviourRegistryDocument(
+		std::shared_ptr<AgentBehaviourRegistry> const& registry,
+		std::filesystem::path const& packageDirectory,
+		std::vector<AgentBehaviourConfigurationMigration> const& migrations,
+		std::string* diagnostic,
+		std::vector<AgentBehaviourReloadDiagnostic>* reloadDiagnostics)
+	{
+		if (diagnostic) diagnostic->clear();
+		if (reloadDiagnostics) reloadDiagnostics->clear();
+		auto refuse = [diagnostic, reloadDiagnostics](std::string message)
+		{
+			if (diagnostic) *diagnostic = message;
+			if (reloadDiagnostics) reloadDiagnostics->push_back({
+				AgentBehaviourReloadDiagnosticScope::Package, {}, {}, {}, {}, {}, {},
+				std::move(message), {} });
+			return false;
+		};
+		if (!registry) return refuse("There is no Agent behaviour registry to migrate");
+		if (registry->isModified())
+			return refuse("The Agent behaviour registry has unsaved changes; save or discard them before migrating");
+		std::string pausedDiagnostic;
+		if (!registry->definitionEditsAreAllowed(&pausedDiagnostic))
+			return refuse(std::move(pausedDiagnostic));
+		try
+		{
+			auto const canonicalDirectory = requireCanonicalPackageDirectory(
+				packageDirectory);
+			auto replacement = readRegistry(canonicalDirectory);
+			requireExpectedUuid(*replacement, registry->getUuid());
+			std::string migrationDiagnostic;
+			if (!registry->replaceDefinitionsFrom(std::move(*replacement),
+				&migrationDiagnostic, reloadDiagnostics, migrations))
+			{
+				if (diagnostic) *diagnostic = std::move(migrationDiagnostic);
+				return false;
+			}
+			return true;
+		}
+		catch (std::exception const& error)
+		{
+			return refuse(std::format(
+				"Could not migrate Agent behaviour registry: {}", error.what()));
 		}
 	}
 

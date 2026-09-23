@@ -4,9 +4,11 @@
 #include <cstdint>
 #include <string>
 #include <memory>
+#include <map>
 #include <string_view>
 #include <vector>
 
+#include "core/AgentBehaviour.h"
 #include "core/EntityId.h"
 
 namespace core
@@ -114,7 +116,8 @@ namespace core
 		static bool prepareReload(Building& building,
 			AgentBehaviourRegistry const& registry,
 			std::unique_ptr<AgentBehaviourRuntimeAdapter>& candidate,
-			std::vector<AgentBehaviourRuntimeDiagnostic>& diagnostics);
+			std::vector<AgentBehaviourRuntimeDiagnostic>& diagnostics,
+			std::map<AgentId, AgentBehaviourAssignment> const* assignments = nullptr);
 		void appendDiagnostics(
 			std::vector<AgentBehaviourRuntimeDiagnostic> diagnostics);
 		static AgentBehaviourModulePreflight preflightModule(

@@ -2305,7 +2305,8 @@ namespace
 	{
 		return building && (building->isModified()
 			|| gBuildingDocumentHistory.isModified()
-			|| attachedAgentTagRegistryIsModified(building));
+			|| attachedAgentTagRegistryIsModified(building)
+			|| attachedAgentBehaviourRegistryIsModified(building));
 	}
 
 	void reportFileError(string message)
@@ -2322,6 +2323,15 @@ namespace
 			|| gBuildingFilepath.empty()) return {};
 		return (filesystem::path(gBuildingFilepath).parent_path()
 			/ building->getAgentTagRegistryFilename()).string();
+	}
+
+	string currentAgentBehaviourRegistryPackagePath(
+		shared_ptr<core::Building> const& building)
+	{
+		if (!building || !building->hasAttachedAgentBehaviourRegistry()
+			|| gBuildingFilepath.empty()) return {};
+		return (filesystem::path(gBuildingFilepath).parent_path()
+			/ building->getAgentBehaviourRegistryPackageName()).string();
 	}
 
 	BuildingDocumentSaveTarget currentDocumentSaveTarget(
@@ -2362,6 +2372,13 @@ namespace
 		}
 
 		string diagnostic;
+		if (attachedAgentBehaviourRegistryIsModified(building)
+			&& !saveAgentBehaviourRegistry(building->getAgentBehaviourRegistry(),
+				currentAgentBehaviourRegistryPackagePath(building), &diagnostic))
+		{
+			reportFileError(std::move(diagnostic));
+			return false;
+		}
 		if (!saveBuildingDocument(currentDocumentSaveTarget(building, filepath),
 			&diagnostic))
 		{
@@ -2378,6 +2395,13 @@ namespace
 		// An untitled Building still needs the ordinary Save location chooser.
 		if (gBuildingFilepath.empty()) return saveBuilding(building, false);
 		string diagnostic;
+		if (attachedAgentBehaviourRegistryIsModified(building)
+			&& !saveAgentBehaviourRegistry(building->getAgentBehaviourRegistry(),
+				currentAgentBehaviourRegistryPackagePath(building), &diagnostic))
+		{
+			reportFileError(std::move(diagnostic));
+			return false;
+		}
 		if (!saveAllDocuments(
 			{ currentDocumentSaveTarget(building, gBuildingFilepath) }, &diagnostic))
 		{
@@ -2854,8 +2878,11 @@ namespace
 		}
 		if (ImGui::BeginPopupModal("Unsaved changes", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
 		{
-			auto const prompt = unsavedDocumentPromptText(
+			auto prompt = unsavedDocumentPromptText(
 				currentDocumentSaveTarget(building, gBuildingFilepath));
+			if (attachedAgentBehaviourRegistryIsModified(building))
+				prompt += "\n- Agent behaviour registry package '"
+					+ building->getAgentBehaviourRegistryPackageName() + "'";
 			ImGui::TextUnformatted(prompt.c_str());
 			if (ImGui::Button("Save All"))
 			{

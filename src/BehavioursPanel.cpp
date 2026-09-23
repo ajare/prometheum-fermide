@@ -79,6 +79,13 @@ namespace
 		ImGui::TextDisabled("UUID %s", registry->getUuid().c_str());
 		ImGui::TextDisabled("Package revision %llu",
 			static_cast<unsigned long long>(registry->getPackageRevision()));
+		if (!building->agentBehaviourConfigurationsAreValid())
+		{
+			ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.3f, 1.0f),
+				"Schema reconciliation required");
+			ImGui::TextWrapped("%s",
+				building->getAgentBehaviourDependencyDiagnostic().c_str());
+		}
 
 		string switchDiagnostic;
 		auto canSwitch = canSelectAgentBehaviourRegistry(
@@ -132,6 +139,18 @@ namespace
 			ImGui::TextColored(ImVec4(1.0f, 0.65f, 0.2f, 1.0f), "Modified");
 		}
 
+		ImGui::BeginDisabled(!registry->isModified());
+		if (ImGui::Button(ICON_FA_SAVE " Save registry"))
+		{
+			string diagnostic;
+			if (!saveAgentBehaviourRegistry(registry,
+				attachedPackagePath(*building, buildingFilepath).string(), &diagnostic))
+				core::addLogMessage("Behaviours", 0, core::LogLevel::Error, diagnostic);
+		}
+		ImGui::EndDisabled();
+		if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+			ImGui::SetTooltip("Persist reconciled schema history");
+		ImGui::SameLine();
 		ImGui::BeginDisabled(registry->isModified() || !definitionEditsAllowed);
 		if (ImGui::Button(ICON_FA_SYNC " Reload registry"))
 		{
@@ -367,6 +386,32 @@ bool reloadAgentBehaviourRegistry(
 	core::addLogMessage("Behaviours", 0, core::LogLevel::Info,
 		"Reloaded Agent behaviour registry package " + packageDirectory);
 	return true;
+}
+
+bool saveAgentBehaviourRegistry(
+	shared_ptr<core::AgentBehaviourRegistry> const& registry,
+	string const& packageDirectory, string* diagnostic)
+{
+	if (diagnostic) diagnostic->clear();
+	if (!registry)
+	{
+		if (diagnostic) *diagnostic = "There is no Agent behaviour registry to save";
+		return false;
+	}
+	try
+	{
+		registry->saveTo(core::agentBehaviourRegistryManifestPath(
+			packageDirectory).string());
+		core::addLogMessage("Behaviours", 0, core::LogLevel::Info,
+			"Saved Agent behaviour registry package " + packageDirectory);
+		return true;
+	}
+	catch (exception const& error)
+	{
+		if (diagnostic) *diagnostic = "Could not save Agent behaviour registry: "
+			+ string(error.what());
+		return false;
+	}
 }
 
 bool attachedAgentBehaviourRegistryIsModified(

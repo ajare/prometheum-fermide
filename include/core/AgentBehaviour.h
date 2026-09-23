@@ -216,6 +216,11 @@ namespace core
 		uint64_t mRevision{ 1 };
 		std::string mSourceModulePath;
 		std::vector<AgentBehaviourSchemaField> mSchema;
+		// Every schema revision remains ordinary registry metadata. Keeping the
+		// historical shape lets a Building opened after an external package edit
+		// classify its authored revision without executing Lua or guessing from
+		// the current values.
+		std::map<uint64_t, std::vector<AgentBehaviourSchemaField>> mSchemaHistory;
 		// Runtime implementation details never enter this authored definition.
 		// Only the ordinary result of protected module preflight is retained for
 		// status reporting in the registry panel.
@@ -230,6 +235,7 @@ namespace core
 			, mSourceModulePath(std::move(sourceModulePath))
 			, mSchema(std::move(schema))
 		{
+			mSchemaHistory.emplace(mRevision, mSchema);
 		}
 
 		void setName(std::string name) { mName = std::move(name); }
@@ -241,6 +247,12 @@ namespace core
 		void setSchema(std::vector<AgentBehaviourSchemaField> schema)
 		{
 			mSchema = std::move(schema);
+			mSchemaHistory[mRevision] = mSchema;
+		}
+		void rememberSchema(uint64_t revision,
+			std::vector<AgentBehaviourSchemaField> schema)
+		{
+			mSchemaHistory[revision] = std::move(schema);
 		}
 		void setModulePreflight(AgentBehaviourModuleStatus status,
 			std::string diagnostic, std::string traceback)
@@ -269,6 +281,14 @@ namespace core
 		{
 			return mSchema;
 		}
+		std::vector<AgentBehaviourSchemaField> const* getSchemaAtRevision(
+			uint64_t revision) const
+		{
+			auto const found = mSchemaHistory.find(revision);
+			return found == mSchemaHistory.end() ? nullptr : &found->second;
+		}
+		std::map<uint64_t, std::vector<AgentBehaviourSchemaField>> const&
+			getSchemaHistory() const { return mSchemaHistory; }
 		AgentBehaviourModuleStatus getModuleStatus() const { return mModuleStatus; }
 		std::string const& getModuleDiagnostic() const { return mModuleDiagnostic; }
 		std::string const& getModuleTraceback() const { return mModuleTraceback; }
