@@ -2451,6 +2451,7 @@ namespace
 			if (world->hasAttachedAgentTagRegistry())
 				(void)agentTagRegistryDocumentHistory(world->getAgentTagRegistry());
 			gWorldFilepath = normalized;
+			setWindowTitle(filesystem::path(gWorldFilepath).filename().string());
 			addRecentFile(gWorldFilepath);
 			clearDocumentState();
 			gWorldDocumentHistory.markSaved();

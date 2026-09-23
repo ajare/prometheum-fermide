@@ -169,6 +169,11 @@ namespace
 	}
 }
 
+void setWindowTitle(string const& title)
+{
+	if (gWindow) SDL_SetWindowTitle(gWindow, title.c_str());
+}
+
 SDL_Window* createWindow()
 {
 	if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_GAMECONTROLLER) != 0)
