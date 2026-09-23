@@ -75,6 +75,46 @@ namespace core
 		auto occupant = find(resource.mOccupants.begin(), resource.mOccupants.end(), request->mOwner);
 		if (occupant == resource.mOccupants.end())
 		{
+			auto actor = mWorld.mAgents.find(request->mOwner);
+
+			// A reserved slot means this passenger is already walking through the
+			// platform's single virtual crossing lane. Keep that transfer alive even
+			// after the exact boarding cutoff closes to new admissions; the scheduler
+			// interlocks departure on the boundary owner.
+			if (request->mCapacityPosition != ~0u)
+			{
+				auto const position = request->mCapacityPosition;
+				if (!actor || position >= resource.mCapacityPositions.size()
+					|| resource.mAdmissionReservations[position] != requestId
+					|| resource.mVirtualBoundaryOwners.empty()
+					|| resource.mVirtualBoundaryOwners.front() != requestId)
+				{
+					denyTraversalRequest(requestId);
+					return;
+				}
+				auto location = mWorld.mSectors[(size_t)resource.mLiftSector.value - 1].get();
+				auto target = location->getPosition() + resource.mCapacityPositions[position];
+				auto const crossingCenter = resource.mLift->getPosition().x
+					+ resource.mLift->getSize().x * 0.5f;
+				auto const crossingHalfWidth = CORE_PLATFORM_LIFT_CROSSING_HALF_WIDTH(
+					resource.mLift->getSize().x);
+				target.x = clamp(target.x, crossingCenter - crossingHalfWidth,
+					crossingCenter + crossingHalfWidth);
+				target.y = resource.mLiftPosition;
+				actor->mTraversalLocalGoal = target;
+				if (actor->getGlobalPosition().distanceTo(target) > 0.001f) return;
+
+				resource.mAdmissionReservations[position] = {};
+				resource.mOccupants[position] = request->mOwner;
+				resource.mVirtualBoundaryOwners.front() = {};
+				request->mCapacityPosition = ~0u;
+				actor->mTraversalLocalGoal.reset();
+				resource.mLiftPassenger = {};
+				for (auto passenger : resource.mOccupants)
+					if (passenger) { resource.mLiftPassenger = passenger; break; }
+				return;
+			}
+
 			if (!request->mQueueTicket)
 			{
 				request->mQueueTicket = QueueTicketId{ mWorld.mNextQueueTicketValue++ };
@@ -102,7 +142,6 @@ namespace core
 
 			// Calling the platform establishes logical priority; after the physical
 			// interaction completes, join this stop's ordinary reserved-position lane.
-			auto actor = mWorld.mAgents.find(request->mOwner);
 			if (request->mQueueApproach == ~0u) attachQueueTicket(requestId, resource);
 			if (request->mQueueApproach >= resource.mQueueLanes.size()
 				|| request->mQueuePosition == ~0u) return;
@@ -111,8 +150,9 @@ namespace core
 				|| actor->getGlobalPosition().distanceTo(
 					queueLane.positions[request->mQueuePosition]) > 0.001f) return;
 
-			// Boarding is an instantaneous boundary transfer. A passenger that has not
-			// reached its queue head by the exact cutoff remains queued for the next visit.
+			// Boarding admission claims the virtual crossing lane. A passenger that has
+			// not reached its queue head by the exact cutoff remains queued for the next
+			// visit; an admitted passenger walks through the lane before becoming an occupant.
 			if (resource.mLiftMoving || resource.mLiftCurrentStop != origin
 				|| resource.mLiftStopPhase != LiftStopPhase::Boarding
 				|| mWorld.mSimulationTick >= resource.mLiftBoardingCutoffTick
@@ -132,29 +172,29 @@ namespace core
 				});
 			if (selected == resource.mAdmissionQueue.end() || *selected != requestId) return;
 
-			auto position = find_if(resource.mOccupants.begin(), resource.mOccupants.end(),
-				[](AgentId value) { return !value; });
-			if (position == resource.mOccupants.end()) return;
-			auto capacityPosition = (uint32_t)distance(resource.mOccupants.begin(), position);
-			*position = request->mOwner;
+			if (resource.mVirtualBoundaryOwners.empty()
+				|| resource.mVirtualBoundaryOwners.front()) return;
+			uint32_t capacityPosition = ~0u;
+			for (uint32_t i = 0; i < resource.mOccupants.size(); ++i)
+				if (!resource.mOccupants[i] && !resource.mAdmissionReservations[i])
+				{ capacityPosition = i; break; }
+			if (capacityPosition == ~0u) return;
+
+			// Claim the lane and capacity before releasing the queue position. The
+			// Agent then crosses at ordinary walking speed to the same separated
+			// standing position used by a normal Lift.
+			resource.mAdmissionReservations[capacityPosition] = requestId;
+			resource.mVirtualBoundaryOwners.front() = requestId;
+			request->mCapacityPosition = capacityPosition;
 			resource.mAdmissionQueue.erase(remove(resource.mAdmissionQueue.begin(),
 				resource.mAdmissionQueue.end(), requestId), resource.mAdmissionQueue.end());
 			auto& laneQueue = resource.mQueueLanes[request->mQueueApproach].queue;
 			laneQueue.erase(remove(laneQueue.begin(), laneQueue.end(), requestId), laneQueue.end());
 			request->mQueuePosition = ~0u;
-			request->mCapacityPosition = ~0u;
 			request->mPreparationRequested = false;
 			request->mPreparationOperation = {};
 
 			auto location = mWorld.mSectors[(size_t)resource.mLiftSector.value - 1].get();
-			auto const halfWidth = CORE_AGENT_MAX_WIDTH * 0.5f;
-			auto const platformX0 = resource.mLift->getPosition().x;
-			auto const platformX1 = platformX0 + resource.mLift->getSize().x;
-			auto entryX = queueLane.direction.x > 0.0f
-				? platformX1 - halfWidth : platformX0 + halfWidth;
-			actor->setPosition({ location,
-				{ entryX - location->getPosition().x,
-					resource.mLiftPosition - location->getPosition().y } }, false);
 			auto target = location->getPosition() + resource.mCapacityPositions[capacityPosition];
 			target.y = resource.mLiftPosition;
 			actor->mTraversalLocalGoal = target;

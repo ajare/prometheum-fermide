@@ -250,6 +250,20 @@ namespace core
 				[](auto id) { return (bool)id; });
 			auto unresolvedDestination = any_of(resource.mOccupants.begin(), resource.mOccupants.end(), [&](auto owner)
 				{ return owner && !resource.mLiftPassengerDestinations.contains(owner); });
+			bool occupantsPositioned = true;
+			if (resource.mLift && !resource.mOpenPlatformLift)
+			{
+				auto transit = mWorld.mSectors[(size_t)resource.mLiftSector.value - 1].get();
+				for (uint32_t i = 0; i < resource.mOccupants.size(); ++i)
+					if (auto passenger = mWorld.mAgents.find(resource.mOccupants[i]))
+					{
+						auto local = resource.mCapacityPositions[i];
+						local.y += resource.mLiftPosition - transit->getPosition().y;
+						if (passenger->getGlobalPosition().distanceTo(
+							transit->getPosition() + local) > 0.001f)
+							occupantsPositioned = false;
+					}
+			}
 			bool waitingHere = hasWaitingAdmissionAtStop(resource.mLiftCurrentStop);
 
 			bool closeStop = false;
@@ -257,13 +271,16 @@ namespace core
 			{
 				if (resource.mOpenPlatformLift)
 				{
-					// A Platform Lift has one exact per-stop timer. Waiting callers neither
-					// shorten nor extend it; callers missing the cutoff retain their requests.
-					closeStop = mWorld.mSimulationTick >= resource.mLiftBoardingCutoffTick;
+					// A Platform Lift has one exact admission cutoff. Waiting callers do not
+					// extend it, but a passenger admitted before it must finish walking through
+					// the crossing lane and selecting a destination before the car closes.
+					closeStop = mWorld.mSimulationTick >= resource.mLiftBoardingCutoffTick
+						&& !crossing && !reserved && !unresolvedDestination
+						&& !resource.mLiftActiveConfirmation;
 				}
 				else closeStop = mWorld.mSimulationTick
 						>= resource.mLiftServiceStartedTick + resource.mLiftMinimumDwellTicks
-					&& !crossing && !reserved && !unresolvedDestination
+					&& !crossing && !reserved && !unresolvedDestination && occupantsPositioned
 					&& !resource.mLiftActiveConfirmation
 					&& (occupied == resource.mCapacity
 						|| mWorld.mSimulationTick > resource.mLiftBoardingCutoffTick || !waitingHere);
@@ -339,9 +356,8 @@ namespace core
 					}
 					else if (resource.mOpenPlatformLift)
 					{
-						// The open platform may depart while a newly boarded passenger is still
-						// walking to their spot. Translate their current position with the car
-						// and keep the reserved spot as an ordinary walking goal.
+						// Platform Lift occupants stand at the same separated capacity positions
+						// as enclosed Lift passengers. Translate those positions with the car.
 						auto vehicleDelta = resource.mLiftPosition - previousVehiclePosition;
 						if (abs(vehicleDelta) > 0.0f)
 							passenger->setPosition({ transit,
@@ -350,10 +366,18 @@ namespace core
 						target.y = resource.mLiftPosition;
 						passenger->mTraversalLocalGoal = target;
 					}
-					else if (resource.mLiftMoving)
+					else
 					{
 						local.y += resource.mLiftPosition - transit->getPosition().y;
-						passenger->setPosition({ transit, local }, false);
+						auto target = transit->getPosition() + local;
+						if (resource.mLiftMoving)
+						{
+							passenger->setPosition({ transit, local }, false);
+							passenger->mTraversalLocalGoal.reset();
+						}
+						else if (passenger->getGlobalPosition().distanceTo(target) > 0.001f)
+							passenger->mTraversalLocalGoal = target;
+						else passenger->mTraversalLocalGoal.reset();
 					}
 				}
 		}

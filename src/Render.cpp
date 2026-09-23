@@ -1067,6 +1067,24 @@ void renderLift(shared_ptr<const core::Lift> lift, uint32_t /* layer */, LayerRe
 }
 
 
+void renderPlatformLift(shared_ptr<const core::LiftSectorObject> const& platformLift,
+	uint32_t layer, LayerRenderStyle style, bool selected, ImDrawList* drawList)
+{
+	// The moving platform is only a thin slab, so also show the full authored
+	// shaft occupied by its stops. Keep this outline subdued so Walkways and the
+	// platform itself remain the dominant geometry.
+	core::Vector2 bounds0, bounds1;
+	platformLift->getBounds(bounds0, bounds1);
+	transformPosition(bounds0);
+	transformPosition(bounds1);
+	ImVec2 topLeft{ min(bounds0.x, bounds1.x), min(bounds0.y, bounds1.y) };
+	ImVec2 bottomRight{ max(bounds0.x, bounds1.x), max(bounds0.y, bounds1.y) };
+	drawList->AddRect(topLeft, bottomRight, ImColor(128, 128, 192, 72));
+
+	renderLift(platformLift->getLift(), layer, style, selected, drawList);
+}
+
+
 void renderShuttle(shared_ptr<const core::Shuttle> shuttle, uint32_t /* layer */, LayerRenderStyle /* style */, bool /* selected */, ImDrawList* drawList)
 {
 	core::Vector2 bounds0, bounds1;
@@ -1311,7 +1329,8 @@ void renderSectorObjects(shared_ptr<const core::Sector> sector, uint32_t layer, 
 		case core::SectorObjectType::Lift:
 			if (flags & RENDER_SECTOR_OBJECTS_INFRONT)
 			{
-				renderLift(static_pointer_cast<const core::LiftSectorObject>(object)->getLift(), layer, style, selected, drawList);
+				renderPlatformLift(static_pointer_cast<const core::LiftSectorObject>(object),
+					layer, style, selected, drawList);
 			}
 			break;
 

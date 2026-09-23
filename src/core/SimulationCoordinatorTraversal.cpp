@@ -400,8 +400,11 @@ namespace core
 				}
 				else
 				{
+					// Crossing commits occupancy at the car threshold. Keep that physical
+					// entry position and walk to the separated interior slot normally rather
+					// than snapping there as soon as the Agent enters the Lift.
 					local.y += lift->mLiftPosition - destinationSector->getPosition().y;
-					agent.setPosition({ destinationSector.get(), local }, false);
+					agent.mTraversalLocalGoal = destinationSector->getPosition() + local;
 				}
 			}
 			else if (request->mSourceSector == lift->mLiftSector

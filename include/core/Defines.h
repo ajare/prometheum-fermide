@@ -79,6 +79,10 @@ namespace core
 // agent's width, halved. A 1-cell door yields +/-0.2; a 3-cell door +/-1.2.
 #define CORE_DOOR_CROSSING_HALF_WIDTH(cellsWide)		\
 	(((float)(cellsWide) - 2.0f * CORE_DOOR_X_INSET - CORE_AGENT_MAX_WIDTH) * 0.5f)
+// An open Platform Lift has no doorway insets. Its single crossing lane spans
+// every centre position at which the maximum-width Agent remains fully aboard.
+#define CORE_PLATFORM_LIFT_CROSSING_HALF_WIDTH(cellsWide)	\
+	(((float)(cellsWide) - CORE_AGENT_MAX_WIDTH) * 0.5f)
 
 //
 // Bulkhead doors

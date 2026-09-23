@@ -253,6 +253,8 @@ namespace core
 		if (resource.mLiftAdmissionReservation == requestId) resource.mLiftAdmissionReservation = {};
 		if (resource.mOpenPlatformLift)
 		{
+			for (auto& boundaryOwner : resource.mVirtualBoundaryOwners)
+				if (boundaryOwner == requestId) boundaryOwner = {};
 			resource.mOpenPlatformMissedBoarding.erase(requestId);
 			resource.mOpenPlatformMissedPositions.erase(requestId);
 			for (auto& lane : resource.mQueueLanes)

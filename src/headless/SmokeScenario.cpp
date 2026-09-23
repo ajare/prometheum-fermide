@@ -3203,8 +3203,10 @@ namespace
 
 		bool sawPhysicalQueuePosition = false;
 		bool sawOnboard = false;
-		bool sawInstantBoarding = false;
+		bool sawBoardingCrossing = false;
+		bool boardingStayedAtWalkSpeed = true;
 		bool fullyInsideWhenRegistered = false;
+		bool registeredAtAssignedPosition = false;
 		bool reachedAssignedPosition = false;
 		bool exitedTowardNextVertex = false;
 		bool checkedExitDirection = false;
@@ -3238,21 +3240,24 @@ namespace
 					== expectedStopTicks) sawConfiguredStopDuration = true;
 			auto onboard = platform->occupantCount == 1;
 			sawOnboard = sawOnboard || onboard;
+			sawBoardingCrossing = sawBoardingCrossing
+				|| (!onboard && platform->virtualBoundaryCrossingCount == 1);
+			if (platform->virtualBoundaryCrossingCount > 1) return false;
+			auto const assignedX = world.getSector(room)->getPosition().x
+				+ platform->capacityPositions.front().position.x;
 			if (onboard && !wasOnboard)
 			{
-				sawInstantBoarding = passenger->getGlobalPosition().distanceTo(previousPosition)
-					> passenger->getWalkSpeed() * world.getFixedTimestep() + 0.001f;
+				boardingStayedAtWalkSpeed = passenger->getGlobalPosition().distanceTo(previousPosition)
+					<= passenger->getWalkSpeed() * world.getFixedTimestep() + 0.001f;
 				auto const centerX = passenger->getGlobalPosition().x;
 				fullyInsideWhenRegistered = centerX - CORE_AGENT_MAX_WIDTH * 0.5f >= 2.0f - 0.001f
 					&& centerX + CORE_AGENT_MAX_WIDTH * 0.5f <= 3.0f + 0.001f;
+				registeredAtAssignedPosition = std::abs(centerX - assignedX) < 0.01f;
 			}
 			if (onboard)
 			{
-				auto assignedX = world.getSector(room)->getPosition().x
-					+ platform->capacityPositions.front().position.x;
 				reachedAssignedPosition = reachedAssignedPosition
 					|| std::abs(passenger->getGlobalPosition().x - assignedX) < 0.01f;
-
 			}
 			for (auto const& operation : snapshot.deviceOperations)
 				if (operation.command.type == core::DeviceCommandType::SelectLiftDestination
@@ -3280,7 +3285,8 @@ namespace
 			[&](auto const& resource) { return resource.id == created.traversalResource; });
 		return sawPhysicalQueuePosition && sawOnboard
 			&& sawConfiguredStopDuration
-			&& sawInstantBoarding && fullyInsideWhenRegistered
+			&& sawBoardingCrossing && boardingStayedAtWalkSpeed
+			&& fullyInsideWhenRegistered && registeredAtAssignedPosition
 			&& reachedAssignedPosition
 			&& exitedTowardNextVertex && sawAttachedMotion && sawDestinationConfirmation
 			&& passenger->getState() == core::Agent::State::Idle
@@ -3288,6 +3294,70 @@ namespace
 			&& passenger->getGlobalPosition().distanceTo(target->getPosition()) < 0.001f
 			&& platform != final.traversalResources.end() && platform->occupantCount == 0
 			&& platform->virtualBoundaryCrossingCount == 0;
+	}
+
+	bool openPlatformLiftCrossingLaneSpreadsPassengers()
+	{
+		core::World world("Platform lift crossing lane", 7, 4);
+		auto room = world.addRoom("Platform room", 0, 0, 0, 6, 3);
+		core::World::CreateLiftOptions options;
+		options.cellsWide = 1;
+		options.stopOffsets = { 0, 2 };
+		options.capacity = 2;
+		options.platformStopDurationSeconds = 10.0f;
+		for (uint32_t x = 0; x < 6; ++x) world.addSectorWalkway(room, 2, x);
+		auto created = world.addSectorPlatformLift(room, 0, 2, options);
+		uint32_t destinationVertexId;
+		world.addSectorMarker(room, 2, 5.5f, &destinationVertexId);
+		world.finishBuild();
+
+		auto destination = world.getGraph()->getVertexByIdentifier(destinationVertexId);
+		std::vector<core::Agent*> passengers;
+		for (float x : { 0.5f, 1.0f })
+		{
+			auto id = world.createAgent("Platform passenger", room, 0, x);
+			auto passenger = world.lookupAgent(id).entity;
+			auto path = world.getGraph()->calculatePath(passenger, destination);
+			if (!path) return false;
+			passenger->setPath(path, true);
+			passengers.push_back(passenger);
+		}
+
+		if (std::abs(CORE_PLATFORM_LIFT_CROSSING_HALF_WIDTH(options.cellsWide) * 2.0f
+			- ((float)options.cellsWide - CORE_AGENT_MAX_WIDTH)) > 0.001f) return false;
+		bool sawTwoPassengersSpread = false;
+		for (uint32_t tick = 0; tick < MaximumSimulationTicks * 12; ++tick)
+		{
+			world.advanceTick();
+			auto snapshot = world.getSimulationSnapshot();
+			auto platform = std::find_if(snapshot.traversalResources.begin(),
+				snapshot.traversalResources.end(), [&](auto const& resource)
+				{ return resource.id == created.traversalResource; });
+			if (platform == snapshot.traversalResources.end()
+				|| platform->virtualBoundaryCrossingCount > 1) return false;
+			if (platform->occupantCount == 2)
+			{
+				auto const roomX = world.getSector(room)->getPosition().x;
+				bool bothAtSeparatedPositions = true;
+				for (auto const& slot : platform->capacityPositions)
+				{
+					if (!slot.occupant) { bothAtSeparatedPositions = false; break; }
+					auto passenger = world.lookupAgent(slot.occupant).entity;
+					if (!passenger || std::abs(passenger->getGlobalPosition().x
+						- (roomX + slot.position.x)) > 0.01f)
+					{ bothAtSeparatedPositions = false; break; }
+				}
+				sawTwoPassengersSpread = sawTwoPassengersSpread || bothAtSeparatedPositions;
+			}
+			if (std::all_of(passengers.begin(), passengers.end(), [](auto passenger)
+				{ return passenger->getState() == core::Agent::State::Idle; })) break;
+		}
+		return sawTwoPassengersSpread
+			&& std::all_of(passengers.begin(), passengers.end(), [&](auto passenger)
+			{
+				return passenger->getState() == core::Agent::State::Idle
+					&& passenger->getGlobalPosition().distanceTo(destination->getPosition()) < 0.001f;
+			});
 	}
 
 	bool openPlatformLiftUsesOneJourneyAcrossIntermediateStops()
@@ -3374,11 +3444,16 @@ namespace
 		bool sawIntentWithoutDispatch = false;
 		bool sawReservedCapacity = false;
 		bool sawOnboard = false;
+		bool enteredAtWalkSpeed = false;
+		bool enteredBeforeAssignedPosition = false;
+		bool walkedToAssignedPosition = false;
 		bool sawConfirmedDestination = false;
 		bool sawMovingAttachedPassenger = false;
 		bool sawQueuedDebug = false, sawEnteringDebug = false;
 		bool sawInLiftDebug = false, sawExitingDebug = false;
 		bool climbedTowardLandingCallButton = false;
+		bool wasOnboard = false;
+		auto previousPosition = passenger->getGlobalPosition();
 		for (uint32_t i = 0; i < MaximumSimulationTicks * 4
 			&& passenger->getState() != core::Agent::State::Idle; ++i)
 		{
@@ -3412,8 +3487,30 @@ namespace
 					}))
 				sawIntentWithoutDispatch = true;
 			sawReservedCapacity = sawReservedCapacity || lift->admissionReservationCount == 1;
-			sawOnboard = sawOnboard || (lift->liftPassenger == passengerId
-				&& passenger->getSector() == world.getSector(created.lift.sector->getIndex()).get());
+			auto const onboard = lift->liftPassenger == passengerId
+				&& passenger->getSector() == world.getSector(created.lift.sector->getIndex()).get();
+			sawOnboard = sawOnboard || onboard;
+			auto assigned = std::find_if(lift->capacityPositions.begin(), lift->capacityPositions.end(),
+				[&](auto const& position) { return position.occupant == passengerId; });
+			if (onboard && assigned != lift->capacityPositions.end())
+			{
+				auto const assignedX = world.getSector(created.lift.sector->getIndex())->getPosition().x
+					+ assigned->position.x;
+				if (!wasOnboard)
+				{
+					enteredAtWalkSpeed = passenger->getGlobalPosition().distanceTo(previousPosition)
+						<= passenger->getWalkSpeed() * world.getFixedTimestep() + 0.001f;
+					enteredBeforeAssignedPosition = std::abs(
+						passenger->getGlobalPosition().x - assignedX) > 0.01f;
+				}
+				else if (std::abs(passenger->getGlobalPosition().x - previousPosition.x) > 0.0001f)
+				{
+					if (passenger->getGlobalPosition().distanceTo(previousPosition)
+						> passenger->getWalkSpeed() * world.getFixedTimestep() + 0.001f) return false;
+					walkedToAssignedPosition = walkedToAssignedPosition
+						|| std::abs(passenger->getGlobalPosition().x - assignedX) < 0.01f;
+				}
+			}
 			for (auto const& operation : snapshot.deviceOperations)
 				if (operation.command.type == core::DeviceCommandType::SelectLiftDestination
 					&& operation.state == core::DeviceOperationState::Succeeded)
@@ -3427,11 +3524,14 @@ namespace
 				if (std::abs(passenger->getGlobalPosition().y - lift->liftPosition) < 0.001f)
 					sawMovingAttachedPassenger = true;
 			}
+			wasOnboard = onboard;
+			previousPosition = passenger->getGlobalPosition();
 		}
 		auto final = world.getSimulationSnapshot();
 		auto lift = std::find_if(final.traversalResources.begin(), final.traversalResources.end(),
 			[&](auto const& resource) { return resource.id == created.traversalResource; });
 		return sawIntentWithoutDispatch && sawReservedCapacity && sawOnboard
+			&& enteredAtWalkSpeed && enteredBeforeAssignedPosition && walkedToAssignedPosition
 			&& sawConfirmedDestination && sawMovingAttachedPassenger
 			&& sawQueuedDebug && sawEnteringDebug && sawInLiftDebug && sawExitingDebug
 			&& !climbedTowardLandingCallButton
@@ -5678,6 +5778,11 @@ int main(int argc, char** argv)
 		if (!openPlatformLiftUsesVirtualBoundaryAndTransportPolicy())
 		{
 			std::cerr << "FAIL: open platform lift journey, virtual boundary, or attachment failed\n";
+			return 1;
+		}
+		if (!openPlatformLiftCrossingLaneSpreadsPassengers())
+		{
+			std::cerr << "FAIL: open platform lift crossing lane or passenger spreading failed\n";
 			return 1;
 		}
 		if (!openPlatformLiftUsesOneJourneyAcrossIntermediateStops())

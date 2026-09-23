@@ -1,0 +1,781 @@
+version: 15
+name: Lift Room Test 1
+randomSeed: 20250926
+cellsWide: 16
+levelsHigh: 4
+layers: 2
+layerNames:
+  - Layer 0
+  - Layer 1
+agentTagRegistry:
+  filename: test.tags.yaml
+  expectedUuid: 5e9a3a89-0519-4813-ae6d-3ca7362028de
+construction:
+  - type: room
+    name: Lift Room
+    layer: 0
+    y: 0
+    x: 0
+    cellsWide: 16
+    levelsHigh: 4
+    topLevelHeight: 0.9
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 1
+    xOffset: 0
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 1
+    xOffset: 1
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 1
+    xOffset: 2
+  - type: objectTombstone
+    sectorIndex: 0
+  - type: objectTombstone
+    sectorIndex: 0
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 1
+    xOffset: 5
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 1
+    xOffset: 6
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 1
+    xOffset: 9
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 1
+    xOffset: 10
+  - type: objectTombstone
+    sectorIndex: 0
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 1
+    xOffset: 12
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 1
+    xOffset: 13
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 1
+    xOffset: 14
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 1
+    xOffset: 15
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 2
+    xOffset: 0
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 2
+    xOffset: 1
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 2
+    xOffset: 2
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 2
+    xOffset: 3
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 2
+    xOffset: 4
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 2
+    xOffset: 5
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 2
+    xOffset: 6
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 2
+    xOffset: 7
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 2
+    xOffset: 9
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 2
+    xOffset: 10
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 2
+    xOffset: 11
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 2
+    xOffset: 12
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 2
+    xOffset: 13
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 2
+    xOffset: 14
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 2
+    xOffset: 15
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 3
+    xOffset: 0
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 3
+    xOffset: 1
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 3
+    xOffset: 2
+  - type: objectTombstone
+    sectorIndex: 0
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 3
+    xOffset: 4
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 3
+    xOffset: 5
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 3
+    xOffset: 6
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 3
+    xOffset: 9
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 3
+    xOffset: 10
+  - type: objectTombstone
+    sectorIndex: 0
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 3
+    xOffset: 12
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 3
+    xOffset: 13
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 3
+    xOffset: 14
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 3
+    xOffset: 15
+  - type: objectTombstone
+    sectorIndex: 0
+  - type: objectTombstone
+    sectorIndex: 0
+  - type: objectTombstone
+    sectorIndex: 0
+  - type: objectTombstone
+    sectorIndex: 0
+  - type: objectTombstone
+    sectorIndex: 0
+  - type: objectTombstone
+    sectorIndex: 0
+  - type: objectTombstone
+    sectorIndex: 0
+  - type: objectTombstone
+    sectorIndex: 0
+  - type: objectTombstone
+    sectorIndex: 0
+  - type: marker
+    sectorIndex: 0
+    levelIndex: 1
+    xOffset: 0.5
+    id: 1
+    name: Level 1 Left
+  - type: marker
+    sectorIndex: 0
+    levelIndex: 1
+    xOffset: 15.5
+    id: 2
+    name: Level 1 Right
+  - type: marker
+    sectorIndex: 0
+    levelIndex: 2
+    xOffset: 0.5
+    id: 3
+    name: Level 2 Left
+  - type: marker
+    sectorIndex: 0
+    levelIndex: 2
+    xOffset: 15.5
+    id: 4
+    name: Level 2 Right
+  - type: marker
+    sectorIndex: 0
+    levelIndex: 3
+    xOffset: 0.5
+    id: 5
+    name: Level 3 Left
+  - type: marker
+    sectorIndex: 0
+    levelIndex: 3
+    xOffset: 15.5
+    id: 6
+    name: Level 3 Right
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 3
+    xOffset: 7
+  - type: walkway
+    sectorIndex: 0
+    levelIndex: 3
+    xOffset: 8
+  - type: objectTombstone
+    sectorIndex: 0
+  - type: objectTombstone
+    sectorIndex: 0
+  - type: objectTombstone
+    sectorIndex: 0
+  - type: objectTombstone
+    sectorIndex: 0
+  - type: objectTombstone
+    sectorIndex: 0
+  - type: objectTombstone
+    sectorIndex: 0
+  - type: objectTombstone
+    sectorIndex: 0
+  - type: objectTombstone
+    sectorIndex: 0
+  - type: objectTombstone
+    sectorIndex: 0
+  - type: objectTombstone
+    sectorIndex: 0
+  - type: objectTombstone
+    sectorIndex: 0
+  - type: objectTombstone
+    sectorIndex: 0
+  - type: objectTombstone
+    sectorIndex: 0
+  - type: objectTombstone
+    sectorIndex: 0
+  - type: objectTombstone
+    sectorIndex: 0
+  - type: objectTombstone
+    sectorIndex: 0
+  - type: objectTombstone
+    sectorIndex: 0
+  - type: objectTombstone
+    sectorIndex: 0
+  - type: objectTombstone
+    sectorIndex: 0
+  - type: objectTombstone
+    sectorIndex: 0
+  - type: objectTombstone
+    sectorIndex: 0
+  - type: objectTombstone
+    sectorIndex: 0
+  - type: objectTombstone
+    sectorIndex: 0
+  - type: objectTombstone
+    sectorIndex: 0
+  - type: objectTombstone
+    sectorIndex: 0
+  - type: objectTombstone
+    sectorIndex: 0
+  - type: objectTombstone
+    sectorIndex: 0
+  - type: objectTombstone
+    sectorIndex: 0
+  - type: objectTombstone
+    sectorIndex: 0
+  - type: objectTombstone
+    sectorIndex: 0
+  - type: marker
+    sectorIndex: 0
+    levelIndex: 0
+    xOffset: 15.5
+    id: 7
+    name: Marker 1
+  - type: marker
+    sectorIndex: 0
+    levelIndex: 0
+    xOffset: 0.5625
+    id: 8
+    name: Marker 2
+  - type: marker
+    sectorIndex: 0
+    levelIndex: 3
+    xOffset: 9.765625
+    id: 9
+    name: Marker 3
+  - type: marker
+    sectorIndex: 0
+    levelIndex: 0
+    xOffset: 7.9375
+    id: 10
+    name: Marker 4
+  - type: removeMarker
+    sectorIndex: 0
+    objectIndex: 93
+    id: 10
+  - type: lift
+    layer: 1
+    y: 0
+    x: 1
+    cellsWide: 1
+    levelsHigh: 4
+    stopOffsets: [0, 1, 2, 3]
+    capacity: 2
+    minimumDwellSeconds: 0.75
+    maximumBoardingSeconds: 10
+    initialStop: 0
+  - type: lift
+    layer: 1
+    y: 0
+    x: 6
+    cellsWide: 1
+    levelsHigh: 4
+    stopOffsets: [0, 1, 2, 3]
+    capacity: 2
+    minimumDwellSeconds: 0.75
+    maximumBoardingSeconds: 10
+    initialStop: 0
+  - type: lift
+    layer: 1
+    y: 0
+    x: 11
+    cellsWide: 1
+    levelsHigh: 3
+    stopOffsets: [0, 2]
+    capacity: 2
+    minimumDwellSeconds: 0.75
+    maximumBoardingSeconds: 10
+    initialStop: 0
+  - type: lift
+    layer: 1
+    y: 0
+    x: 14
+    cellsWide: 1
+    levelsHigh: 4
+    stopOffsets: [0, 1, 2, 3]
+    capacity: 2
+    minimumDwellSeconds: 0.75
+    maximumBoardingSeconds: 10
+    initialStop: 0
+agentGroups:
+  []
+nextMarkerId: 11
+nextAgentGroupId: 1
+agents:
+  - id: 19
+    agent:
+      name: Agent 19
+      flags: 0
+      tags:
+        - 1
+      propertySamples:
+        - type: heightModifier
+          sourceTag: 1
+          propertyRevision: 10
+          value: 0.88
+    sector: 0
+    localX: 1.0625
+    localY: 0
+    path:
+      destinationSector: 0
+      destinationLocalX: 0.5
+      destinationLocalY: 1
+      active: true
+  - id: 20
+    agent:
+      name: Agent 20
+      flags: 0
+      tags:
+        - 1
+      propertySamples:
+        - type: heightModifier
+          sourceTag: 1
+          propertyRevision: 10
+          value: 0.88
+    sector: 0
+    localX: 7.03125
+    localY: 0
+    path:
+      destinationSector: 0
+      destinationLocalX: 15.5
+      destinationLocalY: 2
+      active: true
+  - id: 21
+    agent:
+      name: Agent 21
+      flags: 0
+      tags:
+        - 1
+      propertySamples:
+        - type: heightModifier
+          sourceTag: 1
+          propertyRevision: 10
+          value: 0.88
+    sector: 0
+    localX: 9.609375
+    localY: 0
+    path:
+      destinationSector: 0
+      destinationLocalX: 0.5
+      destinationLocalY: 3
+      active: true
+  - id: 22
+    agent:
+      name: Agent 22
+      flags: 0
+      tags:
+        - 2
+      propertySamples:
+        - type: heightModifier
+          sourceTag: 2
+          propertyRevision: 8
+          value: 0.76
+    sector: 0
+    localX: 13.25
+    localY: 0
+    path:
+      destinationSector: 0
+      destinationLocalX: 15.5
+      destinationLocalY: 1
+      active: true
+  - id: 23
+    agent:
+      name: Agent 23
+      flags: 0
+      tags:
+        - 1
+      propertySamples:
+        - type: heightModifier
+          sourceTag: 1
+          propertyRevision: 10
+          value: 0.88
+    sector: 0
+    localX: 15.140625
+    localY: 0
+    path:
+      destinationSector: 0
+      destinationLocalX: 0.5
+      destinationLocalY: 2
+      active: true
+  - id: 24
+    agent:
+      name: Agent 24
+      flags: 0
+      tags:
+        - 1
+      propertySamples:
+        - type: heightModifier
+          sourceTag: 1
+          propertyRevision: 10
+          value: 0.88
+    sector: 0
+    localX: 8.40625
+    localY: 0
+    path:
+      destinationSector: 0
+      destinationLocalX: 15.5
+      destinationLocalY: 3
+      active: true
+  - id: 25
+    agent:
+      name: Agent 25
+      flags: 0
+      tags:
+        - 1
+      propertySamples:
+        - type: heightModifier
+          sourceTag: 1
+          propertyRevision: 10
+          value: 0.88
+    sector: 0
+    localX: 3.71875
+    localY: 0
+    path:
+      destinationSector: 0
+      destinationLocalX: 15.5
+      destinationLocalY: 1
+      active: true
+  - id: 26
+    agent:
+      name: Agent 26
+      flags: 0
+      tags:
+        - 2
+      propertySamples:
+        - type: heightModifier
+          sourceTag: 2
+          propertyRevision: 8
+          value: 0.76
+    sector: 0
+    localX: 2.75
+    localY: 0
+    path:
+      destinationSector: 0
+      destinationLocalX: 0.5
+      destinationLocalY: 2
+      active: true
+  - id: 27
+    agent:
+      name: Agent 27
+      flags: 0
+      tags:
+        - 2
+      propertySamples:
+        - type: heightModifier
+          sourceTag: 2
+          propertyRevision: 8
+          value: 0.76
+    sector: 0
+    localX: 11.359375
+    localY: 0
+    path:
+      destinationSector: 0
+      destinationLocalX: 0.5
+      destinationLocalY: 3
+      active: true
+  - id: 28
+    agent:
+      name: Agent 28
+      flags: 0
+      tags:
+        - 2
+      propertySamples:
+        - type: heightModifier
+          sourceTag: 2
+          propertyRevision: 8
+          value: 0.76
+    sector: 0
+    localX: 6.21875
+    localY: 0
+    path:
+      destinationSector: 0
+      destinationLocalX: 0.5
+      destinationLocalY: 1
+      active: true
+  - id: 29
+    agent:
+      name: Agent 29
+      flags: 0
+      tags:
+        - 1
+      propertySamples:
+        - type: heightModifier
+          sourceTag: 1
+          propertyRevision: 10
+          value: 0.88
+    sector: 0
+    localX: 12.21875
+    localY: 0
+    path:
+      destinationSector: 0
+      destinationLocalX: 15.5
+      destinationLocalY: 2
+      active: true
+  - id: 30
+    agent:
+      name: Agent 30
+      flags: 0
+      tags:
+        - 2
+      propertySamples:
+        - type: heightModifier
+          sourceTag: 2
+          propertyRevision: 8
+          value: 0.76
+    sector: 0
+    localX: 4.5
+    localY: 0
+    path:
+      destinationSector: 0
+      destinationLocalX: 15.5
+      destinationLocalY: 3
+      active: true
+  - id: 31
+    agent:
+      name: Agent 31
+      flags: 0
+      tags:
+        - 2
+      propertySamples:
+        - type: heightModifier
+          sourceTag: 2
+          propertyRevision: 8
+          value: 0.76
+    sector: 0
+    localX: 14.65625
+    localY: 3
+    path:
+      destinationSector: 0
+      destinationLocalX: 0.5625
+      destinationLocalY: 0
+      active: true
+  - id: 32
+    agent:
+      name: Agent 32
+      flags: 0
+      tags:
+        - 2
+      propertySamples:
+        - type: heightModifier
+          sourceTag: 2
+          propertyRevision: 8
+          value: 0.76
+    sector: 0
+    localX: 2.515625
+    localY: 3
+    path:
+      destinationSector: 0
+      destinationLocalX: 15.5
+      destinationLocalY: 0
+      active: true
+  - id: 33
+    agent:
+      name: Agent 33
+      flags: 0
+      tags:
+        - 2
+      propertySamples:
+        - type: heightModifier
+          sourceTag: 2
+          propertyRevision: 8
+          value: 0.76
+    sector: 0
+    localX: 5.15625
+    localY: 3
+    path:
+      destinationSector: 0
+      destinationLocalX: 0.5
+      destinationLocalY: 1
+      active: true
+  - id: 34
+    agent:
+      name: Agent 34
+      flags: 0
+      tags:
+        - 2
+      propertySamples:
+        - type: heightModifier
+          sourceTag: 2
+          propertyRevision: 8
+          value: 0.76
+    sector: 0
+    localX: 9.046875
+    localY: 3
+    path:
+      destinationSector: 0
+      destinationLocalX: 15.5
+      destinationLocalY: 2
+      active: true
+  - id: 35
+    agent:
+      name: Agent 35
+      flags: 0
+      tags:
+        - 2
+      propertySamples:
+        - type: heightModifier
+          sourceTag: 2
+          propertyRevision: 8
+          value: 0.76
+    sector: 0
+    localX: 11.484375
+    localY: 2
+    path:
+      destinationSector: 0
+      destinationLocalX: 15.5
+      destinationLocalY: 1
+      active: true
+  - id: 36
+    agent:
+      name: Agent 36
+      flags: 0
+      tags:
+        - 2
+      propertySamples:
+        - type: heightModifier
+          sourceTag: 2
+          propertyRevision: 8
+          value: 0.76
+    sector: 0
+    localX: 4.421875
+    localY: 2
+    path:
+      destinationSector: 0
+      destinationLocalX: 0.5
+      destinationLocalY: 3
+      active: true
+  - id: 37
+    agent:
+      name: Agent 37
+      flags: 0
+      tags:
+        - 2
+      propertySamples:
+        - type: heightModifier
+          sourceTag: 2
+          propertyRevision: 8
+          value: 0.76
+    sector: 0
+    localX: 0.953125
+    localY: 1
+    path:
+      destinationSector: 0
+      destinationLocalX: 0.5
+      destinationLocalY: 2
+      active: true
+  - id: 38
+    agent:
+      name: Agent 38
+      flags: 0
+      tags:
+        - 2
+      propertySamples:
+        - type: heightModifier
+          sourceTag: 2
+          propertyRevision: 8
+          value: 0.76
+    sector: 0
+    localX: 6
+    localY: 1
+    path:
+      destinationSector: 0
+      destinationLocalX: 9.765625
+      destinationLocalY: 3
+      active: true
+  - id: 39
+    agent:
+      name: Agent 39
+      flags: 0
+      tags:
+        - 1
+      propertySamples:
+        - type: heightModifier
+          sourceTag: 1
+          propertyRevision: 10
+          value: 0.88
+    sector: 0
+    localX: 13.4375
+    localY: 1
+    path:
+      destinationSector: 0
+      destinationLocalX: 15.5
+      destinationLocalY: 0
+      active: true
