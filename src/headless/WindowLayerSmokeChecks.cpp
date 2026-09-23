@@ -81,7 +81,7 @@ namespace
 version: 4
 name: Legacy Back-most Window
 cellsWide: 8
-decksHigh: 2
+levelsHigh: 2
 layers: 3
 layerNames:
   - Layer 0
@@ -93,29 +93,29 @@ construction:
     y: 0
     x: 0
     cellsWide: 8
-    decksHigh: 1
+    levelsHigh: 1
   - type: room
     name: Mid
     layer: 1
     y: 0
     x: 0
     cellsWide: 8
-    decksHigh: 1
-    topDeckHeight: 0.9
+    levelsHigh: 1
+    topLevelHeight: 0.9
   - type: room
     name: Deep
     layer: 2
     y: 0
     x: 0
     cellsWide: 8
-    decksHigh: 1
-    topDeckHeight: 0.9
+    levelsHigh: 1
+    topLevelHeight: 0.9
   - type: window
     layer: 2
     y: 0
     x: 3
     cellsWide: 1
-    decksHigh: 1
+    levelsHigh: 1
     traversable: true
     initialState: closed
     style: clear

@@ -452,7 +452,7 @@ namespace
 		auto const yaml = R"yaml(version: 5
 name: Hand authored crossing
 cellsWide: 12
-decksHigh: 3
+levelsHigh: 3
 layers: 3
 construction:
   - type: room
@@ -461,14 +461,14 @@ construction:
     y: 0
     x: 0
     cellsWide: 12
-    decksHigh: 1
-    topDeckHeight: 0.9
+    levelsHigh: 1
+    topLevelHeight: 0.9
   - type: background
     layer: 1
     y: 0
     x: 0
     cellsWide: 6
-    decksHigh: 1
+    levelsHigh: 1
     colour: 13148200
   - type: room
     name: Behind
@@ -476,22 +476,22 @@ construction:
     y: 0
     x: 6
     cellsWide: 6
-    decksHigh: 1
-    topDeckHeight: 0.9
+    levelsHigh: 1
+    topLevelHeight: 0.9
   - type: room
     name: Deep
     layer: 2
     y: 0
     x: 0
     cellsWide: 12
-    decksHigh: 1
-    topDeckHeight: 0.9
+    levelsHigh: 1
+    topLevelHeight: 0.9
   - type: window
     layer: 0
     y: 0
     x: 1
     cellsWide: 2
-    decksHigh: 1
+    levelsHigh: 1
     traversable: true
     initialState: open
     style: clear

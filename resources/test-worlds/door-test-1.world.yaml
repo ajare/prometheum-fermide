@@ -1,8 +1,8 @@
-version: 14
+version: 15
 name: Untitled
 randomSeed: 0
 cellsWide: 16
-decksHigh: 6
+levelsHigh: 6
 layers: 2
 layerNames:
   - Layer 0
@@ -19,29 +19,29 @@ construction:
     y: 0
     x: 0
     cellsWide: 16
-    decksHigh: 1
+    levelsHigh: 1
   - type: corridor
     layer: 0
     y: 1
     x: 0
     cellsWide: 16
-    decksHigh: 1
+    levelsHigh: 1
   - type: room
     name: Room 1
     layer: 1
     y: 0
     x: 4
     cellsWide: 8
-    decksHigh: 1
-    topDeckHeight: 0.9
+    levelsHigh: 1
+    topLevelHeight: 0.9
   - type: room
     name: Room 2
     layer: 1
     y: 1
     x: 0
     cellsWide: 16
-    decksHigh: 1
-    topDeckHeight: 0.9
+    levelsHigh: 1
+    topLevelHeight: 0.9
   - type: objectTombstone
     sectorIndex: 0
   - type: objectTombstone
@@ -51,7 +51,7 @@ construction:
     y: 0
     x: 4
     cellsWide: 2
-    decksHigh: 1
+    levelsHigh: 1
     traversable: false
     initialState: closed
     style: clear
@@ -64,7 +64,7 @@ construction:
     y: 1
     x: 4
     cellsWide: 2
-    decksHigh: 1
+    levelsHigh: 1
     traversable: false
     initialState: closed
     style: clear
@@ -77,7 +77,7 @@ construction:
     y: 1
     x: 10
     cellsWide: 2
-    decksHigh: 1
+    levelsHigh: 1
     traversable: false
     initialState: closed
     style: clear
@@ -90,7 +90,7 @@ construction:
     y: 0
     x: 10
     cellsWide: 2
-    decksHigh: 1
+    levelsHigh: 1
     traversable: false
     initialState: closed
     style: clear
@@ -124,7 +124,7 @@ construction:
     openStyle: openUp
   - type: marker
     sectorIndex: 3
-    deckIndex: 0
+    levelIndex: 0
     xOffset: 0.5625
     id: 1
     name: Marker 1
@@ -132,13 +132,13 @@ construction:
     sectorIndex: 3
   - type: marker
     sectorIndex: 2
-    deckIndex: 0
+    levelIndex: 0
     xOffset: 0.640625
     id: 2
     name: Marker 2
   - type: marker
     sectorIndex: 2
-    deckIndex: 0
+    levelIndex: 0
     xOffset: 7.5
     id: 3
     name: Marker 3
@@ -148,37 +148,37 @@ construction:
     y: 2
     x: 6
     cellsWide: 4
-    decksHigh: 1
-    topDeckHeight: 0.9
+    levelsHigh: 1
+    topLevelHeight: 0.9
   - type: corridor
     layer: 0
     y: 2
     x: 0
     cellsWide: 6
-    decksHigh: 1
+    levelsHigh: 1
   - type: corridor
     layer: 0
     y: 2
     x: 10
     cellsWide: 6
-    decksHigh: 1
+    levelsHigh: 1
   - type: room
     name: Room 4
     layer: 1
     y: 2
     x: 6
     cellsWide: 4
-    decksHigh: 2
-    topDeckHeight: 0.9
+    levelsHigh: 2
+    topLevelHeight: 0.9
   - type: marker
     sectorIndex: 7
-    deckIndex: 0
+    levelIndex: 0
     xOffset: 3.53125
     id: 4
     name: Marker 4
   - type: marker
     sectorIndex: 7
-    deckIndex: 0
+    levelIndex: 0
     xOffset: 0.5625
     id: 5
     name: Marker 5
@@ -187,15 +187,15 @@ construction:
     y: 4
     x: 0
     cellsWide: 16
-    decksHigh: 1
+    levelsHigh: 1
   - type: room
     name: Room 5
     layer: 1
     y: 4
     x: 6
     cellsWide: 4
-    decksHigh: 2
-    topDeckHeight: 0.9
+    levelsHigh: 2
+    topLevelHeight: 0.9
   - type: door
     layer: 0
     y: 4
@@ -233,7 +233,7 @@ construction:
     y: 2
     x: 9
     cellsWide: 1
-    decksHigh: 1
+    levelsHigh: 1
     traversable: false
     initialState: closed
     style: clear
@@ -242,19 +242,19 @@ construction:
     y: 2
     x: 6
     cellsWide: 1
-    decksHigh: 1
+    levelsHigh: 1
     traversable: false
     initialState: closed
     style: clear
   - type: marker
     sectorIndex: 9
-    deckIndex: 0
+    levelIndex: 0
     xOffset: 3.3125
     id: 6
     name: Marker 6
   - type: marker
     sectorIndex: 9
-    deckIndex: 0
+    levelIndex: 0
     xOffset: 0.5625
     id: 7
     name: Marker 7
@@ -263,7 +263,7 @@ construction:
     y: 4
     x: 9
     cellsWide: 1
-    decksHigh: 1
+    levelsHigh: 1
     traversable: false
     initialState: closed
     style: clear
@@ -272,43 +272,43 @@ construction:
     y: 4
     x: 6
     cellsWide: 1
-    decksHigh: 1
+    levelsHigh: 1
     traversable: false
     initialState: closed
     style: clear
   - type: marker
     sectorIndex: 8
-    deckIndex: 0
+    levelIndex: 0
     xOffset: 13.75
     id: 8
     name: Marker 8
   - type: marker
     sectorIndex: 8
-    deckIndex: 0
+    levelIndex: 0
     xOffset: 1.9375
     id: 9
     name: Marker 9
   - type: marker
     sectorIndex: 1
-    deckIndex: 0
+    levelIndex: 0
     xOffset: 2.71875
     id: 10
     name: Marker 10
   - type: marker
     sectorIndex: 1
-    deckIndex: 0
+    levelIndex: 0
     xOffset: 13.34375
     id: 11
     name: Marker 11
   - type: marker
     sectorIndex: 3
-    deckIndex: 0
+    levelIndex: 0
     xOffset: 15.5
     id: 12
     name: Marker 12
   - type: removeWall
     sectorIndex: 6
-    deckIndex: 0
+    levelIndex: 0
     side: left
 agentGroups:
   - id: 1

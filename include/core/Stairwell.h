@@ -13,7 +13,7 @@ namespace core
 
 	class Stairwell : public Object
 	{
-		uint32_t mDecksHigh;
+		uint32_t mLevelsHigh;
 
 		int mMountSide;
 
@@ -24,16 +24,16 @@ namespace core
 
 	public:
 
-		Stairwell(uint32_t cellX, uint32_t cellY, uint32_t decksHigh, int mountSide);
+		Stairwell(uint32_t cellX, uint32_t cellY, uint32_t levelsHigh, int mountSide);
 
 		~Stairwell() = default;
 
-		[[nodiscard]] uint32_t getDecksHigh() const;
+		[[nodiscard]] uint32_t getLevelsHigh() const;
 
 		[[nodiscard]] int getMountSide() const;
 
-		// Local pathing/render geometry for one connection to the next deck.
-		[[nodiscard]] std::array<Vector2, 4> getDeckPath(uint32_t deckOffset) const;
+		// Local pathing/render geometry for one connection to the next level.
+		[[nodiscard]] std::array<Vector2, 4> getLevelPath(uint32_t levelOffset) const;
 
 		[[nodiscard]] TraversalResourceId getTraversalResourceId() const { return mTraversalResource; }
 

@@ -27,7 +27,7 @@ namespace core
 		std::shared_ptr<Lift> getLift() const;
 
 		// Overridden from VerticalEdgeCreator
-		[[nodiscard]] std::shared_ptr<Edge> createCrossDeckEdge(std::shared_ptr<VerticalEdgeCreator> edgeCreator) const override;
+		[[nodiscard]] std::shared_ptr<Edge> createCrossLevelEdge(std::shared_ptr<VerticalEdgeCreator> edgeCreator) const override;
 
 		// Overridden from SectorObject
 		[[nodiscard]] std::shared_ptr<Vertex> createVertex(std::shared_ptr<SectorObject> object, std::shared_ptr<Sector> sector, void* user = nullptr) const override;

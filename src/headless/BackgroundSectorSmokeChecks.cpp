@@ -150,22 +150,22 @@ namespace
 		}
 	}
 
-	// The base class needs a top deck height; nothing walks a Background's decks,
+	// The base class needs a top level height; nothing walks a Background's levels,
 	// so it is fixed at CORE_ROOM_MAX_HEIGHT and carries no capacity.
-	void theDeckGeometryIsFixed()
+	void theLevelGeometryIsFixed()
 	{
 		auto background = makeBackground();
 
-		require(background.getTopDeckHeight() == CORE_ROOM_MAX_HEIGHT,
-			"A Background's top deck height is not CORE_ROOM_MAX_HEIGHT");
+		require(background.getTopLevelHeight() == CORE_ROOM_MAX_HEIGHT,
+			"A Background's top level height is not CORE_ROOM_MAX_HEIGHT");
 		require(background.getCapacity() == 0, "A Background reports a capacity");
-		require(background.getCellsWide() == 5 && background.getDecksHigh() == 2,
+		require(background.getCellsWide() == 5 && background.getLevelsHigh() == 2,
 			"A Background does not report its size");
 		require(background.getCellX0() == 3 && background.getCellX1() == 7
 			&& background.getCellY0() == 4 && background.getCellY1() == 5,
 			"A Background does not cover the cells it was given");
 		require(background.getSize().y == 1.0f + CORE_ROOM_MAX_HEIGHT,
-			"A Background's height does not follow its decks");
+			"A Background's height does not follow its levels");
 	}
 
 	// Nothing is walkable on a Background: the cells it owns carry no floor.
@@ -188,6 +188,6 @@ void runBackgroundSectorSmokeChecks()
 	theColourDefaultsAndRoundTrips();
 	aBackgroundHostsNothing();
 	aBackgroundIsLookTargetForAWindowOnly();
-	theDeckGeometryIsFixed();
+	theLevelGeometryIsFixed();
 	aBackgroundOwnsNoWalkableFloor();
 }

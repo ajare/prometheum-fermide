@@ -174,7 +174,7 @@ instance or veto the lifecycle operation.
 
 ## World persistence
 
-World documents use the required `.world.yaml` filename suffix. World version **14** stores the authored deterministic random seed and nested
+World documents use the required `.world.yaml` filename suffix. World version **15** renames vertical-position fields from Deck to Level. Version 14 stores the authored deterministic random seed and nested
 List/Record configuration values. Version 13 introduced scalar per-Agent
 assignments, version 12 the package directory basename and expected UUID, and
 version 11 named Marker identity. Older versions continue to load with a zero

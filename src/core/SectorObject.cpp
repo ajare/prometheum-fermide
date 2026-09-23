@@ -9,8 +9,8 @@ namespace core
 
 	uint32_t SectorObject::VertexIdentifierGenerator = 0;
 
-	SectorObject::SectorObject(SectorObjectType type, shared_ptr<const Sector> sector, uint32_t cellX, uint32_t cellY, uint32_t cellsWide, uint32_t decksHigh, shared_ptr<Object> object, uint32_t* vertexIdentifer)
-		: Area(cellX, cellY, 0.0f, 0.0f, (float)cellsWide, (float)decksHigh)
+	SectorObject::SectorObject(SectorObjectType type, shared_ptr<const Sector> sector, uint32_t cellX, uint32_t cellY, uint32_t cellsWide, uint32_t levelsHigh, shared_ptr<Object> object, uint32_t* vertexIdentifer)
+		: Area(cellX, cellY, 0.0f, 0.0f, (float)cellsWide, (float)levelsHigh)
 		, mObjectType(type)
 		, mSector(sector)
 		, mObject(object)

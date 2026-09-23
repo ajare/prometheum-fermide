@@ -21,12 +21,12 @@ namespace core
 	}
 
 	LiftTransit::LiftTransit(uint32_t index, uint32_t layerIndex, uint32_t cellX, uint32_t cellY, uint32_t cellsWide,
-		uint32_t decksHigh, vector<TransitStop> const& stops)
+		uint32_t levelsHigh, vector<TransitStop> const& stops)
 		: Transit(SectorType::Lift, "Lift", layerIndex, index,
 			cellX, cellY,
 			0.0f, 0.0f,
-			(float)cellsWide, (float)decksHigh,
-			cellsWide, decksHigh,
+			(float)cellsWide, (float)levelsHigh,
+			cellsWide, levelsHigh,
 			1.0f,
 			~0u,
 			stops)
@@ -56,7 +56,7 @@ namespace core
 			|| type == SectorObjectType::Window;
 	}
 
-	shared_ptr<Edge> LiftTransit::createCrossDeckEdge([[maybe_unused]] shared_ptr<VerticalEdgeCreator> edgeCreator) const
+	shared_ptr<Edge> LiftTransit::createCrossLevelEdge([[maybe_unused]] shared_ptr<VerticalEdgeCreator> edgeCreator) const
 	{
 		ASSERT_PTR_EQ_THIS(edgeCreator);
 

@@ -42,7 +42,7 @@ namespace core
 		if (resource.mStairwell)
 		{
 			// Ordinary mount edges remain unconstrained. A narrow stairwell owns
-			// capacity only for the actual sloping, cross-deck edge.
+			// capacity only for the actual sloping, cross-level edge.
 			return request.mSourceSector == resource.mLadderSector
 				&& request.mEdgeType == EdgeType::Stairwell;
 		}
@@ -68,7 +68,7 @@ namespace core
 		if (request->mDirection == TraversalDirection::None)
 		{
 			// Direction is fixed when the request joins the admission queue. Dedicated
-			// Ladder sectors reveal it from the cross-deck edge; Room Ladders reveal it
+			// Ladder sectors reveal it from the cross-level edge; Room Ladders reveal it
 			// from the side of the physical midpoint where the Agent approaches.
 			if (request->mSourceSector == resource.mLadderSector)
 			{
@@ -117,7 +117,7 @@ namespace core
 		if (!resource.mLadder || resource.mLadderSpacing <= 0.0f) return true;
 		auto const ascending = resource.mActiveDirection != TraversalDirection::Descending;
 		auto const entryAltitude = resource.mLadder->getPosition().y - CORE_LADDER_HEIGHT_OFF_GROUND
-			+ (ascending ? 0.0f : (float)(resource.mLadder->getDecksHigh() - 1));
+			+ (ascending ? 0.0f : (float)(resource.mLadder->getLevelsHigh() - 1));
 		auto cleared = [&](AgentId id)
 		{
 			auto agent = mWorld.mAgents.find(id);

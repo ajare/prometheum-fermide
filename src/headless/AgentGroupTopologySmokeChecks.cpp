@@ -296,7 +296,7 @@ namespace
 		world.finishBuild();
 
 		auto const crew = authorCrew(world, frontRoom, backRoom);
-		auto const crewTop = world.createAgent("Top floor hand", doomedRoom, 0, 1.0f);
+		auto const crewTop = world.createAgent("Top level hand", doomedRoom, 0, 1.0f);
 		assign(world, crewTop, crew.crew);
 
 		auto const before = expectedOf(crew);

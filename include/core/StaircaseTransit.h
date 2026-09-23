@@ -26,7 +26,7 @@ namespace core
 		[[nodiscard]] int getRiseSide() const { return mStaircase->getRiseSide(); }
 		[[nodiscard]] std::string getDescription() const override;
 		[[nodiscard]] bool sectorSupportsObjectType(SectorObjectType type) const override;
-		[[nodiscard]] std::shared_ptr<Edge> createCrossDeckEdge(
+		[[nodiscard]] std::shared_ptr<Edge> createCrossLevelEdge(
 			std::shared_ptr<VerticalEdgeCreator> edgeCreator) const override;
 
 		void updateImpl(float frameTime) override;

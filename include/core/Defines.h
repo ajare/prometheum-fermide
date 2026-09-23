@@ -9,8 +9,8 @@
 // Globals
 //
 #define CORE_CELL_WIDTH_PIXELS						64
-#define CORE_DECK_HEIGHT_PIXELS						160
-#define CORE_CELL_YX_RENDER_RATIO					((float)CORE_DECK_HEIGHT_PIXELS / CORE_CELL_WIDTH_PIXELS)
+#define CORE_LEVEL_HEIGHT_PIXELS						160
+#define CORE_CELL_YX_RENDER_RATIO					((float)CORE_LEVEL_HEIGHT_PIXELS / CORE_CELL_WIDTH_PIXELS)
 
 // Do not change side values as rendering and other things depends on them
 #define CORE_DIM_X									0
@@ -22,8 +22,8 @@
 #define CORE_SIDE_RIGHT								1
 #define CORE_SIDE_MIDDLE							2
 
-#define CORE_LEVEL_LOW								0
-#define CORE_LEVEL_HIGH								1
+#define CORE_LADDER_ENDPOINT_LOW						0
+#define CORE_LADDER_ENDPOINT_HIGH						1
 
 #define CORE_MAX_LAYERS								256
 
@@ -171,7 +171,7 @@ namespace core
 #define ASSERT_PAIR_SIDE_OK(side)					assert((side) < 2 && "Invalid threshold pair side")
 #define ASSERT_DIM_OK(dim)						assert((dim == CORE_DIM_X || dim == CORE_DIM_Y) && "Invalid dimension")
 #define ASSERT_SIDE_OK(side)					assert((side == CORE_SIDE_LEFT || side == CORE_SIDE_RIGHT) && "Invalid side")
-#define ASSERT_LEVEL_OK(level)					assert((level == CORE_LEVEL_LOW || level == CORE_LEVEL_HIGH) && "Invalid level");
+#define ASSERT_LADDER_ENDPOINT_OK(endpoint)			assert(((endpoint) == CORE_LADDER_ENDPOINT_LOW || (endpoint) == CORE_LADDER_ENDPOINT_HIGH) && "Invalid Ladder endpoint");
 #define ASSERT_PTR_EQ_THIS(ptr)					assert(ptr.get() == this && "shared_ptr not the same as 'this'");
 #define ASSERT_CONTAINTER_INDEX(index, cont)	assert(index <= cont.size() && "container index out of bounds");
 

@@ -89,7 +89,7 @@ namespace
 		std::set<std::string> named;
 		for (uint32_t layer = 0; layer < world.getLayerCount(); ++layer)
 			for (uint32_t x = 0; x < world.getCellsWide(); ++x)
-				for (uint32_t y = 0; y < world.getDecksHigh(); ++y)
+				for (uint32_t y = 0; y < world.getLevelsHigh(); ++y)
 					if (namesWindow(consequences, layer, x, y))
 						named.insert(std::format("Layer {}.cell {},{}", layer, x, y));
 		return named;
@@ -278,7 +278,7 @@ namespace
 		world.finishBuild();
 
 		auto const before = windowKeys(world);
-		// The Background slides one deck down, leaving every back cell it had.
+		// The Background slides one level down, leaving every back cell it had.
 		auto const plan = world.planResizeBackground(layout.backdropA, 0, 1, 6, 1);
 		require(plan.move, "A Background moved to a new cell was not planned as a move");
 		requireExactlyAnnouncedAndDeleted(world, plan,
@@ -340,7 +340,7 @@ namespace
 			char const* name;
 			bool editsBackdropA;
 			bool remove;
-			uint32_t x, y, cellsWide, decksHigh;
+			uint32_t x, y, cellsWide, levelsHigh;
 			std::set<std::string> expectedDeleted;
 		};
 
@@ -367,7 +367,7 @@ namespace
 			auto const plan = edit.remove
 				? world.planRemoveBackground(sectorIndex)
 				: world.planResizeBackground(sectorIndex, edit.x, edit.y,
-					edit.cellsWide, edit.decksHigh);
+					edit.cellsWide, edit.levelsHigh);
 			require(plan.valid, (std::string(edit.name) + ": refused: " + plan.diagnostic).c_str());
 			require(!namesWindow(plan.consequences, 0, 9, 0),
 				(std::string(edit.name) + ": named the Window looking into the Behind Room: "

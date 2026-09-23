@@ -1,19 +1,19 @@
 // The real renderer's Location wall passes, for the open-wall ticket.
 //
-// A Location's side wall is drawn per deck, and each deck end carries its own
+// A Location's side wall is drawn per level, and each level end carries its own
 // state: Wall, BulkheadDoor, or None (open). Opening a shared wall clears the
 // end on both sides of the boundary at once, and the viewport must then show
 // the two Locations as connected.
 //
-// The opening is the *intersection*, never the whole deck:
+// The opening is the *intersection*, never the whole level:
 //
-//   * an open Corridor end removes its whole deck, because a Corridor deck is
+//   * an open Corridor end removes its whole level, because a Corridor level is
 //     exactly the height of the opening it makes;
 //   * an open Room end removes only the stretch the neighbour shares. A Room
-//     deck standing 1.0 tall beside a 0.7-tall Corridor keeps the 0.3 of wall
-//     above the Corridor's ceiling - removing the whole deck there punched a
+//     level standing 1.0 tall beside a 0.7-tall Corridor keeps the 0.3 of wall
+//     above the Corridor's ceiling - removing the whole level there punched a
 //     hole through the Room's own wall and made it look open to the void;
-//   * a closed end draws its whole deck, and a BulkheadDoor end draws no plain
+//   * a closed end draws its whole level, and a BulkheadDoor end draws no plain
 //     wall line, exactly as before.
 //
 // The wireframe overlay gets a second cut. It x-rays the Layer directly behind
@@ -100,7 +100,7 @@ namespace
 	float toWorldY(float screenY)
 	{
 		return (gUISettings.worldViewportY + gUISettings.worldViewportHeight
-			- gUISettings.yOffset - screenY) / CORE_DECK_HEIGHT_PIXELS;
+			- gUISettings.yOffset - screenY) / CORE_LEVEL_HEIGHT_PIXELS;
 	}
 
 	// AddLine's thick stroke emits the four corners of the stroked rectangle.
@@ -216,7 +216,7 @@ namespace
 		return text.empty() ? " <none>" : text;
 	}
 
-	// The pure rule: a closed end draws its whole deck, a BulkheadDoor end
+	// The pure rule: a closed end draws its whole level, a BulkheadDoor end
 	// draws nothing, and an open end draws only what the neighbour leaves.
 	void checkWallSpanRule()
 	{
@@ -227,13 +227,13 @@ namespace
 
 		auto const roomSector = world->getSector(room);
 		require(roomSector != nullptr, "The Room could not be found");
-		float const deck0Top = deckFloorY(*roomSector, 1);
-		float const corridorTop = deckFloorY(*world->getSector(corridor), 1);
+		float const level0Top = levelFloorY(*roomSector, 1);
+		float const corridorTop = levelFloorY(*world->getSector(corridor), 1);
 
-		// Closed: the whole deck, both sides.
+		// Closed: the whole level, both sides.
 		auto spans = wallSpansToDraw(world, *roomSector, 0, CORE_SIDE_LEFT);
-		require(spans.size() == 1 && near(spans[0].y0, 0.0f) && near(spans[0].y1, deck0Top),
-			"a closed wall does not draw its whole deck");
+		require(spans.size() == 1 && near(spans[0].y0, 0.0f) && near(spans[0].y1, level0Top),
+			"a closed wall does not draw its whole level");
 
 		// Open to a shorter neighbour: only the stretch above the overlap.
 		world->pauseSimulation();
@@ -241,20 +241,20 @@ namespace
 		world->finishBuild();
 
 		spans = wallSpansToDraw(world, *roomSector, 0, CORE_SIDE_RIGHT);
-		require(spans.size() == 1 && near(spans[0].y0, corridorTop) && near(spans[0].y1, deck0Top),
+		require(spans.size() == 1 && near(spans[0].y0, corridorTop) && near(spans[0].y1, level0Top),
 			"an open Room wall did not keep the stretch above its shorter neighbour");
 
-		// The Corridor's own deck is exactly the opening, so nothing is left.
+		// The Corridor's own level is exactly the opening, so nothing is left.
 		spans = wallSpansToDraw(world, *world->getSector(corridor), 0, CORE_SIDE_LEFT);
 		require(spans.empty(), "an open Corridor wall still drew a span");
 
 		// The far side of the Room is untouched.
 		spans = wallSpansToDraw(world, *roomSector, 0, CORE_SIDE_LEFT);
-		require(spans.size() == 1 && near(spans[0].y0, 0.0f) && near(spans[0].y1, deck0Top),
+		require(spans.size() == 1 && near(spans[0].y0, 0.0f) && near(spans[0].y1, level0Top),
 			"opening one boundary disturbed the opposite wall");
 
 		// With no World to ask, an open end has nothing to intersect and
-		// removes its whole deck.
+		// removes its whole level.
 		spans = wallSpansToDraw(nullptr, *roomSector, 0, CORE_SIDE_RIGHT);
 		require(spans.empty(), "an open wall with no World did not fall back to fully open");
 	}
@@ -269,11 +269,11 @@ namespace
 		world->finishBuild();
 
 		auto const leftSector = world->getSector(left);
-		float const deck0Top = deckFloorY(*leftSector, 1);
-		float const deck1Top = deckFloorY(*leftSector, 2);
+		float const level0Top = levelFloorY(*leftSector, 1);
+		float const level1Top = levelFloorY(*leftSector, 2);
 
 		auto const leftWalls = renderWalls(world, left);
-		require(hasLine(leftWalls, 3.0f, 0.0f, deck0Top),
+		require(hasLine(leftWalls, 3.0f, 0.0f, level0Top),
 			"a closed shared wall was not drawn: " + describe(leftWalls));
 
 		world->pauseSimulation();
@@ -281,16 +281,16 @@ namespace
 		world->finishBuild();
 
 		auto const openLeft = renderWalls(world, left);
-		require(!hasLine(openLeft, 3.0f, 0.0f, deck0Top),
-			"an open shared wall still drew its whole deck on the left Room");
-		require(hasLine(openLeft, 3.0f, deck0Top, deck1Top),
-			"opening deck 0 disturbed the left Room's deck 1 wall: " + describe(openLeft));
+		require(!hasLine(openLeft, 3.0f, 0.0f, level0Top),
+			"an open shared wall still drew its whole level on the left Room");
+		require(hasLine(openLeft, 3.0f, level0Top, level1Top),
+			"opening level 0 disturbed the left Room's level 1 wall: " + describe(openLeft));
 
 		auto const openRight = renderWalls(world, right);
-		require(!hasLine(openRight, 3.0f, 0.0f, deck0Top),
-			"an open shared wall still drew its whole deck on the right Room");
-		require(hasLine(openRight, 3.0f, deck0Top, deck1Top),
-			"opening deck 0 disturbed the right Room's deck 1 wall: " + describe(openRight));
+		require(!hasLine(openRight, 3.0f, 0.0f, level0Top),
+			"an open shared wall still drew its whole level on the right Room");
+		require(hasLine(openRight, 3.0f, level0Top, level1Top),
+			"opening level 0 disturbed the right Room's level 1 wall: " + describe(openRight));
 	}
 
 	// A Room opening into a shorter Corridor: the Corridor draws no wall line at
@@ -304,22 +304,22 @@ namespace
 
 		auto const roomSector = world->getSector(room);
 		auto const corridorSector = world->getSector(corridor);
-		float const deck0Top = deckFloorY(*roomSector, 1);
-		float const corridorTop = deckFloorY(*corridorSector, 1);
+		float const level0Top = levelFloorY(*roomSector, 1);
+		float const corridorTop = levelFloorY(*corridorSector, 1);
 
-		require(corridorTop < deck0Top,
-			"the scenario needs a Corridor shorter than the Room deck it opens into");
+		require(corridorTop < level0Top,
+			"the scenario needs a Corridor shorter than the Room level it opens into");
 
 		world->pauseSimulation();
 		world->removeLocationWall(room, 0, CORE_SIDE_RIGHT);
 		world->finishBuild();
 
 		auto const roomWalls = renderWalls(world, room);
-		require(hasLine(roomWalls, 3.0f, corridorTop, deck0Top),
+		require(hasLine(roomWalls, 3.0f, corridorTop, level0Top),
 			"the Room did not keep its wall above the Corridor's ceiling: "
 			+ describe(roomWalls));
-		require(!hasLine(roomWalls, 3.0f, 0.0f, deck0Top),
-			"the Room still drew its whole deck wall beside the Corridor: "
+		require(!hasLine(roomWalls, 3.0f, 0.0f, level0Top),
+			"the Room still drew its whole level wall beside the Corridor: "
 			+ describe(roomWalls));
 
 		auto const corridorWalls = renderWalls(world, corridor);
@@ -331,24 +331,24 @@ namespace
 			+ describe(corridorWalls));
 	}
 
-	// The same rule from the other side, and one deck up: a Room whose deck sits
-	// above a Corridor deck keeps the part of its wall the Corridor does not
+	// The same rule from the other side, and one level up: a Room whose level sits
+	// above a Corridor level keeps the part of its wall the Corridor does not
 	// reach.
-	void checkUpperDeckKeepsItsWallAboveTheOpening()
+	void checkUpperLevelKeepsItsWallAboveTheOpening()
 	{
-		auto world = std::make_shared<core::World>("Upper deck opening", 12, 4);
+		auto world = std::make_shared<core::World>("Upper level opening", 12, 4);
 		auto corridor = world->addCorridor(0u, 0u, 0u, 2u, 2u);
 		auto room = world->addRoom("Room", 0, 1, 2, 3, 1);
 		world->finishBuild();
 
 		auto const corridorSector = world->getSector(corridor);
 		auto const roomSector = world->getSector(room);
-		float const deckFloor = deckFloorY(*roomSector, 0);
-		float const corridorTop = deckFloorY(*corridorSector, 2);
-		float const roomTop = deckFloorY(*roomSector, 1);
+		float const levelFloor = levelFloorY(*roomSector, 0);
+		float const corridorTop = levelFloorY(*corridorSector, 2);
+		float const roomTop = levelFloorY(*roomSector, 1);
 
 		require(corridorTop < roomTop,
-			"the scenario needs a Corridor deck shorter than the Room above it");
+			"the scenario needs a Corridor level shorter than the Room above it");
 
 		world->pauseSimulation();
 		world->removeLocationWall(room, 0, CORE_SIDE_LEFT);
@@ -358,14 +358,14 @@ namespace
 		require(hasLine(roomWalls, 2.0f, corridorTop, roomTop),
 			"the upper Room did not keep its wall above the Corridor's ceiling: "
 			+ describe(roomWalls));
-		require(!hasLine(roomWalls, 2.0f, deckFloor, roomTop),
-			"the upper Room still drew its whole deck wall beside the Corridor: "
+		require(!hasLine(roomWalls, 2.0f, levelFloor, roomTop),
+			"the upper Room still drew its whole level wall beside the Corridor: "
 			+ describe(roomWalls));
 
-		// The Corridor's deck is entirely the opening, so it draws nothing there.
+		// The Corridor's level is entirely the opening, so it draws nothing there.
 		auto const corridorWalls = renderWalls(world, corridor);
-		require(!hasLine(corridorWalls, 2.0f, deckFloor, corridorTop),
-			"the open Corridor deck still rendered a wall line: "
+		require(!hasLine(corridorWalls, 2.0f, levelFloor, corridorTop),
+			"the open Corridor level still rendered a wall line: "
 			+ describe(corridorWalls));
 	}
 
@@ -385,8 +385,8 @@ namespace
 		auto behind = world->addRoom("Behind", 1, 0, 2, 4, 1);
 		world->finishBuild();
 
-		float const roomTop = deckFloorY(*world->getSector(room), 1);
-		float const corridorTop = deckFloorY(*world->getSector(rightCorridor), 1);
+		float const roomTop = levelFloorY(*world->getSector(room), 1);
+		float const corridorTop = levelFloorY(*world->getSector(rightCorridor), 1);
 
 		// Closed to begin with: the behind Room's wall comes through in full.
 		auto const closed = renderWalls(world, behind, 0);
@@ -432,7 +432,7 @@ namespace
 	}
 
 	// A BulkheadDoor end draws no plain wall line, and opening a wall then
-	// restoring it puts the whole deck back.
+	// restoring it puts the whole level back.
 	void checkBulkheadAndRestore()
 	{
 		auto world = std::make_shared<core::World>("Bulkhead and restore", 12, 4);
@@ -440,14 +440,14 @@ namespace
 		auto right = world->addRoom("Right", 0, 0, 3, 3, 1);
 		world->finishBuild();
 
-		float const deckTop = world->getSector(left)->getDeckHeight(0);
+		float const levelTop = world->getSector(left)->getLevelHeight(0);
 
 		world->pauseSimulation();
 		world->removeLocationWall(left, 0, CORE_SIDE_RIGHT);
 		world->finishBuild();
 
 		auto const openWalls = renderWalls(world, left);
-		require(!hasLine(openWalls, 3.0f, 0.0f, deckTop),
+		require(!hasLine(openWalls, 3.0f, 0.0f, levelTop),
 			"the opened shared wall still rendered on the left Room: "
 			+ describe(openWalls));
 
@@ -456,8 +456,8 @@ namespace
 		world->finishBuild();
 
 		auto const restored = renderWalls(world, left);
-		require(hasLine(restored, 3.0f, 0.0f, deckTop),
-			"restoring the wall did not bring the whole deck back: "
+		require(hasLine(restored, 3.0f, 0.0f, levelTop),
+			"restoring the wall did not bring the whole level back: "
 			+ describe(restored));
 
 		world->pauseSimulation();
@@ -474,11 +474,11 @@ namespace
 			"the Bulkhead Door did not take over the shared boundary");
 
 		auto const bulkhead = renderWalls(world, left);
-		require(!hasLine(bulkhead, 3.0f, 0.0f, deckTop),
+		require(!hasLine(bulkhead, 3.0f, 0.0f, levelTop),
 			"a BulkheadDoor end still drew a plain wall line: " + describe(bulkhead));
 
 		auto const bulkheadRight = renderWalls(world, right);
-		require(!hasLine(bulkheadRight, 3.0f, 0.0f, deckTop),
+		require(!hasLine(bulkheadRight, 3.0f, 0.0f, levelTop),
 			"a BulkheadDoor end still drew a plain wall line on the far Room: "
 			+ describe(bulkheadRight));
 	}
@@ -493,7 +493,7 @@ void runWallRenderSmokeChecks()
 		checkWallSpanRule();
 		checkEqualRoomsOpenCompletely();
 		checkRoomIntoShorterCorridorKeepsItsWallAboveTheOpening();
-		checkUpperDeckKeepsItsWallAboveTheOpening();
+		checkUpperLevelKeepsItsWallAboveTheOpening();
 		checkBehindLayerDoesNotDrawAcrossAFrontLayerOpening();
 		checkBulkheadAndRestore();
 	}

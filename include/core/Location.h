@@ -15,7 +15,7 @@ namespace core
 
 	public:
 
-		Location(std::string const& name, SectorType type, uint32_t layerIndex, uint32_t index, uint32_t cellX, uint32_t cellY,  uint32_t cellsWide, uint32_t decksHigh, float topDeckHeight, uint32_t capacity, bool isCorridor = false);
+		Location(std::string const& name, SectorType type, uint32_t layerIndex, uint32_t index, uint32_t cellX, uint32_t cellY,  uint32_t cellsWide, uint32_t levelsHigh, float topLevelHeight, uint32_t capacity, bool isCorridor = false);
 
 		[[nodiscard]] bool isCorridor() const { return mIsCorridor; }
 

@@ -24,8 +24,8 @@ namespace core
 
 	- cellX and cellY are global, not relative to the Location that it's in.
 	*/
-	LadderSectorObject::LadderSectorObject(uint32_t cellX, uint32_t cellY, uint32_t decksHigh, shared_ptr<const Sector> sector, bool extensible, bool startExtended, uint32_t* vertexIdentifer)
-		: SectorObject(SectorObjectType::Ladder, sector, cellX, cellY, 1, decksHigh, make_shared<Ladder>(cellX, cellY, decksHigh, extensible, startExtended), vertexIdentifer)
+	LadderSectorObject::LadderSectorObject(uint32_t cellX, uint32_t cellY, uint32_t endpointsHigh, shared_ptr<const Sector> sector, bool extensible, bool startExtended, uint32_t* vertexIdentifer)
+		: SectorObject(SectorObjectType::Ladder, sector, cellX, cellY, 1, endpointsHigh, make_shared<Ladder>(cellX, cellY, endpointsHigh, extensible, startExtended), vertexIdentifer)
 		, VerticalEdgeCreator()
 	{
 	}
@@ -44,17 +44,17 @@ namespace core
 
 	/***
 
-	createCrossDeckEdge()
+	createCrossLevelEdge()
 	---------------------
 
-	Create an Edge between two Decks.
+	Create an Edge between two Levels.
 
 	Arguments:
 
 	- edgeCreator is actually a shared_ptr to this LadderSectorObject instance.  While this is awkward, it lets us
 	  capture the shared_ptr rather than the raw one, within the Edge.
 	*/
-	shared_ptr<Edge> LadderSectorObject::createCrossDeckEdge([[maybe_unused]] shared_ptr<VerticalEdgeCreator> edgeCreator) const
+	shared_ptr<Edge> LadderSectorObject::createCrossLevelEdge([[maybe_unused]] shared_ptr<VerticalEdgeCreator> edgeCreator) const
 	{
 		ASSERT_PTR_EQ_THIS(edgeCreator);
 
@@ -76,17 +76,17 @@ namespace core
 	*/
 	shared_ptr<Vertex> LadderSectorObject::createVertex(shared_ptr<SectorObject> object, shared_ptr<Sector> sector, void* user) const
 	{
-		int level = *(static_cast<int*>(user));
+		int endpoint = *(static_cast<int*>(user));
 
 		ASSERT_PTR_EQ_THIS(object);
-		ASSERT_LEVEL_OK(level);
+		ASSERT_LADDER_ENDPOINT_OK(endpoint);
 
 		float xOffset = (float)(getCellX() - sector->getCellX()) + 0.5f;
 		float yOffset = (float)(getCellY() - sector->getCellY());
 
-		if (level == CORE_LEVEL_HIGH)
+		if (endpoint == CORE_LADDER_ENDPOINT_HIGH)
 		{
-			yOffset += (getLadder()->getDecksHigh() - 1);
+			yOffset += (getLadder()->getLevelsHigh() - 1);
 		}
 
 		auto vertex = make_shared<SectorObjectVertex>(

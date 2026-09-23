@@ -480,16 +480,18 @@ namespace
 		original.serialize(*writer, workData);
 		writer->serialize();
 		auto const yaml = writer->getSerializedString();
-		require(yaml.find("version: 14") != std::string::npos
+		require(yaml.find("version: 15") != std::string::npos
 			&& yaml.find("layers: 2") != std::string::npos
 			&& yaml.find("layerNames:") != std::string::npos
 			&& yaml.find("- Layer 0") != std::string::npos
 			&& yaml.find("- Layer 1") != std::string::npos
 			&& yaml.find("type: room") != std::string::npos
 			&& yaml.find("cellsWide:") != std::string::npos
+			&& yaml.find("levelsHigh:") != std::string::npos
+			&& yaml.find("levelIndex:") != std::string::npos
 			&& yaml.find("foreControl: true") != std::string::npos
 			&& yaml.find("\n    a:") == std::string::npos,
-			"World YAML did not use the explicit construction schema");
+			"World YAML did not use the explicit Level construction schema");
 		require(yaml.find("construction") != std::string::npos
 			&& yaml.find("agents") != std::string::npos
 			&& yaml.find("path:") != std::string::npos
@@ -503,7 +505,7 @@ namespace
 		require(loaded.deserialize(*reader, workData), "World deserialization failed");
 		require(loaded.getName() == original.getName()
 			&& loaded.getCellsWide() == original.getCellsWide()
-			&& loaded.getDecksHigh() == original.getDecksHigh()
+			&& loaded.getLevelsHigh() == original.getLevelsHigh()
 			&& loaded.getLayerCount() == original.getLayerCount()
 			&& loaded.getLayerName(0) == "Layer 0"
 			&& loaded.getLayerName(1) == "Layer 1"
@@ -531,6 +533,31 @@ namespace
 				- destination->getSectorOffset().x) < 0.0001f,
 			"World-owned Agent or its active path did not round-trip");
 		require(!loaded.isModified(), "deserialized World was unexpectedly modified");
+
+		// Version 15 changed the persisted vertical-position vocabulary. Documents
+		// written by older builds retain their legacy field spellings and must
+		// continue to open.
+		auto legacyYaml = yaml;
+		auto replaceAll = [&](std::string const& from, std::string const& to)
+		{
+			for (auto at = legacyYaml.find(from); at != std::string::npos;
+				at = legacyYaml.find(from, at + to.size()))
+			{
+				legacyYaml.replace(at, from.size(), to);
+			}
+		};
+		replaceAll("version: 15", "version: 14");
+		replaceAll("levelsHigh", "decksHigh");
+		replaceAll("levelIndex", "deckIndex");
+		replaceAll("topLevelHeight", "topDeckHeight");
+		core::World legacyLoaded("legacy placeholder", 2, 2);
+		auto legacyReader = core::YamlSerializer::fromString(legacyYaml);
+		legacyReader->deserialize();
+		require(legacyLoaded.deserialize(*legacyReader, workData)
+			&& legacyLoaded.getLevelsHigh() == original.getLevelsHigh()
+			&& legacyLoaded.getNumSectors() == original.getNumSectors(),
+			"A pre-Level-vocabulary World no longer loads");
+
 		auto replacementPath = loaded.getGraph()->calculatePath(loadedAgent.entity,
 			loadedAgent.entity->getPath()->nodes.back().targetVertex);
 		require(replacementPath && !replacementPath->nodes.empty(),
@@ -620,7 +647,7 @@ namespace
 		rejects(positioned("0.75", "-.inf"), "negative infinite localY");
 		// A finite point beyond the Sector's right edge.
 		rejects(positioned("99.5", "0"), "finite out-of-Sector localX");
-		// A finite point on the Room's upper deck, which has no Walkway there.
+		// A finite point on the Room's upper level, which has no Walkway there.
 		rejects(positioned("1.5", "1"), "finite position on non-traversable floor");
 	}
 
@@ -716,7 +743,7 @@ namespace
 		auto const yaml = R"yaml(version: 1
 name: Legacy
 cellsWide: 4
-decksHigh: 2
+levelsHigh: 2
 construction:
   - kind: 0
     name: ""
@@ -750,13 +777,13 @@ agents: []
 		auto const yaml = R"yaml(version: 3
 name: Legacy v3
 cellsWide: 4
-decksHigh: 2
+levelsHigh: 2
 construction:
   - type: corridor
     y: 0
     x: 0
     cellsWide: 4
-    decksHigh: 1
+    levelsHigh: 1
 agents: []
 )yaml";
 		core::World loaded("placeholder", 1, 1);
@@ -777,7 +804,7 @@ agents: []
 		auto const yaml = R"yaml(version: 4
 name: Legacy v4
 cellsWide: 6
-decksHigh: 2
+levelsHigh: 2
 layers: 3
 layerNames:
   - Ground
@@ -790,16 +817,16 @@ construction:
     y: 0
     x: 0
     cellsWide: 3
-    decksHigh: 1
-    topDeckHeight: 0.9
+    levelsHigh: 1
+    topLevelHeight: 0.9
   - type: room
     name: Deep room
     layer: 2
     y: 0
     x: 3
     cellsWide: 3
-    decksHigh: 1
-    topDeckHeight: 0.9
+    levelsHigh: 1
+    topLevelHeight: 0.9
 agents: []
 )yaml";
 		core::World loaded("placeholder", 1, 1);
@@ -849,7 +876,7 @@ agents: []
 		auto const yaml = R"yaml(version: 5
 name: Mixed layer spellings
 cellsWide: 6
-decksHigh: 2
+levelsHigh: 2
 layers: 3
 layerNames:
   - Ground
@@ -862,16 +889,16 @@ construction:
     y: 0
     x: 0
     cellsWide: 3
-    decksHigh: 1
-    topDeckHeight: 0.9
+    levelsHigh: 1
+    topLevelHeight: 0.9
   - type: room
     name: Deep
     layer: 2
     y: 0
     x: 3
     cellsWide: 3
-    decksHigh: 1
-    topDeckHeight: 0.9
+    levelsHigh: 1
+    topLevelHeight: 0.9
 agents: []
 )yaml";
 		core::World loaded("placeholder", 1, 1);
@@ -1351,10 +1378,10 @@ agents: []
 	{
 		core::World original("Serializable PlatformLift", 7, 4);
 		auto room = original.addRoom("Platform room", 0, 0, 0, 6, 3);
-		for (uint32_t deck = 1; deck <= 2; ++deck)
+		for (uint32_t level = 1; level <= 2; ++level)
 		{
-			original.addSectorWalkway(room, deck, 2);
-			original.addSectorWalkway(room, deck, 3);
+			original.addSectorWalkway(room, level, 2);
+			original.addSectorWalkway(room, level, 3);
 		}
 		core::World::CreateLiftOptions options;
 		options.stopOffsets = { 0, 1, 2 };
@@ -1388,17 +1415,17 @@ agents: []
 			"PlatformLift stop timer default is not the Defines.h value");
 	}
 
-	void enclosedLiftsSupportMultiDeckRooms()
+	void enclosedLiftsSupportMultiLevelRooms()
 	{
 		core::World world("Room lift", 16, 3);
 		auto room = world.addRoom("Lift Hall", 0, 0, 0, 16, 3);
-		for (uint32_t deck = 1; deck < 3; ++deck)
+		for (uint32_t level = 1; level < 3; ++level)
 			for (uint32_t x = 0; x < 16; ++x)
-				world.addSectorWalkway(room, deck, x);
+				world.addSectorWalkway(room, level, x);
 
 		core::World::CreateLiftOptions options;
 		options.cellsWide = 1;
-		options.decksHigh = 3;
+		options.levelsHigh = 3;
 		options.stopOffsets = { 0, 1, 2 };
 		auto created = world.addLift(1, 0, 8, options);
 		world.addSectorMarker(room, 1, 0.5f);
@@ -1456,8 +1483,8 @@ agents: []
 			"Stairwell Agents do not obey the Stairwell's aperture clipping");
 		core::Stairwell leftStairwell(0, 0, 3, CORE_SIDE_LEFT);
 		core::Stairwell rightStairwell(0, 0, 3, CORE_SIDE_RIGHT);
-		auto left = leftStairwell.getDeckPath(0);
-		auto right = rightStairwell.getDeckPath(0);
+		auto left = leftStairwell.getLevelPath(0);
+		auto right = rightStairwell.getLevelPath(0);
 		for (size_t i = 0; i < left.size(); ++i)
 			require(std::abs(left[i].x + right[i].x - 2.0f) < 0.0001f
 				&& left[i].y == right[i].y,
@@ -1467,9 +1494,9 @@ agents: []
 			&& std::abs(left[2].x - 0.334f) < 0.0001f && left[2].y == 0.75f
 			&& left[3].x == 1.0f && left[3].y == 1.0f,
 			"Stairwell primitive endpoints do not match its path vertices");
-		auto nextDeck = leftStairwell.getDeckPath(1);
-		require(left[3] == nextDeck[0],
-			"Adjacent Stairwell diagonal paths do not share a deck endpoint");
+		auto nextLevel = leftStairwell.getLevelPath(1);
+		require(left[3] == nextLevel[0],
+			"Adjacent Stairwell diagonal paths do not share a level endpoint");
 	}
 
 	void staircasesConnectAdjacentCorridorsAndRoundTrip()
@@ -1515,7 +1542,7 @@ agents: []
 		auto index = world.addStaircase(1, 0, 0, 4, CORE_SIDE_RIGHT, 1.25f);
 		world.finishBuild();
 		auto transit = std::dynamic_pointer_cast<const core::StaircaseTransit>(world.getSector(index));
-		require(transit && transit->getCellsWide() == 4 && transit->getDecksHigh() == 2,
+		require(transit && transit->getCellsWide() == 4 && transit->getLevelsHigh() == 2,
 			"Staircase Transit has the wrong footprint");
 		core::World::CreateStaircaseOptions options;
 		require(world.getStaircaseOptions(index, options) && options.cellsWide == 4
@@ -1609,11 +1636,11 @@ agents: []
 			->getLadder()->getCurrentShape(retractedMin, retractedMax);
 		require(std::abs((retractedMax.y - retractedMin.y) - 0.2f) < 0.0001f,
 			"Retracted Ladders were not rendered at the minimum 0.2 length");
-		require(std::abs(controlCenterX(edgeLadder.controls[CORE_LEVEL_LOW]) - 4.2f) < 0.0001f
-			&& std::abs(controlCenterX(edgeLadder.controls[CORE_LEVEL_HIGH]) - 4.2f) < 0.0001f,
+		require(std::abs(controlCenterX(edgeLadder.controls[CORE_LADDER_ENDPOINT_LOW]) - 4.2f) < 0.0001f
+			&& std::abs(controlCenterX(edgeLadder.controls[CORE_LADDER_ENDPOINT_HIGH]) - 4.2f) < 0.0001f,
 			"Left-side Ladder controls were not placed at the cell's 0.2 offset");
-		require(std::abs(controlCenterX(interiorLadder.controls[CORE_LEVEL_LOW]) - 0.8f) < 0.0001f
-			&& std::abs(controlCenterX(interiorLadder.controls[CORE_LEVEL_HIGH]) - 0.8f) < 0.0001f,
+		require(std::abs(controlCenterX(interiorLadder.controls[CORE_LADDER_ENDPOINT_LOW]) - 0.8f) < 0.0001f
+			&& std::abs(controlCenterX(interiorLadder.controls[CORE_LADDER_ENDPOINT_HIGH]) - 0.8f) < 0.0001f,
 			"Right-side Ladder controls were not placed at the cell's 0.8 offset");
 
 		core::World world("Ladder editing", 10, 5);
@@ -1622,7 +1649,7 @@ agents: []
 		std::string diagnostic;
 		require(!world.canAddLadder(1, 0, 1, 1, &diagnostic)
 			&& diagnostic.find("at least two") != std::string::npos,
-			"Ladder placement accepted a one-deck footprint");
+			"Ladder placement accepted a one-level footprint");
 		require(world.canAddLadder(1, 0, 1, 3, &diagnostic),
 			"Valid Ladder placement was rejected");
 		auto created = world.addLadder(1, 0, 1, { 3, false, true });
@@ -1637,7 +1664,7 @@ agents: []
 		auto movedIndex = world.applyLadderEdit(move);
 		auto ladder = std::dynamic_pointer_cast<const core::LadderTransit>(world.getSector(movedIndex));
 		require(ladder && ladder->getCellX() == 4 && ladder->getCellY() == 1
-			&& ladder->getDecksHigh() == 3,
+			&& ladder->getLevelsHigh() == 3,
 			"Ladder geometry was not edited");
 		auto movedAgent = world.lookupAgent(agentId).entity;
 		require(movedAgent
@@ -1683,7 +1710,7 @@ agents: []
 		std::string diagnostic;
 		require(!world.canAddStairwell(1, 0, 1, 1, &diagnostic)
 			&& diagnostic.find("at least two") != std::string::npos,
-			"Stairwell placement accepted a one-deck footprint");
+			"Stairwell placement accepted a one-level footprint");
 		require(world.canAddStairwell(1, 0, 1, 3, &diagnostic),
 			"Valid Stairwell placement was rejected");
 		auto created = world.addStairwell(1, 0, 1,
@@ -1700,7 +1727,7 @@ agents: []
 		auto stairwell = std::dynamic_pointer_cast<const core::StairwellTransit>(
 			world.getSector(movedIndex));
 		require(stairwell && stairwell->getCellX() == 4 && stairwell->getCellY() == 1
-			&& stairwell->getDecksHigh() == 3 && stairwell->getMountSide() == CORE_SIDE_RIGHT,
+			&& stairwell->getLevelsHigh() == 3 && stairwell->getMountSide() == CORE_SIDE_RIGHT,
 			"Stairwell geometry or mounting side was not edited");
 		auto movedAgent = world.lookupAgent(agentId).entity;
 		require(movedAgent
@@ -1764,8 +1791,8 @@ agents: []
 		auto edited = world.applyStairwellEdit(plan);
 		auto stairwell = std::dynamic_pointer_cast<const core::StairwellTransit>(
 			world.getSector(edited));
-		require(stairwell && stairwell->getDecksHigh() == 3,
-			"The extended Stairwell does not span the new deck");
+		require(stairwell && stairwell->getLevelsHigh() == 3,
+			"The extended Stairwell does not span the new level");
 	}
 
 	// Same ordering bug the Stairwell edit had: a Ladder extended onto a
@@ -1786,8 +1813,8 @@ agents: []
 		auto edited = world.applyLadderEdit(plan);
 		auto ladder = std::dynamic_pointer_cast<const core::LadderTransit>(
 			world.getSector(edited));
-		require(ladder && ladder->getDecksHigh() == 3,
-			"The extended Ladder does not span the new deck");
+		require(ladder && ladder->getLevelsHigh() == 3,
+			"The extended Ladder does not span the new level");
 	}
 
 	// A Transit on the Layer behind the selection is visible only through the
@@ -1812,7 +1839,7 @@ agents: []
 		auto staircase = std::dynamic_pointer_cast<const core::StaircaseTransit>(
 			world.getSector(edited));
 		require(staircase && staircase->getCellY() == 2,
-			"The moved Staircase did not reach the new deck");
+			"The moved Staircase did not reach the new level");
 	}
 
 	void transitsOnTheLayerBehindAreOnlyDrawnThroughApertures()
@@ -1839,12 +1866,12 @@ agents: []
 		{
 			core::World world("Lift apertures", 16, 3);
 			auto room = world.addRoom("Lift Hall", 0, 0, 0, 16, 3);
-			for (uint32_t deck = 1; deck < 3; ++deck)
+			for (uint32_t level = 1; level < 3; ++level)
 				for (uint32_t x = 0; x < 16; ++x)
-					world.addSectorWalkway(room, deck, x);
+					world.addSectorWalkway(room, level, x);
 			core::World::CreateLiftOptions options;
 			options.cellsWide = 1;
-			options.decksHigh = 3;
+			options.levelsHigh = 3;
 			options.stopOffsets = { 0, 1, 2 };
 			auto created = world.addLift(1, 0, 8, options);
 			world.finishBuild();
@@ -1864,7 +1891,7 @@ agents: []
 					"A Lift aperture opens outside the Location it lands in");
 			}
 			require(std::abs(apertures[1].min.y - apertures[0].min.y - 1.0f) < 0.0001f,
-				"Lift landing apertures do not step one deck each");
+				"Lift landing apertures do not step one level each");
 			require(transitApertures(transit, 1, world.getSectors(1)).empty(),
 				"A Lift exposes apertures on a Layer it is not directly behind");
 		}
@@ -1969,7 +1996,7 @@ agents: []
 				"A Ladder is clipped by every Location rather than only its landings");
 		}
 
-		// A Stairwell opens one doorway per deck of its own shaft.
+		// A Stairwell opens one doorway per level of its own shaft.
 		{
 			core::World world("Stairwell apertures", 10, 5);
 			for (uint32_t y = 0; y < 5; ++y) world.addCorridor(y, 0, 10);
@@ -1980,15 +2007,15 @@ agents: []
 			auto const transit = world.getSector(created.sectorIndex);
 			auto const apertures = transitApertures(transit, 0, world.getSectors(0));
 			require(apertures.size() == 3,
-				"A three-deck Stairwell does not expose one aperture per deck");
+				"A three-level Stairwell does not expose one aperture per level");
 			for (auto const& aperture : apertures)
 				require(std::abs((aperture.max.x - aperture.min.x)
 						- CORE_STAIRWELL_DOORWAY_WIDTH) < 0.0001f
 						&& std::abs((aperture.max.y - aperture.min.y)
 							- CORE_STAIRWELL_DOORWAY_HEIGHT) < 0.0001f,
-					"A Stairwell deck aperture is not the shaft doorway size");
+					"A Stairwell level aperture is not the shaft doorway size");
 			require(std::abs(apertures[1].min.y - apertures[0].min.y - 1.0f) < 0.0001f,
-				"Stairwell deck apertures do not step one deck each");
+				"Stairwell level apertures do not step one level each");
 		}
 
 		// A Staircase crosses the whole selected Layer, so every Location there
@@ -2800,12 +2827,12 @@ agents: []
 		// Every landing Door a Lift generates is authored OpenApart.
 		core::World liftWorld("Lift door defaults", 16, 3);
 		auto hall = liftWorld.addRoom("Lift Hall", 0, 0, 0, 16, 3);
-		for (uint32_t deck = 1; deck < 3; ++deck)
+		for (uint32_t level = 1; level < 3; ++level)
 			for (uint32_t x = 0; x < 16; ++x)
-				liftWorld.addSectorWalkway(hall, deck, x);
+				liftWorld.addSectorWalkway(hall, level, x);
 		core::World::CreateLiftOptions liftOptions;
 		liftOptions.cellsWide = 1;
-		liftOptions.decksHigh = 3;
+		liftOptions.levelsHigh = 3;
 		liftOptions.stopOffsets = { 0, 1, 2 };
 		auto const lift = liftWorld.addLift(1, 0, 8, liftOptions);
 		liftWorld.finishBuild();
@@ -2960,12 +2987,12 @@ agents: []
 		doorOptions.openStyle = core::Door::OpenStyle::OpenLeft;
 		auto const ordinaryDoor = authored.addSectorDoor(0, 0, 3, doorOptions);
 		auto const liftHall = authored.addRoom("Lift hall", 0, 0, 10, 8, 3);
-		for (uint32_t deck = 1; deck < 3; ++deck)
+		for (uint32_t level = 1; level < 3; ++level)
 			for (uint32_t x = 0; x < 8; ++x)
-				authored.addSectorWalkway(liftHall, deck, x);
+				authored.addSectorWalkway(liftHall, level, x);
 		core::World::CreateLiftOptions liftOptions;
 		liftOptions.cellsWide = 1;
-		liftOptions.decksHigh = 3;
+		liftOptions.levelsHigh = 3;
 		liftOptions.stopOffsets = { 0, 1, 2 };
 		auto const lift = authored.addLift(1, 0, 13, liftOptions);
 		authored.addCorridor(0, 0, 20, 20, 1);
@@ -2983,7 +3010,7 @@ agents: []
 			("A Lift stop style override was refused: " + diagnostic).c_str());
 
 		auto const yaml = serialize(authored);
-		require(yaml.find("version: 14") != std::string::npos,
+		require(yaml.find("version: 15") != std::string::npos,
 			"A map with authored Door styles was not written at the current schema version");
 		require(yaml.find("version: 6") == std::string::npos,
 			"A map with authored Door styles still carries version 6");
@@ -3017,12 +3044,12 @@ agents: []
 		defaults.addRoom("Aft room", 1, 0, 0, 8, 3);
 		auto const defaultDoor = defaults.addSectorDoor(0, 0, 3, core::World::CreateDoorOptions{});
 		auto const defaultHall = defaults.addRoom("Lift hall", 0, 0, 10, 8, 3);
-		for (uint32_t deck = 1; deck < 3; ++deck)
+		for (uint32_t level = 1; level < 3; ++level)
 			for (uint32_t x = 0; x < 8; ++x)
-				defaults.addSectorWalkway(defaultHall, deck, x);
+				defaults.addSectorWalkway(defaultHall, level, x);
 		core::World::CreateLiftOptions defaultLiftOptions;
 		defaultLiftOptions.cellsWide = 1;
-		defaultLiftOptions.decksHigh = 3;
+		defaultLiftOptions.levelsHigh = 3;
 		defaultLiftOptions.stopOffsets = { 0, 1, 2 };
 		auto const defaultLift = defaults.addLift(1, 0, 13, defaultLiftOptions);
 		defaults.addCorridor(0, 0, 20, 20, 1);
@@ -3068,7 +3095,7 @@ agents: []
 			"A legacy Shuttle-owned Door");
 
 		// The current reader still refuses anything above its own ceiling.
-		auto const futureYaml = std::string("version: 15")
+		auto const futureYaml = std::string("version: 16")
 			+ defaultsYaml.substr(defaultsYaml.find("\n"));
 		bool refusedFuture{ false };
 		try
@@ -3297,15 +3324,15 @@ agents: []
 			return world;
 		};
 
-		// Landings live on floors 1-3 so extending the shaft downward shifts
-		// every stop offset while retaining the same stop floors.
+		// Landings live on levels 1-3 so extending the shaft downward shifts
+		// every stop offset while retaining the same stop levels.
 		core::World world("Lift creation styles", 12, 4);
 		world.addRoom("Landing 1", 0, 1, 0, 12, 1);
 		world.addRoom("Landing 2", 0, 2, 0, 12, 1);
 		world.addRoom("Landing 3", 0, 3, 0, 12, 1);
 		core::World::CreateLiftOptions options;
 		options.cellsWide = 1;
-		options.decksHigh = 3;
+		options.levelsHigh = 3;
 		options.stopOffsets = { 0, 1, 2 };
 		// The middle stop carries no override (~0u) and must keep the generated
 		// OpenApart default through every replay.
@@ -3345,7 +3372,7 @@ agents: []
 		requireStyles(*loaded, liftSector, "Rebuilt Lift styled at creation");
 
 		// A stop-preserving resize - the shaft extends below its stops, shifting
-		// every offset - keeps each style on its stop's landing floor.
+		// every offset - keeps each style on its stop's landing level.
 		auto const resizePlan = loaded->planResizeLift(liftSector, 2, 0, 1, 4);
 		require(resizePlan.valid,
 			("A stop-preserving resize plan was refused: " + resizePlan.diagnostic).c_str());
@@ -3425,7 +3452,7 @@ agents: []
 		world.addRoom("Landing 3", 0, 3, 0, 12, 1);
 		core::World::CreateLiftOptions options;
 		options.cellsWide = 1;
-		options.decksHigh = 3;
+		options.levelsHigh = 3;
 		options.stopOffsets = { 0, 1, 2 };
 		// A creation-time vector shorter than the stop list: only stop 0 is
 		// styled; stops 1 and 2 replay with the generated OpenApart default.
@@ -3490,8 +3517,8 @@ agents: []
 	}
 
 	// Ticket #86: per-stop Door styles follow the stop's identity when the Lift
-	// moves or resizes without changing its stop floors. The overrides remap by
-	// absolute landing floor rather than by the transient offset from the shaft
+	// moves or resizes without changing its stop levels. The overrides remap by
+	// absolute landing level rather than by the transient offset from the shaft
 	// anchor, so a sideways move, a shaft extension that shifts every offset,
 	// and a width change all retain each stop's own style, and the reconciled
 	// styles survive save/load.
@@ -3516,7 +3543,7 @@ agents: []
 			}
 			return nullptr;
 		};
-		auto stopFloor = [](core::World const& world, uint32_t liftSector,
+		auto stopLevel = [](core::World const& world, uint32_t liftSector,
 			uint32_t stopIndex) -> uint32_t
 		{
 			auto const lift = std::dynamic_pointer_cast<const core::LiftTransit>(
@@ -3556,9 +3583,9 @@ agents: []
 			return world;
 		};
 
-		// Landings live on floors 1-3 so the shaft's bottom anchor never sits on
+		// Landings live on levels 1-3 so the shaft's bottom anchor never sits on
 		// a stop: extending the shaft downward shifts every stop offset while
-		// retaining the same stop floors.
+		// retaining the same stop levels.
 		core::World world("Lift move style retention", 12, 4);
 		world.addRoom("Landing 1", 0, 1, 0, 12, 1);
 		world.addRoom("Landing 2", 0, 2, 0, 12, 1);
@@ -3584,15 +3611,15 @@ agents: []
 			require(plan.stopOffsets == std::vector<uint32_t>{ 0, 1, 2 },
 				"The sideways move did not retain the stop offsets");
 			liftSector = world.applyLiftEdit(plan);
-			require(stopFloor(world, liftSector, 0) == 1
-				&& stopFloor(world, liftSector, 1) == 2
-				&& stopFloor(world, liftSector, 2) == 3,
-				"The sideways move changed the stop floors");
+			require(stopLevel(world, liftSector, 0) == 1
+				&& stopLevel(world, liftSector, 1) == 2
+				&& stopLevel(world, liftSector, 2) == 3,
+				"The sideways move changed the stop levels");
 			requireStyles(world, liftSector, styles, "Lift moved sideways");
 		}
 
-		// Extending the shaft downward keeps the same stop floors but shifts
-		// every stop offset by one; each style must follow its stop's floor
+		// Extending the shaft downward keeps the same stop levels but shifts
+		// every stop offset by one; each style must follow its stop's level
 		// instead of sliding onto the neighbouring Door.
 		{
 			auto const plan = world.planResizeLift(liftSector, 6, 0, 1, 4);
@@ -3600,10 +3627,10 @@ agents: []
 			require(plan.stopOffsets == std::vector<uint32_t>{ 1, 2, 3 },
 				"The shaft extension did not shift the stop offsets as expected");
 			liftSector = world.applyLiftEdit(plan);
-			require(stopFloor(world, liftSector, 0) == 1
-				&& stopFloor(world, liftSector, 1) == 2
-				&& stopFloor(world, liftSector, 2) == 3,
-				"The shaft extension changed the stop floors");
+			require(stopLevel(world, liftSector, 0) == 1
+				&& stopLevel(world, liftSector, 1) == 2
+				&& stopLevel(world, liftSector, 2) == 3,
+				"The shaft extension changed the stop levels");
 			requireStyles(world, liftSector, styles, "Lift shaft extended below its stops");
 		}
 
@@ -3630,9 +3657,9 @@ agents: []
 			require(plan.valid, ("Deleting the middle stop was refused: " + plan.diagnostic).c_str());
 			auto const remaining = loaded->applyLiftEdit(plan);
 			require(remaining == liftSector, "Removing a stop moved the Lift to another Sector");
-			require(stopFloor(*loaded, liftSector, 0) == 1
-				&& stopFloor(*loaded, liftSector, 1) == 3,
-				"The remaining stops are not on the expected floors");
+			require(stopLevel(*loaded, liftSector, 0) == 1
+				&& stopLevel(*loaded, liftSector, 1) == 3,
+				"The remaining stops are not on the expected levels");
 			requireStyles(*loaded, liftSector,
 				{ core::Door::OpenStyle::OpenLeft, core::Door::OpenStyle::OpenRight },
 				"Lift after its middle stop was deleted");
@@ -3666,7 +3693,7 @@ agents: []
 			}
 			return nullptr;
 		};
-		auto stopFloor = [](core::World const& world, uint32_t liftSector,
+		auto stopLevel = [](core::World const& world, uint32_t liftSector,
 			uint32_t stopIndex) -> uint32_t
 		{
 			auto const lift = std::dynamic_pointer_cast<const core::LiftTransit>(
@@ -3682,29 +3709,29 @@ agents: []
 			require(static_cast<bool>(lift), "The Lift transit disappeared");
 			return lift->getNumStops();
 		};
-		// Styles are asserted against the stop's landing floor, not its index
-		// in the stop list: the floor is the stop's identity for reconciliation.
-		auto requireStyleAtFloor = [&](core::World const& world, uint32_t liftSector,
-			uint32_t floor, core::Door::OpenStyle expected, char const* context)
+		// Styles are asserted against the stop's landing level, not its index
+		// in the stop list: the level is the stop's identity for reconciliation.
+		auto requireStyleAtLevel = [&](core::World const& world, uint32_t liftSector,
+			uint32_t level, core::Door::OpenStyle expected, char const* context)
 		{
 			auto const count = stopCount(world, liftSector);
 			for (uint32_t stop = 0; stop < count; ++stop)
 			{
-				if (stopFloor(world, liftSector, stop) != floor) continue;
+				if (stopLevel(world, liftSector, stop) != level) continue;
 				auto const door = findLiftStopDoor(world, liftSector, stop);
 				require(static_cast<bool>(door),
-					(std::string(context) + ": landing Door is missing at floor "
-						+ std::to_string(floor)).c_str());
+					(std::string(context) + ": landing Door is missing at level "
+						+ std::to_string(level)).c_str());
 				require(door->getOpenStyle() == expected,
-					(std::string(context) + ": the stop at floor " + std::to_string(floor)
+					(std::string(context) + ": the stop at level " + std::to_string(level)
 						+ " does not carry its own style").c_str());
 				return;
 			}
-			require(false, (std::string(context) + ": no stop exists at floor "
-				+ std::to_string(floor)).c_str());
+			require(false, (std::string(context) + ": no stop exists at level "
+				+ std::to_string(level)).c_str());
 		};
-		auto requireNoStopAtFloor = [](core::World const& world, uint32_t liftSector,
-			uint32_t floor, char const* context)
+		auto requireNoStopAtLevel = [](core::World const& world, uint32_t liftSector,
+			uint32_t level, char const* context)
 		{
 			auto const lift = std::dynamic_pointer_cast<const core::LiftTransit>(
 				world.getSector(liftSector));
@@ -3714,9 +3741,9 @@ agents: []
 				auto const& value = lift->getStop(stop);
 				auto const stopAt = static_cast<uint32_t>((int)value.sector->getCellY()
 					+ value.sectorOffsetY);
-				require(stopAt != floor,
-					(std::string(context) + ": a stop still exists at floor "
-						+ std::to_string(floor)).c_str());
+				require(stopAt != level,
+					(std::string(context) + ": a stop still exists at level "
+						+ std::to_string(level)).c_str());
 			}
 		};
 		auto snapshotYaml = [](core::World& world)
@@ -3737,7 +3764,7 @@ agents: []
 			return world;
 		};
 
-		// Landings on floors 1-3; further landings are added mid-lifecycle so
+		// Landings on levels 1-3; further landings are added mid-lifecycle so
 		// stops can be created at the top and bottom of the shaft.
 		core::World world("Lift stop style reconciliation", 12, 5);
 		world.addRoom("Landing 1", 0, 1, 0, 12, 1);
@@ -3758,15 +3785,15 @@ agents: []
 		require(world.setLiftStopDoorOpenStyle(liftSector, 2,
 			core::Door::OpenStyle::OpenRight, &diagnostic),
 			("Styling stop 2 was refused: " + diagnostic).c_str());
-		requireStyleAtFloor(world, liftSector, 1, core::Door::OpenStyle::OpenLeft,
+		requireStyleAtLevel(world, liftSector, 1, core::Door::OpenStyle::OpenLeft,
 			"Freshly styled Lift");
-		requireStyleAtFloor(world, liftSector, 2, core::Door::OpenStyle::OpenUp,
+		requireStyleAtLevel(world, liftSector, 2, core::Door::OpenStyle::OpenUp,
 			"Freshly styled Lift");
-		requireStyleAtFloor(world, liftSector, 3, core::Door::OpenStyle::OpenRight,
+		requireStyleAtLevel(world, liftSector, 3, core::Door::OpenStyle::OpenRight,
 			"Freshly styled Lift");
 
 		// Adding a stop: extending the shaft over a new landing creates a stop
-		// at floor 4.  Every surviving stop keeps its own style and the new
+		// at level 4.  Every surviving stop keeps its own style and the new
 		// Door takes the Lift's generated OpenApart default.  The added Room
 		// record canonicalizes ahead of the Lift, so follow the Lift's Sector.
 		{
@@ -3779,61 +3806,61 @@ agents: []
 			liftSector = world.applyLiftEdit(plan);
 			require(stopCount(world, liftSector) == 4,
 				"The Lift did not gain exactly one new stop");
-			requireStyleAtFloor(world, liftSector, 1, core::Door::OpenStyle::OpenLeft,
+			requireStyleAtLevel(world, liftSector, 1, core::Door::OpenStyle::OpenLeft,
 				"Lift after adding a stop");
-			requireStyleAtFloor(world, liftSector, 2, core::Door::OpenStyle::OpenUp,
+			requireStyleAtLevel(world, liftSector, 2, core::Door::OpenStyle::OpenUp,
 				"Lift after adding a stop");
-			requireStyleAtFloor(world, liftSector, 3, core::Door::OpenStyle::OpenRight,
+			requireStyleAtLevel(world, liftSector, 3, core::Door::OpenStyle::OpenRight,
 				"Lift after adding a stop");
-			requireStyleAtFloor(world, liftSector, 4, core::Door::OpenStyle::OpenApart,
+			requireStyleAtLevel(world, liftSector, 4, core::Door::OpenStyle::OpenApart,
 				"The newly added stop");
 		}
 
-		// Removing a stop: deleting the middle stop (floor 2) takes its OpenUp
+		// Removing a stop: deleting the middle stop (level 2) takes its OpenUp
 		// override with it; the surviving stops keep their own styles.
 		{
 			auto const plan = world.planRemoveLiftStop(liftSector, 1);
-			require(plan.valid, ("Removing the stop at floor 2 was refused: "
+			require(plan.valid, ("Removing the stop at level 2 was refused: "
 				+ plan.diagnostic).c_str());
 			liftSector = world.applyLiftEdit(plan);
 			require(stopCount(world, liftSector) == 3,
 				"Removing a stop did not leave three stops");
-			requireNoStopAtFloor(world, liftSector, 2,
-				"Lift after removing its floor-2 stop");
-			requireStyleAtFloor(world, liftSector, 1, core::Door::OpenStyle::OpenLeft,
+			requireNoStopAtLevel(world, liftSector, 2,
+				"Lift after removing its level-2 stop");
+			requireStyleAtLevel(world, liftSector, 1, core::Door::OpenStyle::OpenLeft,
 				"Lift after removing a stop");
-			requireStyleAtFloor(world, liftSector, 3, core::Door::OpenStyle::OpenRight,
+			requireStyleAtLevel(world, liftSector, 3, core::Door::OpenStyle::OpenRight,
 				"Lift after removing a stop");
-			requireStyleAtFloor(world, liftSector, 4, core::Door::OpenStyle::OpenApart,
+			requireStyleAtLevel(world, liftSector, 4, core::Door::OpenStyle::OpenApart,
 				"Lift after removing a stop");
 		}
 
 		// A later new stop cannot inherit the discarded OpenUp override from
-		// the removed stop it replaced at floor 2: the new identity is
+		// the removed stop it replaced at level 2: the new identity is
 		// generated with the Lift's OpenApart default while every survivor is
 		// untouched.
 		{
 			auto const plan = world.planResizeLift(liftSector, 2, 1, 1, 4);
-			require(plan.valid, ("Re-adding the stop at floor 2 was refused: "
+			require(plan.valid, ("Re-adding the stop at level 2 was refused: "
 				+ plan.diagnostic).c_str());
 			require(plan.stopOffsets == std::vector<uint32_t>{ 0, 1, 2, 3 },
-				"The Lift did not re-derive the stop at floor 2");
+				"The Lift did not re-derive the stop at level 2");
 			liftSector = world.applyLiftEdit(plan);
 			require(stopCount(world, liftSector) == 4,
 				"The Lift did not regain its fourth stop");
-			requireStyleAtFloor(world, liftSector, 1, core::Door::OpenStyle::OpenLeft,
-				"Lift after re-adding the floor-2 stop");
-			requireStyleAtFloor(world, liftSector, 2, core::Door::OpenStyle::OpenApart,
+			requireStyleAtLevel(world, liftSector, 1, core::Door::OpenStyle::OpenLeft,
+				"Lift after re-adding the level-2 stop");
+			requireStyleAtLevel(world, liftSector, 2, core::Door::OpenStyle::OpenApart,
 				"The new stop replacing the removed one");
-			requireStyleAtFloor(world, liftSector, 3, core::Door::OpenStyle::OpenRight,
-				"Lift after re-adding the floor-2 stop");
-			requireStyleAtFloor(world, liftSector, 4, core::Door::OpenStyle::OpenApart,
-				"Lift after re-adding the floor-2 stop");
+			requireStyleAtLevel(world, liftSector, 3, core::Door::OpenStyle::OpenRight,
+				"Lift after re-adding the level-2 stop");
+			requireStyleAtLevel(world, liftSector, 4, core::Door::OpenStyle::OpenApart,
+				"Lift after re-adding the level-2 stop");
 		}
 
 		// Reordering stop data does not swap styles: adding a stop at the
 		// bottom shifts every surviving stop to a new index in the stop list.
-		// Each style follows its stop's landing floor instead of sliding onto
+		// Each style follows its stop's landing level instead of sliding onto
 		// the Door that now sits at the style's old index.
 		{
 			world.addRoom("Landing 0", 0, 0, 0, 12, 1);
@@ -3845,41 +3872,41 @@ agents: []
 			liftSector = world.applyLiftEdit(plan);
 			require(stopCount(world, liftSector) == 5,
 				"Inserting the bottom stop changed the stop count unexpectedly");
-			require(stopFloor(world, liftSector, 0) == 0
-				&& stopFloor(world, liftSector, 1) == 1
-				&& stopFloor(world, liftSector, 2) == 2
-				&& stopFloor(world, liftSector, 3) == 3
-				&& stopFloor(world, liftSector, 4) == 4,
-				"The shifted stop list is not on the expected floors");
-			requireStyleAtFloor(world, liftSector, 0, core::Door::OpenStyle::OpenApart,
+			require(stopLevel(world, liftSector, 0) == 0
+				&& stopLevel(world, liftSector, 1) == 1
+				&& stopLevel(world, liftSector, 2) == 2
+				&& stopLevel(world, liftSector, 3) == 3
+				&& stopLevel(world, liftSector, 4) == 4,
+				"The shifted stop list is not on the expected levels");
+			requireStyleAtLevel(world, liftSector, 0, core::Door::OpenStyle::OpenApart,
 				"The newly inserted bottom stop");
-			requireStyleAtFloor(world, liftSector, 1, core::Door::OpenStyle::OpenLeft,
+			requireStyleAtLevel(world, liftSector, 1, core::Door::OpenStyle::OpenLeft,
 				"Lift after its stop indices shifted down");
-			requireStyleAtFloor(world, liftSector, 2, core::Door::OpenStyle::OpenApart,
+			requireStyleAtLevel(world, liftSector, 2, core::Door::OpenStyle::OpenApart,
 				"Lift after its stop indices shifted down");
-			requireStyleAtFloor(world, liftSector, 3, core::Door::OpenStyle::OpenRight,
+			requireStyleAtLevel(world, liftSector, 3, core::Door::OpenStyle::OpenRight,
 				"Lift after its stop indices shifted down");
-			requireStyleAtFloor(world, liftSector, 4, core::Door::OpenStyle::OpenApart,
+			requireStyleAtLevel(world, liftSector, 4, core::Door::OpenStyle::OpenApart,
 				"Lift after its stop indices shifted down");
 		}
 
 		// The reconciled result round-trips: a save/load after the adds,
 		// the removal, and the reindexing retains every style on its own
-		// stop's landing floor.
+		// stop's landing level.
 		{
 			auto const yaml = snapshotYaml(world);
 			auto const loaded = loadYaml(yaml);
 			require(stopCount(*loaded, liftSector) == 5,
 				"The loaded Lift lost stops in the round-trip");
-			requireStyleAtFloor(*loaded, liftSector, 0, core::Door::OpenStyle::OpenApart,
+			requireStyleAtLevel(*loaded, liftSector, 0, core::Door::OpenStyle::OpenApart,
 				"Loaded Lift after stop reconciliation");
-			requireStyleAtFloor(*loaded, liftSector, 1, core::Door::OpenStyle::OpenLeft,
+			requireStyleAtLevel(*loaded, liftSector, 1, core::Door::OpenStyle::OpenLeft,
 				"Loaded Lift after stop reconciliation");
-			requireStyleAtFloor(*loaded, liftSector, 2, core::Door::OpenStyle::OpenApart,
+			requireStyleAtLevel(*loaded, liftSector, 2, core::Door::OpenStyle::OpenApart,
 				"Loaded Lift after stop reconciliation");
-			requireStyleAtFloor(*loaded, liftSector, 3, core::Door::OpenStyle::OpenRight,
+			requireStyleAtLevel(*loaded, liftSector, 3, core::Door::OpenStyle::OpenRight,
 				"Loaded Lift after stop reconciliation");
-			requireStyleAtFloor(*loaded, liftSector, 4, core::Door::OpenStyle::OpenApart,
+			requireStyleAtLevel(*loaded, liftSector, 4, core::Door::OpenStyle::OpenApart,
 				"Loaded Lift after stop reconciliation");
 		}
 	}
@@ -4948,7 +4975,7 @@ agents: []
 			"A removed missing World remained in the in-memory recent files");
 
 		auto const available = directory / "available.world.yaml";
-		std::ofstream(available) << "version: 14\n";
+		std::ofstream(available) << "version: 15\n";
 		recent.add(available.string());
 		require(!recent.removeUnavailable(available.string())
 			&& recent.entries().size() == 1,
@@ -5630,7 +5657,7 @@ void ladderEditsUseTheLaddersOwnLayer()
 		auto const ladder = std::dynamic_pointer_cast<const core::LadderTransit>(
 			world.getSector(moved));
 		require(ladder && ladder->getCellX() == 4 && ladder->getLayerIndex() == transitLayer
-			&& ladder->getDecksHigh() == 3,
+			&& ladder->getLevelsHigh() == 3,
 			"The Ladder was not moved on its own Layer");
 
 		auto const removal = world.planRemoveLadder(moved);
@@ -5670,7 +5697,7 @@ void stairwellEditsUseTheStairwellsOwnLayer()
 		auto const stairwell = std::dynamic_pointer_cast<const core::StairwellTransit>(
 			world.getSector(moved));
 		require(stairwell && stairwell->getCellX() == 4
-			&& stairwell->getLayerIndex() == transitLayer && stairwell->getDecksHigh() == 3,
+			&& stairwell->getLayerIndex() == transitLayer && stairwell->getLevelsHigh() == 3,
 			"The Stairwell was not moved on its own Layer");
 
 		auto const removal = world.planRemoveStairwell(moved);
@@ -5754,7 +5781,7 @@ void runSerializationSmokeChecks()
 	layerDeletionKeepsAtLeastTwoLayers();
 	locationEditsArePlannedAndAppliedAtomically();
 	editedShuttleRoundTripsWithoutSchemaChanges();
-	enclosedLiftsSupportMultiDeckRooms();
+	enclosedLiftsSupportMultiLevelRooms();
 	stopDerivingAddLiftRejectsInvalidLayerIndex();
 	stairwellSectorsAreCanvasSelectable();
 	staircasesConnectAdjacentCorridorsAndRoundTrip();

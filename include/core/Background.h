@@ -67,11 +67,11 @@ namespace core
 			return CellFloorType::None;
 		}
 
-		// topDeckHeight is fixed at CORE_ROOM_MAX_HEIGHT purely to satisfy the base
-		// class. Nothing walks a Background's decks, so exposing a different value
+		// topLevelHeight is fixed at CORE_ROOM_MAX_HEIGHT purely to satisfy the base
+		// class. Nothing walks a Background's levels, so exposing a different value
 		// would imply behaviour that does not exist.
 		Background(std::string const& name, uint32_t layerIndex, uint32_t index,
-			uint32_t cellX, uint32_t cellY, uint32_t cellsWide, uint32_t decksHigh,
+			uint32_t cellX, uint32_t cellY, uint32_t cellsWide, uint32_t levelsHigh,
 			BackgroundColour const& colour = {});
 
 		~Background() = default;

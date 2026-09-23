@@ -13,7 +13,7 @@ namespace core
 	// A Facade is an occupiable Location whose perimeter walls are all open.
 	// It hosts objects and agents exactly as a Room does, owns walkable floor,
 	// and takes part in the Graph; the only differences from a Room are that
-	// every wall end on every deck is open by construction and that it is
+	// every wall end on every level is open by construction and that it is
 	// rendered as a solid opaque colour, like a Background (ADR 0003).
 	//
 	// "All walls open" is a type invariant, not an editable state: wall
@@ -43,8 +43,8 @@ namespace core
 		static BackgroundColour defaultColour();
 
 		Facade(std::string const& name, uint32_t layerIndex, uint32_t index,
-			uint32_t cellX, uint32_t cellY, uint32_t cellsWide, uint32_t decksHigh,
-			float topDeckHeight, BackgroundColour const& colour = defaultColour());
+			uint32_t cellX, uint32_t cellY, uint32_t cellsWide, uint32_t levelsHigh,
+			float topLevelHeight, BackgroundColour const& colour = defaultColour());
 
 		~Facade() = default;
 

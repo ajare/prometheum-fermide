@@ -502,7 +502,7 @@ return {
 		require(world->setAgentBehaviourAssignment(agent, behaviour, revision,
 			configuration, &diagnostic), "Could not author the document fixture");
 		auto const currentYaml = serializeWorld(*world);
-		require(currentYaml.find("version: 14") != std::string::npos,
+		require(currentYaml.find("version: 15") != std::string::npos,
 			"The current World schema did not include the version-11 Marker data lineage");
 		auto currentRoundTrip = deserializeWorld(currentYaml, registry);
 		currentRoundTrip->pauseSimulation();
@@ -517,9 +517,9 @@ return {
 		auto const markerRoom = markerOnly.addRoom("Room", 0, 0, 0, 8, 1);
 		markerOnly.addSectorMarker(markerRoom, 0, 3.5f, "Named Marker");
 		auto version11 = serializeWorld(markerOnly);
-		auto versionOffset = version11.find("version: 14");
+		auto versionOffset = version11.find("version: 15");
 		require(versionOffset != std::string::npos, "Missing World version field");
-		version11.replace(versionOffset, std::string("version: 14").size(), "version: 11");
+		version11.replace(versionOffset, std::string("version: 15").size(), "version: 11");
 		auto loaded11 = deserializeWorld(version11);
 		require(loaded11->getMarkerIds().size() == 1
 			&& loaded11->lookupMarker(loaded11->getMarkerIds().front())->getName()
@@ -535,8 +535,8 @@ return {
 			"Legacy unnamed Marker migration was not deterministic");
 
 		auto future = currentYaml;
-		versionOffset = future.find("version: 14");
-		future.replace(versionOffset, std::string("version: 14").size(), "version: 15");
+		versionOffset = future.find("version: 15");
+		future.replace(versionOffset, std::string("version: 15").size(), "version: 16");
 		bool futureRefused = false;
 		try { (void)deserializeWorld(future); }
 		catch (std::exception const& error)

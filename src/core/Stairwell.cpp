@@ -15,8 +15,8 @@ namespace core
 	Stairwell
 	---------
 
-	Stairwells connect Locations on different Decks.  They live on the Back Layer, and must connect to a Fore
-	Location on each Deck.  They can connect to multiple floors within the same Location, as long as the exit
+	Stairwells connect Locations on different Levels.  They live on the Back Layer, and must connect to a Fore
+	Location on each Level.  They can connect to multiple floors within the same Location, as long as the exit
 	is on ground or a Walkway.
 
 	Stairwells are two cells wide, in order that the steps are not too steep.
@@ -26,25 +26,25 @@ namespace core
 	Construction arguments:
 
 	- cellX and cellY are global, not relative to the Location that it's in.
-	- decksHigh is the number of decks that the Stairwell spans.  So a Stairwell joining Decks 0 and 1 will have a decksHigh of 2
+	- levelsHigh is the number of levels that the Stairwell spans.  So a Stairwell joining Levels 0 and 1 will have a levelsHigh of 2
 	*/
-	Stairwell::Stairwell(uint32_t cellX, uint32_t cellY, uint32_t decksHigh, int mountSide)
-		: Object((float)cellX, (float)cellY, 2.0f, (float)decksHigh)
-		, mDecksHigh(decksHigh)
+	Stairwell::Stairwell(uint32_t cellX, uint32_t cellY, uint32_t levelsHigh, int mountSide)
+		: Object((float)cellX, (float)cellY, 2.0f, (float)levelsHigh)
+		, mLevelsHigh(levelsHigh)
 		, mMountSide(mountSide)
 	{
 	}
 
 	/***
 
-	getDecksHigh()
+	getLevelsHigh()
 	--------------
 
-	Get number of decks that the Stairwell joins.
+	Get number of levels that the Stairwell joins.
 	*/
-	uint32_t Stairwell::getDecksHigh() const
+	uint32_t Stairwell::getLevelsHigh() const
 	{
-		return mDecksHigh;
+		return mLevelsHigh;
 	}
 
 	/***
@@ -59,11 +59,11 @@ namespace core
 		return mMountSide;
 	}
 
-	array<Vector2, 4> Stairwell::getDeckPath(uint32_t deckOffset) const
+	array<Vector2, 4> Stairwell::getLevelPath(uint32_t levelOffset) const
 	{
 		float const lowerX = mMountSide == CORE_SIDE_LEFT ? 1.666f : 0.334f;
 		float const upperX = mMountSide == CORE_SIDE_LEFT ? 0.334f : 1.666f;
-		float const y = (float)deckOffset;
+		float const y = (float)levelOffset;
 		return { Vector2{ 1.0f, y }, Vector2{ lowerX, y + 0.25f },
 			Vector2{ upperX, y + 0.75f }, Vector2{ 1.0f, y + 1.0f } };
 	}
@@ -77,7 +77,7 @@ namespace core
 	*/
 	string Stairwell::getDescription() const
 	{
-		return format("Stairwell - {} decks", mDecksHigh);
+		return format("Stairwell - {} levels", mLevelsHigh);
 	}
 
 	/***

@@ -27,10 +27,10 @@ namespace core
 	- cellsWide should generally be 1, but in theory there's no reason why it can't be any value greater than zero.
 	- locations[2] is the fore and back Location (front first, adjacent layer behind second)
 	*/
-	Window::Window(uint32_t cellX, uint32_t cellY, uint32_t cellsWide, uint32_t decksHigh, shared_ptr<const Sector> sectors[2])
-		: Object((float)cellX + CORE_WINDOW_X_INSET, (float)cellY + CORE_WINDOW_Y_OFFSET, cellsWide - CORE_WINDOW_X_INSET * 2.0f, (decksHigh - 1) + CORE_WINDOW_HEIGHT)
+	Window::Window(uint32_t cellX, uint32_t cellY, uint32_t cellsWide, uint32_t levelsHigh, shared_ptr<const Sector> sectors[2])
+		: Object((float)cellX + CORE_WINDOW_X_INSET, (float)cellY + CORE_WINDOW_Y_OFFSET, cellsWide - CORE_WINDOW_X_INSET * 2.0f, (levelsHigh - 1) + CORE_WINDOW_HEIGHT)
 		, mCellsWide(cellsWide)
-		, mDecksHigh(decksHigh)
+		, mLevelsHigh(levelsHigh)
 		, mState(State::Closed)
 		, mStyle(Style::Clear)
 		, mSectors{ sectors[0], sectors[1] }
@@ -51,14 +51,14 @@ namespace core
 
 	/***
 
-	getDecksHigh()
+	getLevelsHigh()
 	--------------
 
 	Get the height of the Window, in cells.
 	*/
-	uint32_t Window::getDecksHigh() const
+	uint32_t Window::getLevelsHigh() const
 	{
-		return mDecksHigh;
+		return mLevelsHigh;
 	}
 
 	/***

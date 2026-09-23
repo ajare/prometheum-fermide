@@ -52,10 +52,10 @@ namespace
 	};
 
 	LiftPreview previewLift(core::World const& world, uint32_t shaftLayer, uint32_t y,
-		uint32_t x, uint32_t cellsWide, uint32_t decksHigh)
+		uint32_t x, uint32_t cellsWide, uint32_t levelsHigh)
 	{
 		LiftPreview preview;
-		for (auto const& row : world.getLiftLandingRows(shaftLayer, y, x, cellsWide, decksHigh))
+		for (auto const& row : world.getLiftLandingRows(shaftLayer, y, x, cellsWide, levelsHigh))
 		{
 			if (!row.location || !row.fullyOverlapping || row.obstructed
 				|| !row.location->isCorridor()) continue;
@@ -97,7 +97,7 @@ namespace
 	void authorLiftLandings(core::World& world)
 	{
 		while (world.getLayerCount() < 4) world.addLayer();
-		for (uint32_t row = 0; row < world.getDecksHigh(); ++row)
+		for (uint32_t row = 0; row < world.getLevelsHigh(); ++row)
 			world.addCorridor(0, row, 0, 40, 1);
 		world.addCorridor(1, 1, 8, 12, 1);
 		world.addCorridor(1, 3, 8, 12, 1);
@@ -119,7 +119,7 @@ void liftLandingsComeFromTheLayerInFront()
 	authorLiftLandings(world);
 
 	auto const rows = world.getLiftLandingRows(2, 0, 12, 2, 5);
-	require(rows.size() == 5, "A Lift shaft did not report one landing row per deck");
+	require(rows.size() == 5, "A Lift shaft did not report one landing row per level");
 	require(usableStopOffsets(rows) == std::vector<uint32_t>({ 1, 3 }),
 		"A Lift on Layer 2 did not derive its stops from the Layer directly in front");
 	for (auto const& row : rows)

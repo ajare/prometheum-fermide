@@ -64,8 +64,8 @@ namespace core
 	A World has two Layers, and there is quite a bit of hard-coding and reliance around
 	this, which is to say that increasing to three or more would be a lot of work.
 
-	One important concept to bear in mind is the API difference between "y" and "deckIndex".
-	"y" is used as an absolute value within the Layer, whereas "deckIndex" is used as an absolute
+	One important concept to bear in mind is the API difference between "y" and "levelIndex".
+	"y" is used as an absolute value within the Layer, whereas "levelIndex" is used as an absolute
 	value within a Sector, ie it is relative to a Sector's base y offset within the Layer.
 
 	Worlds are created piece by piece, and must be valid at every stage of their construction.
@@ -96,11 +96,11 @@ namespace core
 
 	*/
 
-	World::World(string const& name, uint32_t cellsWide, uint32_t decksHigh,
+	World::World(string const& name, uint32_t cellsWide, uint32_t levelsHigh,
 		AgentBehaviourRuntimeLimits behaviourRuntimeLimits)
 		: mName(name)
 		, mCellsWide(cellsWide)
-		, mDecksHigh(decksHigh)
+		, mLevelsHigh(levelsHigh)
 		, mLayers(2)
 		, mLayerNames{ defaultLayerName(0), defaultLayerName(1) }
 		, mSimulationCoordinator(*this)
@@ -109,7 +109,7 @@ namespace core
 	{
 		for (uint32_t i = 0; i < mLayers.size(); ++i)
 		{
-			mLayers[i] = make_shared<Layer>(this, cellsWide, decksHigh, i);
+			mLayers[i] = make_shared<Layer>(this, cellsWide, levelsHigh, i);
 		}
 
 		mGraph = make_shared<Graph>(this);
@@ -1338,9 +1338,9 @@ namespace core
 		return mCellsWide;
 	}
 
-	uint32_t World::getDecksHigh() const
+	uint32_t World::getLevelsHigh() const
 	{
-		return mDecksHigh;
+		return mLevelsHigh;
 	}
 
 	uint32_t World::getLayerCount() const
@@ -1376,7 +1376,7 @@ namespace core
 				format("World cannot have more than {} layers", CORE_MAX_LAYERS));
 		}
 
-		mLayers.push_back(make_shared<Layer>(this, mCellsWide, mDecksHigh, layerIndex));
+		mLayers.push_back(make_shared<Layer>(this, mCellsWide, mLevelsHigh, layerIndex));
 		mLayerNames.push_back(defaultLayerName(layerIndex));
 		modify();
 
@@ -1479,7 +1479,7 @@ namespace core
 		}
 	}
 
-	void World::validateBounds(string const& caller, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh) const
+	void World::validateBounds(string const& caller, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t levelsHigh) const
 	{
 		if (x >= mCellsWide)
 		{
@@ -1491,22 +1491,22 @@ namespace core
 			throw WorldException(this, format("{} - cellsWide={} is out of bounds", caller, cellsWide));
 		}
 
-		if (y >= mDecksHigh)
+		if (y >= mLevelsHigh)
 		{
 			throw WorldException(this, format("{} - y={} is out of bounds", caller, y));
 		}
 
-		if (decksHigh > mDecksHigh - y)
+		if (levelsHigh > mLevelsHigh - y)
 		{
-			throw WorldException(this, format("{} - decksHigh={} is out of bounds", caller, decksHigh));
+			throw WorldException(this, format("{} - levelsHigh={} is out of bounds", caller, levelsHigh));
 		}
 	}
 
-	void World::validateLayerSpace(string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh) const
+	void World::validateLayerSpace(string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t levelsHigh) const
 	{
 		auto layer = getLayer(layerIndex);
 
-		for (uint32_t iy = y; iy < y + decksHigh; ++iy)
+		for (uint32_t iy = y; iy < y + levelsHigh; ++iy)
 		{
 			for (uint32_t ix = x; ix < x + cellsWide; ++ix)
 			{
@@ -1535,7 +1535,7 @@ namespace core
 		}
 	}
 
-	void World::validateSpaceOnlyInOneSector(string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh, bool allowAllBackgroundSpan) const
+	void World::validateSpaceOnlyInOneSector(string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t levelsHigh, bool allowAllBackgroundSpan) const
 	{
 		auto layer = getLayer(layerIndex);
 
@@ -1548,7 +1548,7 @@ namespace core
 		{
 			bool seesBackground = false;
 			bool seesOccupiedOther = false;
-			for (uint32_t iy = y; iy < y + decksHigh; ++iy)
+			for (uint32_t iy = y; iy < y + levelsHigh; ++iy)
 				for (uint32_t ix = x; ix < x + cellsWide; ++ix)
 				{
 					auto const& cellDef = layer->getCellDefinition(ix, iy);
@@ -1562,12 +1562,12 @@ namespace core
 			if (seesBackground && seesOccupiedOther)
 				throw WorldException(this, format(
 					"{} - bounds {},{} -> {},{} mix a Background with a Location or Transit on Layer {}; a Window cannot look half into a room and half into a Background, since there should be a wall where the room ends",
-					caller, x, y, x + cellsWide, y + decksHigh, layerIndex));
+					caller, x, y, x + cellsWide, y + levelsHigh, layerIndex));
 		}
 
 		auto sectorIndex = layer->getCellDefinition(x, y).sectorIndex;
 
-		for (uint32_t iy = y; iy < y + decksHigh; ++iy)
+		for (uint32_t iy = y; iy < y + levelsHigh; ++iy)
 		{
 			for (uint32_t ix = x; ix < x + cellsWide; ++ix)
 			{
@@ -1575,7 +1575,7 @@ namespace core
 
 				if (cellDef.sectorIndex != sectorIndex)
 				{
-					throw WorldException(this, format("{} - bounds {},{} -> {},{} cross multiple Sectors", caller, x, y, x + cellsWide, y + decksHigh));
+					throw WorldException(this, format("{} - bounds {},{} -> {},{} cross multiple Sectors", caller, x, y, x + cellsWide, y + levelsHigh));
 				}
 			}
 		}
@@ -1691,11 +1691,11 @@ namespace core
 		return mLayers[layerIndex];
 	}
 
-	uint32_t World::createLocation(string const& name, SectorType type, uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh, float topDeckHeight, bool isCorridor)
+	uint32_t World::createLocation(string const& name, SectorType type, uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t levelsHigh, float topLevelHeight, bool isCorridor)
 	{
 		auto sectorIndex = (uint32_t)mSectors.size();
 
-		auto location = make_shared<Location>(name, type, layerIndex, sectorIndex, x, y, cellsWide, decksHigh, topDeckHeight, ~0u, isCorridor);
+		auto location = make_shared<Location>(name, type, layerIndex, sectorIndex, x, y, cellsWide, levelsHigh, topLevelHeight, ~0u, isCorridor);
 		
 		mSectors.push_back(location);
 		return sectorIndex;
@@ -1704,7 +1704,7 @@ namespace core
 	uint32_t World::createLadder(uint32_t layerIndex, uint32_t x, uint32_t y, CreateLadderOptions const& options)
 	{
 		auto y0 = y;
-		auto y1 = y + options.decksHigh - 1;
+		auto y1 = y + options.levelsHigh - 1;
 
 		// Get Locations this Ladder connects.  A Transit on layerIndex lands on the
 		// Layer directly in front of it, never on a Layer of its own choosing.
@@ -1719,18 +1719,18 @@ namespace core
 
 		// Transit stops
 		vector<TransitStop> stops = {
-			{ sectors[CORE_LEVEL_LOW], (int)x - (int)sectors[0]->getCellX(), (int)y - (int)sectors[0]->getCellY() },
-			{ sectors[CORE_LEVEL_HIGH], (int)x - (int)sectors[1]->getCellX(), (int)y - (int)sectors[1]->getCellY() }
+			{ sectors[CORE_LADDER_ENDPOINT_LOW], (int)x - (int)sectors[0]->getCellX(), (int)y - (int)sectors[0]->getCellY() },
+			{ sectors[CORE_LADDER_ENDPOINT_HIGH], (int)x - (int)sectors[1]->getCellX(), (int)y - (int)sectors[1]->getCellY() }
 		};
 
 		auto sectorIndex = (uint32_t)mSectors.size();
-		auto ladder = make_shared<LadderTransit>(sectorIndex, layerIndex, x, y, options.decksHigh, stops, options.extensible, options.startExtended);
+		auto ladder = make_shared<LadderTransit>(sectorIndex, layerIndex, x, y, options.levelsHigh, stops, options.extensible, options.startExtended);
 
 		mSectors.push_back(ladder);
 		return sectorIndex;
 	}
 
-	uint32_t World::createStairwell(uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t decksHigh, int mountSide)
+	uint32_t World::createStairwell(uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t levelsHigh, int mountSide)
 	{
 		ASSERT_SIDE_OK(mountSide);
 
@@ -1740,7 +1740,7 @@ namespace core
 		vector<TransitStop> stops;
 		auto const& landing = mLayers[layerInFront(layerIndex)];
 
-		for (uint32_t iy = y; iy < y + decksHigh; ++iy)
+		for (uint32_t iy = y; iy < y + levelsHigh; ++iy)
 		{
 			auto const& cellDef = landing->getCellDefinition(x, iy);
 			auto sector = getSector(cellDef.sectorIndex);
@@ -1753,7 +1753,7 @@ namespace core
 		}
 
 		auto sectorIndex = (uint32_t)mSectors.size();
-		auto stairwell = make_shared<StairwellTransit>(sectorIndex, layerIndex, x, y, decksHigh, mountSide, stops);
+		auto stairwell = make_shared<StairwellTransit>(sectorIndex, layerIndex, x, y, levelsHigh, mountSide, stops);
 
 		mSectors.push_back(stairwell);
 		return sectorIndex;
@@ -1781,7 +1781,7 @@ namespace core
 	}
 
 	World::CreateObjectResult World::createLift(uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide,
-		uint32_t decksHigh, vector<uint32_t> const& stopOffsets)
+		uint32_t levelsHigh, vector<uint32_t> const& stopOffsets)
 	{
 		// Get Locations this Lift connects, all on the Layer directly in front.
 		vector<TransitStop> stops;
@@ -1802,7 +1802,7 @@ namespace core
 		}
 
 		auto sectorIndex = (uint32_t)mSectors.size();
-		auto lift = make_shared<LiftTransit>(sectorIndex, layerIndex, x, y, cellsWide, decksHigh, stops);
+		auto lift = make_shared<LiftTransit>(sectorIndex, layerIndex, x, y, cellsWide, levelsHigh, stops);
 
 		mSectors.push_back(lift);
 		
@@ -1856,20 +1856,20 @@ namespace core
 		};
 	}
 
-	uint32_t World::addLocation(string const& name, SectorType type, uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh, float topDeckHeight, bool isCorridor)
+	uint32_t World::addLocation(string const& name, SectorType type, uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t levelsHigh, float topLevelHeight, bool isCorridor)
 	{
-		string caller = format("World::addLocation({}, {}, {}, {}, {}, {}, {} {})", name, getSectorTypeString(type), layerIndex, x, y, cellsWide, decksHigh, topDeckHeight);
+		string caller = format("World::addLocation({}, {}, {}, {}, {}, {}, {} {})", name, getSectorTypeString(type), layerIndex, x, y, cellsWide, levelsHigh, topLevelHeight);
 		
-		validateBounds(caller, x, y, cellsWide, decksHigh);
-		validateLayerSpace(caller, layerIndex, x, y, cellsWide, decksHigh);
+		validateBounds(caller, x, y, cellsWide, levelsHigh);
+		validateLayerSpace(caller, layerIndex, x, y, cellsWide, levelsHigh);
 
 		// Create sector
-		auto sectorIndex = createLocation(name, type, layerIndex, x, y, cellsWide, decksHigh, topDeckHeight, isCorridor);
+		auto sectorIndex = createLocation(name, type, layerIndex, x, y, cellsWide, levelsHigh, topLevelHeight, isCorridor);
 
 		// Set layers
 		auto layer = getLayer(layerIndex);
 
-		for (uint32_t iy = y; iy < y + decksHigh; ++iy)
+		for (uint32_t iy = y; iy < y + levelsHigh; ++iy)
 		{
 			for (uint32_t ix = x; ix < x + cellsWide; ++ix)
 			{
@@ -1917,9 +1917,9 @@ namespace core
 		};
 	}
 
-	World::CreateObjectResult World::createWindow(uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh, uint32_t* vertexIdentifier)
+	World::CreateObjectResult World::createWindow(uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t levelsHigh, uint32_t* vertexIdentifier)
 	{
-		string caller = format("World::createWindow({}, {}, {}, {}, {})", layerIndex, x, y, cellsWide, decksHigh);
+		string caller = format("World::createWindow({}, {}, {}, {}, {})", layerIndex, x, y, cellsWide, levelsHigh);
 
 		// A Window is authored on the front Layer of the pair it crosses.  The Layer
 		// behind it is only absent when a map written before the back-most Layer rule
@@ -1948,7 +1948,7 @@ namespace core
 		}
 
 		// Create window in fore Location and add to back
-		auto windowIndex = foreSector->createWindow(foreSector, backSector, x, y, cellsWide, decksHigh, vertexIdentifier);
+		auto windowIndex = foreSector->createWindow(foreSector, backSector, x, y, cellsWide, levelsHigh, vertexIdentifier);
 
 		if (backSector)
 		{
@@ -2354,13 +2354,13 @@ namespace core
 	{
 		auto layer = getLayer(layerIndex);
 
-		string caller = format("World::createLadderSectorObject({}, {}, {}, {}, {})", layerIndex, x, y, options.startExtended, options.decksHigh);
+		string caller = format("World::createLadderSectorObject({}, {}, {}, {}, {})", layerIndex, x, y, options.startExtended, options.levelsHigh);
 
 		auto const& cellDef = layer->getCellDefinition(x, y);
 		auto sector = _getSector(cellDef.sectorIndex);
 
 		return {
-			sector->createLadder(sector, x, y, options.extensible, options.startExtended, options.decksHigh, vertexIdentifier),
+			sector->createLadder(sector, x, y, options.extensible, options.startExtended, options.levelsHigh, vertexIdentifier),
 			SectorObjectType::Ladder,
 			sector
 		};
@@ -2412,9 +2412,9 @@ namespace core
 
 		// Convert screen bounds to cell bounds
 		int cellX0 = max((int)(x / CORE_CELL_WIDTH_PIXELS), 0);
-		int cellY0 = max((int)(y / CORE_DECK_HEIGHT_PIXELS), 0);
+		int cellY0 = max((int)(y / CORE_LEVEL_HEIGHT_PIXELS), 0);
 		int cellX1 = min((int)((x + width) / CORE_CELL_WIDTH_PIXELS), (int)mCellsWide - 1);
-		int cellY1 = min((int)((y + height) / CORE_DECK_HEIGHT_PIXELS), (int)mDecksHigh - 1);
+		int cellY1 = min((int)((y + height) / CORE_LEVEL_HEIGHT_PIXELS), (int)mLevelsHigh - 1);
 
 		// Add all Locations to a set, as a single Location will have a reference for every CellDefinition,
 		// but we only want it once.
@@ -2462,15 +2462,15 @@ namespace core
 		return mBuildLog;
 	}
 
-	uint32_t World::addCorridor(uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t decksHigh)
+	uint32_t World::addCorridor(uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t levelsHigh)
 	{
-		return addCorridor(0, y, x, cellsWide, decksHigh);
+		return addCorridor(0, y, x, cellsWide, levelsHigh);
 	}
 
 	uint32_t World::addCorridor(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide,
-		uint32_t decksHigh)
+		uint32_t levelsHigh)
 	{
-		string const caller = format("World::addCorridor({}, {}, {}, {}, {})", layerIndex, y, x, cellsWide, decksHigh);
+		string const caller = format("World::addCorridor({}, {}, {}, {}, {})", layerIndex, y, x, cellsWide, levelsHigh);
 		// Every rejecting check runs before beginStructuralEdit() so a refused
 		// call stays a true no-op: no modified flag, no topology invalidation
 		// (ticket #93).
@@ -2480,56 +2480,56 @@ namespace core
 		// unreachable forever (ticket #64).
 		if (cellsWide == 0)
 			throw WorldException(this, format("{} - a Corridor must be at least one cell wide", caller));
-		if (decksHigh == 0)
-			throw WorldException(this, format("{} - a Corridor must be at least one deck high", caller));
+		if (levelsHigh == 0)
+			throw WorldException(this, format("{} - a Corridor must be at least one level high", caller));
 		beginStructuralEdit("addCorridor");
-		auto const result = addLocation("Corridor", SectorType::Location, layerIndex, x, y, cellsWide, decksHigh, CORE_CORRIDOR_HEIGHT, true);
+		auto const result = addLocation("Corridor", SectorType::Location, layerIndex, x, y, cellsWide, levelsHigh, CORE_CORRIDOR_HEIGHT, true);
 		ConstructionRecord record{ ConstructionType::Corridor };
 		record.layer = layerIndex;
-		record.a = y; record.b = x; record.c = cellsWide; record.d = decksHigh;
+		record.a = y; record.b = x; record.c = cellsWide; record.d = levelsHigh;
 		recordConstruction(std::move(record));
 		return result;
 	}
 
-	uint32_t World::addRoom(string const& name, uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t decksHigh, float topDeckHeight)
+	uint32_t World::addRoom(string const& name, uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t levelsHigh, float topLevelHeight)
 	{
-		string const caller = format("World::addRoom({}, {}, {}, {}, {}, {}, {})", name, layerIndex, y, x, cellsWide, decksHigh, topDeckHeight);
+		string const caller = format("World::addRoom({}, {}, {}, {}, {}, {}, {})", name, layerIndex, y, x, cellsWide, levelsHigh, topLevelHeight);
 		// Every rejecting check runs before beginStructuralEdit() so a refused
 		// call stays a true no-op: no modified flag, no topology invalidation
 		// (ticket #93).
-		// Written as a negated in-range test so a NaN topDeckHeight is rejected
+		// Written as a negated in-range test so a NaN topLevelHeight is rejected
 		// too: NaN fails both comparisons, so the plain < / > pair would let it
 		// through (ticket #55).
-		if (!(topDeckHeight >= CORE_ROOM_MIN_HEIGHT && topDeckHeight <= CORE_ROOM_MAX_HEIGHT))
+		if (!(topLevelHeight >= CORE_ROOM_MIN_HEIGHT && topLevelHeight <= CORE_ROOM_MAX_HEIGHT))
 		{
-			throw WorldException(this, format("{} - topDeckHeight={} is out of range", caller, topDeckHeight));
+			throw WorldException(this, format("{} - topLevelHeight={} is out of range", caller, topLevelHeight));
 		}
 		// Minimum (1,1), the same invariant Background and Facade enforce: a
 		// zero-sized Room would pass the bounds checks by covering nothing,
 		// leaving a Sector no cell references (ticket #64).
 		if (cellsWide == 0)
 			throw WorldException(this, format("{} - a Room must be at least one cell wide", caller));
-		if (decksHigh == 0)
-			throw WorldException(this, format("{} - a Room must be at least one deck high", caller));
+		if (levelsHigh == 0)
+			throw WorldException(this, format("{} - a Room must be at least one level high", caller));
 
 		beginStructuralEdit("addRoom");
 
-		auto const result = addLocation(name, SectorType::Location, layerIndex, x, y, cellsWide, decksHigh, topDeckHeight, false);
+		auto const result = addLocation(name, SectorType::Location, layerIndex, x, y, cellsWide, levelsHigh, topLevelHeight, false);
 		ConstructionRecord record{ ConstructionType::Room };
 		record.name = name;
-		record.a = layerIndex; record.b = y; record.c = x; record.d = cellsWide; record.e = decksHigh;
-		record.x = topDeckHeight;
+		record.a = layerIndex; record.b = y; record.c = x; record.d = cellsWide; record.e = levelsHigh;
+		record.x = topLevelHeight;
 		recordConstruction(std::move(record));
 		return result;
 	}
 
 	bool World::canAddBackground(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide,
-		uint32_t decksHigh, string* diagnostic) const
+		uint32_t levelsHigh, string* diagnostic) const
 	{
 		if (diagnostic) diagnostic->clear();
 
 		string caller = format("World::addBackground({}, {}, {}, {}, {})",
-			layerIndex, y, x, cellsWide, decksHigh);
+			layerIndex, y, x, cellsWide, levelsHigh);
 
 		try
 		{
@@ -2539,16 +2539,16 @@ namespace core
 			// nothing, which is not a Background worth authoring.
 			if (cellsWide == 0)
 				throw WorldException(this, format("{} - a Background must be at least one cell wide", caller));
-			if (decksHigh == 0)
-				throw WorldException(this, format("{} - a Background must be at least one deck high", caller));
+			if (levelsHigh == 0)
+				throw WorldException(this, format("{} - a Background must be at least one level high", caller));
 
-			validateBounds(caller, x, y, cellsWide, decksHigh);
+			validateBounds(caller, x, y, cellsWide, levelsHigh);
 
 			// Every cell must be unoccupied on the Background's own Layer, which is the
 			// same rule a Location plays by. Any Layer is legal, front-most and back-most
 			// included: a "back layers only" rule would re-introduce exactly the
 			// Fore/Back special-casing that ADR 0002 removed.
-			validateLayerSpace(caller, layerIndex, x, y, cellsWide, decksHigh);
+			validateLayerSpace(caller, layerIndex, x, y, cellsWide, levelsHigh);
 		}
 		catch (Exception const& error)
 		{
@@ -2564,20 +2564,20 @@ namespace core
 	}
 
 	uint32_t World::addBackground(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide,
-		uint32_t decksHigh, BackgroundColour const& colour)
+		uint32_t levelsHigh, BackgroundColour const& colour)
 	{
 		string diagnostic;
-		if (!canAddBackground(layerIndex, y, x, cellsWide, decksHigh, &diagnostic))
+		if (!canAddBackground(layerIndex, y, x, cellsWide, levelsHigh, &diagnostic))
 			throw WorldException(this, diagnostic);
 
 		beginStructuralEdit("addBackground");
 
 		auto sectorIndex = (uint32_t)mSectors.size();
 		mSectors.push_back(make_shared<Background>("Background", layerIndex, sectorIndex,
-			x, y, cellsWide, decksHigh, colour));
+			x, y, cellsWide, levelsHigh, colour));
 
 		auto layer = getLayer(layerIndex);
-		for (uint32_t iy = y; iy < y + decksHigh; ++iy)
+		for (uint32_t iy = y; iy < y + levelsHigh; ++iy)
 		{
 			for (uint32_t ix = x; ix < x + cellsWide; ++ix)
 			{
@@ -2592,7 +2592,7 @@ namespace core
 
 		ConstructionRecord record{ ConstructionType::Background };
 		record.layer = layerIndex;
-		record.a = y; record.b = x; record.c = cellsWide; record.d = decksHigh;
+		record.a = y; record.b = x; record.c = cellsWide; record.d = levelsHigh;
 		// The whole Background appearance fits one integer, so no new record field is
 		// needed to persist its colour.
 		record.f = packBackgroundColour(colour);
@@ -2602,12 +2602,12 @@ namespace core
 	}
 
 	bool World::canAddFacade(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide,
-		uint32_t decksHigh, float topDeckHeight, string* diagnostic) const
+		uint32_t levelsHigh, float topLevelHeight, string* diagnostic) const
 	{
 		if (diagnostic) diagnostic->clear();
 
 		string caller = format("World::addFacade({}, {}, {}, {}, {})",
-			layerIndex, y, x, cellsWide, decksHigh);
+			layerIndex, y, x, cellsWide, levelsHigh);
 
 		try
 		{
@@ -2617,15 +2617,15 @@ namespace core
 			// World bounds, and on cells unoccupied on its own Layer.
 			if (cellsWide == 0)
 				throw WorldException(this, format("{} - a Facade must be at least one cell wide", caller));
-			if (decksHigh == 0)
-				throw WorldException(this, format("{} - a Facade must be at least one deck high", caller));
-			// Same negated in-range test as addRoom: a NaN topDeckHeight must
+			if (levelsHigh == 0)
+				throw WorldException(this, format("{} - a Facade must be at least one level high", caller));
+			// Same negated in-range test as addRoom: a NaN topLevelHeight must
 			// not sail through the < / > pair (ticket #55).
-			if (!(topDeckHeight >= CORE_ROOM_MIN_HEIGHT && topDeckHeight <= CORE_ROOM_MAX_HEIGHT))
-				throw WorldException(this, format("{} - topDeckHeight={} is out of range", caller, topDeckHeight));
+			if (!(topLevelHeight >= CORE_ROOM_MIN_HEIGHT && topLevelHeight <= CORE_ROOM_MAX_HEIGHT))
+				throw WorldException(this, format("{} - topLevelHeight={} is out of range", caller, topLevelHeight));
 
-			validateBounds(caller, x, y, cellsWide, decksHigh);
-			validateLayerSpace(caller, layerIndex, x, y, cellsWide, decksHigh);
+			validateBounds(caller, x, y, cellsWide, levelsHigh);
+			validateLayerSpace(caller, layerIndex, x, y, cellsWide, levelsHigh);
 		}
 		catch (Exception const& error)
 		{
@@ -2641,34 +2641,34 @@ namespace core
 	}
 
 	uint32_t World::addFacade(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide,
-		uint32_t decksHigh, float topDeckHeight, BackgroundColour const& colour)
+		uint32_t levelsHigh, float topLevelHeight, BackgroundColour const& colour)
 	{
-		return addFacade(Facade::defaultName(), layerIndex, y, x, cellsWide, decksHigh,
-			topDeckHeight, colour);
+		return addFacade(Facade::defaultName(), layerIndex, y, x, cellsWide, levelsHigh,
+			topLevelHeight, colour);
 	}
 
 	uint32_t World::addFacade(std::string const& name, uint32_t layerIndex, uint32_t y, uint32_t x,
-		uint32_t cellsWide, uint32_t decksHigh, float topDeckHeight, BackgroundColour const& colour)
+		uint32_t cellsWide, uint32_t levelsHigh, float topLevelHeight, BackgroundColour const& colour)
 	{
 		string diagnostic;
-		if (!canAddFacade(layerIndex, y, x, cellsWide, decksHigh, topDeckHeight, &diagnostic))
+		if (!canAddFacade(layerIndex, y, x, cellsWide, levelsHigh, topLevelHeight, &diagnostic))
 			throw WorldException(this, diagnostic);
 
 		beginStructuralEdit("addFacade");
 
 		auto sectorIndex = (uint32_t)mSectors.size();
 		mSectors.push_back(make_shared<Facade>(name, layerIndex, sectorIndex,
-			x, y, cellsWide, decksHigh, topDeckHeight, colour));
+			x, y, cellsWide, levelsHigh, topLevelHeight, colour));
 
 		auto layer = getLayer(layerIndex);
-		for (uint32_t iy = y; iy < y + decksHigh; ++iy)
+		for (uint32_t iy = y; iy < y + levelsHigh; ++iy)
 		{
 			for (uint32_t ix = x; ix < x + cellsWide; ++ix)
 			{
 				auto& cellDef = layer->getCellDefinition(ix, iy);
 				cellDef.sectorIndex = sectorIndex;
 				// A Facade owns walkable floor exactly as a Location does: ground
-				// on the bottom deck, upper decks reached by Walkways.
+				// on the bottom level, upper levels reached by Walkways.
 				cellDef.floorType = iy == y ? CellFloorType::Ground : CellFloorType::None;
 			}
 		}
@@ -2676,8 +2676,8 @@ namespace core
 		ConstructionRecord record{ ConstructionType::Facade };
 		record.name = name;
 		record.layer = layerIndex;
-		record.a = y; record.b = x; record.c = cellsWide; record.d = decksHigh;
-		record.x = topDeckHeight;
+		record.a = y; record.b = x; record.c = cellsWide; record.d = levelsHigh;
+		record.x = topLevelHeight;
 		// The Facade reuses Background's colour packing, so the editor and the
 		// headless checks round-trip the same arithmetic (ADR 0003).
 		record.f = packBackgroundColour(colour);
@@ -2686,7 +2686,7 @@ namespace core
 		return sectorIndex;
 	}
 
-	bool World::canAddLadder(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t decksHigh,
+	bool World::canAddLadder(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t levelsHigh,
 		string* diagnostic) const
 	{
 		auto reject = [&](string message)
@@ -2697,16 +2697,16 @@ namespace core
 		if (diagnostic) diagnostic->clear();
 		if (layerIndex == 0 || layerIndex >= getLayerCount())
 			return reject("A Ladder must sit on a Layer that has a Layer in front of it to land on");
-		if (decksHigh < 2) return reject("A Ladder must span at least two decks");
-		if (x >= mCellsWide || y >= mDecksHigh || y + decksHigh > mDecksHigh)
+		if (levelsHigh < 2) return reject("A Ladder must span at least two levels");
+		if (x >= mCellsWide || y >= mLevelsHigh || y + levelsHigh > mLevelsHigh)
 			return reject("The Ladder is outside the World bounds");
 		auto const& transitLayer = mLayers[layerIndex];
 		auto const& landing = mLayers[layerInFront(layerIndex)];
-		for (uint32_t iy = y; iy < y + decksHigh; ++iy)
+		for (uint32_t iy = y; iy < y + levelsHigh; ++iy)
 			if (transitLayer->getCellDefinition(x, iy).occupied())
 				return reject(format("A Sector at {},{} blocks the Ladder", x, iy));
 
-		auto upperY = y + decksHigh - 1;
+		auto upperY = y + levelsHigh - 1;
 		auto const& lower = landing->getCellDefinition(x, y);
 		auto const& upper = landing->getCellDefinition(x, upperY);
 		if (lower.sectorIndex == ~0u)
@@ -2739,7 +2739,7 @@ namespace core
 		auto transitLayer = getLayer(layerIndex);
 
 		// Checks
-		string caller = format("World::addLadder({}, {}, {}, {}, {})", layerIndex, y, x, options.decksHigh, options.startExtended);
+		string caller = format("World::addLadder({}, {}, {}, {}, {})", layerIndex, y, x, options.levelsHigh, options.startExtended);
 
 		validateLayer(caller, layerIndex);
 		if (isFrontMostLayer(layerIndex))
@@ -2747,16 +2747,16 @@ namespace core
 			throw WorldException(this, format("{} - a Ladder cannot be placed on the front-most Layer, because it has no Layer in front to land on", caller));
 		}
 
-		if (options.decksHigh < 2)
+		if (options.levelsHigh < 2)
 		{
-			throw WorldException(this, format("{} - Ladder at {},{} must be at least 2 decks high", caller, x, y));
+			throw WorldException(this, format("{} - Ladder at {},{} must be at least 2 levels high", caller, x, y));
 		}
 
-		validateBounds(caller, x, y, 1, options.decksHigh);
-		validateLayerSpace(caller, layerIndex, x, y, 1, options.decksHigh);
+		validateBounds(caller, x, y, 1, options.levelsHigh);
+		validateLayerSpace(caller, layerIndex, x, y, 1, options.levelsHigh);
 
 		auto y0 = y;
-		auto y1 = y + options.decksHigh - 1;
+		auto y1 = y + options.levelsHigh - 1;
 
 		// Make sure the landing cells have a Sector
 		auto const& cellDef0 = mLayers[landingLayer]->getCellDefinition(x, y0);
@@ -2801,7 +2801,7 @@ namespace core
 		auto sectorIndex = createLadder(layerIndex, x, y, options);
 
 		// Set layers
-		for (uint32_t iy = y; iy < y + options.decksHigh; ++iy)
+		for (uint32_t iy = y; iy < y + options.levelsHigh; ++iy)
 		{
 			auto& cellDef = transitLayer->getCellDefinition(x, iy);
 
@@ -2839,13 +2839,13 @@ namespace core
 			{
 				return x == sector->getCellX1() ? CORE_SIDE_LEFT : CORE_SIDE_RIGHT;
 			};
-			createdControls[CORE_LEVEL_LOW] = _createLadderButton(
+			createdControls[CORE_LADDER_ENDPOINT_LOW] = _createLadderButton(
 				foreSector0, x, y0, inwardSide(foreSector0), 0, nullptr, true);
-			registerExtensionControl(createdControls[CORE_LEVEL_LOW]);
+			registerExtensionControl(createdControls[CORE_LADDER_ENDPOINT_LOW]);
 
-			createdControls[CORE_LEVEL_HIGH] = _createLadderButton(
+			createdControls[CORE_LADDER_ENDPOINT_HIGH] = _createLadderButton(
 				foreSector1, x, y1, inwardSide(foreSector1), 0, nullptr, true);
-			registerExtensionControl(createdControls[CORE_LEVEL_HIGH]);
+			registerExtensionControl(createdControls[CORE_LADDER_ENDPOINT_HIGH]);
 		}
 
 		CreateLadderResult result{
@@ -2855,13 +2855,13 @@ namespace core
 		};
 		ConstructionRecord record{ ConstructionType::Ladder };
 		record.layer = layerIndex;
-		record.a = y; record.b = x; record.c = options.decksHigh; record.d = options.directionalBatchLimit;
+		record.a = y; record.b = x; record.c = options.levelsHigh; record.d = options.directionalBatchLimit;
 		record.p = options.extensible; record.q = options.startExtended;
 		recordConstruction(std::move(record));
 		return result;
 	}
 
-	bool World::canAddStairwell(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t decksHigh,
+	bool World::canAddStairwell(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t levelsHigh,
 		string* diagnostic) const
 	{
 		auto reject = [&](string message)
@@ -2872,13 +2872,13 @@ namespace core
 		if (diagnostic) diagnostic->clear();
 		if (layerIndex == 0 || layerIndex >= getLayerCount())
 			return reject("A Stairwell must sit on a Layer that has a Layer in front of it to land on");
-		if (decksHigh < 2) return reject("A Stairwell must span at least two decks");
-		if (x >= mCellsWide || y >= mDecksHigh || x + 2 > mCellsWide
-			|| y + decksHigh > mDecksHigh)
+		if (levelsHigh < 2) return reject("A Stairwell must span at least two levels");
+		if (x >= mCellsWide || y >= mLevelsHigh || x + 2 > mCellsWide
+			|| y + levelsHigh > mLevelsHigh)
 			return reject("The Stairwell is outside the World bounds");
 		auto const& transitLayer = mLayers[layerIndex];
 		auto const& landing = mLayers[layerInFront(layerIndex)];
-		for (uint32_t iy = y; iy < y + decksHigh; ++iy)
+		for (uint32_t iy = y; iy < y + levelsHigh; ++iy)
 		{
 			auto const& first = landing->getCellDefinition(x, iy);
 			if (first.sectorIndex == ~0u)
@@ -2892,7 +2892,7 @@ namespace core
 			{
 				auto const& fore = landing->getCellDefinition(ix, iy);
 				if (fore.sectorIndex != first.sectorIndex)
-					return reject(format("The Stairwell spans different landing Locations at deck {}", iy));
+					return reject(format("The Stairwell spans different landing Locations at level {}", iy));
 				if (!fore.isTraversableOnFoot())
 					return reject(format("The landing floor at {},{} is not traversable", ix, iy));
 				auto const occupant = transitLayer->getCellDefinition(ix, iy).sectorIndex;
@@ -2903,17 +2903,17 @@ namespace core
 		return true;
 	}
 
-	uint32_t World::addStairwell(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t decksHigh, int mountSide)
+	uint32_t World::addStairwell(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t levelsHigh, int mountSide)
 	{
 		beginStructuralEdit("addStairwell");
-		return addStairwell(layerIndex, y, x, CreateStairwellOptions{ decksHigh, mountSide }).sectorIndex;
+		return addStairwell(layerIndex, y, x, CreateStairwellOptions{ levelsHigh, mountSide }).sectorIndex;
 	}
 
 	World::CreateStairwellResult World::addStairwell(uint32_t layerIndex, uint32_t y, uint32_t x,
 		CreateStairwellOptions const& options)
 	{
 		beginStructuralEdit("addStairwell");
-		auto decksHigh = options.decksHigh;
+		auto levelsHigh = options.levelsHigh;
 		auto mountSide = options.mountSide;
 		ASSERT_SIDE_OK(mountSide);
 
@@ -2923,7 +2923,7 @@ namespace core
 		const uint32_t cellsWide = 2;
 
 		// Checks
-		string caller = format("World::addStairwell({}, {}, {}, {}, {})", layerIndex, y, x, decksHigh, mountSide);
+		string caller = format("World::addStairwell({}, {}, {}, {}, {})", layerIndex, y, x, levelsHigh, mountSide);
 
 		validateLayer(caller, layerIndex);
 		if (isFrontMostLayer(layerIndex))
@@ -2931,18 +2931,18 @@ namespace core
 			throw WorldException(this, format("{} - a Stairwell cannot be placed on the front-most Layer, because it has no Layer in front to land on", caller));
 		}
 
-		if (decksHigh < 2)
+		if (levelsHigh < 2)
 		{
-			throw WorldException(this, format("{} - Stairwell at {},{} must be at least 2 decks high", caller, x, y));
+			throw WorldException(this, format("{} - Stairwell at {},{} must be at least 2 levels high", caller, x, y));
 		}
 
-		validateBounds(caller, x, y, cellsWide, decksHigh);
-		validateLayerSpace(caller, layerIndex, x, y, cellsWide, decksHigh);
+		validateBounds(caller, x, y, cellsWide, levelsHigh);
+		validateLayerSpace(caller, layerIndex, x, y, cellsWide, levelsHigh);
 
-		for (uint32_t iy = y; iy < y + decksHigh; ++iy)
+		for (uint32_t iy = y; iy < y + levelsHigh; ++iy)
 		{
 			auto const& cellDef0 = mLayers[landingLayer]->getCellDefinition(x, iy);
-			auto deckSectorIndex = cellDef0.sectorIndex;
+			auto levelSectorIndex = cellDef0.sectorIndex;
 
 			for (uint32_t ix = x; ix < x + cellsWide; ++ix)
 			{
@@ -2951,7 +2951,7 @@ namespace core
 
 				// Make sure the landing cells have a Sector, and that the horizontal Sectors are not different:
 				// Stairwells cannot span different Sectors horizontally, due to placement of the door leading to them.
-				if (foreSectorIndex != deckSectorIndex)
+				if (foreSectorIndex != levelSectorIndex)
 				{
 					throw WorldException(this, format("{} - the stairwell horizontally spans different landing Sectors between {},{} and {},{}, which is not allowed", caller, x, iy, x + 1, iy));
 				}
@@ -2982,10 +2982,10 @@ namespace core
 		}
 
 		// Create stairwell
-		auto sectorIndex = createStairwell(layerIndex, x, y, decksHigh, mountSide);
+		auto sectorIndex = createStairwell(layerIndex, x, y, levelsHigh, mountSide);
 
 		// Set layers
-		for (uint32_t iy = y; iy < y + decksHigh; ++iy)
+		for (uint32_t iy = y; iy < y + levelsHigh; ++iy)
 		{
 			for (uint32_t ix = x; ix < x + cellsWide; ++ix)
 			{
@@ -3008,7 +3008,7 @@ namespace core
 
 		ConstructionRecord record{ ConstructionType::Stairwell };
 		record.layer = layerIndex;
-		record.a = y; record.b = x; record.c = options.decksHigh;
+		record.a = y; record.b = x; record.c = options.levelsHigh;
 		record.i = options.mountSide; record.d = options.directionalCapacity; record.e = options.directionalBatchLimit;
 		recordConstruction(std::move(record));
 		return { sectorIndex, traversalResource };
@@ -3039,12 +3039,12 @@ namespace core
 			return false;
 		}
 
-		auto const roomDeck = y - location->getCellY();
+		auto const roomLevel = y - location->getCellY();
 		auto openLandingAt = [&](int wallSide)
 		{
 			uint32_t const boundaryX = wallSide == CORE_SIDE_LEFT
 				? location->getCellX0() : location->getCellX1();
-			if (x != boundaryX || location->getEndType(roomDeck, wallSide) != SectorEndType::None)
+			if (x != boundaryX || location->getEndType(roomLevel, wallSide) != SectorEndType::None)
 				return false;
 			int const adjacentX = wallSide == CORE_SIDE_LEFT ? (int)x - 1 : (int)x + 1;
 			if (adjacentX < 0 || adjacentX >= (int)mCellsWide) return false;
@@ -3053,9 +3053,9 @@ namespace core
 			if (!adjacent.occupied() || !adjacent.isTraversableOnFoot()) return false;
 			auto adjacentLocation = dynamic_pointer_cast<const Location>(mSectors[adjacent.sectorIndex]);
 			if (!adjacentLocation || y < adjacentLocation->getCellY()) return false;
-			auto const adjacentDeck = y - adjacentLocation->getCellY();
-			return adjacentDeck < adjacentLocation->getDecksHigh()
-				&& adjacentLocation->getEndType(adjacentDeck, 1 - wallSide) == SectorEndType::None;
+			auto const adjacentLevel = y - adjacentLocation->getCellY();
+			return adjacentLevel < adjacentLocation->getLevelsHigh()
+				&& adjacentLocation->getEndType(adjacentLevel, 1 - wallSide) == SectorEndType::None;
 		};
 		if (openLandingAt(CORE_SIDE_LEFT) || openLandingAt(CORE_SIDE_RIGHT)) return true;
 		diagnostic = format("The upper Staircase endpoint at {},{} must meet an open Room wall with adjacent traversable floor", x, y);
@@ -3072,7 +3072,7 @@ namespace core
 		if (riseSide != CORE_SIDE_LEFT && riseSide != CORE_SIDE_RIGHT)
 			return reject("The Staircase rise direction is invalid");
 		if (cellsWide < 2) return reject("A Staircase must be at least two cells wide");
-		if (x >= mCellsWide || y >= mDecksHigh || cellsWide > mCellsWide - x || y + 1 >= mDecksHigh)
+		if (x >= mCellsWide || y >= mLevelsHigh || cellsWide > mCellsWide - x || y + 1 >= mLevelsHigh)
 			return reject("The Staircase is outside the World bounds");
 		for (uint32_t iy = y; iy <= y + 1; ++iy)
 			for (uint32_t ix = x; ix < x + cellsWide; ++ix)
@@ -3117,19 +3117,19 @@ namespace core
 	}
 
 	std::vector<World::LiftLandingRow> World::getLiftLandingRows(uint32_t layerIndex,
-		uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t decksHigh) const
+		uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t levelsHigh) const
 	{
 		vector<LiftLandingRow> rows;
-		if (layerIndex >= mLayers.size() || cellsWide == 0 || decksHigh == 0)
+		if (layerIndex >= mLayers.size() || cellsWide == 0 || levelsHigh == 0)
 			return rows;
 		// A Transit lands on the Layer directly in front of the Layer it occupies, so
 		// the front-most Layer - which has nothing in front of it - has no landings.
 		if (isFrontMostLayer(layerIndex)) return rows;
-		if (x >= mCellsWide || y >= mDecksHigh || cellsWide > mCellsWide - x
-			|| decksHigh > mDecksHigh - y) return rows;
+		if (x >= mCellsWide || y >= mLevelsHigh || cellsWide > mCellsWide - x
+			|| levelsHigh > mLevelsHigh - y) return rows;
 
 		auto const& landing = mLayers[layerInFront(layerIndex)];
-		for (uint32_t iy = y; iy < y + decksHigh; ++iy)
+		for (uint32_t iy = y; iy < y + levelsHigh; ++iy)
 		{
 			LiftLandingRow row;
 			row.offset = iy - y;
@@ -3159,21 +3159,21 @@ namespace core
 	}
 
 	World::CreateLiftResult World::addLift(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide,
-		uint32_t decksHigh)
+		uint32_t levelsHigh)
 	{
 		CreateLiftOptions options;
 		options.cellsWide = cellsWide;
-		options.decksHigh = decksHigh;
-		if (cellsWide == 0 || cellsWide > 2 || decksHigh == 0)
-			throw WorldException(this, "Editor lifts must be one or two cells wide and at least one deck high");
+		options.levelsHigh = levelsHigh;
+		if (cellsWide == 0 || cellsWide > 2 || levelsHigh == 0)
+			throw WorldException(this, "Editor lifts must be one or two cells wide and at least one level high");
 		validateLayer(format("World::addLift({}, ...)", layerIndex), layerIndex);
 		if (isFrontMostLayer(layerIndex))
 			throw WorldException(this, "A Lift cannot be placed on the front-most Layer, because it has no Layer in front to land on");
-		for (auto const& row : getLiftLandingRows(layerIndex, y, x, cellsWide, decksHigh))
+		for (auto const& row : getLiftLandingRows(layerIndex, y, x, cellsWide, levelsHigh))
 		{
 			if (!row.fullyOverlapping) continue;
 			if (row.obstructed)
-				throw WorldException(this, format("An object blocks the Lift landing at floor {}", y + row.offset));
+				throw WorldException(this, format("An object blocks the Lift landing at level {}", y + row.offset));
 			options.stopOffsets.push_back(row.offset);
 		}
 		return addLift(layerIndex, y, x, options);
@@ -3197,19 +3197,19 @@ namespace core
 		if (options.cellsWide > 2)
 			throw WorldException(this, format("{} - enclosed Lift width must be one or two cells.", caller));
 
-		auto decksHigh = options.decksHigh ? options.decksHigh : options.stopOffsets.back() + 1;
-		if (options.stopOffsets.back() >= decksHigh)
+		auto levelsHigh = options.levelsHigh ? options.levelsHigh : options.stopOffsets.back() + 1;
+		if (options.stopOffsets.back() >= levelsHigh)
 			throw WorldException(this, format("{} - Lift stop is outside the shaft bounds.", caller));
 
-		validateBounds(caller, x, y, options.cellsWide, decksHigh);
-		validateLayerSpace(caller, layerIndex, x, y, options.cellsWide, decksHigh);
+		validateBounds(caller, x, y, options.cellsWide, levelsHigh);
+		validateLayerSpace(caller, layerIndex, x, y, options.cellsWide, levelsHigh);
 
 		for (auto stopOffset : options.stopOffsets)
 		{
 			auto iy = y + stopOffset;
 		
 			auto const& cellDef = foreLayer->getCellDefinition(x, iy);
-			auto deckSectorIndex = cellDef.sectorIndex;
+			auto levelSectorIndex = cellDef.sectorIndex;
 
 			for (uint32_t ix = x; ix < x + options.cellsWide; ++ix)
 			{
@@ -3218,7 +3218,7 @@ namespace core
 
 				// Make sure the foreground cells have a Sector, and that the horizontal Sectors are not different:
 				// Lifts cannot span different Sectors horizontally, due to placement of the door leading to them.
-				if (foreSectorIndex != deckSectorIndex)
+				if (foreSectorIndex != levelSectorIndex)
 				{
 					throw WorldException(this, format("{} - the lift horizontally spans different foreground Sectors between {},{} and {},{}, which is not allowed", caller, x, iy, x + 1, iy));
 				}
@@ -3243,19 +3243,19 @@ namespace core
 				if (cellDef.hasObject() || !cellDef.markers.empty())
 					throw WorldException(this, format("{} - an object blocks the Lift landing at {},{}", caller, ix, iy));
 			}
-			if (x == getSector(deckSectorIndex)->getCellX0()
-				&& x + options.cellsWide - 1 == getSector(deckSectorIndex)->getCellX1())
-				throw WorldException(this, format("{} - there is no space for a Lift call button at floor {}", caller, iy));
+			if (x == getSector(levelSectorIndex)->getCellX0()
+				&& x + options.cellsWide - 1 == getSector(levelSectorIndex)->getCellX1())
+				throw WorldException(this, format("{} - there is no space for a Lift call button at level {}", caller, iy));
 		}
 
 		// Create lift
-		auto liftObject = createLift(layerIndex, x, y, options.cellsWide, decksHigh, options.stopOffsets);
+		auto liftObject = createLift(layerIndex, x, y, options.cellsWide, levelsHigh, options.stopOffsets);
 
 		auto liftTransit = dynamic_pointer_cast<LiftTransit>(liftObject.sector);
 		auto lift = liftTransit->getLift();
 
 		// Set layers
-		for (uint32_t iy = y; iy < y + decksHigh; ++iy)
+		for (uint32_t iy = y; iy < y + levelsHigh; ++iy)
 		{
 			for (uint32_t ix = x; ix < x + options.cellsWide; ++ix)
 			{
@@ -3365,7 +3365,7 @@ namespace core
 		ConstructionRecord record{ ConstructionType::Lift };
 		record.layer = layerIndex;
 		record.a = y; record.b = x; record.c = options.cellsWide; record.d = options.capacity;
-		record.e = decksHigh; record.g = options.initialStop;
+		record.e = levelsHigh; record.g = options.initialStop;
 		record.x = options.minimumDwellSeconds; record.y = options.maximumBoardingSeconds;
 		record.values = options.stopOffsets;
 		// The per-stop Door styles are authored Lift data, not just initial Door
@@ -3623,7 +3623,7 @@ namespace core
 		return shuttleRes;
 	}
 
-	bool World::canRemoveLocationWall(uint32_t sectorIndex, uint32_t deckIndex, int side,
+	bool World::canRemoveLocationWall(uint32_t sectorIndex, uint32_t levelIndex, int side,
 		string* diagnostic) const
 	{
 		auto reject = [&](string message)
@@ -3639,9 +3639,9 @@ namespace core
 			return reject("A Facade has no walls: its perimeter is open by construction");
 		if (sector->getType() != SectorType::Location)
 			return reject("Walls can only be edited on Rooms and Corridors");
-		if (deckIndex >= sector->getDecksHigh()) return reject("The Location deck does not exist");
+		if (levelIndex >= sector->getLevelsHigh()) return reject("The Location level does not exist");
 
-		auto const globalY = sector->getCellY() + deckIndex;
+		auto const globalY = sector->getCellY() + levelIndex;
 		int const neighbourX = side == CORE_SIDE_LEFT
 			? (int)sector->getCellX() - 1
 			: (int)sector->getCellX() + (int)sector->getCellsWide();
@@ -3661,25 +3661,25 @@ namespace core
 		if (!isLocationLike(neighbour->getType()))
 			return reject("The adjacent sector is not a Room, Corridor or Facade");
 		if (globalY < neighbour->getCellY()
-			|| globalY >= neighbour->getCellY() + neighbour->getDecksHigh())
-			return reject("The adjacent Location does not occupy this deck");
-		auto const neighbourDeck = globalY - neighbour->getCellY();
+			|| globalY >= neighbour->getCellY() + neighbour->getLevelsHigh())
+			return reject("The adjacent Location does not occupy this level");
+		auto const neighbourLevel = globalY - neighbour->getCellY();
 		if (neighbour->getType() == SectorType::Facade)
 		{
 			// The Facade's half of the boundary is open by construction; only
 			// the Room's own wall stands in the way.
-			if (neighbour->getEndType(neighbourDeck, 1 - side) != SectorEndType::None)
+			if (neighbour->getEndType(neighbourLevel, 1 - side) != SectorEndType::None)
 				return reject("The Facade side of the boundary is not open");
 		}
-		else if (neighbour->getEndType(neighbourDeck, 1 - side) != SectorEndType::Wall)
+		else if (neighbour->getEndType(neighbourLevel, 1 - side) != SectorEndType::Wall)
 			return reject("The shared boundary is not a pair of walls");
-		if (sector->getEndType(deckIndex, side) != SectorEndType::Wall)
+		if (sector->getEndType(levelIndex, side) != SectorEndType::Wall)
 			return reject("The shared boundary is not a pair of walls");
 		if (diagnostic) diagnostic->clear();
 		return true;
 	}
 
-	bool World::canAddLocationWall(uint32_t sectorIndex, uint32_t deckIndex, int side,
+	bool World::canAddLocationWall(uint32_t sectorIndex, uint32_t levelIndex, int side,
 		string* diagnostic) const
 	{
 		auto reject = [&](string message)
@@ -3695,9 +3695,9 @@ namespace core
 			return reject("A Facade has no walls: its perimeter is open by construction");
 		if (sector->getType() != SectorType::Location)
 			return reject("Walls can only be edited on Rooms and Corridors");
-		if (deckIndex >= sector->getDecksHigh()) return reject("The Location deck does not exist");
+		if (levelIndex >= sector->getLevelsHigh()) return reject("The Location level does not exist");
 
-		auto const globalY = sector->getCellY() + deckIndex;
+		auto const globalY = sector->getCellY() + levelIndex;
 		int const neighbourX = side == CORE_SIDE_LEFT
 			? (int)sector->getCellX() - 1
 			: (int)sector->getCellX() + (int)sector->getCellsWide();
@@ -3711,49 +3711,49 @@ namespace core
 		if (neighbour->getType() != SectorType::Location)
 			return reject("The adjacent sector is not a Room or Corridor");
 		if (globalY < neighbour->getCellY()
-			|| globalY >= neighbour->getCellY() + neighbour->getDecksHigh())
-			return reject("The adjacent Location does not occupy this deck");
-		auto const neighbourDeck = globalY - neighbour->getCellY();
-		if (sector->getEndType(deckIndex, side) != SectorEndType::None
-			|| neighbour->getEndType(neighbourDeck, 1 - side) != SectorEndType::None)
+			|| globalY >= neighbour->getCellY() + neighbour->getLevelsHigh())
+			return reject("The adjacent Location does not occupy this level");
+		auto const neighbourLevel = globalY - neighbour->getCellY();
+		if (sector->getEndType(levelIndex, side) != SectorEndType::None
+			|| neighbour->getEndType(neighbourLevel, 1 - side) != SectorEndType::None)
 			return reject("The shared boundary is not an open wall");
 		if (diagnostic) diagnostic->clear();
 		return true;
 	}
 
-	void World::removeLocationWall(uint32_t sectorIndex, uint32_t deckIndex, int side)
+	void World::removeLocationWall(uint32_t sectorIndex, uint32_t levelIndex, int side)
 	{
 		string diagnostic;
-		if (!canRemoveLocationWall(sectorIndex, deckIndex, side, &diagnostic))
+		if (!canRemoveLocationWall(sectorIndex, levelIndex, side, &diagnostic))
 			throw WorldException(this, "World::removeLocationWall - " + diagnostic);
 		beginStructuralEdit("removeLocationWall");
 
 		auto sector = _getSector(sectorIndex);
-		auto const globalY = sector->getCellY() + deckIndex;
+		auto const globalY = sector->getCellY() + levelIndex;
 		auto const neighbourX = side == CORE_SIDE_LEFT
 			? sector->getCellX() - 1
 			: sector->getCellX() + sector->getCellsWide();
 		auto const neighbourIndex = mLayers[sector->getLayerIndex()]
 			->getCellDefinition(neighbourX, globalY).sectorIndex;
 		auto neighbour = _getSector(neighbourIndex);
-		auto const neighbourDeck = globalY - neighbour->getCellY();
-		sector->removeEndWall(deckIndex, side);
-		neighbour->removeEndWall(neighbourDeck, 1 - side);
+		auto const neighbourLevel = globalY - neighbour->getCellY();
+		sector->removeEndWall(levelIndex, side);
+		neighbour->removeEndWall(neighbourLevel, 1 - side);
 
 		ConstructionRecord record{ ConstructionType::RemoveWall };
-		record.a = sectorIndex; record.b = deckIndex; record.i = side;
+		record.a = sectorIndex; record.b = levelIndex; record.i = side;
 		recordConstruction(std::move(record));
 	}
 
-	void World::addLocationWall(uint32_t sectorIndex, uint32_t deckIndex, int side)
+	void World::addLocationWall(uint32_t sectorIndex, uint32_t levelIndex, int side)
 	{
 		string diagnostic;
-		if (!canAddLocationWall(sectorIndex, deckIndex, side, &diagnostic))
+		if (!canAddLocationWall(sectorIndex, levelIndex, side, &diagnostic))
 			throw WorldException(this, "World::addLocationWall - " + diagnostic);
 		beginStructuralEdit("addLocationWall");
 
 		auto sector = _getSector(sectorIndex);
-		auto const globalY = sector->getCellY() + deckIndex;
+		auto const globalY = sector->getCellY() + levelIndex;
 		auto const boundaryX = side == CORE_SIDE_LEFT
 			? sector->getCellX() : sector->getCellX() + sector->getCellsWide();
 		auto const neighbourX = side == CORE_SIDE_LEFT
@@ -3762,9 +3762,9 @@ namespace core
 		auto const neighbourIndex = mLayers[sector->getLayerIndex()]
 			->getCellDefinition(neighbourX, globalY).sectorIndex;
 		auto neighbour = _getSector(neighbourIndex);
-		auto const neighbourDeck = globalY - neighbour->getCellY();
-		sector->addEndWall(deckIndex, side);
-		neighbour->addEndWall(neighbourDeck, 1 - side);
+		auto const neighbourLevel = globalY - neighbour->getCellY();
+		sector->addEndWall(levelIndex, side);
+		neighbour->addEndWall(neighbourLevel, 1 - side);
 
 		// An open wall is persisted as a RemoveWall command. Restoring the wall
 		// removes either side's command for this same physical boundary.
@@ -3774,7 +3774,7 @@ namespace core
 				if (record.type != ConstructionType::RemoveWall
 					|| record.a >= mSectors.size()) return false;
 				auto commandSector = mSectors[record.a];
-				if (record.b >= commandSector->getDecksHigh()
+				if (record.b >= commandSector->getLevelsHigh()
 					|| commandSector->getLayerIndex() != sector->getLayerIndex()) return false;
 				auto const commandX = record.i == CORE_SIDE_LEFT
 					? commandSector->getCellX()
@@ -3912,7 +3912,7 @@ namespace core
 		uint32_t& landingX, uint32_t& landingWidth) const
 	{
 		if (layerIndex >= getLayerCount()) return false;
-		if (x >= mCellsWide || y >= mDecksHigh) return false;
+		if (x >= mCellsWide || y >= mLevelsHigh) return false;
 		auto const& cell = mLayers[layerIndex]->getCellDefinition(x, y);
 		if (cell.sectorIndex == ~0u) return false;
 		auto lift = dynamic_pointer_cast<const LiftTransit>(mSectors[cell.sectorIndex]);
@@ -4032,7 +4032,7 @@ namespace core
 	{
 		vector<uint32_t> result;
 		if (layerIndex == 0 || layerIndex >= getLayerCount()) return result;
-		if (y >= mDecksHigh || x >= mCellsWide || cellsWide > mCellsWide - x
+		if (y >= mLevelsHigh || x >= mCellsWide || cellsWide > mCellsWide - x
 			|| numCars == 0 || carWidth < 3 || carWidth > 5
 			|| doorMask == 0 || (doorMask >> carWidth) != 0
 			|| numCars > (cellsWide + 1) / (carWidth + 1)) return result;
@@ -4153,10 +4153,10 @@ namespace core
 		if (layerIndex + 1 >= getLayerCount())
 			return reject("A Door needs a Layer directly behind the Layer it is authored on");
 		auto const backLayer = layerBehind(layerIndex);
-		constexpr uint32_t decksHigh = 1;
+		constexpr uint32_t levelsHigh = 1;
 		// Door authoring reserves the final column as the world boundary.
 		if (options.width == 0 || x >= mCellsWide || options.width > mCellsWide - x
-			|| x + options.width >= mCellsWide || y + decksHigh > mDecksHigh)
+			|| x + options.width >= mCellsWide || y + levelsHigh > mLevelsHigh)
 			return reject("Door position is outside the world");
 		try
 		{
@@ -4169,14 +4169,14 @@ namespace core
 			if (options.activationMode != DoorActivationMode::RemoteControlled
 				&& (options.controls[0] || options.controls[1]))
 				return reject("Physical controls require a remote-controlled Door");
-			validateBounds(caller, x, y, options.width, decksHigh);
+			validateBounds(caller, x, y, options.width, levelsHigh);
 			// The whole Door rectangle stays inside one Sector on each Layer of its pair:
 			// a tall opening that straddles a Sector boundary on the Layer behind would
 			// join two Sectors with one threshold.
-			validateSpaceOnlyInOneSector(caller, layerIndex, x, y, options.width, decksHigh);
-			validateSpaceOnlyInOneSector(caller, backLayer, x, y, options.width, decksHigh);
+			validateSpaceOnlyInOneSector(caller, layerIndex, x, y, options.width, levelsHigh);
+			validateSpaceOnlyInOneSector(caller, backLayer, x, y, options.width, levelsHigh);
 			shared_ptr<const Sector> sectors[2];
-			for (uint32_t iy = y; iy < y + decksHigh; ++iy)
+			for (uint32_t iy = y; iy < y + levelsHigh; ++iy)
 				for (uint32_t ix = x; ix < x + options.width; ++ix)
 			{
 				auto const& foreCell = mLayers[layerIndex]->getCellDefinition(ix, iy);
@@ -4201,11 +4201,11 @@ namespace core
 				// Markers on the destination Layer remain independent.
 				if (foreCell.hasObject() || !foreCell.markers.empty())
 					return reject("Another object blocks Door placement");
-				// Only the threshold deck carries the walking floor.  The decks above it
+				// Only the threshold level carries the walking floor.  The levels above it
 				// are the opening's headroom, so they need no floor of their own.
 				if (iy == y && (!foreCell.isTraversableOnFoot() || !backCell.isTraversableOnFoot()))
 					return reject("Door placement requires a traversable floor on both layers");
-				// A Walkway or other floor above the threshold deck runs through the
+				// A Walkway or other floor above the threshold level runs through the
 				// opening, so the Door cannot cover it.
 				if (iy != y && (foreCell.floorType != CellFloorType::None
 					|| backCell.floorType != CellFloorType::None))
@@ -4220,7 +4220,7 @@ namespace core
 				{
 					auto const& existing = lift->getStop(stop);
 					if ((uint32_t)((int)existing.sector->getCellY() + existing.sectorOffsetY) == y)
-						return reject("This lift already has a stop on this floor");
+						return reject("This lift already has a stop on this level");
 				}
 				if (x == sectors[0]->getCellX0() && x + options.width - 1 == sectors[0]->getCellX1())
 					return reject("There is no space to place the Lift call button");
@@ -4332,7 +4332,7 @@ namespace core
 		if (layerIndex < mLayers.size() && mLayers[layerIndex])
 		{
 			auto const layer = mLayers[layerIndex].get();
-			if (x < layer->getCellsWide() && y < layer->getDecksHigh())
+			if (x < layer->getCellsWide() && y < layer->getLevelsHigh())
 			{
 				auto const& cell = layer->getCellDefinition(x, y);
 				if (cell.sectorObjectType == SectorObjectType::Door
@@ -4395,7 +4395,7 @@ namespace core
 
 		// The live landing Door rides with its record so the viewport and the
 		// Selection panel show the new style without a rebuild.  The Door is
-		// authored on the Layer in front of the Lift, at the stop's deck.
+		// authored on the Layer in front of the Lift, at the stop's level.
 		if (liftSectorIndex < mSectors.size() && mSectors[liftSectorIndex])
 		{
 			auto const lift = dynamic_pointer_cast<const LiftTransit>(mSectors[liftSectorIndex]);
@@ -4405,7 +4405,7 @@ namespace core
 				auto const doorY = lift->getCellY() + found->values[stopIndex];
 				if (frontLayer < mLayers.size() && mLayers[frontLayer]
 					&& lift->getCellX() < mLayers[frontLayer]->getCellsWide()
-					&& doorY < mLayers[frontLayer]->getDecksHigh())
+					&& doorY < mLayers[frontLayer]->getLevelsHigh())
 				{
 					auto const& cell = mLayers[frontLayer]->getCellDefinition(lift->getCellX(), doorY);
 					if (cell.sectorObjectType == SectorObjectType::Door
@@ -4477,7 +4477,7 @@ namespace core
 					+ carriageIndex * (found->e + 1) + doorOffsets[doorIndex];
 				if (frontLayer < mLayers.size() && mLayers[frontLayer]
 					&& doorX < mLayers[frontLayer]->getCellsWide()
-					&& found->a < mLayers[frontLayer]->getDecksHigh())
+					&& found->a < mLayers[frontLayer]->getLevelsHigh())
 				{
 					auto const& cell = mLayers[frontLayer]->getCellDefinition(doorX, found->a);
 					if (cell.sectorObjectType == SectorObjectType::Door
@@ -4514,7 +4514,7 @@ namespace core
 			auto const liftIndex = mLayers[layerBehind(layerIndex)]->getCellDefinition(liftX, y).sectorIndex;
 			auto lift = dynamic_pointer_cast<LiftTransit>(_getSector(liftIndex));
 			auto idlePlan = planResizeLift(liftIndex, lift->getCellX(), lift->getCellY(),
-				lift->getCellsWide(), lift->getDecksHigh());
+				lift->getCellsWide(), lift->getLevelsHigh());
 			if (!idlePlan.valid) throw WorldException(this, idlePlan.diagnostic);
 			idlePlan.stopOffsets.clear();
 			for (uint32_t stop = 0; stop < lift->getNumStops(); ++stop)
@@ -4802,16 +4802,16 @@ namespace core
 			throw WorldException(this,
 				format("{} - physical controls require remote-controlled activation", caller));
 		}
-		constexpr uint32_t decksHigh = 1;
-		validateBounds(caller, x, y, cellsWide, decksHigh);
-		validateSpaceOnlyInOneSector(caller, layerIndex, x, y, cellsWide, decksHigh);
-		validateSpaceOnlyInOneSector(caller, backLayer, x, y, cellsWide, decksHigh);
+		constexpr uint32_t levelsHigh = 1;
+		validateBounds(caller, x, y, cellsWide, levelsHigh);
+		validateSpaceOnlyInOneSector(caller, layerIndex, x, y, cellsWide, levelsHigh);
+		validateSpaceOnlyInOneSector(caller, backLayer, x, y, cellsWide, levelsHigh);
 
 		auto frontLayer = getLayer(layerIndex);
 		auto behindLayer = getLayer(backLayer);
 
 		shared_ptr<Sector> sectors[2];
-		for (uint32_t iy = y; iy < y + decksHigh; ++iy)
+		for (uint32_t iy = y; iy < y + levelsHigh; ++iy)
 			for (uint32_t ix = x; ix < x + cellsWide; ++ix)
 		{
 			auto& cellDef0 = frontLayer->getCellDefinition(ix, iy);
@@ -4843,7 +4843,7 @@ namespace core
 					"{} - another object occupies front Layer cell at {},{}", caller, ix, iy));
 			}
 
-			// The decks above the threshold are the opening's headroom: a Walkway or
+			// The levels above the threshold are the opening's headroom: a Walkway or
 			// other floor there runs through the opening.
 			if (iy != y && (cellDef0.floorType != CellFloorType::None
 				|| cellDef1.floorType != CellFloorType::None))
@@ -4874,7 +4874,7 @@ namespace core
 		// Door approaches are explicit resource geometry. Seed each side at the
 		// threshold, which Door placement already proved has traversable floor.
 		// Queue positions are expanded below only across contiguous usable floor;
-		// an unrelated gap elsewhere in a multi-deck Room must not invalidate the Door.
+		// an unrelated gap elsewhere in a multi-level Room must not invalidate the Door.
 		auto const threshold = Vector2{ x + cellsWide * 0.5f, (float)y };
 		for (auto const& sector : sectors)
 			configureDoorQueueLane(traversalResource,
@@ -4930,7 +4930,7 @@ namespace core
 		// Only the authored Layer carries the Door in its cell grid. The shared
 		// Door remains registered in the destination Sector for rendering and
 		// traversal, without replacing that Layer's own object occupancy.
-		for (uint32_t iy = y; iy < y + decksHigh; ++iy)
+		for (uint32_t iy = y; iy < y + levelsHigh; ++iy)
 			for (uint32_t ix = x; ix < x + cellsWide; ++ix)
 		{
 			auto& cellDef0 = frontLayer->getCellDefinition(ix, iy);
@@ -4978,13 +4978,13 @@ namespace core
 	}
 
 	bool World::canAddSectorWindow(uint32_t layerIndex, uint32_t y, uint32_t x,
-		uint32_t cellsWide, uint32_t decksHigh, string* diagnostic) const
+		uint32_t cellsWide, uint32_t levelsHigh, string* diagnostic) const
 	{
 		string caller = format("World::addSectorWindow({}, {}, {}, {})", layerIndex, y, x, cellsWide);
 		try
 		{
 			validateLayer(caller, layerIndex);
-			validateBounds(caller, x, y, cellsWide, decksHigh);
+			validateBounds(caller, x, y, cellsWide, levelsHigh);
 
 			// A Window joins its own Layer to the Layer directly behind it.  The back-most
 			// Layer has nothing behind it, so a Window there would cross no threshold and
@@ -5002,13 +5002,13 @@ namespace core
 			// whose own wall straddles two Sectors has no coherent frame.  The Layer
 			// behind may span several Backgrounds, but may not mix one with a Room.
 			for (auto requiredLayer : requiredLayers)
-				validateSpaceOnlyInOneSector(caller, requiredLayer, x, y, cellsWide, decksHigh,
+				validateSpaceOnlyInOneSector(caller, requiredLayer, x, y, cellsWide, levelsHigh,
 					requiredLayer != layerIndex);
 
 			for (auto requiredLayer : requiredLayers)
 			{
 				auto layer = getLayer(requiredLayer);
-				for (uint32_t iy = y; iy < y + decksHigh; ++iy)
+				for (uint32_t iy = y; iy < y + levelsHigh; ++iy)
 					for (uint32_t ix = x; ix < x + cellsWide; ++ix)
 					{
 						auto const& cellDef = layer->getCellDefinition(ix, iy);
@@ -5040,16 +5040,16 @@ namespace core
 		return true;
 	}
 
-	uint32_t World::addSectorWindow(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t decksHigh)
+	uint32_t World::addSectorWindow(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t levelsHigh)
 	{
-		return addSectorWindow(layerIndex, y, x, cellsWide, decksHigh, {}).window.index;
+		return addSectorWindow(layerIndex, y, x, cellsWide, levelsHigh, {}).window.index;
 	}
 
 	World::CreateWindowResult World::addSectorWindow(uint32_t layerIndex, uint32_t y, uint32_t x,
-		uint32_t cellsWide, uint32_t decksHigh, CreateWindowOptions const& options)
+		uint32_t cellsWide, uint32_t levelsHigh, CreateWindowOptions const& options)
 	{
 		string diagnostic;
-		if (!canAddSectorWindow(layerIndex, y, x, cellsWide, decksHigh, &diagnostic))
+		if (!canAddSectorWindow(layerIndex, y, x, cellsWide, levelsHigh, &diagnostic))
 			throw WorldException(this, diagnostic);
 		if (options.traversable)
 		{
@@ -5059,7 +5059,7 @@ namespace core
 			if (layerIndex + 1 < getLayerCount())
 			{
 				auto const backLayer = layerBehind(layerIndex);
-				for (uint32_t iy = y; iy < y + decksHigh; ++iy)
+				for (uint32_t iy = y; iy < y + levelsHigh; ++iy)
 					for (uint32_t ix = x; ix < x + cellsWide; ++ix)
 					{
 						auto const& backCell = mLayers[backLayer]->getCellDefinition(ix, iy);
@@ -5075,7 +5075,7 @@ namespace core
 		auto layer = getLayer(layerIndex);
 
 		// Create window
-		auto createdWindow = createWindow(layerIndex, x, y, cellsWide, decksHigh);
+		auto createdWindow = createWindow(layerIndex, x, y, cellsWide, levelsHigh);
 		auto windowIndex = createdWindow.index;
 		auto windowObjType = createdWindow.type;
 		auto windowSector = createdWindow.sector;
@@ -5090,7 +5090,7 @@ namespace core
 		}
 
 		// Set layers
-		for (uint32_t iy = y; iy < y + decksHigh; ++iy)
+		for (uint32_t iy = y; iy < y + levelsHigh; ++iy)
 			for (uint32_t ix = x; ix < x + cellsWide; ++ix)
 			{
 				auto& cellDef = layer->getCellDefinition(ix, iy);
@@ -5100,7 +5100,7 @@ namespace core
 			}
 
 		ConstructionRecord record{ ConstructionType::Window };
-		record.a = layerIndex; record.b = y; record.c = x; record.d = cellsWide; record.e = decksHigh;
+		record.a = layerIndex; record.b = y; record.c = x; record.d = cellsWide; record.e = levelsHigh;
 		record.p = options.traversable;
 		record.i = static_cast<int32_t>(options.initialState);
 		record.j = static_cast<int32_t>(options.style);
@@ -5109,14 +5109,14 @@ namespace core
 	}
 
 	bool World::getSectorWindowOptions(uint32_t layerIndex, uint32_t y, uint32_t x,
-		uint32_t cellsWide, uint32_t decksHigh, CreateWindowOptions& options) const
+		uint32_t cellsWide, uint32_t levelsHigh, CreateWindowOptions& options) const
 	{
 		auto found = find_if(mConstructionRecords.rbegin(), mConstructionRecords.rend(),
 			[&](ConstructionRecord const& record)
 			{
 				return record.type == ConstructionType::Window && record.a == layerIndex
 					&& record.b == y && record.c == x && record.d == cellsWide
-					&& record.e == decksHigh;
+					&& record.e == levelsHigh;
 			});
 		if (found == mConstructionRecords.rend()) return false;
 		options.traversable = found->p;
@@ -5133,7 +5133,7 @@ namespace core
 			if (diagnostic) *diagnostic = std::move(reason);
 			return false;
 		};
-		if (layerIndex >= mLayers.size() || y >= mDecksHigh
+		if (layerIndex >= mLayers.size() || y >= mLevelsHigh
 			|| (side != CORE_SIDE_LEFT && side != CORE_SIDE_RIGHT))
 			return reject("Bulkhead Door position is outside the world");
 		uint32_t thresholdX;
@@ -5320,7 +5320,7 @@ namespace core
 		return ctrl;
 	}
 
-	bool World::canAddSectorWalkway(uint32_t sectorIndex, uint32_t deckIndex,
+	bool World::canAddSectorWalkway(uint32_t sectorIndex, uint32_t levelIndex,
 		uint32_t xOffset, string* diagnostic) const
 	{
 		auto reject = [diagnostic](string reason)
@@ -5332,12 +5332,12 @@ namespace core
 		if (sectorIndex >= mSectors.size()) return reject("Walkway Room does not exist");
 		auto location = dynamic_pointer_cast<const Location>(mSectors[sectorIndex]);
 		if (!location) return reject("Walkways require a Location");
-		if (deckIndex == 0) return reject("Walkways must be placed above the Location's ground floor");
-		if (deckIndex >= location->getDecksHigh() || xOffset >= location->getCellsWide())
+		if (levelIndex == 0) return reject("Walkways must be placed above the Location's ground floor");
+		if (levelIndex >= location->getLevelsHigh() || xOffset >= location->getCellsWide())
 			return reject("Walkway position is outside the Location");
 
 		auto const& cellDef = mLayers[location->getLayerIndex()]->getCellDefinition(
-			location->getCellX() + xOffset, location->getCellY() + deckIndex);
+			location->getCellX() + xOffset, location->getCellY() + levelIndex);
 		if (cellDef.floorType == CellFloorType::Ground)
 			return reject("Walkways cannot replace a ground floor");
 		if (cellDef.floorType == CellFloorType::Walkway)
@@ -5352,11 +5352,11 @@ namespace core
 	}
 
 	World::CreateObjectResult World::addSectorWalkway(uint32_t sectorIndex,
-		uint32_t deckIndex, uint32_t xOffset)
+		uint32_t levelIndex, uint32_t xOffset)
 	{
-		string caller = format("World::addSectorWalkway({}, {}, {})", sectorIndex, deckIndex, xOffset);
+		string caller = format("World::addSectorWalkway({}, {}, {})", sectorIndex, levelIndex, xOffset);
 		string diagnostic;
-		if (!canAddSectorWalkway(sectorIndex, deckIndex, xOffset, &diagnostic))
+		if (!canAddSectorWalkway(sectorIndex, levelIndex, xOffset, &diagnostic))
 			throw WorldException(this, format("{} - {}", caller, diagnostic));
 
 		// Once editing an already-built document, replay the authored structure so
@@ -5372,8 +5372,8 @@ namespace core
 				{
 					auto ladder = ladderObject->getLadder();
 					auto base = ladderObject->getCellY() - room->getCellY();
-					auto top = base + ladder->getDecksHigh() - 1;
-					if (deckIndex > base && deckIndex < top && roomLadderIsActive(ladder))
+					auto top = base + ladder->getLevelsHigh() - 1;
+					if (levelIndex > base && levelIndex < top && roomLadderIsActive(ladder))
 						throw WorldException(this, "A Room Ladder cannot be resized while it is in use");
 				}
 				auto liftObject = dynamic_pointer_cast<LiftSectorObject>(room->getObject(i));
@@ -5383,7 +5383,7 @@ namespace core
 			}
 			auto records = mConstructionRecords;
 			ConstructionRecord record{ ConstructionType::Walkway };
-			record.a = sectorIndex; record.b = deckIndex; record.c = xOffset;
+			record.a = sectorIndex; record.b = levelIndex; record.c = xOffset;
 			// A PlatformLift validates authored landing Walkways while replaying, so
 			// keep a newly added Walkway before PlatformLifts in the same Room.
 			auto beforeLift = find_if(records.begin(), records.end(), [&](auto const& candidate)
@@ -5398,7 +5398,7 @@ namespace core
 				auto object = rebuilt->getObject(i);
 				if (object && object->getObjectType() == SectorObjectType::Walkway
 					&& object->getCellX() == rebuilt->getCellX() + xOffset
-					&& object->getCellY() == rebuilt->getCellY() + deckIndex)
+					&& object->getCellY() == rebuilt->getCellY() + levelIndex)
 					return { i, SectorObjectType::Walkway, rebuilt };
 			}
 			throw WorldException(this, "Could not locate the added Walkway");
@@ -5409,19 +5409,19 @@ namespace core
 		auto layerIndex = sector->getLayerIndex();
 		auto layer = getLayer(layerIndex);
 		auto& cellDef = layer->getCellDefinition(sector->getCellX() + xOffset,
-			sector->getCellY() + deckIndex);
+			sector->getCellY() + levelIndex);
 		auto createdWalkway = createWalkway(layerIndex,
-			sector->getCellX() + xOffset, sector->getCellY() + deckIndex);
+			sector->getCellX() + xOffset, sector->getCellY() + levelIndex);
 
 		cellDef.floorIndex = createdWalkway.index;
 		cellDef.floorType = CellFloorType::Walkway;
 		ConstructionRecord record{ ConstructionType::Walkway };
-		record.a = sectorIndex; record.b = deckIndex; record.c = xOffset;
+		record.a = sectorIndex; record.b = levelIndex; record.c = xOffset;
 		recordConstruction(std::move(record));
 		return createdWalkway;
 	}
 
-	bool World::canAddSectorMarker(uint32_t sectorIndex, uint32_t deckIndex, float xOffset,
+	bool World::canAddSectorMarker(uint32_t sectorIndex, uint32_t levelIndex, float xOffset,
 		string* diagnostic) const
 	{
 		auto reject = [diagnostic](string reason)
@@ -5434,12 +5434,12 @@ namespace core
 		auto const& sector = mSectors[sectorIndex];
 		if (!sector || !sector->sectorSupportsObjectType(SectorObjectType::Marker))
 			return reject("This sector does not support Markers");
-		if (deckIndex >= sector->getDecksHigh()) return reject("Marker deck is outside the sector");
+		if (levelIndex >= sector->getLevelsHigh()) return reject("Marker level is outside the sector");
 		if (!isfinite(xOffset) || xOffset < 0.0f || xOffset >= sector->getSize().x)
 			return reject("Marker position is outside the sector");
 
 		auto const cellX = sector->getCellX() + (uint32_t)floor(xOffset);
-		auto const cellY = sector->getCellY() + deckIndex;
+		auto const cellY = sector->getCellY() + levelIndex;
 		auto const& cellDef = mLayers[sector->getLayerIndex()]->getCellDefinition(cellX, cellY);
 		if (cellDef.floorType != CellFloorType::Ground
 			&& cellDef.floorType != CellFloorType::Walkway)
@@ -5555,17 +5555,17 @@ namespace core
 	}
 
 	World::CreateObjectResult World::addSectorMarker(uint32_t sectorIndex,
-		uint32_t deckIndex, float xOffset, uint32_t* vertexIdentifier)
+		uint32_t levelIndex, float xOffset, uint32_t* vertexIdentifier)
 	{
-		return addSectorMarker(sectorIndex, deckIndex, xOffset,
+		return addSectorMarker(sectorIndex, levelIndex, xOffset,
 			nextGeneratedMarkerName(), vertexIdentifier);
 	}
 
 	World::CreateObjectResult World::addSectorMarker(uint32_t sectorIndex,
-		uint32_t deckIndex, float xOffset, string const& name, uint32_t* vertexIdentifier)
+		uint32_t levelIndex, float xOffset, string const& name, uint32_t* vertexIdentifier)
 	{
 		string diagnostic;
-		if (!canAddSectorMarker(sectorIndex, deckIndex, xOffset, &diagnostic))
+		if (!canAddSectorMarker(sectorIndex, levelIndex, xOffset, &diagnostic))
 			throw WorldException(this, "World::addSectorMarker - " + diagnostic);
 		auto const trimmed = Marker::trimName(name);
 		if (!Marker::nameIsValid(trimmed, &diagnostic))
@@ -5576,18 +5576,18 @@ namespace core
 			throw WorldException(this, "World::addSectorMarker - Marker ID space is exhausted");
 		auto const id = MarkerId{ mNextMarkerId };
 		mNextMarkerId = mNextMarkerId == numeric_limits<uint64_t>::max() ? 0 : mNextMarkerId + 1;
-		return addSectorMarkerRestored(sectorIndex, deckIndex, xOffset, id, trimmed,
+		return addSectorMarkerRestored(sectorIndex, levelIndex, xOffset, id, trimmed,
 			vertexIdentifier);
 	}
 
 	World::CreateObjectResult World::addSectorMarkerRestored(uint32_t sectorIndex,
-		uint32_t deckIndex, float xOffset, MarkerId id, string name,
+		uint32_t levelIndex, float xOffset, MarkerId id, string name,
 		uint32_t* vertexIdentifier)
 	{
 		string diagnostic;
 		if (!id) throw WorldException(this, "Marker ID cannot be zero");
 		if (lookupMarker(id)) throw WorldException(this, "Marker ID is already in use");
-		if (!canAddSectorMarker(sectorIndex, deckIndex, xOffset, &diagnostic))
+		if (!canAddSectorMarker(sectorIndex, levelIndex, xOffset, &diagnostic))
 			throw WorldException(this, "World::addSectorMarker - " + diagnostic);
 		name = Marker::trimName(name);
 		if (!Marker::nameIsValid(name, &diagnostic))
@@ -5600,12 +5600,12 @@ namespace core
 		auto layerIndex = sector->getLayerIndex();
 		auto layer = getLayer(layerIndex);
 		auto& cellDef = layer->getCellDefinition(sector->getCellX() + (uint32_t)xOffset,
-			sector->getCellY() + deckIndex);
+			sector->getCellY() + levelIndex);
 		auto createdMarker = createMarker(layerIndex, sector->getCellX(),
-			sector->getCellY() + deckIndex, xOffset, id, name, vertexIdentifier);
+			sector->getCellY() + levelIndex, xOffset, id, name, vertexIdentifier);
 		cellDef.markers.push_back(createdMarker.index);
 		ConstructionRecord record{ ConstructionType::Marker };
-		record.a = sectorIndex; record.b = deckIndex; record.x = xOffset;
+		record.a = sectorIndex; record.b = levelIndex; record.x = xOffset;
 		record.markerId = id; record.name = std::move(name);
 		recordConstruction(std::move(record));
 		return createdMarker;
@@ -5698,23 +5698,23 @@ namespace core
 	}
 
 	World::CreateForceBridgeResult World::addSectorForceBridge(uint32_t sectorIndex,
-		uint32_t deckIndex, uint32_t xOffset)
+		uint32_t levelIndex, uint32_t xOffset)
 	{
-		return addSectorForceBridge(sectorIndex, deckIndex, xOffset, CreateForceBridgeOptions{});
+		return addSectorForceBridge(sectorIndex, levelIndex, xOffset, CreateForceBridgeOptions{});
 	}
 
 	bool World::calculateSectorForceBridgeWidthToRight(uint32_t sectorIndex,
-		uint32_t deckIndex, uint32_t xOffset, uint32_t& width, string* diagnostic) const
+		uint32_t levelIndex, uint32_t xOffset, uint32_t& width, string* diagnostic) const
 	{
 		width = 0;
 		auto reject = [&](string reason) { if (diagnostic) *diagnostic = std::move(reason); return false; };
 		if (sectorIndex >= mSectors.size()) return reject("Force Bridge Room does not exist");
 		auto room = dynamic_pointer_cast<const Location>(mSectors[sectorIndex]);
 		if (!room || room->isCorridor()) return reject("Force Bridges can only be placed in Rooms");
-		if (deckIndex >= room->getDecksHigh() || xOffset == 0 || xOffset >= room->getCellsWide())
+		if (levelIndex >= room->getLevelsHigh() || xOffset == 0 || xOffset >= room->getCellsWide())
 			return reject("The Force Bridge and both supports must remain inside its Room");
 		auto layer = mLayers[room->getLayerIndex()];
-		uint32_t x = room->getCellX() + xOffset, y = room->getCellY() + deckIndex;
+		uint32_t x = room->getCellX() + xOffset, y = room->getCellY() + levelIndex;
 		auto const& left = layer->getCellDefinition(x - 1, y);
 		if (left.floorType != CellFloorType::Ground && left.floorType != CellFloorType::Walkway)
 			return reject("The Force Bridge requires Ground or a Walkway on its left");
@@ -5737,7 +5737,7 @@ namespace core
 		return reject("No Walkway exists to the right of this gap");
 	}
 
-	bool World::canAddSectorForceBridge(uint32_t sectorIndex, uint32_t deckIndex,
+	bool World::canAddSectorForceBridge(uint32_t sectorIndex, uint32_t levelIndex,
 		uint32_t xOffset, CreateForceBridgeOptions const& options, string* diagnostic) const
 	{
 		auto reject = [&](string reason) { if (diagnostic) *diagnostic = std::move(reason); return false; };
@@ -5752,11 +5752,11 @@ namespace core
 		if (sectorIndex >= mSectors.size()) return reject("Force Bridge Room does not exist");
 		auto room = dynamic_pointer_cast<const Location>(mSectors[sectorIndex]);
 		if (!room || room->isCorridor()) return reject("Force Bridges can only be placed in Rooms");
-		if (deckIndex >= room->getDecksHigh() || xOffset == 0
+		if (levelIndex >= room->getLevelsHigh() || xOffset == 0
 			|| (uint64_t)xOffset + options.width >= room->getCellsWide())
 			return reject("The Force Bridge and both supports must remain inside its Room");
 		auto layer = mLayers[room->getLayerIndex()];
-		uint32_t x = room->getCellX() + xOffset, y = room->getCellY() + deckIndex;
+		uint32_t x = room->getCellX() + xOffset, y = room->getCellY() + levelIndex;
 		for (uint32_t ix = x; ix < x + options.width; ++ix)
 			if (layer->getCellDefinition(ix, y).floorType != CellFloorType::None)
 				return reject("The Force Bridge span must be clear air");
@@ -5770,11 +5770,11 @@ namespace core
 		return true;
 	}
 
-	World::CreateForceBridgeResult World::addSectorForceBridge(uint32_t sectorIndex, uint32_t deckIndex, uint32_t xOffset, CreateForceBridgeOptions const& options)
+	World::CreateForceBridgeResult World::addSectorForceBridge(uint32_t sectorIndex, uint32_t levelIndex, uint32_t xOffset, CreateForceBridgeOptions const& options)
 	{
-		string caller = format("World::addSectorForceBridge({}, {}, {}, {}, {}, {})", sectorIndex, deckIndex, xOffset, options.width, options.fromSide, options.startExtended);
+		string caller = format("World::addSectorForceBridge({}, {}, {}, {}, {}, {})", sectorIndex, levelIndex, xOffset, options.width, options.fromSide, options.startExtended);
 		string diagnostic;
-		if (!canAddSectorForceBridge(sectorIndex, deckIndex, xOffset, options, &diagnostic))
+		if (!canAddSectorForceBridge(sectorIndex, levelIndex, xOffset, options, &diagnostic))
 			throw WorldException(this, format("{} - {}", caller, diagnostic));
 		beginStructuralEdit("addSectorForceBridge");
 		ASSERT_SIDE_OK(options.fromSide);
@@ -5783,7 +5783,7 @@ namespace core
 		auto sector = _getSector(sectorIndex);
 		auto layerIndex = sector->getLayerIndex();
 		uint32_t x = sector->getCellX() + xOffset;
-		uint32_t y = sector->getCellY() + deckIndex;
+		uint32_t y = sector->getCellY() + levelIndex;
 		auto layer = getLayer(layerIndex);
 
 		// Create and mark every cell in the authored span as one floor object.
@@ -5845,44 +5845,44 @@ namespace core
 			traversalResource
 		};
 		ConstructionRecord record{ ConstructionType::ForceBridge };
-		record.a = sectorIndex; record.b = deckIndex; record.c = xOffset; record.d = options.width;
+		record.a = sectorIndex; record.b = levelIndex; record.c = xOffset; record.d = options.width;
 		record.i = options.fromSide; record.p = options.extensible; record.q = options.startExtended;
 		record.e = options.controlCount;
 		recordConstruction(std::move(record));
 		return result;
 	}
 
-	bool World::canAddRoomLadder(uint32_t sectorIndex, uint32_t deckIndex,
-		uint32_t xOffset, uint32_t* decksHigh, string* diagnostic) const
+	bool World::canAddRoomLadder(uint32_t sectorIndex, uint32_t levelIndex,
+		uint32_t xOffset, uint32_t* levelsHigh, string* diagnostic) const
 	{
 		auto reject = [&](string reason)
 		{
-			if (decksHigh) *decksHigh = 0;
+			if (levelsHigh) *levelsHigh = 0;
 			if (diagnostic) *diagnostic = std::move(reason);
 			return false;
 		};
 		if (sectorIndex >= mSectors.size()) return reject("Room does not exist");
 		auto room = dynamic_pointer_cast<const Location>(mSectors[sectorIndex]);
 		if (!room || room->isCorridor()) return reject("Room Ladders can only be placed in Rooms");
-		if (xOffset >= room->getCellsWide() || deckIndex >= room->getDecksHigh())
+		if (xOffset >= room->getCellsWide() || levelIndex >= room->getLevelsHigh())
 			return reject("Ladder base is outside the Room");
 
 		auto const x = room->getCellX() + xOffset;
-		auto const y = room->getCellY() + deckIndex;
+		auto const y = room->getCellY() + levelIndex;
 		auto const& base = mLayers[room->getLayerIndex()]->getCellDefinition(x, y);
 		if (base.floorType != CellFloorType::Ground && base.floorType != CellFloorType::Walkway)
 			return reject("Drop the Room Ladder on Ground or a Walkway");
 
-		uint32_t topDeck = ~0u;
-		for (uint32_t offset = deckIndex + 1; offset < room->getDecksHigh(); ++offset)
+		uint32_t topLevel = ~0u;
+		for (uint32_t offset = levelIndex + 1; offset < room->getLevelsHigh(); ++offset)
 		{
 			auto const& cell = mLayers[room->getLayerIndex()]->getCellDefinition(
 				x, room->getCellY() + offset);
-			if (cell.floorType == CellFloorType::Walkway) { topDeck = offset; break; }
+			if (cell.floorType == CellFloorType::Walkway) { topLevel = offset; break; }
 		}
-		if (topDeck == ~0u) return reject("No Walkway exists above this position");
+		if (topLevel == ~0u) return reject("No Walkway exists above this position");
 
-		uint32_t const topY = room->getCellY() + topDeck;
+		uint32_t const topY = room->getCellY() + topLevel;
 		for (uint32_t i = 0; i < room->getNumObjects(); ++i)
 		{
 			auto object = room->getObject(i);
@@ -5901,54 +5901,54 @@ namespace core
 			else if (max(y, objectY0) <= min(topY, objectY1))
 				return reject("Another object blocks the Ladder");
 		}
-		if (decksHigh) *decksHigh = topDeck - deckIndex + 1;
+		if (levelsHigh) *levelsHigh = topLevel - levelIndex + 1;
 		if (diagnostic) diagnostic->clear();
 		return true;
 	}
 
 	World::CreateLadderResult World::addRoomLadder(uint32_t sectorIndex,
-		uint32_t deckIndex, uint32_t xOffset)
+		uint32_t levelIndex, uint32_t xOffset)
 	{
-		return addRoomLadder(sectorIndex, deckIndex, xOffset, { 0, false, true });
+		return addRoomLadder(sectorIndex, levelIndex, xOffset, { 0, false, true });
 	}
 
 	World::CreateLadderResult World::addRoomLadder(uint32_t sectorIndex,
-		uint32_t deckIndex, uint32_t xOffset, CreateLadderOptions options)
+		uint32_t levelIndex, uint32_t xOffset, CreateLadderOptions options)
 	{
 		uint32_t height{}; string diagnostic;
-		if (!canAddRoomLadder(sectorIndex, deckIndex, xOffset, &height, &diagnostic))
+		if (!canAddRoomLadder(sectorIndex, levelIndex, xOffset, &height, &diagnostic))
 			throw WorldException(this, format("World::addRoomLadder - {}", diagnostic));
-		options.decksHigh = height;
-		return addSectorLadder(sectorIndex, deckIndex, xOffset, options);
+		options.levelsHigh = height;
+		return addSectorLadder(sectorIndex, levelIndex, xOffset, options);
 	}
 
-	World::CreateLadderResult World::addSectorLadder(uint32_t sectorIndex, uint32_t deckIndex, uint32_t xOffset, CreateLadderOptions const& options)
+	World::CreateLadderResult World::addSectorLadder(uint32_t sectorIndex, uint32_t levelIndex, uint32_t xOffset, CreateLadderOptions const& options)
 	{
 		beginStructuralEdit("addSectorLadder");
 		auto sector = _getSector(sectorIndex);
 		auto layerIndex = sector->getLayerIndex();
 
 		uint32_t x = sector->getCellX() + xOffset;
-		uint32_t y = sector->getCellY() + deckIndex;
+		uint32_t y = sector->getCellY() + levelIndex;
 
 		auto y0 = y;
-		auto y1 = y + options.decksHigh - 1;
+		auto y1 = y + options.levelsHigh - 1;
 
 		// Checks
-		string caller = format("World::addSectorLadder({}, {}, {}, {})", sectorIndex, deckIndex, xOffset, options.startExtended);
+		string caller = format("World::addSectorLadder({}, {}, {}, {})", sectorIndex, levelIndex, xOffset, options.startExtended);
 
 		validateSectorLadderOptions(caller, options);
 		validateObjectAllowedInSector(caller, SectorObjectType::Ladder, sectorIndex);
-		validateSpaceOnlyInOneSector(caller, layerIndex, x, y, 1, options.decksHigh);
+		validateSpaceOnlyInOneSector(caller, layerIndex, x, y, 1, options.levelsHigh);
 
-		if (options.decksHigh < 2)
+		if (options.levelsHigh < 2)
 		{
-			throw WorldException(this, format("{} - Ladder at {},{} must be at least 2 decks high", caller, x, y));
+			throw WorldException(this, format("{} - Ladder at {},{} must be at least 2 levels high", caller, x, y));
 		}
 
-		if (deckIndex > sector->getDecksHigh())
+		if (levelIndex > sector->getLevelsHigh())
 		{
-			throw WorldException(this, format("{} - deckIndex={} out of bounds", caller, deckIndex));
+			throw WorldException(this, format("{} - levelIndex={} out of bounds", caller, levelIndex));
 		}
 
 		auto const& baseCell = mLayers[layerIndex]->getCellDefinition(x, y);
@@ -6012,15 +6012,15 @@ namespace core
 			int side = x == sector->getCellX1() ? CORE_SIDE_LEFT : CORE_SIDE_RIGHT;
 
 			// Lower
-			createdControls[CORE_LEVEL_LOW] = _createLadderButton(
+			createdControls[CORE_LADDER_ENDPOINT_LOW] = _createLadderButton(
 				ladderObject.sector, x, y0, side, 0, nullptr, true);
-			registerExtensionControl(createdControls[CORE_LEVEL_LOW]);
+			registerExtensionControl(createdControls[CORE_LADDER_ENDPOINT_LOW]);
 
 
 			// Upper
-			createdControls[CORE_LEVEL_HIGH] = _createLadderButton(
+			createdControls[CORE_LADDER_ENDPOINT_HIGH] = _createLadderButton(
 				ladderObject.sector, x, y1, side, 0, nullptr, true);
-			registerExtensionControl(createdControls[CORE_LEVEL_HIGH]);
+			registerExtensionControl(createdControls[CORE_LADDER_ENDPOINT_HIGH]);
 
 		}
 		else
@@ -6033,12 +6033,12 @@ namespace core
 
 		CreateLadderResult result{
 			ladderObject,
-			{ createdControls[CORE_LEVEL_LOW], createdControls[CORE_LEVEL_HIGH] },
+			{ createdControls[CORE_LADDER_ENDPOINT_LOW], createdControls[CORE_LADDER_ENDPOINT_HIGH] },
 			traversalResource
 		};
 		ConstructionRecord record{ ConstructionType::SectorLadder };
-		record.a = sectorIndex; record.b = deckIndex; record.c = xOffset;
-		record.d = options.decksHigh; record.e = options.directionalBatchLimit;
+		record.a = sectorIndex; record.b = levelIndex; record.c = xOffset;
+		record.d = options.levelsHigh; record.e = options.directionalBatchLimit;
 		record.p = options.extensible; record.q = options.startExtended;
 		recordConstruction(std::move(record));
 		return result;
@@ -6063,13 +6063,13 @@ namespace core
 		{
 			auto walkway = dynamic_pointer_cast<const WalkwaySectorObject>(room->getObject(i));
 			if (!walkway || walkway->getCellX() != x || walkway->getCellY() <= room->getCellY()) continue;
-			auto deck = walkway->getCellY() - room->getCellY();
-			if (deck >= room->getDecksHigh()) continue;
-			result.push_back({ deck, sideAvailable(walkway->getCellY(), CORE_SIDE_LEFT),
+			auto level = walkway->getCellY() - room->getCellY();
+			if (level >= room->getLevelsHigh()) continue;
+			result.push_back({ level, sideAvailable(walkway->getCellY(), CORE_SIDE_LEFT),
 				sideAvailable(walkway->getCellY(), CORE_SIDE_RIGHT) });
 		}
 		sort(result.begin(), result.end(), [](auto const& a, auto const& b)
-			{ return a.deckOffset < b.deckOffset; });
+			{ return a.levelOffset < b.levelOffset; });
 		return result;
 	}
 
@@ -6104,9 +6104,9 @@ namespace core
 		for (size_t i = 1; i < stops.size(); ++i)
 		{
 			auto found = find_if(candidates.begin(), candidates.end(), [&](auto const& candidate)
-				{ return candidate.deckOffset == stops[i]; });
+				{ return candidate.levelOffset == stops[i]; });
 			if (found == candidates.end())
-				return reject(format("No Walkway exists at deck {} in the PlatformLift column", stops[i]));
+				return reject(format("No Walkway exists at level {} in the PlatformLift column", stops[i]));
 			left = left && found->leftButton;
 			right = right && found->rightButton;
 		}
@@ -6122,17 +6122,17 @@ namespace core
 				&& room->getCellY() < objectTop && room->getCellY() + top >= object->getCellY())
 				return reject("Another object blocks the PlatformLift shaft");
 		}
-		for (uint32_t deck = 0; deck <= top; ++deck)
-			if (!layer->getCellDefinition(x, room->getCellY() + deck).markers.empty())
+		for (uint32_t level = 0; level <= top; ++level)
+			if (!layer->getCellDefinition(x, room->getCellY() + level).markers.empty())
 				return reject("A Marker blocks the PlatformLift shaft");
 		if (diagnostic) diagnostic->clear();
 		return true;
 	}
 
-	World::CreatePlatformLiftResult World::addSectorPlatformLift(uint32_t sectorIndex, uint32_t deckIndex, uint32_t xOffset, CreateLiftOptions const& options)
+	World::CreatePlatformLiftResult World::addSectorPlatformLift(uint32_t sectorIndex, uint32_t levelIndex, uint32_t xOffset, CreateLiftOptions const& options)
 	{
 		string placementDiagnostic;
-		if (deckIndex != 0)
+		if (levelIndex != 0)
 			throw WorldException(this, "PlatformLifts must be placed on a Room's ground floor");
 		if (!canAddPlatformLift(sectorIndex, xOffset, options, &placementDiagnostic))
 			throw WorldException(this, placementDiagnostic);
@@ -6142,10 +6142,10 @@ namespace core
 		auto layer = getLayer(layerIndex);
 
 		uint32_t x = sector->getCellX() + xOffset;
-		uint32_t y = sector->getCellY() + deckIndex;
+		uint32_t y = sector->getCellY() + levelIndex;
 
 		// Checks
-		string caller = format("World::addSectorPlatformLift({}, {}, {})", sectorIndex, deckIndex, xOffset);
+		string caller = format("World::addSectorPlatformLift({}, {}, {})", sectorIndex, levelIndex, xOffset);
 
 		validateLiftOptions(caller, options);
 		validateObjectAllowedInSector(caller, SectorObjectType::Lift, sectorIndex);
@@ -6156,9 +6156,9 @@ namespace core
 			throw WorldException(this, format("{} - PlatformLift at {},{} must have at least 2 stops", caller, x, y));
 		}
 
-		if (deckIndex > sector->getDecksHigh())
+		if (levelIndex > sector->getLevelsHigh())
 		{
-			throw WorldException(this, format("{} - deckIndex={} out of bounds", caller, deckIndex));
+			throw WorldException(this, format("{} - levelIndex={} out of bounds", caller, levelIndex));
 		}
 
 		bool buttonSidesOk[2] = { true, true };
@@ -6303,7 +6303,7 @@ namespace core
 		resource->mLiftSelector = liftRes.interiorSelector;
 
 		ConstructionRecord record{ ConstructionType::PlatformLift };
-		record.a = sectorIndex; record.b = deckIndex; record.c = xOffset;
+		record.a = sectorIndex; record.b = levelIndex; record.c = xOffset;
 		record.d = options.cellsWide; record.e = options.capacity;
 		record.z = options.platformStopDurationSeconds;
 		record.values = options.stopOffsets;
@@ -6696,7 +6696,7 @@ namespace core
 		int cellX = (int)x;
 		int cellY = (int)y;
 
-		if (cellX < 0 || cellY < 0 || cellX >= (int)getCellsWide() || cellY >= (int)getDecksHigh())
+		if (cellX < 0 || cellY < 0 || cellX >= (int)getCellsWide() || cellY >= (int)getLevelsHigh())
 		{
 			return nullptr;
 		}
@@ -6782,9 +6782,9 @@ namespace core
 	// (ADR 0004). World owns the Agent registry (ADR 0001) and forwards, so
 	// no caller outside World names the coordinator.
 
-	AgentId World::addOwnedAgentToSector(unique_ptr<Agent> agent, uint32_t sectorId, uint32_t deckOffset, float xOffset)
+	AgentId World::addOwnedAgentToSector(unique_ptr<Agent> agent, uint32_t sectorId, uint32_t levelOffset, float xOffset)
 	{
-		return mSimulationCoordinator.addOwnedAgentToSector(std::move(agent), sectorId, deckOffset, xOffset);
+		return mSimulationCoordinator.addOwnedAgentToSector(std::move(agent), sectorId, levelOffset, xOffset);
 	}
 
 	AgentId World::addOwnedAgentToSector(unique_ptr<Agent> agent, uint32_t sectorId)
@@ -6792,9 +6792,9 @@ namespace core
 		return mSimulationCoordinator.addOwnedAgentToSector(std::move(agent), sectorId);
 	}
 
-	AgentId World::createAgent(string const& name, uint32_t sectorId, uint32_t deckOffset, float xOffset)
+	AgentId World::createAgent(string const& name, uint32_t sectorId, uint32_t levelOffset, float xOffset)
 	{
-		return mSimulationCoordinator.createAgent(name, sectorId, deckOffset, xOffset);
+		return mSimulationCoordinator.createAgent(name, sectorId, levelOffset, xOffset);
 	}
 
 	AgentId World::createAgent(string const& name, uint32_t sectorId)
@@ -7788,17 +7788,17 @@ namespace core
 		// Capacity is a physical property of the usable vertical span: each slot keeps
 		// neighbouring Agents at least CORE_LADDER_AGENT_SPACING apart in render space.
 		// Even a short valid Ladder admits one Agent.
-		auto crossedFloors = (float)(ladder->getDecksHigh() - 1);
+		auto crossedLevels = (float)(ladder->getLevelsHigh() - 1);
 		auto agentSpacing = CORE_LADDER_AGENT_SPACING / CORE_CELL_YX_RENDER_RATIO;
-		auto capacity = max(1u, (uint32_t)floor(crossedFloors / agentSpacing));
+		auto capacity = max(1u, (uint32_t)floor(crossedLevels / agentSpacing));
 		vector<Vector2> positions;
 		positions.reserve(capacity);
 		auto origin = ladder->getPosition();
 		auto x = origin.x + ladder->getSize().x * 0.5f;
 		for (uint32_t i = 0; i < capacity; ++i)
 		{
-			positions.push_back({ x, origin.y + (agentSpacing >= crossedFloors
-				? crossedFloors * 0.5f : agentSpacing * ((float)i + 0.5f)) });
+			positions.push_back({ x, origin.y + (agentSpacing >= crossedLevels
+				? crossedLevels * 0.5f : agentSpacing * ((float)i + 0.5f)) });
 		}
 
 		auto id = mTraversalResources.add(unique_ptr<TraversalResource>(new TraversalResource(

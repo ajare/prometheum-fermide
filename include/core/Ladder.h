@@ -16,17 +16,17 @@ namespace core
 
 	private:
 
-		uint32_t mDecksHigh;
+		uint32_t mLevelsHigh;
 
 		TraversalResourceId mTraversalResource;
 
 	public:
 
-		Ladder(uint32_t cellX, uint32_t cellY, uint32_t decksHigh, bool extensible, bool startExtended);
+		Ladder(uint32_t cellX, uint32_t cellY, uint32_t levelsHigh, bool extensible, bool startExtended);
 
 		~Ladder() = default;
 
-		[[nodiscard]] uint32_t getDecksHigh() const;
+		[[nodiscard]] uint32_t getLevelsHigh() const;
 
 		[[nodiscard]] float getUsableLength() const;
 

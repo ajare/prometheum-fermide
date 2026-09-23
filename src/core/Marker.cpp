@@ -17,7 +17,7 @@ namespace core
 	-------
 
 	Markers are essentially floating platforms within Locations.  They must be placed in a Location with height greater
-	than 1, and on "floor" greater than zero.
+	than 1, and on a level greater than zero.
 
 	Construction arguments:
 

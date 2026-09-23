@@ -90,6 +90,6 @@ core::Vector2 getMouseWorldPosition()
 
     return {
         (mouseScreenPos.x - gUISettings.worldViewportX - gUISettings.xOffset) / CORE_CELL_WIDTH_PIXELS,
-        (gUISettings.worldViewportY + gUISettings.worldViewportHeight - mouseScreenPos.y - gUISettings.yOffset) / CORE_DECK_HEIGHT_PIXELS
+        (gUISettings.worldViewportY + gUISettings.worldViewportHeight - mouseScreenPos.y - gUISettings.yOffset) / CORE_LEVEL_HEIGHT_PIXELS
     };
 }

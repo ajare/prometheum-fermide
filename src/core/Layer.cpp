@@ -7,13 +7,13 @@ namespace core
 
 	using namespace std;
 
-	Layer::Layer(World const* world, uint32_t cellsWide, uint32_t decksHigh, uint32_t z)
+	Layer::Layer(World const* world, uint32_t cellsWide, uint32_t levelsHigh, uint32_t z)
 		: mwWorld(world)
 		, mCellsWide(cellsWide)
-		, mDecksHigh(decksHigh)
+		, mLevelsHigh(levelsHigh)
 		, mZ(z)
 	{
-		mCells.resize(cellsWide * decksHigh);
+		mCells.resize(cellsWide * levelsHigh);
 	}
 
 	uint32_t Layer::getCellsWide() const
@@ -21,9 +21,9 @@ namespace core
 		return mCellsWide;
 	}
 
-	uint32_t Layer::getDecksHigh() const
+	uint32_t Layer::getLevelsHigh() const
 	{
-		return mDecksHigh;
+		return mLevelsHigh;
 	}
 
 	uint32_t Layer::getZ() const
@@ -39,7 +39,7 @@ namespace core
 			throw WorldException(mwWorld, format("Layer::validateCellBounds({}, {}) - x={} is out of bounds", x, y, x));
 		}
 
-		if (y >= mDecksHigh)
+		if (y >= mLevelsHigh)
 		{
 			throw WorldException(mwWorld, format("Layer::validateCellBounds({}, {}) - y={} is out of bounds", x, y, y));
 		}

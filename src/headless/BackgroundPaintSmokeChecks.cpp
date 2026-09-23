@@ -55,7 +55,7 @@ namespace
 		uint32_t x{ 0 };
 		uint32_t y{ 0 };
 		uint32_t cellsWide{ 0 };
-		uint32_t decksHigh{ 0 };
+		uint32_t levelsHigh{ 0 };
 		std::string diagnostic;
 	};
 
@@ -64,13 +64,13 @@ namespace
 	{
 		PaintPreview preview;
 		auto const clampedEndX = std::clamp(endX, 0, (int)world.getCellsWide() - 1);
-		auto const clampedEndY = std::clamp(endY, 0, (int)world.getDecksHigh() - 1);
+		auto const clampedEndY = std::clamp(endY, 0, (int)world.getLevelsHigh() - 1);
 		preview.x = (uint32_t)std::min(anchorX, clampedEndX);
 		preview.y = (uint32_t)std::min(anchorY, clampedEndY);
 		preview.cellsWide = (uint32_t)(std::abs(clampedEndX - anchorX) + 1);
-		preview.decksHigh = (uint32_t)(std::abs(clampedEndY - anchorY) + 1);
+		preview.levelsHigh = (uint32_t)(std::abs(clampedEndY - anchorY) + 1);
 		preview.valid = world.canAddBackground(layerIndex, preview.y, preview.x,
-			preview.cellsWide, preview.decksHigh, &preview.diagnostic);
+			preview.cellsWide, preview.levelsHigh, &preview.diagnostic);
 		return preview;
 	}
 
@@ -84,7 +84,7 @@ namespace
 		if (!preview.valid)
 			throw std::runtime_error("Release path ran on an invalid preview: " + preview.diagnostic);
 		return world.addBackground(layerIndex, preview.y, preview.x, preview.cellsWide,
-			preview.decksHigh);
+			preview.levelsHigh);
 	}
 
 	std::shared_ptr<const core::Background> backgroundIn(core::World const& world,
@@ -100,10 +100,10 @@ namespace
 	}
 
 	void footprintIsStamped(core::World const& world, uint32_t layerIndex,
-		uint32_t sectorIndex, uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t decksHigh)
+		uint32_t sectorIndex, uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t levelsHigh)
 	{
 		auto const layer = world.getLayer(layerIndex);
-		for (uint32_t iy = y; iy < y + decksHigh; ++iy)
+		for (uint32_t iy = y; iy < y + levelsHigh; ++iy)
 		{
 			for (uint32_t ix = x; ix < x + cellsWide; ++ix)
 			{
@@ -135,7 +135,7 @@ void paintingAnEmptyBlockCreatesABackground()
 	require(background->getLayerIndex() == 1, "The painted Background landed on the wrong Layer");
 	require(background->getCellX() == 0 && background->getCellY() == 0,
 		"The painted Background did not anchor at the dragged corner");
-	require(background->getCellsWide() == 6 && background->getDecksHigh() == 3,
+	require(background->getCellsWide() == 6 && background->getLevelsHigh() == 3,
 		"The painted Background did not keep the dragged footprint");
 	footprintIsStamped(world, 1, index, 0, 0, 6, 3);
 }
@@ -180,17 +180,17 @@ void thePaintIsSizedBetweenOneByOneAndTheWorldBounds()
 
 	auto const single = previewBackgroundPaint(world, 1, 3, 2, 3, 2);
 	require(single.valid, "The minimum 1x1 paint was refused");
-	require(single.cellsWide == 1 && single.decksHigh == 1,
+	require(single.cellsWide == 1 && single.levelsHigh == 1,
 		"The 1x1 paint did not report a one-cell footprint");
 	auto const singleIndex = releaseBackgroundPaint(world, 1, 3, 2, 3, 2);
 	require(backgroundIn(world, singleIndex)->getCellsWide() == 1
-		&& backgroundIn(world, singleIndex)->getDecksHigh() == 1,
+		&& backgroundIn(world, singleIndex)->getLevelsHigh() == 1,
 		"The 1x1 Background was not created one cell to a block");
 
 	// Dragging past the edge clamps into the World instead of refusing.
 	auto const clamped = previewBackgroundPaint(world, 2, 0, 0, 99, 99);
 	require(clamped.valid, "A drag past the World bounds was refused instead of clamped");
-	require(clamped.cellsWide == 12 && clamped.decksHigh == 4,
+	require(clamped.cellsWide == 12 && clamped.levelsHigh == 4,
 		"The clamped drag did not fill the World bounds");
 
 	// A zero-sized block is not a paintable Background.

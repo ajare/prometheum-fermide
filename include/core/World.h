@@ -124,7 +124,7 @@ namespace core
 
 		struct CreateLadderOptions
 		{
-			uint32_t decksHigh;
+			uint32_t levelsHigh;
 			bool extensible;  // implies controlled
 			bool startExtended;
 			uint32_t directionalBatchLimit{ 4 };
@@ -139,7 +139,7 @@ namespace core
 
 		struct CreateStairwellOptions
 		{
-			uint32_t decksHigh;
+			uint32_t levelsHigh;
 			int mountSide;
 			// Zero preserves ordinary, unconstrained bidirectional stairs.
 			uint32_t directionalCapacity{ 0 };
@@ -170,7 +170,7 @@ namespace core
 			float maximumBoardingSeconds{ CORE_DOOR_STAY_OPEN_TIME };
 			uint32_t initialStop{ 0 };
 			// Zero preserves the legacy API behaviour of ending at the highest stop.
-			uint32_t decksHigh{ 0 };
+			uint32_t levelsHigh{ 0 };
 			// Used only by open PlatformLifts. Enclosed Lifts retain their separate
 			// minimum-dwell and maximum-boarding timings.
 			float platformStopDurationSeconds{ CORE_PLATFORM_LIFT_STOP_DURATION };
@@ -247,7 +247,7 @@ namespace core
 
 		struct PlatformLiftStopCandidate
 		{
-			uint32_t deckOffset{ 0 };
+			uint32_t levelOffset{ 0 };
 			bool leftButton{ false };
 			bool rightButton{ false };
 		};
@@ -287,7 +287,7 @@ namespace core
 			bool remove{ false };
 			bool move{ false };
 			uint32_t sectorIndex{ ~0u };
-			uint32_t x{ 0 }, y{ 0 }, cellsWide{ 0 }, decksHigh{ 0 };
+			uint32_t x{ 0 }, y{ 0 }, cellsWide{ 0 }, levelsHigh{ 0 };
 			std::string diagnostic;
 			std::vector<std::string> consequences;
 
@@ -303,7 +303,7 @@ namespace core
 			bool remove{ false };
 			bool move{ false };
 			uint32_t sectorIndex{ ~0u };
-			uint32_t x{ 0 }, y{ 0 }, cellsWide{ 0 }, decksHigh{ 0 };
+			uint32_t x{ 0 }, y{ 0 }, cellsWide{ 0 }, levelsHigh{ 0 };
 			std::vector<uint32_t> stopOffsets;
 			std::string diagnostic;
 			std::vector<std::string> consequences;
@@ -338,7 +338,7 @@ namespace core
 			bool remove{ false };
 			bool move{ false };
 			uint32_t sectorIndex{ ~0u };
-			uint32_t x{ 0 }, y{ 0 }, decksHigh{ 0 };
+			uint32_t x{ 0 }, y{ 0 }, levelsHigh{ 0 };
 			CreateLadderOptions options{ 0, false, true };
 			std::string diagnostic;
 			std::vector<std::string> consequences;
@@ -352,7 +352,7 @@ namespace core
 			bool remove{ false };
 			bool move{ false };
 			uint32_t sectorIndex{ ~0u };
-			uint32_t x{ 0 }, y{ 0 }, decksHigh{ 0 };
+			uint32_t x{ 0 }, y{ 0 }, levelsHigh{ 0 };
 			CreateStairwellOptions options{ 0, CORE_SIDE_LEFT };
 			std::string diagnostic;
 			std::vector<std::string> consequences;
@@ -436,7 +436,7 @@ namespace core
 		// value, Agent ID, and behaviour ID on reset or reload.
 		uint64_t mRandomSeed{ 0 };
 
-		uint32_t mCellsWide, mDecksHigh;
+		uint32_t mCellsWide, mLevelsHigh;
 
 		std::vector<std::shared_ptr<Layer>> mLayers;
 		std::vector<std::string> mLayerNames;
@@ -861,7 +861,7 @@ namespace core
 		// behind itself, so its back cells are its own rectangle on the Layer behind.
 		std::vector<std::shared_ptr<const WindowSectorObject>> windowsUncoveredByBackground(
 			std::shared_ptr<const Sector> const& background, bool covered,
-			uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh) const;
+			uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t levelsHigh) const;
 
 		// The consequence lines naming every Window which loses the Background the
 		// plan edits, so the confirmation popup spells out the cascade rather than
@@ -881,7 +881,7 @@ namespace core
 		std::vector<ConstructionRecord> recordsWithoutLayer(uint32_t layerIndex,
 			LayerDeleteImpact& impact) const;
 
-		void resetForDeserialization(std::string name, uint32_t cellsWide, uint32_t decksHigh,
+		void resetForDeserialization(std::string name, uint32_t cellsWide, uint32_t levelsHigh,
 			bool preserveBehaviourRuntime = false);
 
 		// Constructs a validation candidate with the same dimensions and layer count as this World.
@@ -912,9 +912,9 @@ namespace core
 
 		void validateLayer(std::string const& caller, uint32_t layerIndex) const;
 
-		void validateBounds(std::string const& caller, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh) const;
+		void validateBounds(std::string const& caller, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t levelsHigh) const;
 
-		void validateLayerSpace(std::string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh) const;
+		void validateLayerSpace(std::string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t levelsHigh) const;
 
 		void validateObjectAllowedInSector(std::string const& caller, SectorObjectType type, uint32_t sectorIndex) const;
 
@@ -927,7 +927,7 @@ namespace core
 		// Sectors, since a Background takes no part in traversal and what lies behind
 		// an aperture is read from the cell grid. A span that mixes a Background with
 		// any other Sector is still refused.
-		void validateSpaceOnlyInOneSector(std::string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh, bool allowAllBackgroundSpan = false) const;
+		void validateSpaceOnlyInOneSector(std::string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t levelsHigh, bool allowAllBackgroundSpan = false) const;
 
 		void validateSectorDoorOptions(std::string const& caller, CreateDoorOptions const& options) const;
 
@@ -954,19 +954,19 @@ namespace core
 
 		std::shared_ptr<Layer> getLayer(uint32_t layerIndex);
 
-		uint32_t createLocation(std::string const& name, SectorType type, uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh, float topDeckHeight, bool isCorridor);
+		uint32_t createLocation(std::string const& name, SectorType type, uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t levelsHigh, float topLevelHeight, bool isCorridor);
 
 		// A Transit is created on layerIndex and lands on the Layer directly in front of
 		// it, so every landing cell is read from layerInFront(layerIndex).
 		uint32_t createLadder(uint32_t layerIndex, uint32_t x, uint32_t y, CreateLadderOptions const& options);
 
-		uint32_t createStairwell(uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t decksHigh, int mountSide);
+		uint32_t createStairwell(uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t levelsHigh, int mountSide);
 
 		uint32_t createStaircase(uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide,
 			int riseSide, float speed);
 
 		CreateObjectResult createLift(uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide,
-			uint32_t decksHigh, std::vector<uint32_t> const& stopOffsets);
+			uint32_t levelsHigh, std::vector<uint32_t> const& stopOffsets);
 
 		CreateObjectResult createShuttle(uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t numCars, uint32_t carWidth, std::vector<uint32_t> const& stopOffsets);
 
@@ -975,7 +975,7 @@ namespace core
 		CreateObjectResult createDoor(uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide,
 			Door::Height height = Door::Height::Regular, uint32_t* vertexIdentifier = nullptr);
 
-		CreateObjectResult createWindow(uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh, uint32_t* vertexIdentifier = nullptr);
+		CreateObjectResult createWindow(uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t levelsHigh, uint32_t* vertexIdentifier = nullptr);
 
 		CreateObjectResult createBulkheadDoor(uint32_t layerIndex, uint32_t x, uint32_t y, int side);
 
@@ -994,7 +994,7 @@ namespace core
 			float xOffset, MarkerId id, std::string name,
 			uint32_t* vertexIdentifier = nullptr);
 		CreateObjectResult addSectorMarkerRestored(uint32_t sectorIndex,
-			uint32_t deckIndex, float xOffset, MarkerId id, std::string name,
+			uint32_t levelIndex, float xOffset, MarkerId id, std::string name,
 			uint32_t* vertexIdentifier = nullptr);
 
 		CreateObjectResult createForceBridge(uint32_t layerIndex, uint32_t x, uint32_t y, CreateForceBridgeOptions const& options);
@@ -1020,12 +1020,12 @@ namespace core
 
 		CreateObjectResult _createPlatformLiftButton(std::shared_ptr<const Sector> sector, uint32_t x, uint32_t y, uint32_t cellsWide, int side, uint32_t flags, uint32_t* index = nullptr);
 
-		uint32_t addLocation(std::string const& name, SectorType type, uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh, float topDeckHeight, bool isCorridor);
+		uint32_t addLocation(std::string const& name, SectorType type, uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t levelsHigh, float topLevelHeight, bool isCorridor);
 
 		void buildGraph();
 
 		// Forwards to SimulationCoordinator, which owns Agent placement (ADR 0004).
-		AgentId addOwnedAgentToSector(std::unique_ptr<Agent> agent, uint32_t sectorId, uint32_t deckOffset, float xOffset);
+		AgentId addOwnedAgentToSector(std::unique_ptr<Agent> agent, uint32_t sectorId, uint32_t levelOffset, float xOffset);
 
 		AgentId addOwnedAgentToSector(std::unique_ptr<Agent> agent, uint32_t sectorId);
 
@@ -1166,7 +1166,7 @@ namespace core
 
 	public:
 
-		World(std::string const& name, uint32_t cellsWide, uint32_t decksHigh,
+		World(std::string const& name, uint32_t cellsWide, uint32_t levelsHigh,
 			AgentBehaviourRuntimeLimits behaviourRuntimeLimits = {});
 
 		virtual ~World();
@@ -1277,7 +1277,7 @@ namespace core
 
 		uint32_t getCellsWide() const;
 
-		uint32_t getDecksHigh() const;
+		uint32_t getLevelsHigh() const;
 
 		uint32_t getLayerCount() const;
 
@@ -1315,11 +1315,11 @@ namespace core
 		// Sector types
 		// A Corridor is a Location, so it may sit on any Layer.  The Layer-less form
 		// keeps the front-most Layer as its default.
-		uint32_t addCorridor(uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t decksHigh = 1);
+		uint32_t addCorridor(uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t levelsHigh = 1);
 		uint32_t addCorridor(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide,
-			uint32_t decksHigh = 1);
+			uint32_t levelsHigh = 1);
 
-		uint32_t addRoom(std::string const& name, uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t decksHigh, float topDeckHeight = CORE_ROOM_MAX_HEIGHT);
+		uint32_t addRoom(std::string const& name, uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t levelsHigh, float topLevelHeight = CORE_ROOM_MAX_HEIGHT);
 
 		// A Background is a non-occupiable Sector: it takes space on its own Layer and
 		// nothing else. It may sit on any Layer, front-most and back-most included; a
@@ -1327,10 +1327,10 @@ namespace core
 		// ADR 0002 removed. Adjacent Backgrounds are allowed and never merge: each
 		// keeps its own colour.
 		uint32_t addBackground(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide,
-			uint32_t decksHigh, BackgroundColour const& colour = {});
+			uint32_t levelsHigh, BackgroundColour const& colour = {});
 
 		bool canAddBackground(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide,
-			uint32_t decksHigh, std::string* diagnostic = nullptr) const;
+			uint32_t levelsHigh, std::string* diagnostic = nullptr) const;
 
 		// A Facade is an occupiable Location with its perimeter walls all open by
 		// construction: it hosts objects and agents exactly as a Room does and is
@@ -1340,31 +1340,31 @@ namespace core
 		// name alongside its footprint and packed colour. The unnamed form keeps
 		// the generic "Facade" name.
 		uint32_t addFacade(std::string const& name, uint32_t layerIndex, uint32_t y, uint32_t x,
-			uint32_t cellsWide, uint32_t decksHigh, float topDeckHeight = CORE_ROOM_MAX_HEIGHT,
+			uint32_t cellsWide, uint32_t levelsHigh, float topLevelHeight = CORE_ROOM_MAX_HEIGHT,
 			BackgroundColour const& colour = Facade::defaultColour());
 
 		uint32_t addFacade(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide,
-			uint32_t decksHigh, float topDeckHeight = CORE_ROOM_MAX_HEIGHT,
+			uint32_t levelsHigh, float topLevelHeight = CORE_ROOM_MAX_HEIGHT,
 			BackgroundColour const& colour = Facade::defaultColour());
 
 		bool canAddFacade(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide,
-			uint32_t decksHigh, float topDeckHeight, std::string* diagnostic = nullptr) const;
+			uint32_t levelsHigh, float topLevelHeight, std::string* diagnostic = nullptr) const;
 	
 		// A Transit is authored on layerIndex, the Layer it occupies, and lands on the
 		// Layer directly in front of it.  The front-most Layer can carry no Transit.
 		CreateLadderResult addLadder(uint32_t layerIndex, uint32_t y, uint32_t x, CreateLadderOptions const& options);
 
-		bool canAddLadder(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t decksHigh,
+		bool canAddLadder(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t levelsHigh,
 			std::string* diagnostic = nullptr) const;
 
 		bool getLadderOptions(uint32_t sectorIndex, CreateLadderOptions& options) const;
 
-		uint32_t addStairwell(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t decksHigh, int mountSide);
+		uint32_t addStairwell(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t levelsHigh, int mountSide);
 
 		CreateStairwellResult addStairwell(uint32_t layerIndex, uint32_t y, uint32_t x,
 			CreateStairwellOptions const& options);
 
-		bool canAddStairwell(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t decksHigh,
+		bool canAddStairwell(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t levelsHigh,
 			std::string* diagnostic = nullptr) const;
 
 		bool getStairwellOptions(uint32_t sectorIndex, CreateStairwellOptions& options) const;
@@ -1380,7 +1380,7 @@ namespace core
 
 		// One landing row of an enclosed Lift shaft: the row of cells on the Layer
 		// directly in front of the shaft's own Layer that the shaft overlaps at one
-		// deck offset.
+		// level offset.
 		struct LiftLandingRow
 		{
 			uint32_t offset{ 0 };
@@ -1400,14 +1400,14 @@ namespace core
 			}
 		};
 
-		// The landing rows of a cellsWide-by-decksHigh shaft at (y, x) on layerIndex.
+		// The landing rows of a cellsWide-by-levelsHigh shaft at (y, x) on layerIndex.
 		// Rows are always read from the Layer directly in front of layerIndex; the
 		// front-most Layer has nothing in front of it and yields no rows.
 		std::vector<LiftLandingRow> getLiftLandingRows(uint32_t layerIndex, uint32_t y, uint32_t x,
-			uint32_t cellsWide, uint32_t decksHigh) const;
+			uint32_t cellsWide, uint32_t levelsHigh) const;
 
 		// Derives stops from every fully overlapping landing-layer corridor row.
-		CreateLiftResult addLift(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t decksHigh);
+		CreateLiftResult addLift(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t levelsHigh);
 
 		CreateShuttleResult addShuttle(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide, CreateShuttleOptions const& options);
 
@@ -1477,7 +1477,7 @@ namespace core
 		// topology stays fixed.  The override lives in the Lift's own record, not
 		// in a Door record, so editing one stop affects no sibling Door; save/load
 		// and snapshot-based undo/redo carry the choice.  The override is keyed by
-		// the stop's absolute landing floor, so moving or resizing the Lift while
+		// the stop's absolute landing level, so moving or resizing the Lift while
 		// retaining its stops keeps every style attached to its own stop.
 		// Stops without an override keep the generated OpenApart default.
 		// Transport-managed geometry, controls, timing, and traversal are untouched.
@@ -1533,16 +1533,16 @@ namespace core
 		// A Window needs the Layer directly behind the Layer it is authored on, so the
 		// back-most Layer can never take a new one.
 		bool canAddSectorWindow(uint32_t layerIndex, uint32_t y, uint32_t x,
-			uint32_t cellsWide = 1, uint32_t decksHigh = 1,
+			uint32_t cellsWide = 1, uint32_t levelsHigh = 1,
 			std::string* diagnostic = nullptr) const;
 
-		uint32_t addSectorWindow(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t decksHigh);
+		uint32_t addSectorWindow(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t levelsHigh);
 
 		CreateWindowResult addSectorWindow(uint32_t layerIndex, uint32_t y, uint32_t x,
-			uint32_t cellsWide, uint32_t decksHigh, CreateWindowOptions const& options);
+			uint32_t cellsWide, uint32_t levelsHigh, CreateWindowOptions const& options);
 
 		bool getSectorWindowOptions(uint32_t layerIndex, uint32_t y, uint32_t x,
-			uint32_t cellsWide, uint32_t decksHigh, CreateWindowOptions& options) const;
+			uint32_t cellsWide, uint32_t levelsHigh, CreateWindowOptions& options) const;
 
 		bool removeSectorWindow(uint32_t sectorIndex, uint32_t objectIndex);
 
@@ -1569,18 +1569,18 @@ namespace core
 
 		CreateObjectResult addSectorLightSwitch(uint32_t sectorIndex, uint32_t xOffset);
 
-		CreateForceBridgeResult addSectorForceBridge(uint32_t sectorIndex, uint32_t deckIndex,
+		CreateForceBridgeResult addSectorForceBridge(uint32_t sectorIndex, uint32_t levelIndex,
 			uint32_t xOffset);
 
-		CreateForceBridgeResult addSectorForceBridge(uint32_t sectorIndex, uint32_t deckIndex,
+		CreateForceBridgeResult addSectorForceBridge(uint32_t sectorIndex, uint32_t levelIndex,
 			uint32_t xOffset, CreateForceBridgeOptions const& options);
 
-		bool canAddSectorForceBridge(uint32_t sectorIndex, uint32_t deckIndex,
+		bool canAddSectorForceBridge(uint32_t sectorIndex, uint32_t levelIndex,
 			uint32_t xOffset, CreateForceBridgeOptions const& options,
 			std::string* diagnostic = nullptr) const;
 
 		bool calculateSectorForceBridgeWidthToRight(uint32_t sectorIndex,
-			uint32_t deckIndex, uint32_t xOffset, uint32_t& width,
+			uint32_t levelIndex, uint32_t xOffset, uint32_t& width,
 			std::string* diagnostic = nullptr) const;
 
 		bool getSectorForceBridgeOptions(uint32_t sectorIndex, uint32_t objectIndex,
@@ -1595,17 +1595,17 @@ namespace core
 			uint32_t* forceBridgeSectorIndex = nullptr,
 			uint32_t* forceBridgeObjectIndex = nullptr) const;
 
-		CreateLadderResult addSectorLadder(uint32_t sectorIndex, uint32_t deckIndex, uint32_t xOffset, CreateLadderOptions const& options);
+		CreateLadderResult addSectorLadder(uint32_t sectorIndex, uint32_t levelIndex, uint32_t xOffset, CreateLadderOptions const& options);
 
 		// Room Ladders are point-placed objects. Their height is always derived
 		// from the nearest Walkway above their Ground/Walkway base.
-		bool canAddRoomLadder(uint32_t sectorIndex, uint32_t deckIndex, uint32_t xOffset,
-			uint32_t* decksHigh = nullptr, std::string* diagnostic = nullptr) const;
+		bool canAddRoomLadder(uint32_t sectorIndex, uint32_t levelIndex, uint32_t xOffset,
+			uint32_t* levelsHigh = nullptr, std::string* diagnostic = nullptr) const;
 
-		CreateLadderResult addRoomLadder(uint32_t sectorIndex, uint32_t deckIndex,
+		CreateLadderResult addRoomLadder(uint32_t sectorIndex, uint32_t levelIndex,
 			uint32_t xOffset);
 
-		CreateLadderResult addRoomLadder(uint32_t sectorIndex, uint32_t deckIndex,
+		CreateLadderResult addRoomLadder(uint32_t sectorIndex, uint32_t levelIndex,
 			uint32_t xOffset, CreateLadderOptions options);
 
 		bool getRoomLadderOptions(uint32_t sectorIndex, uint32_t objectIndex,
@@ -1616,7 +1616,7 @@ namespace core
 
 		bool removeRoomLadder(uint32_t sectorIndex, uint32_t objectIndex);
 
-		CreatePlatformLiftResult addSectorPlatformLift(uint32_t sectorIndex, uint32_t deckIndex, uint32_t xOffset, CreateLiftOptions const& options);
+		CreatePlatformLiftResult addSectorPlatformLift(uint32_t sectorIndex, uint32_t levelIndex, uint32_t xOffset, CreateLiftOptions const& options);
 
 		std::vector<PlatformLiftStopCandidate> getPlatformLiftStopCandidates(
 			uint32_t sectorIndex, uint32_t xOffset) const;
@@ -1641,23 +1641,23 @@ namespace core
 
 		bool applyWalkwayEdit(WalkwayEditPlan const& plan);
 
-		bool canAddSectorWalkway(uint32_t sectorIndex, uint32_t deckIndex, uint32_t xOffset,
+		bool canAddSectorWalkway(uint32_t sectorIndex, uint32_t levelIndex, uint32_t xOffset,
 			std::string* diagnostic = nullptr) const;
 
-		CreateObjectResult addSectorWalkway(uint32_t sectorIndex, uint32_t deckIndex,
+		CreateObjectResult addSectorWalkway(uint32_t sectorIndex, uint32_t levelIndex,
 			uint32_t xOffset);
 
 		bool removeSectorWalkway(uint32_t sectorIndex, uint32_t objectIndex);
 
-		bool canAddSectorMarker(uint32_t sectorIndex, uint32_t deckIndex, float xOffset,
+		bool canAddSectorMarker(uint32_t sectorIndex, uint32_t levelIndex, float xOffset,
 			std::string* diagnostic = nullptr) const;
 
-		CreateObjectResult addSectorMarker(uint32_t sectorIndex, uint32_t deckIndex, float xOffset,
+		CreateObjectResult addSectorMarker(uint32_t sectorIndex, uint32_t levelIndex, float xOffset,
 			uint32_t* vertexIdentifier = nullptr);
 
 		// Explicit naming follows the same validation as rename. The legacy
 		// overload above generates a deterministic unique name for editor placement.
-		CreateObjectResult addSectorMarker(uint32_t sectorIndex, uint32_t deckIndex,
+		CreateObjectResult addSectorMarker(uint32_t sectorIndex, uint32_t levelIndex,
 			float xOffset, std::string const& name, uint32_t* vertexIdentifier = nullptr);
 
 		// Runtime-only movement seam: no Path/Vertex access is needed by callers.
@@ -1685,7 +1685,7 @@ namespace core
 		// Plans are side-effect free. Applying a plan reconstructs the authored
 		// structure atomically and leaves the simulation paused.
 		LocationEditPlan planResizeLocation(uint32_t sectorIndex, uint32_t x, uint32_t y,
-			uint32_t cellsWide, uint32_t decksHigh) const;
+			uint32_t cellsWide, uint32_t levelsHigh) const;
 
 		LocationEditPlan planRemoveLocation(uint32_t sectorIndex) const;
 
@@ -1707,7 +1707,7 @@ namespace core
 		LocationEditPlan planRemoveBackground(uint32_t sectorIndex) const;
 
 		LocationEditPlan planResizeBackground(uint32_t sectorIndex, uint32_t x, uint32_t y,
-			uint32_t cellsWide, uint32_t decksHigh) const;
+			uint32_t cellsWide, uint32_t levelsHigh) const;
 
 		uint32_t applyBackgroundEdit(LocationEditPlan const& plan);
 
@@ -1729,7 +1729,7 @@ namespace core
 			std::string* diagnostic = nullptr);
 
 		LiftEditPlan planResizeLift(uint32_t sectorIndex, uint32_t x, uint32_t y,
-			uint32_t cellsWide, uint32_t decksHigh) const;
+			uint32_t cellsWide, uint32_t levelsHigh) const;
 
 		LiftEditPlan planRemoveLift(uint32_t sectorIndex) const;
 
@@ -1788,25 +1788,25 @@ namespace core
 		// path as movement, preserving authored options while validating the complete
 		// new footprint against normal Window placement rules.
 		ObjectMovePlan planResizeSectorWindow(uint32_t sectorIndex, uint32_t objectIndex,
-			uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh) const;
+			uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t levelsHigh) const;
 
-		// Regular Doors resize horizontally between one and two cells. Their one-deck
+		// Regular Doors resize horizontally between one and two cells. Their one-level
 		// footprint has a separately authored regular/tall physical height. Lift and
 		// Shuttle landing doors are managed by their transport and refuse to resize.
 		ObjectMovePlan planResizeSectorDoor(uint32_t sectorIndex, uint32_t objectIndex,
-			uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh) const;
+			uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t levelsHigh) const;
 
 		std::shared_ptr<const SectorObject> applyObjectMove(ObjectMovePlan const& plan);
 
-		bool canRemoveLocationWall(uint32_t sectorIndex, uint32_t deckIndex, int side,
+		bool canRemoveLocationWall(uint32_t sectorIndex, uint32_t levelIndex, int side,
 			std::string* diagnostic = nullptr) const;
 
-		bool canAddLocationWall(uint32_t sectorIndex, uint32_t deckIndex, int side,
+		bool canAddLocationWall(uint32_t sectorIndex, uint32_t levelIndex, int side,
 			std::string* diagnostic = nullptr) const;
 
-		void removeLocationWall(uint32_t sectorIndex, uint32_t deckIndex, int side);
+		void removeLocationWall(uint32_t sectorIndex, uint32_t levelIndex, int side);
 
-		void addLocationWall(uint32_t sectorIndex, uint32_t deckIndex, int side);
+		void addLocationWall(uint32_t sectorIndex, uint32_t levelIndex, int side);
 
 		void finishBuild();
 
@@ -1848,7 +1848,7 @@ namespace core
 		// waking, and traversal-ownership release - lives in SimulationCoordinator
 		// (ADR 0004); every Agent entry point below forwards to it, as does every
 		// InteractionPoint, InteractionRequest and DeviceOperation entry point.
-		AgentId createAgent(std::string const& name, uint32_t sectorId, uint32_t deckOffset, float xOffset);
+		AgentId createAgent(std::string const& name, uint32_t sectorId, uint32_t levelOffset, float xOffset);
 
 		AgentId createAgent(std::string const& name, uint32_t sectorId);
 

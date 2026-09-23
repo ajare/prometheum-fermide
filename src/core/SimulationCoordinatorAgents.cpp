@@ -35,7 +35,7 @@ namespace core
 	// lift scheduling helpers, and traversal cancellation and release to the
 	// transaction lifecycle which joined it in stage 4.
 
-	AgentId SimulationCoordinator::addOwnedAgentToSector(unique_ptr<Agent> agent, uint32_t sectorId, uint32_t deckOffset, float xOffset)
+	AgentId SimulationCoordinator::addOwnedAgentToSector(unique_ptr<Agent> agent, uint32_t sectorId, uint32_t levelOffset, float xOffset)
 	{
 		if (!agent)
 		{
@@ -54,7 +54,7 @@ namespace core
 		}
 		auto rawAgent = agent.get();
 		rawAgent->attachToWorld(&mWorld);
-		sector->enterAgent(rawAgent, deckOffset, xOffset);
+		sector->enterAgent(rawAgent, levelOffset, xOffset);
 		auto id = mWorld.mAgents.add(std::move(agent));
 		mWorld.mAgentIds.emplace(rawAgent, id);
 
@@ -99,9 +99,9 @@ namespace core
 		return id;
 	}
 
-	AgentId SimulationCoordinator::createAgent(string const& name, uint32_t sectorId, uint32_t deckOffset, float xOffset)
+	AgentId SimulationCoordinator::createAgent(string const& name, uint32_t sectorId, uint32_t levelOffset, float xOffset)
 	{
-		return addOwnedAgentToSector(make_unique<Agent>(name), sectorId, deckOffset, xOffset);
+		return addOwnedAgentToSector(make_unique<Agent>(name), sectorId, levelOffset, xOffset);
 	}
 
 	AgentId SimulationCoordinator::createAgent(string const& name, uint32_t sectorId)

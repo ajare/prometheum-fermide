@@ -23,13 +23,13 @@ namespace core
 	}
 
 	Facade::Facade(string const& name, uint32_t layerIndex, uint32_t index,
-		uint32_t cellX, uint32_t cellY, uint32_t cellsWide, uint32_t decksHigh,
-		float topDeckHeight, BackgroundColour const& colour)
+		uint32_t cellX, uint32_t cellY, uint32_t cellsWide, uint32_t levelsHigh,
+		float topLevelHeight, BackgroundColour const& colour)
 		: Location(name, SectorType::Facade, layerIndex, index, cellX, cellY,
-			cellsWide, decksHigh, topDeckHeight, ~0u, false)
+			cellsWide, levelsHigh, topLevelHeight, ~0u, false)
 		, mColour(colour)
 	{
-		// The open perimeter is intrinsic to the type: every end on every deck
+		// The open perimeter is intrinsic to the type: every end on every level
 		// and both sides is created open rather than opened by an edit. No
 		// RemoveWall record is ever emitted for a Facade (ADR 0003).
 		for (auto& end : mEnds)

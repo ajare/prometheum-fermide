@@ -415,7 +415,7 @@ void setup()
 		0
 	};
 	gAgentIconFont = io.Fonts->AddFontFromFileTTF(iconFontPath.c_str(),
-		CORE_AGENT_MAX_HEIGHT * CORE_DECK_HEIGHT_PIXELS, nullptr, agentIconRanges);
+		CORE_AGENT_MAX_HEIGHT * CORE_LEVEL_HEIGHT_PIXELS, nullptr, agentIconRanges);
 	if (!gAgentIconFont)
 	{
 		throw ExitApplicationException(1, "Could not load the Agent icon font.");
@@ -515,17 +515,17 @@ std::shared_ptr<core::World> createTestWorld()
 
 	try
 	{
-		enum CitadelDeck
+		enum CitadelLevel
 		{
-			ReactorDeck,
-			HospitalDeck,
-			MaintenanceDeck,
-			StorageDeck,
-			FlightDeck,
-			ExecutiveDeck,
-			EngineeringDeck,
-			SecurityDeck,
-			BridgeDeck
+			ReactorLevel,
+			HospitalLevel,
+			MaintenanceLevel,
+			StorageLevel,
+			FlightLevel,
+			ExecutiveLevel,
+			EngineeringLevel,
+			SecurityLevel,
+			BridgeLevel
 		};
 
 		//
@@ -533,25 +533,25 @@ std::shared_ptr<core::World> createTestWorld()
 		// 
 
 		// First corridor
-		world->addCorridor(ReactorDeck, 1, 8);
+		world->addCorridor(ReactorLevel, 1, 8);
 		
-		world->addRoom("Pump Room", 1, ReactorDeck, 0, 4, 1);
+		world->addRoom("Pump Room", 1, ReactorLevel, 0, 4, 1);
 		
 		//world->addSectorLightSwitch(pumpRoomIndex, 0);
 
-		world->addRoom("Fuel Cells", 1, ReactorDeck, 5, 3, 1);
+		world->addRoom("Fuel Cells", 1, ReactorLevel, 5, 3, 1);
 		
-		world->addSectorDoor(0, ReactorDeck, 6);
+		world->addSectorDoor(0, ReactorLevel, 6);
 		
-		world->addSectorDoor(0, ReactorDeck, 2);
+		world->addSectorDoor(0, ReactorLevel, 2);
 		/*
-		world->addSectorWindow(0, ReactorDeck, 7, 1, 1);
+		world->addSectorWindow(0, ReactorLevel, 7, 1, 1);
 		
 		// Second corridor
-		auto corr2Index = world->addCorridor(ReactorDeck, 9, 6);
+		auto corr2Index = world->addCorridor(ReactorLevel, 9, 6);
 
 		// Reactor core
-		auto reactorCoreIndex = world->addRoom("Reactor Core", 1, ReactorDeck, 9, 4, 3);
+		auto reactorCoreIndex = world->addRoom("Reactor Core", 1, ReactorLevel, 9, 4, 3);
 		
 		world->addSectorWalkway(reactorCoreIndex, 1, 0);
 		world->addSectorWalkway(reactorCoreIndex, 1, 2);
@@ -566,49 +566,49 @@ std::shared_ptr<core::World> createTestWorld()
 
 		world->addSectorMarker(reactorCoreIndex, 0, 3.0f);
 		
-		world->addSectorDoor(ReactorDeck, 10);
+		world->addSectorDoor(ReactorLevel, 10);
 
-		world->addSectorWindow(0, ReactorDeck, 1, 1, 1);
+		world->addSectorWindow(0, ReactorLevel, 1, 1, 1);
 		
 		// Decontamination
-		world->addRoom("Decontamination", 1, ReactorDeck, 14, 3, 1);
-		world->addSectorDoor(ReactorDeck, 14);
+		world->addRoom("Decontamination", 1, ReactorLevel, 14, 3, 1);
+		world->addSectorDoor(ReactorLevel, 14);
 
-		world->addSectorWindow(0, ReactorDeck, 11, 2, 1);
+		world->addSectorWindow(0, ReactorLevel, 11, 2, 1);
 
 		// Connect corridors
-		world->addSectorBulkheadDoor(0, ReactorDeck, 9, CORE_SIDE_LEFT);
+		world->addSectorBulkheadDoor(0, ReactorLevel, 9, CORE_SIDE_LEFT);
 		
 		// Third corridor
-		world->addCorridor(ReactorDeck, 16, 14);
+		world->addCorridor(ReactorLevel, 16, 14);
 
-		world->addSectorDoor(ReactorDeck, 16);
+		world->addSectorDoor(ReactorLevel, 16);
 
 		// Fourth corridor
-		world->addCorridor(ReactorDeck, 34, 9);
+		world->addCorridor(ReactorLevel, 34, 9);
 
-		world->addSectorDoor(ReactorDeck, 38);
+		world->addSectorDoor(ReactorLevel, 38);
 
-		world->addShuttle(ReactorDeck, 24, 17, { 2, 3, { 0, 10 }, 0 });
+		world->addShuttle(ReactorLevel, 24, 17, { 2, 3, { 0, 10 }, 0 });
 */
 /*
 		//
 		// Hospital
 		//
-		world->addCorridor(HospitalDeck, 1, 4);
-		world->addCorridor(HospitalDeck, 6, 10);
-		auto corrIndex = world->addCorridor(HospitalDeck, 17, 4, 2);
+		world->addCorridor(HospitalLevel, 1, 4);
+		world->addCorridor(HospitalLevel, 6, 10);
+		auto corrIndex = world->addCorridor(HospitalLevel, 17, 4, 2);
 
 		world->addSectorWalkway(corrIndex, 1, 1);
 		world->addSectorWalkway(corrIndex, 1, 2);
 		world->addSectorWalkway(corrIndex, 1, 3);
 
-		auto icuIndex = world->addRoom("ICU", 1, HospitalDeck, 13, 3, 1, CORE_DOOR_HEIGHT + 0.1f);
-		world->addSectorDoor(HospitalDeck, 14);
+		auto icuIndex = world->addRoom("ICU", 1, HospitalLevel, 13, 3, 1, CORE_DOOR_HEIGHT + 0.1f);
+		world->addSectorDoor(HospitalLevel, 14);
 
 		world->removeLocationWall(icuIndex, 0, CORE_SIDE_LEFT);
 
-		auto acIndex = world->addRoom("Autoclaves", 1, HospitalDeck, 0, 3, 4, CORE_DOOR_HEIGHT + 0.1f);
+		auto acIndex = world->addRoom("Autoclaves", 1, HospitalLevel, 0, 3, 4, CORE_DOOR_HEIGHT + 0.1f);
 
 		world->addSectorWalkway(acIndex, 1, 0);
 		world->addSectorWalkway(acIndex, 1, 1);
@@ -617,11 +617,11 @@ std::shared_ptr<core::World> createTestWorld()
 
 		world->addSectorPlatformLift(acIndex, 0, 0, { 1, { 0, 1, 2 } });
 
-		world->addSectorDoor(HospitalDeck, 2);
+		world->addSectorDoor(HospitalLevel, 2);
 		
-		auto morgueCorrIndex = world->addCorridor(HospitalDeck, 22, 9);
-		auto morgueIndex = world->addRoom("Morgue", 1, HospitalDeck, 22, 9, 1);
-		world->addSectorDoor(HospitalDeck, 26);
+		auto morgueCorrIndex = world->addCorridor(HospitalLevel, 22, 9);
+		auto morgueIndex = world->addRoom("Morgue", 1, HospitalLevel, 22, 9, 1);
+		world->addSectorDoor(HospitalLevel, 26);
 
 		uint32_t vertexIdentifiers[20];
 		for (int i = 0; i < 9; ++i)
@@ -646,39 +646,39 @@ std::shared_ptr<core::World> createTestWorld()
 		//
 		// Maintenance
 		//
-		world->addCorridor(MaintenanceDeck, 2, 3);
-		world->addCorridor(MaintenanceDeck, 6, 3);
+		world->addCorridor(MaintenanceLevel, 2, 3);
+		world->addCorridor(MaintenanceLevel, 6, 3);
 
 		//
 		// Storage
 		//
-		auto storageCorrIndex = world->addCorridor(StorageDeck, 6, 6);
-		world->addCorridor(StorageDeck, 15, 6);
+		auto storageCorrIndex = world->addCorridor(StorageLevel, 6, 6);
+		world->addCorridor(StorageLevel, 15, 6);
 
-		world->addShuttle(StorageDeck, 10, 7, { 1, 3, { 0, 4 }, 0 });
+		world->addShuttle(StorageLevel, 10, 7, { 1, 3, { 0, 4 }, 0 });
 
-		//world->addSectorWindow(0, StorageDeck, 10, 2, 1);
-		//world->addSectorWindow(1, StorageDeck, 13, 1, 1);
-
-		//
-		// Flight deck
-		//
-		world->addCorridor(FlightDeck, 6, 4);
+		//world->addSectorWindow(0, StorageLevel, 10, 2, 1);
+		//world->addSectorWindow(1, StorageLevel, 13, 1, 1);
 
 		//
-		// Join decks
+		// Flight level
 		//
-		world->addLadder(ReactorDeck, 4, { 3, true, true });
-		world->addLadder(HospitalDeck + 1, 18, { 2, true, true });
-		world->addStairwell(ReactorDeck, 19, 4, CORE_SIDE_LEFT);
-		world->addLift(ReactorDeck, 17, { 1, { 0, 1, 3 } });
-		world->addLift(HospitalDeck, 6, { 2, { 0, 1, 2, 3 } });
+		world->addCorridor(FlightLevel, 6, 4);
+
+		//
+		// Join levels
+		//
+		world->addLadder(ReactorLevel, 4, { 3, true, true });
+		world->addLadder(HospitalLevel + 1, 18, { 2, true, true });
+		world->addStairwell(ReactorLevel, 19, 4, CORE_SIDE_LEFT);
+		world->addLift(ReactorLevel, 17, { 1, { 0, 1, 3 } });
+		world->addLift(HospitalLevel, 6, { 2, { 0, 1, 2, 3 } });
 
 		// Add Windows now that we've placed objects on both Layers
-		world->addSectorWindow(1, HospitalDeck, 4, 1, 1);
-		world->addSectorWindow(0, MaintenanceDeck, 17, 1, 1);
-		world->addSectorWindow(1, MaintenanceDeck, 0, 1, 1);
-		world->addSectorWindow(1, MaintenanceDeck, 12, 1, 1);
+		world->addSectorWindow(1, HospitalLevel, 4, 1, 1);
+		world->addSectorWindow(0, MaintenanceLevel, 17, 1, 1);
+		world->addSectorWindow(1, MaintenanceLevel, 0, 1, 1);
+		world->addSectorWindow(1, MaintenanceLevel, 12, 1, 1);
 */
 		world->finishBuild();
 

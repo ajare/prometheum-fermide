@@ -144,7 +144,7 @@ namespace
 		std::set<std::string> named;
 		for (uint32_t layer = 0; layer < world.getLayerCount(); ++layer)
 			for (uint32_t x = 0; x < world.getCellsWide(); ++x)
-				for (uint32_t y = 0; y < world.getDecksHigh(); ++y)
+				for (uint32_t y = 0; y < world.getLevelsHigh(); ++y)
 					if (namesWindow(consequences, layer, x, y))
 						named.insert(std::format("Layer {}.cell {},{}", layer, x, y));
 		return named;
@@ -219,7 +219,7 @@ void thePanelReadsTheSelectedBackground()
 	require(background->getLayerIndex() == 1, "The Background is on the wrong Layer");
 	require(background->getCellX() == 2 && background->getCellY() == 1,
 		"The Background is not where the panel would say it is");
-	require(background->getCellsWide() == 3 && background->getDecksHigh() == 2,
+	require(background->getCellsWide() == 3 && background->getLevelsHigh() == 2,
 		"The Background size the panel reports is wrong");
 	require(!background->getName().empty(), "The panel has no name to show");
 	require(background->getColour() == (core::BackgroundColour{ 10, 20, 30 }),
@@ -273,7 +273,7 @@ void aPanelColourEditRoundTripsThroughSerialisation()
 			after->getColour().r, after->getColour().g, after->getColour().b));
 	// The edit was a recolour, not a move: the geometry the panel reports is untouched.
 	require(after->getLayerIndex() == 1 && after->getCellX() == 0 && after->getCellY() == 0
-		&& after->getCellsWide() == 4 && after->getDecksHigh() == 1,
+		&& after->getCellsWide() == 4 && after->getLevelsHigh() == 1,
 		"The recolour changed the Background's geometry");
 	require(reloaded.getNumSectors() == world.getNumSectors(),
 		"The recolour changed the Sector count");

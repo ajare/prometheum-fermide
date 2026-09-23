@@ -16,7 +16,7 @@ namespace core
 	}
 
 	uint32_t RailedTransport::getNumStops() const { return (uint32_t)mStops.size(); }
-	uint32_t RailedTransport::getStopDeckIndex(uint32_t index) const { return mStops.at(index).y; }
+	uint32_t RailedTransport::getStopLevelIndex(uint32_t index) const { return mStops.at(index).y; }
 
 	uint32_t RailedTransport::getStopIndex(uint32_t x, uint32_t y) const
 	{

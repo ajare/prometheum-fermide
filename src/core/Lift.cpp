@@ -32,7 +32,7 @@ namespace core
 	Lift
 	----
 
-	A Lift spans multiple, potentially non-contiguous Decks, either within a Location, or on the Back Layer, connecting
+	A Lift spans multiple, potentially non-contiguous Levels, either within a Location, or on the Back Layer, connecting
 	separate Locations on the Fore Layer.
 
 	Construction arguments:

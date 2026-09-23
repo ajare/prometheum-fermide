@@ -14,7 +14,7 @@ namespace core
 	{
 		World const* mwWorld;
 
-		uint32_t mCellsWide, mDecksHigh, mZ;
+		uint32_t mCellsWide, mLevelsHigh, mZ;
 
 		std::vector<CellDefinition> mCells;
 
@@ -24,11 +24,11 @@ namespace core
 
 	public:
 
-		Layer(World const* world, uint32_t cellsWide, uint32_t decksHigh, uint32_t z);
+		Layer(World const* world, uint32_t cellsWide, uint32_t levelsHigh, uint32_t z);
 
 		uint32_t getCellsWide() const;
 
-		uint32_t getDecksHigh() const;
+		uint32_t getLevelsHigh() const;
 
 		uint32_t getZ() const;
 

@@ -1,7 +1,7 @@
 version: 7
 name: Untitled
 cellsWide: 16
-decksHigh: 6
+levelsHigh: 6
 layers: 4
 layerNames:
   - Street
@@ -15,60 +15,60 @@ construction:
     y: 0
     x: 6
     cellsWide: 4
-    decksHigh: 2
-    topDeckHeight: 0.9
+    levelsHigh: 2
+    topLevelHeight: 0.9
   - type: corridor
     layer: 1
     y: 0
     x: 10
     cellsWide: 5
-    decksHigh: 1
+    levelsHigh: 1
   - type: corridor
     layer: 1
     y: 0
     x: 1
     cellsWide: 5
-    decksHigh: 1
+    levelsHigh: 1
   - type: corridor
     layer: 1
     y: 1
     x: 1
     cellsWide: 5
-    decksHigh: 1
+    levelsHigh: 1
   - type: corridor
     layer: 1
     y: 1
     x: 10
     cellsWide: 5
-    decksHigh: 1
+    levelsHigh: 1
   - type: corridor
     layer: 1
     y: 2
     x: 1
     cellsWide: 14
-    decksHigh: 1
+    levelsHigh: 1
   - type: corridor
     layer: 1
     y: 3
     x: 1
     cellsWide: 14
-    decksHigh: 1
+    levelsHigh: 1
   - type: room
     name: Room 2
     layer: 2
     y: 2
     x: 2
     cellsWide: 4
-    decksHigh: 1
-    topDeckHeight: 0.9
+    levelsHigh: 1
+    topLevelHeight: 0.9
   - type: room
     name: Room 3
     layer: 2
     y: 2
     x: 10
     cellsWide: 4
-    decksHigh: 1
-    topDeckHeight: 0.9
+    levelsHigh: 1
+    topLevelHeight: 0.9
   - type: door
     layer: 1
     y: 2
@@ -97,8 +97,8 @@ construction:
     y: 0
     x: 1
     cellsWide: 14
-    decksHigh: 4
-    topDeckHeight: 0.9
+    levelsHigh: 4
+    topLevelHeight: 0.9
     colour: 11575424
   - type: objectTombstone
     sectorIndex: 2
@@ -109,7 +109,7 @@ construction:
     y: 0
     x: 13
     cellsWide: 1
-    decksHigh: 1
+    levelsHigh: 1
     traversable: false
     initialState: closed
     style: clear
@@ -122,20 +122,20 @@ construction:
     y: 0
     x: 0
     cellsWide: 16
-    decksHigh: 6
+    levelsHigh: 6
     colour: 6324384
   - type: corridor
     layer: 2
     y: 0
     x: 4
     cellsWide: 8
-    decksHigh: 1
+    levelsHigh: 1
   - type: window
     layer: 0
     y: 0
     x: 2
     cellsWide: 2
-    decksHigh: 1
+    levelsHigh: 1
     traversable: false
     initialState: closed
     style: clear
@@ -148,7 +148,7 @@ construction:
     y: 0
     x: 6
     cellsWide: 1
-    decksHigh: 2
+    levelsHigh: 2
     traversable: false
     initialState: closed
     style: clear
@@ -158,7 +158,7 @@ construction:
     sectorIndex: 0
   - type: marker
     sectorIndex: 0
-    deckIndex: 0
+    levelIndex: 0
     xOffset: 0.546875
   - type: door
     layer: 0
@@ -175,7 +175,7 @@ construction:
     sectorIndex: 1
   - type: marker
     sectorIndex: 0
-    deckIndex: 0
+    levelIndex: 0
     xOffset: 3.5
 agents:
   - id: 1

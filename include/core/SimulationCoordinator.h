@@ -57,8 +57,8 @@ namespace core
 		// ------------------------------------------------------------------
 
 		// Creates an Agent named `name` and places it in the Sector `sectorId`,
-		// either at a specific deck and lateral offset or at the Sector default.
-		AgentId createAgent(std::string const& name, uint32_t sectorId, uint32_t deckOffset, float xOffset);
+		// either at a specific level and lateral offset or at the Sector default.
+		AgentId createAgent(std::string const& name, uint32_t sectorId, uint32_t levelOffset, float xOffset);
 
 		AgentId createAgent(std::string const& name, uint32_t sectorId);
 
@@ -66,7 +66,7 @@ namespace core
 		// places it in the Sector `sectorId`. The Agent is attached to the
 		// World, never to the coordinator: the World remains the owner the
 		// Agent reports to.
-		AgentId addOwnedAgentToSector(std::unique_ptr<Agent> agent, uint32_t sectorId, uint32_t deckOffset, float xOffset);
+		AgentId addOwnedAgentToSector(std::unique_ptr<Agent> agent, uint32_t sectorId, uint32_t levelOffset, float xOffset);
 
 		AgentId addOwnedAgentToSector(std::unique_ptr<Agent> agent, uint32_t sectorId);
 
@@ -498,7 +498,7 @@ namespace core
 			TraversalResource const& resource) const;
 
 		// Put a request into the resource's admission queue, fixing its travel
-		// direction on the way in - from the cross-deck edge, or from which side of
+		// direction on the way in - from the cross-level edge, or from which side of
 		// the physical midpoint the Agent approaches - and taking it a queue ticket
 		// where the ladder has one.
 		void attachLadderAdmissionRequest(TraversalRequestId requestId,

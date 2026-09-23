@@ -93,7 +93,7 @@ void renderStaircase(shared_ptr<const core::Staircase> staircase, ImDrawList* dr
 void transformPosition(core::Vector2& p)
 {
 	p.x *= CORE_CELL_WIDTH_PIXELS;
-	p.y *= CORE_DECK_HEIGHT_PIXELS;
+	p.y *= CORE_LEVEL_HEIGHT_PIXELS;
 	p.y = gUISettings.worldViewportY + gUISettings.worldViewportHeight - p.y;
 
 	p.x += gUISettings.worldViewportX + gUISettings.xOffset;
@@ -269,7 +269,7 @@ void renderSelectedQueues(shared_ptr<const core::World> const& world, int layer,
 void renderGrid(shared_ptr<const core::World> const& world, ImColor const& colour,
 	float width, ImDrawList* drawList)
 {
-	core::Vector2 topLeft{ 0.0f, (float)world->getDecksHigh() };
+	core::Vector2 topLeft{ 0.0f, (float)world->getLevelsHigh() };
 	core::Vector2 bottomRight{ (float)world->getCellsWide(), 0.0f };
 	transformPosition(topLeft);
 	transformPosition(bottomRight);
@@ -283,9 +283,9 @@ void renderGrid(shared_ptr<const core::World> const& world, ImColor const& colou
 		drawList->AddLine({ screenX, topLeft.y }, { screenX, bottomRight.y }, colour, width);
 	}
 
-	for (uint32_t y = 0; y <= world->getDecksHigh(); ++y)
+	for (uint32_t y = 0; y <= world->getLevelsHigh(); ++y)
 	{
-		float screenY = bottomRight.y - y * CORE_DECK_HEIGHT_PIXELS;
+		float screenY = bottomRight.y - y * CORE_LEVEL_HEIGHT_PIXELS;
 		drawList->AddLine({ topLeft.x, screenY }, { bottomRight.x, screenY }, colour, width);
 	}
 }
@@ -1000,7 +1000,7 @@ void renderMarker(shared_ptr<const core::Marker> marker, uint32_t /* layer */, L
 	if (style != LayerRenderStyle::Solid) return;
 	auto point = marker->getPosition();
 	point.x += marker->getOffset();
-	point.y += MarkerDeckLift;
+	point.y += MarkerFloorLift;
 	transformPosition(point);
 
 	ImFont* font = gAgentIconFont ? gAgentIconFont : ImGui::GetFont();
@@ -1129,14 +1129,14 @@ void renderStairwell(shared_ptr<const core::Stairwell> stairwell, uint32_t /* la
 		return ImVec2{ point.x, point.y };
 	};
 
-	// Stairwell::getDeckPath is also used to place the Graph vertices. Build one
-	// continuous polyline so adjacent flights share their exact deck endpoint.
+	// Stairwell::getLevelPath is also used to place the Graph vertices. Build one
+	// continuous polyline so adjacent flights share their exact level endpoint.
 	vector<ImVec2> pathPoints;
-	if (stairwell->getDecksHigh() > 1)
-		pathPoints.reserve(1 + (stairwell->getDecksHigh() - 1) * 3);
-	for (uint32_t deck = 0; deck + 1 < stairwell->getDecksHigh(); ++deck)
+	if (stairwell->getLevelsHigh() > 1)
+		pathPoints.reserve(1 + (stairwell->getLevelsHigh() - 1) * 3);
+	for (uint32_t level = 0; level + 1 < stairwell->getLevelsHigh(); ++level)
 	{
-		auto path = stairwell->getDeckPath(deck);
+		auto path = stairwell->getLevelPath(level);
 		if (pathPoints.empty()) pathPoints.push_back(toScreen(path[0]));
 		pathPoints.push_back(toScreen(path[1]));
 		pathPoints.push_back(toScreen(path[2]));
@@ -1651,7 +1651,7 @@ void renderSector(shared_ptr<const core::Sector> sector, uint32_t layer, LayerRe
 		// Render walls
 		//
 		// An open end takes away only the stretch of wall the neighbouring
-		// Location actually shares, never the whole deck: a Room deck standing
+		// Location actually shares, never the whole level: a Room level standing
 		// taller than the Corridor it opens into keeps the wall above the
 		// Corridor's ceiling, or the two Locations read as open to the void
 		// above their own connection.
@@ -1663,16 +1663,16 @@ void renderSector(shared_ptr<const core::Sector> sector, uint32_t layer, LayerRe
 		int const viewLayer{ std::max(0, gUISettings.visibleLayer) };
 		float height{ 0.0f };
 
-		for (uint32_t y = 0; y < sector->getDecksHigh(); ++y)
+		for (uint32_t y = 0; y < sector->getLevelsHigh(); ++y)
 		{
-			auto deckHeight = sector->getDeckHeight(y);
+			auto levelHeight = sector->getLevelHeight(y);
 
 			core::Vector2 wallBounds0, wallBounds1;
 
 			sector->getBounds(wallBounds0, wallBounds1);
 
 			wallBounds0.y += height;
-			wallBounds1.y = wallBounds0.y + deckHeight;
+			wallBounds1.y = wallBounds0.y + levelHeight;
 
 			for (int const side : { CORE_SIDE_LEFT, CORE_SIDE_RIGHT })
 			{
@@ -1689,7 +1689,7 @@ void renderSector(shared_ptr<const core::Sector> sector, uint32_t layer, LayerRe
 				}
 			}
 
-			height += deckHeight;
+			height += levelHeight;
 		}
 	}
 
@@ -1796,7 +1796,7 @@ void renderTransitThroughApertures(shared_ptr<const core::Sector> const& transit
 // Every render pass must cull with the same bounds (#58): the visible world
 // origin is (-xOffset, -yOffset) - the scrollbars drive both - over the
 // viewport's own width and height. Passing a hard-coded Y origin here is what
-// made high decks vanish when scrolled into view.
+// made high levels vanish when scrolled into view.
 //
 std::vector<std::shared_ptr<const core::Sector>> viewportSectors(
 	std::shared_ptr<const core::World> const& world, uint32_t layer)

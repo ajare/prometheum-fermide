@@ -59,17 +59,17 @@ namespace core
 
 	/***
 
-	createCrossDeckEdge()
+	createCrossLevelEdge()
 	---------------------
 
-	Create an Edge between two Decks.
+	Create an Edge between two Levels.
 
 	Arguments:
 
 	- edgeCreator is actually a shared_ptr to this LiftSectorObject instance.  While this is awkward, it lets us
 	  capture the shared_ptr rather than the raw one, within the Edge.
 	*/
-	shared_ptr<Edge> LiftSectorObject::createCrossDeckEdge([[maybe_unused]] shared_ptr<VerticalEdgeCreator> edgeCreator) const
+	shared_ptr<Edge> LiftSectorObject::createCrossLevelEdge([[maybe_unused]] shared_ptr<VerticalEdgeCreator> edgeCreator) const
 	{
 		ASSERT_PTR_EQ_THIS(edgeCreator);
 

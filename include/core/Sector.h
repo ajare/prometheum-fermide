@@ -41,9 +41,9 @@ namespace core
 
 		uint32_t mIndex;
 
-		uint32_t mCellsWide, mDecksHigh;
+		uint32_t mCellsWide, mLevelsHigh;
 
-		float mTopDeckHeight;
+		float mTopLevelHeight;
 
 		std::string mName;
 
@@ -72,7 +72,7 @@ namespace core
 
 		void addDoor(std::shared_ptr<DoorSectorObject> door);
 
-		uint32_t createWindow(std::shared_ptr<const Sector> sector, std::shared_ptr<const Sector> backSector, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh, uint32_t* vertexIdentifier = nullptr);
+		uint32_t createWindow(std::shared_ptr<const Sector> sector, std::shared_ptr<const Sector> backSector, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t levelsHigh, uint32_t* vertexIdentifier = nullptr);
 
 		uint32_t addWindow(std::shared_ptr<WindowSectorObject> window);
 
@@ -88,19 +88,19 @@ namespace core
 
 		uint32_t createForceBridge(std::shared_ptr<const Sector> sector, uint32_t x, uint32_t y, uint32_t size, int fromSide, bool extensible, bool startExtended);
 
-		uint32_t createLadder(std::shared_ptr<const Sector> sector, uint32_t x, uint32_t y, bool extensible, bool startExtended, uint32_t decksHigh, uint32_t* vertexIdentifier = nullptr);
+		uint32_t createLadder(std::shared_ptr<const Sector> sector, uint32_t x, uint32_t y, bool extensible, bool startExtended, uint32_t levelsHigh, uint32_t* vertexIdentifier = nullptr);
 
 		uint32_t createPlatformLift(std::shared_ptr<const Sector> sector, uint32_t x, uint32_t y, uint32_t cellsWide, std::vector<uint32_t> const& stopOffsets, uint32_t* vertexIdentifier = nullptr);
 
-		uint32_t createBulkheadDoor(std::shared_ptr<const Sector> sector, std::shared_ptr<const Sector> rightLocation, uint32_t deckIndex, int side);
+		uint32_t createBulkheadDoor(std::shared_ptr<const Sector> sector, std::shared_ptr<const Sector> rightLocation, uint32_t levelIndex, int side);
 
-		void addBulkheadDoor(std::shared_ptr<BulkheadDoorSectorObject> door, uint32_t deckIndex, int side);
+		void addBulkheadDoor(std::shared_ptr<BulkheadDoorSectorObject> door, uint32_t levelIndex, int side);
 
-		void setEndType(uint32_t deckIndex, int side, SectorEndType type);
+		void setEndType(uint32_t levelIndex, int side, SectorEndType type);
 
-		void addEndWall(uint32_t deckIndex, int side);
+		void addEndWall(uint32_t levelIndex, int side);
 
-		void removeEndWall(uint32_t deckIndex, int side);
+		void removeEndWall(uint32_t levelIndex, int side);
 
 		void enterAgent(Agent* agent, SectorPosition const& pos, bool authored = true);
 
@@ -117,7 +117,7 @@ namespace core
 
 	public:
 
-		Sector(SectorType type, uint32_t layerIndex, uint32_t index, uint32_t cellX, uint32_t cellY, float xCellOffset, float yCellOffset, float width, float height, std::string const& name, uint32_t cellsWide, uint32_t decksHigh, float topDeckHeight, uint32_t capacity);
+		Sector(SectorType type, uint32_t layerIndex, uint32_t index, uint32_t cellX, uint32_t cellY, float xCellOffset, float yCellOffset, float width, float height, std::string const& name, uint32_t cellsWide, uint32_t levelsHigh, float topLevelHeight, uint32_t capacity);
 
 		virtual ~Sector() = default;
 
@@ -137,17 +137,17 @@ namespace core
 
 		[[nodiscard]] uint32_t getCellsWide() const;
 
-		[[nodiscard]] uint32_t getDecksHigh() const;
+		[[nodiscard]] uint32_t getLevelsHigh() const;
 
-		[[nodiscard]] float getDeckHeight(uint32_t deckIndex) const;
+		[[nodiscard]] float getLevelHeight(uint32_t levelIndex) const;
 
-		[[nodiscard]] float getTopDeckHeight() const;
+		[[nodiscard]] float getTopLevelHeight() const;
 
 		[[nodiscard]] std::string const& getName() const;
 
 		[[nodiscard]] uint32_t getCapacity() const;
 
-		[[nodiscard]] SectorEndType getEndType(uint32_t deckIndex, int side) const;
+		[[nodiscard]] SectorEndType getEndType(uint32_t levelIndex, int side) const;
 
 		[[nodiscard]] virtual std::string getDescription() const = 0;
 
@@ -177,7 +177,7 @@ namespace core
 
 		bool toggleLights();
 
-		void enterAgent(Agent* agent, uint32_t deckIndex, float xOffset);
+		void enterAgent(Agent* agent, uint32_t levelIndex, float xOffset);
 
 		void enterAgent(Agent* agent, std::shared_ptr<const Vertex> vertex = {}, Vector2 const& offset = { 0, 0 });
 

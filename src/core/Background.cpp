@@ -11,11 +11,11 @@ namespace core
 	using namespace std;
 
 	Background::Background(string const& name, uint32_t layerIndex, uint32_t index,
-		uint32_t cellX, uint32_t cellY, uint32_t cellsWide, uint32_t decksHigh,
+		uint32_t cellX, uint32_t cellY, uint32_t cellsWide, uint32_t levelsHigh,
 		BackgroundColour const& colour)
 		: Sector(SectorType::Background, layerIndex, index, cellX, cellY, 0.0f, 0.0f,
-			(float)cellsWide, (float)((decksHigh - 1) + CORE_ROOM_MAX_HEIGHT), name,
-			cellsWide, decksHigh, CORE_ROOM_MAX_HEIGHT, 0)
+			(float)cellsWide, (float)((levelsHigh - 1) + CORE_ROOM_MAX_HEIGHT), name,
+			cellsWide, levelsHigh, CORE_ROOM_MAX_HEIGHT, 0)
 		, mColour(colour)
 	{
 	}

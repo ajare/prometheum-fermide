@@ -14,7 +14,7 @@ namespace core
 	{
 	public:
 
-		WindowSectorObject(uint32_t cellX, uint32_t cellY, uint32_t cellsWide, uint32_t decksHigh, std::shared_ptr<const Sector> sectors[2], uint32_t* vertexIdentifer = nullptr);
+		WindowSectorObject(uint32_t cellX, uint32_t cellY, uint32_t cellsWide, uint32_t levelsHigh, std::shared_ptr<const Sector> sectors[2], uint32_t* vertexIdentifer = nullptr);
 
 		~WindowSectorObject() = default;
 

@@ -252,12 +252,12 @@ namespace
 	{
 		auto world = std::make_shared<core::World>("Lift door query", 16, 3);
 		auto const hall = world->addRoom("Lift Hall", 0, 0, 0, 16, 3);
-		for (uint32_t deck = 1; deck < 3; ++deck)
+		for (uint32_t level = 1; level < 3; ++level)
 			for (uint32_t x = 0; x < 16; ++x)
-				world->addSectorWalkway(hall, deck, x);
+				world->addSectorWalkway(hall, level, x);
 		core::World::CreateLiftOptions liftOptions;
 		liftOptions.cellsWide = 1;
-		liftOptions.decksHigh = 3;
+		liftOptions.levelsHigh = 3;
 		liftOptions.stopOffsets = { 0, 1, 2 };
 		auto const lift = world->addLift(1, 0, 8, liftOptions);
 		require(lift.doors.size() == 3, "The Lift did not generate one Door per stop");

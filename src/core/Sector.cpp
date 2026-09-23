@@ -26,19 +26,19 @@ namespace core
 
 	using namespace std;
 
-	Sector::Sector(SectorType type, uint32_t layerIndex, uint32_t index, uint32_t cellX, uint32_t cellY, float xCellOffset, float yCellOffset, float width, float height, string const& name, uint32_t cellsWide, uint32_t decksHigh, float topDeckHeight, uint32_t capacity)
+	Sector::Sector(SectorType type, uint32_t layerIndex, uint32_t index, uint32_t cellX, uint32_t cellY, float xCellOffset, float yCellOffset, float width, float height, string const& name, uint32_t cellsWide, uint32_t levelsHigh, float topLevelHeight, uint32_t capacity)
 		: Area(cellX, cellY, xCellOffset, yCellOffset, width, height)
 		, mType(type)
 		, mLayerIndex(layerIndex)
 		, mIndex(index)
 		, mCellsWide(cellsWide)
-		, mDecksHigh(decksHigh)
-		, mTopDeckHeight(topDeckHeight)
+		, mLevelsHigh(levelsHigh)
+		, mTopLevelHeight(topLevelHeight)
 		, mName(name)
 		, mCapacity(capacity)
 		, mLightsOn(true)
 	{
-		mEnds.resize(decksHigh);
+		mEnds.resize(levelsHigh);
 	}
 
 	SectorType Sector::getType() const
@@ -73,7 +73,7 @@ namespace core
 
 	uint32_t Sector::getCellY1() const
 	{
-		return getCellY() + getDecksHigh() - 1;
+		return getCellY() + getLevelsHigh() - 1;
 	}
 
 	uint32_t Sector::getCellsWide() const
@@ -81,16 +81,16 @@ namespace core
 		return mCellsWide;
 	}
 
-	uint32_t Sector::getDecksHigh() const
+	uint32_t Sector::getLevelsHigh() const
 	{
-		return mDecksHigh;
+		return mLevelsHigh;
 	}
 
-	float Sector::getDeckHeight(uint32_t deckIndex) const
+	float Sector::getLevelHeight(uint32_t levelIndex) const
 	{
-		if (deckIndex == getDecksHigh() - 1)
+		if (levelIndex == getLevelsHigh() - 1)
 		{
-			return getTopDeckHeight();
+			return getTopLevelHeight();
 		}
 		else
 		{
@@ -98,9 +98,9 @@ namespace core
 		}
 	}
 
-	float Sector::getTopDeckHeight() const
+	float Sector::getTopLevelHeight() const
 	{
-		return mTopDeckHeight;
+		return mTopLevelHeight;
 	}
 
 	string const& Sector::getName() const
@@ -113,12 +113,12 @@ namespace core
 		return mCapacity;
 	}
 
-	SectorEndType Sector::getEndType(uint32_t deckIndex, int side) const
+	SectorEndType Sector::getEndType(uint32_t levelIndex, int side) const
 	{
-		assert(deckIndex < getDecksHigh());
+		assert(levelIndex < getLevelsHigh());
 		ASSERT_SIDE_OK(side);
 
-		return mEnds[deckIndex].end[side];
+		return mEnds[levelIndex].end[side];
 	}
 
 	bool Sector::sectorSupportsObjectAsLookTarget(SectorObjectType type) const
@@ -210,14 +210,14 @@ namespace core
 		addSectorObject(door);
 	}
 
-	uint32_t Sector::createWindow(shared_ptr<const Sector> sector, shared_ptr<const Sector> backSector, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh, uint32_t* vertexIdentifier)
+	uint32_t Sector::createWindow(shared_ptr<const Sector> sector, shared_ptr<const Sector> backSector, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t levelsHigh, uint32_t* vertexIdentifier)
 	{
 		ASSERT_PTR_EQ_THIS(sector);
 		assert(x >= getCellX0() && x <= getCellX1());
 		assert(y >= getCellY0() && y <= getCellY1());
 
 		shared_ptr<const Sector> sectors[2] = { sector, backSector };
-		auto window = make_shared<WindowSectorObject>(x, y, cellsWide, decksHigh, sectors, vertexIdentifier);
+		auto window = make_shared<WindowSectorObject>(x, y, cellsWide, levelsHigh, sectors, vertexIdentifier);
 
 		return addSectorObject(window);
 	}
@@ -280,11 +280,11 @@ namespace core
 		return addSectorObject(forceBridge);
 	}
 
-	uint32_t Sector::createLadder(shared_ptr<const Sector> sector, uint32_t x, uint32_t y, bool extensible, bool startExtended, uint32_t decksHigh, uint32_t* vertexIdentifier)
+	uint32_t Sector::createLadder(shared_ptr<const Sector> sector, uint32_t x, uint32_t y, bool extensible, bool startExtended, uint32_t levelsHigh, uint32_t* vertexIdentifier)
 	{
 		ASSERT_PTR_EQ_THIS(sector);
 
-		auto ladder = make_shared<LadderSectorObject>(x, y, decksHigh, sector, extensible, startExtended, vertexIdentifier);
+		auto ladder = make_shared<LadderSectorObject>(x, y, levelsHigh, sector, extensible, startExtended, vertexIdentifier);
 
 		return addSectorObject(ladder);
 	}
@@ -298,37 +298,37 @@ namespace core
 		return addSectorObject(lift);
 	}
 
-	void Sector::setEndType(uint32_t deckIndex, int side, SectorEndType type)
+	void Sector::setEndType(uint32_t levelIndex, int side, SectorEndType type)
 	{
-		string caller = format("Sector::setEndType({}, {}, {})", deckIndex, side, (int)type);
+		string caller = format("Sector::setEndType({}, {}, {})", levelIndex, side, (int)type);
 
-		if (deckIndex >= getDecksHigh())
+		if (levelIndex >= getLevelsHigh())
 		{
-			throw SectorException(this, format("{} - deckIndex={} out of bounds", caller, deckIndex));
+			throw SectorException(this, format("{} - levelIndex={} out of bounds", caller, levelIndex));
 		}
 
 		if (side != CORE_SIDE_LEFT && side != CORE_SIDE_RIGHT)
 		{
-			throw SectorException(this, format("{} - side={} invalid: must be 0 or 1.", caller, deckIndex));
+			throw SectorException(this, format("{} - side={} invalid: must be 0 or 1.", caller, levelIndex));
 		}
 
-		mEnds[deckIndex].end[side] = type;
+		mEnds[levelIndex].end[side] = type;
 	}
 
-	void Sector::addEndWall(uint32_t deckIndex, int side)
+	void Sector::addEndWall(uint32_t levelIndex, int side)
 	{
-		setEndType(deckIndex, side, SectorEndType::Wall);
+		setEndType(levelIndex, side, SectorEndType::Wall);
 	}
 
-	void Sector::removeEndWall(uint32_t deckIndex, int side)
+	void Sector::removeEndWall(uint32_t levelIndex, int side)
 	{
-		setEndType(deckIndex, side, SectorEndType::None);
+		setEndType(levelIndex, side, SectorEndType::None);
 	}
 
-	uint32_t Sector::createBulkheadDoor(shared_ptr<const Sector> sector, shared_ptr<const Sector> rightSector, uint32_t deckIndex, int side)
+	uint32_t Sector::createBulkheadDoor(shared_ptr<const Sector> sector, shared_ptr<const Sector> rightSector, uint32_t levelIndex, int side)
 	{
 		ASSERT_PTR_EQ_THIS(sector);
-		assert(deckIndex < getDecksHigh());
+		assert(levelIndex < getLevelsHigh());
 		ASSERT_SIDE_OK(side);
 
 		uint32_t x;
@@ -344,17 +344,17 @@ namespace core
 		}
 
 		shared_ptr<const Sector> sectors[2] = { sector, rightSector };
-		auto door = make_shared<BulkheadDoorSectorObject>(x, getCellY() + deckIndex, sectors);
+		auto door = make_shared<BulkheadDoorSectorObject>(x, getCellY() + levelIndex, sectors);
 
 		auto doorIndex = addSectorObject(door);
 
-		setEndType(deckIndex, 1 - side, SectorEndType::BulkheadDoor);
+		setEndType(levelIndex, 1 - side, SectorEndType::BulkheadDoor);
 		return doorIndex;
 	}
 
-	void Sector::addBulkheadDoor(shared_ptr<BulkheadDoorSectorObject> door, uint32_t deckIndex, int side)
+	void Sector::addBulkheadDoor(shared_ptr<BulkheadDoorSectorObject> door, uint32_t levelIndex, int side)
 	{
-		setEndType(deckIndex, 1 - side, SectorEndType::BulkheadDoor);
+		setEndType(levelIndex, 1 - side, SectorEndType::BulkheadDoor);
 		addSectorObject(door);
 	}
 
@@ -376,9 +376,9 @@ namespace core
 		assert(inserted.second && "Agent already in Sector!");
 	}
 
-	void Sector::enterAgent(Agent* agent, uint32_t deckIndex, float xOffset)
+	void Sector::enterAgent(Agent* agent, uint32_t levelIndex, float xOffset)
 	{
-		Vector2 offset{ xOffset, (float)deckIndex };
+		Vector2 offset{ xOffset, (float)levelIndex };
 		SectorPosition pos(this, offset);
 
 		enterAgent(agent, pos);

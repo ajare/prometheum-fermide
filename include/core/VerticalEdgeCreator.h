@@ -16,7 +16,7 @@ namespace core
 
 		virtual ~VerticalEdgeCreator() = default;
 
-		[[nodiscard]] virtual std::shared_ptr<Edge> createCrossDeckEdge(std::shared_ptr<VerticalEdgeCreator> edgeCreator) const = 0;
+		[[nodiscard]] virtual std::shared_ptr<Edge> createCrossLevelEdge(std::shared_ptr<VerticalEdgeCreator> edgeCreator) const = 0;
 	};
 
 } // core

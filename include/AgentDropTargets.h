@@ -28,7 +28,7 @@ extern UISettings gUISettings;
 struct PegmanTarget
 {
 	std::shared_ptr<const core::Sector> sector;
-	uint32_t deckOffset{ 0 };
+	uint32_t levelOffset{ 0 };
 	float localX{ 0.0f };
 	float feetY{ 0.0f };
 	float floorY{ 0.0f };
@@ -60,8 +60,8 @@ inline PegmanTarget pegmanAgentTargetAtWorld(std::shared_ptr<const core::World> 
 
 	auto cellY = (uint32_t)std::floor(worldPosition.y);
 	if (cellY < sector->getCellY()) return {};
-	auto deckOffset = cellY - sector->getCellY();
-	if (deckOffset >= sector->getDecksHigh()) return {};
+	auto levelOffset = cellY - sector->getCellY();
+	if (levelOffset >= sector->getLevelsHigh()) return {};
 
 	float halfAgentWidth = CORE_AGENT_MAX_WIDTH * 0.5f;
 	float minimumX = halfAgentWidth;
@@ -71,8 +71,8 @@ inline PegmanTarget pegmanAgentTargetAtWorld(std::shared_ptr<const core::World> 
 		? std::clamp(localX, minimumX, maximumX)
 		: sector->getSize().x * 0.5f;
 
-	return { sector, deckOffset, localX, worldPosition.y,
-		(float)sector->getCellY() + deckOffset, {} };
+	return { sector, levelOffset, localX, worldPosition.y,
+		(float)sector->getCellY() + levelOffset, {} };
 }
 
 // The drag-move target for a selected Agent, in world coordinates. An Agent
@@ -82,7 +82,7 @@ inline PegmanTarget getAgentMoveTarget(std::shared_ptr<const core::World> const&
 	core::Agent const* agent, core::Vector2 const& worldPosition)
 {
 	if (worldPosition.x < 0.0f || worldPosition.y < 0.0f
-		|| worldPosition.x >= world->getCellsWide() || worldPosition.y >= world->getDecksHigh())
+		|| worldPosition.x >= world->getCellsWide() || worldPosition.y >= world->getLevelsHigh())
 		return { nullptr, 0, 0.0f, worldPosition.y, worldPosition.y, "Drop the Agent inside the world" };
 	auto sector = world->getSectorAtPosition(gUISettings.visibleLayer, worldPosition.x, worldPosition.y);
 	bool const retainsCapacity = sector && agent && agent->getSector() == sector.get();
@@ -93,8 +93,8 @@ inline PegmanTarget getAgentMoveTarget(std::shared_ptr<const core::World> const&
 			"Agents require a viable sector with available capacity" };
 
 	auto cellY = (uint32_t)std::floor(worldPosition.y);
-	if (cellY < sector->getCellY() || cellY >= sector->getCellY() + sector->getDecksHigh())
-		return { nullptr, 0, 0.0f, worldPosition.y, worldPosition.y, "Agent deck is outside the sector" };
+	if (cellY < sector->getCellY() || cellY >= sector->getCellY() + sector->getLevelsHigh())
+		return { nullptr, 0, 0.0f, worldPosition.y, worldPosition.y, "Agent level is outside the sector" };
 	float halfWidth = CORE_AGENT_MAX_WIDTH * 0.5f;
 	float localX = std::clamp(worldPosition.x - sector->getPosition().x, halfWidth,
 		std::max(halfWidth, sector->getSize().x - halfWidth));

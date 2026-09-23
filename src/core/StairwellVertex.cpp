@@ -18,17 +18,17 @@ namespace core
 	to other StairwellVertices via a StairwellEdge, and StairwellLocationVertices via StairwellMountEdge.
 	*/
 
-	StairwellVertex::StairwellVertex(uint32_t id, shared_ptr<Sector> sector, shared_ptr<Stairwell> stairwell, float xOffset, float yOffset, uint32_t deckOffset)
+	StairwellVertex::StairwellVertex(uint32_t id, shared_ptr<Sector> sector, shared_ptr<Stairwell> stairwell, float xOffset, float yOffset, uint32_t levelOffset)
 		: Vertex(id, isLocationLike(sector->getType()) ? VertexType::Location : VertexType::Stairwell, VertexSubType::Stairwell, sector, xOffset, yOffset)
 		, mStairwell(stairwell)
-		, mDeckOffset(deckOffset)
+		, mLevelOffset(levelOffset)
 	{
 	}
 
-	StairwellVertex::StairwellVertex(shared_ptr<Sector> sector, shared_ptr<Stairwell> stairwell, float xOffset, float yOffset, uint32_t deckOffset)
+	StairwellVertex::StairwellVertex(shared_ptr<Sector> sector, shared_ptr<Stairwell> stairwell, float xOffset, float yOffset, uint32_t levelOffset)
 		: Vertex(isLocationLike(sector->getType()) ? VertexType::Location : VertexType::Stairwell, VertexSubType::Stairwell, sector, xOffset, yOffset)
 		, mStairwell(stairwell)
-		, mDeckOffset(deckOffset)
+		, mLevelOffset(levelOffset)
 	{
 	}
 
@@ -53,7 +53,7 @@ namespace core
 			getStairwell(),
 			getSectorOffset().x,
 			getSectorOffset().y,
-			mDeckOffset
+			mLevelOffset
 		);
 	}
 

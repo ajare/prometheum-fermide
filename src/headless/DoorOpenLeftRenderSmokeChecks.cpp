@@ -86,7 +86,7 @@ namespace
 	float toScreenY(float worldY)
 	{
 		return gUISettings.worldViewportY + gUISettings.worldViewportHeight
-			- worldY * CORE_DECK_HEIGHT_PIXELS - gUISettings.yOffset;
+			- worldY * CORE_LEVEL_HEIGHT_PIXELS - gUISettings.yOffset;
 	}
 
 	// The leaf's right edge in world units: it slides toward decreasing X as

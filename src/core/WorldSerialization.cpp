@@ -54,7 +54,7 @@ namespace core
 
 	// Whether a saved Agent position may be restored into the Sector it names.
 	// A live Agent is placed by the editor's drop rules, which keep it inside the
-	// Sector, on one of its decks, and - for a Location - on floor it can walk
+	// Sector, on one of its levels, and - for a Location - on floor it can walk
 	// on.  Restoration used to write the saved coordinates straight into the
 	// Sector, so a hand-edited NaN or a point in the air became a permanent
 	// Agent the renderer and the hit-tests could not handle (#60).
@@ -83,16 +83,16 @@ namespace core
 
 		auto const cellX = (uint32_t)floor(global.x);
 		auto const cellY = (uint32_t)floor(global.y);
-		if (cellX >= world.getCellsWide() || cellY >= world.getDecksHigh())
+		if (cellX >= world.getCellsWide() || cellY >= world.getLevelsHigh())
 		{
 			diagnostic = format("cell {},{} is outside the World", cellX, cellY);
 			return false;
 		}
 
-		if (cellY < sector.getCellY() || cellY >= sector.getCellY() + sector.getDecksHigh())
+		if (cellY < sector.getCellY() || cellY >= sector.getCellY() + sector.getLevelsHigh())
 		{
-			diagnostic = format("deck {} is outside Sector '{}' ({} deck(s) from cell {})",
-				cellY, sector.getName(), sector.getDecksHigh(), sector.getCellY());
+			diagnostic = format("level {} is outside Sector '{}' ({} level(s) from cell {})",
+				cellY, sector.getName(), sector.getLevelsHigh(), sector.getCellY());
 			return false;
 		}
 
@@ -241,23 +241,23 @@ namespace core
 		case ConstructionType::Corridor:
 			serializer.writeUint32("layer", record.layer);
 			serializer.writeUint32("y", record.a); serializer.writeUint32("x", record.b);
-			serializer.writeUint32("cellsWide", record.c); serializer.writeUint32("decksHigh", record.d); break;
+			serializer.writeUint32("cellsWide", record.c); serializer.writeUint32("levelsHigh", record.d); break;
 		case ConstructionType::Room:
 			// Version 4 records the layer index directly instead of a fore/back name.
 			serializer.writeString("name", record.name); serializer.writeUint32("layer", record.a);
 			serializer.writeUint32("y", record.b); serializer.writeUint32("x", record.c);
-			serializer.writeUint32("cellsWide", record.d); serializer.writeUint32("decksHigh", record.e);
-			serializer.writeFloat("topDeckHeight", record.x); break;
+			serializer.writeUint32("cellsWide", record.d); serializer.writeUint32("levelsHigh", record.e);
+			serializer.writeFloat("topLevelHeight", record.x); break;
 		case ConstructionType::Ladder:
 			serializer.writeUint32("layer", record.layer);
 			serializer.writeUint32("y", record.a); serializer.writeUint32("x", record.b);
-			serializer.writeUint32("decksHigh", record.c); serializer.writeBool("extensible", record.p);
+			serializer.writeUint32("levelsHigh", record.c); serializer.writeBool("extensible", record.p);
 			serializer.writeBool("startExtended", record.q);
 			serializer.writeUint32("directionalBatchLimit", record.d); break;
 		case ConstructionType::Stairwell:
 			serializer.writeUint32("layer", record.layer);
 			serializer.writeUint32("y", record.a); serializer.writeUint32("x", record.b);
-			serializer.writeUint32("decksHigh", record.c); serializer.writeString("mountSide", sideName(record.i));
+			serializer.writeUint32("levelsHigh", record.c); serializer.writeString("mountSide", sideName(record.i));
 			serializer.writeUint32("directionalCapacity", record.d);
 			serializer.writeUint32("directionalBatchLimit", record.e); break;
 		case ConstructionType::Staircase:
@@ -268,7 +268,7 @@ namespace core
 		case ConstructionType::Lift:
 			serializer.writeUint32("layer", record.layer);
 			serializer.writeUint32("y", record.a); serializer.writeUint32("x", record.b);
-			serializer.writeUint32("cellsWide", record.c); serializer.writeUint32("decksHigh", record.e);
+			serializer.writeUint32("cellsWide", record.c); serializer.writeUint32("levelsHigh", record.e);
 			writeStops(); writeStopDoorOpenStyles("stopDoorOpenStyles"); serializer.writeUint32("capacity", record.d);
 			serializer.writeFloat("minimumDwellSeconds", record.x);
 			serializer.writeFloat("maximumBoardingSeconds", record.y);
@@ -311,7 +311,7 @@ namespace core
 				throw SerializationException("Cannot serialize an unknown Window state or style");
 			serializer.writeUint32("layer", record.a); serializer.writeUint32("y", record.b);
 			serializer.writeUint32("x", record.c); serializer.writeUint32("cellsWide", record.d);
-			serializer.writeUint32("decksHigh", record.e); serializer.writeBool("traversable", record.p);
+			serializer.writeUint32("levelsHigh", record.e); serializer.writeBool("traversable", record.p);
 			serializer.writeString("initialState", states[record.i]); serializer.writeString("style", styles[record.j]); break;
 		}
 		case ConstructionType::BulkheadDoor:
@@ -323,30 +323,30 @@ namespace core
 		case ConstructionType::LightSwitch:
 			serializer.writeUint32("sectorIndex", record.a); serializer.writeUint32("xOffset", record.b); break;
 		case ConstructionType::ForceBridge:
-			serializer.writeUint32("sectorIndex", record.a); serializer.writeUint32("deckIndex", record.b);
+			serializer.writeUint32("sectorIndex", record.a); serializer.writeUint32("levelIndex", record.b);
 			serializer.writeUint32("xOffset", record.c); serializer.writeUint32("width", record.d);
 			serializer.writeString("fromSide", sideName(record.i)); serializer.writeBool("extensible", record.p);
 			serializer.writeBool("startExtended", record.q); serializer.writeUint32("controlCount", record.e); break;
 		case ConstructionType::SectorLadder:
-			serializer.writeUint32("sectorIndex", record.a); serializer.writeUint32("deckIndex", record.b);
-			serializer.writeUint32("xOffset", record.c); serializer.writeUint32("decksHigh", record.d);
+			serializer.writeUint32("sectorIndex", record.a); serializer.writeUint32("levelIndex", record.b);
+			serializer.writeUint32("xOffset", record.c); serializer.writeUint32("levelsHigh", record.d);
 			serializer.writeBool("extensible", record.p); serializer.writeBool("startExtended", record.q);
 			serializer.writeUint32("directionalBatchLimit", record.e); break;
 		case ConstructionType::PlatformLift:
-			serializer.writeUint32("sectorIndex", record.a); serializer.writeUint32("deckIndex", record.b);
+			serializer.writeUint32("sectorIndex", record.a); serializer.writeUint32("levelIndex", record.b);
 			serializer.writeUint32("xOffset", record.c); serializer.writeUint32("cellsWide", record.d);
 			writeStops(); serializer.writeUint32("capacity", record.e);
 			serializer.writeFloat("stopDurationSeconds", record.z); break;
 		case ConstructionType::Walkway:
-			serializer.writeUint32("sectorIndex", record.a); serializer.writeUint32("deckIndex", record.b);
+			serializer.writeUint32("sectorIndex", record.a); serializer.writeUint32("levelIndex", record.b);
 			serializer.writeUint32("xOffset", record.c); break;
 		case ConstructionType::Marker:
-			serializer.writeUint32("sectorIndex", record.a); serializer.writeUint32("deckIndex", record.b);
+			serializer.writeUint32("sectorIndex", record.a); serializer.writeUint32("levelIndex", record.b);
 			serializer.writeFloat("xOffset", record.x);
 			serializer.writeUint64("id", record.markerId.value);
 			serializer.writeString("name", record.name); break;
 		case ConstructionType::RemoveWall:
-			serializer.writeUint32("sectorIndex", record.a); serializer.writeUint32("deckIndex", record.b);
+			serializer.writeUint32("sectorIndex", record.a); serializer.writeUint32("levelIndex", record.b);
 			serializer.writeString("side", sideName(record.i)); break;
 		case ConstructionType::RemoveMarker:
 			serializer.writeUint32("sectorIndex", record.a); serializer.writeUint32("objectIndex", record.b);
@@ -356,7 +356,7 @@ namespace core
 		case ConstructionType::Background:
 			serializer.writeUint32("layer", record.layer);
 			serializer.writeUint32("y", record.a); serializer.writeUint32("x", record.b);
-			serializer.writeUint32("cellsWide", record.c); serializer.writeUint32("decksHigh", record.d);
+			serializer.writeUint32("cellsWide", record.c); serializer.writeUint32("levelsHigh", record.d);
 			// The colour is the packed 0xRRGGBB integer, which keeps the record to
 			// existing integer fields.
 			serializer.writeUint32("colour", record.f); break;
@@ -364,8 +364,8 @@ namespace core
 			serializer.writeString("name", record.name);
 			serializer.writeUint32("layer", record.layer);
 			serializer.writeUint32("y", record.a); serializer.writeUint32("x", record.b);
-			serializer.writeUint32("cellsWide", record.c); serializer.writeUint32("decksHigh", record.d);
-			serializer.writeFloat("topDeckHeight", record.x);
+			serializer.writeUint32("cellsWide", record.c); serializer.writeUint32("levelsHigh", record.d);
+			serializer.writeFloat("topLevelHeight", record.x);
 			// The Facade reuses Background's packed 0xRRGGBB colour form.
 			serializer.writeUint32("colour", record.f); break;
 		}
@@ -374,6 +374,7 @@ namespace core
 	void World::serializeImpl(Serializer& serializer, SerializationWorkData& workData) const
 	{
 		serializer.beginMap("world");
+		// Version 15 renames the vertical-position schema fields from Deck to Level.
 		// Version 14 adds the authored deterministic random seed and recursive
 		// List/Record behaviour configuration values. Version 13 adds typed
 		// per-Agent behaviour assignments. Version 12 adds
@@ -396,11 +397,11 @@ namespace core
 		// allocator's high-water mark (#123). It is an added field rather than a
 		// new version: a reader that predates it still opens these files and
 		// falls back to deriving the next ID from the groups that survive.
-		serializer.writeUint32("version", 14);
+		serializer.writeUint32("version", 15);
 		serializer.writeString("name", mName);
 		serializer.writeUint64("randomSeed", mRandomSeed);
 		serializer.writeUint32("cellsWide", mCellsWide);
-		serializer.writeUint32("decksHigh", mDecksHigh);
+		serializer.writeUint32("levelsHigh", mLevelsHigh);
 		serializer.writeUint32("layers", getLayerCount());
 
 		serializer.beginArray("layerNames");
@@ -592,6 +593,16 @@ namespace core
 			}
 			serializer.endArray();
 		};
+		auto readRenamedUint32 = [&](char const* field, char const* legacyField)
+		{
+			return serializer.readUint32(serializer.hasField(field) ? field : legacyField);
+		};
+		auto readRenamedFloat = [&](char const* field, char const* legacyField, bool optional = false,
+			float defaultValue = 0.0f)
+		{
+			return serializer.readFloat(serializer.hasField(field) ? field : legacyField,
+				optional, defaultValue);
+		};
 
 		record.type = constructionTypeFromName(serializer.readString("type"));
 		switch (record.type)
@@ -599,23 +610,23 @@ namespace core
 		case ConstructionType::Corridor:
 			record.layer = readLayerOr("layer", 0u);
 			record.a = serializer.readUint32("y"); record.b = serializer.readUint32("x");
-			record.c = serializer.readUint32("cellsWide"); record.d = serializer.readUint32("decksHigh"); break;
+			record.c = serializer.readUint32("cellsWide"); record.d = readRenamedUint32("levelsHigh", "decksHigh"); break;
 		case ConstructionType::Room:
 			record.name = serializer.readString("name"); record.a = readLayer("layer");
 			record.b = serializer.readUint32("y"); record.c = serializer.readUint32("x");
-			record.d = serializer.readUint32("cellsWide"); record.e = serializer.readUint32("decksHigh");
-			record.x = serializer.readFloat("topDeckHeight"); break;
+			record.d = serializer.readUint32("cellsWide"); record.e = readRenamedUint32("levelsHigh", "decksHigh");
+			record.x = readRenamedFloat("topLevelHeight", "topDeckHeight"); break;
 		case ConstructionType::Ladder:
 			record.layer = readLayerOr("layer", layerBehind(0));
 			record.a = serializer.readUint32("y"); record.b = serializer.readUint32("x");
-			record.c = serializer.readUint32("decksHigh"); record.p = serializer.readBool("extensible");
+			record.c = readRenamedUint32("levelsHigh", "decksHigh"); record.p = serializer.readBool("extensible");
 			record.q = serializer.readBool("startExtended");
 			(void)serializer.readFloat("agentSpacing", true, CORE_LADDER_AGENT_SPACING);
 			record.d = serializer.readUint32("directionalBatchLimit"); break;
 		case ConstructionType::Stairwell:
 			record.layer = readLayerOr("layer", layerBehind(0));
 			record.a = serializer.readUint32("y"); record.b = serializer.readUint32("x");
-			record.c = serializer.readUint32("decksHigh"); record.i = readSide("mountSide");
+			record.c = readRenamedUint32("levelsHigh", "decksHigh"); record.i = readSide("mountSide");
 			record.d = serializer.readUint32("directionalCapacity");
 			record.e = serializer.readUint32("directionalBatchLimit"); break;
 		case ConstructionType::Staircase:
@@ -626,7 +637,7 @@ namespace core
 		case ConstructionType::Lift:
 			record.layer = readLayerOr("layer", layerBehind(0));
 			record.a = serializer.readUint32("y"); record.b = serializer.readUint32("x");
-			record.c = serializer.readUint32("cellsWide"); record.e = serializer.readUint32("decksHigh");
+			record.c = serializer.readUint32("cellsWide"); record.e = readRenamedUint32("levelsHigh", "decksHigh");
 			readStops(); readStopDoorOpenStyles("stopDoorOpenStyles", "Lift stop"); record.d = serializer.readUint32("capacity");
 			record.x = serializer.readFloat("minimumDwellSeconds");
 			record.y = serializer.readFloat("maximumBoardingSeconds");
@@ -669,7 +680,7 @@ namespace core
 			static char const* styles[] = { "clear", "tinted", "frosted" };
 			record.a = readLayer("layer"); record.b = serializer.readUint32("y");
 			record.c = serializer.readUint32("x"); record.d = serializer.readUint32("cellsWide");
-			record.e = serializer.readUint32("decksHigh"); record.p = serializer.readBool("traversable");
+			record.e = readRenamedUint32("levelsHigh", "decksHigh"); record.p = serializer.readBool("traversable");
 			auto const state = serializer.readString("initialState"); auto const style = serializer.readString("style");
 			auto stateIt = find(begin(states), end(states), state); auto styleIt = find(begin(styles), end(styles), style);
 			if (stateIt == end(states) || styleIt == end(styles)) throw SerializationException("Unknown Window state or style");
@@ -685,18 +696,18 @@ namespace core
 		case ConstructionType::LightSwitch:
 			record.a = serializer.readUint32("sectorIndex"); record.b = serializer.readUint32("xOffset"); break;
 		case ConstructionType::ForceBridge:
-			record.a = serializer.readUint32("sectorIndex"); record.b = serializer.readUint32("deckIndex");
+			record.a = serializer.readUint32("sectorIndex"); record.b = readRenamedUint32("levelIndex", "deckIndex");
 			record.c = serializer.readUint32("xOffset"); record.d = serializer.readUint32("width");
 			record.i = readSide("fromSide"); record.p = serializer.readBool("extensible");
 			record.q = serializer.readBool("startExtended"); record.e = serializer.readUint32("controlCount"); break;
 		case ConstructionType::SectorLadder:
-			record.a = serializer.readUint32("sectorIndex"); record.b = serializer.readUint32("deckIndex");
-			record.c = serializer.readUint32("xOffset"); record.d = serializer.readUint32("decksHigh");
+			record.a = serializer.readUint32("sectorIndex"); record.b = readRenamedUint32("levelIndex", "deckIndex");
+			record.c = serializer.readUint32("xOffset"); record.d = readRenamedUint32("levelsHigh", "decksHigh");
 			record.p = serializer.readBool("extensible"); record.q = serializer.readBool("startExtended");
 			(void)serializer.readFloat("agentSpacing", true, CORE_LADDER_AGENT_SPACING);
 			record.e = serializer.readUint32("directionalBatchLimit"); break;
 		case ConstructionType::PlatformLift:
-			record.a = serializer.readUint32("sectorIndex"); record.b = serializer.readUint32("deckIndex");
+			record.a = serializer.readUint32("sectorIndex"); record.b = readRenamedUint32("levelIndex", "deckIndex");
 			record.c = serializer.readUint32("xOffset"); record.d = serializer.readUint32("cellsWide");
 			readStops(); record.e = serializer.readUint32("capacity");
 			// Legacy timing fields remain accepted for old maps, but PlatformLift now
@@ -706,10 +717,10 @@ namespace core
 				CORE_PLATFORM_LIFT_STOP_DURATION);
 			record.z = serializer.readFloat("stopDurationSeconds", true, record.y); break;
 		case ConstructionType::Walkway:
-			record.a = serializer.readUint32("sectorIndex"); record.b = serializer.readUint32("deckIndex");
+			record.a = serializer.readUint32("sectorIndex"); record.b = readRenamedUint32("levelIndex", "deckIndex");
 			record.c = serializer.readUint32("xOffset"); break;
 		case ConstructionType::Marker:
-			record.a = serializer.readUint32("sectorIndex"); record.b = serializer.readUint32("deckIndex");
+			record.a = serializer.readUint32("sectorIndex"); record.b = readRenamedUint32("levelIndex", "deckIndex");
 			record.x = serializer.readFloat("xOffset");
 			if (version >= 11)
 			{
@@ -718,7 +729,7 @@ namespace core
 			}
 			break;
 		case ConstructionType::RemoveWall:
-			record.a = serializer.readUint32("sectorIndex"); record.b = serializer.readUint32("deckIndex");
+			record.a = serializer.readUint32("sectorIndex"); record.b = readRenamedUint32("levelIndex", "deckIndex");
 			record.i = readSide("side"); break;
 		case ConstructionType::RemoveMarker:
 			record.a = serializer.readUint32("sectorIndex"); record.b = serializer.readUint32("objectIndex");
@@ -729,7 +740,7 @@ namespace core
 		case ConstructionType::Background:
 			record.layer = readLayer("layer");
 			record.a = serializer.readUint32("y"); record.b = serializer.readUint32("x");
-			record.c = serializer.readUint32("cellsWide"); record.d = serializer.readUint32("decksHigh");
+			record.c = serializer.readUint32("cellsWide"); record.d = readRenamedUint32("levelsHigh", "decksHigh");
 			// A hand-authored record may leave the colour out and take the default.
 			record.f = serializer.readUint32("colour", true,
 				packBackgroundColour(BackgroundColour{}));
@@ -741,8 +752,8 @@ namespace core
 			record.name = serializer.readString("name", true, Facade::defaultName());
 			record.layer = readLayer("layer");
 			record.a = serializer.readUint32("y"); record.b = serializer.readUint32("x");
-			record.c = serializer.readUint32("cellsWide"); record.d = serializer.readUint32("decksHigh");
-			record.x = serializer.readFloat("topDeckHeight", true, CORE_ROOM_MAX_HEIGHT);
+			record.c = serializer.readUint32("cellsWide"); record.d = readRenamedUint32("levelsHigh", "decksHigh");
+			record.x = readRenamedFloat("topLevelHeight", "topDeckHeight", true, CORE_ROOM_MAX_HEIGHT);
 			// A hand-authored record may leave the colour out and take the Facade
 			// default, not the Background's.
 			record.f = serializer.readUint32("colour", true,
@@ -763,10 +774,11 @@ namespace core
 		// them; versions 1 through 8 load with neither. Version 10 adds the
 		// optional Agent tag registry reference and Agent tag assignments.
 		// Version 12 adds the optional Agent behaviour registry package
-		// reference; version 13 adds typed per-Agent assignments, and version 14
-		// adds composite configuration plus the authored random seed. Older
-		// versions load with no assignment.
-		if (version < 1 || version > 14)
+		// reference; version 13 adds typed per-Agent assignments, version 14
+		// adds composite configuration plus the authored random seed, and version
+		// 15 renames vertical-position fields from Deck to Level. Older versions
+		// load with no assignment.
+		if (version < 1 || version > 15)
 		{
 			throw SerializationException("Unsupported World serialization version");
 		}
@@ -774,8 +786,9 @@ namespace core
 		auto const randomSeed = version >= 14
 			? serializer.readUint64("randomSeed") : uint64_t{ 0 };
 		auto const cellsWide = serializer.readUint32("cellsWide");
-		auto const decksHigh = serializer.readUint32("decksHigh");
-		if (cellsWide == 0 || decksHigh == 0)
+		auto const levelsHigh = serializer.readUint32(serializer.hasField("levelsHigh")
+			? "levelsHigh" : "decksHigh");
+		if (cellsWide == 0 || levelsHigh == 0)
 		{
 			throw SerializationException("World dimensions must be positive");
 		}
@@ -1010,7 +1023,7 @@ namespace core
 		// that identity from the deterministic replay and will write it on save.
 		try
 		{
-			World candidate(name, cellsWide, decksHigh);
+			World candidate(name, cellsWide, levelsHigh);
 			while (candidate.getLayerCount() < layerCount) candidate.addLayer();
 			candidate.mDeserializingConstruction = true;
 			for (auto& record : records)
@@ -1035,7 +1048,7 @@ namespace core
 			throw SerializationException(string("Invalid World construction: ") + error.what());
 		}
 
-		resetForDeserialization(std::move(name), cellsWide, decksHigh);
+		resetForDeserialization(std::move(name), cellsWide, levelsHigh);
 		mRandomSeed = randomSeed;
 		mNextMarkerId = nextMarkerId;
 		mAgentTagRegistryReference = std::move(agentTagRegistryReference);
@@ -1303,7 +1316,7 @@ namespace core
 		markSaved();
 	}
 
-	void World::resetForDeserialization(std::string name, uint32_t cellsWide, uint32_t decksHigh,
+	void World::resetForDeserialization(std::string name, uint32_t cellsWide, uint32_t levelsHigh,
 		bool preserveBehaviourRuntime)
 	{
 		if (!preserveBehaviourRuntime)
@@ -1341,10 +1354,10 @@ namespace core
 
 		mName = std::move(name);
 		mCellsWide = cellsWide;
-		mDecksHigh = decksHigh;
+		mLevelsHigh = levelsHigh;
 		for (uint32_t layer = 0; layer < mLayers.size(); ++layer)
 		{
-			mLayers[layer] = std::make_shared<Layer>(this, cellsWide, decksHigh, layer);
+			mLayers[layer] = std::make_shared<Layer>(this, cellsWide, levelsHigh, layer);
 		}
 		mGraph = std::make_shared<Graph>(this);
 		if (!preserveBehaviourRuntime)
@@ -1371,7 +1384,7 @@ namespace core
 
 	std::unique_ptr<World> World::makeCandidateWorld() const
 	{
-		auto candidate = std::make_unique<World>(mName, mCellsWide, mDecksHigh);
+		auto candidate = std::make_unique<World>(mName, mCellsWide, mLevelsHigh);
 		while (candidate->getLayerCount() < getLayerCount())
 			candidate->addLayer();
 		for (uint32_t layer = 2; layer < getLayerCount(); ++layer)
@@ -1578,9 +1591,9 @@ namespace core
 		{
 			auto const oldY = found->a;
 			found->a = plan.y; found->b = plan.x; found->c = plan.cellsWide;
-			found->e = plan.decksHigh;
+			found->e = plan.levelsHigh;
 			// Per-stop Door style overrides follow their stop, keyed by the
-			// stop's absolute landing floor rather than its offset from the
+			// stop's absolute landing level rather than its offset from the
 			// shaft anchor: a move or a shaft extension that shifts the offsets
 			// still lands each override on the Door it was authored for, an
 			// inserted stop takes the generated default, and a removed stop
@@ -1591,10 +1604,10 @@ namespace core
 			found->overrides.assign(plan.stopOffsets.size(), ~0u);
 			for (size_t i = 0; i < plan.stopOffsets.size(); ++i)
 			{
-				auto const floor = plan.y + plan.stopOffsets[i];
+				auto const level = plan.y + plan.stopOffsets[i];
 				for (size_t j = 0; j < oldOffsets.size(); ++j)
 				{
-					if (oldY + oldOffsets[j] == floor && j < oldStyles.size())
+					if (oldY + oldOffsets[j] == level && j < oldStyles.size())
 					{
 						found->overrides[i] = oldStyles[j];
 						break;
@@ -1658,7 +1671,7 @@ namespace core
 			{
 				auto cellX = (uint32_t)floor(saved.position.x);
 				auto cellY = (uint32_t)floor(saved.position.y);
-				if (cellX >= mCellsWide || cellY >= mDecksHigh) continue;
+				if (cellX >= mCellsWide || cellY >= mLevelsHigh) continue;
 				if (isLocationLike(sector->getType())
 					&& !mLayers[saved.layer]->getCellDefinition(cellX, cellY).isTraversableOnFoot()) continue;
 			}
@@ -1691,7 +1704,7 @@ namespace core
 	void World::rebuildFromConstructionRecords(vector<ConstructionRecord> records,
 		uint32_t movedSectorIndex, int deltaX, int deltaY)
 	{
-		struct ActiveLadder { uint32_t sector, deck, x, height; };
+		struct ActiveLadder { uint32_t sector, level, x, height; };
 		vector<ActiveLadder> activeLadders;
 		for (auto const& record : mConstructionRecords)
 		{
@@ -1714,7 +1727,7 @@ namespace core
 			auto unchanged = find_if(records.begin(), records.end(), [&](ConstructionRecord const& record)
 			{
 				return record.type == ConstructionType::SectorLadder && record.a == active.sector
-					&& record.b == active.deck && record.c == active.x && record.d == active.height;
+					&& record.b == active.level && record.c == active.x && record.d == active.height;
 			});
 			if (unchanged == records.end())
 				throw WorldException(this, "A Room Ladder cannot be changed while it is in use");
@@ -1737,7 +1750,7 @@ namespace core
 			if (carried.sectorIndex == movedSectorIndex)
 				carried.position += Vector2{ (float)deltaX, (float)deltaY };
 		}
-		resetForDeserialization(mName, mCellsWide, mDecksHigh, true);
+		resetForDeserialization(mName, mCellsWide, mLevelsHigh, true);
 		mDeserializingConstruction = true;
 		try
 		{
@@ -1788,7 +1801,7 @@ namespace core
 
 	vector<shared_ptr<const WindowSectorObject>> World::windowsUncoveredByBackground(
 		shared_ptr<const Sector> const& background, bool covered,
-		uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh) const
+		uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t levelsHigh) const
 	{
 		vector<shared_ptr<const WindowSectorObject>> uncovered;
 		if (!background) return uncovered;
@@ -1802,7 +1815,7 @@ namespace core
 			if (covered
 				&& windowObject->getCellX() >= x && windowObject->getCellY() >= y
 				&& windowObject->getCellX() + window->getCellsWide() <= x + cellsWide
-				&& windowObject->getCellY() + window->getDecksHigh() <= y + decksHigh)
+				&& windowObject->getCellY() + window->getLevelsHigh() <= y + levelsHigh)
 				continue;
 			uncovered.push_back(windowObject);
 		}
@@ -2091,7 +2104,7 @@ namespace core
 		mLayers.erase(mLayers.begin() + plan.layerIndex);
 		mLayerNames.erase(mLayerNames.begin() + plan.layerIndex);
 
-		resetForDeserialization(mName, mCellsWide, mDecksHigh, true);
+		resetForDeserialization(mName, mCellsWide, mLevelsHigh, true);
 		mDeserializingConstruction = true;
 		try
 		{
@@ -2110,11 +2123,11 @@ namespace core
 	}
 
 	World::LiftEditPlan World::planResizeLift(uint32_t sectorIndex,
-		uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh) const
+		uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t levelsHigh) const
 	{
 		LiftEditPlan plan;
 		plan.sectorIndex = sectorIndex; plan.x = x; plan.y = y;
-		plan.cellsWide = cellsWide; plan.decksHigh = decksHigh;
+		plan.cellsWide = cellsWide; plan.levelsHigh = levelsHigh;
 		if (sectorIndex >= mSectors.size() || !dynamic_pointer_cast<const LiftTransit>(mSectors[sectorIndex]))
 		{ plan.diagnostic = "Only enclosed Lifts can be resized"; return plan; }
 		auto lift = dynamic_pointer_cast<const LiftTransit>(mSectors[sectorIndex]);
@@ -2125,7 +2138,7 @@ namespace core
 		plan.move = x != lift->getCellX() || y != lift->getCellY();
 		if (cellsWide < 1 || cellsWide > 2)
 		{ plan.diagnostic = "A Lift must be one or two cells wide"; return plan; }
-		if (decksHigh == 0 || x + cellsWide > mCellsWide || y + decksHigh > mDecksHigh)
+		if (levelsHigh == 0 || x + cellsWide > mCellsWide || y + levelsHigh > mLevelsHigh)
 		{ plan.diagnostic = "The Lift shaft is outside the World bounds"; return plan; }
 		if (!lift->getAgents().empty())
 		{ plan.diagnostic = "The Lift cannot be edited while agents occupy it"; return plan; }
@@ -2149,14 +2162,14 @@ namespace core
 			if (active)
 			{ plan.diagnostic = "The Lift cannot be edited while it has active journeys, queues, or reservations"; return plan; }
 		}
-		for (uint32_t iy = y; iy < y + decksHigh; ++iy)
+		for (uint32_t iy = y; iy < y + levelsHigh; ++iy)
 			for (uint32_t ix = x; ix < x + cellsWide; ++ix)
 			{
 				auto occupant = mLayers[transitLayer]->getCellDefinition(ix, iy).sectorIndex;
 				if (occupant != ~0u && occupant != sectorIndex)
 				{ plan.diagnostic = format("Sector at {},{} blocks the Lift", ix, iy); return plan; }
 			}
-		for (uint32_t iy = y; iy < y + decksHigh; ++iy)
+		for (uint32_t iy = y; iy < y + levelsHigh; ++iy)
 		{
 			auto const& first = mLayers[landingLayer]->getCellDefinition(x, iy);
 			if (first.sectorIndex == ~0u) continue;
@@ -2188,20 +2201,20 @@ namespace core
 			plan.consequences.push_back("Move the Lift and rebuild every landing door and button");
 		if (cellsWide != lift->getCellsWide())
 			plan.consequences.push_back("Change the Lift width and rebuild every landing door and button");
-		if (decksHigh < lift->getDecksHigh())
+		if (levelsHigh < lift->getLevelsHigh())
 			plan.consequences.push_back("Shrink the Lift shaft");
-		for (auto floor : oldStops) if (find(newStops.begin(), newStops.end(), floor) == newStops.end())
-			plan.consequences.push_back(format("Remove Lift stop and landing at floor {}", floor));
+		for (auto level : oldStops) if (find(newStops.begin(), newStops.end(), level) == newStops.end())
+			plan.consequences.push_back(format("Remove Lift stop and landing at level {}", level));
 		bool const destructive = !plan.consequences.empty();
 		if (destructive)
-			for (auto floor : newStops) if (find(oldStops.begin(), oldStops.end(), floor) == oldStops.end())
-				plan.consequences.push_back(format("Create Lift stop and landing at floor {}", floor));
+			for (auto level : newStops) if (find(oldStops.begin(), oldStops.end(), level) == oldStops.end())
+				plan.consequences.push_back(format("Create Lift stop and landing at level {}", level));
 		for (auto const& [id, resource] : mTraversalResources.entries())
 		{
 			(void)id;
 			if (!resource->mLift || resource->mLiftSector.value != (uint64_t)sectorIndex + 1) continue;
-			auto currentFloor = (uint32_t)round(resource->mLiftPosition);
-			if (find(newStops.begin(), newStops.end(), currentFloor) == newStops.end())
+			auto currentLevel = (uint32_t)round(resource->mLiftPosition);
+			if (find(newStops.begin(), newStops.end(), currentLevel) == newStops.end())
 				plan.consequences.push_back("Relocate the Lift car to the nearest remaining stop");
 		}
 		vector<ConstructionRecord> records;
@@ -2215,7 +2228,7 @@ namespace core
 		{ LiftEditPlan plan; plan.diagnostic = "Only an enclosed Lift can be deleted"; return plan; }
 		auto lift = dynamic_pointer_cast<const LiftTransit>(mSectors[sectorIndex]);
 		auto plan = planResizeLift(sectorIndex, lift->getCellX(), lift->getCellY(),
-			lift->getCellsWide(), lift->getDecksHigh());
+			lift->getCellsWide(), lift->getLevelsHigh());
 		if (!plan.valid) return plan;
 		plan.remove = true;
 		plan.consequences.clear();
@@ -2237,18 +2250,18 @@ namespace core
 		if (lift->getNumStops() <= 2)
 		{ invalid.diagnostic = "Deleting this landing would leave the Lift with fewer than two stops"; return invalid; }
 		auto plan = planResizeLift(sectorIndex, lift->getCellX(), lift->getCellY(),
-			lift->getCellsWide(), lift->getDecksHigh());
+			lift->getCellsWide(), lift->getLevelsHigh());
 		if (!plan.valid) return plan;
 		plan.stopOffsets.clear();
-		uint32_t removedFloor = 0;
+		uint32_t removedLevel = 0;
 		for (uint32_t stop = 0; stop < lift->getNumStops(); ++stop)
 		{
 			auto const& value = lift->getStop(stop);
-			auto floor = (uint32_t)((int)value.sector->getCellY() + value.sectorOffsetY);
-			if (stop == stopIndex) { removedFloor = floor; continue; }
-			plan.stopOffsets.push_back(floor - lift->getCellY());
+			auto level = (uint32_t)((int)value.sector->getCellY() + value.sectorOffsetY);
+			if (stop == stopIndex) { removedLevel = level; continue; }
+			plan.stopOffsets.push_back(level - lift->getCellY());
 		}
-		plan.consequences = { format("Delete Lift landing, button, pathing, and stop at floor {}", removedFloor) };
+		plan.consequences = { format("Delete Lift landing, button, pathing, and stop at level {}", removedLevel) };
 		vector<ConstructionRecord> records;
 		plan.valid = prepareLiftEdit(plan, records, plan.diagnostic);
 		return plan;
@@ -2259,7 +2272,7 @@ namespace core
 		if (!mSimulationPaused) throw WorldException(this, "Editing a Lift requires the simulation to be paused");
 		auto plan = requested.remove ? planRemoveLift(requested.sectorIndex)
 			: planResizeLift(requested.sectorIndex, requested.x, requested.y,
-				requested.cellsWide, requested.decksHigh);
+				requested.cellsWide, requested.levelsHigh);
 		if (!plan.valid) throw WorldException(this, plan.diagnostic);
 		if (!requested.remove && requested.stopOffsets.size() >= 2
 			&& requested.stopOffsets != plan.stopOffsets)
@@ -2312,7 +2325,7 @@ namespace core
 			records.erase(remove_if(records.begin(), records.end(), [&](ConstructionRecord const& record)
 			{
 				if (record.type != ConstructionType::Window) return false;
-				for (uint32_t iy = record.b; iy < record.b + record.e && iy < mDecksHigh; ++iy)
+				for (uint32_t iy = record.b; iy < record.b + record.e && iy < mLevelsHigh; ++iy)
 					for (uint32_t ix = record.c; ix < record.c + record.d && ix < mCellsWide; ++ix)
 						if (mLayers[transitLayer]->getCellDefinition(ix, iy).sectorIndex
 							== plan.sectorIndex) return true;
@@ -2488,7 +2501,7 @@ namespace core
 		auto const landingLayer = layerInFront(transitLayer);
 		plan.move = cellsWide == shuttleTransit->getCellsWide()
 			&& (x != shuttleTransit->getCellX() || y != shuttleTransit->getCellY());
-		if (cellsWide == 0 || x + cellsWide > mCellsWide || y >= mDecksHigh)
+		if (cellsWide == 0 || x + cellsWide > mCellsWide || y >= mLevelsHigh)
 		{ plan.diagnostic = "The Shuttle track is outside the World bounds"; return plan; }
 		if (!shuttleTransit->getAgents().empty())
 		{ plan.diagnostic = "The Shuttle cannot be edited while agents occupy it"; return plan; }
@@ -2647,7 +2660,7 @@ namespace core
 		{
 			if (record.type != ConstructionType::Window) continue;
 			bool dependent = false;
-			for (uint32_t iy = record.b; !dependent && iy < record.b + record.e && iy < mDecksHigh; ++iy)
+			for (uint32_t iy = record.b; !dependent && iy < record.b + record.e && iy < mLevelsHigh; ++iy)
 				for (uint32_t ix = record.c; ix < record.c + record.d && ix < mCellsWide; ++ix)
 					if (mLayers[transitLayer]->getCellDefinition(ix, iy).sectorIndex == sectorIndex)
 					{ dependent = true; break; }
@@ -2786,7 +2799,7 @@ namespace core
 		}
 		else
 		{
-			found->a = plan.y; found->b = plan.x; found->c = plan.options.decksHigh;
+			found->a = plan.y; found->b = plan.x; found->c = plan.options.levelsHigh;
 			found->p = plan.options.extensible; found->q = plan.options.startExtended;
 			found->d = plan.options.directionalBatchLimit;
 		}
@@ -2831,7 +2844,7 @@ namespace core
 	{
 		LadderEditPlan plan;
 		plan.sectorIndex = sectorIndex; plan.x = x; plan.y = y;
-		plan.decksHigh = options.decksHigh; plan.options = options;
+		plan.levelsHigh = options.levelsHigh; plan.options = options;
 		if (sectorIndex >= mSectors.size() || !dynamic_pointer_cast<const LadderTransit>(mSectors[sectorIndex]))
 		{ plan.diagnostic = "Only Ladders can be edited"; return plan; }
 		auto ladder = dynamic_pointer_cast<const LadderTransit>(mSectors[sectorIndex]);
@@ -2839,21 +2852,21 @@ namespace core
 		// Layer directly in front.
 		auto const transitLayer = ladder->getLayerIndex();
 		auto const landingLayer = layerInFront(transitLayer);
-		plan.move = options.decksHigh == ladder->getDecksHigh()
+		plan.move = options.levelsHigh == ladder->getLevelsHigh()
 			&& (x != ladder->getCellX() || y != ladder->getCellY());
-		if (options.decksHigh < 2)
-		{ plan.diagnostic = "A Ladder must span at least two decks"; return plan; }
+		if (options.levelsHigh < 2)
+		{ plan.diagnostic = "A Ladder must span at least two levels"; return plan; }
 		if (options.directionalBatchLimit == 0)
 		{ plan.diagnostic = "Ladder directional batch limit must be positive"; return plan; }
-		if (x >= mCellsWide || y >= mDecksHigh || y + options.decksHigh > mDecksHigh)
+		if (x >= mCellsWide || y >= mLevelsHigh || y + options.levelsHigh > mLevelsHigh)
 		{ plan.diagnostic = "The Ladder is outside the World bounds"; return plan; }
-		for (uint32_t iy = y; iy < y + options.decksHigh; ++iy)
+		for (uint32_t iy = y; iy < y + options.levelsHigh; ++iy)
 		{
 			auto occupant = mLayers[transitLayer]->getCellDefinition(x, iy).sectorIndex;
 			if (occupant != ~0u && occupant != sectorIndex)
 			{ plan.diagnostic = format("A Sector at {},{} on the Layer behind blocks the Ladder", x, iy); return plan; }
 		}
-		auto upperY = y + options.decksHigh - 1;
+		auto upperY = y + options.levelsHigh - 1;
 		auto const& lower = mLayers[landingLayer]->getCellDefinition(x, y);
 		auto const& upper = mLayers[landingLayer]->getCellDefinition(x, upperY);
 		if (lower.sectorIndex == ~0u || !mSectors[lower.sectorIndex]
@@ -2868,9 +2881,9 @@ namespace core
 		{ plan.diagnostic = format("The floor at {},{} on the Layer in front is not traversable", x, y); return plan; }
 		if (!upper.isTraversableOnFoot())
 		{ plan.diagnostic = format("The floor at {},{} on the Layer in front is not traversable", x, upperY); return plan; }
-		auto crossedFloors = (float)(options.decksHigh - 1);
+		auto crossedLevels = (float)(options.levelsHigh - 1);
 		auto agentSpacing = CORE_LADDER_AGENT_SPACING / CORE_CELL_YX_RENDER_RATIO;
-		auto capacity = max(1u, (uint32_t)floor(crossedFloors / agentSpacing));
+		auto capacity = max(1u, (uint32_t)floor(crossedLevels / agentSpacing));
 		if (ladder->getAgents().size() > capacity)
 		{ plan.diagnostic = "Ladder capacity is below its current occupancy"; return plan; }
 
@@ -2879,7 +2892,7 @@ namespace core
 			(void)id;
 			if (agent->getSector() != ladder.get() || plan.move) continue;
 			auto position = agent->getGlobalPosition();
-			if (position.y < y || position.y >= y + options.decksHigh)
+			if (position.y < y || position.y >= y + options.levelsHigh)
 				plan.consequences.push_back("Delete Agent " + agent->getName());
 		}
 		vector<ConstructionRecord> records;
@@ -2900,7 +2913,7 @@ namespace core
 		plan.x = ladder->getCellX(); plan.y = ladder->getCellY();
 		if (!getLadderOptions(sectorIndex, plan.options))
 		{ plan.diagnostic = "The selected Ladder no longer has an authored definition"; return plan; }
-		plan.decksHigh = plan.options.decksHigh;
+		plan.levelsHigh = plan.options.levelsHigh;
 		plan.consequences.push_back("Delete Ladder");
 		for (auto const& [id, agent] : mAgents.entries())
 		{
@@ -2981,7 +2994,7 @@ namespace core
 			{ plan.diagnostic = "A Staircase speed must be finite"; return plan; }
 		if (options.cellsWide < 2)
 			{ plan.diagnostic = "A Staircase must be at least two cells wide"; return plan; }
-		if (x >= mCellsWide || y >= mDecksHigh || options.cellsWide > mCellsWide - x || y + 1 >= mDecksHigh)
+		if (x >= mCellsWide || y >= mLevelsHigh || options.cellsWide > mCellsWide - x || y + 1 >= mLevelsHigh)
 			{ plan.diagnostic = "The Staircase is outside the World bounds"; return plan; }
 		// The edited Staircase keeps the Layer it already sits on.
 		auto const transitLayer = mSectors[sectorIndex]->getLayerIndex();
@@ -3114,7 +3127,7 @@ namespace core
 		}
 		else
 		{
-			found->a = plan.y; found->b = plan.x; found->c = plan.options.decksHigh;
+			found->a = plan.y; found->b = plan.x; found->c = plan.options.levelsHigh;
 			found->i = plan.options.mountSide; found->d = plan.options.directionalCapacity;
 			found->e = plan.options.directionalBatchLimit;
 		}
@@ -3160,7 +3173,7 @@ namespace core
 		uint32_t x, uint32_t y, CreateStairwellOptions const& options) const
 	{
 		StairwellEditPlan plan;
-		plan.sectorIndex = sectorIndex; plan.x = x; plan.y = y; plan.decksHigh = options.decksHigh;
+		plan.sectorIndex = sectorIndex; plan.x = x; plan.y = y; plan.levelsHigh = options.levelsHigh;
 		plan.options = options;
 		if (sectorIndex >= mSectors.size() || !dynamic_pointer_cast<const StairwellTransit>(mSectors[sectorIndex]))
 		{ plan.diagnostic = "Only Stairwells can be edited"; return plan; }
@@ -3172,17 +3185,17 @@ namespace core
 		plan.move = x != stairwell->getCellX() || y != stairwell->getCellY();
 		if (options.mountSide != CORE_SIDE_LEFT && options.mountSide != CORE_SIDE_RIGHT)
 		{ plan.diagnostic = "The Stairwell mounting side is invalid"; return plan; }
-		if (options.decksHigh < 2)
-		{ plan.diagnostic = "A Stairwell must span at least two decks"; return plan; }
+		if (options.levelsHigh < 2)
+		{ plan.diagnostic = "A Stairwell must span at least two levels"; return plan; }
 		if (options.directionalCapacity > 0 && options.directionalBatchLimit == 0)
 		{ plan.diagnostic = "A constrained Stairwell requires a positive directional batch limit"; return plan; }
 		if (options.directionalCapacity > 0
 			&& stairwell->getAgents().size() > options.directionalCapacity)
 		{ plan.diagnostic = "Directional capacity is below the current Stairwell occupancy"; return plan; }
-		if (x >= mCellsWide || y >= mDecksHigh || x + 2 > mCellsWide
-			|| y + options.decksHigh > mDecksHigh)
+		if (x >= mCellsWide || y >= mLevelsHigh || x + 2 > mCellsWide
+			|| y + options.levelsHigh > mLevelsHigh)
 		{ plan.diagnostic = "The Stairwell is outside the World bounds"; return plan; }
-		for (uint32_t iy = y; iy < y + options.decksHigh; ++iy)
+		for (uint32_t iy = y; iy < y + options.levelsHigh; ++iy)
 		{
 			auto const& first = mLayers[landingLayer]->getCellDefinition(x, iy);
 			// A Stairwell lands on any location-like Sector, a Facade included
@@ -3194,7 +3207,7 @@ namespace core
 			{
 				auto const& fore = mLayers[landingLayer]->getCellDefinition(ix, iy);
 				if (fore.sectorIndex != first.sectorIndex)
-				{ plan.diagnostic = format("The Stairwell spans different Locations on the Layer in front at deck {}", iy); return plan; }
+				{ plan.diagnostic = format("The Stairwell spans different Locations on the Layer in front at level {}", iy); return plan; }
 				if (!fore.isTraversableOnFoot())
 				{ plan.diagnostic = format("The floor at {},{} on the Layer in front is not traversable", ix, iy); return plan; }
 				auto occupant = mLayers[transitLayer]->getCellDefinition(ix, iy).sectorIndex;
@@ -3208,7 +3221,7 @@ namespace core
 			(void)id;
 			if (agent->getSector() != stairwell.get() || plan.move) continue;
 			auto position = agent->getGlobalPosition();
-			if (position.y < y || position.y >= y + options.decksHigh)
+			if (position.y < y || position.y >= y + options.levelsHigh)
 				plan.consequences.push_back("Delete Agent " + agent->getName());
 		}
 		vector<ConstructionRecord> records;
@@ -3229,7 +3242,7 @@ namespace core
 		plan.x = stairwell->getCellX(); plan.y = stairwell->getCellY();
 		if (!getStairwellOptions(sectorIndex, plan.options))
 		{ plan.diagnostic = "The selected Stairwell no longer has an authored definition"; return plan; }
-		plan.decksHigh = plan.options.decksHigh;
+		plan.levelsHigh = plan.options.levelsHigh;
 		plan.consequences.push_back("Delete Stairwell");
 		for (auto const& [id, agent] : mAgents.entries())
 		{
@@ -3293,7 +3306,7 @@ namespace core
 
 		auto locationAt = [&](uint32_t x, uint32_t y) -> shared_ptr<const Sector>
 		{
-			if (x >= candidate->mCellsWide || y >= candidate->mDecksHigh) return nullptr;
+			if (x >= candidate->mCellsWide || y >= candidate->mLevelsHigh) return nullptr;
 			auto const& cell = candidate->mLayers[0]->getCellDefinition(x, y);
 			if (cell.sectorIndex == ~0u) return nullptr;
 			auto sector = candidate->getSector(cell.sectorIndex);
@@ -3315,12 +3328,12 @@ namespace core
 					if (source.type == ConstructionType::Corridor)
 					{
 						source.a = plan.y; source.b = plan.x;
-						source.c = plan.cellsWide; source.d = plan.decksHigh;
+						source.c = plan.cellsWide; source.d = plan.levelsHigh;
 					}
 					else if (source.type == ConstructionType::Room)
 					{
 						source.b = plan.y; source.c = plan.x;
-						source.d = plan.cellsWide; source.e = plan.decksHigh;
+						source.d = plan.cellsWide; source.e = plan.levelsHigh;
 					}
 					else
 					{
@@ -3466,7 +3479,7 @@ namespace core
 					}
 					if (supported.size() < 2)
 					{
-						diagnostic = "The edit would leave a Stairwell with fewer than two supported decks. "
+						diagnostic = "The edit would leave a Stairwell with fewer than two supported levels. "
 							"Delete the Stairwell first (transit deletion is not yet supported by the editor).";
 						return false;
 					}
@@ -3544,12 +3557,12 @@ namespace core
 				|| record.type == ConstructionType::Stairwell || record.type == ConstructionType::Staircase || record.type == ConstructionType::Lift
 				|| record.type == ConstructionType::Shuttle) ++sectorIndex;
 		}
-		auto hasWalkway = [&](uint32_t owner, uint32_t deck, uint32_t x)
+		auto hasWalkway = [&](uint32_t owner, uint32_t level, uint32_t x)
 		{
 			return any_of(records.begin(), records.end(), [&](ConstructionRecord const& record)
 			{
 				return record.type == ConstructionType::Walkway && record.a == owner
-					&& record.b == deck && record.c == x;
+					&& record.b == level && record.c == x;
 			});
 		};
 		for (auto& ladder : records)
@@ -3749,7 +3762,7 @@ namespace core
 			? plan.previewHeight : (uint32_t)ceil(object->getSize().y);
 		if (type == SectorObjectType::Window && (targetWidth == 0 || targetHeight == 0))
 		{
-			diagnostic = "A Window must be at least one cell wide and one deck high";
+			diagnostic = "A Window must be at least one cell wide and one level high";
 			return false;
 		}
 		if (type == SectorObjectType::Door && resizing
@@ -3760,7 +3773,7 @@ namespace core
 		}
 		if (type == SectorObjectType::Door && resizing && targetHeight != 1)
 		{
-			diagnostic = "A Door has a one-deck footprint";
+			diagnostic = "A Door has a one-level footprint";
 			return false;
 		}
 		if (type == SectorObjectType::Walkway && (plan.x != sourceX || plan.y != sourceY)
@@ -3866,7 +3879,7 @@ namespace core
 				diagnostic = "A Door cannot shrink below its authored crossing lanes";
 				return false;
 			}
-			// The decks above the threshold are the opening's headroom.  A Walkway
+			// The levels above the threshold are the opening's headroom.  A Walkway
 			// or other floor there runs through the opening, so the Door cannot
 			// grow across it.
 			for (uint64_t iy = plan.y + 1; iy < targetTop; ++iy)
@@ -3906,7 +3919,7 @@ namespace core
 				&& layer->getCellDefinition(plan.x + 1, plan.y).isTraversableOnFoot();
 			for (auto const& stop : candidates)
 				if ((groundLeft && stop.leftButton) || (groundRight && stop.rightButton))
-				{ lowest = stop.deckOffset; break; }
+				{ lowest = stop.levelOffset; break; }
 			if (lowest == ~0u)
 			{
 				diagnostic = "No eligible Walkway exists above this PlatformLift position";
@@ -3921,7 +3934,7 @@ namespace core
 		{
 			if (plan.x < owner->getCellX() || plan.y < owner->getCellY()
 				|| plan.x >= owner->getCellX() + owner->getCellsWide()
-				|| plan.y >= owner->getCellY() + owner->getDecksHigh())
+				|| plan.y >= owner->getCellY() + owner->getLevelsHigh())
 			{
 				diagnostic = "The Room Ladder must remain inside its Room";
 				return false;
@@ -3933,7 +3946,7 @@ namespace core
 				return false;
 			}
 			uint32_t top = ~0u;
-			for (uint32_t iy = plan.y + 1; iy < owner->getCellY() + owner->getDecksHigh(); ++iy)
+			for (uint32_t iy = plan.y + 1; iy < owner->getCellY() + owner->getLevelsHigh(); ++iy)
 				if (mLayers[owner->getLayerIndex()]->getCellDefinition(plan.x, iy).floorType
 					== CellFloorType::Walkway) { top = iy; break; }
 			if (top == ~0u)
@@ -3943,7 +3956,7 @@ namespace core
 			}
 			targetTop = (uint64_t)top + 1;
 		}
-		if (targetRight > mCellsWide || targetTop > mDecksHigh)
+		if (targetRight > mCellsWide || targetTop > mLevelsHigh)
 		{
 			diagnostic = "The destination is outside the world";
 			return false;
@@ -3975,7 +3988,7 @@ namespace core
 		}
 		if (!pastePlaced && (plan.x < owner->getCellX() || plan.y < owner->getCellY()
 			|| targetRight > (uint64_t)owner->getCellX() + owner->getCellsWide()
-			|| targetTop > (uint64_t)owner->getCellY() + owner->getDecksHigh()))
+			|| targetTop > (uint64_t)owner->getCellY() + owner->getLevelsHigh()))
 		{
 			diagnostic = "The object must remain inside its sector";
 			return false;
@@ -4091,13 +4104,13 @@ namespace core
 
 		if (type == SectorObjectType::Walkway && (plan.x != sourceX || plan.y != sourceY))
 		{
-			uint32_t sourceDeck = sourceY - owner->getCellY();
+			uint32_t sourceLevel = sourceY - owner->getCellY();
 			vector<ConstructionRecord> reconciled;
 			for (auto const& record : records)
 			{
 				if (record.type != ConstructionType::PlatformLift || record.a != owner->getIndex()
 					|| owner->getCellX() + record.c != sourceX
-					|| find(record.values.begin(), record.values.end(), sourceDeck) == record.values.end())
+					|| find(record.values.begin(), record.values.end(), sourceLevel) == record.values.end())
 				{
 					reconciled.push_back(record);
 					continue;
@@ -4113,7 +4126,7 @@ namespace core
 				else
 				{
 					auto updated = record;
-					updated.values.erase(remove(updated.values.begin(), updated.values.end(), sourceDeck), updated.values.end());
+					updated.values.erase(remove(updated.values.begin(), updated.values.end(), sourceLevel), updated.values.end());
 					reconciled.push_back(std::move(updated));
 					ConstructionRecord tombstone{ ConstructionType::ObjectTombstone };
 					tombstone.a = owner->getIndex(); reconciled.push_back(std::move(tombstone));
@@ -4173,7 +4186,7 @@ namespace core
 			if (!lift || lift->getNumStops() <= 2)
 				throw WorldException(this, "Deleting this landing would leave the Lift with fewer than two stops");
 			auto plan = planResizeLift(liftIndex, lift->getCellX(), lift->getCellY(),
-				lift->getCellsWide(), lift->getDecksHigh());
+				lift->getCellsWide(), lift->getLevelsHigh());
 			if (!plan.valid) throw WorldException(this, plan.diagnostic);
 			plan.stopOffsets.clear();
 			for (uint32_t stop = 0; stop < lift->getNumStops(); ++stop)
@@ -4240,7 +4253,7 @@ namespace core
 
 		auto const agents = captureAgentsForReplay();
 
-		resetForDeserialization(mName, mCellsWide, mDecksHigh, true);
+		resetForDeserialization(mName, mCellsWide, mLevelsHigh, true);
 		mDeserializingConstruction = true;
 		try
 		{
@@ -4701,7 +4714,7 @@ namespace core
 		plan.options.stopOffsets = desired;
 		for (auto stop : current.stopOffsets)
 			if (find(desired.begin(), desired.end(), stop) == desired.end())
-				plan.consequences.push_back(format("Remove PlatformLift landing, button, pathing, and stop at deck {}", stop));
+				plan.consequences.push_back(format("Remove PlatformLift landing, button, pathing, and stop at level {}", stop));
 		auto room = mSectors[sectorIndex];
 		auto candidates = getPlatformLiftStopCandidates(sectorIndex,
 			object->getCellX() - room->getCellX());
@@ -4716,7 +4729,7 @@ namespace core
 			for (size_t i = 1; i < stops.size(); ++i)
 			{
 				auto found = find_if(candidates.begin(), candidates.end(), [&](auto const& value)
-					{ return value.deckOffset == stops[i]; });
+					{ return value.levelOffset == stops[i]; });
 				left = left && found != candidates.end() && found->leftButton;
 				right = right && found != candidates.end() && found->rightButton;
 			}
@@ -4784,8 +4797,8 @@ namespace core
 			if (!liftObject || liftObject->getCellX() != walkway->getCellX()) continue;
 			CreateLiftOptions options;
 			if (!getPlatformLiftOptions(sectorIndex, i, options)) continue;
-			auto deck = walkway->getCellY() - mSectors[sectorIndex]->getCellY();
-			if (find(options.stopOffsets.begin(), options.stopOffsets.end(), deck) == options.stopOffsets.end()) continue;
+			auto level = walkway->getCellY() - mSectors[sectorIndex]->getCellY();
+			if (find(options.stopOffsets.begin(), options.stopOffsets.end(), level) == options.stopOffsets.end()) continue;
 			if (platformLiftIsActive(liftObject->getLift()))
 			{ plan.diagnostic = "The connected PlatformLift is in use"; return plan; }
 			if (options.stopOffsets.size() <= 2)
@@ -4817,7 +4830,7 @@ namespace core
 			auto ladderObject = dynamic_pointer_cast<LadderSectorObject>(object->getSector()->getObject(i));
 			if (!ladderObject || ladderObject->getCellX() != object->getCellX()) continue;
 			auto ladder = ladderObject->getLadder();
-			uint32_t top = ladderObject->getCellY() + ladder->getDecksHigh() - 1;
+			uint32_t top = ladderObject->getCellY() + ladder->getLevelsHigh() - 1;
 			if ((ladderObject->getCellY() == object->getCellY() || top == object->getCellY())
 				&& roomLadderIsActive(ladder))
 				throw WorldException(this, "A Room Ladder cannot be changed while it is in use");
@@ -4835,7 +4848,7 @@ namespace core
 		auto room = mSectors[sectorIndex];
 		auto layer = mLayers[room->getLayerIndex()];
 		uint32_t supportX = object->getCellX(), supportY = object->getCellY();
-		uint32_t supportDeck = supportY - room->getCellY();
+		uint32_t supportLevel = supportY - room->getCellY();
 		map<size_t, ConstructionRecord> platformUpdates;
 		set<size_t> platformDeletions;
 		for (size_t recordIndex = 0; recordIndex < mConstructionRecords.size(); ++recordIndex)
@@ -4843,7 +4856,7 @@ namespace core
 			auto const& record = mConstructionRecords[recordIndex];
 			if (record.type != ConstructionType::PlatformLift || record.a != sectorIndex
 				|| room->getCellX() + record.c != supportX
-				|| find(record.values.begin(), record.values.end(), supportDeck) == record.values.end()) continue;
+				|| find(record.values.begin(), record.values.end(), supportLevel) == record.values.end()) continue;
 			shared_ptr<const LiftSectorObject> liftObject;
 			for (uint32_t i = 0; i < room->getNumObjects(); ++i)
 			{
@@ -4856,7 +4869,7 @@ namespace core
 			else
 			{
 				auto updated = record;
-				updated.values.erase(remove(updated.values.begin(), updated.values.end(), supportDeck), updated.values.end());
+				updated.values.erase(remove(updated.values.begin(), updated.values.end(), supportLevel), updated.values.end());
 				platformUpdates.emplace(recordIndex, std::move(updated));
 			}
 		}
@@ -4994,7 +5007,7 @@ namespace core
 		{
 			return record.type == ConstructionType::Window && record.a == sourceLayer
 				&& record.b == sourceY && record.c == sourceX
-				&& record.d == window->getCellsWide() && record.e == window->getDecksHigh();
+				&& record.d == window->getCellsWide() && record.e == window->getLevelsHigh();
 		};
 		auto source = find_if(mConstructionRecords.begin(), mConstructionRecords.end(), matches);
 		if (source == mConstructionRecords.end()) return false;
@@ -5023,7 +5036,7 @@ namespace core
 
 		auto const agents = captureAgentsForReplay();
 
-		resetForDeserialization(mName, mCellsWide, mDecksHigh, true);
+		resetForDeserialization(mName, mCellsWide, mLevelsHigh, true);
 		mDeserializingConstruction = true;
 		try
 		{
@@ -5084,11 +5097,11 @@ namespace core
 				if (plan.valid && object->getObjectType() == SectorObjectType::Walkway
 					&& (x != object->getCellX() || y != object->getCellY()))
 				{
-					uint32_t sourceDeck = object->getCellY() - object->getSector()->getCellY();
+					uint32_t sourceLevel = object->getCellY() - object->getSector()->getCellY();
 					for (auto const& record : mConstructionRecords)
 						if (record.type == ConstructionType::PlatformLift && record.a == sectorIndex
 							&& mSectors[sectorIndex]->getCellX() + record.c == object->getCellX()
-							&& find(record.values.begin(), record.values.end(), sourceDeck) != record.values.end())
+							&& find(record.values.begin(), record.values.end(), sourceLevel) != record.values.end())
 							if (record.values.size() <= 2)
 								plan.consequences.push_back("Delete connected PlatformLift");
 				}
@@ -5099,7 +5112,7 @@ namespace core
 
 	World::ObjectMovePlan World::planResizeSectorWindow(uint32_t sectorIndex,
 		uint32_t objectIndex, uint32_t x, uint32_t y, uint32_t cellsWide,
-		uint32_t decksHigh) const
+		uint32_t levelsHigh) const
 	{
 		ObjectMovePlan plan;
 		plan.sectorIndex = sectorIndex;
@@ -5107,7 +5120,7 @@ namespace core
 		plan.x = x;
 		plan.y = y;
 		plan.previewWidth = cellsWide;
-		plan.previewHeight = decksHigh;
+		plan.previewHeight = levelsHigh;
 		plan.resizeRequested = true;
 		if (sectorIndex >= mSectors.size() || !mSectors[sectorIndex]
 			|| objectIndex >= mSectors[sectorIndex]->getNumObjects())
@@ -5129,7 +5142,7 @@ namespace core
 
 	World::ObjectMovePlan World::planResizeSectorDoor(uint32_t sectorIndex,
 		uint32_t objectIndex, uint32_t x, uint32_t y, uint32_t cellsWide,
-		uint32_t decksHigh) const
+		uint32_t levelsHigh) const
 	{
 		ObjectMovePlan plan;
 		plan.sectorIndex = sectorIndex;
@@ -5137,7 +5150,7 @@ namespace core
 		plan.x = x;
 		plan.y = y;
 		plan.previewWidth = cellsWide;
-		plan.previewHeight = decksHigh;
+		plan.previewHeight = levelsHigh;
 		plan.resizeRequested = true;
 		if (sectorIndex >= mSectors.size() || !mSectors[sectorIndex]
 			|| objectIndex >= mSectors[sectorIndex]->getNumObjects())
@@ -5175,7 +5188,7 @@ namespace core
 
 		auto const agents = captureAgentsForReplay();
 
-		resetForDeserialization(mName, mCellsWide, mDecksHigh, true);
+		resetForDeserialization(mName, mCellsWide, mLevelsHigh, true);
 		mDeserializingConstruction = true;
 		try
 		{
@@ -5196,11 +5209,11 @@ namespace core
 	}
 
 	World::LocationEditPlan World::planResizeLocation(uint32_t sectorIndex,
-		uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh) const
+		uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t levelsHigh) const
 	{
 		LocationEditPlan plan;
 		plan.sectorIndex = sectorIndex;
-		plan.x = x; plan.y = y; plan.cellsWide = cellsWide; plan.decksHigh = decksHigh;
+		plan.x = x; plan.y = y; plan.cellsWide = cellsWide; plan.levelsHigh = levelsHigh;
 		if (sectorIndex >= mSectors.size() || !mSectors[sectorIndex]
 			|| mSectors[sectorIndex]->getType() != SectorType::Location)
 		{
@@ -5243,21 +5256,21 @@ namespace core
 			}
 		}
 		plan.move = (x != sector->getCellX() || y != sector->getCellY())
-			&& cellsWide == sector->getCellsWide() && decksHigh == sector->getDecksHigh();
-		if (cellsWide == 0 || decksHigh == 0 || x + cellsWide > mCellsWide || y + decksHigh > mDecksHigh)
+			&& cellsWide == sector->getCellsWide() && levelsHigh == sector->getLevelsHigh();
+		if (cellsWide == 0 || levelsHigh == 0 || x + cellsWide > mCellsWide || y + levelsHigh > mLevelsHigh)
 		{
 			plan.diagnostic = "The resized sector is outside the World bounds";
 			return plan;
 		}
-		bool corridor = sector->getTopDeckHeight() == CORE_CORRIDOR_HEIGHT;
+		bool corridor = sector->getTopLevelHeight() == CORE_CORRIDOR_HEIGHT;
 		if (corridor && !plan.move
-			&& (y != sector->getCellY() || decksHigh != sector->getDecksHigh()))
+			&& (y != sector->getCellY() || levelsHigh != sector->getLevelsHigh()))
 		{
 			plan.diagnostic = "Corridors cannot be resized vertically";
 			return plan;
 		}
 		auto layer = mLayers[sector->getLayerIndex()];
-		for (uint32_t iy = y; iy < y + decksHigh; ++iy)
+		for (uint32_t iy = y; iy < y + levelsHigh; ++iy)
 			for (uint32_t ix = x; ix < x + cellsWide; ++ix)
 			{
 				auto occupant = layer->getCellDefinition(ix, iy).sectorIndex;
@@ -5284,12 +5297,12 @@ namespace core
 			Vector2 min, max;
 			object->getBounds(min, max);
 			bool inside = min.x >= x && max.x <= x + cellsWide
-				&& min.y >= y && max.y <= y + decksHigh;
+				&& min.y >= y && max.y <= y + levelsHigh;
 			bool losesFloor = y != sector->getCellY() && object->getCellY() == sector->getCellY();
 			bool const walkway = object->getObjectType() == SectorObjectType::Walkway;
 			auto const relativeX = object->getCellX() - sector->getCellX();
 			auto const relativeY = object->getCellY() - sector->getCellY();
-			bool walkwayCropped = walkway && (relativeX >= cellsWide || relativeY >= decksHigh);
+			bool walkwayCropped = walkway && (relativeX >= cellsWide || relativeY >= levelsHigh);
 			bool walkwayMoved = walkway && !walkwayCropped
 				&& (x + relativeX != object->getCellX() || y + relativeY != object->getCellY());
 			if ((walkwayCropped || walkwayMoved)
@@ -5318,11 +5331,11 @@ namespace core
 						|| walkway->getCellY() != sector->getCellY() + options.stopOffsets[stop]) continue;
 					auto relativeX = walkway->getCellX() - sector->getCellX();
 					auto relativeY = walkway->getCellY() - sector->getCellY();
-					walkwayRetained = plan.move || (relativeX < cellsWide && relativeY < decksHigh);
+					walkwayRetained = plan.move || (relativeX < cellsWide && relativeY < levelsHigh);
 					break;
 				}
 				if (walkwayRetained) ++retained;
-				else plan.consequences.push_back(format("Remove PlatformLift stop at deck {}", options.stopOffsets[stop]));
+				else plan.consequences.push_back(format("Remove PlatformLift stop at level {}", options.stopOffsets[stop]));
 			}
 			if (!plan.move && (liftObject->getCellX() - sector->getCellX() >= cellsWide || retained < 2))
 				plan.consequences.push_back("Delete Platform Lift");
@@ -5333,7 +5346,7 @@ namespace core
 			if (agent->getSector() != sector.get()) continue;
 			if (plan.move) continue;
 			auto pos = agent->getGlobalPosition();
-			if (pos.x < x || pos.x > x + cellsWide || pos.y < y || pos.y > y + decksHigh
+			if (pos.x < x || pos.x > x + cellsWide || pos.y < y || pos.y > y + levelsHigh
 				|| (y != sector->getCellY() && (uint32_t)floor(pos.y) == sector->getCellY()))
 				plan.consequences.push_back("Delete Agent " + agent->getName());
 		}
@@ -5358,7 +5371,7 @@ namespace core
 				auto stopX = (int)sector->getCellX() + transitStop.sectorOffsetX;
 				auto stopY = (int)sector->getCellY() + transitStop.sectorOffsetY;
 				if (plan.move || stopX < (int)x || stopX >= (int)(x + cellsWide)
-					|| stopY < (int)y || stopY >= (int)(y + decksHigh))
+					|| stopY < (int)y || stopY >= (int)(y + levelsHigh))
 				{
 					plan.consequences.push_back(format("Remove stop {} from {}", stop, transit->getName()));
 					for (auto const& [id, resource] : mTraversalResources.entries())
@@ -5437,7 +5450,7 @@ namespace core
 			}
 		}
 		plan.x = sector->getCellX(); plan.y = sector->getCellY();
-		plan.cellsWide = sector->getCellsWide(); plan.decksHigh = sector->getDecksHigh();
+		plan.cellsWide = sector->getCellsWide(); plan.levelsHigh = sector->getLevelsHigh();
 		set<void const*> seen;
 		for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
 		{
@@ -5500,7 +5513,7 @@ namespace core
 		LocationEditPlan plan = requested.remove
 			? (facade ? planRemoveFacade(requested.sectorIndex) : planRemoveLocation(requested.sectorIndex))
 			: planResizeLocation(requested.sectorIndex, requested.x, requested.y,
-				requested.cellsWide, requested.decksHigh);
+				requested.cellsWide, requested.levelsHigh);
 		if (!plan.valid) throw WorldException(this, plan.diagnostic);
 
 		vector<ConstructionRecord> records;
@@ -5524,7 +5537,7 @@ namespace core
 			}
 		}
 
-		resetForDeserialization(mName, mCellsWide, mDecksHigh, true);
+		resetForDeserialization(mName, mCellsWide, mLevelsHigh, true);
 		mDeserializingConstruction = true;
 		try
 		{
@@ -5550,7 +5563,7 @@ namespace core
 		if (plan.sectorIndex >= mSectors.size() || !mSectors[plan.sectorIndex]) return;
 		auto const background = mSectors[plan.sectorIndex];
 		for (auto const& windowObject : windowsUncoveredByBackground(background, !plan.remove,
-			plan.x, plan.y, plan.cellsWide, plan.decksHigh))
+			plan.x, plan.y, plan.cellsWide, plan.levelsHigh))
 		{
 			auto const front = windowObject->getWindow()->getFrontLayer();
 			auto const frontName = front < mLayerNames.size()
@@ -5589,7 +5602,7 @@ namespace core
 		// with it, so the replay is never asked to rebuild a Window with nothing
 		// behind it.
 		auto const uncovered = windowsUncoveredByBackground(background, !plan.remove,
-			plan.x, plan.y, plan.cellsWide, plan.decksHigh);
+			plan.x, plan.y, plan.cellsWide, plan.levelsHigh);
 		auto losesItsBackground = [&](ConstructionRecord const& record)
 		{
 			if (record.type != ConstructionType::Window) return false;
@@ -5620,7 +5633,7 @@ namespace core
 					}
 					if (plan.remove) continue;
 					source.a = plan.y; source.b = plan.x;
-					source.c = plan.cellsWide; source.d = plan.decksHigh;
+					source.c = plan.cellsWide; source.d = plan.levelsHigh;
 				}
 
 				if (losesItsBackground(source)) continue;
@@ -5663,7 +5676,7 @@ namespace core
 		}
 		auto const sector = mSectors[sectorIndex];
 		plan.x = sector->getCellX(); plan.y = sector->getCellY();
-		plan.cellsWide = sector->getCellsWide(); plan.decksHigh = sector->getDecksHigh();
+		plan.cellsWide = sector->getCellsWide(); plan.levelsHigh = sector->getLevelsHigh();
 		addUncoveredWindowConsequences(plan);
 		vector<ConstructionRecord> records;
 		uint32_t ignored;
@@ -5672,11 +5685,11 @@ namespace core
 	}
 
 	World::LocationEditPlan World::planResizeBackground(uint32_t sectorIndex,
-		uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh) const
+		uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t levelsHigh) const
 	{
 		LocationEditPlan plan;
 		plan.sectorIndex = sectorIndex;
-		plan.x = x; plan.y = y; plan.cellsWide = cellsWide; plan.decksHigh = decksHigh;
+		plan.x = x; plan.y = y; plan.cellsWide = cellsWide; plan.levelsHigh = levelsHigh;
 		if (sectorIndex >= mSectors.size() || !mSectors[sectorIndex]
 			|| mSectors[sectorIndex]->getType() != SectorType::Background)
 		{
@@ -5685,14 +5698,14 @@ namespace core
 		}
 		auto const sector = mSectors[sectorIndex];
 		plan.move = (x != sector->getCellX() || y != sector->getCellY())
-			&& cellsWide == sector->getCellsWide() && decksHigh == sector->getDecksHigh();
-		if (cellsWide == 0 || decksHigh == 0 || x + cellsWide > mCellsWide || y + decksHigh > mDecksHigh)
+			&& cellsWide == sector->getCellsWide() && levelsHigh == sector->getLevelsHigh();
+		if (cellsWide == 0 || levelsHigh == 0 || x + cellsWide > mCellsWide || y + levelsHigh > mLevelsHigh)
 		{
 			plan.diagnostic = "The resized Background is outside the World bounds";
 			return plan;
 		}
 		auto const layer = mLayers[sector->getLayerIndex()];
-		for (uint32_t iy = y; iy < y + decksHigh; ++iy)
+		for (uint32_t iy = y; iy < y + levelsHigh; ++iy)
 			for (uint32_t ix = x; ix < x + cellsWide; ++ix)
 			{
 				auto occupant = layer->getCellDefinition(ix, iy).sectorIndex;
@@ -5714,7 +5727,7 @@ namespace core
 		LocationEditPlan plan = requested.remove
 			? planRemoveBackground(requested.sectorIndex)
 			: planResizeBackground(requested.sectorIndex, requested.x, requested.y,
-				requested.cellsWide, requested.decksHigh);
+				requested.cellsWide, requested.levelsHigh);
 		if (!plan.valid) throw WorldException(this, plan.diagnostic);
 
 		vector<ConstructionRecord> records;
@@ -5728,7 +5741,7 @@ namespace core
 		// Agent group (#122).
 		auto const agents = captureAgentsForReplay();
 
-		resetForDeserialization(mName, mCellsWide, mDecksHigh, true);
+		resetForDeserialization(mName, mCellsWide, mLevelsHigh, true);
 		mDeserializingConstruction = true;
 		try
 		{

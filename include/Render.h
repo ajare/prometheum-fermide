@@ -34,13 +34,13 @@
 //
 // Marker icon geometry.
 //
-// A Marker's icon floats MarkerDeckLift world units above the deck its Vertex
-// sits on, which clears the deck line and lets the editor's hit box cover the
-// icon plus the gap down to the deck. The Vertex itself stays on the ground;
+// A Marker's icon floats MarkerFloorLift world units above the floor its Vertex
+// sits on, which clears the floor line and lets the editor's hit box cover the
+// icon plus the gap down to the floor. The Vertex itself stays on the ground;
 // only the icon lifts.
 //
 inline constexpr float MarkerIconSize{ 22.0f };	// longest edge of the drawn icon, in pixels
-inline constexpr float MarkerDeckLift{ 0.1f };	// how far the icon floats above the deck, in world units
+inline constexpr float MarkerFloorLift{ 0.1f };	// how far the icon floats above the floor, in world units
 
 //
 // How a Sector is drawn by one pass of the viewport.
@@ -248,7 +248,7 @@ inline std::vector<BackgroundApertureRegion> backgroundApertureRegions(
 	int const x1 = std::min(static_cast<int>(std::ceil(apertureMax.x)) - 1,
 		static_cast<int>(world.getCellsWide()) - 1);
 	int const y1 = std::min(static_cast<int>(std::ceil(apertureMax.y)) - 1,
-		static_cast<int>(world.getDecksHigh()) - 1);
+		static_cast<int>(world.getLevelsHigh()) - 1);
 
 	for (int y = y0; y <= y1; ++y)
 	{
@@ -349,10 +349,10 @@ inline bool shouldHighlightSelectedSector(LayerRenderStyle style, uint32_t secto
 }
 
 //
-// One vertical stretch of a Sector deck's side wall that the viewport draws.
+// One vertical stretch of a Sector level's side wall that the viewport draws.
 //
 // World units, y0 the lower end and y1 the upper, so the pair reads the same
-// way up as the Sector's own deck spans rather than in flipped screen space.
+// way up as the Sector's own level spans rather than in flipped screen space.
 //
 struct WallSpan
 {
@@ -363,46 +363,46 @@ struct WallSpan
 };
 
 //
-// The world-y of one Sector deck's floor: the Sector's own base plus every deck
-// under it. Deck heights differ between Locations - a Corridor deck is
-// CORE_CORRIDOR_HEIGHT, a Room deck stands taller - so a deck's height is not
+// The world-y of one Sector level's floor: the Sector's own base plus every level
+// under it. Level heights differ between Locations - a Corridor level is
+// CORE_CORRIDOR_HEIGHT, a Room level stands taller - so a level's height is not
 // its row, and the two cannot be used interchangeably here.
 //
-inline float deckFloorY(core::Sector const& sector, uint32_t deckIndex)
+inline float levelFloorY(core::Sector const& sector, uint32_t levelIndex)
 {
 	core::Vector2 lo, hi;
 	sector.getBounds(lo, hi);
 
 	float y = lo.y;
 
-	for (uint32_t d = 0; d < deckIndex && d < sector.getDecksHigh(); ++d)
+	for (uint32_t d = 0; d < levelIndex && d < sector.getLevelsHigh(); ++d)
 	{
-		y += sector.getDeckHeight(d);
+		y += sector.getLevelHeight(d);
 	}
 
 	return y;
 }
 
 //
-// The Location, if any, sharing one Sector's side boundary on a given deck.
+// The Location, if any, sharing one Sector's side boundary on a given level.
 //
 // Looked up geometrically - the cell just outside the Sector's own footprint on
-// the deck's global row - because that cell is the boundary the wall would
+// the level's global row - because that cell is the boundary the wall would
 // stand in.
 //
 inline std::shared_ptr<const core::Sector> boundarySector(
 	core::World const& world,
 	core::Sector const& sector,
-	uint32_t deckIndex,
+	uint32_t levelIndex,
 	int side)
 {
 	int const boundaryX = side == CORE_SIDE_LEFT
 		? static_cast<int>(sector.getCellX()) - 1
 		: static_cast<int>(sector.getCellX()) + static_cast<int>(sector.getCellsWide());
-	int const globalY = static_cast<int>(sector.getCellY()) + static_cast<int>(deckIndex);
+	int const globalY = static_cast<int>(sector.getCellY()) + static_cast<int>(levelIndex);
 
 	if (boundaryX < 0 || boundaryX >= static_cast<int>(world.getCellsWide())
-		|| globalY < 0 || globalY >= static_cast<int>(world.getDecksHigh()))
+		|| globalY < 0 || globalY >= static_cast<int>(world.getLevelsHigh()))
 	{
 		return nullptr;
 	}
@@ -426,7 +426,7 @@ inline std::shared_ptr<const core::Sector> boundarySector(
 // not open.
 //
 inline bool frontLayerOpening(std::shared_ptr<const core::World> const& world,
-	int viewLayer, core::Sector const& sector, uint32_t deckIndex, int side,
+	int viewLayer, core::Sector const& sector, uint32_t levelIndex, int side,
 	float& openFrom, float& openTo)
 {
 	openFrom = openTo = 0.0f;
@@ -441,10 +441,10 @@ inline bool frontLayerOpening(std::shared_ptr<const core::World> const& world,
 	int const boundaryX = side == CORE_SIDE_LEFT
 		? static_cast<int>(sector.getCellX())
 		: static_cast<int>(sector.getCellX()) + static_cast<int>(sector.getCellsWide());
-	int const globalY = static_cast<int>(sector.getCellY()) + static_cast<int>(deckIndex);
+	int const globalY = static_cast<int>(sector.getCellY()) + static_cast<int>(levelIndex);
 
 	if (boundaryX <= 0 || boundaryX >= static_cast<int>(world->getCellsWide())
-		|| globalY < 0 || globalY >= static_cast<int>(world->getDecksHigh()))
+		|| globalY < 0 || globalY >= static_cast<int>(world->getLevelsHigh()))
 	{
 		return false;
 	}
@@ -459,27 +459,27 @@ inline bool frontLayerOpening(std::shared_ptr<const core::World> const& world,
 		return false;
 	}
 
-	auto const leftDeck = globalY - static_cast<int>(left->getCellY());
-	auto const rightDeck = globalY - static_cast<int>(right->getCellY());
+	auto const leftLevel = globalY - static_cast<int>(left->getCellY());
+	auto const rightLevel = globalY - static_cast<int>(right->getCellY());
 
-	if (leftDeck < 0 || leftDeck >= static_cast<int>(left->getDecksHigh())
-		|| rightDeck < 0 || rightDeck >= static_cast<int>(right->getDecksHigh()))
+	if (leftLevel < 0 || leftLevel >= static_cast<int>(left->getLevelsHigh())
+		|| rightLevel < 0 || rightLevel >= static_cast<int>(right->getLevelsHigh()))
 	{
 		return false;
 	}
 
-	if (left->getEndType(static_cast<uint32_t>(leftDeck), CORE_SIDE_RIGHT) != core::SectorEndType::None
-		|| right->getEndType(static_cast<uint32_t>(rightDeck), CORE_SIDE_LEFT) != core::SectorEndType::None)
+	if (left->getEndType(static_cast<uint32_t>(leftLevel), CORE_SIDE_RIGHT) != core::SectorEndType::None
+		|| right->getEndType(static_cast<uint32_t>(rightLevel), CORE_SIDE_LEFT) != core::SectorEndType::None)
 	{
 		return false;
 	}
 
-	auto const leftFloor = deckFloorY(*left, static_cast<uint32_t>(leftDeck));
-	auto const rightFloor = deckFloorY(*right, static_cast<uint32_t>(rightDeck));
+	auto const leftFloor = levelFloorY(*left, static_cast<uint32_t>(leftLevel));
+	auto const rightFloor = levelFloorY(*right, static_cast<uint32_t>(rightLevel));
 
 	openFrom = std::max(leftFloor, rightFloor);
-	openTo = std::min(leftFloor + left->getDeckHeight(static_cast<uint32_t>(leftDeck)),
-		rightFloor + right->getDeckHeight(static_cast<uint32_t>(rightDeck)));
+	openTo = std::min(leftFloor + left->getLevelHeight(static_cast<uint32_t>(leftLevel)),
+		rightFloor + right->getLevelHeight(static_cast<uint32_t>(rightLevel)));
 
 	return openTo > openFrom;
 }
@@ -511,21 +511,21 @@ inline std::vector<WallSpan> subtractSpan(WallSpan const& span, float from, floa
 }
 
 //
-// The stretches of one Location deck's side wall the viewport should draw.
+// The stretches of one Location level's side wall the viewport should draw.
 //
-// A closed (Wall) end draws its whole deck; a BulkheadDoor end draws no plain
+// A closed (Wall) end draws its whole level; a BulkheadDoor end draws no plain
 // wall line, exactly as before.
 //
 // An open end removes only the boundary it actually shares: the vertical
-// overlap between this Sector's deck span and the neighbouring Sector's deck
-// span at the same global row. A Room deck standing 1.0 tall beside a
+// overlap between this Sector's level span and the neighbouring Sector's level
+// span at the same global row. A Room level standing 1.0 tall beside a
 // 0.7-tall Corridor therefore keeps the 0.3 of wall above the Corridor's
-// ceiling - the opening is the intersection, never the whole deck. Two decks
+// ceiling - the opening is the intersection, never the whole level. Two levels
 // of equal height overlap completely, so their shared wall vanishes entirely
 // and the two Locations read as connected.
 //
 // With no World to ask, or no Sector on the boundary, an open end removes
-// its whole deck: with nothing to intersect there is no shared boundary to
+// its whole level: with nothing to intersect there is no shared boundary to
 // leave standing, and this is how an open end has always rendered.
 //
 // `viewLayer` is the Layer the viewport is showing. A Sector drawn from behind
@@ -534,19 +534,19 @@ inline std::vector<WallSpan> subtractSpan(WallSpan const& span, float from, floa
 // player just removed. Pass a negative viewLayer to skip that second cut.
 //
 inline std::vector<WallSpan> wallSpansToDraw(std::shared_ptr<const core::World> const& world,
-	core::Sector const& sector, uint32_t deckIndex, int side, int viewLayer = -1)
+	core::Sector const& sector, uint32_t levelIndex, int side, int viewLayer = -1)
 {
 	std::vector<WallSpan> spans;
 
-	if (deckIndex >= sector.getDecksHigh())
+	if (levelIndex >= sector.getLevelsHigh())
 	{
 		return spans;
 	}
 
-	auto const y0 = deckFloorY(sector, deckIndex);
-	auto const y1 = y0 + sector.getDeckHeight(deckIndex);
+	auto const y0 = levelFloorY(sector, levelIndex);
+	auto const y1 = y0 + sector.getLevelHeight(levelIndex);
 
-	auto const endType = sector.getEndType(deckIndex, side);
+	auto const endType = sector.getEndType(levelIndex, side);
 
 	if (endType != core::SectorEndType::None)
 	{
@@ -558,7 +558,7 @@ inline std::vector<WallSpan> wallSpansToDraw(std::shared_ptr<const core::World> 
 	else
 	{
 		auto const neighbour = world
-			? boundarySector(*world, sector, deckIndex, side)
+			? boundarySector(*world, sector, levelIndex, side)
 			: nullptr;
 
 		if (!neighbour)
@@ -566,21 +566,21 @@ inline std::vector<WallSpan> wallSpansToDraw(std::shared_ptr<const core::World> 
 			return spans;
 		}
 
-		auto const neighbourDeck = static_cast<int>(deckIndex) + static_cast<int>(sector.getCellY())
+		auto const neighbourLevel = static_cast<int>(levelIndex) + static_cast<int>(sector.getCellY())
 			- static_cast<int>(neighbour->getCellY());
-		if (neighbourDeck < 0 || neighbourDeck >= static_cast<int>(neighbour->getDecksHigh()))
+		if (neighbourLevel < 0 || neighbourLevel >= static_cast<int>(neighbour->getLevelsHigh()))
 		{
 			return spans;
 		}
 
-		auto const neighbourFloor = deckFloorY(*neighbour, static_cast<uint32_t>(neighbourDeck));
+		auto const neighbourFloor = levelFloorY(*neighbour, static_cast<uint32_t>(neighbourLevel));
 		auto const neighbourTop = neighbourFloor
-			+ neighbour->getDeckHeight(static_cast<uint32_t>(neighbourDeck));
+			+ neighbour->getLevelHeight(static_cast<uint32_t>(neighbourLevel));
 
 		auto const openFrom = std::max(y0, neighbourFloor);
 		auto const openTo = std::min(y1, neighbourTop);
 
-		// Decks on the same global row always meet, but a neighbour that somehow
+		// Levels on the same global row always meet, but a neighbour that somehow
 		// misses this one leaves no opening to cut, and the wall stands whole.
 		if (openTo <= openFrom)
 		{
@@ -601,7 +601,7 @@ inline std::vector<WallSpan> wallSpansToDraw(std::shared_ptr<const core::World> 
 	}
 
 	float openingFrom{ 0.0f }, openingTo{ 0.0f };
-	if (!frontLayerOpening(world, viewLayer, sector, deckIndex, side, openingFrom, openingTo))
+	if (!frontLayerOpening(world, viewLayer, sector, levelIndex, side, openingFrom, openingTo))
 	{
 		return spans;
 	}
@@ -642,7 +642,7 @@ struct TransitAperture
 	core::Vector2 max;
 
 	// The Location on the selected Layer that this aperture opens through. Null
-	// when the aperture belongs to the Transit alone, as a Stairwell deck does.
+	// when the aperture belongs to the Transit alone, as a Stairwell level does.
 	std::shared_ptr<const core::Sector> location;
 };
 
@@ -684,7 +684,7 @@ inline bool shouldRenderStaircaseAfterSector(core::SectorType sectorType)
 //   Lift       the doorway rectangle at each landing
 //   Shuttle    the rectangle of each Door on the selected Layer which opens
 //              onto it, so the aperture is the doorway the player can see
-//   Stairwell  the doorway rectangle of each deck
+//   Stairwell  the doorway rectangle of each level
 //   Staircase  the bounds of every Location on the selected Layer
 //
 // `viewLocations` is the selected Layer's Sectors, already culled to the
@@ -810,18 +810,18 @@ inline std::vector<TransitAperture> transitApertures(
 	case core::SectorType::Stairwell:
 		if (auto const* stairwell = dynamic_cast<core::StairwellTransit const*>(transit.get()))
 		{
-			for (uint32_t deck = 0; deck < stairwell->getDecksHigh(); ++deck)
+			for (uint32_t level = 0; level < stairwell->getLevelsHigh(); ++level)
 			{
-				// A deck opens at the shaft's own column rather than at a landing's
+				// A level opens at the shaft's own column rather than at a landing's
 				// cell, so the aperture carries no Location of its own.
 				apertures.push_back({
 					{ (float)stairwell->getCellX() + 1.0f
 						- CORE_STAIRWELL_DOORWAY_WIDTH * 0.5f,
-						(float)stairwell->getCellY() + (float)deck },
+						(float)stairwell->getCellY() + (float)level },
 					{ (float)stairwell->getCellX() + 1.0f
 						+ CORE_STAIRWELL_DOORWAY_WIDTH * 0.5f,
-						(float)stairwell->getCellY() + (float)deck + CORE_STAIRWELL_DOORWAY_HEIGHT },
-					deck < stairwell->getNumStops() ? stairwell->getStop(deck).sector : nullptr });
+						(float)stairwell->getCellY() + (float)level + CORE_STAIRWELL_DOORWAY_HEIGHT },
+					level < stairwell->getNumStops() ? stairwell->getStop(level).sector : nullptr });
 			}
 		}
 		break;

@@ -88,7 +88,7 @@ namespace
 	float toScreenY(float worldY)
 	{
 		return gUISettings.worldViewportY + gUISettings.worldViewportHeight
-			- worldY * CORE_DECK_HEIGHT_PIXELS - gUISettings.yOffset;
+			- worldY * CORE_LEVEL_HEIGHT_PIXELS - gUISettings.yOffset;
 	}
 
 	// The leaf geometry the renderer should produce for the Door's current open

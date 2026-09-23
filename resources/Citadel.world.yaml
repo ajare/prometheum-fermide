@@ -1,32 +1,32 @@
 version: 2
 name: Untitled
 cellsWide: 48
-decksHigh: 6
+levelsHigh: 6
 construction:
   - type: corridor
     y: 0
     x: 1
     cellsWide: 10
-    decksHigh: 1
+    levelsHigh: 1
   - type: room
     name: Room 1
     layer: back
     y: 0
     x: 4
     cellsWide: 3
-    decksHigh: 1
-    topDeckHeight: 0.9
+    levelsHigh: 1
+    topLevelHeight: 0.9
   - type: room
     name: Room 2
     layer: back
     y: 0
     x: 0
     cellsWide: 3
-    decksHigh: 1
-    topDeckHeight: 0.9
+    levelsHigh: 1
+    topLevelHeight: 0.9
   - type: marker
     sectorIndex: 2
-    deckIndex: 0
+    levelIndex: 0
     xOffset: 0.484375
   - type: door
     y: 0
@@ -61,18 +61,18 @@ construction:
     crossingLanes: 0
   - type: marker
     sectorIndex: 1
-    deckIndex: 0
+    levelIndex: 0
     xOffset: 0.578125
   - type: corridor
     y: 1
     x: 1
     cellsWide: 10
-    decksHigh: 1
+    levelsHigh: 1
   - type: lift
     y: 0
     x: 9
     cellsWide: 1
-    decksHigh: 3
+    levelsHigh: 3
     stopOffsets: [0, 1]
     capacity: 1
     minimumDwellSeconds: 0.75
@@ -80,7 +80,7 @@ construction:
     initialStop: 0
   - type: marker
     sectorIndex: 3
-    deckIndex: 0
+    levelIndex: 0
     xOffset: 2.34375
 agents:
   - id: 3

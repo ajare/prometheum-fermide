@@ -150,7 +150,7 @@ struct PendingAgentPlacement
 {
 	AgentClipboardPayload payload;
 	std::shared_ptr<const core::Sector> sector;
-	std::uint32_t deckOffset{ 0 };
+	std::uint32_t levelOffset{ 0 };
 	float localX{ 0.0f };
 
 	bool armed() const { return sector != nullptr; }
@@ -160,7 +160,7 @@ struct PendingAgentPlacement
 	void cancel() { *this = PendingAgentPlacement{}; }
 };
 
-// Accept `payload` for deferred placement at `sector`/`deckOffset`/`localX`.
+// Accept `payload` for deferred placement at `sector`/`levelOffset`/`localX`.
 // The Agent group and complete Agent tag state are judged here - before
 // anything is deferred - so an unusable payload or registry UUID mismatch is
 // reported at the keystroke rather than after a fall that was always going to
@@ -169,7 +169,7 @@ struct PendingAgentPlacement
 bool armAgentPlacement(PendingAgentPlacement& pending,
 	core::World const& world, AgentClipboardPayload const& payload,
 	std::shared_ptr<const core::Sector> sector,
-	std::uint32_t deckOffset, float localX, std::string& diagnostic);
+	std::uint32_t levelOffset, float localX, std::string& diagnostic);
 
 // Create `payload` in `world` as exactly one document edit: the Agent's
 // Agent group is reused when the World already defines that exact name,
@@ -181,7 +181,7 @@ bool armAgentPlacement(PendingAgentPlacement& pending,
 bool commitAgentPlacement(std::shared_ptr<core::World> const& world,
 	AgentClipboardPayload const& payload,
 	std::shared_ptr<const core::Sector> sector,
-	std::uint32_t deckOffset, float localX,
+	std::uint32_t levelOffset, float localX,
 	core::AgentId& placed, std::string& diagnostic);
 
 // Land an armed placement through commitAgentPlacement(). The pending state

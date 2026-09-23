@@ -4,11 +4,11 @@ This document describes an Agent traversing a **Sector Ladder**: a `LadderSector
 
 ## Graph topology
 
-`Graph::processLadderObject()` creates a Location-side and Ladder-side vertex at each endpoint. `Graph::processCrossDeckVertices()` joins the two Ladder vertices with the `LadderEdge` returned by `LadderSectorObject::createCrossDeckEdge()`.
+`Graph::processLadderObject()` creates a Location-side and Ladder-side vertex at each endpoint. `Graph::processCrossLevelVertices()` joins the two Ladder vertices with the `LadderEdge` returned by `LadderSectorObject::createCrossLevelEdge()`.
 
 ```mermaid
 flowchart LR
-    A["Location path<br/>on source deck"]
+    A["Location path<br/>on source level"]
     B["Source SectorObjectVertex<br/>Location side"]
     C["Source LadderMountEdge<br/>immediate permit"]
     D["Source LadderVertex"]
@@ -165,7 +165,7 @@ For a Sector Ladder, the capacity position remains an **admission reservation** 
 | Derive Ladder capacity positions | `src/core/World.cpp: World::createLadderTraversalResource()` |
 | Configure endpoint queue lanes | `src/core/World.cpp: World::configureLadderQueueLanes()` |
 | Create endpoint/mount graph topology | `src/core/Graph.cpp: Graph::processLadderObject()` |
-| Join endpoints with the climbing edge | `src/core/Graph.cpp: Graph::processCrossDeckVertices()` and `src/core/LadderSectorObject.cpp: LadderSectorObject::createCrossDeckEdge()` |
+| Join endpoints with the climbing edge | `src/core/Graph.cpp: Graph::processCrossLevelVertices()` and `src/core/LadderSectorObject.cpp: LadderSectorObject::createCrossLevelEdge()` |
 | Approach a path vertex / detect early queue tails | `src/core/Agent.cpp: Agent::moveToVertex()` and `src/core/World.cpp: World::stopForAvailableQueuePosition()` |
 | Create traversal intent | `src/core/Agent.cpp: Agent::collectTraversalIntent()` and `src/core/World.cpp: World::createTraversalRequest()` |
 | Decide whether an edge claims Ladder capacity | `src/core/World.cpp: World::isLadderAdmission()` |

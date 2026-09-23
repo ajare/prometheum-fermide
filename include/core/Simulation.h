@@ -111,7 +111,7 @@ namespace core
 		AgentId agent;
 		LiftAgentState state{ LiftAgentState::QueuingAtDoor };
 		uint32_t targetStop{ ~0u };
-		float targetFloor{ 0.0f };
+		float targetLevel{ 0.0f };
 	};
 
 	struct ShuttleCarriageSnapshot

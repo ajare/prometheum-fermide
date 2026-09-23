@@ -14,7 +14,7 @@ namespace core
 	CarLift
 	-------
 
-	CarLift is a subclass of Lift which is used to connect Decks, within a LiftTransit.
+	CarLift is a subclass of Lift which is used to connect Levels, within a LiftTransit.
 
 	Construction arguments:
 

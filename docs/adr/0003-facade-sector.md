@@ -6,7 +6,7 @@ A Facade is a new Sector type that behaves as a Room in every traversal and plac
 
 - **Subclass Background and add occupancy.** Rejected: Background's identity is "non-occupiable, absent from the Graph, hosts nothing"; bolting walkable floor, capacity, and object hosting onto it would duplicate Location's rules and leave two divergent implementations of "Room behaviour".
 - **A flag on Location (like isCorridor) instead of a new SectorType.** Rejected: a Room that silently opens all its walls is not invariant-safe; persistence, adjacency checks, and wall-edit validation would all have to reason about a combinatorial state rather than a type, and the record-replay index mapping expects producing records to map cleanly to sector kinds.
-- **Create it as a Room record plus RemoveWall records for every end.** Rejected: cellsWide × decksHigh × 2 records of noise per Facade, order-dependent replay, and no single place that states "this sector has no walls".
+- **Create it as a Room record plus RemoveWall records for every end.** Rejected: cellsWide × levelsHigh × 2 records of noise per Facade, order-dependent replay, and no single place that states "this sector has no walls".
 - **Tint the fill when the Facade's lights are off.** Rejected: the colour is user-authored; tinting would silently override the picker, the same argument ADR-level reasoning already applied to Background.
 
 ## Consequences

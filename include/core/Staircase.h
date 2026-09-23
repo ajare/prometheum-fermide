@@ -7,7 +7,7 @@
 
 namespace core
 {
-	// A single straight flight connecting two adjacent decks.
+	// A single straight flight connecting two adjacent levels.
 	class Staircase : public Object
 	{
 		uint32_t mCellsWide;

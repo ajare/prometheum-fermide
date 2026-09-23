@@ -3,7 +3,7 @@
 // A Facade is an occupiable Location whose perimeter walls are all open by
 // construction: it hosts objects and agents exactly as a Room does, owns
 // walkable floor, and takes part in the Graph, but every wall end on every
-// deck is open intrinsically and it is rendered as a solid opaque colour
+// level is open intrinsically and it is rendered as a solid opaque colour
 // (ADR 0003). These checks cover creation and placement validation, the
 // open-end invariant, agent placement, object-placement parity with a Room,
 // Bulkhead Door refusal, wall-command refusal, persistence of the
@@ -149,30 +149,30 @@ namespace
 			require(sector != nullptr, "World reported a null Sector while signing");
 			signature += std::format("{}:{}@{},{},{}x{} name={}", index,
 				core::getSectorTypeString(sector->getType()), sector->getLayerIndex(),
-				sector->getCellX(), sector->getCellY(), sector->getCellsWide(), sector->getDecksHigh(),
+				sector->getCellX(), sector->getCellY(), sector->getCellsWide(), sector->getLevelsHigh(),
 				sector->getName());
 			if (sector->getType() == core::SectorType::Facade)
 			{
 				auto const facade = std::dynamic_pointer_cast<const core::Facade>(sector);
 				require(facade != nullptr, "Signed Facade is not a core::Facade");
-				signature += std::format(" colour={:06X} topDeck={}",
-					core::packBackgroundColour(facade->getColour()), facade->getTopDeckHeight());
+				signature += std::format(" colour={:06X} topLevel={}",
+					core::packBackgroundColour(facade->getColour()), facade->getTopLevelHeight());
 			}
 			signature += ";\n";
 		}
 		return signature;
 	}
 
-	// The open-perimeter invariant: every end on every deck and both sides is
+	// The open-perimeter invariant: every end on every level and both sides is
 	// open, and nothing has crept in as a Wall.
 	void everyEndIsOpen(core::Sector const& sector)
 	{
-		for (uint32_t deck = 0; deck < sector.getDecksHigh(); ++deck)
+		for (uint32_t level = 0; level < sector.getLevelsHigh(); ++level)
 		{
 			for (int side : { CORE_SIDE_LEFT, CORE_SIDE_RIGHT })
 			{
-				require(sector.getEndType(deck, side) == core::SectorEndType::None,
-					std::format("A Facade end is not open: deck {}, side {}", deck, side).c_str());
+				require(sector.getEndType(level, side) == core::SectorEndType::None,
+					std::format("A Facade end is not open: level {}, side {}", level, side).c_str());
 			}
 		}
 	}
@@ -318,7 +318,7 @@ namespace
 
 	// canAddFacade accepts the same placements a Room plays by and refuses the
 	// same ones: minimum (1,1), inside the bounds, free cells on its own Layer,
-	// and a legal top deck height.
+	// and a legal top level height.
 	void placementValidationFollowsTheRoomRule()
 	{
 		core::World world("Placement", 12, 3);
@@ -338,9 +338,9 @@ namespace
 		require(!world.canAddFacade(0, 0, 0, 1, 0, CORE_ROOM_MAX_HEIGHT, &diagnostic),
 			"A zero-high Facade was accepted");
 		require(!world.canAddFacade(0, 0, 0, 1, 1, CORE_ROOM_MAX_HEIGHT + 0.1f, &diagnostic),
-			"A Facade was accepted with a top deck height above CORE_ROOM_MAX_HEIGHT");
+			"A Facade was accepted with a top level height above CORE_ROOM_MAX_HEIGHT");
 		require(!world.canAddFacade(0, 0, 0, 1, 1, CORE_ROOM_MIN_HEIGHT - 0.1f, &diagnostic),
-			"A Facade was accepted with a top deck height below CORE_ROOM_MIN_HEIGHT");
+			"A Facade was accepted with a top level height below CORE_ROOM_MIN_HEIGHT");
 		require(!world.canAddFacade(0, 0, 11, 2, 1, CORE_ROOM_MAX_HEIGHT, &diagnostic),
 			"A Facade was accepted across the World bounds");
 		require(!world.canAddFacade(9, 0, 0, 1, 1, CORE_ROOM_MAX_HEIGHT, &diagnostic),
@@ -350,28 +350,28 @@ namespace
 		world.finishBuild();
 		auto const facade = facadeIn(world, 1);
 		require(facade->getLayerIndex() == 0 && facade->getCellY() == 1 && facade->getCellX() == 4
-			&& facade->getCellsWide() == 4 && facade->getDecksHigh() == 2,
+			&& facade->getCellsWide() == 4 && facade->getLevelsHigh() == 2,
 			"The Facade footprint is not where it was placed");
 		require(facade->getColour() == core::BackgroundColour{ 200, 30, 99 },
 			"The Facade colour was not carried to the live Sector");
 
 		// A Facade owns walkable floor exactly as a Location does: ground on
-		// the bottom deck.
+		// the bottom level.
 		auto const layer = std::as_const(world).getLayer(0);
 		require(layer->getCellDefinition(4, 1).floorType == core::CellFloorType::Ground
 			&& layer->getCellDefinition(4, 1).isTraversableOnFoot(),
-			"A Facade's ground deck is not walkable");
+			"A Facade's ground level is not walkable");
 	}
 
-	// The open-end invariant on the live World: every deck, both sides.
-	void everyWallEndIsOpenOnEveryDeck()
+	// The open-end invariant on the live World: every level, both sides.
+	void everyWallEndIsOpenOnEveryLevel()
 	{
 		core::World world("Open perimeter", 12, 3);
 		auto const index = world.addFacade(0, 0, 0, 5, 3);
 		world.finishBuild();
 
 		auto const facade = facadeIn(world, index);
-		require(facade->getDecksHigh() == 3, "The Facade did not keep its deck count");
+		require(facade->getLevelsHigh() == 3, "The Facade did not keep its level count");
 		everyEndIsOpen(*facade);
 	}
 
@@ -643,7 +643,7 @@ namespace
 			"A wall was restored against a Facade");
 	}
 
-	// The Facade record round-trips: type name, footprint, top deck height,
+	// The Facade record round-trips: type name, footprint, top level height,
 	// and packed colour; and replay is stable across saves.
 	void theFacadeRecordRoundTrips()
 	{
@@ -679,7 +679,7 @@ namespace
 		auto const yaml = R"yaml(version: 6
 name: Hand authored facade
 cellsWide: 12
-decksHigh: 3
+levelsHigh: 3
 layers: 2
 layerNames:
   - Layer 0
@@ -690,16 +690,16 @@ construction:
     y: 1
     x: 2
     cellsWide: 3
-    decksHigh: 2
-    topDeckHeight: 0.9
+    levelsHigh: 2
+    topLevelHeight: 0.9
     colour: 11261568
   - type: facade
     layer: 1
     y: 0
     x: 0
     cellsWide: 1
-    decksHigh: 1
-    topDeckHeight: 0.9
+    levelsHigh: 1
+    topLevelHeight: 0.9
 agents: []
 )yaml";
 
@@ -711,7 +711,7 @@ agents: []
 		require(first->getColour() == core::unpackBackgroundColour(11261568),
 			"A hand-authored Facade colour was not read");
 		require(first->getLayerIndex() == 0 && first->getCellY() == 1 && first->getCellX() == 2
-			&& first->getCellsWide() == 3 && first->getDecksHigh() == 2,
+			&& first->getCellsWide() == 3 && first->getLevelsHigh() == 2,
 			"The hand-authored Facade footprint was not read");
 		everyEndIsOpen(*first);
 
@@ -755,7 +755,7 @@ agents: []
 		auto const yaml = R"yaml(version: 6
 name: Unnamed frontage
 cellsWide: 12
-decksHigh: 3
+levelsHigh: 3
 layers: 2
 layerNames:
   - Layer 0
@@ -766,8 +766,8 @@ construction:
     y: 0
     x: 0
     cellsWide: 2
-    decksHigh: 1
-    topDeckHeight: 0.9
+    levelsHigh: 1
+    topLevelHeight: 0.9
     colour: 11261568
 agents: []
 )yaml";
@@ -870,7 +870,7 @@ agents: []
 	}
 
 	// Acceptance #44: a Facade never writes wall-removal records. Its open
-	// perimeter is a type property rather than an edit, so however many decks
+	// perimeter is a type property rather than an edit, so however many levels
 	// it spans the whole Facade is one record and zero RemoveWall records,
 	// and the replay needs no wall edits to leave every end open.
 	void aFacadeNeverWritesWallRemovalRecords()
@@ -903,7 +903,7 @@ agents: []
 		auto const check = [](std::string const& facadeRecord, std::string const& otherRecords,
 			char const* what)
 		{
-			auto const yaml = std::string("version: 6\nname: Order test\ncellsWide: 12\ndecksHigh: 3\n"
+			auto const yaml = std::string("version: 6\nname: Order test\ncellsWide: 12\nlevelsHigh: 3\n"
 				"layers: 2\nlayerNames:\n  - Layer 0\n  - Layer 1\nconstruction:\n")
 				+ facadeRecord + otherRecords + "agents: []\n";
 
@@ -921,9 +921,9 @@ agents: []
 		};
 
 		auto const facadeRecord = std::string("  - type: facade\n    layer: 0\n    y: 0\n    x: 0\n"
-			"    cellsWide: 3\n    decksHigh: 2\n    topDeckHeight: 0.9\n    colour: 11261568\n");
+			"    cellsWide: 3\n    levelsHigh: 2\n    topLevelHeight: 0.9\n    colour: 11261568\n");
 		auto const roomRecord = std::string("  - type: room\n    name: Room A\n    layer: 0\n    y: 0\n"
-			"    x: 4\n    cellsWide: 3\n    decksHigh: 2\n    topDeckHeight: 0.9\n");
+			"    x: 4\n    cellsWide: 3\n    levelsHigh: 2\n    topLevelHeight: 0.9\n");
 
 		check(facadeRecord, roomRecord, "Facade record first");
 		check(roomRecord, facadeRecord, "Facade record last");
@@ -942,7 +942,7 @@ agents: []
 		world.finishBuild();
 
 		auto const yaml = serializeWorld(world);
-		require(yaml.find("version: 14") != std::string::npos,
+		require(yaml.find("version: 15") != std::string::npos,
 			"The writer did not raise the version above the pre-Door-style ceiling");
 
 		bool refusedVersion = false;
@@ -965,7 +965,7 @@ agents: []
 		auto const legacyFacadeMap = R"yaml(version: 5
 name: Legacy facade
 cellsWide: 12
-decksHigh: 3
+levelsHigh: 3
 layers: 2
 layerNames:
   - Layer 0
@@ -977,16 +977,16 @@ construction:
     y: 0
     x: 0
     cellsWide: 3
-    decksHigh: 1
-    topDeckHeight: 0.9
+    levelsHigh: 1
+    topLevelHeight: 0.9
   - type: facade
     name: Frontage
     layer: 0
     y: 0
     x: 3
     cellsWide: 3
-    decksHigh: 1
-    topDeckHeight: 0.9
+    levelsHigh: 1
+    topLevelHeight: 0.9
     colour: 11261568
 agents: []
 )yaml";
@@ -1010,7 +1010,7 @@ agents: []
 		auto const legacyPlainMap = R"yaml(version: 5
 name: Legacy plain
 cellsWide: 12
-decksHigh: 3
+levelsHigh: 3
 layers: 2
 layerNames:
   - Layer 0
@@ -1022,14 +1022,14 @@ construction:
     y: 0
     x: 0
     cellsWide: 3
-    decksHigh: 1
-    topDeckHeight: 0.9
+    levelsHigh: 1
+    topLevelHeight: 0.9
   - type: background
     layer: 1
     y: 0
     x: 0
     cellsWide: 3
-    decksHigh: 1
+    levelsHigh: 1
     colour: 6340864
 agents: []
 )yaml";
@@ -1107,7 +1107,7 @@ agents: []
 	// Ticket #55: the Agent restore loops after a Layer delete, a Location
 	// edit, and a Background edit drop Agents left standing on non-traversable
 	// cells - but the guard used to fire only for a plain Location, so an Agent
-	// saved on a Facade's upper deck with no Walkway came back standing on air.
+	// saved on a Facade's upper level with no Walkway came back standing on air.
 	// The guard follows isLocationLike(), so a Facade is held to the same floor.
 	void restoreDropsAgentsOnNonTraversableFacadeCells()
 	{
@@ -1118,7 +1118,7 @@ agents: []
 				(std::string("The Agent on the Facade's walkable floor was not restored across ")
 					+ path).c_str());
 			require(world.lookupAgent(airId).entity == nullptr,
-				(std::string("The Agent on the Facade's non-traversable deck was restored across ")
+				(std::string("The Agent on the Facade's non-traversable level was restored across ")
 					+ path).c_str());
 		};
 
@@ -1129,7 +1129,7 @@ agents: []
 			world.addLayer();
 			world.finishBuild();
 			require(!std::as_const(world).getLayer(1)->getCellDefinition(0, 1).isTraversableOnFoot(),
-				"The Facade's upper deck is unexpectedly walkable; the restore guard would be vacuous");
+				"The Facade's upper level is unexpectedly walkable; the restore guard would be vacuous");
 			auto const groundId = world.createAgent("Grounded", facadeIndex, 0, 0.5f);
 			auto const airId = world.createAgent("On air", facadeIndex, 1, 0.5f);
 			auto const plan = world.planDeleteLayer(0);
@@ -1182,20 +1182,20 @@ agents: []
 	}
 
 	// Ticket #55: the height range check is a negated in-range test so a NaN
-	// topDeckHeight is rejected instead of sailing through both one-sided
+	// topLevelHeight is rejected instead of sailing through both one-sided
 	// comparisons - the same flaw the plain < / > pair had in addRoom.
-	void nanTopDeckHeightIsRejected()
+	void nanTopLevelHeightIsRejected()
 	{
 		core::World world("NaN", 12, 2);
 		world.finishBuild();
 		float const nan = std::numeric_limits<float>::quiet_NaN();
 		std::string diagnostic;
 		require(!world.canAddFacade(0, 0, 0, 2, 1, nan, &diagnostic),
-			"canAddFacade accepted a NaN topDeckHeight");
+			"canAddFacade accepted a NaN topLevelHeight");
 		require(throws([&] { world.addFacade(0, 0, 0, 2, 1, nan); }),
-			"addFacade accepted a NaN topDeckHeight");
+			"addFacade accepted a NaN topLevelHeight");
 		require(throws([&] { world.addRoom("NaN room", 0, 0, 0, 2, 1, nan); }),
-			"addRoom accepted a NaN topDeckHeight");
+			"addRoom accepted a NaN topLevelHeight");
 	}
 
 	bool hasPath(core::World const& world, core::Agent const* agent,
@@ -1265,16 +1265,16 @@ agents: []
 	}
 
 	// Ticket #45: floors must still match at the boundary. A Facade beside a
-	// Room one deck higher does not merge - no route crosses, and the
+	// Room one level higher does not merge - no route crosses, and the
 	// wall-removal command refuses the boundary exactly as it does between
-	// mismatched-floor Rooms - while the same pair sharing a deck does merge
+	// mismatched-floor Rooms - while the same pair sharing a level does merge
 	// once the Room opens its wall, so the refusal is the mismatch and not
 	// the Facade.
 	void facadeBesideHigherFloorDoesNotMerge()
 	{
 		std::string diagnostic;
 
-		// Facade floor: row 0. Room floors: rows 1-2, one deck higher at the
+		// Facade floor: row 0. Room floors: rows 1-2, one level higher at the
 		// boundary.
 		core::World mismatched("Mismatched", 12, 3);
 		auto const facade = mismatched.addFacade(0, 0, 0, 4, 1);
@@ -1289,9 +1289,9 @@ agents: []
 		require(mismatchedAgent != nullptr, "The mismatched-floor route checker was not created");
 
 		require(!hasPath(mismatched, mismatchedAgent, facadeMarker, roomMarker),
-			"A Facade merged with a Room one deck higher at the boundary");
+			"A Facade merged with a Room one level higher at the boundary");
 		require(!mismatched.canRemoveLocationWall(room, 0, CORE_SIDE_LEFT, &diagnostic),
-			"A wall removal was accepted against a Facade that does not share the deck");
+			"A wall removal was accepted against a Facade that does not share the level");
 
 		// Control: the same pair sharing row 0 merges once the Room opens its
 		// wall into the Facade's open half.
@@ -1304,7 +1304,7 @@ agents: []
 		aligned.addSectorMarker(room2, 0, 1.0f, &roomMarker2);
 		aligned.pauseSimulation();
 		require(aligned.canRemoveLocationWall(room2, 0, CORE_SIDE_LEFT, &diagnostic),
-			("A Room could not open its wall into a Facade sharing its deck: " + diagnostic).c_str());
+			("A Room could not open its wall into a Facade sharing its level: " + diagnostic).c_str());
 		aligned.removeLocationWall(room2, 0, CORE_SIDE_LEFT);
 		aligned.finishBuild();
 		auto const alignedAgentId = aligned.createAgent("Route checker", facade2, 0, 0.5f);
@@ -1406,16 +1406,16 @@ agents: []
 	}
 
 	uint32_t addLanding(core::World& world, LandingKind kind, uint32_t layer,
-		uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t decksHigh)
+		uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t levelsHigh)
 	{
 		switch (kind)
 		{
 		case LandingKind::Facade:
-			return world.addFacade(layer, y, x, cellsWide, decksHigh);
+			return world.addFacade(layer, y, x, cellsWide, levelsHigh);
 		case LandingKind::Room:
-			return world.addRoom("Landing", layer, y, x, cellsWide, decksHigh);
+			return world.addRoom("Landing", layer, y, x, cellsWide, levelsHigh);
 		case LandingKind::Background:
-			return world.addBackground(layer, y, x, cellsWide, decksHigh);
+			return world.addBackground(layer, y, x, cellsWide, levelsHigh);
 		}
 		throw std::runtime_error("Unknown landing kind");
 	}
@@ -1466,7 +1466,7 @@ agents: []
 					std::format("addLadder() over a {} landing said: {}", nameOf(kind), refusal).c_str());
 			}
 
-			// Stairwell: two cells of the Sector under test on each landing deck.
+			// Stairwell: two cells of the Sector under test on each landing level.
 			{
 				core::World world("Stairwell landing", 8, 3);
 				addLanding(world, kind, 0, 0, 0, 2, 1);
@@ -1478,7 +1478,7 @@ agents: []
 			}
 
 			// Lift: two stacked landing Sectors, one per stop row - only a
-			// Sector's own bottom deck is walkable floor - with a one-cell shaft
+			// Sector's own bottom level is walkable floor - with a one-cell shaft
 			// inside them so each stop keeps its call-button space. The landing
 			// rows are the same read the palette preview uses, and the add
 			// follows them.
@@ -1550,7 +1550,7 @@ agents: []
 	//   Layer 0  F  | U  U  | FFF   | F  F  F  F  F  F  F  | F  F  F
 	//
 	// Every Facade landing row is its own Facade, because only a Sector's own
-	// bottom deck carries walkable floor.
+	// bottom level carries walkable floor.
 	void authorFacadeLandingMenagerie(core::World& world,
 		uint32_t* facadeMarker = nullptr, uint32_t* upperMarker = nullptr)
 	{
@@ -1671,7 +1671,7 @@ void runFacadeSmokeChecks()
 	theTypeIsAKnownLocationKind();
 	theColourDefaultsAndRoundTrips();
 	placementValidationFollowsTheRoomRule();
-	everyWallEndIsOpenOnEveryDeck();
+	everyWallEndIsOpenOnEveryLevel();
 	agentsMayBePlacedInAFacade();
 	objectHostingParityWithARoom();
 	roomSupportedObjectsPlaceInAFacade();
@@ -1691,7 +1691,7 @@ void runFacadeSmokeChecks()
 	layerDeletionHandlesFacadeRecords();
 	restoreDropsAgentsOnNonTraversableFacadeCells();
 	theDescriptionCarriesTheFacadeName();
-	nanTopDeckHeightIsRejected();
+	nanTopLevelHeightIsRejected();
 	facadeBetweenTwoAlignedRoomsIsOneContinuousFloor();
 	facadeBesideHigherFloorDoesNotMerge();
 	wallRemovalAcceptsFacadeNeighboursBothWays();

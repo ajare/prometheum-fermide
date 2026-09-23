@@ -19,7 +19,7 @@
 //   wall add/remove against a Facade refuse with a clear, Facade-naming
 //   diagnostic, both through the can-check and through the throwing command
 //   the Selection panel's gates hold: a Facade is selectable, and no wall
-//   affordance on any deck or side would be actionable
+//   affordance on any level or side would be actionable
 //   the canvas drop targets - the pegman's Agent drop and a selected
 //   Agent's drag-move - accept a Facade exactly as they accept a Room
 
@@ -114,19 +114,19 @@ void theFacadeCreationFlowPlacesAnOccupiableSelectableSector()
 		("A free Facade rectangle was refused: " + diagnostic).c_str());
 
 	// The paint release adds it, and it arrives as a Facade with the dragged
-	// footprint, walkable ground on its bottom deck, and a name to show.
+	// footprint, walkable ground on its bottom level, and a name to show.
 	auto const facadeIndex = world.addFacade("Frontage", 1, 0, 0, 4, 2,
 		CORE_ROOM_MAX_HEIGHT);
 	world.finishBuild();
 	auto const facade = facadeIn(world, facadeIndex);
 	require(facade->getLayerIndex() == 1 && facade->getCellX() == 0
 		&& facade->getCellY() == 0 && facade->getCellsWide() == 4
-		&& facade->getDecksHigh() == 2,
+		&& facade->getLevelsHigh() == 2,
 		"The painted Facade landed with the wrong footprint");
 	require(facade->getName() == "Frontage", "The painted Facade lost its name");
 	require(std::as_const(world).getLayer(1)->getCellDefinition(0, 0).floorType
 		== core::CellFloorType::Ground,
-		"The Facade's bottom deck does not own walkable ground");
+		"The Facade's bottom level does not own walkable ground");
 	require(world.isTraversalTopologyValid(),
 		"The painted Facade left an invalid topology: " + world.getTopologyDiagnostic());
 
@@ -204,7 +204,7 @@ void aFacadeColourEditPersistsThroughTheConstructionRecord()
 	// The edit was a recolour, not a move: the geometry the panel reports is
 	// untouched.
 	require(after->getLayerIndex() == 1 && after->getCellX() == 0 && after->getCellY() == 0
-		&& after->getCellsWide() == 4 && after->getDecksHigh() == 1,
+		&& after->getCellsWide() == 4 && after->getLevelsHigh() == 1,
 		"The recolour changed the Facade's geometry");
 	require(reloaded.getNumSectors() == world.getNumSectors(),
 		"The recolour changed the Sector count");
@@ -289,7 +289,7 @@ void aRecolourIsRefusedForAnythingWhichIsNotAFacade()
 }
 
 // Wall add/remove against a Facade refuse with a clear, Facade-naming
-// diagnostic - on every deck and both sides - through the can-check and
+// diagnostic - on every level and both sides - through the can-check and
 // through the throwing command the editor calls.
 void wallCommandsRefuseAFacadeWithAClearDiagnostic()
 {
@@ -301,18 +301,18 @@ void wallCommandsRefuseAFacadeWithAClearDiagnostic()
 	world.pauseSimulation();
 
 	auto const facade = facadeIn(world, facadeIndex);
-	for (uint32_t deck = 0; deck < facade->getDecksHigh(); ++deck)
+	for (uint32_t level = 0; level < facade->getLevelsHigh(); ++level)
 	{
 		for (int side = CORE_SIDE_LEFT; side <= CORE_SIDE_RIGHT; ++side)
 		{
 			std::string diagnostic;
-			require(!world.canAddLocationWall(facadeIndex, deck, side, &diagnostic),
+			require(!world.canAddLocationWall(facadeIndex, level, side, &diagnostic),
 				"A wall addition was accepted on a Facade");
 			require(diagnostic.find("Facade") != std::string::npos
 				&& diagnostic.find("no walls") != std::string::npos,
 				"The wall-add refusal did not name the Facade rule: " + diagnostic);
 
-			require(!world.canRemoveLocationWall(facadeIndex, deck, side, &diagnostic),
+			require(!world.canRemoveLocationWall(facadeIndex, level, side, &diagnostic),
 				"A wall removal was accepted on a Facade");
 			require(diagnostic.find("Facade") != std::string::npos
 				&& diagnostic.find("no walls") != std::string::npos,
@@ -323,7 +323,7 @@ void wallCommandsRefuseAFacadeWithAClearDiagnostic()
 			bool threw = false;
 			try
 			{
-				world.addLocationWall(facadeIndex, deck, side);
+				world.addLocationWall(facadeIndex, level, side);
 			}
 			catch (core::Exception const& error)
 			{
@@ -337,7 +337,7 @@ void wallCommandsRefuseAFacadeWithAClearDiagnostic()
 			threw = false;
 			try
 			{
-				world.removeLocationWall(facadeIndex, deck, side);
+				world.removeLocationWall(facadeIndex, level, side);
 			}
 			catch (core::Exception const& error)
 			{
@@ -351,9 +351,9 @@ void wallCommandsRefuseAFacadeWithAClearDiagnostic()
 	}
 
 	// Nothing moved: the Facade still has no walls, and its neighbour's do.
-	for (uint32_t deck = 0; deck < facade->getDecksHigh(); ++deck)
+	for (uint32_t level = 0; level < facade->getLevelsHigh(); ++level)
 		for (int side = CORE_SIDE_LEFT; side <= CORE_SIDE_RIGHT; ++side)
-			require(facade->getEndType(deck, side) == core::SectorEndType::None,
+			require(facade->getEndType(level, side) == core::SectorEndType::None,
 				"A refused wall edit changed a Facade end");
 	require(world.getSector(roomIndex)->getEndType(0, CORE_SIDE_LEFT)
 		== core::SectorEndType::Wall,
@@ -363,7 +363,7 @@ void wallCommandsRefuseAFacadeWithAClearDiagnostic()
 }
 
 // The Selection panel's shape for a Facade: reachable by selection, its colour
-// widget opens on the Facade's own colour, and no wall affordance on any deck
+// widget opens on the Facade's own colour, and no wall affordance on any level
 // or side would be actionable - the panel shows the picker and never the wall
 // editor.
 void theSelectionPanelShowsNoWallAffordancesForAFacade()
@@ -388,17 +388,17 @@ void theSelectionPanelShowsNoWallAffordancesForAFacade()
 		"The colour widget round-trip does not preserve the Facade's colour");
 
 	// No wall affordance is actionable: every add and remove the wall editor
-	// could offer across every deck and side refuses, so the panel - which
+	// could offer across every level and side refuses, so the panel - which
 	// branches to its own Facade layout before the wall editor - has no wall
 	// buttons to grey out or fire.
-	for (uint32_t deck = 0; deck < facade->getDecksHigh(); ++deck)
+	for (uint32_t level = 0; level < facade->getLevelsHigh(); ++level)
 	{
 		for (int side = CORE_SIDE_LEFT; side <= CORE_SIDE_RIGHT; ++side)
 		{
 			std::string diagnostic;
-			require(!world.canAddLocationWall(index, deck, side, &diagnostic),
+			require(!world.canAddLocationWall(index, level, side, &diagnostic),
 				"The wall editor would find an actionable wall-add on a Facade");
-			require(!world.canRemoveLocationWall(index, deck, side, &diagnostic),
+			require(!world.canRemoveLocationWall(index, level, side, &diagnostic),
 				"The wall editor would find an actionable wall-remove on a Facade");
 		}
 	}
@@ -431,7 +431,7 @@ void theCanvasDropTargetsAcceptAFacade()
 	require(facadeTarget.sector->getType() == core::SectorType::Facade
 		&& facadeTarget.sector->getIndex() == facadeIndex,
 		"The pegman drop resolved to something other than the Facade");
-	require(facadeTarget.deckOffset == 0, "The pegman drop landed on the wrong deck");
+	require(facadeTarget.levelOffset == 0, "The pegman drop landed on the wrong level");
 	require(facadeTarget.localX >= CORE_AGENT_MAX_WIDTH * 0.5f
 		&& facadeTarget.localX <= facadeTarget.sector->getSize().x - CORE_AGENT_MAX_WIDTH * 0.5f,
 		"The pegman drop landed outside the Facade's Agent band");

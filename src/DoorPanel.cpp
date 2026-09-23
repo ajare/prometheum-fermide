@@ -97,7 +97,7 @@ void renderDoorPanel(shared_ptr<core::World> const& world,
 		ImGui::Separator();
 		ImGui::Text("Owned by %s", liftOwned ? "Lift" : "Shuttle");
 		ImGui::Text("%s sector: %u", liftOwned ? "Lift" : "Shuttle", liftSector);
-		if (liftOwned) ImGui::Text("Stop: %u (floor %u)", stopIndex, object->getCellY());
+		if (liftOwned) ImGui::Text("Stop: %u (level %u)", stopIndex, object->getCellY());
 		else ImGui::Text("Stop: %u, carriage: %u, door: %u", stopIndex, carriageIndex, doorIndex);
 		ImGui::TextDisabled("Landing geometry and controls are managed by the transport.");
 		ImGui::TextDisabled(liftOwned

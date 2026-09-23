@@ -23,7 +23,7 @@ namespace core
 			bool looping);
 		bool hasStop(uint32_t x, uint32_t y) const;
 		uint32_t getNumStops() const;
-		uint32_t getStopDeckIndex(uint32_t index) const;
+		uint32_t getStopLevelIndex(uint32_t index) const;
 		uint32_t getStopIndex(uint32_t x, uint32_t y) const;
 		std::vector<std::pair<std::string, std::string>> getInternalsStrings() const override;
 	};

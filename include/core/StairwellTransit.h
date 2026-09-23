@@ -17,7 +17,7 @@ namespace core
 
 	public:
 
-		StairwellTransit(uint32_t index, uint32_t layerIndex, uint32_t cellX, uint32_t cellY, uint32_t decksHigh, int mountSide, std::vector<TransitStop> const& stops);
+		StairwellTransit(uint32_t index, uint32_t layerIndex, uint32_t cellX, uint32_t cellY, uint32_t levelsHigh, int mountSide, std::vector<TransitStop> const& stops);
 
 		~StairwellTransit() = default;
 
@@ -32,7 +32,7 @@ namespace core
 		[[nodiscard]] bool sectorSupportsObjectType(SectorObjectType type) const override;
 
 		// Overridden from VerticalEdgeCreator
-		[[nodiscard]] std::shared_ptr<Edge> createCrossDeckEdge(std::shared_ptr<VerticalEdgeCreator> edgeCreator) const override;
+		[[nodiscard]] std::shared_ptr<Edge> createCrossLevelEdge(std::shared_ptr<VerticalEdgeCreator> edgeCreator) const override;
 	};
 
 } // core

@@ -30,7 +30,7 @@ namespace core
 
 	public:
 
-		SectorObject(SectorObjectType type, std::shared_ptr<const Sector> sector, uint32_t cellX, uint32_t cellY, uint32_t cellsWide, uint32_t decksHigh, std::shared_ptr<Object> object, uint32_t* vertexIdentifer);
+		SectorObject(SectorObjectType type, std::shared_ptr<const Sector> sector, uint32_t cellX, uint32_t cellY, uint32_t cellsWide, uint32_t levelsHigh, std::shared_ptr<Object> object, uint32_t* vertexIdentifer);
 
 		~SectorObject() = default;
 

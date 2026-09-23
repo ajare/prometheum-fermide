@@ -62,10 +62,10 @@ namespace
 	// The cell footprint a Background claims on its own Layer: occupied by that
 	// Sector, with no floor and no SectorObject on every cell.
 	void footprintIsStamped(core::World const& world, uint32_t layerIndex,
-		uint32_t sectorIndex, uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t decksHigh)
+		uint32_t sectorIndex, uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t levelsHigh)
 	{
 		auto const layer = world.getLayer(layerIndex);
-		for (uint32_t iy = y; iy < y + decksHigh; ++iy)
+		for (uint32_t iy = y; iy < y + levelsHigh; ++iy)
 		{
 			for (uint32_t ix = x; ix < x + cellsWide; ++ix)
 			{
@@ -93,7 +93,7 @@ namespace
 			require(sector != nullptr, "World reported a null Sector while signing");
 			signature += std::format("{}:{}@{},{},{}x{}", index,
 				core::getSectorTypeString(sector->getType()), sector->getLayerIndex(),
-				sector->getCellX(), sector->getCellY(), sector->getCellsWide(), sector->getDecksHigh());
+				sector->getCellX(), sector->getCellY(), sector->getCellsWide(), sector->getLevelsHigh());
 			if (sector->getType() == core::SectorType::Background)
 			{
 				auto const background = std::dynamic_pointer_cast<const core::Background>(sector);
@@ -312,7 +312,7 @@ namespace
 		world.finishBuild();
 
 		auto const yaml = serializeWorld(world);
-		require(yaml.find("version: 14") != std::string::npos,
+		require(yaml.find("version: 15") != std::string::npos,
 			"The World writer did not emit the current schema version");
 		require(yaml.find("type: background") != std::string::npos,
 			"The Background record was not written");
@@ -330,7 +330,7 @@ namespace
 		require(backgroundIn(loaded, 1)->getLayerIndex() == 1
 			&& backgroundIn(loaded, 1)->getCellY() == 1 && backgroundIn(loaded, 1)->getCellX() == 6
 			&& backgroundIn(loaded, 1)->getCellsWide() == 4
-			&& backgroundIn(loaded, 1)->getDecksHigh() == 2,
+			&& backgroundIn(loaded, 1)->getLevelsHigh() == 2,
 			"The Background footprint did not survive the round-trip");
 		footprintIsStamped(loaded, 1, 1, 1, 6, 4, 2);
 	}
@@ -342,7 +342,7 @@ namespace
 		auto const yaml = R"yaml(version: 5
 name: Hand authored
 cellsWide: 12
-decksHigh: 3
+levelsHigh: 3
 layers: 2
 layerNames:
   - Layer 0
@@ -353,7 +353,7 @@ construction:
     y: 1
     x: 6
     cellsWide: 4
-    decksHigh: 2
+    levelsHigh: 2
     colour: 12345678
   - type: room
     name: Front room
@@ -361,8 +361,8 @@ construction:
     y: 0
     x: 0
     cellsWide: 6
-    decksHigh: 1
-    topDeckHeight: 0.9
+    levelsHigh: 1
+    topLevelHeight: 0.9
 agents: []
 )yaml";
 
@@ -427,7 +427,7 @@ agents: []
 		require(throws([&] { world.createAgent("Nowhere", backdrop); }),
 			"An Agent was created inside a Background");
 		require(throws([&] { world.createAgent("Nowhere either", backdrop, 0, 1.0f); }),
-			"An Agent was created inside a Background with a deck offset");
+			"An Agent was created inside a Background with a level offset");
 		require(backgroundIn(world, backdrop)->getAgents().empty(),
 			"A Background holds Agents after a refused placement");
 	}

@@ -208,16 +208,16 @@ namespace core
 		});
 	}
 
-	void Graph::addCrossDeckVertex(shared_ptr<VerticalEdgeCreator> edgeCreator, shared_ptr <Vertex> vertex, CrossDeckVertexMap& crossDeckVertices)
+	void Graph::addCrossLevelVertex(shared_ptr<VerticalEdgeCreator> edgeCreator, shared_ptr <Vertex> vertex, CrossLevelVertexMap& crossLevelVertices)
 	{
-		auto it = crossDeckVertices.insert(make_pair(edgeCreator, VertexList()));
+		auto it = crossLevelVertices.insert(make_pair(edgeCreator, VertexList()));
 
 		it.first->second.push_back(vertex);
 	}
 
-	void Graph::processCrossDeckVertices(CrossDeckVertexMap const& crossDeckVertices)
+	void Graph::processCrossLevelVertices(CrossLevelVertexMap const& crossLevelVertices)
 	{
-		for (auto item : crossDeckVertices)
+		for (auto item : crossLevelVertices)
 		{
 			auto const& [edgeCreator, vertices] = item;
 
@@ -227,7 +227,7 @@ namespace core
 			for (uint32_t i = 0; i < numVertices - 1; ++i)
 			{
 				bool connectZ = vertices[i]->getSector()->getLayerIndex() != vertices[i + 1]->getSector()->getLayerIndex();
-				addEdge(edgeCreator->createCrossDeckEdge(edgeCreator), vertices[i], vertices[i + 1], connectZ);
+				addEdge(edgeCreator->createCrossLevelEdge(edgeCreator), vertices[i], vertices[i + 1], connectZ);
 			}
 		}
 	}
@@ -410,7 +410,7 @@ namespace core
 		return nullptr;
 	}
 
-	void Graph::processDoor(ObjectData const& obj, LayerPairRole role, PositionVertexMap& interLayerVertexLookup, RowVertices& row, CrossDeckVertexMap& crossDeckVertices)
+	void Graph::processDoor(ObjectData const& obj, LayerPairRole role, PositionVertexMap& interLayerVertexLookup, RowVertices& row, CrossLevelVertexMap& crossLevelVertices)
 	{
 		ASSERT_INDEX_OK(obj.index);
 
@@ -445,11 +445,11 @@ namespace core
 			break;
 		
 		case SectorType::Lift:
-			vertex = createLiftTransitVertex(dynamic_pointer_cast<LiftTransit>(sector), obj.x, obj.y, crossDeckVertices);
+			vertex = createLiftTransitVertex(dynamic_pointer_cast<LiftTransit>(sector), obj.x, obj.y, crossLevelVertices);
 			break;
 
 		case SectorType::Shuttle:
-			vertex = createShuttleTransitVertex(dynamic_pointer_cast<ShuttleTransit>(sector), obj.x, obj.y, crossDeckVertices);
+			vertex = createShuttleTransitVertex(dynamic_pointer_cast<ShuttleTransit>(sector), obj.x, obj.y, crossLevelVertices);
 			break;
 
 		default:
@@ -598,7 +598,7 @@ namespace core
 		addEdge(make_shared<ForceBridgeEdge>(sectorObject->getForceBridge()), left, right, false);
 	}
 
-	void Graph::processLadderObject(ObjectData const& obj, RowVertices& row, CrossDeckVertexMap& crossDeckVertices, int level)
+	void Graph::processLadderObject(ObjectData const& obj, RowVertices& row, CrossLevelVertexMap& crossLevelVertices, int endpoint)
 	{
 		ASSERT_INDEX_OK(obj.index);
 
@@ -606,7 +606,7 @@ namespace core
 		auto ladderObject = dynamic_pointer_cast<LadderSectorObject>(sector->_getObject(obj.index));
 		auto ladder = ladderObject->getLadder();
 
-		auto locationVertex = ladderObject->createVertex(ladderObject, sector, &level);
+		auto locationVertex = ladderObject->createVertex(ladderObject, sector, &endpoint);
 
 		addSectorObjectVertexLookup(ladderObject, locationVertex);
 
@@ -621,22 +621,22 @@ namespace core
 		float xOffset = (ladderObject->getCellX() - sector->getCellX()) + 0.5f;
 		float yOffset = (float)(ladderObject->getCellY() - sector->getCellY());
 		
-		if (level == CORE_LEVEL_HIGH)
+		if (endpoint == CORE_LADDER_ENDPOINT_HIGH)
 		{
-			yOffset += (ladder->getDecksHigh() - 1.0f);
+			yOffset += (ladder->getLevelsHigh() - 1.0f);
 		}
 		
-		auto ladderVertex = make_shared<LadderVertex>(sector, ladder, xOffset, yOffset, level);
+		auto ladderVertex = make_shared<LadderVertex>(sector, ladder, xOffset, yOffset, endpoint);
 		auto ladderMountEdge = make_shared<LadderMountEdge>(ladder);
 		auto connectZ = true;
 
 		addEdge(ladderMountEdge, locationVertex, ladderVertex, connectZ);
 	
 		// Add LadderVertex to a post-processing list, to join up its vertices with a Ladder edge, later
-		addCrossDeckVertex(ladderObject, ladderVertex, crossDeckVertices);
+		addCrossLevelVertex(ladderObject, ladderVertex, crossLevelVertices);
 	}
 
-	void Graph::processLiftObject(ObjectData const& obj, RowVertices& row, CrossDeckVertexMap& crossDeckVertices, uint32_t stopOffset)
+	void Graph::processLiftObject(ObjectData const& obj, RowVertices& row, CrossLevelVertexMap& crossLevelVertices, uint32_t stopOffset)
 	{
 		ASSERT_INDEX_OK(obj.index);
 
@@ -666,10 +666,10 @@ namespace core
 		addEdge(liftMountEdge, sectorVertex, liftVertex, connectZ);
 
 		// Add LiftVertex to a post-processing list, to join up its vertices with a Ladder edge, later
-		addCrossDeckVertex(liftObject, liftVertex, crossDeckVertices);
+		addCrossLevelVertex(liftObject, liftVertex, crossLevelVertices);
 	}
 
-	void Graph::processLadderTransit(LayerPairRole role, uint32_t curSectorIndex, uint32_t x, uint32_t y, int level, PositionVertexMap& interLayerVertexLookup, RowVertices& row, CrossDeckVertexMap& crossDeckVertices)
+	void Graph::processLadderTransit(LayerPairRole role, uint32_t curSectorIndex, uint32_t x, uint32_t y, int endpoint, PositionVertexMap& interLayerVertexLookup, RowVertices& row, CrossLevelVertexMap& crossLevelVertices)
 	{
 		auto sector = mwWorld->_getSector(curSectorIndex);
 		float xOffset = (float)(x - sector->getCellX()) + 0.5f;
@@ -698,7 +698,7 @@ namespace core
 
 		auto ladderTransit = dynamic_pointer_cast<LadderTransit>(sector);
 		auto ladder = ladderTransit->getLadder();
-		auto ladderVert = make_shared<LadderVertex>(sector, ladder, xOffset, yOffset, level);
+		auto ladderVert = make_shared<LadderVertex>(sector, ladder, xOffset, yOffset, endpoint);
 
 		appendRowVertex(row, x, SlotTransit, ladderVert);
 
@@ -717,10 +717,10 @@ namespace core
 			it->second->getSector()->getLayerIndex() != ladderVert->getSector()->getLayerIndex());
 
 		// Add Ladder Vertex to lookup for joining up
-		addCrossDeckVertex(ladderTransit, ladderVert, crossDeckVertices);
+		addCrossLevelVertex(ladderTransit, ladderVert, crossLevelVertices);
 	}
 
-	shared_ptr<Vertex> Graph::createLiftTransitVertex(shared_ptr<LiftTransit> liftTransit, uint32_t x, uint32_t y, CrossDeckVertexMap& crossDeckVertices)
+	shared_ptr<Vertex> Graph::createLiftTransitVertex(shared_ptr<LiftTransit> liftTransit, uint32_t x, uint32_t y, CrossLevelVertexMap& crossLevelVertices)
 	{
 		uint32_t stopOffset = y - liftTransit->getCellY();
 		float xOffset = (float)(x - liftTransit->getCellX()) + liftTransit->getCellsWide() * 0.5f;
@@ -729,12 +729,12 @@ namespace core
 		auto liftVertex = make_shared<LiftVertex>(liftTransit, liftTransit->getLift(), xOffset, yOffset, stopOffset);
 
 		// Add Ladder Vertex to lookup for joining up
-		addCrossDeckVertex(liftTransit, liftVertex, crossDeckVertices);
+		addCrossLevelVertex(liftTransit, liftVertex, crossLevelVertices);
 
 		return liftVertex;
 	}
 
-	shared_ptr<Vertex> Graph::createShuttleTransitVertex(shared_ptr<ShuttleTransit> shuttleTransit, uint32_t x, uint32_t y, CrossDeckVertexMap& crossDeckVertices)
+	shared_ptr<Vertex> Graph::createShuttleTransitVertex(shared_ptr<ShuttleTransit> shuttleTransit, uint32_t x, uint32_t y, CrossLevelVertexMap& crossLevelVertices)
 	{
 		uint32_t stopOffset = x - shuttleTransit->getCellX();
 		float xOffset = (float)stopOffset + 0.5f;
@@ -743,12 +743,12 @@ namespace core
 		auto shuttleVertex = make_shared<ShuttleVertex>(shuttleTransit, shuttleTransit->getShuttle(), xOffset, yOffset, stopOffset);
 
 		// Add Ladder Vertex to lookup for joining up
-		addCrossDeckVertex(shuttleTransit, shuttleVertex, crossDeckVertices);
+		addCrossLevelVertex(shuttleTransit, shuttleVertex, crossLevelVertices);
 
 		return shuttleVertex;
 	}
 
-	void Graph::processStairwellTransit(LayerPairRole role, uint32_t curSectorIndex, uint32_t backSectorIndex, uint32_t x, uint32_t y, uint32_t deckOffset, PositionVertexMap& interLayerVertexLookup, RowVertices& row, CrossDeckVertexMap& crossDeckVertices)
+	void Graph::processStairwellTransit(LayerPairRole role, uint32_t curSectorIndex, uint32_t backSectorIndex, uint32_t x, uint32_t y, uint32_t levelOffset, PositionVertexMap& interLayerVertexLookup, RowVertices& row, CrossLevelVertexMap& crossLevelVertices)
 	{
 		// Stairwell Vertices are probably the most complex to place, as we have to design a usable path through the transit
 		// area, whose steps are not too steep.  Also need to take into account the width of Agents as they pass through.
@@ -785,9 +785,9 @@ namespace core
 		}
 
 		auto stairwell = stairwellTransit->getStairwell();
-		auto path = stairwell->getDeckPath(deckOffset);
+		auto path = stairwell->getLevelPath(levelOffset);
 		auto stairwellVert0 = make_shared<StairwellVertex>(sector, stairwell,
-			path[0].x, path[0].y, deckOffset);
+			path[0].x, path[0].y, levelOffset);
 
 		appendRowVertex(row, x, SlotTransit, stairwellVert0);
 
@@ -806,31 +806,31 @@ namespace core
 			it->second->getSector()->getLayerIndex() != stairwellVert0->getSector()->getLayerIndex());
 
 		// Add Ladder Vertex to lookup for joining up
-		addCrossDeckVertex(stairwellTransit, stairwellVert0, crossDeckVertices);
+		addCrossLevelVertex(stairwellTransit, stairwellVert0, crossLevelVertices);
 
 		// Intermediate Vertices
-		if (y < (stairwellTransit->getCellY() + stairwellTransit->getDecksHigh() - 1))
+		if (y < (stairwellTransit->getCellY() + stairwellTransit->getLevelsHigh() - 1))
 		{
 			// Lower landing
 			auto stairwellVert1 = make_shared<StairwellVertex>(sector, stairwell,
-				path[1].x, path[1].y, deckOffset);
+				path[1].x, path[1].y, levelOffset);
 
 			appendStandaloneRowVertex(row, x, SlotTransit, stairwellVert1);
-			addCrossDeckVertex(stairwellTransit, stairwellVert1, crossDeckVertices);
+			addCrossLevelVertex(stairwellTransit, stairwellVert1, crossLevelVertices);
 
 			// Upper landing
 			auto stairwellVert2 = make_shared<StairwellVertex>(sector, stairwell,
-				path[2].x, path[2].y, deckOffset);
+				path[2].x, path[2].y, levelOffset);
 
 			appendStandaloneRowVertex(row, x, SlotTransit, stairwellVert2);
-			addCrossDeckVertex(stairwellTransit, stairwellVert2, crossDeckVertices);
+			addCrossLevelVertex(stairwellTransit, stairwellVert2, crossLevelVertices);
 		}
 	}
 
 	void Graph::processStaircaseTransit(LayerPairRole role, uint32_t curSectorIndex,
 		uint32_t backSectorIndex, uint32_t x, uint32_t y,
 		PositionVertexMap& interLayerVertexLookup, RowVertices& row,
-		CrossDeckVertexMap& crossDeckVertices)
+		CrossLevelVertexMap& crossLevelVertices)
 	{
 		auto transit = dynamic_pointer_cast<StaircaseTransit>(mwWorld->_getSector(backSectorIndex));
 		auto staircase = transit->getStaircase();
@@ -860,7 +860,7 @@ namespace core
 			if (found == interLayerVertexLookup.end())
 				throw WorldException(mwWorld, format("A Staircase endpoint has no Location at {},{}", x, y));
 			addEdge(make_shared<StaircaseMountEdge>(staircase), found->second, staircaseVertex, true);
-			addCrossDeckVertex(transit, staircaseVertex, crossDeckVertices);
+			addCrossLevelVertex(transit, staircaseVertex, crossLevelVertices);
 		}
 	}
 
@@ -994,7 +994,7 @@ namespace core
 	Graph::LayerRows Graph::buildLayerRows() const
 	{
 		auto const layerCount = mwWorld->getLayerCount();
-		auto const decksHigh = mwWorld->getDecksHigh();
+		auto const levelsHigh = mwWorld->getLevelsHigh();
 
 		LayerRows rows(layerCount);
 
@@ -1003,9 +1003,9 @@ namespace core
 			auto const layer = mwWorld->getLayer(layerIndex);
 			auto const cellsWide = layer->getCellsWide();
 
-			rows[layerIndex].reserve(decksHigh);
+			rows[layerIndex].reserve(levelsHigh);
 
-			for (uint32_t y = 0; y < decksHigh; ++y)
+			for (uint32_t y = 0; y < levelsHigh; ++y)
 			{
 				RowVertices row;
 				row.layerIndex = layerIndex;
@@ -1126,7 +1126,7 @@ namespace core
 		}
 	}
 
-	void Graph::processLayerRow(uint32_t layerIndex, uint32_t y, RowVertices& row, CrossDeckVertexMap& crossDeckVertices)
+	void Graph::processLayerRow(uint32_t layerIndex, uint32_t y, RowVertices& row, CrossLevelVertexMap& crossLevelVertices)
 	{
 		auto const layer = mwWorld->getLayer(layerIndex);
 		auto const cellsWide = layer->getCellsWide();
@@ -1204,14 +1204,14 @@ namespace core
 
 				// Check to see if we want to add a Vertex on either the lowest or highest floor
 				bool lowest = y == 0 || layer->getCellDefinition(x, y - 1).sectorObjectIndex != thisLadderIndex;
-				bool highest = y == (mwWorld->getDecksHigh() - 1) || layer->getCellDefinition(x, y + 1).sectorObjectIndex != thisLadderIndex;
+				bool highest = y == (mwWorld->getLevelsHigh() - 1) || layer->getCellDefinition(x, y + 1).sectorObjectIndex != thisLadderIndex;
 
 				if (lowest || highest)
 				{
 					ObjectData obj = { thisLadderIndex, layerIndex, x, y,
 						mwWorld->_getSector(cellDef.sectorIndex), {} };
 
-					processLadderObject(obj, row, crossDeckVertices, lowest ? CORE_LEVEL_LOW : CORE_LEVEL_HIGH);
+					processLadderObject(obj, row, crossLevelVertices, lowest ? CORE_LADDER_ENDPOINT_LOW : CORE_LADDER_ENDPOINT_HIGH);
 				}
 			}
 			else if (cellDef.sectorObjectType == SectorObjectType::Lift)
@@ -1230,7 +1230,7 @@ namespace core
 				{
 					ObjectData obj = { thisLiftIndex, layerIndex, x, y, sector, {} };
 
-					processLiftObject(obj, row, crossDeckVertices, y - liftObject->getCellY());
+					processLiftObject(obj, row, crossLevelVertices, y - liftObject->getCellY());
 				}
 			}
 
@@ -1274,17 +1274,17 @@ namespace core
 		}
 	}
 
-	void Graph::processLayerPair(uint32_t frontLayer, uint32_t backLayer, LayerRows& rows, CrossDeckVertexMap& crossDeckVertices)
+	void Graph::processLayerPair(uint32_t frontLayer, uint32_t backLayer, LayerRows& rows, CrossLevelVertexMap& crossLevelVertices)
 	{
 		// Each adjacent Layer pair gets its own inter-layer Vertex lookup, so a Vertex
 		// belonging to one pair can never be joined with a Vertex of another.
 		PositionVertexMap interLayerVertexLookup;
 
-		for (uint32_t y = 0; y < mwWorld->getDecksHigh(); ++y)
+		for (uint32_t y = 0; y < mwWorld->getLevelsHigh(); ++y)
 		{
 			for (uint32_t x = 0; x < mwWorld->getCellsWide(); ++x)
 			{
-				processPairCell(frontLayer, backLayer, x, y, interLayerVertexLookup, rows, crossDeckVertices);
+				processPairCell(frontLayer, backLayer, x, y, interLayerVertexLookup, rows, crossLevelVertices);
 			}
 		}
 	}
@@ -1323,7 +1323,7 @@ namespace core
 
 	void Graph::processPairCell(uint32_t frontLayer, uint32_t backLayer, uint32_t x, uint32_t y,
 		PositionVertexMap& interLayerVertexLookup, LayerRows& rows,
-		CrossDeckVertexMap& crossDeckVertices)
+		CrossLevelVertexMap& crossLevelVertices)
 	{
 		auto const frontLayerPtr = mwWorld->getLayer(frontLayer);
 		auto const backLayerPtr = mwWorld->getLayer(backLayer);
@@ -1357,7 +1357,7 @@ namespace core
 			auto const sharedObject = frontSector->_getObject(frontCell.sectorObjectIndex);
 			ObjectData front = { frontCell.sectorObjectIndex, frontLayer, x, y, frontSector, {} };
 			processDoor(front, LayerPairRole::Front, interLayerVertexLookup,
-				rows[frontLayer][y], crossDeckVertices);
+				rows[frontLayer][y], crossLevelVertices);
 
 			if (backProcessable)
 			{
@@ -1368,7 +1368,7 @@ namespace core
 						format("A Door at {},{} is missing from its back-layer Sector", x, y));
 				ObjectData back = { backIndex, backLayer, x, y, backSector, {} };
 				processDoor(back, LayerPairRole::Back, interLayerVertexLookup,
-					rows[backLayer][y], crossDeckVertices);
+					rows[backLayer][y], crossLevelVertices);
 			}
 		}
 
@@ -1407,22 +1407,22 @@ namespace core
 		{
 			// Want to make sure we only process the lowest and highest cells of the Ladder.
 			bool lowest = y == 0 || backLayerPtr->getCellDefinition(x, y - 1).sectorIndex != backCell.sectorIndex;
-			bool highest = y == (mwWorld->getDecksHigh() - 1) || backLayerPtr->getCellDefinition(x, y + 1).sectorIndex != backCell.sectorIndex;
+			bool highest = y == (mwWorld->getLevelsHigh() - 1) || backLayerPtr->getCellDefinition(x, y + 1).sectorIndex != backCell.sectorIndex;
 
 			if (lowest || highest)
 			{
-				auto const level = lowest ? CORE_LEVEL_LOW : CORE_LEVEL_HIGH;
+				auto const endpoint = lowest ? CORE_LADDER_ENDPOINT_LOW : CORE_LADDER_ENDPOINT_HIGH;
 
 				if (frontProcessable)
 				{
-					processLadderTransit(LayerPairRole::Front, frontCell.sectorIndex, x, y, level,
-						interLayerVertexLookup, rows[frontLayer][y], crossDeckVertices);
+					processLadderTransit(LayerPairRole::Front, frontCell.sectorIndex, x, y, endpoint,
+						interLayerVertexLookup, rows[frontLayer][y], crossLevelVertices);
 				}
 
 				if (backProcessable)
 				{
-					processLadderTransit(LayerPairRole::Back, backCell.sectorIndex, x, y, level,
-						interLayerVertexLookup, rows[backLayer][y], crossDeckVertices);
+					processLadderTransit(LayerPairRole::Back, backCell.sectorIndex, x, y, endpoint,
+						interLayerVertexLookup, rows[backLayer][y], crossLevelVertices);
 				}
 			}
 		}
@@ -1433,18 +1433,18 @@ namespace core
 
 			if (stairwellTransit->getCellX() == x)
 			{
-				auto const deckOffset = y - stairwellTransit->getCellY();
+				auto const levelOffset = y - stairwellTransit->getCellY();
 
 				if (frontProcessable)
 				{
 					processStairwellTransit(LayerPairRole::Front, frontCell.sectorIndex, backCell.sectorIndex,
-						x, y, deckOffset, interLayerVertexLookup, rows[frontLayer][y], crossDeckVertices);
+						x, y, levelOffset, interLayerVertexLookup, rows[frontLayer][y], crossLevelVertices);
 				}
 
 				if (backProcessable)
 				{
 					processStairwellTransit(LayerPairRole::Back, backCell.sectorIndex, backCell.sectorIndex,
-						x, y, deckOffset, interLayerVertexLookup, rows[backLayer][y], crossDeckVertices);
+						x, y, levelOffset, interLayerVertexLookup, rows[backLayer][y], crossLevelVertices);
 				}
 			}
 		}
@@ -1462,13 +1462,13 @@ namespace core
 				if (frontProcessable)
 				{
 					processStaircaseTransit(LayerPairRole::Front, frontCell.sectorIndex, backCell.sectorIndex,
-						x, y, interLayerVertexLookup, rows[frontLayer][y], crossDeckVertices);
+						x, y, interLayerVertexLookup, rows[frontLayer][y], crossLevelVertices);
 				}
 
 				if (backProcessable)
 				{
 					processStaircaseTransit(LayerPairRole::Back, backCell.sectorIndex, backCell.sectorIndex,
-						x, y, interLayerVertexLookup, rows[backLayer][y], crossDeckVertices);
+						x, y, interLayerVertexLookup, rows[backLayer][y], crossLevelVertices);
 				}
 			}
 		}
@@ -1497,38 +1497,38 @@ namespace core
 		// how many Layers the World has.
 		auto rows = buildLayerRows();
 
-		// To connect Vertices between Decks, we store each object with its Vertices, for instance
+		// To connect Vertices between Levels, we store each object with its Vertices, for instance
 		// a Lift with each LiftVertex
-		CrossDeckVertexMap crossDeckVertexLists;
+		CrossLevelVertexMap crossLevelVertexLists;
 
 		// Thresholds and Transits pair each adjacent Layer - 0<->1, 1<->2, and so on -
 		// instead of one hard-coded Fore/Back pass.  Each pair is scanned front-first,
 		// with its own inter-layer Vertex lookup.
 		for (uint32_t frontLayer = 0; frontLayer + 1 < layerCount; ++frontLayer)
 		{
-			processLayerPair(frontLayer, layerBehind(frontLayer), rows, crossDeckVertexLists);
+			processLayerPair(frontLayer, layerBehind(frontLayer), rows, crossLevelVertexLists);
 		}
 
 		// A Layer's own content is scanned once, independently of the pairs it forms.
 		for (uint32_t layerIndex = 0; layerIndex < layerCount; ++layerIndex)
 		{
-			for (uint32_t y = 0; y < mwWorld->getDecksHigh(); ++y)
+			for (uint32_t y = 0; y < mwWorld->getLevelsHigh(); ++y)
 			{
-				processLayerRow(layerIndex, y, rows[layerIndex][y], crossDeckVertexLists);
+				processLayerRow(layerIndex, y, rows[layerIndex][y], crossLevelVertexLists);
 			}
 		}
 
-		// Connect each row, in the Layer and deck order it was scanned in.
+		// Connect each row, in the Layer and level order it was scanned in.
 		for (uint32_t layerIndex = 0; layerIndex < layerCount; ++layerIndex)
 		{
-			for (uint32_t y = 0; y < mwWorld->getDecksHigh(); ++y)
+			for (uint32_t y = 0; y < mwWorld->getLevelsHigh(); ++y)
 			{
 				flushRowVertices(rows[layerIndex][y]);
 			}
 		}
 
 		// Connect Layers
-		processCrossDeckVertices(crossDeckVertexLists);
+		processCrossLevelVertices(crossLevelVertexLists);
 	}
 	void Graph::validate()
 	{

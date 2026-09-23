@@ -17,17 +17,17 @@ namespace core
 	This Vertex is used at each end of a Ladder.  For each Ladder, there will be a pair, connected by a LadderEdge.
 	*/
 
-	LadderVertex::LadderVertex(uint32_t id, shared_ptr<Sector> sector, shared_ptr<Ladder> ladder, float xOffset, float yOffset, int level)
+	LadderVertex::LadderVertex(uint32_t id, shared_ptr<Sector> sector, shared_ptr<Ladder> ladder, float xOffset, float yOffset, int endpoint)
 		: Vertex(id, isLocationLike(sector->getType()) ? VertexType::Location : VertexType::Ladder, VertexSubType::Ladder, sector, xOffset, yOffset)
 		, mLadder(ladder)
-		, mLevel(level)
+		, mEndpoint(endpoint)
 	{
 	}
 
-	LadderVertex::LadderVertex(shared_ptr<Sector> sector, shared_ptr<Ladder> ladder, float xOffset, float yOffset, int level)
+	LadderVertex::LadderVertex(shared_ptr<Sector> sector, shared_ptr<Ladder> ladder, float xOffset, float yOffset, int endpoint)
 		: Vertex(isLocationLike(sector->getType()) ? VertexType::Location : VertexType::Ladder, VertexSubType::Ladder, sector, xOffset, yOffset)
 		, mLadder(ladder)
-		, mLevel(level)
+		, mEndpoint(endpoint)
 	{
 	}
 
@@ -52,7 +52,7 @@ namespace core
 			getLadder(),
 			getSectorOffset().x,
 			getSectorOffset().y,
-			mLevel
+			mEndpoint
 		);
 	}
 

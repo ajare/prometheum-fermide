@@ -39,7 +39,7 @@ namespace core
 
 	private:
 
-		uint32_t mCellsWide, mDecksHigh; 
+		uint32_t mCellsWide, mLevelsHigh;
 
 		State mState;
 
@@ -56,13 +56,13 @@ namespace core
 
 	public:
 
-		Window(uint32_t cellX, uint32_t cellY, uint32_t cellsWide, uint32_t decksHigh, std::shared_ptr<const Sector> sectors[2]);
+		Window(uint32_t cellX, uint32_t cellY, uint32_t cellsWide, uint32_t levelsHigh, std::shared_ptr<const Sector> sectors[2]);
 
 		~Window() = default;
 
 		[[nodiscard]] uint32_t getCellsWide() const;
 
-		[[nodiscard]] uint32_t getDecksHigh() const;
+		[[nodiscard]] uint32_t getLevelsHigh() const;
 
 		[[nodiscard]] State const& getState() const;
 

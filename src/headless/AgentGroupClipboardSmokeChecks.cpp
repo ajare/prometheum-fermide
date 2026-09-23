@@ -246,11 +246,11 @@ namespace
 	// pegman landing calls.
 	core::AgentId place(std::shared_ptr<core::World> const& world,
 		AgentClipboardPayload const& payload, std::shared_ptr<const core::Sector> sector,
-		uint32_t deckOffset = 0, float localX = 2.0f)
+		uint32_t levelOffset = 0, float localX = 2.0f)
 	{
 		core::AgentId placed{};
 		std::string diagnostic;
-		require(commitAgentPlacement(world, payload, sector, deckOffset, localX,
+		require(commitAgentPlacement(world, payload, sector, levelOffset, localX,
 			placed, diagnostic), "Placing the pasted Agent failed: " + diagnostic);
 		require(!!placed, "The placement reported success without naming an Agent");
 		return placed;

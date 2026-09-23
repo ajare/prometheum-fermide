@@ -72,7 +72,7 @@ namespace
 		return "version: 6\n"
 			"name: Zero size replay\n"
 			"cellsWide: 6\n"
-			"decksHigh: 4\n"
+			"levelsHigh: 4\n"
 			"layers: 2\n"
 			"construction:\n"
 			"  - " + record +
@@ -123,7 +123,7 @@ namespace
 		requireMinimumRefusal(refusalMessage([&] {
 			world.addCorridor(1u, 1u, 0u);
 		}), "Corridor");
-		// The Layer-less overload with an explicit zero decksHigh; the cast picks
+		// The Layer-less overload with an explicit zero levelsHigh; the cast picks
 		// that overload because the 4-argument forms are otherwise ambiguous.
 		auto const layerless = static_cast<uint32_t(core::World::*)(
 			uint32_t, uint32_t, uint32_t, uint32_t)>(&core::World::addCorridor);
@@ -166,8 +166,8 @@ namespace
 				"    y: 1\n"
 				"    x: 1\n"
 				"    cellsWide: 0\n"
-				"    decksHigh: 2\n"
-				"    topDeckHeight: 0.9\n"));
+				"    levelsHigh: 2\n"
+				"    topLevelHeight: 0.9\n"));
 		}), "replayed Room");
 		requireMinimumRefusal(refusalMessage([&] {
 			loadFailure(mapWith("type: room\n"
@@ -176,8 +176,8 @@ namespace
 				"    y: 1\n"
 				"    x: 1\n"
 				"    cellsWide: 2\n"
-				"    decksHigh: 0\n"
-				"    topDeckHeight: 0.9\n"));
+				"    levelsHigh: 0\n"
+				"    topLevelHeight: 0.9\n"));
 		}), "replayed Room");
 	}
 
@@ -190,7 +190,7 @@ namespace
 				"    y: 1\n"
 				"    x: 1\n"
 				"    cellsWide: 0\n"
-				"    decksHigh: 2\n"));
+				"    levelsHigh: 2\n"));
 		}), "replayed Corridor");
 		requireMinimumRefusal(refusalMessage([&] {
 			loadFailure(mapWith("type: corridor\n"
@@ -198,7 +198,7 @@ namespace
 				"    y: 1\n"
 				"    x: 1\n"
 				"    cellsWide: 2\n"
-				"    decksHigh: 0\n"));
+				"    levelsHigh: 0\n"));
 		}), "replayed Corridor");
 	}
 
@@ -253,14 +253,14 @@ namespace
 			"    y: 1\n"
 			"    x: 1\n"
 			"    cellsWide: 2\n"
-			"    decksHigh: 2\n"
-			"    topDeckHeight: 0.9\n"
+			"    levelsHigh: 2\n"
+			"    topLevelHeight: 0.9\n"
 			"  - type: corridor\n"
 			"    layer: 0\n"
 			"    y: 3\n"
 			"    x: 1\n"
 			"    cellsWide: 2\n"
-			"    decksHigh: 1\n"));
+			"    levelsHigh: 1\n"));
 		reader->deserialize();
 		require(loaded.deserialize(*reader, workData),
 			"A valid Room and Corridor document did not load");

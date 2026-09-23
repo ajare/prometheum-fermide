@@ -211,7 +211,7 @@ void facadeFillCoversTheWholeFacadeSurface()
 		auto const ty = [](float y)
 		{
 			return gUISettings.worldViewportY + gUISettings.worldViewportHeight
-				- y * CORE_DECK_HEIGHT_PIXELS - gUISettings.yOffset;
+				- y * CORE_LEVEL_HEIGHT_PIXELS - gUISettings.yOffset;
 		};
 
 		float minX = FLT_MAX, maxX = -FLT_MAX, minY = FLT_MAX, maxY = -FLT_MAX;

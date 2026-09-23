@@ -770,7 +770,7 @@ core::AgentGroupId findAgentGroupByName(core::World const& world,
 bool armAgentPlacement(PendingAgentPlacement& pending,
 	core::World const& world, AgentClipboardPayload const& payload,
 	shared_ptr<const core::Sector> sector,
-	uint32_t deckOffset, float localX, string& diagnostic)
+	uint32_t levelOffset, float localX, string& diagnostic)
 {
 	pending.cancel();
 	diagnostic.clear();
@@ -804,7 +804,7 @@ bool armAgentPlacement(PendingAgentPlacement& pending,
 
 	pending.payload = payload;
 	pending.sector = sector;
-	pending.deckOffset = deckOffset;
+	pending.levelOffset = levelOffset;
 	pending.localX = localX;
 	return true;
 }
@@ -812,7 +812,7 @@ bool armAgentPlacement(PendingAgentPlacement& pending,
 bool commitAgentPlacement(shared_ptr<core::World> const& world,
 	AgentClipboardPayload const& payload,
 	shared_ptr<const core::Sector> sector,
-	uint32_t deckOffset, float localX,
+	uint32_t levelOffset, float localX,
 	core::AgentId& placed, string& diagnostic)
 {
 	placed = {};
@@ -895,7 +895,7 @@ bool commitAgentPlacement(shared_ptr<core::World> const& world,
 	{
 		// The Agent is created first: if that is refused, no group has been
 		// made yet, so the common failure leaves nothing behind at all.
-		agentId = world->createAgent(payload.name, sector->getIndex(), deckOffset, localX);
+		agentId = world->createAgent(payload.name, sector->getIndex(), levelOffset, localX);
 		auto const created = world->lookupAgent(agentId).entity;
 		if (!created)
 		{
@@ -987,11 +987,11 @@ bool commitPendingAgentPlacement(PendingAgentPlacement& pending,
 	// by a second frame of the fall.
 	auto const payload = pending.payload;
 	auto const sector = pending.sector;
-	auto const deckOffset = pending.deckOffset;
+	auto const levelOffset = pending.levelOffset;
 	auto const localX = pending.localX;
 	pending.cancel();
 
-	return commitAgentPlacement(world, payload, sector, deckOffset, localX,
+	return commitAgentPlacement(world, payload, sector, levelOffset, localX,
 		placed, diagnostic);
 }
 

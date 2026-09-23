@@ -10,6 +10,14 @@ The complete simulation aggregate, including its spatial structure, movement net
 **Layer**:
 One of the ordered spatial planes used to represent depth in the two-dimensional world. Layers are numbered from front (0) to back. A World may have between 2 and 256 layers.
 
+**Level**:
+A vertical position analogous to a floor or storey in a building. Levels are numbered upward from ground level 0.
+_Avoid_: Deck; floor or storey when referring to a vertical position
+
+**Floor**:
+A physical horizontal surface of a Sector on which an Agent may walk.
+_Avoid_: Level, deck, storey
+
 **Sector**:
 A region of a Layer in the world's spatial structure. A sector is either a Location, a Transit, or a Background; an agent belongs to a Location or a Transit, never to a Background.
 
@@ -24,7 +32,7 @@ A named location that may occupy any layer.
 A location that may occupy any layer.
 
 **Facade**:
-A location whose perimeter walls are all open. It is occupiable, hosts every object type a Room hosts, owns walkable floor, and takes part in traversal exactly as a Room does; its only differences are that every wall end on every deck is open, and that it is rendered as a solid opaque colour like a Background. The open perimeter is an intrinsic creation property, not an editable state: wall add/remove commands and Bulkhead Doors refuse a Facade.
+A location whose perimeter walls are all open. It is occupiable, hosts every object type a Room hosts, owns walkable floor, and takes part in traversal exactly as a Room does; its only differences are that every wall end on every level is open, and that it is rendered as a solid opaque colour like a Background. The open perimeter is an intrinsic creation property, not an editable state: wall add/remove commands and Bulkhead Doors refuse a Facade.
 
 **Background**:
 A non-occupiable Sector that exists only to be seen through Windows and other apertures from the Layer in front. It carries one opaque colour, hosts no objects, owns no walkable floor, and takes no part in traversal. Where a Window looks into a sector, that sector is its Background - no separate domain noun is minted for it.
@@ -83,7 +91,7 @@ The controlled boundary between two sectors, such as a doorway or the entrance t
 _Avoid_: Vertex, when discussing physical movement rules
 
 **Door**:
-A threshold that connects two adjacent layers. It is authored on the front layer of the pair and opens into the layer immediately behind it. A regular Door has a one-deck footprint. An ordinary Door authored in a Room may be regular height or 0.9-unit tall; Corridor, Facade, Lift, and Shuttle Doors always use regular height. Lift and Shuttle landing doors belong to their transport.
+A threshold that connects two adjacent layers. It is authored on the front layer of the pair and opens into the layer immediately behind it. A regular Door has a one-level footprint. An ordinary Door authored in a Room may be regular height or 0.9-unit tall; Corridor, Facade, Lift, and Shuttle Doors always use regular height. Lift and Shuttle landing doors belong to their transport.
 _Avoid_: Portal
 
 **Crossing width**:
@@ -94,7 +102,7 @@ _Avoid_: Door width, doorway width, when referring to the arrival band
 A threshold, similar to a Door, that connects two adjacent layers and is authored on the front layer of the pair. It always looks into the layer directly behind it, so it can never sit on the back-most layer.
 
 **Walkway**:
-A traversable floor within a multi-deck room, above that room's ground floor.
+A traversable floor within a multi-level room, above that room's ground-level floor.
 
 **Platform lift**:
 An open transport vehicle within one room. Its ground stop is mandatory, and selected walkway stops connect it to higher levels in the same column. Walkways in that column need not all be stops.

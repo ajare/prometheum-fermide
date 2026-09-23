@@ -204,7 +204,7 @@ namespace core
 					: destination != resource.mLiftPassengerDestinations.end()
 						? destination->second : findAgentLiftDestination(*agent, resource);
 				if (passenger.targetStop < resource.mLiftStops.size())
-					passenger.targetFloor = resource.mLiftStops[passenger.targetStop].globalPosition;
+					passenger.targetLevel = resource.mLiftStops[passenger.targetStop].globalPosition;
 				result.liftAgents.push_back(passenger);
 			}
 		}

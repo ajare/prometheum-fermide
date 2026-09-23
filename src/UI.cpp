@@ -171,7 +171,7 @@ namespace
 		PaletteItem item{ PaletteItem::None };
 		ImVec2 pressPosition{};
 		shared_ptr<const core::Sector> sector;
-		uint32_t deckOffset{ 0 };
+		uint32_t levelOffset{ 0 };
 		float localX{ 0.0f };
 		float feetY{ 0.0f };
 		float floorY{ 0.0f };
@@ -414,7 +414,7 @@ namespace
 		return {
 			(position.x - gUISettings.worldViewportX - gUISettings.xOffset) / CORE_CELL_WIDTH_PIXELS,
 			(gUISettings.worldViewportY + gUISettings.worldViewportHeight - position.y
-				- gUISettings.yOffset) / CORE_DECK_HEIGHT_PIXELS
+				- gUISettings.yOffset) / CORE_LEVEL_HEIGHT_PIXELS
 		};
 	}
 
@@ -424,7 +424,7 @@ namespace
 			gUISettings.worldViewportX + gUISettings.xOffset
 				+ position.x * CORE_CELL_WIDTH_PIXELS,
 			gUISettings.worldViewportY + gUISettings.worldViewportHeight
-				- gUISettings.yOffset - position.y * CORE_DECK_HEIGHT_PIXELS
+				- gUISettings.yOffset - position.y * CORE_LEVEL_HEIGHT_PIXELS
 		};
 	}
 
@@ -448,14 +448,14 @@ namespace
 
 		auto cellY = (uint32_t)floor(worldPosition.y);
 		if (cellY < sector->getCellY())
-			return { sector, 0, 0.0f, worldPosition.y, worldPosition.y, "Marker deck is outside the sector" };
-		auto deckOffset = cellY - sector->getCellY();
+			return { sector, 0, 0.0f, worldPosition.y, worldPosition.y, "Marker level is outside the sector" };
+		auto levelOffset = cellY - sector->getCellY();
 		auto localX = worldPosition.x - sector->getPosition().x;
 		string diagnostic;
-		world->canAddSectorMarker(sector->getIndex(), deckOffset, localX, &diagnostic);
-		return { sector, deckOffset, localX,
-			(float)sector->getCellY() + deckOffset,
-			(float)sector->getCellY() + deckOffset, std::move(diagnostic) };
+		world->canAddSectorMarker(sector->getIndex(), levelOffset, localX, &diagnostic);
+		return { sector, levelOffset, localX,
+			(float)sector->getCellY() + levelOffset,
+			(float)sector->getCellY() + levelOffset, std::move(diagnostic) };
 	}
 
 	PegmanTarget getDoorTarget(shared_ptr<const core::World> const& world,
@@ -559,10 +559,10 @@ namespace
 			target.diagnostic = "Walkways can only be placed in Rooms";
 		else
 		{
-			target.deckOffset = target.cellY >= target.sector->getCellY()
+			target.levelOffset = target.cellY >= target.sector->getCellY()
 				? target.cellY - target.sector->getCellY() : ~0u;
 			target.localX = (float)(target.cellX - target.sector->getCellX());
-			world->canAddSectorWalkway(target.sector->getIndex(), target.deckOffset,
+			world->canAddSectorWalkway(target.sector->getIndex(), target.levelOffset,
 				(uint32_t)target.localX, &target.diagnostic);
 		}
 		return target;
@@ -590,15 +590,15 @@ namespace
 		if (!room || room->isCorridor()) target.diagnostic = "Force Bridges can only be placed in Rooms";
 		else
 		{
-			target.deckOffset = target.cellY - room->getCellY();
+			target.levelOffset = target.cellY - room->getCellY();
 			target.localX = (float)(target.cellX - room->getCellX());
 			core::World::CreateForceBridgeOptions options;
 			if (world->calculateSectorForceBridgeWidthToRight(room->getIndex(),
-				target.deckOffset, (uint32_t)target.localX, target.cellsWide,
+				target.levelOffset, (uint32_t)target.localX, target.cellsWide,
 				&target.diagnostic))
 			{
 				options.width = target.cellsWide;
-				world->canAddSectorForceBridge(room->getIndex(), target.deckOffset,
+				world->canAddSectorForceBridge(room->getIndex(), target.levelOffset,
 					(uint32_t)target.localX, options, &target.diagnostic);
 			}
 		}
@@ -628,10 +628,10 @@ namespace
 			target.diagnostic = "Room Ladders can only be placed in Rooms";
 		else
 		{
-			target.deckOffset = target.cellY - room->getCellY();
+			target.levelOffset = target.cellY - room->getCellY();
 			target.localX = (float)(target.cellX - room->getCellX());
 			uint32_t height{};
-			world->canAddRoomLadder(room->getIndex(), target.deckOffset,
+			world->canAddRoomLadder(room->getIndex(), target.levelOffset,
 				(uint32_t)target.localX, &height, &target.diagnostic);
 			target.floorY = (float)(target.cellY + height);
 		}
@@ -653,18 +653,18 @@ namespace
 		{ target.diagnostic = "PlatformLifts can only be placed in Rooms"; return target; }
 		target.cellX = (uint32_t)floor(worldPosition.x);
 		target.cellY = room->getCellY();
-		target.deckOffset = 0;
+		target.levelOffset = 0;
 		target.localX = (float)(target.cellX - room->getCellX());
 		core::World::CreateLiftOptions options;
 		options.cellsWide = 1;
 		for (auto const& candidate : world->getPlatformLiftStopCandidates(
 			room->getIndex(), (uint32_t)target.localX))
 		{
-			options.stopOffsets = { 0, candidate.deckOffset };
+			options.stopOffsets = { 0, candidate.levelOffset };
 			if (world->canAddPlatformLift(room->getIndex(), (uint32_t)target.localX,
 				options, &target.diagnostic))
 			{
-				target.floorY = (float)(room->getCellY() + candidate.deckOffset + 1);
+				target.floorY = (float)(room->getCellY() + candidate.levelOffset + 1);
 				return target;
 			}
 		}
@@ -793,12 +793,12 @@ namespace
 				auto marker = static_pointer_cast<const core::MarkerSectorObject>(object)->getMarker();
 				auto worldPosition = marker->getPosition();
 				worldPosition.x += marker->getOffset();
-				// The icon is drawn MarkerDeckLift above the deck, so the hit box covers
-				// the icon and the gap down to the deck the Vertex stays on.
-				auto point = worldToScreen({ worldPosition.x, worldPosition.y + MarkerDeckLift });
-				auto deckPad = MarkerDeckLift * CORE_DECK_HEIGHT_PIXELS + 2.0f;
+				// The icon is drawn MarkerFloorLift above the floor, so the hit box covers
+				// the icon and the gap down to the floor the Vertex stays on.
+				auto point = worldToScreen({ worldPosition.x, worldPosition.y + MarkerFloorLift });
+				auto floorPad = MarkerFloorLift * CORE_LEVEL_HEIGHT_PIXELS + 2.0f;
 				if (pointInRect(position, point - ImVec2(MarkerIconSize * 0.5f, MarkerIconSize),
-					point + ImVec2(MarkerIconSize * 0.5f, deckPad))) return object;
+					point + ImVec2(MarkerIconSize * 0.5f, floorPad))) return object;
 			}
 		}
 		return nullptr;
@@ -844,7 +844,7 @@ namespace
 				float tolerance = 5.0f / (float)CORE_CELL_WIDTH_PIXELS;
 				if (worldPosition.x < min.x - tolerance || worldPosition.x > max.x + tolerance
 					|| worldPosition.y < min.y - tolerance || worldPosition.y > max.y + tolerance) continue;
-				// At a shared endpoint the upper segment has the greater base deck.
+				// At a shared endpoint the upper segment has the greater base level.
 				if (!selected || object->getCellY() > selected->getCellY()) selected = object;
 			}
 		}
@@ -1023,14 +1023,14 @@ namespace
 	{
 		if (!gPaint.dragging || gPaint.anchorX < 0 || gPaint.anchorY < 0
 			|| gPaint.anchorX >= (int)world->getCellsWide()
-			|| gPaint.anchorY >= (int)world->getDecksHigh()) return {};
+			|| gPaint.anchorY >= (int)world->getLevelsHigh()) return {};
 
 		auto layer = world->getLayer(gPaint.layer);
 		auto worldPosition = screenToWorld(mousePosition);
 		if (gPaint.tool == PaintTool::Staircase)
 		{
 			int endX = clamp((int)floor(worldPosition.x), 0, (int)world->getCellsWide() - 1);
-			int endY = clamp((int)floor(worldPosition.y), 0, (int)world->getDecksHigh() - 1);
+			int endY = clamp((int)floor(worldPosition.y), 0, (int)world->getLevelsHigh() - 1);
 			int x = min(gPaint.anchorX, endX);
 			int y = min(gPaint.anchorY, endY);
 			uint32_t width = (uint32_t)(abs(endX - gPaint.anchorX) + 1);
@@ -1053,7 +1053,7 @@ namespace
 			bool leftward = floor(worldPosition.x) < gPaint.anchorX;
 			int x = leftward ? gPaint.anchorX - 1 : gPaint.anchorX;
 			if (x + 2 > (int)world->getCellsWide()) x = gPaint.anchorX - 1;
-			int endY = clamp((int)floor(worldPosition.y), 0, (int)world->getDecksHigh() - 1);
+			int endY = clamp((int)floor(worldPosition.y), 0, (int)world->getLevelsHigh() - 1);
 			int y = min(gPaint.anchorY, endY);
 			uint32_t height = (uint32_t)(abs(endY - gPaint.anchorY) + 1);
 			PaintRectangle result{ false, (uint32_t)max(0, x), (uint32_t)y, 2, height, {} };
@@ -1066,7 +1066,7 @@ namespace
 		}
 		if (gPaint.tool == PaintTool::Ladder)
 		{
-			int endY = clamp((int)floor(worldPosition.y), 0, (int)world->getDecksHigh() - 1);
+			int endY = clamp((int)floor(worldPosition.y), 0, (int)world->getLevelsHigh() - 1);
 			int y = min(gPaint.anchorY, endY);
 			uint32_t height = (uint32_t)(abs(endY - gPaint.anchorY) + 1);
 			PaintRectangle result{ false, (uint32_t)gPaint.anchorX, (uint32_t)y, 1, height, {} };
@@ -1081,7 +1081,7 @@ namespace
 			// it refuses the paint. canAddBackground() owns the rule and the
 			// diagnostic, so the preview turns red where the refusal lands.
 			int endX = clamp((int)floor(worldPosition.x), 0, (int)world->getCellsWide() - 1);
-			int endY = clamp((int)floor(worldPosition.y), 0, (int)world->getDecksHigh() - 1);
+			int endY = clamp((int)floor(worldPosition.y), 0, (int)world->getLevelsHigh() - 1);
 			int x = min(gPaint.anchorX, endX);
 			int y = min(gPaint.anchorY, endY);
 			PaintRectangle result{ false, (uint32_t)x, (uint32_t)y,
@@ -1098,7 +1098,7 @@ namespace
 			endX = clamp(endX, gPaint.anchorX - 1, gPaint.anchorX + 1);
 		int endY = (gPaint.tool == PaintTool::Corridor || gPaint.tool == PaintTool::Shuttle)
 			? gPaint.anchorY
-			: clamp((int)floor(worldPosition.y), 0, (int)world->getDecksHigh() - 1);
+			: clamp((int)floor(worldPosition.y), 0, (int)world->getLevelsHigh() - 1);
 		int directionX = endX >= gPaint.anchorX ? 1 : -1;
 		int directionY = endY >= gPaint.anchorY ? 1 : -1;
 		int requestedWidth = abs(endX - gPaint.anchorX) + 1;
@@ -1207,7 +1207,7 @@ namespace
 		{
 			if (!world->isSimulationPaused()) world->pauseSimulation();
 			auto created = world->addSectorMarker(target.sector->getIndex(),
-				target.deckOffset, target.localX);
+				target.levelOffset, target.localX);
 			world->finishBuild();
 			setSelectionMode(UISettings::SelectionMode::Object);
 			gSelectedAgent = nullptr;
@@ -1310,7 +1310,7 @@ namespace
 		try
 		{
 			auto created = world->addSectorWalkway(target.sector->getIndex(),
-				target.deckOffset, (uint32_t)target.localX);
+				target.levelOffset, (uint32_t)target.localX);
 			world->finishBuild();
 			setSelectionMode(UISettings::SelectionMode::Object);
 			gSelectedAgent = nullptr;
@@ -1338,7 +1338,7 @@ namespace
 			for (auto const& candidate : world->getPlatformLiftStopCandidates(
 				target.sector->getIndex(), (uint32_t)target.localX))
 			{
-				options.stopOffsets = { 0, candidate.deckOffset };
+				options.stopOffsets = { 0, candidate.levelOffset };
 				string diagnostic;
 				if (!world->canAddPlatformLift(target.sector->getIndex(),
 					(uint32_t)target.localX, options, &diagnostic)) continue;
@@ -1367,7 +1367,7 @@ namespace
 			core::World::CreateForceBridgeOptions options;
 			options.width = target.cellsWide;
 			auto created = world->addSectorForceBridge(target.sector->getIndex(),
-				target.deckOffset, (uint32_t)target.localX, options);
+				target.levelOffset, (uint32_t)target.localX, options);
 			world->finishBuild();
 			setSelectionMode(UISettings::SelectionMode::Object);
 			gSelectedAgent = nullptr;
@@ -1391,7 +1391,7 @@ namespace
 		try
 		{
 			auto created = world->addRoomLadder(target.sector->getIndex(),
-				target.deckOffset, (uint32_t)target.localX);
+				target.levelOffset, (uint32_t)target.localX);
 			world->finishBuild();
 			setSelectionMode(UISettings::SelectionMode::Object);
 			gSelectedAgent = nullptr;
@@ -1424,7 +1424,7 @@ namespace
 				? commitPendingAgentPlacement(gPegman.pastedAgent, world, placed, diagnostic)
 				: commitAgentPlacement(world,
 					AgentClipboardPayload{ nextAgentName(world), 0, true, nullopt },
-					gPegman.sector, gPegman.deckOffset, gPegman.localX, placed, diagnostic);
+					gPegman.sector, gPegman.levelOffset, gPegman.localX, placed, diagnostic);
 			if (!landed)
 			{
 				reportEditorError("Agent editor", diagnostic);
@@ -1641,7 +1641,7 @@ namespace
 			int x = (int)floor(worldPosition.x);
 			int y = (int)floor(worldPosition.y);
 			if (x >= 0 && y >= 0 && x < (int)world->getCellsWide()
-				&& y < (int)world->getDecksHigh())
+				&& y < (int)world->getLevelsHigh())
 			{
 				gPaint.dragging = true;
 				gPaint.layer = (uint32_t)gUISettings.visibleLayer;
@@ -1895,7 +1895,7 @@ namespace
 				{
 					gPegman.phase = PalettePhase::Falling;
 					gPegman.sector = target.sector;
-					gPegman.deckOffset = target.deckOffset;
+					gPegman.levelOffset = target.levelOffset;
 					gPegman.localX = target.localX;
 					gPegman.feetY = target.feetY;
 					gPegman.floorY = target.floorY;
@@ -1919,7 +1919,7 @@ namespace
 			{
 				auto preview = target.sector
 					? worldToScreen({ target.sector->getPosition().x + target.localX,
-						target.floorY + MarkerDeckLift })
+						target.floorY + MarkerFloorLift })
 					: io.MousePos;
 				drawMarkerIcon(drawList, preview, MarkerIconSize, colour);
 			}
@@ -1967,9 +1967,9 @@ namespace
 				auto x = target.sector ? worldToScreen({ (float)target.cellX, 0.0f }).x : io.MousePos.x;
 				auto top = target.sector
 					? worldToScreen({ (float)target.cellX, (float)target.cellY + CORE_CORRIDOR_HEIGHT }).y
-					: io.MousePos.y - CORE_DECK_HEIGHT_PIXELS * CORE_CORRIDOR_HEIGHT * 0.5f;
+					: io.MousePos.y - CORE_LEVEL_HEIGHT_PIXELS * CORE_CORRIDOR_HEIGHT * 0.5f;
 				auto bottom = target.sector ? worldToScreen({ (float)target.cellX, (float)target.cellY }).y
-					: io.MousePos.y + CORE_DECK_HEIGHT_PIXELS * CORE_CORRIDOR_HEIGHT * 0.5f;
+					: io.MousePos.y + CORE_LEVEL_HEIGHT_PIXELS * CORE_CORRIDOR_HEIGHT * 0.5f;
 				drawList->AddLine({ x, top }, { x, bottom }, colour, 5.0f);
 			}
 			else if (gPegman.item == PaletteItem::Door
@@ -1990,7 +1990,7 @@ namespace
 				{
 					auto previewHeight = gPegman.item == PaletteItem::Door ? CORE_DOOR_HEIGHT : 1.0f;
 					auto halfSize = ImVec2(CORE_CELL_WIDTH_PIXELS * 0.5f,
-						previewHeight * CORE_DECK_HEIGHT_PIXELS * 0.5f);
+						previewHeight * CORE_LEVEL_HEIGHT_PIXELS * 0.5f);
 					drawList->AddRect(io.MousePos - halfSize, io.MousePos + halfSize,
 						colour, 0.0f, 0, 2.0f);
 				}
@@ -1999,7 +1999,7 @@ namespace
 			{
 				drawPegman(drawList, io.MousePos,
 					CORE_AGENT_MAX_WIDTH * CORE_CELL_WIDTH_PIXELS,
-					CORE_AGENT_MAX_HEIGHT * CORE_DECK_HEIGHT_PIXELS, colour);
+					CORE_AGENT_MAX_HEIGHT * CORE_LEVEL_HEIGHT_PIXELS, colour);
 			}
 			if (!target.diagnostic.empty()) ImGui::SetTooltip("%s", target.diagnostic.c_str());
 			ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
@@ -2009,7 +2009,7 @@ namespace
 			auto globalX = gPegman.sector->getPosition().x + gPegman.localX;
 			drawPegman(drawList, worldToScreen({ globalX, gPegman.feetY }),
 				CORE_AGENT_MAX_WIDTH * CORE_CELL_WIDTH_PIXELS,
-				CORE_AGENT_MAX_HEIGHT * CORE_DECK_HEIGHT_PIXELS, yellow);
+				CORE_AGENT_MAX_HEIGHT * CORE_LEVEL_HEIGHT_PIXELS, yellow);
 		}
 
 		gPegmanConsumesLeftMouse = gSectorResize.dragging || gObjectMove.dragging
@@ -2226,7 +2226,7 @@ namespace
 	string gFileError;
 	char gNewWorldName[128]{ "Untitled" };
 	int gNewWorldWidth{ 48 };
-	int gNewWorldDecks{ 6 };
+	int gNewWorldLevels{ 6 };
 
 	void clearDocumentState(bool clearHistory = true)
 	{
@@ -2930,9 +2930,9 @@ namespace
 		{
 			ImGui::InputText("Name", gNewWorldName, sizeof(gNewWorldName));
 			ImGui::InputInt("Width", &gNewWorldWidth);
-			ImGui::InputInt("Decks", &gNewWorldDecks);
+			ImGui::InputInt("Levels", &gNewWorldLevels);
 			bool const valid = gNewWorldName[0] != '\0'
-				&& gNewWorldWidth > 0 && gNewWorldDecks > 0;
+				&& gNewWorldWidth > 0 && gNewWorldLevels > 0;
 			if (ImGui::Button("Create") && valid)
 			{
 				if (world && world->hasAttachedAgentTagRegistry())
@@ -2941,7 +2941,7 @@ namespace
 					forgetAgentBehaviourRegistryDocument(world->getAgentBehaviourRegistry());
 				world = make_shared<core::World>(gNewWorldName,
 					static_cast<uint32_t>(gNewWorldWidth),
-					static_cast<uint32_t>(gNewWorldDecks));
+					static_cast<uint32_t>(gNewWorldLevels));
 				gWorldFilepath.clear();
 				clearDocumentState();
 				setWorldPaused(world, true);
@@ -2949,7 +2949,7 @@ namespace
 			}
 			ImGui::SameLine();
 			if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
-			if (!valid) ImGui::TextDisabled("Name, width, and deck count are required.");
+			if (!valid) ImGui::TextDisabled("Name, width, and level count are required.");
 			ImGui::EndPopup();
 		}
 
@@ -2982,7 +2982,7 @@ namespace
 			else
 			{
 				auto& draft = *gShuttleDraft;
-				ImGui::Text("Track: deck %u, x %u..%u", draft.y, draft.x,
+				ImGui::Text("Track: level %u, x %u..%u", draft.y, draft.x,
 					draft.x + draft.cellsWide - 1);
 				// Authoring is intentionally limited to a single carriage for now.
 				draft.numCars = 1;
@@ -3420,12 +3420,12 @@ namespace
 			// the Layer its definition is recorded against.
 			if (!world->getSectorWindowOptions(window->getFrontLayer(),
 				gSelectedSectorObject->getCellY(), gSelectedSectorObject->getCellX(),
-				window->getCellsWide(), window->getDecksHigh(), options))
+				window->getCellsWide(), window->getLevelsHigh(), options))
 				throw runtime_error("The selected Window has no authored definition");
 			output << YAML::Key << "type" << YAML::Value << "Window"
 				<< YAML::Key << "object" << YAML::Value << YAML::BeginMap
 				<< YAML::Key << "width" << YAML::Value << window->getCellsWide()
-				<< YAML::Key << "height" << YAML::Value << window->getDecksHigh()
+				<< YAML::Key << "height" << YAML::Value << window->getLevelsHigh()
 				<< YAML::Key << "traversable" << YAML::Value << options.traversable
 				<< YAML::Key << "initialState" << YAML::Value << windowStateName(options.initialState)
 				<< YAML::Key << "style" << YAML::Value << windowStyleName(options.style)
@@ -3828,8 +3828,8 @@ namespace
 				auto sector = world->getSectorAtPosition(gUISettings.visibleLayer, worldPosition.x, worldPosition.y);
 				if (!locationHasCapacity(sector) || !sector->pointInBounds(worldPosition.x, worldPosition.y))
 					throw runtime_error("Agents require a viable sector with available capacity");
-				if (y < sector->getCellY() || y >= sector->getCellY() + sector->getDecksHigh())
-					throw runtime_error("Agent deck is outside the sector");
+				if (y < sector->getCellY() || y >= sector->getCellY() + sector->getLevelsHigh())
+					throw runtime_error("Agent level is outside the sector");
 				bool consumedCut = definition.cut && clipboardText == gConsumedCutClipboard;
 				auto payload = definition.agent;
 				if (definition.cut && !consumedCut)
@@ -3856,7 +3856,7 @@ namespace
 				gPegman.phase = PalettePhase::Falling;
 				gPegman.item = PaletteItem::Agent;
 				gPegman.sector = sector;
-				gPegman.deckOffset = y - sector->getCellY();
+				gPegman.levelOffset = y - sector->getCellY();
 				gPegman.localX = localX;
 				gPegman.feetY = worldPosition.y;
 				gPegman.floorY = static_cast<float>(y);
@@ -3932,7 +3932,7 @@ namespace
 				bool valid = false;
 				for (auto const& candidate : world->getPlatformLiftStopCandidates(room->getIndex(), xOffset))
 				{
-					definition.platformLift.stopOffsets = { 0, candidate.deckOffset };
+					definition.platformLift.stopOffsets = { 0, candidate.levelOffset };
 					if (world->canAddPlatformLift(room->getIndex(), xOffset,
 						definition.platformLift, &diagnostic)) { valid = true; break; }
 				}
@@ -4935,7 +4935,7 @@ void renderWalkwayPanel(shared_ptr<core::World> const& world,
 	ImGui::Text("Room index: %u", room->getIndex());
 	ImGui::Text("Layer: %s", layerLabel(world, room->getLayerIndex()).c_str());
 	ImGui::Text("Position: %u, %u", walkway->getCellX(), walkway->getCellY());
-	ImGui::Text("Deck offset: %u", walkway->getCellY() - room->getCellY());
+	ImGui::Text("Level offset: %u", walkway->getCellY() - room->getCellY());
 	ImGui::Separator();
 	if (ImGui::Button("Delete Walkway"))
 	{
@@ -4981,8 +4981,8 @@ void renderWindowPanel(shared_ptr<const core::World> const& world,
 
 	ImGui::TextUnformatted("Window");
 	ImGui::Text("Position: %.2f, %.2f", position.x, position.y);
-	ImGui::Text("Size: %u x %u cell%s", window->getCellsWide(), window->getDecksHigh(),
-		window->getCellsWide() == 1 && window->getDecksHigh() == 1 ? "" : "s");
+	ImGui::Text("Size: %u x %u cell%s", window->getCellsWide(), window->getLevelsHigh(),
+		window->getCellsWide() == 1 && window->getLevelsHigh() == 1 ? "" : "s");
 	ImGui::Text("Style: %s", style);
 	ImGui::Text("State: %s", state);
 	ImGui::Text("Traversable: %s", window->isTraversalConfigured() ? "Yes" : "No");
@@ -5015,7 +5015,7 @@ void renderBackgroundPanel(shared_ptr<core::World> const& world,
 	ImGui::Text("Sector index: %u", background->getIndex());
 	ImGui::Text("Layer: %s", layerLabel(world, background->getLayerIndex()).c_str());
 	ImGui::Text("Position: %u, %u", background->getCellX(), background->getCellY());
-	ImGui::Text("Size: %u x %u cells", background->getCellsWide(), background->getDecksHigh());
+	ImGui::Text("Size: %u x %u cells", background->getCellsWide(), background->getLevelsHigh());
 
 	ImGui::Separator();
 
@@ -5125,7 +5125,7 @@ void renderFacadePanel(shared_ptr<core::World> const& world,
 	ImGui::Text("Sector index: %u", facade->getIndex());
 	ImGui::Text("Layer: %s", layerLabel(world, facade->getLayerIndex()).c_str());
 	ImGui::Text("Position: %u, %u", facade->getCellX(), facade->getCellY());
-	ImGui::Text("Size: %u x %u cells", facade->getCellsWide(), facade->getDecksHigh());
+	ImGui::Text("Size: %u x %u cells", facade->getCellsWide(), facade->getLevelsHigh());
 	ImGui::Text("Agents: %u", (uint32_t)facade->getAgents().size());
 
 	ImGui::Separator();
@@ -5418,7 +5418,7 @@ void renderLiftOwnedControlPanel(shared_ptr<core::World> const& world,
 	ImGui::Separator();
 	ImGui::Text("Owned by %s", liftOwned ? "Lift" : "Shuttle");
 	ImGui::Text("%s sector: %u", liftOwned ? "Lift" : "Shuttle", transportSector);
-	if (liftOwned) ImGui::Text("Stop: %u (floor %u)", stopIndex, object->getCellY());
+	if (liftOwned) ImGui::Text("Stop: %u (level %u)", stopIndex, object->getCellY());
 	else ImGui::Text("Stop: %u", stopIndex);
 	ImGui::TextDisabled("This button is managed by its transport landing and is read-only.");
 }
@@ -5438,7 +5438,7 @@ void renderForceBridgePanel(shared_ptr<core::World> const& world,
 	ImGui::Text("Room index: %u", room->getIndex());
 	ImGui::Text("Layer: %s", layerLabel(world, room->getLayerIndex()).c_str());
 	ImGui::Text("Position: %u, %u", object->getCellX(), object->getCellY());
-	ImGui::Text("Deck offset: %u", object->getCellY() - room->getCellY());
+	ImGui::Text("Level offset: %u", object->getCellY() - room->getCellY());
 	float pct = forceBridge->getExtendedPercentage() * 100.0f;
 	char const* state = "Unknown";
 	switch (forceBridge->getState())
@@ -5570,7 +5570,7 @@ void renderLadderPanel(shared_ptr<core::World> const& world,
 	ImGui::Text("Room: %s", room->getName().c_str());
 	ImGui::Text("Layer: %s", layerLabel(world, room->getLayerIndex()).c_str());
 	ImGui::Text("Position: %u, %u", object->getCellX(), object->getCellY());
-	ImGui::Text("Calculated height: %u decks", ladder->getDecksHigh());
+	ImGui::Text("Calculated height: %u levels", ladder->getLevelsHigh());
 	float pct = ladder->getExtendedPercentage() * 100.0f;
 	char const* state = "Extended";
 	switch (ladder->getState())
@@ -5605,7 +5605,7 @@ void renderLadderPanel(shared_ptr<core::World> const& world,
 			if (!world->isSimulationPaused()) world->pauseSimulation();
 			gUISettings.worldPaused = true;
 			gSelectedSectorObject = world->applyRoomLadderOptions(room->getIndex(), objectIndex,
-				{ ladder->getDecksHigh(), desiredExtensible,
+				{ ladder->getLevelsHigh(), desiredExtensible,
 					desiredExtensible ? desiredInitiallyExtended : true,
 					(uint32_t)desiredBatchLimit });
 			editedObject = gSelectedSectorObject.get();
@@ -5710,23 +5710,23 @@ void renderPlatformLiftPanel(shared_ptr<core::World> const& world,
 		object->getCellX() - room->getCellX());
 	for (auto const& candidate : candidates)
 	{
-		bool selected = find(draft.stopOffsets.begin(), draft.stopOffsets.end(), candidate.deckOffset)
+		bool selected = find(draft.stopOffsets.begin(), draft.stopOffsets.end(), candidate.levelOffset)
 			!= draft.stopOffsets.end();
 		auto tentative = draft;
-		if (!selected) tentative.stopOffsets.push_back(candidate.deckOffset);
+		if (!selected) tentative.stopOffsets.push_back(candidate.levelOffset);
 		else tentative.stopOffsets.erase(remove(tentative.stopOffsets.begin(), tentative.stopOffsets.end(),
-			candidate.deckOffset), tentative.stopOffsets.end());
+			candidate.levelOffset), tentative.stopOffsets.end());
 		bool lastWalkway = selected && draft.stopOffsets.size() <= 2;
 		auto validation = lastWalkway ? core::World::PlatformLiftEditPlan{}
 			: world->planPlatformLiftEdit(room->getIndex(), objectIndex, tentative);
 		bool disabled = lastWalkway || (!selected && !validation.valid);
-		ImGui::PushID((int)candidate.deckOffset);
+		ImGui::PushID((int)candidate.levelOffset);
 		ImGui::BeginDisabled(disabled);
 		if (ImGui::Checkbox("##stop", &selected)) draft = tentative;
 		ImGui::EndDisabled();
 		ImGui::SameLine();
-		ImGui::Text("Walkway: deck %u (global y %u)", candidate.deckOffset,
-			room->getCellY() + candidate.deckOffset);
+		ImGui::Text("Walkway: level %u (global y %u)", candidate.levelOffset,
+			room->getCellY() + candidate.levelOffset);
 		if (disabled && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
 			ImGui::SetTooltip("%s", lastWalkway
 				? "A PlatformLift requires at least one Walkway stop"
@@ -5839,7 +5839,7 @@ void renderLiftPanel(shared_ptr<const core::World> const& world,
 	{
 		ImGui::TableSetupColumn("Agent");
 		ImGui::TableSetupColumn("State");
-		ImGui::TableSetupColumn("Target floor");
+		ImGui::TableSetupColumn("Target level");
 		ImGui::TableHeadersRow();
 		for (auto const& passenger : resource->liftAgents)
 		{
@@ -5859,7 +5859,7 @@ void renderLiftPanel(shared_ptr<const core::World> const& world,
 			ImGui::TableSetColumnIndex(1); ImGui::TextUnformatted(state);
 			ImGui::TableSetColumnIndex(2);
 			if (passenger.targetStop == ~0u) ImGui::TextUnformatted("<unknown>");
-			else ImGui::Text("%.0f", passenger.targetFloor);
+			else ImGui::Text("%.0f", passenger.targetLevel);
 		}
 		ImGui::EndTable();
 	}
@@ -6282,19 +6282,19 @@ void renderLocationWallEditor(shared_ptr<core::World> const& world,
 	ImGui::TextUnformatted("Shared walls");
 	ImGui::TextDisabled("Open walls directly connect adjacent Rooms or Corridors.");
 	if (!ImGui::BeginTable("LocationWalls", 3, ImGuiTableFlags_BordersInnerV)) return;
-	ImGui::TableSetupColumn("Deck");
+	ImGui::TableSetupColumn("Level");
 	ImGui::TableSetupColumn("Left");
 	ImGui::TableSetupColumn("Right");
 	ImGui::TableHeadersRow();
-	for (uint32_t deck = 0; deck < location->getDecksHigh(); ++deck)
+	for (uint32_t level = 0; level < location->getLevelsHigh(); ++level)
 	{
 		ImGui::TableNextRow();
 		ImGui::TableSetColumnIndex(0);
-		ImGui::Text("%u (floor %u)", deck, location->getCellY() + deck);
+		ImGui::Text("%u (global level %u)", level, location->getCellY() + level);
 		for (int side = CORE_SIDE_LEFT; side <= CORE_SIDE_RIGHT; ++side)
 		{
 			ImGui::TableSetColumnIndex(side + 1);
-			auto const end = location->getEndType(deck, side);
+			auto const end = location->getEndType(level, side);
 			if (end == core::SectorEndType::BulkheadDoor)
 			{
 				ImGui::TextUnformatted("Bulkhead Door");
@@ -6303,10 +6303,10 @@ void renderLocationWallEditor(shared_ptr<core::World> const& world,
 			string diagnostic;
 			bool const isOpen = end == core::SectorEndType::None;
 			bool const canChange = isOpen
-				? world->canAddLocationWall(location->getIndex(), deck, side, &diagnostic)
-				: world->canRemoveLocationWall(location->getIndex(), deck, side, &diagnostic);
+				? world->canAddLocationWall(location->getIndex(), level, side, &diagnostic)
+				: world->canRemoveLocationWall(location->getIndex(), level, side, &diagnostic);
 			string const label = string(isOpen ? "Add wall" : "Open wall") + "##wall-"
-				+ to_string(deck) + "-" + to_string(side);
+				+ to_string(level) + "-" + to_string(side);
 			ImGui::BeginDisabled(!canChange);
 			bool const clicked = ImGui::Button(label.c_str());
 			ImGui::EndDisabled();
@@ -6319,8 +6319,8 @@ void renderLocationWallEditor(shared_ptr<core::World> const& world,
 			{
 				if (!world->isSimulationPaused()) world->pauseSimulation();
 				gUISettings.worldPaused = true;
-				if (isOpen) world->addLocationWall(location->getIndex(), deck, side);
-				else world->removeLocationWall(location->getIndex(), deck, side);
+				if (isOpen) world->addLocationWall(location->getIndex(), level, side);
+				else world->removeLocationWall(location->getIndex(), level, side);
 				world->finishBuild();
 				commitDocumentEdit(std::move(undo));
 			}
@@ -6365,7 +6365,7 @@ void renderSelectedObjectPanel(shared_ptr<core::World> const& world)
 		switch (gSelectedSector->getType())
 		{
 		case core::SectorType::Location:
-			type = gSelectedSector->getTopDeckHeight() == CORE_CORRIDOR_HEIGHT
+			type = gSelectedSector->getTopLevelHeight() == CORE_CORRIDOR_HEIGHT
 				? "Corridor" : "Room";
 			break;
 		case core::SectorType::Lift: type = "Lift"; break;
@@ -6385,7 +6385,7 @@ void renderSelectedObjectPanel(shared_ptr<core::World> const& world)
 			ImGui::Text("Car y: %.2f", lift->getPosition().y);
 		}
 		ImGui::Text("Size: %u x %u cells", gSelectedSector->getCellsWide(),
-			gSelectedSector->getDecksHigh());
+			gSelectedSector->getLevelsHigh());
 		ImGui::Text("Agents: %u", (uint32_t)gSelectedSector->getAgents().size());
 
 		switch (gSelectedSector->getType())
@@ -6476,7 +6476,7 @@ void renderSelectedObjectPanel(shared_ptr<core::World> const& world)
 			if (ImGui::Button("Apply Ladder settings"))
 			{
 				core::World::CreateLadderOptions options{
-					gSelectedSector->getDecksHigh(), extensible,
+					gSelectedSector->getLevelsHigh(), extensible,
 					extensible ? initiallyExtended : true,
 					(uint32_t)directionalBatchLimit };
 				auto plan = world->planResizeLadder(gSelectedSector->getIndex(),
@@ -6553,7 +6553,7 @@ void renderSelectedObjectPanel(shared_ptr<core::World> const& world)
 			if (ImGui::Button("Apply capacity settings"))
 			{
 				core::World::CreateStairwellOptions options{
-					gSelectedSector->getDecksHigh(), mountSide,
+					gSelectedSector->getLevelsHigh(), mountSide,
 					(uint32_t)directionalCapacity, (uint32_t)max(1, directionalBatchLimit) };
 				auto plan = world->planResizeStairwell(gSelectedSector->getIndex(),
 					gSelectedSector->getCellX(), gSelectedSector->getCellY(), options);
@@ -7315,7 +7315,7 @@ namespace
 		shared_ptr<const core::Sector> const& sector, int left, int bottom, int right, int top)
 	{
 		if (left < 0 || bottom < 0 || right > (int)world->getCellsWide()
-			|| top > (int)world->getDecksHigh() || left >= right || bottom >= top) return false;
+			|| top > (int)world->getLevelsHigh() || left >= right || bottom >= top) return false;
 		auto layer = world->getLayer(sector->getLayerIndex());
 		for (int y = bottom; y < top; ++y)
 			for (int x = left; x < right; ++x)
@@ -7341,7 +7341,7 @@ namespace
 	{
 		if (!sector || !isSectorTypeResizable(sector->getType())) return ResizeEdge::None;
 		auto topLeft = worldToScreen({ (float)sector->getCellX(),
-			(float)(sector->getCellY() + sector->getDecksHigh()) });
+			(float)(sector->getCellY() + sector->getLevelsHigh()) });
 		auto bottomRight = worldToScreen({ (float)(sector->getCellX() + sector->getCellsWide()),
 			(float)sector->getCellY() });
 		constexpr float tolerance = 6.0f;
@@ -7356,7 +7356,7 @@ namespace
 		}
 		bool corridor = sector->getType() == core::SectorType::Shuttle
 			|| (sector->getType() == core::SectorType::Location
-				&& sector->getTopDeckHeight() == CORE_CORRIDOR_HEIGHT);
+				&& sector->getTopLevelHeight() == CORE_CORRIDOR_HEIGHT);
 		if (!corridor && mouse.x >= topLeft.x - tolerance && mouse.x <= bottomRight.x + tolerance)
 		{
 			candidates.push_back({ ResizeEdge::Top, abs(mouse.y - topLeft.y) });
@@ -7405,7 +7405,7 @@ namespace
 		}
 		auto target = gAgentMove.originalPosition + core::Vector2{
 			(io.MousePos.x - gAgentMove.pressPosition.x) / CORE_CELL_WIDTH_PIXELS,
-			-(io.MousePos.y - gAgentMove.pressPosition.y) / CORE_DECK_HEIGHT_PIXELS };
+			-(io.MousePos.y - gAgentMove.pressPosition.y) / CORE_LEVEL_HEIGHT_PIXELS };
 		gAgentMove.preview = getAgentMoveTarget(world, gSelectedAgent, target);
 
 		if (!io.MouseReleased[0]) return;
@@ -7439,7 +7439,7 @@ namespace
 			auto source = const_cast<core::Sector*>(gSelectedAgent->getSector());
 			auto destination = const_cast<core::Sector*>(gAgentMove.preview.sector.get());
 			if (source) source->exitAgent(gSelectedAgent);
-			destination->enterAgent(gSelectedAgent, gAgentMove.preview.deckOffset,
+			destination->enterAgent(gSelectedAgent, gAgentMove.preview.levelOffset,
 				gAgentMove.preview.localX);
 			gHoveredAgent = nullptr;
 			commitDocumentEdit(std::move(undo));
@@ -7482,7 +7482,7 @@ namespace
 	}
 
 	// A Door resizes horizontally only. Physical regular/tall height is selected
-	// in the Selection panel and does not change its one-deck grid footprint.
+	// in the Selection panel and does not change its one-level grid footprint.
 	ResizeEdge hoveredDoorResizeEdge(shared_ptr<const core::SectorObject> const& object,
 		ImVec2 mouse)
 	{
@@ -7521,7 +7521,7 @@ namespace
 	// dragging: a resizable Sector, or a Window or Door SectorObject. False
 	// when the selection cannot be resized, or is not on the Layer being drawn.
 	bool selectedResizeFootprint(uint32_t& cellX, uint32_t& cellY, uint32_t& cellsWide,
-		uint32_t& decksHigh)
+		uint32_t& levelsHigh)
 	{
 		if (gUISettings.selectionMode == UISettings::SelectionMode::Sector)
 		{
@@ -7533,7 +7533,7 @@ namespace
 			cellX = gSelectedSector->getCellX();
 			cellY = gSelectedSector->getCellY();
 			cellsWide = gSelectedSector->getCellsWide();
-			decksHigh = gSelectedSector->getDecksHigh();
+			levelsHigh = gSelectedSector->getLevelsHigh();
 			return true;
 		}
 		if (gUISettings.selectionMode != UISettings::SelectionMode::Object
@@ -7569,7 +7569,7 @@ namespace
 		cellX = gSelectedSectorObject->getCellX();
 		cellY = gSelectedSectorObject->getCellY();
 		cellsWide = (uint32_t)ceil(gSelectedSectorObject->getSize().x);
-		decksHigh = (uint32_t)ceil(gSelectedSectorObject->getSize().y);
+		levelsHigh = (uint32_t)ceil(gSelectedSectorObject->getSize().y);
 		return true;
 	}
 
@@ -7656,7 +7656,7 @@ namespace
 		}
 
 		int deltaX = (int)round((io.MousePos.x - gObjectMove.pressPosition.x) / CORE_CELL_WIDTH_PIXELS);
-		int deltaY = (int)round(-(io.MousePos.y - gObjectMove.pressPosition.y) / CORE_DECK_HEIGHT_PIXELS);
+		int deltaY = (int)round(-(io.MousePos.y - gObjectMove.pressPosition.y) / CORE_LEVEL_HEIGHT_PIXELS);
 		int targetX = (int)gObjectMove.originalX + deltaX;
 		int targetY = (int)gObjectMove.originalY + deltaY;
 		int targetWidth = (int)gObjectMove.originalWidth;
@@ -7664,10 +7664,10 @@ namespace
 		bool const resizing = gObjectMove.edge != ResizeEdge::Move;
 		bool const doorResize = resizing
 			&& gSelectedSectorObject->getObjectType() == core::SectorObjectType::Door;
-		// A regular Door may span at most two cells and always has a one-deck
+		// A regular Door may span at most two cells and always has a one-level
 		// footprint; physical regular/tall height is not changed by dragging.
 		int const maxResizeWidth = doorResize ? 2 : (int)world->getCellsWide();
-		int const maxResizeHeight = (int)world->getDecksHigh();
+		int const maxResizeHeight = (int)world->getLevelsHigh();
 		if (gObjectMove.edge == ResizeEdge::Left)
 		{
 			auto right = (int)gObjectMove.originalX + (int)gObjectMove.originalWidth;
@@ -7697,13 +7697,13 @@ namespace
 		{
 			auto top = clamp((int)gObjectMove.originalY + (int)gObjectMove.originalHeight
 				+ deltaY, (int)gObjectMove.originalY + 1,
-				min(maxResizeHeight + (int)gObjectMove.originalY, (int)world->getDecksHigh()));
+				min(maxResizeHeight + (int)gObjectMove.originalY, (int)world->getLevelsHigh()));
 			targetX = (int)gObjectMove.originalX;
 			targetY = (int)gObjectMove.originalY;
 			targetHeight = top - targetY;
 		}
 		bool const targetInWorld = targetX >= 0 && targetY >= 0
-			&& targetX < (int)world->getCellsWide() && targetY < (int)world->getDecksHigh();
+			&& targetX < (int)world->getCellsWide() && targetY < (int)world->getLevelsHigh();
 		if (!targetInWorld)
 		{
 			gObjectMove.preview.valid = false;
@@ -7807,7 +7807,7 @@ namespace
 			gSectorResize.originalX = gSelectedSector->getCellX();
 			gSectorResize.originalY = gSelectedSector->getCellY();
 			gSectorResize.originalWidth = gSelectedSector->getCellsWide();
-			gSectorResize.originalHeight = gSelectedSector->getDecksHigh();
+			gSectorResize.originalHeight = gSelectedSector->getLevelsHigh();
 			if (gSectorResize.lift)
 				gSectorResize.liftPreview = world->planResizeLift(gSelectedSector->getIndex(),
 					gSectorResize.originalX, gSectorResize.originalY,
@@ -7852,7 +7852,7 @@ namespace
 		int right = left + (int)gSectorResize.originalWidth;
 		int top = bottom + (int)gSectorResize.originalHeight;
 		int deltaX = (int)round((io.MousePos.x - gSectorResize.pressPosition.x) / CORE_CELL_WIDTH_PIXELS);
-		int deltaY = (int)round(-(io.MousePos.y - gSectorResize.pressPosition.y) / CORE_DECK_HEIGHT_PIXELS);
+		int deltaY = (int)round(-(io.MousePos.y - gSectorResize.pressPosition.y) / CORE_LEVEL_HEIGHT_PIXELS);
 		int* moving = nullptr;
 		int desired = 0;
 		switch (gSectorResize.edge)
@@ -7868,13 +7868,13 @@ namespace
 			 top - ((gSectorResize.ladder || gSectorResize.stairwell) ? 2 : 1)); break;
 		case ResizeEdge::Top: moving = &top; desired = clamp(top + deltaY,
 			bottom + ((gSectorResize.ladder || gSectorResize.stairwell) ? 2 : 1),
-			(int)world->getDecksHigh()); break;
+			(int)world->getLevelsHigh()); break;
 		case ResizeEdge::Move:
 		{
 			int width = right - left;
 			int height = top - bottom;
 			left = clamp(left + deltaX, 0, (int)world->getCellsWide() - width);
-			bottom = clamp(bottom + deltaY, 0, (int)world->getDecksHigh() - height);
+			bottom = clamp(bottom + deltaY, 0, (int)world->getLevelsHigh() - height);
 			right = left + width;
 			top = bottom + height;
 			if ((deltaX != 0 || deltaY != 0) && !gSectorResize.lift
@@ -7906,7 +7906,7 @@ namespace
 			if (gSectorResize.liftPreview.x != (uint32_t)left
 				|| gSectorResize.liftPreview.y != (uint32_t)bottom
 				|| gSectorResize.liftPreview.cellsWide != (uint32_t)(right - left)
-				|| gSectorResize.liftPreview.decksHigh != (uint32_t)(top - bottom))
+				|| gSectorResize.liftPreview.levelsHigh != (uint32_t)(top - bottom))
 				gSectorResize.liftPreview = world->planResizeLift(gSelectedSector->getIndex(),
 					(uint32_t)left, (uint32_t)bottom, (uint32_t)(right - left), (uint32_t)(top - bottom));
 		}
@@ -7922,10 +7922,10 @@ namespace
 		{
 			if (gSectorResize.ladderPreview.x != (uint32_t)left
 				|| gSectorResize.ladderPreview.y != (uint32_t)bottom
-				|| gSectorResize.ladderPreview.options.decksHigh != (uint32_t)(top - bottom))
+				|| gSectorResize.ladderPreview.options.levelsHigh != (uint32_t)(top - bottom))
 			{
 				auto options = gSectorResize.ladderPreview.options;
-				options.decksHigh = (uint32_t)(top - bottom);
+				options.levelsHigh = (uint32_t)(top - bottom);
 				gSectorResize.ladderPreview = world->planResizeLadder(
 					gSelectedSector->getIndex(), (uint32_t)left, (uint32_t)bottom, options);
 			}
@@ -7934,10 +7934,10 @@ namespace
 		{
 			if (gSectorResize.stairwellPreview.x != (uint32_t)left
 				|| gSectorResize.stairwellPreview.y != (uint32_t)bottom
-				|| gSectorResize.stairwellPreview.options.decksHigh != (uint32_t)(top - bottom))
+				|| gSectorResize.stairwellPreview.options.levelsHigh != (uint32_t)(top - bottom))
 			{
 				auto options = gSectorResize.stairwellPreview.options;
-				options.decksHigh = (uint32_t)(top - bottom);
+				options.levelsHigh = (uint32_t)(top - bottom);
 				gSectorResize.stairwellPreview = world->planResizeStairwell(
 					gSelectedSector->getIndex(), (uint32_t)left, (uint32_t)bottom, options);
 			}
@@ -7945,7 +7945,7 @@ namespace
 		else if (gSectorResize.preview.x != (uint32_t)left
 			|| gSectorResize.preview.y != (uint32_t)bottom
 			|| gSectorResize.preview.cellsWide != (uint32_t)(right - left)
-			|| gSectorResize.preview.decksHigh != (uint32_t)(top - bottom))
+			|| gSectorResize.preview.levelsHigh != (uint32_t)(top - bottom))
 		{
 			gSectorResize.preview = previewRectangle(gSelectedSector->getIndex(),
 				(uint32_t)left, (uint32_t)bottom, (uint32_t)(right - left), (uint32_t)(top - bottom));
@@ -8009,7 +8009,7 @@ namespace
 		{
 			auto edge = hoveredResizeEdge(gSelectedSector, ImGui::GetIO().MousePos);
 			auto topLeft = worldToScreen({ (float)gSelectedSector->getCellX(),
-				(float)(gSelectedSector->getCellY() + gSelectedSector->getDecksHigh()) });
+				(float)(gSelectedSector->getCellY() + gSelectedSector->getLevelsHigh()) });
 			auto bottomRight = worldToScreen({
 				(float)(gSelectedSector->getCellX() + gSelectedSector->getCellsWide()),
 				(float)gSelectedSector->getCellY() });
@@ -8033,16 +8033,16 @@ namespace
 		if (gWorldHovered && !gSectorResize.dragging && !gObjectMove.dragging
 			&& !gAgentMove.dragging)
 		{
-			uint32_t cellX{ 0 }, cellY{ 0 }, cellsWide{ 0 }, decksHigh{ 0 };
-			if (selectedResizeFootprint(cellX, cellY, cellsWide, decksHigh))
+			uint32_t cellX{ 0 }, cellY{ 0 }, cellsWide{ 0 }, levelsHigh{ 0 };
+			if (selectedResizeFootprint(cellX, cellY, cellsWide, levelsHigh))
 			{
 				auto const worldPosition = screenToWorld(ImGui::GetIO().MousePos);
 				auto const hoverX = (int)floor(worldPosition.x);
 				auto const hoverY = (int)floor(worldPosition.y);
 				if (hoverX >= (int)cellX && hoverX < (int)(cellX + cellsWide)
-					&& hoverY >= (int)cellY && hoverY < (int)(cellY + decksHigh))
+					&& hoverY >= (int)cellY && hoverY < (int)(cellY + levelsHigh))
 					drawList->AddRect(
-						worldToScreen({ (float)cellX, (float)(cellY + decksHigh) }),
+						worldToScreen({ (float)cellX, (float)(cellY + levelsHigh) }),
 						worldToScreen({ (float)(cellX + cellsWide), (float)cellY }),
 						IM_COL32(255, 255, 0, 255), 0.0f, 0, 1.0f);
 			}
@@ -8055,7 +8055,7 @@ namespace
 		{
 			auto const& plan = gSectorResize.liftPreview;
 			hasPlan = true; valid = plan.valid; remove = plan.remove; x = plan.x; y = plan.y;
-			width = plan.cellsWide; height = plan.decksHigh; diagnostic = plan.diagnostic;
+			width = plan.cellsWide; height = plan.levelsHigh; diagnostic = plan.diagnostic;
 		}
 		else if (gSectorResize.shuttle && (gSectorResize.dragging || gSectorResize.shuttlePreview.cellsWide))
 		{
@@ -8064,30 +8064,30 @@ namespace
 			width = plan.cellsWide; height = 1; diagnostic = plan.diagnostic;
 		}
 		else if (gSectorResize.ladder && (gSectorResize.dragging
-			|| gSectorResize.ladderPreview.decksHigh))
+			|| gSectorResize.ladderPreview.levelsHigh))
 		{
 			auto const& plan = gSectorResize.ladderPreview;
 			hasPlan = true; valid = plan.valid; remove = plan.remove; x = plan.x; y = plan.y;
-			width = 1; height = plan.options.decksHigh; diagnostic = plan.diagnostic;
+			width = 1; height = plan.options.levelsHigh; diagnostic = plan.diagnostic;
 		}
 		else if (gSectorResize.stairwell && (gSectorResize.dragging
-			|| gSectorResize.stairwellPreview.decksHigh))
+			|| gSectorResize.stairwellPreview.levelsHigh))
 		{
 			auto const& plan = gSectorResize.stairwellPreview;
 			hasPlan = true; valid = plan.valid; remove = plan.remove; x = plan.x; y = plan.y;
-			width = 2; height = plan.options.decksHigh; diagnostic = plan.diagnostic;
+			width = 2; height = plan.options.levelsHigh; diagnostic = plan.diagnostic;
 		}
 		else if (gSectorResize.dragging || (gSectorResize.preview.cellsWide && !gPendingLocationEdit))
 		{
 			auto const& plan = gSectorResize.preview;
 			hasPlan = true; valid = plan.valid; remove = plan.remove; x = plan.x; y = plan.y;
-			width = plan.cellsWide; height = plan.decksHigh; diagnostic = plan.diagnostic;
+			width = plan.cellsWide; height = plan.levelsHigh; diagnostic = plan.diagnostic;
 		}
 		else if (gPendingLiftEdit)
 		{
 			auto const& plan = *gPendingLiftEdit;
 			hasPlan = true; valid = plan.valid; remove = plan.remove; x = plan.x; y = plan.y;
-			width = plan.cellsWide; height = plan.decksHigh; diagnostic = plan.diagnostic;
+			width = plan.cellsWide; height = plan.levelsHigh; diagnostic = plan.diagnostic;
 		}
 		else if (gPendingShuttleEdit)
 		{
@@ -8099,19 +8099,19 @@ namespace
 		{
 			auto const& plan = *gPendingLocationEdit;
 			hasPlan = true; valid = plan.valid; remove = plan.remove; x = plan.x; y = plan.y;
-			width = plan.cellsWide; height = plan.decksHigh; diagnostic = plan.diagnostic;
+			width = plan.cellsWide; height = plan.levelsHigh; diagnostic = plan.diagnostic;
 		}
 		else if (gPendingLadderEdit)
 		{
 			auto const& plan = *gPendingLadderEdit;
 			hasPlan = true; valid = plan.valid; remove = plan.remove; x = plan.x; y = plan.y;
-			width = 1; height = plan.options.decksHigh; diagnostic = plan.diagnostic;
+			width = 1; height = plan.options.levelsHigh; diagnostic = plan.diagnostic;
 		}
 		else if (gPendingStairwellEdit)
 		{
 			auto const& plan = *gPendingStairwellEdit;
 			hasPlan = true; valid = plan.valid; remove = plan.remove; x = plan.x; y = plan.y;
-			width = 2; height = plan.options.decksHigh; diagnostic = plan.diagnostic;
+			width = 2; height = plan.options.levelsHigh; diagnostic = plan.diagnostic;
 		}
 		if (gShuttleDraft)
 		{
@@ -8166,7 +8166,7 @@ void renderWorldWindow(shared_ptr<core::World> world, shared_ptr<const core::Gra
 	float const horizontalScrollbarSpace = scrollbarThickness + style.ItemSpacing.y;
 	float const verticalScrollbarSpace = scrollbarThickness + style.ItemSpacing.x;
 	float const worldWidth = (float)world->getCellsWide() * (float)CORE_CELL_WIDTH_PIXELS;
-	float const worldHeight = (float)world->getDecksHigh() * (float)CORE_DECK_HEIGHT_PIXELS;
+	float const worldHeight = (float)world->getLevelsHigh() * (float)CORE_LEVEL_HEIGHT_PIXELS;
 
 	bool showHorizontalScrollbar = worldWidth > canvasSize.x;
 	bool showVerticalScrollbar = worldHeight > canvasSize.y;
@@ -8268,7 +8268,7 @@ void renderWorldWindow(shared_ptr<core::World> world, shared_ptr<const core::Gra
 		// agents over sector objects, and sector objects over their owning sector.
 		// While picking an agent's path destination only vertices are selectable,
 		// with a slightly enlarged target radius to make them easier to pick.
-		float vertexRadius = RENDER_VERTEX_SIZE / (float)CORE_DECK_HEIGHT_PIXELS;
+		float vertexRadius = RENDER_VERTEX_SIZE / (float)CORE_LEVEL_HEIGHT_PIXELS;
 		if (gSelectingAgentPathDestination) vertexRadius *= 1.5f;
 		if (gUISettings.renderGraph)
 			gHoveredVertex = graph->getVertexAtPosition(gUISettings.visibleLayer, mousePos.x,
@@ -8328,7 +8328,7 @@ void renderWorldWindow(shared_ptr<core::World> world, shared_ptr<const core::Gra
 
 	// Keep world geometry and editor overlays inside the dimensions declared by
 	// the world. The canvas can be larger than the world when docked or resized.
-	auto worldTopLeft = worldToScreen({ 0.0f, (float)world->getDecksHigh() });
+	auto worldTopLeft = worldToScreen({ 0.0f, (float)world->getLevelsHigh() });
 	auto worldBottomRight = worldToScreen({ (float)world->getCellsWide(), 0.0f });
 	drawList->PushClipRect(worldTopLeft, worldBottomRight, true);
 	renderWorld(world);
@@ -8343,7 +8343,7 @@ void renderWorldWindow(shared_ptr<core::World> world, shared_ptr<const core::Gra
 				preview.floorY };
 			drawPegman(drawList, worldToScreen(position),
 				CORE_AGENT_MAX_WIDTH * CORE_CELL_WIDTH_PIXELS,
-				CORE_AGENT_MAX_HEIGHT * CORE_DECK_HEIGHT_PIXELS,
+				CORE_AGENT_MAX_HEIGHT * CORE_LEVEL_HEIGHT_PIXELS,
 				IM_COL32(255, 255, 0, 255));
 		}
 		else if (!preview.diagnostic.empty()) ImGui::SetTooltip("%s", preview.diagnostic.c_str());

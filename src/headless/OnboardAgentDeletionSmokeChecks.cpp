@@ -260,7 +260,7 @@ namespace
 	}
 
 	// Deleting the rider must not strand the car: it lands, and a later passenger
-	// can still call it from either floor.
+	// can still call it from either level.
 	void theLiftKeepsServingAfterItsRiderIsDeleted()
 	{
 		LiftScenario scenario("Lift keeps serving");

@@ -591,7 +591,7 @@ namespace
 		if (world.planResizeSectorDoor(owner->getIndex(), index, 2, 0, 0, 1).valid
 			|| world.planResizeSectorDoor(owner->getIndex(), index, 2, 0, 3, 1).valid)
 			return false;
-		// Door resizing remains horizontal; its grid footprint is always one deck.
+		// Door resizing remains horizontal; its grid footprint is always one level.
 		if (world.planResizeSectorDoor(owner->getIndex(), index, 2, 0, 2, 0).valid
 			|| world.planResizeSectorDoor(owner->getIndex(), index, 2, 0, 2, 2).valid)
 			return false;
@@ -602,7 +602,7 @@ namespace
 		world.addSectorMarker(front, 0, 4.5f);
 		if (world.planResizeSectorDoor(owner->getIndex(), index, 3, 0, 2, 1).valid)
 			return false;
-		// These rooms are one deck tall, so the Door cannot grow upward here.
+		// These rooms are one level tall, so the Door cannot grow upward here.
 		if (world.planResizeSectorDoor(owner->getIndex(), index, 2, 0, 2, 2).valid)
 			return false;
 
@@ -697,7 +697,7 @@ namespace
 		lowerRoomWorld.finishBuild();
 		if (!lowerRoomWorld.isTraversalTopologyValid()) return false;
 
-		// escalator-test-1.world.yaml: the flight starts on the Room's bottom floor and
+		// escalator-test-1.world.yaml: the flight starts on the Room's ground-level floor and
 		// reaches its upper-right edge, where the wall into the upper Corridor is open.
 		core::World mapWorld("Escalator map Room landing", 16, 3);
 		mapWorld.addRoom("Room 1", 0, 1, 10, 4, 2);
@@ -928,9 +928,9 @@ namespace
 		if (!world.getRoomLadderOptions(room, lower.ladder.index, defaultOptions))
 			return false;
 		if (std::static_pointer_cast<const core::LadderSectorObject>(
-			lower.ladder.sector->getObject(lower.ladder.index))->getLadder()->getDecksHigh() != 3) return false;
+			lower.ladder.sector->getObject(lower.ladder.index))->getLadder()->getLevelsHigh() != 3) return false;
 		if (std::static_pointer_cast<const core::LadderSectorObject>(
-			upper.ladder.sector->getObject(upper.ladder.index))->getLadder()->getDecksHigh() != 3) return false;
+			upper.ladder.sector->getObject(upper.ladder.index))->getLadder()->getLevelsHigh() != 3) return false;
 		if (world.canAddRoomLadder(room, 0, 2, &height, &diagnostic)
 			|| diagnostic.find("No Walkway") == std::string::npos) return false;
 		auto corridor = world.addCorridor(5, 0, 3);
@@ -942,7 +942,7 @@ namespace
 		if (!move.valid || move.previewHeight != 4) return false;
 		auto moved = world.applyObjectMove(move);
 		if (!moved || std::static_pointer_cast<const core::LadderSectorObject>(moved)
-			->getLadder()->getDecksHigh() != 4) return false;
+			->getLadder()->getLevelsHigh() != 4) return false;
 
 		auto nearer = world.addSectorWalkway(room, 1, 3);
 		auto rebuiltRoom = world.getSector(room);
@@ -952,7 +952,7 @@ namespace
 			auto ladder = std::dynamic_pointer_cast<const core::LadderSectorObject>(rebuiltRoom->getObject(i));
 			if (ladder && ladder->getCellX() == 3 && ladder->getCellY() == 0) recalculated = ladder;
 		}
-		if (!recalculated || recalculated->getLadder()->getDecksHigh() != 2) return false;
+		if (!recalculated || recalculated->getLadder()->getLevelsHigh() != 2) return false;
 		if (!world.removeSectorWalkway(room, nearer.index)) return false;
 		rebuiltRoom = world.getSector(room);
 		uint32_t movedIndex = ~0u;
@@ -961,7 +961,7 @@ namespace
 			auto ladder = std::dynamic_pointer_cast<const core::LadderSectorObject>(rebuiltRoom->getObject(i));
 			if (ladder && ladder->getCellX() == 3 && ladder->getCellY() == 0)
 			{
-				if (ladder->getLadder()->getDecksHigh() != 4) return false;
+				if (ladder->getLadder()->getLevelsHigh() != 4) return false;
 				movedIndex = i;
 			}
 		}
@@ -2704,7 +2704,7 @@ namespace
 	bool ladderAdmissionsMaintainPhysicalSpacing()
 	{
 		// Mirrors resources/test-worlds/sector-ladder-test-1.world.yaml: twelve Agents cross
-		// a four-deck Ladder in both directions. Admission must stagger entry so
+		// a four-level Ladder in both directions. Admission must stagger entry so
 		// equal-speed climbers never overlap on the span.
 		core::World world("Ladder spacing", 16, 6);
 		auto lower = world.addCorridor(1, 0, 16);
@@ -2941,7 +2941,7 @@ namespace
 	bool platformLiftAuthoringReconcilesWalkwayStops()
 	{
 		{
-			core::World offset("PlatformLift initial floor", 8, 6);
+			core::World offset("PlatformLift initial level", 8, 6);
 			auto offsetRoom = offset.addRoom("Offset room", 0, 1, 0, 7, 4);
 			offset.addSectorWalkway(offsetRoom, 2, 2);
 			offset.addSectorWalkway(offsetRoom, 2, 3);
@@ -3200,7 +3200,7 @@ namespace
 			{ return node.edge && node.edge->getType() == core::EdgeType::Lift; }) != 2) return false;
 		passenger->setPath(path, true);
 
-		bool passedIntermediateFloorWhileMoving = false;
+		bool passedIntermediateLevelWhileMoving = false;
 		for (uint32_t tick = 0; tick < MaximumSimulationTicks * 8
 			&& passenger->getState() != core::Agent::State::Idle; ++tick)
 		{
@@ -3211,10 +3211,10 @@ namespace
 				{ return resource.id == created.traversalResource; });
 			if (platform == snapshot.traversalResources.end()) return false;
 			if (platform->liftCurrentStop == 1 && !platform->liftMoving) return false;
-			passedIntermediateFloorWhileMoving = passedIntermediateFloorWhileMoving
+			passedIntermediateLevelWhileMoving = passedIntermediateLevelWhileMoving
 				|| (platform->liftMoving && std::abs(platform->liftPosition - 1.0f) < 0.01f);
 		}
-		return passedIntermediateFloorWhileMoving
+		return passedIntermediateLevelWhileMoving
 			&& passenger->getState() == core::Agent::State::Idle
 			&& passenger->getGlobalPosition().distanceTo(destination->getPosition()) < 0.001f;
 	}
@@ -3274,7 +3274,7 @@ namespace
 			for (auto const& debug : lift->liftAgents)
 			{
 				if (debug.agent != passengerId || debug.targetStop != 1
-					|| std::abs(debug.targetFloor - 2.0f) > 0.001f) continue;
+					|| std::abs(debug.targetLevel - 2.0f) > 0.001f) continue;
 				sawQueuedDebug = sawQueuedDebug
 					|| debug.state == core::LiftAgentState::QueuingAtDoor;
 				sawEnteringDebug = sawEnteringDebug
@@ -4184,7 +4184,7 @@ namespace
 		auto created = world.addLift(1, 0, 2, 2, 6);
 		world.finishBuild();
 		auto lift = std::dynamic_pointer_cast<const core::LiftTransit>(created.lift.sector);
-		if (!lift || lift->getCellsWide() != 2 || lift->getDecksHigh() != 6
+		if (!lift || lift->getCellsWide() != 2 || lift->getLevelsHigh() != 6
 			|| lift->getNumStops() != 2 || created.doors.size() != 2) return false;
 		for (auto const& door : created.doors)
 			if (!world.isLiftOwnedDoor(door.door.sector->getObject(door.door.index))) return false;
@@ -4208,14 +4208,14 @@ namespace
 		if (!move.valid || !move.move) return false;
 		auto movedIndex = world.applyLiftEdit(move);
 		lift = std::dynamic_pointer_cast<const core::LiftTransit>(world.getSector(movedIndex));
-		if (!lift || lift->getCellX() != 5 || lift->getDecksHigh() != 6
+		if (!lift || lift->getCellX() != 5 || lift->getLevelsHigh() != 6
 			|| lift->getNumStops() != 3) return false;
 		for (uint32_t stop = 0; stop < lift->getNumStops(); ++stop)
 		{
-			auto floor = (uint32_t)((int)lift->getStop(stop).sector->getCellY()
+			auto level = (uint32_t)((int)lift->getStop(stop).sector->getCellY()
 				+ lift->getStop(stop).sectorOffsetY);
 			auto const& cell = static_cast<core::World const&>(world)
-				.getLayer(0)->getCellDefinition(5, floor);
+				.getLayer(0)->getCellDefinition(5, level);
 			auto door = world.getSector(cell.sectorIndex)->getObject(cell.sectorObjectIndex);
 			if (!world.isLiftOwnedDoor(door)) return false;
 		}
@@ -4517,7 +4517,7 @@ namespace
 	// landing on the Layer directly in front of it.  The Agent starts on the
 	// front-most Layer, crosses a Door authored on the 0<->1 pair into Layer 1,
 	// boards the Layer 2 Lift through its landing Doors, rides it, and disembarks
-	// into the upper deck of the Layer 1 Corridor.
+	// into the upper level of the Layer 1 Corridor.
 	struct ThreeLayerJourneyResult
 	{
 		bool pathShapeValid{ false };
@@ -4634,7 +4634,7 @@ namespace
 		uint32_t entry{ 0 };
 		uint32_t lobby{ 0 };
 		uint32_t lowerLobby{ 0 };
-		uint32_t middleDeck{ 0 };
+		uint32_t middleLevel{ 0 };
 		uint32_t middleStore{ 0 };
 		uint32_t doomedLadder{ 0 };
 		uint32_t deepStore{ 0 };
@@ -4646,7 +4646,7 @@ namespace
 	};
 
 	// Layer 0 is the entry Layer, Layer 1 the Layer under test, and Layers 2 and 3
-	// the deeper Layers which must survive.  Every Location is one deck high so a
+	// the deeper Layers which must survive.  Every Location is one level high so a
 	// Ladder can land on two stacked Locations, and the two Doors are authored at
 	// different cells so the deletion counts the Door it really crosses rather
 	// than one which merely shares a cell.
@@ -4661,7 +4661,7 @@ namespace
 		layout.entry = world.addCorridor(0, 0, 0, 12, 1);
 		layout.lobby = world.addRoom("Lobby", 0, 1, 0, 12, 1);
 		layout.lowerLobby = world.addRoom("Lower Lobby", 0, 2, 0, 12, 1);
-		layout.middleDeck = world.addRoom("Middle Deck", 1, 0, 0, 12, 1);
+		layout.middleLevel = world.addRoom("Middle Level", 1, 0, 0, 12, 1);
 		layout.middleStore = world.addRoom("Middle Store", 1, 2, 0, 11, 1);
 		layout.doomedLadder = world.addLadder(1, 1, 11, { 2, false, true })
 			.ladder.sector->getIndex();
@@ -4732,7 +4732,7 @@ namespace
 		// One Agent stands in every kind of Sector the deletion touches, and two of
 		// them are mid-journey when the Layer is pulled out from under them.
 		auto const entryAgentId = world.createAgent("Entry walker", layout.entry, 0, 0.5f);
-		auto const sitterAgentId = world.createAgent("Middle sitter", layout.middleDeck, 0, 0.5f);
+		auto const sitterAgentId = world.createAgent("Middle sitter", layout.middleLevel, 0, 0.5f);
 		auto const climberAgentId = world.createAgent("Doomed climber", layout.doomedLadder, 0, 0.5f);
 		auto const riderAgentId = world.createAgent("Doomed rider", layout.doomedLift, 0, 0.5f);
 		auto const deepAgentId = world.createAgent("Deep traveller", layout.deepStore, 0, 0.5f);
@@ -4803,7 +4803,7 @@ namespace
 		{
 			auto const sector = world.getSector(i);
 			if (!sector) continue;
-			if (sector->getName() == "Middle Deck" || sector->getName() == "Middle Store")
+			if (sector->getName() == "Middle Level" || sector->getName() == "Middle Store")
 			{
 				result.diagnostic = "a Location survived on the deleted Layer";
 				return result;

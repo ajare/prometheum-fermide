@@ -11,18 +11,18 @@ namespace core
 
 	using namespace std;
 
-	LadderTransit::LadderTransit(uint32_t index, uint32_t layerIndex, uint32_t cellX, uint32_t cellY, uint32_t decksHigh, vector<TransitStop> const& stops, bool extensible, bool startExtended)
+	LadderTransit::LadderTransit(uint32_t index, uint32_t layerIndex, uint32_t cellX, uint32_t cellY, uint32_t levelsHigh, vector<TransitStop> const& stops, bool extensible, bool startExtended)
 		: Transit(SectorType::Ladder, "Ladder", layerIndex, index,
 			cellX, cellY,
 			0.0f, 0.0f,
-			1.0f, (float)decksHigh,
-			1, decksHigh, 
+			1.0f, (float)levelsHigh,
+			1, levelsHigh,
 			CORE_CORRIDOR_HEIGHT,
-			(uint32_t)((float)((decksHigh - 1.0f) + CORE_CORRIDOR_HEIGHT) / CORE_AGENT_MAX_HEIGHT),
+			(uint32_t)((float)((levelsHigh - 1.0f) + CORE_CORRIDOR_HEIGHT) / CORE_AGENT_MAX_HEIGHT),
 			stops)
 		, VerticalEdgeCreator()
 	{
-		mLadder = make_shared<Ladder>(cellX, cellY, decksHigh, extensible, startExtended);
+		mLadder = make_shared<Ladder>(cellX, cellY, levelsHigh, extensible, startExtended);
 	}
 
 	shared_ptr<Ladder> LadderTransit::getLadder() const
@@ -41,7 +41,7 @@ namespace core
 			type == SectorObjectType::Window;
 	}
 
-	shared_ptr<Edge> LadderTransit::createCrossDeckEdge([[maybe_unused]] shared_ptr<VerticalEdgeCreator> edgeCreator) const
+	shared_ptr<Edge> LadderTransit::createCrossLevelEdge([[maybe_unused]] shared_ptr<VerticalEdgeCreator> edgeCreator) const
 	{
 		ASSERT_PTR_EQ_THIS(edgeCreator);
 

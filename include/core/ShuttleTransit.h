@@ -33,7 +33,7 @@ namespace core
 		[[nodiscard]] bool sectorSupportsObjectType(SectorObjectType type) const override;
 
 		// Overridden from VerticalEdgeCreator
-		[[nodiscard]] std::shared_ptr<Edge> createCrossDeckEdge(std::shared_ptr<VerticalEdgeCreator> edgeCreator) const override;
+		[[nodiscard]] std::shared_ptr<Edge> createCrossLevelEdge(std::shared_ptr<VerticalEdgeCreator> edgeCreator) const override;
 	};
 
 } // core

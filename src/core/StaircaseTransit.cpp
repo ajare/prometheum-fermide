@@ -20,7 +20,7 @@ namespace core
 
 	bool StaircaseTransit::sectorSupportsObjectType(SectorObjectType) const { return false; }
 
-	shared_ptr<Edge> StaircaseTransit::createCrossDeckEdge(
+	shared_ptr<Edge> StaircaseTransit::createCrossLevelEdge(
 		[[maybe_unused]] shared_ptr<VerticalEdgeCreator> edgeCreator) const
 	{
 		ASSERT_PTR_EQ_THIS(edgeCreator);
