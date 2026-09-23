@@ -327,7 +327,9 @@ namespace core
 		SimulationResumed,
 		DestinationReached,
 		MovementCancelled,
-		RouteLost
+		RouteLost,
+		AgentActivated,
+		AgentDeactivated
 	};
 
 	// Events contain values only.  They are collected during a tick and become
@@ -343,6 +345,9 @@ namespace core
 		AgentSnapshot agent;
 		InteractionPointSnapshot interactionPoint;
 		InteractionRequestSnapshot interactionRequest;
+		// Stable semantic display value captured with a terminal interaction
+		// outcome. Behaviour callbacks never receive the request snapshot itself.
+		std::string interactionName;
 		DeviceOperationSnapshot deviceOperation;
 		TraversalResourceSnapshot traversalResource;
 		TraversalRequestSnapshot traversalRequest;

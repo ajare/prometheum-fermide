@@ -298,6 +298,9 @@ namespace core
 		event.type = SimulationEventType::InteractionRequestChanged;
 		event.phase = mBuilding.mCurrentPhase;
 		event.interactionRequest = makeInteractionRequestSnapshot(id, *request);
+		if (auto point = mBuilding.mInteractionPoints.find(request->mPoint))
+			event.interactionName = point->getName();
+		mBuilding.mAgentBehaviourRuntime->observeOutcome(event);
 		mBuilding.mEvents.push_back(std::move(event));
 		return true;
 	}
@@ -786,6 +789,9 @@ namespace core
 				event.type = SimulationEventType::InteractionRequestChanged;
 				event.phase = mBuilding.mCurrentPhase;
 				event.interactionRequest = makeInteractionRequestSnapshot(id, *request);
+				if (auto point = mBuilding.mInteractionPoints.find(request->mPoint))
+					event.interactionName = point->getName();
+				mBuilding.mAgentBehaviourRuntime->observeOutcome(event);
 				mBuilding.mEvents.push_back(std::move(event));
 			}
 		}

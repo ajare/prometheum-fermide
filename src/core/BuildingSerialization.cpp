@@ -1303,6 +1303,13 @@ namespace core
 	void Building::resetForDeserialization(std::string name, uint32_t cellsWide, uint32_t decksHigh,
 		bool preserveBehaviourRuntime)
 	{
+		if (!preserveBehaviourRuntime)
+		{
+			mAgentBehaviourRuntime->teardownAll(*this,
+				AgentBehaviourTeardownReason::Reset);
+			// Document replacement/reset also discards transient diagnostics.
+			mAgentBehaviourRuntime->reset();
+		}
 		for (auto const& [id, agent] : mAgents.entries())
 		{
 			(void)id;
@@ -1340,7 +1347,6 @@ namespace core
 		if (!preserveBehaviourRuntime)
 		{
 			mMovementGoals.clear();
-			mAgentBehaviourRuntime->reset();
 			mSimulationTick = 0;
 			mNextEventSequence = 1;
 		}

@@ -606,6 +606,7 @@ namespace core
 		constexpr char MarkerMetatable[] = "prometheum.v1.marker";
 		constexpr char AgentMetatable[] = "prometheum.v1.agent";
 		constexpr char SectorMetatable[] = "prometheum.v1.sector";
+		constexpr char InteractionMetatable[] = "prometheum.v1.interaction";
 
 		struct MarkerHandle
 		{
@@ -620,6 +621,11 @@ namespace core
 		struct SectorHandle
 		{
 			SectorId sector;
+		};
+
+		struct InteractionHandle
+		{
+			InteractionRequestId interaction;
 		};
 
 		enum class PendingMovementCommandType { MoveTo, Cancel };
@@ -706,6 +712,36 @@ namespace core
 			return reason == MovementCancellationReason::Explicit ? "explicit" : "unknown";
 		}
 
+		std::string_view interactionResultName(InteractionResult result)
+		{
+			switch (result)
+			{
+			case InteractionResult::Succeeded: return "succeeded";
+			case InteractionResult::SucceededWithBestEffortFailure:
+				return "succeeded_with_best_effort_failure";
+			case InteractionResult::Failed: return "failed";
+			case InteractionResult::Rejected: return "rejected";
+			case InteractionResult::Cancelled: return "cancelled";
+			case InteractionResult::Pending: break;
+			}
+			return "unknown";
+		}
+
+		std::string_view teardownReasonName(AgentBehaviourTeardownReason reason)
+		{
+			switch (reason)
+			{
+			case AgentBehaviourTeardownReason::Unassignment: return "unassignment";
+			case AgentBehaviourTeardownReason::Reset: return "reset";
+			case AgentBehaviourTeardownReason::Reload: return "reload";
+			case AgentBehaviourTeardownReason::BuildingClose: return "building_close";
+			case AgentBehaviourTeardownReason::InstanceFailure: return "instance_failure";
+			case AgentBehaviourTeardownReason::BehaviourDeletion:
+				return "behaviour_deletion";
+			}
+			return "unknown";
+		}
+
 		int markerToString(lua_State* state)
 		{
 			(void)luaL_checkudata(state, 1, MarkerMetatable);
@@ -724,6 +760,13 @@ namespace core
 		{
 			(void)luaL_checkudata(state, 1, SectorMetatable);
 			lua_pushliteral(state, "Sector");
+			return 1;
+		}
+
+		int interactionToString(lua_State* state)
+		{
+			(void)luaL_checkudata(state, 1, InteractionMetatable);
+			lua_pushliteral(state, "Interaction");
 			return 1;
 		}
 
@@ -754,6 +797,12 @@ namespace core
 				state, SectorMetatable);
 		}
 
+		int interactionEqual(lua_State* state)
+		{
+			return opaqueHandleEqual<InteractionHandle, InteractionRequestId,
+				&InteractionHandle::interaction>(state, InteractionMetatable);
+		}
+
 		void ensureOpaqueMetatable(lua_State* state, char const* metatable,
 			char const* description, lua_CFunction toString, lua_CFunction equal)
 		{
@@ -777,6 +826,8 @@ namespace core
 				agentToString, agentEqual);
 			ensureOpaqueMetatable(state, SectorMetatable, "opaque Sector handle",
 				sectorToString, sectorEqual);
+			ensureOpaqueMetatable(state, InteractionMetatable,
+				"opaque interaction handle", interactionToString, interactionEqual);
 		}
 
 		template<typename Handle>
@@ -1099,21 +1150,36 @@ namespace core
 
 	struct AgentBehaviourRuntimeAdapter::Impl
 	{
+		enum class OutcomeType
+		{
+			DestinationReached,
+			MovementCancelled,
+			RouteLost,
+			InteractionCompleted,
+			InteractionFailed,
+			Activated,
+			Deactivated
+		};
+
 		struct PendingOutcome
 		{
 			uint64_t sequence{ 0 };
 			uint64_t tick{ 0 };
-			SimulationEventType type{ SimulationEventType::DestinationReached };
+			OutcomeType type{ OutcomeType::DestinationReached };
 			MarkerId destination;
 			RouteLossReason routeLossReason{ RouteLossReason::None };
 			MovementCancellationReason cancellationReason{
 				MovementCancellationReason::None };
+			InteractionRequestId interaction;
+			std::string interactionName;
+			InteractionResult interactionResult{ InteractionResult::Pending };
 		};
 
 		struct Definition
 		{
 			AgentId agent;
 			AgentBehaviourAssignment assignment;
+			bool active{ true };
 			uint64_t randomSeed{ 0 };
 			std::string registryUuid;
 			uint64_t packageRevision{ 0 };
@@ -1136,10 +1202,14 @@ namespace core
 			std::unique_ptr<ModuleLoader> moduleLoader;
 			bool started{ false };
 			bool disabled{ false };
+			bool suspended{ false };
 			uint64_t randomState{ 0 };
 			CallbackScope scope;
+			// Active instances store absolute due ticks. Suspended instances store
+			// remaining durations in the same map, frozen at deactivation.
 			std::map<std::string, uint64_t> timers;
 			std::vector<PendingOutcome> outcomes;
+			std::vector<PendingOutcome> lifecycleOutcomes;
 		};
 
 		ScratchBudget budget;
@@ -1147,6 +1217,9 @@ namespace core
 		std::unique_ptr<lua_State, StateCloser> state;
 		ModuleLoader hostLoader;
 		std::map<AgentId, Instance> instances;
+		// Activation can be authored before the first simulation boundary has
+		// constructed the assigned instance.
+		std::map<AgentId, std::vector<PendingOutcome>> pendingLifecycleOutcomes;
 		std::vector<AgentBehaviourRuntimeDiagnostic> diagnostics;
 		uint64_t observedOutcomeCount{ 0 };
 		uint64_t lastObservedSequence{ 0 };
@@ -1199,6 +1272,7 @@ namespace core
 				release(instance);
 			}
 			instances.clear();
+			pendingLifecycleOutcomes.clear();
 			diagnostics.clear();
 			observedOutcomeCount = 0;
 			lastObservedSequence = 0;
@@ -1329,6 +1403,7 @@ namespace core
 				if (instances.contains(definition.agent)) continue;
 				Instance instance;
 				instance.assignment = definition.assignment;
+				instance.suspended = !definition.active;
 				instance.randomState = definition.randomSeed;
 				instance.registryUuid = definition.registryUuid;
 				instance.packageRevision = definition.packageRevision;
@@ -1340,6 +1415,12 @@ namespace core
 					instance.disabled = true;
 					release(instance);
 					(void)lua_gc(state.get(), LUA_GCCOLLECT);
+				}
+				if (auto pending = pendingLifecycleOutcomes.find(definition.agent);
+					pending != pendingLifecycleOutcomes.end())
+				{
+					instance.lifecycleOutcomes = std::move(pending->second);
+					pendingLifecycleOutcomes.erase(pending);
 				}
 				instances.emplace(definition.agent, std::move(instance));
 			}
@@ -1423,6 +1504,22 @@ namespace core
 			pushImmutableProxy(lua);
 		}
 
+		void pushReadOnlyContext(Building const& building, Instance& instance)
+		{
+			auto* lua = state.get();
+			lua_newtable(lua);
+			auto const backing = lua_gettop(lua);
+			lua_rawgeti(lua, LUA_REGISTRYINDEX, instance.configurationReference);
+			lua_setfield(lua, backing, "configuration");
+			lua_pushinteger(lua, static_cast<lua_Integer>(building.mSimulationTick));
+			lua_setfield(lua, backing, "tick");
+			pushAgentState(building, instance.scope.agent);
+			lua_pushvalue(lua, -1);
+			lua_setfield(lua, backing, "agent");
+			lua_setfield(lua, backing, "state");
+			pushImmutableProxy(lua);
+		}
+
 		void pushContext(Building const& building, Instance& instance)
 		{
 			auto* lua = state.get();
@@ -1487,7 +1584,9 @@ namespace core
 			instance.scope.setTimer = [&building, &instance, this](std::string name,
 				uint64_t duration, std::string& diagnostic)
 			{
-				if (duration > std::numeric_limits<uint64_t>::max() - building.mSimulationTick)
+				if (!instance.suspended
+					&& duration > std::numeric_limits<uint64_t>::max()
+						- building.mSimulationTick)
 				{
 					diagnostic = "timer due tick exceeds the simulation tick range";
 					return false;
@@ -1499,7 +1598,8 @@ namespace core
 						"Agent behaviour timer limit of {} per instance exceeded", timerLimit);
 					return false;
 				}
-				instance.timers[std::move(name)] = building.mSimulationTick + duration;
+				instance.timers[std::move(name)] = instance.suspended
+					? duration : building.mSimulationTick + duration;
 				return true;
 			};
 			instance.scope.cancelTimer = [&instance](std::string const& name)
@@ -1555,24 +1655,144 @@ namespace core
 			auto* lua = state.get();
 			lua_newtable(lua);
 			auto const backing = lua_gettop(lua);
-			auto const type = outcome.type == SimulationEventType::DestinationReached
-				? std::string_view("destination_reached")
-				: std::string_view("movement_cancelled");
+			std::string_view type;
+			switch (outcome.type)
+			{
+			case OutcomeType::DestinationReached: type = "destination_reached"; break;
+			case OutcomeType::MovementCancelled: type = "movement_cancelled"; break;
+			case OutcomeType::InteractionCompleted: type = "interaction_completed"; break;
+			case OutcomeType::InteractionFailed: type = "interaction_failed"; break;
+			case OutcomeType::Activated: type = "activated"; break;
+			case OutcomeType::Deactivated: type = "deactivated"; break;
+			case OutcomeType::RouteLost: type = "route_lost"; break;
+			}
 			lua_pushlstring(lua, type.data(), type.size());
 			lua_setfield(lua, backing, "type");
 			lua_pushinteger(lua, static_cast<lua_Integer>(outcome.tick));
 			lua_setfield(lua, backing, "tick");
 			lua_pushinteger(lua, static_cast<lua_Integer>(outcome.sequence));
 			lua_setfield(lua, backing, "sequence");
-			pushMarkerHandle(lua, outcome.destination);
-			lua_setfield(lua, backing, "destination");
-			if (outcome.type == SimulationEventType::MovementCancelled)
+			if (outcome.type == OutcomeType::DestinationReached
+				|| outcome.type == OutcomeType::MovementCancelled)
 			{
-				auto const reason = cancellationReasonName(outcome.cancellationReason);
-				lua_pushlstring(lua, reason.data(), reason.size());
-				lua_setfield(lua, backing, "reason");
+				pushMarkerHandle(lua, outcome.destination);
+				lua_setfield(lua, backing, "destination");
+				if (outcome.type == OutcomeType::MovementCancelled)
+				{
+					auto const reason = cancellationReasonName(outcome.cancellationReason);
+					lua_pushlstring(lua, reason.data(), reason.size());
+					lua_setfield(lua, backing, "reason");
+				}
+			}
+			else if (outcome.type == OutcomeType::InteractionCompleted
+				|| outcome.type == OutcomeType::InteractionFailed)
+			{
+				pushOpaqueHandle(lua, InteractionHandle{ outcome.interaction },
+					InteractionMetatable);
+				lua_setfield(lua, backing, "interaction");
+				lua_pushlstring(lua, outcome.interactionName.data(),
+					outcome.interactionName.size());
+				lua_setfield(lua, backing, "name");
+				auto const value = interactionResultName(outcome.interactionResult);
+				lua_pushlstring(lua, value.data(), value.size());
+				lua_setfield(lua, backing,
+					outcome.type == OutcomeType::InteractionCompleted
+						? "result" : "reason");
 			}
 			pushImmutableProxy(lua);
+		}
+
+		void teardownInstance(Building& building, Instance& instance,
+			AgentBehaviourTeardownReason reason, bool keepDisabled)
+		{
+			auto* lua = state.get();
+			instance.scope.active = false;
+			instance.scope.commands.clear();
+			if (instance.instanceReference != LUA_NOREF)
+			{
+				auto const base = lua_gettop(lua);
+				if (pushCallback(instance, "on_stop"))
+				{
+					auto const reasonName = teardownReasonName(reason);
+					lua_pushlstring(lua, reasonName.data(), reasonName.size());
+					pushReadOnlyContext(building, instance);
+					auto const result = protectedCall(lua, budget, 2, 0);
+					if (!result.succeeded)
+						record(instance, AgentBehaviourRuntimeStage::Callback,
+							"on_stop", result);
+				}
+				lua_settop(lua, base);
+			}
+			instance.outcomes.clear();
+			instance.lifecycleOutcomes.clear();
+			instance.timers.clear();
+			release(instance);
+			instance.disabled = keepDisabled;
+			(void)lua_gc(lua, LUA_GCCOLLECT);
+		}
+
+		void applyActivation(AgentId agent, bool active, uint64_t tick,
+			PendingOutcome outcome)
+		{
+			auto found = instances.find(agent);
+			if (found == instances.end())
+			{
+				pendingLifecycleOutcomes[agent].push_back(std::move(outcome));
+				return;
+			}
+			auto& instance = found->second;
+			if (active)
+			{
+				if (instance.suspended)
+					for (auto& [name, remaining] : instance.timers)
+					{
+						(void)name;
+						remaining = remaining > std::numeric_limits<uint64_t>::max() - tick
+							? std::numeric_limits<uint64_t>::max() : tick + remaining;
+					}
+				instance.suspended = false;
+			}
+			else
+			{
+				if (!instance.suspended)
+					for (auto& [name, dueTick] : instance.timers)
+					{
+						(void)name;
+						dueTick = dueTick > tick ? dueTick - tick : 0;
+					}
+				instance.suspended = true;
+			}
+			instance.lifecycleOutcomes.push_back(std::move(outcome));
+		}
+
+		void dispatchOutcome(Building& building, AgentId agentId, Instance& instance,
+			PendingOutcome const& outcome,
+			std::vector<PendingMovementCommand>& commands)
+		{
+			auto* lua = state.get();
+			auto const base = lua_gettop(lua);
+			if (outcome.type == OutcomeType::RouteLost)
+			{
+				if (pushCallback(instance, "on_route_lost"))
+				{
+					prepareScope(building, agentId, instance, commands);
+					pushMarkerHandle(lua, outcome.destination);
+					auto const reason = routeLossReasonName(outcome.routeLossReason);
+					lua_pushlstring(lua, reason.data(), reason.size());
+					pushContext(building, instance);
+					auto const result = protectedCall(lua, budget, 3, 0);
+					finishCallback(instance, "on_route_lost", result, commands);
+				}
+			}
+			else if (pushCallback(instance, "on_event"))
+			{
+				prepareScope(building, agentId, instance, commands);
+				pushSemanticEvent(outcome);
+				pushContext(building, instance);
+				auto const result = protectedCall(lua, budget, 2, 0);
+				finishCallback(instance, "on_event", result, commands);
+			}
+			lua_settop(lua, base);
 		}
 
 		void runBoundaryCallbacks(Building& building)
@@ -1583,10 +1803,22 @@ namespace core
 			{
 				if (instance.disabled) continue;
 				auto agent = building.mAgents.find(agentId);
-				if (!agent || !agent->isActive()) continue;
+				if (!agent) continue;
 				auto* lua = state.get();
 
-				if (!instance.started)
+				std::sort(instance.lifecycleOutcomes.begin(),
+					instance.lifecycleOutcomes.end(),
+					[](PendingOutcome const& lhs, PendingOutcome const& rhs)
+					{ return lhs.sequence < rhs.sequence; });
+				for (auto const& outcome : instance.lifecycleOutcomes)
+				{
+					dispatchOutcome(building, agentId, instance, outcome, commands);
+					if (instance.disabled) break;
+				}
+				instance.lifecycleOutcomes.clear();
+
+				if (!instance.disabled && !instance.suspended && agent->isActive()
+					&& !instance.started)
 				{
 					instance.started = true;
 					auto const base = lua_gettop(lua);
@@ -1602,55 +1834,26 @@ namespace core
 					lua_settop(lua, base);
 				}
 
-				if (instance.disabled)
+				if (!instance.disabled && !instance.suspended && agent->isActive())
 				{
+					std::sort(instance.outcomes.begin(), instance.outcomes.end(),
+						[](PendingOutcome const& lhs, PendingOutcome const& rhs)
+						{ return lhs.sequence < rhs.sequence; });
+					for (auto const& outcome : instance.outcomes)
+					{
+						dispatchOutcome(building, agentId, instance, outcome, commands);
+						if (instance.disabled) break;
+					}
 					instance.outcomes.clear();
-					release(instance);
-					(void)lua_gc(state.get(), LUA_GCCOLLECT);
-					disabledAgents.push_back(agentId);
-					continue;
 				}
 
-				std::sort(instance.outcomes.begin(), instance.outcomes.end(),
-					[](PendingOutcome const& lhs, PendingOutcome const& rhs)
-					{ return lhs.sequence < rhs.sequence; });
-				for (auto const& outcome : instance.outcomes)
-				{
-					auto const base = lua_gettop(lua);
-					if (outcome.type == SimulationEventType::RouteLost)
-					{
-						if (pushCallback(instance, "on_route_lost"))
-						{
-							prepareScope(building, agentId, instance, commands);
-							pushMarkerHandle(lua, outcome.destination);
-							auto const reason = routeLossReasonName(outcome.routeLossReason);
-							lua_pushlstring(lua, reason.data(), reason.size());
-							pushContext(building, instance);
-							auto const result = protectedCall(lua, budget, 3, 0);
-							finishCallback(instance, "on_route_lost", result, commands);
-						}
-					}
-					else if (pushCallback(instance, "on_event"))
-					{
-						prepareScope(building, agentId, instance, commands);
-						pushSemanticEvent(outcome);
-						pushContext(building, instance);
-						auto const result = protectedCall(lua, budget, 2, 0);
-						finishCallback(instance, "on_event", result, commands);
-					}
-					lua_settop(lua, base);
-					if (instance.disabled) break;
-				}
-				instance.outcomes.clear();
-
-				if (!instance.disabled)
+				if (!instance.disabled && !instance.suspended && agent->isActive())
 				{
 					std::vector<std::string> dueTimers;
 					for (auto const& [name, dueTick] : instance.timers)
 						if (dueTick <= building.mSimulationTick) dueTimers.push_back(name);
 					// Due timers form this boundary's immutable callback batch. Erasing all
-					// of them before the first callback preserves one-shot semantics even
-					// when a callback schedules or cancels one of the same names.
+					// before the first callback preserves one-shot semantics.
 					for (auto const& name : dueTimers) instance.timers.erase(name);
 					for (auto const& name : dueTimers)
 					{
@@ -1669,9 +1872,8 @@ namespace core
 				}
 				if (instance.disabled)
 				{
-					instance.timers.clear();
-					release(instance);
-					(void)lua_gc(state.get(), LUA_GCCOLLECT);
+					teardownInstance(building, instance,
+						AgentBehaviourTeardownReason::InstanceFailure, true);
 					disabledAgents.push_back(agentId);
 				}
 			}
@@ -1689,8 +1891,8 @@ namespace core
 				else
 					(void)building.cancelBehaviourAgentMovement(command.agent);
 			}
-			for (auto agent : disabledAgents)
-				(void)building.cancelBehaviourAgentMovement(agent);
+			for (auto agentId : disabledAgents)
+				(void)building.cancelBehaviourAgentMovement(agentId);
 		}
 	};
 
@@ -1730,7 +1932,7 @@ namespace core
 				auto source = registry->mSourceCache.find(
 					behaviour->getSourceModulePath());
 				if (source == registry->mSourceCache.end()) continue;
-				definitions.push_back({ agentId, assignment,
+				definitions.push_back({ agentId, assignment, agent->isActive(),
 					deriveRandomSeed(building.mRandomSeed, agentId, assignment.behaviour),
 					registry->getUuid(), registry->getPackageRevision(),
 					registry->mPackageDirectory->filename().string(),
@@ -1780,24 +1982,103 @@ namespace core
 
 	void AgentBehaviourRuntimeAdapter::observeOutcome(SimulationEvent const& event)
 	{
-		if (event.type != SimulationEventType::DestinationReached
-			&& event.type != SimulationEventType::MovementCancelled
-			&& event.type != SimulationEventType::RouteLost) return;
-		auto found = mImpl->instances.find(event.agent.id);
+		Impl::PendingOutcome outcome;
+		AgentId agent;
+		outcome.sequence = event.sequence;
+		outcome.tick = event.tick;
+		if (event.type == SimulationEventType::DestinationReached
+			|| event.type == SimulationEventType::MovementCancelled
+			|| event.type == SimulationEventType::RouteLost)
+		{
+			agent = event.agent.id;
+			outcome.type = event.type == SimulationEventType::DestinationReached
+				? Impl::OutcomeType::DestinationReached
+				: event.type == SimulationEventType::MovementCancelled
+					? Impl::OutcomeType::MovementCancelled
+					: Impl::OutcomeType::RouteLost;
+			outcome.destination = event.destinationMarker;
+			outcome.routeLossReason = event.routeLossReason;
+			outcome.cancellationReason = event.movementCancellationReason;
+		}
+		else if (event.type == SimulationEventType::InteractionRequestChanged
+			&& event.interactionRequest.result != InteractionResult::Pending)
+		{
+			agent = event.interactionRequest.actor;
+			outcome.type = event.interactionRequest.result == InteractionResult::Succeeded
+				|| event.interactionRequest.result
+					== InteractionResult::SucceededWithBestEffortFailure
+				? Impl::OutcomeType::InteractionCompleted
+				: Impl::OutcomeType::InteractionFailed;
+			outcome.interaction = event.interactionRequest.id;
+			outcome.interactionName = event.interactionName;
+			outcome.interactionResult = event.interactionRequest.result;
+		}
+		else return;
+
+		auto found = mImpl->instances.find(agent);
 		if (found == mImpl->instances.end() || found->second.disabled) return;
-		found->second.outcomes.push_back({ event.sequence, event.tick, event.type,
-			event.destinationMarker, event.routeLossReason,
-			event.movementCancellationReason });
+		found->second.outcomes.push_back(std::move(outcome));
 		++mImpl->observedOutcomeCount;
 		mImpl->lastObservedSequence = event.sequence;
 	}
 
-	void AgentBehaviourRuntimeAdapter::removeInstance(AgentId agent)
+	void AgentBehaviourRuntimeAdapter::observeActivation(
+		SimulationEvent const& event)
 	{
+		if (event.type != SimulationEventType::AgentActivated
+			&& event.type != SimulationEventType::AgentDeactivated) return;
+		Impl::PendingOutcome outcome;
+		outcome.sequence = event.sequence;
+		outcome.tick = event.tick;
+		outcome.type = event.type == SimulationEventType::AgentActivated
+			? Impl::OutcomeType::Activated : Impl::OutcomeType::Deactivated;
+		mImpl->applyActivation(event.agent.id,
+			event.type == SimulationEventType::AgentActivated, event.tick,
+			std::move(outcome));
+	}
+
+	void AgentBehaviourRuntimeAdapter::removeInstance(Building& building,
+		AgentId agent, AgentBehaviourTeardownReason reason)
+	{
+		mImpl->pendingLifecycleOutcomes.erase(agent);
 		auto found = mImpl->instances.find(agent);
 		if (found == mImpl->instances.end()) return;
-		mImpl->release(found->second);
+		try
+		{
+			mImpl->teardownInstance(building, found->second, reason, false);
+		}
+		catch (...)
+		{
+			// Adapter-side conversion/allocation failures are no more entitled to
+			// veto teardown than a protected Lua error.
+			found->second.scope.active = false;
+			found->second.scope.commands.clear();
+			mImpl->release(found->second);
+		}
 		mImpl->instances.erase(found);
+	}
+
+	void AgentBehaviourRuntimeAdapter::teardownAll(Building& building,
+		AgentBehaviourTeardownReason reason)
+	{
+		for (auto& [agent, instance] : mImpl->instances)
+		{
+			(void)agent;
+			try
+			{
+				mImpl->teardownInstance(building, instance, reason, false);
+			}
+			catch (...)
+			{
+				instance.scope.active = false;
+				instance.scope.commands.clear();
+				mImpl->release(instance);
+			}
+		}
+		mImpl->instances.clear();
+		mImpl->pendingLifecycleOutcomes.clear();
+		mImpl->observedOutcomeCount = 0;
+		mImpl->lastObservedSequence = 0;
 	}
 
 	bool AgentBehaviourRuntimeAdapter::isInstanceDisabled(AgentId agent) const

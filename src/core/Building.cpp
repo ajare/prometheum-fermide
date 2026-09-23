@@ -117,6 +117,11 @@ namespace core
 
 	Building::~Building()
 	{
+		// Lua teardown needs the final Building and Agent value views, so it runs
+		// before registries and domain storage begin destruction. on_stop is
+		// best-effort and cannot prevent the Building from closing.
+		mAgentBehaviourRuntime->teardownAll(*this,
+			AgentBehaviourTeardownReason::BuildingClose);
 		if (mAgentTagRegistry) mAgentTagRegistry->unregisterBuilding(*this);
 		if (mAgentBehaviourRegistry) mAgentBehaviourRegistry->unregisterBuilding(*this);
 	}
@@ -140,8 +145,9 @@ namespace core
 			if (diagnostic) *diagnostic = "The Building random seed is unchanged";
 			return false;
 		}
+		mAgentBehaviourRuntime->teardownAll(*this,
+			AgentBehaviourTeardownReason::Reset);
 		mRandomSeed = seed;
-		mAgentBehaviourRuntime->reset();
 		for (auto const& [agentId, agent] : mAgents.entries())
 			if (agent && agent->getBehaviourAssignment())
 				mSimulationCoordinator.clearAgentMovementForBehaviourEdit(agentId);
@@ -619,7 +625,8 @@ namespace core
 		// Assignment hands movement authority to a fresh instance. A manual route,
 		// or runtime intent from the assignment being replaced, must not survive
 		// into that instance.
-		mAgentBehaviourRuntime->removeInstance(agentId);
+		mAgentBehaviourRuntime->removeInstance(*this, agentId,
+			AgentBehaviourTeardownReason::Unassignment);
 		mSimulationCoordinator.clearAgentMovementForBehaviourEdit(agentId);
 		mAgents.find(agentId)->setBehaviourAssignment(std::move(assignment));
 		modify();
@@ -646,7 +653,8 @@ namespace core
 			if (diagnostic) *diagnostic = "The Agent has no behaviour assignment to clear";
 			return false;
 		}
-		mAgentBehaviourRuntime->removeInstance(agentId);
+		mAgentBehaviourRuntime->removeInstance(*this, agentId,
+			AgentBehaviourTeardownReason::Unassignment);
 		mSimulationCoordinator.clearAgentMovementForBehaviourEdit(agentId);
 		mAgents.find(agentId)->clearBehaviourAssignment();
 		modify();

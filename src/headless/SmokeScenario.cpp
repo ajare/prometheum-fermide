@@ -159,6 +159,8 @@ namespace
 			{
 			case core::SimulationEventType::AgentAdded:
 			case core::SimulationEventType::AgentChanged:
+			case core::SimulationEventType::AgentActivated:
+			case core::SimulationEventType::AgentDeactivated:
 			case core::SimulationEventType::AgentRemoved:
 				appendAgent(output, event.agent);
 				break;

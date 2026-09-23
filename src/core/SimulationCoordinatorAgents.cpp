@@ -141,7 +141,19 @@ namespace core
 	bool SimulationCoordinator::setAgentActive(AgentId id, bool active, string* diagnostic)
 	{
 		if (!canSetAgentActive(id, active, diagnostic)) return false;
-		mBuilding.mAgents.find(id)->setActive(active);
+		auto* agent = mBuilding.mAgents.find(id);
+		if (agent->isActive() == active) return true;
+		agent->setActive(active);
+
+		SimulationEvent event;
+		event.sequence = mBuilding.mNextEventSequence++;
+		event.tick = mBuilding.mSimulationTick;
+		event.type = active ? SimulationEventType::AgentActivated
+			: SimulationEventType::AgentDeactivated;
+		event.agent = makeAgentSnapshot(agent);
+		if (agent->getBehaviourAssignment())
+			mBuilding.mAgentBehaviourRuntime->observeActivation(event);
+		mBuilding.mEvents.push_back(std::move(event));
 		return true;
 	}
 
@@ -486,6 +498,11 @@ namespace core
 		{
 			sector->exitAgent(found.entity);
 		}
+		// Removing an assigned Agent is also the end of its private behaviour
+		// lifetime. Best-effort on_stop runs while the final read-only Agent state
+		// is still available and cannot veto removal.
+		mBuilding.mAgentBehaviourRuntime->removeInstance(mBuilding, id,
+			AgentBehaviourTeardownReason::Unassignment);
 		mBuilding.mAgentIds.erase(found.entity);
 		mBuilding.mAgents.remove(id);
 

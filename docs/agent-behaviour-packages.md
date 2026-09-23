@@ -149,10 +149,28 @@ reload, and registry reload recreate it. Lua's `math.random` and
 `on_event` receives immutable `destination_reached` and `movement_cancelled`
 values in stable event-sequence order. Both carry `tick`, `sequence`, and an
 opaque `destination`; cancellation also carries the semantic reason `explicit`.
-`on_route_lost` receives the opaque destination and one of `unreachable`,
-`topology_changed`, or `destination_removed` after the engine has cleared the old
-goal. Successful automatic same-destination replanning remains internal and does
-not call Lua.
+It also receives `interaction_completed` with an opaque `interaction`, display
+`name`, and `result` (`succeeded` or `succeeded_with_best_effort_failure`), and
+`interaction_failed` with the same identity/name fields and a `reason` of
+`failed`, `rejected`, or `cancelled`. Request snapshots, actors, operations, and
+device internals are not exposed. `on_route_lost` receives the opaque destination
+and one of `unreachable`, `topology_changed`, or `destination_removed` after the
+engine has cleared the old goal. Successful automatic same-destination replanning
+remains internal and does not call Lua.
+
+Deactivating an assigned Agent freezes each timer at its remaining duration and
+queues one immutable `deactivated` event. Other events, timers, and commands stay
+suspended. Reactivation queues `activated`, restores those relative durations,
+and resumes the same private instance without rerunning `on_start`. Ordinary
+pause/resume does not alter instance state, timers, or random streams. Reset
+tears instances down and recreates them from authored configuration.
+
+`on_stop` receives a reason and a read-only context containing only
+`configuration`, `tick`, and the final semantic Agent `state`/`agent` view. It has
+no movement, timer, or random capabilities. Reasons are `unassignment`, `reset`,
+`reload`, `building_close`, `instance_failure`, and `behaviour_deletion`.
+Teardown is best-effort: an `on_stop` error is diagnosed but cannot retain the
+instance or veto the lifecycle operation.
 
 ## Building persistence
 

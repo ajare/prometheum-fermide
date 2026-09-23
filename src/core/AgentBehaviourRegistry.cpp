@@ -461,7 +461,8 @@ namespace core
 		for (auto* building : mLoadedBuildings)
 		{
 			if (!building) continue;
-			building->mAgentBehaviourRuntime->reset();
+			building->mAgentBehaviourRuntime->teardownAll(*building,
+				AgentBehaviourTeardownReason::Reload);
 			for (auto const& [agentId, agent] : building->mAgents.entries())
 				if (agent && agent->getBehaviourAssignment())
 					building->mSimulationCoordinator

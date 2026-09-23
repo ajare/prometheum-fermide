@@ -40,6 +40,18 @@ namespace core
 		Callback
 	};
 
+	// Defined lifetime endpoints passed to the best-effort on_stop callback.
+	// They are runtime values only and are never part of Building persistence.
+	enum class AgentBehaviourTeardownReason
+	{
+		Unassignment,
+		Reset,
+		Reload,
+		BuildingClose,
+		InstanceFailure,
+		BehaviourDeletion
+	};
+
 	// Value-only failure record. Later failure-policy layers may decide how to
 	// present or stop a run; the Lua boundary always records the original scope
 	// and never lets a Lua/sol2 failure unwind through a simulation tick.
@@ -106,9 +118,15 @@ namespace core
 		// Agent/event order, then commands are applied before intent collection.
 		void runBoundary(Building& building);
 		void observeOutcome(SimulationEvent const& event);
-		// Assignment edits are paused-only. Removing the private instance here
-		// prevents a later boundary from delivering stale outcomes to a replacement.
-		void removeInstance(AgentId agent);
+		// Activation edits are paused-only. The transition is retained even when
+		// the private instance will not be constructed until the next boundary.
+		void observeActivation(SimulationEvent const& event);
+		// Assignment edits are paused-only. Best-effort teardown cannot veto the
+		// edit, and removing the private instance prevents stale outcome delivery.
+		void removeInstance(Building& building, AgentId agent,
+			AgentBehaviourTeardownReason reason =
+				AgentBehaviourTeardownReason::Unassignment);
+		void teardownAll(Building& building, AgentBehaviourTeardownReason reason);
 		bool isInstanceDisabled(AgentId agent) const;
 		std::vector<AgentBehaviourRuntimeDiagnostic> consumeDiagnostics();
 		AgentBehaviourRuntimeLimits getLimits() const;
