@@ -29,14 +29,30 @@ bool canSelectAgentBehaviourRegistry(
 	std::shared_ptr<const core::Building> const& building,
 	std::string const& buildingFilepath, std::string* diagnostic = nullptr);
 
-// Building-reference edits own Building undo entries. Detach is non-destructive
-// because no Agent behaviour assignment exists yet.
+// Building-reference edits own Building undo entries. Direct detach/switch is
+// non-destructive and refuses a used namespace. The clearing variants are the
+// explicit confirmed destructive transaction.
 bool commitAgentBehaviourRegistryDetach(
+	std::shared_ptr<core::Building> const& building, std::string& diagnostic);
+bool commitAgentBehaviourRegistryDetachClearingAssignments(
 	std::shared_ptr<core::Building> const& building, std::string& diagnostic);
 bool commitAgentBehaviourRegistrySwitch(
 	std::shared_ptr<core::Building> const& building,
 	std::string const& buildingFilepath, std::string const& packageDirectory,
 	std::string& diagnostic);
+bool commitAgentBehaviourRegistrySwitchClearingAssignments(
+	std::shared_ptr<core::Building> const& building,
+	std::string const& buildingFilepath, std::string const& packageDirectory,
+	std::string& diagnostic);
+
+void requestAgentBehaviourRegistryDetach(
+	std::shared_ptr<core::Building> const& building);
+void requestAgentBehaviourRegistrySwitch(
+	std::shared_ptr<core::Building> const& building,
+	std::string buildingFilepath, std::string packageDirectory);
+bool agentBehaviourRegistryChangePending(std::string* consequence = nullptr);
+bool confirmPendingAgentBehaviourRegistryChange(std::string& diagnostic);
+void cancelPendingAgentBehaviourRegistryChange();
 
 // Reload refuses dirty state and running dependents. Source/helper modules and
 // every affected authored Agent configuration are preflighted in fresh

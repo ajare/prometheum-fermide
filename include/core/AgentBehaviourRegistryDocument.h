@@ -36,10 +36,19 @@ namespace core
 		Building& building, std::filesystem::path const& buildingFilepath,
 		std::filesystem::path const& packageDirectory);
 
+	// Explicit destructive replacement. The complete candidate package is read
+	// and validated before the Building atomically clears every assignment and
+	// configuration or changes its persisted reference.
+	std::shared_ptr<AgentBehaviourRegistry>
+	selectAndAttachAgentBehaviourRegistryClearingAssignments(
+		Building& building, std::filesystem::path const& buildingFilepath,
+		std::filesystem::path const& packageDirectory);
+
 	// Resolves a persisted Building reference beside the Building document,
 	// verifies the registry UUID, and attaches it. Registries are shared by
-	// canonical package identity. Returns null when the Building has no
-	// reference.
+	// canonical package identity. Missing, substituted, unsupported, or invalid
+	// packages become a recoverable dependency diagnostic and return null while
+	// structural and unresolved authored Building data remain loaded.
 	std::shared_ptr<AgentBehaviourRegistry> loadAndAttachAgentBehaviourRegistry(
 		Building& building, std::filesystem::path const& buildingFilepath);
 

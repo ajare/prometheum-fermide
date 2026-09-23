@@ -20,6 +20,34 @@ namespace
 {
 	vector<core::AgentBehaviourReloadDiagnostic> gReloadDiagnostics;
 
+	struct PendingAgentBehaviourRegistryChange
+	{
+		weak_ptr<core::Building> building;
+		string buildingFilepath;
+		string packageDirectory;
+		string consequence;
+		bool detach{ false };
+		bool active{ false };
+		bool openRequested{ false };
+	};
+	PendingAgentBehaviourRegistryChange gPendingRegistryChange;
+
+	string registryChangeConsequence(core::Building const& building, bool detach,
+		string const& packageDirectory)
+	{
+		auto const assignments = building.getAgentBehaviourAssignmentCount();
+		string result = "This destructive action will clear all "
+			+ to_string(assignments) + " Agent behaviour assignment"
+			+ (assignments == 1 ? "" : "s")
+			+ " and configuration" + (assignments == 1 ? "" : "s") + ".\n";
+		if (detach)
+			result += "It will detach " + building.getAgentBehaviourRegistryPackageName() + ". ";
+		else result += "It will replace the current reference with "
+			+ filesystem::path(packageDirectory).filename().string() + ". ";
+		result += "Registry package files will not be deleted, renamed, or rewritten.";
+		return result;
+	}
+
 	filesystem::path attachedPackagePath(core::Building const& building,
 		string const& buildingFilepath)
 	{
@@ -65,11 +93,66 @@ namespace
 		auto const& registry = building->getAgentBehaviourRegistry();
 		if (!registry)
 		{
-			ImGui::TextDisabled("The referenced Agent behaviour registry package is not loaded.");
-			ImGui::TextWrapped(
-				"The package '%s' beside this Building is missing, malformed, or has a different UUID. "
-				"Repair or replace it, then reopen the Building.",
-				building->getAgentBehaviourRegistryPackageName().c_str());
+			ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.3f, 1.0f),
+				"Agent behaviour dependency unavailable");
+			ImGui::TextWrapped("%s",
+				building->getAgentBehaviourDependencyDiagnostic().c_str());
+
+			string selectDiagnostic;
+			auto canSelect = canSelectAgentBehaviourRegistry(
+				building, buildingFilepath, &selectDiagnostic);
+			if (!selectPackageDirectory)
+			{
+				canSelect = false;
+				selectDiagnostic = "Registry package selection is unavailable";
+			}
+			ImGui::BeginDisabled(!canSelect);
+			auto const repairClicked = ImGui::Button("Repair or replace registry");
+			ImGui::EndDisabled();
+			if (!canSelect && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+				ImGui::SetTooltip("%s", selectDiagnostic.c_str());
+			ImGui::SameLine();
+			ImGui::BeginDisabled(!building->isSimulationPaused());
+			auto const detachClicked = ImGui::Button("Detach registry");
+			ImGui::EndDisabled();
+
+			if (repairClicked)
+			{
+				try
+				{
+					auto selectedPath = selectPackageDirectory();
+					if (selectedPath)
+					{
+						string diagnostic;
+						if (commitAgentBehaviourRegistrySwitch(building,
+							buildingFilepath, *selectedPath, diagnostic)) return true;
+						if (building->getAgentBehaviourAssignmentCount() != 0
+							&& diagnostic.find("confirmed destructive action") != string::npos)
+							requestAgentBehaviourRegistrySwitch(building,
+								buildingFilepath, *selectedPath);
+						else if (!diagnostic.empty())
+							core::addLogMessage("Behaviours", 0,
+								core::LogLevel::Warning, diagnostic);
+					}
+				}
+				catch (exception const& error)
+				{
+					core::addLogMessage("Behaviours", 0,
+						core::LogLevel::Error, error.what());
+				}
+			}
+			if (detachClicked)
+			{
+				if (building->getAgentBehaviourAssignmentCount() != 0)
+					requestAgentBehaviourRegistryDetach(building);
+				else
+				{
+					string diagnostic;
+					if (commitAgentBehaviourRegistryDetach(building, diagnostic)) return true;
+					if (!diagnostic.empty()) core::addLogMessage("Behaviours", 0,
+						core::LogLevel::Warning, diagnostic);
+				}
+			}
 			return false;
 		}
 
@@ -118,16 +201,25 @@ namespace
 				string diagnostic;
 				if (commitAgentBehaviourRegistrySwitch(building, buildingFilepath,
 					*selectedPath, diagnostic)) return true;
-				if (!diagnostic.empty())
+				if (building->getAgentBehaviourAssignmentCount() != 0
+					&& diagnostic.find("confirmed destructive action") != string::npos)
+					requestAgentBehaviourRegistrySwitch(building,
+						buildingFilepath, *selectedPath);
+				else if (!diagnostic.empty())
 					core::addLogMessage("Behaviours", 0, core::LogLevel::Warning, diagnostic);
 			}
 		}
 		if (detachClicked)
 		{
-			string diagnostic;
-			if (commitAgentBehaviourRegistryDetach(building, diagnostic)) return true;
-			if (!diagnostic.empty())
-				core::addLogMessage("Behaviours", 0, core::LogLevel::Warning, diagnostic);
+			if (building->getAgentBehaviourAssignmentCount() != 0)
+				requestAgentBehaviourRegistryDetach(building);
+			else
+			{
+				string diagnostic;
+				if (commitAgentBehaviourRegistryDetach(building, diagnostic)) return true;
+				if (!diagnostic.empty())
+					core::addLogMessage("Behaviours", 0, core::LogLevel::Warning, diagnostic);
+			}
 		}
 
 		string editDiagnostic;
@@ -290,6 +382,38 @@ namespace
 			"Definitions and Lua source are edited externally; Reload re-runs protected preflight.");
 		return false;
 	}
+
+	bool renderRegistryChangeConfirmation()
+	{
+		if (gPendingRegistryChange.openRequested)
+		{
+			ImGui::OpenPopup("Clear Agent behaviour assignments?");
+			gPendingRegistryChange.openRequested = false;
+		}
+		bool changed{ false };
+		if (ImGui::BeginPopupModal("Clear Agent behaviour assignments?", nullptr,
+			ImGuiWindowFlags_AlwaysAutoResize))
+		{
+			ImGui::TextWrapped("%s", gPendingRegistryChange.consequence.c_str());
+			if (ImGui::Button("Clear assignments and continue"))
+			{
+				string diagnostic;
+				changed = confirmPendingAgentBehaviourRegistryChange(diagnostic);
+				if (!changed && !diagnostic.empty())
+					core::addLogMessage("Behaviours", 0,
+						core::LogLevel::Error, diagnostic);
+				ImGui::CloseCurrentPopup();
+			}
+			ImGui::SameLine();
+			if (ImGui::Button("Cancel"))
+			{
+				cancelPendingAgentBehaviourRegistryChange();
+				ImGui::CloseCurrentPopup();
+			}
+			ImGui::EndPopup();
+		}
+		return changed;
+	}
 }
 
 bool commitAgentBehaviourRegistryDetach(
@@ -327,6 +451,41 @@ bool commitAgentBehaviourRegistryDetach(
 	}
 }
 
+bool commitAgentBehaviourRegistryDetachClearingAssignments(
+	shared_ptr<core::Building> const& building, string& diagnostic)
+{
+	diagnostic.clear();
+	if (!building || !building->hasAgentBehaviourRegistryReference())
+	{
+		diagnostic = "There is no Agent behaviour registry to detach";
+		return false;
+	}
+	auto undo = captureDocumentSnapshot(building);
+	if (!undo)
+	{
+		diagnostic = "Could not capture the Building before clearing Agent behaviour assignments and detaching its registry";
+		return false;
+	}
+	try
+	{
+		auto const packageName = building->getAgentBehaviourRegistryPackageName();
+		auto registry = building->getAgentBehaviourRegistry();
+		building->detachAgentBehaviourRegistryAndClearAssignments();
+		commitDocumentEdit(std::move(undo));
+		releaseRegistryIfUnused(registry);
+		resetBehavioursPanelState();
+		core::addLogMessage("Behaviours", 0, core::LogLevel::Info,
+			"Cleared all Agent behaviour assignments and configurations, then detached "
+				+ packageName + " without changing its files");
+		return true;
+	}
+	catch (std::exception const& error)
+	{
+		diagnostic = error.what();
+		return false;
+	}
+}
+
 bool commitAgentBehaviourRegistrySwitch(
 	shared_ptr<core::Building> const& building, string const& buildingFilepath,
 	string const& packageDirectory, string& diagnostic)
@@ -345,7 +504,8 @@ bool commitAgentBehaviourRegistrySwitch(
 	}
 	try
 	{
-		auto previousRegistry = building->hasAttachedAgentBehaviourRegistry()
+		auto const previouslyAttached = building->hasAttachedAgentBehaviourRegistry();
+		auto previousRegistry = previouslyAttached
 			? building->getAgentBehaviourRegistry() : nullptr;
 		auto const previousPackage = building->hasAgentBehaviourRegistryReference()
 			? building->getAgentBehaviourRegistryPackageName() : string{};
@@ -353,17 +513,22 @@ bool commitAgentBehaviourRegistrySwitch(
 			? building->getExpectedAgentBehaviourRegistryUuid() : string{};
 		auto registry = core::selectAndAttachAgentBehaviourRegistry(
 			*building, buildingFilepath, packageDirectory);
-		if (building->getAgentBehaviourRegistryPackageName() == previousPackage
-			&& building->getExpectedAgentBehaviourRegistryUuid() == previousUuid)
+		auto const referenceChanged
+			= building->getAgentBehaviourRegistryPackageName() != previousPackage
+				|| building->getExpectedAgentBehaviourRegistryUuid() != previousUuid;
+		if (!referenceChanged && previouslyAttached)
 		{
 			diagnostic = "The selected Agent behaviour registry is already attached";
 			return false;
 		}
-		commitDocumentEdit(std::move(undo));
+		// Resolving the already-persisted expected package changes only runtime
+		// dependency state, so it creates no authored undo entry or dirty state.
+		if (referenceChanged) commitDocumentEdit(std::move(undo));
 		if (previousRegistry != registry) releaseRegistryIfUnused(previousRegistry);
 		resetBehavioursPanelState();
 		core::addLogMessage("Behaviours", 0, core::LogLevel::Info,
-			"Switched to Agent behaviour registry package "
+			string(referenceChanged ? "Switched to" : "Recovered")
+				+ " Agent behaviour registry package "
 				+ building->getAgentBehaviourRegistryPackageName()
 				+ " (" + registry->getUuid() + ")");
 		return true;
@@ -373,6 +538,107 @@ bool commitAgentBehaviourRegistrySwitch(
 		diagnostic = error.what();
 		return false;
 	}
+}
+
+bool commitAgentBehaviourRegistrySwitchClearingAssignments(
+	shared_ptr<core::Building> const& building, string const& buildingFilepath,
+	string const& packageDirectory, string& diagnostic)
+{
+	diagnostic.clear();
+	if (!building)
+	{
+		diagnostic = "No Building is open";
+		return false;
+	}
+	auto undo = captureDocumentSnapshot(building);
+	if (!undo)
+	{
+		diagnostic = "Could not capture the Building before clearing Agent behaviour assignments and switching registries";
+		return false;
+	}
+	try
+	{
+		auto previousRegistry = building->hasAttachedAgentBehaviourRegistry()
+			? building->getAgentBehaviourRegistry() : nullptr;
+		auto registry = core::selectAndAttachAgentBehaviourRegistryClearingAssignments(
+			*building, buildingFilepath, packageDirectory);
+		commitDocumentEdit(std::move(undo));
+		if (previousRegistry != registry) releaseRegistryIfUnused(previousRegistry);
+		resetBehavioursPanelState();
+		core::addLogMessage("Behaviours", 0, core::LogLevel::Info,
+			"Cleared all Agent behaviour assignments and configurations, then switched to "
+				+ building->getAgentBehaviourRegistryPackageName()
+				+ " (" + registry->getUuid() + ")");
+		return true;
+	}
+	catch (std::exception const& error)
+	{
+		diagnostic = error.what();
+		return false;
+	}
+}
+
+void requestAgentBehaviourRegistryDetach(
+	shared_ptr<core::Building> const& building)
+{
+	if (!building || !building->hasAgentBehaviourRegistryReference()
+		|| building->getAgentBehaviourAssignmentCount() == 0) return;
+	gPendingRegistryChange.building = building;
+	gPendingRegistryChange.consequence = registryChangeConsequence(
+		*building, true, {});
+	gPendingRegistryChange.detach = true;
+	gPendingRegistryChange.active = true;
+	gPendingRegistryChange.openRequested = true;
+}
+
+void requestAgentBehaviourRegistrySwitch(
+	shared_ptr<core::Building> const& building, string buildingFilepath,
+	string packageDirectory)
+{
+	if (!building || !building->hasAgentBehaviourRegistryReference()
+		|| building->getAgentBehaviourAssignmentCount() == 0) return;
+	gPendingRegistryChange.building = building;
+	gPendingRegistryChange.buildingFilepath = std::move(buildingFilepath);
+	gPendingRegistryChange.packageDirectory = std::move(packageDirectory);
+	gPendingRegistryChange.consequence = registryChangeConsequence(*building,
+		false, gPendingRegistryChange.packageDirectory);
+	gPendingRegistryChange.detach = false;
+	gPendingRegistryChange.active = true;
+	gPendingRegistryChange.openRequested = true;
+}
+
+bool agentBehaviourRegistryChangePending(string* consequence)
+{
+	if (consequence) *consequence = gPendingRegistryChange.active
+		? gPendingRegistryChange.consequence : string{};
+	return gPendingRegistryChange.active;
+}
+
+bool confirmPendingAgentBehaviourRegistryChange(string& diagnostic)
+{
+	if (!gPendingRegistryChange.active)
+	{
+		diagnostic = "No Agent behaviour registry change is awaiting confirmation";
+		return false;
+	}
+	auto pending = gPendingRegistryChange;
+	cancelPendingAgentBehaviourRegistryChange();
+	auto building = pending.building.lock();
+	if (!building)
+	{
+		diagnostic = "The Building awaiting an Agent behaviour registry change is no longer open";
+		return false;
+	}
+	if (pending.detach)
+		return commitAgentBehaviourRegistryDetachClearingAssignments(
+			building, diagnostic);
+	return commitAgentBehaviourRegistrySwitchClearingAssignments(building,
+		pending.buildingFilepath, pending.packageDirectory, diagnostic);
+}
+
+void cancelPendingAgentBehaviourRegistryChange()
+{
+	gPendingRegistryChange = PendingAgentBehaviourRegistryChange{};
 }
 
 bool reloadAgentBehaviourRegistry(
@@ -424,6 +690,7 @@ bool attachedAgentBehaviourRegistryIsModified(
 void resetBehavioursPanelState()
 {
 	gReloadDiagnostics.clear();
+	cancelPendingAgentBehaviourRegistryChange();
 }
 
 void forgetAgentBehaviourRegistryDocument(
@@ -492,7 +759,11 @@ bool renderBehavioursPanel(shared_ptr<core::Building> const& building,
 	AgentBehaviourRegistryPathSelector const& selectPackageDirectory)
 {
 	if (building->hasAgentBehaviourRegistryReference())
-		return renderAttachedRegistry(building, buildingFilepath, selectPackageDirectory);
+	{
+		auto const changed = renderAttachedRegistry(
+			building, buildingFilepath, selectPackageDirectory);
+		return renderRegistryChangeConfirmation() || changed;
+	}
 
 	ImGui::TextDisabled("No Agent behaviour registry attached.");
 	string createDiagnostic;

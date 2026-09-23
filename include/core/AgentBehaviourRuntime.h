@@ -106,6 +106,7 @@ namespace core
 	class AgentBehaviourRuntimeAdapter
 	{
 		friend class AgentBehaviourRegistry;
+		friend class Building;
 
 		struct Impl;
 		std::unique_ptr<Impl> mImpl;

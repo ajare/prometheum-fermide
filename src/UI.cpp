@@ -1190,7 +1190,9 @@ namespace
 		{
 			gUISettings.worldPaused = true;
 			core::addLogMessage("Object palette", 0, core::LogLevel::Error,
-				building->getTopologyDiagnostic());
+				building->agentBehaviourConfigurationsAreValid()
+					? building->getTopologyDiagnostic()
+					: building->getAgentBehaviourDependencyDiagnostic());
 			return;
 		}
 		gUISettings.worldPaused = false;

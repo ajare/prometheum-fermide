@@ -172,18 +172,13 @@ namespace
 		auto replacement = core::AgentBehaviourRegistry::create();
 		replacement->saveTo(manifestPath(packageDirectory).string());
 		auto substituted = loadBuilding(buildingPath);
-		bool mismatchRefused{ false };
-		try
-		{
-			(void)core::loadAndAttachAgentBehaviourRegistry(*substituted, buildingPath);
-		}
-		catch (std::exception const& error)
-		{
-			mismatchRefused = std::string(error.what()).find("UUID mismatch")
-				!= std::string::npos;
-		}
-		require(mismatchRefused && !substituted->hasAttachedAgentBehaviourRegistry(),
-			"A substituted registry with a different UUID was attached");
+		auto unresolved = core::loadAndAttachAgentBehaviourRegistry(
+			*substituted, buildingPath);
+		require(!unresolved && !substituted->hasAttachedAgentBehaviourRegistry()
+			&& !substituted->agentBehaviourConfigurationsAreValid()
+			&& substituted->getAgentBehaviourDependencyDiagnostic().find("UUID mismatch")
+				!= std::string::npos,
+			"A substituted registry did not leave a recoverable dependency diagnostic");
 	}
 
 	void olderBuildingWithoutReferenceStillLoads()
@@ -557,24 +552,16 @@ namespace
 			std::filesystem::copy_options::recursive);
 		replacement.reset();
 
-		auto current = std::make_shared<core::Building>("Current", 7, 3);
-		current->pauseSimulation();
-		auto const* currentIdentity = current.get();
-		bool mismatchRefused{ false };
-		try
-		{
-			current = core::loadBuildingDocument(buildingPath);
-		}
-		catch (std::exception const& error)
-		{
-			mismatchRefused = std::string(error.what()).find("UUID mismatch")
-				!= std::string::npos;
-		}
-		require(mismatchRefused && current.get() == currentIdentity
-			&& current->getName() == "Current" && current->getCellsWide() == 7,
-			"A refused Building load replaced or changed the current Building");
+		auto current = core::loadBuildingDocument(buildingPath);
+		require(current->getName() == "Persisted" && current->getCellsWide() == 4
+			&& current->hasAgentBehaviourRegistryReference()
+			&& !current->hasAttachedAgentBehaviourRegistry()
+			&& !current->agentBehaviourConfigurationsAreValid()
+			&& current->getAgentBehaviourDependencyDiagnostic().find("UUID mismatch")
+				!= std::string::npos,
+			"A substituted dependency prevented the structural Building from loading");
 
-		// The replacement was parsed solely for the failed load above. It must no
+		// The replacement was parsed solely for the recoverable load above. It must no
 		// longer count as loaded, so the same UUID at this independent path is valid.
 		auto destination = std::make_shared<core::Building>("Destination", 4, 2);
 		destination->pauseSimulation();
@@ -1175,6 +1162,198 @@ namespace
 		require(core::unloadAgentBehaviourRegistryDocumentIfUnused(registry), "Unused package did not unload");
 	}
 
+	void recoverDetachAndReplaceUsedRegistrySafely()
+	{
+		TemporaryDirectory temporary;
+		auto const buildingPath = temporary.path / "recovery.yaml";
+		auto const package = temporary.path / "recovery.behaviours";
+		auto const hiddenPackage = temporary.path / "recovery.hidden";
+		auto building = std::make_shared<core::Building>("Recovery", 8, 2);
+		auto const corridor = building->addCorridor(0, 0, 6);
+		building->finishBuild();
+		auto const agent = building->createAgent("Assigned", corridor, 0, 1.5f);
+		building->pauseSimulation();
+		building->saveTo(buildingPath.string());
+		auto registry = core::createAndAttachAgentBehaviourRegistry(
+			*building, buildingPath);
+		writeText(package / "worker.lua",
+			"return {api_version=1,factory=function(config) return {} end}\n");
+		auto const behaviour = registry->addAgentBehaviour("Worker", "worker.lua", {});
+		registry->saveTo(manifestPath(package).string());
+		std::string diagnostic;
+		require(building->setAgentBehaviourAssignment(agent, behaviour, 1, {},
+			&diagnostic), "Could not author the recovery assignment");
+		building->saveTo(buildingPath.string());
+		auto const originalManifest = readText(manifestPath(package));
+		auto const originalSource = readText(package / "worker.lua");
+		auto const expectedUuid = registry->getUuid();
+		building.reset();
+		require(core::unloadAgentBehaviourRegistryDocumentIfUnused(registry),
+			"Could not release the recovery package before dependency fixtures");
+		registry.reset();
+
+		auto assertRecoverableOpen = [&](char const* expectedDiagnostic)
+		{
+			auto loaded = core::loadBuildingDocument(buildingPath);
+			require(loaded->getName() == "Recovery" && loaded->getNumSectors() == 1
+				&& loaded->hasAgentBehaviourRegistryReference()
+				&& !loaded->hasAttachedAgentBehaviourRegistry()
+				&& loaded->getAgentBehaviourAssignmentCount() == 1
+				&& loaded->getAgentBehaviourAssignment(agent)
+				&& !loaded->agentBehaviourConfigurationsAreValid()
+				&& loaded->getAgentBehaviourDependencyDiagnostic().find(expectedDiagnostic)
+					!= std::string::npos
+				&& !loaded->resumeSimulation(),
+				"A broken package did not preserve a blocked structural Building and its assignment");
+			return loaded;
+		};
+
+		std::filesystem::rename(package, hiddenPackage);
+		auto unresolved = assertRecoverableOpen("missing");
+		std::filesystem::rename(hiddenPackage, package);
+		writeText(manifestPath(package), "agentBehaviourRegistry: [not valid");
+		(void)assertRecoverableOpen("Could not load");
+		writeText(manifestPath(package), originalManifest);
+		auto unsupported = originalManifest;
+		auto const version = unsupported.find("version: 1");
+		require(version != std::string::npos, "Recovery manifest omitted its version");
+		unsupported.replace(version, std::string("version: 1").size(), "version: 2");
+		writeText(manifestPath(package), unsupported);
+		(void)assertRecoverableOpen("Unsupported");
+		writeText(manifestPath(package), originalManifest);
+		auto substituted = originalManifest;
+		auto const uuidOffset = substituted.find(expectedUuid);
+		require(uuidOffset != std::string::npos, "Recovery manifest omitted its UUID");
+		auto replacementIdentity = core::AgentBehaviourRegistry::create();
+		substituted.replace(uuidOffset, expectedUuid.size(),
+			replacementIdentity->getUuid());
+		writeText(manifestPath(package), substituted);
+		(void)assertRecoverableOpen("UUID mismatch");
+		writeText(manifestPath(package), originalManifest);
+
+		// A syntactically valid package whose assigned factory fails is not a
+		// repair. Candidate construction happens before reference/runtime adoption.
+		gBuildingDocumentHistory.clear();
+		gBuildingDocumentHistory.markSaved();
+		auto const beforeFailedRepair = serializeBuilding(*unresolved);
+		auto const beforeFailedRepairModified = unresolved->isModified();
+		writeText(package / "worker.lua",
+			"return {api_version=1,factory=function(config) error('broken repair') end}\n");
+		require(!commitAgentBehaviourRegistrySwitch(unresolved,
+			buildingPath.string(), package.string(), diagnostic)
+			&& diagnostic.find("runtime preflight failed") != std::string::npos
+			&& serializeBuilding(*unresolved) == beforeFailedRepair
+			&& unresolved->isModified() == beforeFailedRepairModified
+			&& !gBuildingDocumentHistory.canUndo(),
+			"A failed expected-package repair changed authored state, dirty state, or history");
+		writeText(package / "worker.lua", originalSource);
+
+		// Selecting the expected repaired package validates every authored
+		// configuration and constructs all factories before making it live. The
+		// persisted reference is unchanged, so recovery is not an authored edit.
+		gBuildingDocumentHistory.clear();
+		gBuildingDocumentHistory.markSaved();
+		auto const unresolvedYaml = serializeBuilding(*unresolved);
+		auto const unresolvedModified = unresolved->isModified();
+		require(commitAgentBehaviourRegistrySwitch(unresolved,
+			buildingPath.string(), package.string(), diagnostic),
+			"The repaired expected package did not attach");
+		require(unresolved->hasAttachedAgentBehaviourRegistry()
+			&& unresolved->agentBehaviourConfigurationsAreValid()
+			&& unresolved->getExpectedAgentBehaviourRegistryUuid() == expectedUuid
+			&& unresolved->getAgentBehaviourAssignment(agent)
+			&& unresolved->getAgentBehaviourAssignment(agent)->behaviour == behaviour
+			&& serializeBuilding(*unresolved) == unresolvedYaml
+			&& unresolved->isModified() == unresolvedModified
+			&& !gBuildingDocumentHistory.canUndo(),
+			"Recovery changed authored state, assignment data, dirty state, or history");
+
+		// Another loaded Building proves that switching one dependent never unloads
+		// a shared package. A third exercises confirmed destructive detachment.
+		auto shared = core::loadBuildingDocument(buildingPath);
+		shared->pauseSimulation();
+		require(shared->getAgentBehaviourRegistry()
+			== unresolved->getAgentBehaviourRegistry(),
+			"Canonical recovery packages did not share one loaded instance");
+		auto detacher = core::loadBuildingDocument(buildingPath);
+		detacher->pauseSimulation();
+		gBuildingDocumentHistory.clear();
+		requestAgentBehaviourRegistryDetach(detacher);
+		std::string consequence;
+		require(agentBehaviourRegistryChangePending(&consequence)
+			&& consequence.find("clear all 1 Agent behaviour assignment")
+				!= std::string::npos,
+			"Used detachment did not require explicit destructive confirmation");
+		require(confirmPendingAgentBehaviourRegistryChange(diagnostic)
+			&& !detacher->hasAgentBehaviourRegistryReference()
+			&& detacher->getAgentBehaviourAssignmentCount() == 0
+			&& gBuildingDocumentHistory.undoCount() == 1,
+			"Confirmed used detachment did not clear assignment/configuration atomically");
+
+		gBuildingDocumentHistory.clear();
+		gBuildingDocumentHistory.markSaved();
+		auto const before = serializeBuilding(*unresolved);
+		auto const sourceRegistry = unresolved->getAgentBehaviourRegistry();
+		auto const modified = unresolved->isModified();
+		require(!commitAgentBehaviourRegistryDetach(unresolved, diagnostic)
+			&& diagnostic.find("confirmed destructive action") != std::string::npos
+			&& serializeBuilding(*unresolved) == before
+			&& unresolved->getAgentBehaviourRegistry() == sourceRegistry
+			&& unresolved->isModified() == modified
+			&& !gBuildingDocumentHistory.canUndo(),
+			"Direct used detachment changed state or history");
+		requestAgentBehaviourRegistryDetach(unresolved);
+		cancelPendingAgentBehaviourRegistryChange();
+		require(!agentBehaviourRegistryChangePending()
+			&& serializeBuilding(*unresolved) == before
+			&& unresolved->getAgentBehaviourRegistry() == sourceRegistry
+			&& !gBuildingDocumentHistory.canUndo(),
+			"Cancelling used detachment changed state or history");
+
+		requestAgentBehaviourRegistrySwitch(unresolved, buildingPath.string(),
+			(temporary.path / "missing.behaviours").string());
+		require(!confirmPendingAgentBehaviourRegistryChange(diagnostic)
+			&& serializeBuilding(*unresolved) == before
+			&& unresolved->getAgentBehaviourRegistry() == sourceRegistry
+			&& unresolved->isModified() == modified
+			&& !gBuildingDocumentHistory.canUndo(),
+			"A failed destructive replacement cleared data, replaced runtime, or changed history");
+
+		auto const replacementPackage = temporary.path / "replacement.behaviours";
+		std::filesystem::create_directories(replacementPackage);
+		auto replacement = core::AgentBehaviourRegistry::create();
+		replacement->saveTo(manifestPath(replacementPackage).string());
+		requestAgentBehaviourRegistrySwitch(unresolved, buildingPath.string(),
+			replacementPackage.string());
+		require(agentBehaviourRegistryChangePending(&consequence)
+			&& consequence.find("replacement.behaviours") != std::string::npos,
+			"Used replacement did not describe its destructive consequence");
+		require(confirmPendingAgentBehaviourRegistryChange(diagnostic)
+			&& unresolved->getAgentBehaviourRegistryPackageName()
+				== "replacement.behaviours"
+			&& unresolved->getAgentBehaviourAssignmentCount() == 0
+			&& !unresolved->getAgentBehaviourAssignment(agent)
+			&& gBuildingDocumentHistory.undoCount() == 1,
+			"Confirmed replacement did not atomically clear assignments and change reference");
+		require(sourceRegistry->hasLoadedBuilding(shared.get())
+			&& !core::unloadAgentBehaviourRegistryDocumentIfUnused(sourceRegistry),
+			"Switching one Building unloaded a registry still shared by another");
+
+		// Dirty unreferenced package work survives ordinary detach/replacement and
+		// is released only by an explicit discard after the final dependent leaves.
+		require(sourceRegistry->renameAgentBehaviour(behaviour, "Unsaved worker",
+			&diagnostic), "Could not dirty the shared source registry");
+		require(commitAgentBehaviourRegistryDetachClearingAssignments(
+			shared, diagnostic),
+			"The final shared registry did not detach after explicit assignment clearing");
+		require(sourceRegistry->isModified()
+			&& !core::unloadAgentBehaviourRegistryDocumentIfUnused(sourceRegistry)
+			&& core::unloadAgentBehaviourRegistryDocumentIfUnused(sourceRegistry, true),
+			"Dirty unreferenced package work was silently discarded or could not be explicitly discarded");
+		cancelPendingAgentBehaviourRegistryChange();
+		gBuildingDocumentHistory.clear();
+	}
+
 	void unsavedBuildingDocumentRefusesManagedOperations()
 	{
 		TemporaryDirectory temporary;
@@ -1209,6 +1388,7 @@ void runAgentBehaviourRegistrySmokeChecks()
 	definitionsPersistWithSchemasRevisionsAndModulePaths();
 	reloadValidatesAndSharesReplacementAcrossDependents();
 	hotReloadIsAtomicAcrossSourceHelpersAndDependentBuildings();
+	recoverDetachAndReplaceUsedRegistrySafely();
 	unsavedBuildingDocumentRefusesManagedOperations();
 	packageContainmentAndLifecycle();
 }

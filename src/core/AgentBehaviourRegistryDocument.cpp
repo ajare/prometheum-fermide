@@ -303,7 +303,41 @@ namespace core
 		}
 
 		auto registry = loadSharedRegistry(canonicalDirectory);
-		building.attachAgentBehaviourRegistry(canonicalDirectory.filename().string(), registry);
+		auto const packageName = canonicalDirectory.filename().string();
+		if (building.hasAgentBehaviourRegistryReference()
+			&& !building.hasAttachedAgentBehaviourRegistry()
+			&& building.getAgentBehaviourRegistryPackageName() == packageName
+			&& building.getExpectedAgentBehaviourRegistryUuid() == registry->getUuid())
+		{
+			// Repairing the persisted expected dependency preserves its reference and
+			// uses the open-time schema reconciliation/runtime transaction.
+			building.resolveAgentBehaviourRegistry(registry);
+		}
+		else building.attachAgentBehaviourRegistry(packageName, registry);
+		return registry;
+	}
+
+	std::shared_ptr<AgentBehaviourRegistry>
+	selectAndAttachAgentBehaviourRegistryClearingAssignments(
+		Building& building, std::filesystem::path const& buildingFilepath,
+		std::filesystem::path const& packageDirectory)
+	{
+		if (!building.isSimulationPaused())
+			throw SerializationException("Pause the Building before replacing an Agent behaviour registry");
+		auto const savedBuilding = requireSavedBuildingPath(buildingFilepath);
+		auto const canonicalDirectory = requireCanonicalPackageDirectory(packageDirectory);
+		if (canonicalDirectory.parent_path() != savedBuilding.parent_path())
+		{
+			throw SerializationException(
+				"An Agent behaviour registry package must be in the same directory as its Building");
+		}
+
+		// loadSharedRegistry parses the complete manifest, contains every source
+		// path, and preflights the package before the destructive Building method
+		// can clear a single authored value.
+		auto registry = loadSharedRegistry(canonicalDirectory);
+		building.attachAgentBehaviourRegistryAndClearAssignments(
+			canonicalDirectory.filename().string(), registry);
 		return registry;
 	}
 
@@ -311,28 +345,30 @@ namespace core
 		Building& building, std::filesystem::path const& buildingFilepath)
 	{
 		if (!building.hasAgentBehaviourRegistryReference()) return {};
-		auto const savedBuilding = requireSavedBuildingPath(buildingFilepath);
-		auto const packageDirectory = savedBuilding.parent_path()
-			/ building.getAgentBehaviourRegistryPackageName();
-		auto const canonical = requireCanonicalPackageDirectory(packageDirectory);
-		if (canonical.parent_path() != savedBuilding.parent_path())
-			throw SerializationException("Agent behaviour package must remain beside its Building");
-		auto registry = loadSharedRegistry(canonical,
-			building.getExpectedAgentBehaviourRegistryUuid());
+		std::shared_ptr<AgentBehaviourRegistry> registry;
 		try
 		{
+			auto const savedBuilding = requireSavedBuildingPath(buildingFilepath);
+			auto const packageDirectory = savedBuilding.parent_path()
+				/ building.getAgentBehaviourRegistryPackageName();
+			auto const canonical = requireCanonicalPackageDirectory(packageDirectory);
+			if (canonical.parent_path() != savedBuilding.parent_path())
+				throw SerializationException("Agent behaviour package must remain beside its Building");
+			registry = loadSharedRegistry(canonical,
+				building.getExpectedAgentBehaviourRegistryUuid());
 			building.resolveAgentBehaviourRegistry(registry);
+			return registry;
 		}
-		catch (...)
+		catch (std::exception const& error)
 		{
-			// A registry first encountered by a refused Building open must not
-			// remain even as an expired manager entry. Existing shared registries
-			// retain their other owners and are therefore unaffected.
+			// Dependency failure is recoverable Building state. A registry first
+			// encountered by this attempt is released unless another loaded Building
+			// already owns it; authored structure, reference, and assignments survive.
 			registry.reset();
 			discardUnreferencedRegistries();
-			throw;
+			building.markAgentBehaviourRegistryUnavailable(error.what());
+			return {};
 		}
-		return registry;
 	}
 
 	bool previewAgentBehaviourRegistrySchemaMigration(

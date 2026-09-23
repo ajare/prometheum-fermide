@@ -1227,9 +1227,18 @@ namespace core
 		}
 		void attachAgentBehaviourRegistry(std::string packageName,
 			std::shared_ptr<AgentBehaviourRegistry> registry);
+		// Explicit destructive variants clear every authored assignment and its
+		// configuration in the same paused-only registry-reference transaction.
+		void attachAgentBehaviourRegistryAndClearAssignments(std::string packageName,
+			std::shared_ptr<AgentBehaviourRegistry> registry);
 		void detachAgentBehaviourRegistry();
+		void detachAgentBehaviourRegistryAndClearAssignments();
 		void resolveAgentBehaviourRegistry(
 			std::shared_ptr<AgentBehaviourRegistry> registry);
+		// A package load failure is dependency state, not malformed Building data.
+		// Recording it never dirties authored data; the persisted reference and
+		// unresolved assignments remain available for repair.
+		void markAgentBehaviourRegistryUnavailable(std::string diagnostic);
 
 		// One paused-only, schema-validated authored Agent behaviour assignment.
 		// Optional defaults are materialized before mutation. A failed validation
