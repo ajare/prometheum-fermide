@@ -1,0 +1,16 @@
+version: 1
+uuid: bf712409-4e4c-40c9-b0ab-72f40e22b2fd
+revision: 1
+modules:
+  []
+nextBehaviourId: 2
+behaviours:
+  - id: 1
+    name: Marker Patrol
+    revision: 1
+    source: marker-patrol.lua
+    schema:
+      - name: first_marker
+        type: marker
+      - name: second_marker
+        type: marker

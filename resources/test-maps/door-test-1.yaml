@@ -1,11 +1,15 @@
-version: 9
+version: 14
 name: Untitled
+randomSeed: 0
 cellsWide: 16
 decksHigh: 6
 layers: 2
 layerNames:
   - Layer 0
   - Layer 1
+agentBehaviourRegistry:
+  package: door-test-1.behaviours
+  expectedUuid: bf712409-4e4c-40c9-b0ab-72f40e22b2fd
 construction:
   - type: corridor
     layer: 0
@@ -119,16 +123,22 @@ construction:
     sectorIndex: 3
     deckIndex: 0
     xOffset: 0.5625
+    id: 1
+    name: Marker 1
   - type: objectTombstone
     sectorIndex: 3
   - type: marker
     sectorIndex: 2
     deckIndex: 0
     xOffset: 0.640625
+    id: 2
+    name: Marker 2
   - type: marker
     sectorIndex: 2
     deckIndex: 0
     xOffset: 7.5
+    id: 3
+    name: Marker 3
   - type: room
     name: Room 3
     layer: 0
@@ -161,10 +171,14 @@ construction:
     sectorIndex: 7
     deckIndex: 0
     xOffset: 3.53125
+    id: 4
+    name: Marker 4
   - type: marker
     sectorIndex: 7
     deckIndex: 0
     xOffset: 0.5625
+    id: 5
+    name: Marker 5
   - type: corridor
     layer: 0
     y: 4
@@ -233,10 +247,14 @@ construction:
     sectorIndex: 9
     deckIndex: 0
     xOffset: 3.3125
+    id: 6
+    name: Marker 6
   - type: marker
     sectorIndex: 9
     deckIndex: 0
     xOffset: 0.5625
+    id: 7
+    name: Marker 7
   - type: window
     layer: 0
     y: 4
@@ -259,22 +277,32 @@ construction:
     sectorIndex: 8
     deckIndex: 0
     xOffset: 13.75
+    id: 8
+    name: Marker 8
   - type: marker
     sectorIndex: 8
     deckIndex: 0
     xOffset: 1.9375
+    id: 9
+    name: Marker 9
   - type: marker
     sectorIndex: 1
     deckIndex: 0
     xOffset: 2.71875
+    id: 10
+    name: Marker 10
   - type: marker
     sectorIndex: 1
     deckIndex: 0
     xOffset: 13.34375
+    id: 11
+    name: Marker 11
   - type: marker
     sectorIndex: 3
     deckIndex: 0
     xOffset: 15.5
+    id: 12
+    name: Marker 12
   - type: removeWall
     sectorIndex: 6
     deckIndex: 0
@@ -288,6 +316,7 @@ agentGroups:
     name: High Door
   - id: 4
     name: Button
+nextMarkerId: 13
 nextAgentGroupId: 5
 agents:
   - id: 1
@@ -402,14 +431,19 @@ agents:
       name: Agent 10
       flags: 0
       group: 2
+      behaviour:
+        id: 1
+        revision: 1
+        configuration:
+          - field: first_marker
+            type: marker
+            value: 10
+          - field: second_marker
+            type: marker
+            value: 11
     sector: 1
     localX: 1.75
     localY: 0
-    path:
-      destinationSector: 3
-      destinationLocalX: 15.5
-      destinationLocalY: 0
-      active: true
   - id: 11
     agent:
       name: Agent 11
