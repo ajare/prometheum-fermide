@@ -8,7 +8,7 @@
 namespace core
 {
 	class AgentBehaviourRegistry;
-	class Building;
+	class World;
 	struct AgentBehaviourReloadDiagnostic;
 	struct AgentBehaviourSchemaMigrationPreview;
 	struct AgentBehaviourConfigurationMigration;
@@ -16,18 +16,18 @@ namespace core
 	// An Agent behaviour registry package is a directory whose name ends with
 	// .behaviours and whose manifest is the fixed file behaviours.yaml inside
 	// it. The directory also holds the package's managed Lua source modules.
-	// The default adjacent package for `/project/station.yaml` is the
+	// The default adjacent package for `/project/station.world.yaml` is the
 	// directory `/project/station.behaviours/`.
 	std::filesystem::path defaultAgentBehaviourRegistryPackagePath(
-		std::filesystem::path const& buildingFilepath);
+		std::filesystem::path const& worldFilepath);
 	std::filesystem::path agentBehaviourRegistryManifestPath(
 		std::filesystem::path const& packageDirectory);
 
 	// Creates a new empty package without overwriting an existing directory,
 	// writes its manifest atomically, and only then attaches the package name
-	// and UUID to the Building.
+	// and UUID to the World.
 	std::shared_ptr<AgentBehaviourRegistry> createAndAttachAgentBehaviourRegistry(
-		Building& building, std::filesystem::path const& buildingFilepath);
+		World& world, std::filesystem::path const& worldFilepath);
 
 	// Installs an independent no-clobber package copy. Only manifest-declared
 	// behaviour and helper Lua modules are copied; failure removes the whole
@@ -39,30 +39,30 @@ namespace core
 
 	// Selects an existing package. Both documents must resolve to a directory
 	// and regular manifest in the same canonical directory, and only the
-	// package directory name is stored in the Building.
+	// package directory name is stored in the World.
 	std::shared_ptr<AgentBehaviourRegistry> selectAndAttachAgentBehaviourRegistry(
-		Building& building, std::filesystem::path const& buildingFilepath,
+		World& world, std::filesystem::path const& worldFilepath,
 		std::filesystem::path const& packageDirectory);
 
 	// Explicit destructive replacement. The complete candidate package is read
-	// and validated before the Building atomically clears every assignment and
+	// and validated before the World atomically clears every assignment and
 	// configuration or changes its persisted reference.
 	std::shared_ptr<AgentBehaviourRegistry>
 	selectAndAttachAgentBehaviourRegistryClearingAssignments(
-		Building& building, std::filesystem::path const& buildingFilepath,
+		World& world, std::filesystem::path const& worldFilepath,
 		std::filesystem::path const& packageDirectory);
 
-	// Resolves a persisted Building reference beside the Building document,
+	// Resolves a persisted World reference beside the World document,
 	// verifies the registry UUID, and attaches it. Registries are shared by
 	// canonical package identity. Missing, substituted, unsupported, or invalid
 	// packages become a recoverable dependency diagnostic and return null while
-	// structural and unresolved authored Building data remain loaded.
+	// structural and unresolved authored World data remain loaded.
 	std::shared_ptr<AgentBehaviourRegistry> loadAndAttachAgentBehaviourRegistry(
-		Building& building, std::filesystem::path const& buildingFilepath);
+		World& world, std::filesystem::path const& worldFilepath);
 
 	// Explicitly reloads a clean shared registry package from disk. The
 	// replacement manifest and every managed source module are validated
-	// before definitions change; all dependent Buildings must already be
+	// before definitions change; all dependent Worlds must already be
 	// paused.
 	bool previewAgentBehaviourRegistrySchemaMigration(
 		std::shared_ptr<AgentBehaviourRegistry> const& registry,
@@ -86,7 +86,7 @@ namespace core
 		std::string* diagnostic = nullptr,
 		std::vector<AgentBehaviourReloadDiagnostic>* reloadDiagnostics = nullptr);
 
-	// Removes a manager-owned registry only after its final Building detaches.
+	// Removes a manager-owned registry only after its final World detaches.
 	// Dirty registries stay loaded unless discardDirty is the user's explicit
 	// discard action.
 	bool unloadAgentBehaviourRegistryDocumentIfUnused(

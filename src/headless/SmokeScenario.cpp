@@ -22,7 +22,7 @@
 #include <vector>
 
 #include "core/Agent.h"
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/Button.h"
 #include "core/GapEdge.h"
 #include "core/Graph.h"
@@ -216,29 +216,29 @@ namespace
 
 	bool accumulatedRenderTimeAdvancesWholeTicksOnly()
 	{
-		core::Building building("Accumulator check", 1, 1);
-		auto halfTick = core::Building::getFixedTimestep() * 0.5f;
-		building.update(halfTick);
-		if (building.getSimulationTick() != 0)
+		core::World world("Accumulator check", 1, 1);
+		auto halfTick = core::World::getFixedTimestep() * 0.5f;
+		world.update(halfTick);
+		if (world.getSimulationTick() != 0)
 		{
 			return false;
 		}
-		building.update(halfTick);
-		return building.getSimulationTick() == 1;
+		world.update(halfTick);
+		return world.getSimulationTick() == 1;
 	}
 
-	bool buildingOwnsTypedEntitiesAndInvalidatesHandles()
+	bool worldOwnsTypedEntitiesAndInvalidatesHandles()
 	{
-		core::Building building("Ownership check", 3, 2);
-		auto corridor = building.addCorridor(0, 0, 2);
-		building.finishBuild();
+		core::World world("Ownership check", 3, 2);
+		auto corridor = world.addCorridor(0, 0, 2);
+		world.finishBuild();
 
-		auto agentId = building.createAgent("Owned idle agent", corridor, 0, 0.5f);
-		auto pointId = building.createInteractionPoint("Light switch");
-		auto operationId = building.createDeviceOperation("Turn lights on", agentId);
-		auto resourceId = building.createTraversalResource("Ordinary passage");
+		auto agentId = world.createAgent("Owned idle agent", corridor, 0, 0.5f);
+		auto pointId = world.createInteractionPoint("Light switch");
+		auto operationId = world.createDeviceOperation("Turn lights on", agentId);
+		auto resourceId = world.createTraversalResource("Ordinary passage");
 
-		auto snapshot = building.getSimulationSnapshot();
+		auto snapshot = world.getSimulationSnapshot();
 		if (snapshot.agents.size() != 1 || snapshot.agents.front().id != agentId
 			|| snapshot.interactionPoints.size() != 1 || snapshot.interactionPoints.front().id != pointId
 			|| snapshot.deviceOperations.size() != 1 || snapshot.deviceOperations.front().id != operationId
@@ -248,21 +248,21 @@ namespace
 			return false;
 		}
 
-		if (!building.removeAgent(agentId)
-			|| building.lookupAgent(agentId)
-			|| building.lookupAgent(agentId).diagnostic.empty()
-			|| building.lookupDeviceOperation(operationId)
-			|| building.lookupDeviceOperation(operationId).diagnostic.empty())
+		if (!world.removeAgent(agentId)
+			|| world.lookupAgent(agentId)
+			|| world.lookupAgent(agentId).diagnostic.empty()
+			|| world.lookupDeviceOperation(operationId)
+			|| world.lookupDeviceOperation(operationId).diagnostic.empty())
 		{
 			return false;
 		}
-		if (!building.removeInteractionPoint(pointId) || !building.removeTraversalResource(resourceId))
+		if (!world.removeInteractionPoint(pointId) || !world.removeTraversalResource(resourceId))
 		{
 			return false;
 		}
 
-		building.advanceTick();
-		auto afterRemoval = building.getSimulationSnapshot();
+		world.advanceTick();
+		auto afterRemoval = world.getSimulationSnapshot();
 		return afterRemoval.agents.empty()
 			&& afterRemoval.interactionPoints.empty()
 			&& afterRemoval.deviceOperations.empty()
@@ -280,21 +280,21 @@ namespace
 
 	bool inferredPathSourceDoesNotMakeAgentDoubleBack()
 	{
-		core::Building building("Path source selection", 7, 2);
-		auto corridor = building.addCorridor(0, 0, 6);
+		core::World world("Path source selection", 7, 2);
+		auto corridor = world.addCorridor(0, 0, 6);
 		uint32_t sourceVertexId;
 		uint32_t destinationVertexId;
-		building.addSectorMarker(corridor, 0, 0.5f, &sourceVertexId);
-		building.addSectorMarker(corridor, 0, 5.5f, &destinationVertexId);
-		building.finishBuild();
+		world.addSectorMarker(corridor, 0, 0.5f, &sourceVertexId);
+		world.addSectorMarker(corridor, 0, 5.5f, &destinationVertexId);
+		world.finishBuild();
 
-		auto source = building.getGraph()->getVertexByIdentifier(sourceVertexId);
-		auto destination = building.getGraph()->getVertexByIdentifier(destinationVertexId);
-		auto agentId = building.createAgent("Path source traveller", corridor, 0, 2.5f);
-		auto agent = building.lookupAgent(agentId).entity;
+		auto source = world.getGraph()->getVertexByIdentifier(sourceVertexId);
+		auto destination = world.getGraph()->getVertexByIdentifier(destinationVertexId);
+		auto agentId = world.createAgent("Path source traveller", corridor, 0, 2.5f);
+		auto agent = world.lookupAgent(agentId).entity;
 
-		auto inferredPath = building.getGraph()->calculatePath(agent, destination);
-		auto explicitPath = building.getGraph()->calculatePath(agent, source, destination);
+		auto inferredPath = world.getGraph()->calculatePath(agent, destination);
+		auto explicitPath = world.getGraph()->calculatePath(agent, source, destination);
 		return inferredPath && inferredPath->nodes.size() == 1
 			&& inferredPath->nodes.front().targetVertex->sameAs(destination)
 			&& !inferredPath->nodes.front().edge
@@ -305,30 +305,30 @@ namespace
 
 	bool markerPlacementEnforcesPaletteCoreRules()
 	{
-		core::Building building("Marker placement rules", 7, 3);
-		auto room = building.addRoom("Marker room", 0, 0, 0, 6, 2);
-		building.finishBuild();
+		core::World world("Marker placement rules", 7, 3);
+		auto room = world.addRoom("Marker room", 0, 0, 0, 6, 2);
+		world.finishBuild();
 
 		std::string diagnostic;
-		if (!building.canAddSectorMarker(room, 0, 2.5f, &diagnostic)
-			|| building.canAddSectorMarker(room, 1, 2.5f, &diagnostic)) return false;
+		if (!world.canAddSectorMarker(room, 0, 2.5f, &diagnostic)
+			|| world.canAddSectorMarker(room, 1, 2.5f, &diagnostic)) return false;
 
 		bool runningRejected = false;
-		try { building.addSectorMarker(room, 0, 2.5f); }
+		try { world.addSectorMarker(room, 0, 2.5f); }
 		catch (std::exception const&) { runningRejected = true; }
-		if (!runningRejected || building.isTraversalTopologyDirty()) return false;
+		if (!runningRejected || world.isTraversalTopologyDirty()) return false;
 
-		building.pauseSimulation();
-		auto created = building.addSectorMarker(room, 0, 2.5f);
+		world.pauseSimulation();
+		auto created = world.addSectorMarker(room, 0, 2.5f);
 		if (created.type != core::SectorObjectType::Marker || created.index == ~0u
-			|| building.canAddSectorMarker(room, 0, 2.52f, &diagnostic)
+			|| world.canAddSectorMarker(room, 0, 2.52f, &diagnostic)
 			|| diagnostic.find("already exists") == std::string::npos) return false;
 
 		bool duplicateRejected = false;
-		try { building.addSectorMarker(room, 0, 2.52f); }
+		try { world.addSectorMarker(room, 0, 2.52f); }
 		catch (std::exception const&) { duplicateRejected = true; }
-		return duplicateRejected && building.rebuildTraversalTopology()
-			&& building.resumeSimulation() && !building.isSimulationPaused();
+		return duplicateRejected && world.rebuildTraversalTopology()
+			&& world.resumeSimulation() && !world.isSimulationPaused();
 	}
 
 	bool corridorDoorPlacementEnforcesPaletteRules()
@@ -338,147 +338,147 @@ namespace
 		for (int frontKind = 0; frontKind < 3; ++frontKind)
 			for (int backKind = 0; backKind < 3; ++backKind)
 			{
-				core::Building building("Location Door placement rules", 10, 4);
+				core::World world("Location Door placement rules", 10, 4);
 				auto addLocation = [&](int kind, uint32_t layer)
 				{
-					if (kind == 0) return building.addRoom("Room", layer, 0, 0, 6, 1);
-					if (kind == 1) return building.addCorridor(layer, 0, 0, 6, 1);
-					return building.addFacade(layer, 0, 0, 6, 1);
+					if (kind == 0) return world.addRoom("Room", layer, 0, 0, 6, 1);
+					if (kind == 1) return world.addCorridor(layer, 0, 0, 6, 1);
+					return world.addFacade(layer, 0, 0, 6, 1);
 				};
 				addLocation(frontKind, 0);
 				addLocation(backKind, 1);
 
 				std::string diagnostic;
-				if (!building.canAddCorridorDoor(0, 0, 2, &diagnostic)) return false;
-				auto door = building.addSectorDoor(0, 0, 2);
-				building.finishBuild();
+				if (!world.canAddCorridorDoor(0, 0, 2, &diagnostic)) return false;
+				auto door = world.addSectorDoor(0, 0, 2);
+				world.finishBuild();
 				if (door.door.type != core::SectorObjectType::Door
-					|| !building.isTraversalTopologyValid()) return false;
+					|| !world.isTraversalTopologyValid()) return false;
 			}
 
-		core::Building building("Door obstruction rules", 10, 4);
-		auto frontRoom = building.addRoom("Front room", 0, 0, 0, 6, 2);
-		auto backRoom = building.addRoom("Back room", 1, 0, 0, 6, 1);
+		core::World world("Door obstruction rules", 10, 4);
+		auto frontRoom = world.addRoom("Front room", 0, 0, 0, 6, 2);
+		auto backRoom = world.addRoom("Back room", 1, 0, 0, 6, 1);
 		std::string diagnostic;
-		building.addSectorMarker(frontRoom, 0, 4.5f);
-		building.addSectorMarker(backRoom, 0, 0.5f);
-		if (building.canAddCorridorDoor(0, 0, 4, &diagnostic)
+		world.addSectorMarker(frontRoom, 0, 4.5f);
+		world.addSectorMarker(backRoom, 0, 0.5f);
+		if (world.canAddCorridorDoor(0, 0, 4, &diagnostic)
 			|| diagnostic.find("blocks") == std::string::npos
-			|| building.canAddCorridorDoor(0, 1, 1, &diagnostic)
+			|| world.canAddCorridorDoor(0, 1, 1, &diagnostic)
 			|| diagnostic.find("behind") == std::string::npos) return false;
 		return true;
 	}
 
 	bool objectMoveValidatesAndRebuildsOnceCommitted()
 	{
-		core::Building building("Object movement", 10, 3);
-		auto corridor = building.addCorridor(0, 0, 8);
-		building.addRoom("Back room", 1, 0, 0, 8, 1);
-		core::Building::CreateDoorOptions doorOptions;
+		core::World world("Object movement", 10, 3);
+		auto corridor = world.addCorridor(0, 0, 8);
+		world.addRoom("Back room", 1, 0, 0, 8, 1);
+		core::World::CreateDoorOptions doorOptions;
 		doorOptions.controls[0] = true;
 		doorOptions.controls[1] = true;
 		doorOptions.activationMode = core::DoorActivationMode::RemoteControlled;
-		auto created = building.addSectorDoor(0, 0, 1, doorOptions);
-		building.addSectorMarker(corridor, 0, 5.5f);
-		building.finishBuild();
-		building.pauseSimulation();
-		auto agentId = building.createAgent("Stationary", corridor, 0, 0.5f);
+		auto created = world.addSectorDoor(0, 0, 1, doorOptions);
+		world.addSectorMarker(corridor, 0, 5.5f);
+		world.finishBuild();
+		world.pauseSimulation();
+		auto agentId = world.createAgent("Stationary", corridor, 0, 0.5f);
 
-		auto outsideBothSectors = building.planMoveSectorObject(
+		auto outsideBothSectors = world.planMoveSectorObject(
 			created.door.sector->getIndex(), created.door.index, 1, 1);
-		auto blocked = building.planMoveSectorObject(
+		auto blocked = world.planMoveSectorObject(
 			created.door.sector->getIndex(), created.door.index, 5, 0);
-		auto valid = building.planMoveSectorObject(
+		auto valid = world.planMoveSectorObject(
 			created.door.sector->getIndex(), created.door.index, 3, 0);
 		if (outsideBothSectors.valid || blocked.valid || !valid.valid) return false;
 
-		auto moved = building.applyObjectMove(valid);
+		auto moved = world.applyObjectMove(valid);
 		if (!moved || moved->getObjectType() != core::SectorObjectType::Door
 			|| moved->getCellX() != 3 || moved->getCellY() != 0
-			|| building.lookupAgent(agentId).entity == nullptr
-			|| !building.isSimulationPaused() || !building.isTraversalTopologyValid()) return false;
+			|| world.lookupAgent(agentId).entity == nullptr
+			|| !world.isSimulationPaused() || !world.isTraversalTopologyValid()) return false;
 		auto doorOwner = moved->getSector();
 		uint32_t movedDoorIndex = ~0u;
 		for (uint32_t i = 0; i < doorOwner->getNumObjects(); ++i)
 			if (doorOwner->getObject(i) == moved) { movedDoorIndex = i; break; }
 		if (movedDoorIndex == ~0u
-			|| !building.removeSectorDoor(doorOwner->getIndex(), movedDoorIndex)
-			|| building.lookupAgent(agentId).entity == nullptr
-			|| !building.getSimulationSnapshot().traversalResources.empty()) return false;
-		for (auto const& sector : building.getSectors(0))
+			|| !world.removeSectorDoor(doorOwner->getIndex(), movedDoorIndex)
+			|| world.lookupAgent(agentId).entity == nullptr
+			|| !world.getSimulationSnapshot().traversalResources.empty()) return false;
+		for (auto const& sector : world.getSectors(0))
 			for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
 				if (auto object = sector->getObject(i))
 					if (object->getObjectType() == core::SectorObjectType::Door) return false;
 
-		core::Building windowBuilding("Window editing", 10, 3);
-		auto fore = windowBuilding.addRoom("Fore", 0, 0, 0, 8, 1);
-		windowBuilding.addRoom("Back", 1, 0, 0, 8, 1);
-		auto createdWindow = windowBuilding.addSectorWindow(0, 0, 1, 1, 1, {});
-		windowBuilding.finishBuild();
-		windowBuilding.pauseSimulation();
-		auto windowAgent = windowBuilding.createAgent("Stationary", fore, 0, 0.5f);
-		auto windowMove = windowBuilding.planMoveSectorObject(
+		core::World windowWorld("Window editing", 10, 3);
+		auto fore = windowWorld.addRoom("Fore", 0, 0, 0, 8, 1);
+		windowWorld.addRoom("Back", 1, 0, 0, 8, 1);
+		auto createdWindow = windowWorld.addSectorWindow(0, 0, 1, 1, 1, {});
+		windowWorld.finishBuild();
+		windowWorld.pauseSimulation();
+		auto windowAgent = windowWorld.createAgent("Stationary", fore, 0, 0.5f);
+		auto windowMove = windowWorld.planMoveSectorObject(
 			createdWindow.window.sector->getIndex(), createdWindow.window.index, 3, 0);
 		if (!windowMove.valid) return false;
-		auto movedWindow = windowBuilding.applyObjectMove(windowMove);
+		auto movedWindow = windowWorld.applyObjectMove(windowMove);
 		if (!movedWindow || movedWindow->getObjectType() != core::SectorObjectType::Window
 			|| movedWindow->getCellX() != 3) return false;
 		auto owner = movedWindow->getSector();
 		uint32_t movedIndex = ~0u;
 		for (uint32_t i = 0; i < owner->getNumObjects(); ++i)
 			if (owner->getObject(i) == movedWindow) { movedIndex = i; break; }
-		if (movedIndex == ~0u || !windowBuilding.removeSectorWindow(owner->getIndex(), movedIndex))
+		if (movedIndex == ~0u || !windowWorld.removeSectorWindow(owner->getIndex(), movedIndex))
 			return false;
-		for (auto const& sector : windowBuilding.getSectors(0))
+		for (auto const& sector : windowWorld.getSectors(0))
 			for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
 				if (auto object = sector->getObject(i))
 					if (object->getObjectType() == core::SectorObjectType::Window) return false;
-		if (windowBuilding.lookupAgent(windowAgent).entity == nullptr
-			|| !windowBuilding.isSimulationPaused() || !windowBuilding.isTraversalTopologyValid()) return false;
+		if (windowWorld.lookupAgent(windowAgent).entity == nullptr
+			|| !windowWorld.isSimulationPaused() || !windowWorld.isTraversalTopologyValid()) return false;
 
-		core::Building pasteMoveBuilding("Paste-style movement", 10, 2);
-		pasteMoveBuilding.addCorridor(0, 0, 4);
-		auto right = pasteMoveBuilding.addCorridor(0, 6, 4);
-		pasteMoveBuilding.addRoom("Left back", 1, 0, 0, 4, 1);
-		pasteMoveBuilding.addRoom("Right back", 1, 0, 6, 4, 1);
-		auto crossSectorDoor = pasteMoveBuilding.addSectorDoor(0, 0, 1);
-		pasteMoveBuilding.finishBuild();
-		pasteMoveBuilding.pauseSimulation();
-		auto doorPlan = pasteMoveBuilding.planMoveSectorObject(
+		core::World pasteMoveWorld("Paste-style movement", 10, 2);
+		pasteMoveWorld.addCorridor(0, 0, 4);
+		auto right = pasteMoveWorld.addCorridor(0, 6, 4);
+		pasteMoveWorld.addRoom("Left back", 1, 0, 0, 4, 1);
+		pasteMoveWorld.addRoom("Right back", 1, 0, 6, 4, 1);
+		auto crossSectorDoor = pasteMoveWorld.addSectorDoor(0, 0, 1);
+		pasteMoveWorld.finishBuild();
+		pasteMoveWorld.pauseSimulation();
+		auto doorPlan = pasteMoveWorld.planMoveSectorObject(
 			crossSectorDoor.door.sector->getIndex(), crossSectorDoor.door.index, 7, 0);
 		if (!doorPlan.valid) return false;
-		auto movedAcrossSectors = pasteMoveBuilding.applyObjectMove(doorPlan);
+		auto movedAcrossSectors = pasteMoveWorld.applyObjectMove(doorPlan);
 		if (!movedAcrossSectors || movedAcrossSectors->getSector()->getIndex() != right) return false;
 
-		core::Building markerMoveBuilding("Marker movement", 10, 1);
-		auto markerLeft = markerMoveBuilding.addCorridor(0, 0, 4);
-		auto markerRight = markerMoveBuilding.addCorridor(0, 6, 4);
-		auto marker = markerMoveBuilding.addSectorMarker(markerLeft, 0, 2.5f);
-		markerMoveBuilding.finishBuild();
-		markerMoveBuilding.pauseSimulation();
-		auto markerPlan = markerMoveBuilding.planMoveSectorObject(markerLeft, marker.index, 8, 0);
+		core::World markerMoveWorld("Marker movement", 10, 1);
+		auto markerLeft = markerMoveWorld.addCorridor(0, 0, 4);
+		auto markerRight = markerMoveWorld.addCorridor(0, 6, 4);
+		auto marker = markerMoveWorld.addSectorMarker(markerLeft, 0, 2.5f);
+		markerMoveWorld.finishBuild();
+		markerMoveWorld.pauseSimulation();
+		auto markerPlan = markerMoveWorld.planMoveSectorObject(markerLeft, marker.index, 8, 0);
 		if (!markerPlan.valid) return false;
-		auto movedMarker = markerMoveBuilding.applyObjectMove(markerPlan);
+		auto movedMarker = markerMoveWorld.applyObjectMove(markerPlan);
 		return movedMarker && movedMarker->getSector()->getIndex() == markerRight
 			&& movedMarker->getCellX() == 8;
 	}
 
 	bool windowResizeUsesWindowPlacementRules()
 	{
-		core::Building building("Window resizing", 12, 3);
-		auto front = building.addRoom("Front", 0, 0, 0, 8, 3);
-		building.addRoom("Front neighbour", 0, 0, 8, 4, 3);
-		building.addRoom("Behind", 1, 0, 0, 12, 3);
-		core::Building::CreateWindowOptions options;
+		core::World world("Window resizing", 12, 3);
+		auto front = world.addRoom("Front", 0, 0, 0, 8, 3);
+		world.addRoom("Front neighbour", 0, 0, 8, 4, 3);
+		world.addRoom("Behind", 1, 0, 0, 12, 3);
+		core::World::CreateWindowOptions options;
 		options.traversable = true;
 		options.initialState = core::Window::State::Tinted;
 		options.style = core::Window::Style::Tinted;
 		// Palette placement creates a one-cell aperture; resizing does the rest.
-		auto created = building.addSectorWindow(0, 0, 3, 1, 1, options);
+		auto created = world.addSectorWindow(0, 0, 3, 1, 1, options);
 		if (created.window.sector->getObject(created.window.index)->getSize()
 			!= core::Vector2{ 1.0f, 1.0f }) return false;
-		building.finishBuild();
-		building.pauseSimulation();
+		world.finishBuild();
+		world.pauseSimulation();
 
 		auto findWindowIndex = [](std::shared_ptr<const core::Sector> const& owner,
 			std::shared_ptr<const core::SectorObject> const& object)
@@ -493,9 +493,9 @@ namespace
 			auto owner = object->getSector();
 			auto index = findWindowIndex(owner, object);
 			if (index == ~0u) return std::shared_ptr<const core::SectorObject>{};
-			auto plan = building.planResizeSectorWindow(
+			auto plan = world.planResizeSectorWindow(
 				owner->getIndex(), index, x, y, width, height);
-			return plan.valid ? building.applyObjectMove(plan)
+			return plan.valid ? world.applyObjectMove(plan)
 				: std::shared_ptr<const core::SectorObject>{};
 		};
 
@@ -508,23 +508,23 @@ namespace
 		auto owner = resized->getSector();
 		auto index = findWindowIndex(owner, resized);
 		if (index == ~0u
-			|| building.planResizeSectorWindow(owner->getIndex(), index, 1, 0, 0, 1).valid
-			|| building.planResizeSectorWindow(owner->getIndex(), index, 1, 0, 6, 0).valid
-			|| building.planResizeSectorWindow(owner->getIndex(), index, 1, 0, 8, 1).valid
-			|| building.planResizeSectorWindow(owner->getIndex(), index, 1, 0, 12, 1).valid)
+			|| world.planResizeSectorWindow(owner->getIndex(), index, 1, 0, 0, 1).valid
+			|| world.planResizeSectorWindow(owner->getIndex(), index, 1, 0, 6, 0).valid
+			|| world.planResizeSectorWindow(owner->getIndex(), index, 1, 0, 8, 1).valid
+			|| world.planResizeSectorWindow(owner->getIndex(), index, 1, 0, 12, 1).valid)
 			return false;
-		building.addSectorMarker(front, 0, 7.5f);
-		if (building.planResizeSectorWindow(owner->getIndex(), index, 1, 0, 7, 1).valid)
+		world.addSectorMarker(front, 0, 7.5f);
+		if (world.planResizeSectorWindow(owner->getIndex(), index, 1, 0, 7, 1).valid)
 			return false;
 
 		resized = resize(resized, 1, 0, 6, 3);
 		if (!resized || resized->getSize() != core::Vector2{ 6.0f, 3.0f }) return false;
 		std::string diagnostic;
-		if (building.canAddSectorWindow(0, 2, 2, 1, 1, &diagnostic)) return false;
+		if (world.canAddSectorWindow(0, 2, 2, 1, 1, &diagnostic)) return false;
 		owner = resized->getSector();
 		index = findWindowIndex(owner, resized);
 		if (index == ~0u
-			|| building.planResizeSectorWindow(owner->getIndex(), index, 1, 0, 6, 4).valid)
+			|| world.planResizeSectorWindow(owner->getIndex(), index, 1, 0, 6, 4).valid)
 			return false;
 		resized = resize(resized, 1, 1, 6, 2);
 		if (!resized || resized->getCellY() != 1
@@ -532,35 +532,35 @@ namespace
 
 		owner = resized->getSector();
 		index = findWindowIndex(owner, resized);
-		building.addSectorMarker(front, 0, 2.5f);
+		world.addSectorMarker(front, 0, 2.5f);
 		if (index == ~0u
-			|| building.planResizeSectorWindow(owner->getIndex(), index, 1, 0, 6, 3).valid)
+			|| world.planResizeSectorWindow(owner->getIndex(), index, 1, 0, 6, 3).valid)
 			return false;
 
-		if (!building.rebuildTraversalTopology()) return false;
-		core::Building::CreateWindowOptions retained;
-		return building.getSectorWindowOptions(0, 1, 1, 6, 2, retained)
+		if (!world.rebuildTraversalTopology()) return false;
+		core::World::CreateWindowOptions retained;
+		return world.getSectorWindowOptions(0, 1, 1, 6, 2, retained)
 			&& retained.traversable && retained.initialState == core::Window::State::Tinted
 			&& retained.style == core::Window::Style::Tinted
-			&& building.isSimulationPaused() && building.isTraversalTopologyValid();
+			&& world.isSimulationPaused() && world.isTraversalTopologyValid();
 	}
 
 	bool doorResizeRespectsDoorPlacementRules()
 	{
-		core::Building building("Door resizing", 12, 2);
-		auto front = building.addRoom("Front", 0, 0, 0, 8, 1);
-		building.addRoom("Front neighbour", 0, 0, 8, 4, 1);
-		building.addRoom("Behind", 1, 0, 0, 12, 1);
-		core::Building::CreateDoorOptions options;
+		core::World world("Door resizing", 12, 2);
+		auto front = world.addRoom("Front", 0, 0, 0, 8, 1);
+		world.addRoom("Front neighbour", 0, 0, 8, 4, 1);
+		world.addRoom("Behind", 1, 0, 0, 12, 1);
+		core::World::CreateDoorOptions options;
 		options.controls[0] = true;
 		options.controls[1] = true;
 		options.activationMode = core::DoorActivationMode::RemoteControlled;
 		options.holdOpenSeconds = 4.5f;
 		// Palette placement creates a one-cell Door; resizing does the rest.
-		auto created = building.addSectorDoor(0, 0, 3, options);
-		building.finishBuild();
-		building.pauseSimulation();
-		auto agentId = building.createAgent("Stationary", front, 0, 0.5f);
+		auto created = world.addSectorDoor(0, 0, 3, options);
+		world.finishBuild();
+		world.pauseSimulation();
+		auto agentId = world.createAgent("Stationary", front, 0, 0.5f);
 
 		auto findDoorIndex = [](std::shared_ptr<const core::Sector> const& owner,
 			std::shared_ptr<const core::SectorObject> const& object)
@@ -575,8 +575,8 @@ namespace
 			auto owner = object->getSector();
 			auto index = findDoorIndex(owner, object);
 			if (index == ~0u) return std::shared_ptr<const core::SectorObject>{};
-			auto plan = building.planResizeSectorDoor(owner->getIndex(), index, x, y, width, height);
-			return plan.valid ? building.applyObjectMove(plan)
+			auto plan = world.planResizeSectorDoor(owner->getIndex(), index, x, y, width, height);
+			return plan.valid ? world.applyObjectMove(plan)
 				: std::shared_ptr<const core::SectorObject>{};
 		};
 
@@ -588,65 +588,65 @@ namespace
 		auto index = findDoorIndex(owner, resized);
 		if (index == ~0u) return false;
 		// A Door is one or two cells wide, never zero and never three.
-		if (building.planResizeSectorDoor(owner->getIndex(), index, 2, 0, 0, 1).valid
-			|| building.planResizeSectorDoor(owner->getIndex(), index, 2, 0, 3, 1).valid)
+		if (world.planResizeSectorDoor(owner->getIndex(), index, 2, 0, 0, 1).valid
+			|| world.planResizeSectorDoor(owner->getIndex(), index, 2, 0, 3, 1).valid)
 			return false;
 		// Door resizing remains horizontal; its grid footprint is always one deck.
-		if (building.planResizeSectorDoor(owner->getIndex(), index, 2, 0, 2, 0).valid
-			|| building.planResizeSectorDoor(owner->getIndex(), index, 2, 0, 2, 2).valid)
+		if (world.planResizeSectorDoor(owner->getIndex(), index, 2, 0, 2, 0).valid
+			|| world.planResizeSectorDoor(owner->getIndex(), index, 2, 0, 2, 2).valid)
 			return false;
 		// The span may not cross the front Sector boundary into the neighbour.
-		if (building.planResizeSectorDoor(owner->getIndex(), index, 7, 0, 2, 1).valid)
+		if (world.planResizeSectorDoor(owner->getIndex(), index, 7, 0, 2, 1).valid)
 			return false;
 		// Nor may it grow into a cell another object occupies.
-		building.addSectorMarker(front, 0, 4.5f);
-		if (building.planResizeSectorDoor(owner->getIndex(), index, 3, 0, 2, 1).valid)
+		world.addSectorMarker(front, 0, 4.5f);
+		if (world.planResizeSectorDoor(owner->getIndex(), index, 3, 0, 2, 1).valid)
 			return false;
 		// These rooms are one deck tall, so the Door cannot grow upward here.
-		if (building.planResizeSectorDoor(owner->getIndex(), index, 2, 0, 2, 2).valid)
+		if (world.planResizeSectorDoor(owner->getIndex(), index, 2, 0, 2, 2).valid)
 			return false;
 
-		if (!building.rebuildTraversalTopology()) return false;
-		core::Building::CreateDoorOptions retained;
-		if (!building.getSectorDoorOptions(0, 0, 2, 2, retained)
+		if (!world.rebuildTraversalTopology()) return false;
+		core::World::CreateDoorOptions retained;
+		if (!world.getSectorDoorOptions(0, 0, 2, 2, retained)
 			|| retained.activationMode != core::DoorActivationMode::RemoteControlled
 			|| retained.holdOpenSeconds != 4.5f
 			|| !retained.controls[0] || !retained.controls[1]
-			|| building.lookupAgent(agentId).entity == nullptr
-			|| !building.isSimulationPaused() || !building.isTraversalTopologyValid())
+			|| world.lookupAgent(agentId).entity == nullptr
+			|| !world.isSimulationPaused() || !world.isTraversalTopologyValid())
 			return false;
 
 		// Authored crossing lanes outrank a narrower Door: shrinking below them
 		// would silently drop capacity, so the plan refuses.
-		core::Building laneBuilding("Lane door resizing", 8, 2);
-		laneBuilding.addRoom("Fore", 0, 0, 0, 8, 1);
-		laneBuilding.addRoom("Aft", 1, 0, 0, 8, 1);
-		core::Building::CreateDoorOptions lanes;
+		core::World laneWorld("Lane door resizing", 8, 2);
+		laneWorld.addRoom("Fore", 0, 0, 0, 8, 1);
+		laneWorld.addRoom("Aft", 1, 0, 0, 8, 1);
+		core::World::CreateDoorOptions lanes;
 		lanes.width = 2;
 		lanes.crossingLanes = 2;
-		auto laneDoor = laneBuilding.addSectorDoor(0, 0, 3, lanes);
-		laneBuilding.finishBuild();
-		laneBuilding.pauseSimulation();
+		auto laneDoor = laneWorld.addSectorDoor(0, 0, 3, lanes);
+		laneWorld.finishBuild();
+		laneWorld.pauseSimulation();
 		owner = laneDoor.door.sector;
 		index = findDoorIndex(owner, laneDoor.door.sector->getObject(laneDoor.door.index));
 		if (index == ~0u
-			|| laneBuilding.planResizeSectorDoor(owner->getIndex(), index, 3, 0, 1, 1).valid)
+			|| laneWorld.planResizeSectorDoor(owner->getIndex(), index, 3, 0, 1, 1).valid)
 			return false;
 
 		// Lift landing doors belong to the transport and refuse to resize.
-		core::Building liftBuilding("Lift door resizing", 10, 8);
-		liftBuilding.addCorridor(1, 0, 8);
-		liftBuilding.addCorridor(4, 0, 8);
-		auto lift = liftBuilding.addLift(1, 0, 2, 2, 6);
-		liftBuilding.finishBuild();
-		liftBuilding.pauseSimulation();
+		core::World liftWorld("Lift door resizing", 10, 8);
+		liftWorld.addCorridor(1, 0, 8);
+		liftWorld.addCorridor(4, 0, 8);
+		auto lift = liftWorld.addLift(1, 0, 2, 2, 6);
+		liftWorld.finishBuild();
+		liftWorld.pauseSimulation();
 		if (lift.doors.empty()) return false;
 		auto landingDoor = lift.doors[0].door.sector->getObject(lift.doors[0].door.index);
-		if (!liftBuilding.isLiftOwnedDoor(landingDoor)) return false;
+		if (!liftWorld.isLiftOwnedDoor(landingDoor)) return false;
 		owner = landingDoor->getSector();
 		index = findDoorIndex(owner, landingDoor);
 		if (index == ~0u
-			|| liftBuilding.planResizeSectorDoor(owner->getIndex(), index,
+			|| liftWorld.planResizeSectorDoor(owner->getIndex(), index,
 				landingDoor->getCellX(), landingDoor->getCellY(), 1, 1).valid)
 			return false;
 		return true;
@@ -666,154 +666,154 @@ namespace
 
 	bool staircaseCanUseForeRoomEndpoints()
 	{
-		core::Building building("Room staircase landing", 10, 3);
-		building.addCorridor(0, 0, 6);
-		auto upperCorridor = building.addCorridor(1, 0, 7);
-		auto room = building.addRoom("Upper room", 0, 1, 7, 3, 1);
+		core::World world("Room staircase landing", 10, 3);
+		world.addCorridor(0, 0, 6);
+		auto upperCorridor = world.addCorridor(1, 0, 7);
+		auto room = world.addRoom("Upper room", 0, 1, 7, 3, 1);
 
 		std::string diagnostic;
-		if (building.canAddStaircase(1, 0, 5, 3, CORE_SIDE_RIGHT, &diagnostic)) return false;
-		building.removeLocationWall(room, 0, CORE_SIDE_LEFT);
-		if (!building.canAddStaircase(1, 0, 5, 3, CORE_SIDE_RIGHT, &diagnostic)) return false;
-		auto staircase = building.addStaircase(1, 0, 5,
-			core::Building::CreateStaircaseOptions{ 3, CORE_SIDE_RIGHT, 0.0f });
-		building.finishBuild();
-		if (staircase == ~0u || !building.isTraversalTopologyValid()) return false;
-		building.pauseSimulation();
-		auto edit = building.planResizeStaircase(staircase, 5, 0,
-			core::Building::CreateStaircaseOptions{ 3, CORE_SIDE_RIGHT, 0.0f });
+		if (world.canAddStaircase(1, 0, 5, 3, CORE_SIDE_RIGHT, &diagnostic)) return false;
+		world.removeLocationWall(room, 0, CORE_SIDE_LEFT);
+		if (!world.canAddStaircase(1, 0, 5, 3, CORE_SIDE_RIGHT, &diagnostic)) return false;
+		auto staircase = world.addStaircase(1, 0, 5,
+			core::World::CreateStaircaseOptions{ 3, CORE_SIDE_RIGHT, 0.0f });
+		world.finishBuild();
+		if (staircase == ~0u || !world.isTraversalTopologyValid()) return false;
+		world.pauseSimulation();
+		auto edit = world.planResizeStaircase(staircase, 5, 0,
+			core::World::CreateStaircaseOptions{ 3, CORE_SIDE_RIGHT, 0.0f });
 		if (!edit.valid
-			|| building.getSector(room)->getEndType(0, CORE_SIDE_LEFT) != core::SectorEndType::None
-			|| building.getSector(upperCorridor)->getEndType(0, CORE_SIDE_RIGHT) != core::SectorEndType::None)
+			|| world.getSector(room)->getEndType(0, CORE_SIDE_LEFT) != core::SectorEndType::None
+			|| world.getSector(upperCorridor)->getEndType(0, CORE_SIDE_RIGHT) != core::SectorEndType::None)
 			return false;
 
-		core::Building lowerRoomBuilding("Lower Room staircase endpoint", 8, 3);
-		lowerRoomBuilding.addRoom("Lower room", 0, 0, 0, 3, 1);
-		lowerRoomBuilding.addCorridor(1, 4, 4);
-		if (!lowerRoomBuilding.canAddStaircase(1, 0, 2, 3, CORE_SIDE_RIGHT, &diagnostic))
+		core::World lowerRoomWorld("Lower Room staircase endpoint", 8, 3);
+		lowerRoomWorld.addRoom("Lower room", 0, 0, 0, 3, 1);
+		lowerRoomWorld.addCorridor(1, 4, 4);
+		if (!lowerRoomWorld.canAddStaircase(1, 0, 2, 3, CORE_SIDE_RIGHT, &diagnostic))
 			return false;
-		lowerRoomBuilding.addStaircase(1, 0, 2,
-			core::Building::CreateStaircaseOptions{ 3, CORE_SIDE_RIGHT, 0.0f });
-		lowerRoomBuilding.finishBuild();
-		if (!lowerRoomBuilding.isTraversalTopologyValid()) return false;
+		lowerRoomWorld.addStaircase(1, 0, 2,
+			core::World::CreateStaircaseOptions{ 3, CORE_SIDE_RIGHT, 0.0f });
+		lowerRoomWorld.finishBuild();
+		if (!lowerRoomWorld.isTraversalTopologyValid()) return false;
 
-		// escalator-test-1.yaml: the flight starts on the Room's bottom floor and
+		// escalator-test-1.world.yaml: the flight starts on the Room's bottom floor and
 		// reaches its upper-right edge, where the wall into the upper Corridor is open.
-		core::Building mapBuilding("Escalator map Room landing", 16, 3);
-		mapBuilding.addRoom("Room 1", 0, 1, 10, 4, 2);
-		mapBuilding.addCorridor(2, 14, 2);
-		mapBuilding.removeLocationWall(0, 1, CORE_SIDE_RIGHT);
-		if (!mapBuilding.canAddStaircase(1, 1, 11, 3, CORE_SIDE_RIGHT, &diagnostic))
+		core::World mapWorld("Escalator map Room landing", 16, 3);
+		mapWorld.addRoom("Room 1", 0, 1, 10, 4, 2);
+		mapWorld.addCorridor(2, 14, 2);
+		mapWorld.removeLocationWall(0, 1, CORE_SIDE_RIGHT);
+		if (!mapWorld.canAddStaircase(1, 1, 11, 3, CORE_SIDE_RIGHT, &diagnostic))
 			return false;
-		mapBuilding.addStaircase(1, 1, 11,
-			core::Building::CreateStaircaseOptions{ 3, CORE_SIDE_RIGHT, 0.4f });
-		mapBuilding.finishBuild();
-		return mapBuilding.isTraversalTopologyValid();
+		mapWorld.addStaircase(1, 1, 11,
+			core::World::CreateStaircaseOptions{ 3, CORE_SIDE_RIGHT, 0.4f });
+		mapWorld.finishBuild();
+		return mapWorld.isTraversalTopologyValid();
 	}
 
 	bool sharedLocationWallsCanBeOpenedAndRestored()
 	{
-		core::Building building("Shared Location walls", 8, 4);
-		auto left = building.addRoom("Left", 0, 1, 0, 3, 2);
-		auto right = building.addRoom("Right", 0, 0, 3, 3, 3);
-		building.finishBuild();
+		core::World world("Shared Location walls", 8, 4);
+		auto left = world.addRoom("Left", 0, 1, 0, 3, 2);
+		auto right = world.addRoom("Right", 0, 0, 3, 3, 3);
+		world.finishBuild();
 
 		std::string diagnostic;
-		if (!building.canRemoveLocationWall(left, 0, CORE_SIDE_RIGHT, &diagnostic)
-			|| building.canRemoveLocationWall(left, 0, CORE_SIDE_LEFT, &diagnostic)) return false;
+		if (!world.canRemoveLocationWall(left, 0, CORE_SIDE_RIGHT, &diagnostic)
+			|| world.canRemoveLocationWall(left, 0, CORE_SIDE_LEFT, &diagnostic)) return false;
 		bool activeEditRejected = false;
-		try { building.removeLocationWall(left, 0, CORE_SIDE_RIGHT); }
+		try { world.removeLocationWall(left, 0, CORE_SIDE_RIGHT); }
 		catch (std::exception const&) { activeEditRejected = true; }
 		if (!activeEditRejected) return false;
 
-		building.pauseSimulation();
-		building.removeLocationWall(left, 0, CORE_SIDE_RIGHT);
-		if (building.getSector(left)->getEndType(0, CORE_SIDE_RIGHT) != core::SectorEndType::None
-			|| building.getSector(right)->getEndType(1, CORE_SIDE_LEFT) != core::SectorEndType::None
-			|| !building.canAddLocationWall(right, 1, CORE_SIDE_LEFT, &diagnostic)) return false;
-		building.finishBuild();
-		if (!building.isTraversalTopologyValid()) return false;
+		world.pauseSimulation();
+		world.removeLocationWall(left, 0, CORE_SIDE_RIGHT);
+		if (world.getSector(left)->getEndType(0, CORE_SIDE_RIGHT) != core::SectorEndType::None
+			|| world.getSector(right)->getEndType(1, CORE_SIDE_LEFT) != core::SectorEndType::None
+			|| !world.canAddLocationWall(right, 1, CORE_SIDE_LEFT, &diagnostic)) return false;
+		world.finishBuild();
+		if (!world.isTraversalTopologyValid()) return false;
 
-		building.addLocationWall(right, 1, CORE_SIDE_LEFT);
-		if (building.getSector(left)->getEndType(0, CORE_SIDE_RIGHT) != core::SectorEndType::Wall
-			|| building.getSector(right)->getEndType(1, CORE_SIDE_LEFT) != core::SectorEndType::Wall)
+		world.addLocationWall(right, 1, CORE_SIDE_LEFT);
+		if (world.getSector(left)->getEndType(0, CORE_SIDE_RIGHT) != core::SectorEndType::Wall
+			|| world.getSector(right)->getEndType(1, CORE_SIDE_LEFT) != core::SectorEndType::Wall)
 			return false;
-		building.finishBuild();
-		return building.isTraversalTopologyValid()
-			&& building.canRemoveLocationWall(right, 1, CORE_SIDE_LEFT, &diagnostic);
+		world.finishBuild();
+		return world.isTraversalTopologyValid()
+			&& world.canRemoveLocationWall(right, 1, CORE_SIDE_LEFT, &diagnostic);
 	}
 
 	bool walkwayEditingEnforcesPlacementMovementAndOccupancyRules()
 	{
-		core::Building building("Walkway editing", 10, 4);
-		auto room = building.addRoom("Walkway room", 0, 0, 0, 4, 3);
-		auto otherRoom = building.addRoom("Other room", 0, 0, 6, 3, 3);
+		core::World world("Walkway editing", 10, 4);
+		auto room = world.addRoom("Walkway room", 0, 0, 0, 4, 3);
+		auto otherRoom = world.addRoom("Other room", 0, 0, 6, 3, 3);
 		std::string diagnostic;
-		if (building.canAddSectorWalkway(room, 0, 1, &diagnostic)
-			|| !building.canAddSectorWalkway(room, 1, 1, &diagnostic)) return false;
-		auto created = building.addSectorWalkway(room, 1, 1);
-		building.finishBuild();
-		building.pauseSimulation();
+		if (world.canAddSectorWalkway(room, 0, 1, &diagnostic)
+			|| !world.canAddSectorWalkway(room, 1, 1, &diagnostic)) return false;
+		auto created = world.addSectorWalkway(room, 1, 1);
+		world.finishBuild();
+		world.pauseSimulation();
 
-		auto acrossRooms = building.planMoveSectorObject(room, created.index, 6, 1);
-		auto withinRoom = building.planMoveSectorObject(room, created.index, 2, 1);
+		auto acrossRooms = world.planMoveSectorObject(room, created.index, 6, 1);
+		auto withinRoom = world.planMoveSectorObject(room, created.index, 2, 1);
 		if (acrossRooms.valid || !withinRoom.valid) return false;
 
-		auto agentId = building.createAgent("Walkway occupant", room, 1, 1.5f);
-		if (building.planMoveSectorObject(room, created.index, 2, 1).valid) return false;
+		auto agentId = world.createAgent("Walkway occupant", room, 1, 1.5f);
+		if (world.planMoveSectorObject(room, created.index, 2, 1).valid) return false;
 		bool occupiedDeleteRejected = false;
-		try { building.removeSectorWalkway(room, created.index); }
+		try { world.removeSectorWalkway(room, created.index); }
 		catch (std::exception const&) { occupiedDeleteRejected = true; }
 		if (!occupiedDeleteRejected) return false;
-		auto cropped = building.planResizeLocation(room, 0, 0, 1, 3);
+		auto cropped = world.planResizeLocation(room, 0, 0, 1, 3);
 		if (cropped.valid) return false;
 
-		if (!building.removeAgent(agentId)) return false;
-		withinRoom = building.planMoveSectorObject(room, created.index, 2, 1);
+		if (!world.removeAgent(agentId)) return false;
+		withinRoom = world.planMoveSectorObject(room, created.index, 2, 1);
 		if (!withinRoom.valid) return false;
-		auto moved = building.applyObjectMove(withinRoom);
+		auto moved = world.applyObjectMove(withinRoom);
 		if (!moved || moved->getCellX() != 2 || moved->getCellY() != 1
 			|| moved->getSector()->getIndex() != room) return false;
 		uint32_t movedIndex = ~0u;
 		for (uint32_t i = 0; i < moved->getSector()->getNumObjects(); ++i)
 			if (moved->getSector()->getObject(i) == moved) { movedIndex = i; break; }
-		if (movedIndex == ~0u || !building.removeSectorWalkway(room, movedIndex)) return false;
-		for (uint32_t i = 0; i < building.getSector(room)->getNumObjects(); ++i)
-			if (auto object = building.getSector(room)->getObject(i))
+		if (movedIndex == ~0u || !world.removeSectorWalkway(room, movedIndex)) return false;
+		for (uint32_t i = 0; i < world.getSector(room)->getNumObjects(); ++i)
+			if (auto object = world.getSector(room)->getObject(i))
 				if (object->getObjectType() == core::SectorObjectType::Walkway) return false;
 
-		building.addSectorWalkway(room, 1, 3);
-		building.finishBuild();
-		auto cropUnoccupied = building.planResizeLocation(room, 0, 0, 3, 3);
+		world.addSectorWalkway(room, 1, 3);
+		world.finishBuild();
+		auto cropUnoccupied = world.planResizeLocation(room, 0, 0, 3, 3);
 		if (!cropUnoccupied.valid) return false;
-		auto resizedRoom = building.applyLocationEdit(cropUnoccupied);
-		for (uint32_t i = 0; i < building.getSector(resizedRoom)->getNumObjects(); ++i)
-			if (auto object = building.getSector(resizedRoom)->getObject(i))
+		auto resizedRoom = world.applyLocationEdit(cropUnoccupied);
+		for (uint32_t i = 0; i < world.getSector(resizedRoom)->getNumObjects(); ++i)
+			if (auto object = world.getSector(resizedRoom)->getObject(i))
 				if (object->getObjectType() == core::SectorObjectType::Walkway) return false;
-		return building.getSector(otherRoom) != nullptr && building.isTraversalTopologyValid();
+		return world.getSector(otherRoom) != nullptr && world.isTraversalTopologyValid();
 	}
 
 	bool forceBridgeObjectEditingIsAtomic()
 	{
-		core::Building building("Force Bridge editing", 10, 4);
-		auto room = building.addRoom("Bridge room", 0, 0, 0, 8, 3);
-		building.addSectorWalkway(room, 1, 0);
-		building.addSectorWalkway(room, 1, 3);
-		building.addSectorWalkway(room, 1, 6);
-		core::Building::CreateForceBridgeOptions options{ 2, CORE_SIDE_LEFT, true, true, 1 };
+		core::World world("Force Bridge editing", 10, 4);
+		auto room = world.addRoom("Bridge room", 0, 0, 0, 8, 3);
+		world.addSectorWalkway(room, 1, 0);
+		world.addSectorWalkway(room, 1, 3);
+		world.addSectorWalkway(room, 1, 6);
+		core::World::CreateForceBridgeOptions options{ 2, CORE_SIDE_LEFT, true, true, 1 };
 		std::string diagnostic;
-		if (!building.canAddSectorForceBridge(room, 1, 1, options, &diagnostic)
-			|| building.canAddSectorForceBridge(room, 1, 2, options, &diagnostic)) return false;
-		auto created = building.addSectorForceBridge(room, 1, 1, options);
-		building.finishBuild();
-		building.pauseSimulation();
+		if (!world.canAddSectorForceBridge(room, 1, 1, options, &diagnostic)
+			|| world.canAddSectorForceBridge(room, 1, 2, options, &diagnostic)) return false;
+		auto created = world.addSectorForceBridge(room, 1, 1, options);
+		world.finishBuild();
+		world.pauseSimulation();
 
-		core::Building::CreateForceBridgeOptions authored;
-		if (!building.getSectorForceBridgeOptions(room, created.forceBridge.index, authored)
+		core::World::CreateForceBridgeOptions authored;
+		if (!world.getSectorForceBridgeOptions(room, created.forceBridge.index, authored)
 			|| authored.width != 2 || authored.controlCount != 1) return false;
-		auto move = building.planMoveSectorObject(room, created.forceBridge.index, 4, 1);
+		auto move = world.planMoveSectorObject(room, created.forceBridge.index, 4, 1);
 		if (!move.valid || move.previewWidth != 2) return false;
-		auto moved = building.applyObjectMove(move);
+		auto moved = world.applyObjectMove(move);
 		if (!moved || moved->getCellX() != 4) return false;
 		uint32_t movedIndex = ~0u;
 		for (uint32_t i = 0; i < moved->getSector()->getNumObjects(); ++i)
@@ -821,34 +821,34 @@ namespace
 		if (movedIndex == ~0u) return false;
 		options.fromSide = CORE_SIDE_RIGHT;
 		options.controlCount = 2;
-		auto edited = building.applySectorForceBridgeOptions(room, movedIndex, options);
+		auto edited = world.applySectorForceBridgeOptions(room, movedIndex, options);
 		if (!edited || edited->getCellX() != 4) return false;
 		uint32_t editedIndex = ~0u;
 		for (uint32_t i = 0; i < edited->getSector()->getNumObjects(); ++i)
 			if (edited->getSector()->getObject(i) == edited) { editedIndex = i; break; }
 		if (editedIndex == ~0u) return false;
-		auto occupant = building.createAgent("Bridge occupant", room, 1, 4.5f);
+		auto occupant = world.createAgent("Bridge occupant", room, 1, 4.5f);
 		bool occupiedDeleteRejected = false;
-		try { building.removeSectorForceBridge(room, editedIndex); }
+		try { world.removeSectorForceBridge(room, editedIndex); }
 		catch (std::exception const&) { occupiedDeleteRejected = true; }
-		if (!occupiedDeleteRejected || !building.removeAgent(occupant)
-			|| !building.removeSectorForceBridge(room, editedIndex)) return false;
-		for (uint32_t i = 0; i < building.getSector(room)->getNumObjects(); ++i)
-			if (auto object = building.getSector(room)->getObject(i))
+		if (!occupiedDeleteRejected || !world.removeAgent(occupant)
+			|| !world.removeSectorForceBridge(room, editedIndex)) return false;
+		for (uint32_t i = 0; i < world.getSector(room)->getNumObjects(); ++i)
+			if (auto object = world.getSector(room)->getObject(i))
 				if (object->getObjectType() == core::SectorObjectType::ForceBridge) return false;
-		return building.isTraversalTopologyValid();
+		return world.isTraversalTopologyValid();
 	}
 
 	bool forceBridgeWalkwayDeletionUpdatesItsDestination()
 	{
 		{
-			core::Building placement("Force Bridge inferred width", 8, 4);
+			core::World placement("Force Bridge inferred width", 8, 4);
 			auto placementRoom = placement.addRoom("Bridge room", 0, 0, 0, 6, 3);
 			placement.addSectorWalkway(placementRoom, 1, 0);
 			placement.addSectorWalkway(placementRoom, 1, 3);
 			uint32_t inferredWidth = 0;
 			std::string diagnostic;
-			core::Building::CreateForceBridgeOptions inferred;
+			core::World::CreateForceBridgeOptions inferred;
 			if (!placement.calculateSectorForceBridgeWidthToRight(placementRoom, 1, 1,
 				inferredWidth, &diagnostic) || inferredWidth != 2) return false;
 			inferred.width = inferredWidth;
@@ -857,12 +857,12 @@ namespace
 		}
 
 		{
-			core::Building right("Right-origin Force Bridge dependencies", 9, 4);
+			core::World right("Right-origin Force Bridge dependencies", 9, 4);
 			auto rightRoom = right.addRoom("Bridge room", 0, 0, 0, 7, 3);
 			right.addSectorWalkway(rightRoom, 1, 2);
 			auto rightDestination = right.addSectorWalkway(rightRoom, 1, 3);
 			auto rightOrigin = right.addSectorWalkway(rightRoom, 1, 5);
-			core::Building::CreateForceBridgeOptions rightOptions{
+			core::World::CreateForceBridgeOptions rightOptions{
 				1, CORE_SIDE_RIGHT, true, true, 1 };
 			right.addSectorForceBridge(rightRoom, 1, 4, rightOptions);
 			right.finishBuild();
@@ -878,7 +878,7 @@ namespace
 			{
 				auto candidate = sector->getObject(i);
 				if (!candidate || candidate->getObjectType() != core::SectorObjectType::ForceBridge) continue;
-				core::Building::CreateForceBridgeOptions updated;
+				core::World::CreateForceBridgeOptions updated;
 				resized = right.getSectorForceBridgeOptions(rightRoom, i, updated)
 					&& candidate->getCellX() == 3 && updated.width == 2
 					&& updated.fromSide == CORE_SIDE_RIGHT;
@@ -886,27 +886,27 @@ namespace
 			if (!resized) return false;
 		}
 
-		core::Building building("Force Bridge walkway dependencies", 10, 4);
-		auto room = building.addRoom("Bridge room", 0, 0, 0, 7, 3);
-		auto origin = building.addSectorWalkway(room, 1, 0);
-		auto destination = building.addSectorWalkway(room, 1, 2);
-		building.addSectorWalkway(room, 1, 3);
-		core::Building::CreateForceBridgeOptions options{ 1, CORE_SIDE_LEFT, true, true, 1 };
-		building.addSectorForceBridge(room, 1, 1, options);
-		building.finishBuild();
-		building.pauseSimulation();
+		core::World world("Force Bridge walkway dependencies", 10, 4);
+		auto room = world.addRoom("Bridge room", 0, 0, 0, 7, 3);
+		auto origin = world.addSectorWalkway(room, 1, 0);
+		auto destination = world.addSectorWalkway(room, 1, 2);
+		world.addSectorWalkway(room, 1, 3);
+		core::World::CreateForceBridgeOptions options{ 1, CORE_SIDE_LEFT, true, true, 1 };
+		world.addSectorForceBridge(room, 1, 1, options);
+		world.finishBuild();
+		world.pauseSimulation();
 
 		bool originRejected = false;
-		try { building.removeSectorWalkway(room, origin.index); }
+		try { world.removeSectorWalkway(room, origin.index); }
 		catch (std::exception const&) { originRejected = true; }
-		if (!originRejected || !building.removeSectorWalkway(room, destination.index)) return false;
-		auto sector = building.getSector(room);
+		if (!originRejected || !world.removeSectorWalkway(room, destination.index)) return false;
+		auto sector = world.getSector(room);
 		for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
 		{
 			auto object = sector->getObject(i);
 			if (!object || object->getObjectType() != core::SectorObjectType::ForceBridge) continue;
-			core::Building::CreateForceBridgeOptions updated;
-			return building.getSectorForceBridgeOptions(room, i, updated)
+			core::World::CreateForceBridgeOptions updated;
+			return world.getSectorForceBridgeOptions(room, i, updated)
 				&& object->getCellX() == 1 && updated.width == 2;
 		}
 		return false;
@@ -914,38 +914,38 @@ namespace
 
 	bool roomLadderEditingCalculatesAndMaintainsWalkwayEndpoints()
 	{
-		core::Building building("Room Ladder editing", 8, 6);
-		auto room = building.addRoom("Ladder room", 0, 0, 0, 5, 5);
-		building.addSectorWalkway(room, 2, 1);
-		building.addSectorWalkway(room, 4, 1);
-		building.addSectorWalkway(room, 3, 3);
-		building.addSectorWalkway(room, 3, 4);
+		core::World world("Room Ladder editing", 8, 6);
+		auto room = world.addRoom("Ladder room", 0, 0, 0, 5, 5);
+		world.addSectorWalkway(room, 2, 1);
+		world.addSectorWalkway(room, 4, 1);
+		world.addSectorWalkway(room, 3, 3);
+		world.addSectorWalkway(room, 3, 4);
 		uint32_t height = 0; std::string diagnostic;
-		if (!building.canAddRoomLadder(room, 0, 1, &height, &diagnostic) || height != 3) return false;
-		auto lower = building.addRoomLadder(room, 0, 1);
-		auto upper = building.addRoomLadder(room, 2, 1);
-		core::Building::CreateLadderOptions defaultOptions{};
-		if (!building.getRoomLadderOptions(room, lower.ladder.index, defaultOptions))
+		if (!world.canAddRoomLadder(room, 0, 1, &height, &diagnostic) || height != 3) return false;
+		auto lower = world.addRoomLadder(room, 0, 1);
+		auto upper = world.addRoomLadder(room, 2, 1);
+		core::World::CreateLadderOptions defaultOptions{};
+		if (!world.getRoomLadderOptions(room, lower.ladder.index, defaultOptions))
 			return false;
 		if (std::static_pointer_cast<const core::LadderSectorObject>(
 			lower.ladder.sector->getObject(lower.ladder.index))->getLadder()->getDecksHigh() != 3) return false;
 		if (std::static_pointer_cast<const core::LadderSectorObject>(
 			upper.ladder.sector->getObject(upper.ladder.index))->getLadder()->getDecksHigh() != 3) return false;
-		if (building.canAddRoomLadder(room, 0, 2, &height, &diagnostic)
+		if (world.canAddRoomLadder(room, 0, 2, &height, &diagnostic)
 			|| diagnostic.find("No Walkway") == std::string::npos) return false;
-		auto corridor = building.addCorridor(5, 0, 3);
-		if (building.canAddRoomLadder(corridor, 0, 0, &height, &diagnostic)) return false;
+		auto corridor = world.addCorridor(5, 0, 3);
+		if (world.canAddRoomLadder(corridor, 0, 0, &height, &diagnostic)) return false;
 
-		building.finishBuild();
-		building.pauseSimulation();
-		auto move = building.planMoveSectorObject(room, lower.ladder.index, 3, 0);
+		world.finishBuild();
+		world.pauseSimulation();
+		auto move = world.planMoveSectorObject(room, lower.ladder.index, 3, 0);
 		if (!move.valid || move.previewHeight != 4) return false;
-		auto moved = building.applyObjectMove(move);
+		auto moved = world.applyObjectMove(move);
 		if (!moved || std::static_pointer_cast<const core::LadderSectorObject>(moved)
 			->getLadder()->getDecksHigh() != 4) return false;
 
-		auto nearer = building.addSectorWalkway(room, 1, 3);
-		auto rebuiltRoom = building.getSector(room);
+		auto nearer = world.addSectorWalkway(room, 1, 3);
+		auto rebuiltRoom = world.getSector(room);
 		std::shared_ptr<const core::LadderSectorObject> recalculated;
 		for (uint32_t i = 0; i < rebuiltRoom->getNumObjects(); ++i)
 		{
@@ -953,8 +953,8 @@ namespace
 			if (ladder && ladder->getCellX() == 3 && ladder->getCellY() == 0) recalculated = ladder;
 		}
 		if (!recalculated || recalculated->getLadder()->getDecksHigh() != 2) return false;
-		if (!building.removeSectorWalkway(room, nearer.index)) return false;
-		rebuiltRoom = building.getSector(room);
+		if (!world.removeSectorWalkway(room, nearer.index)) return false;
+		rebuiltRoom = world.getSector(room);
 		uint32_t movedIndex = ~0u;
 		for (uint32_t i = 0; i < rebuiltRoom->getNumObjects(); ++i)
 		{
@@ -966,14 +966,14 @@ namespace
 			}
 		}
 		if (movedIndex == ~0u) return false;
-		auto edited = building.applyRoomLadderOptions(room, movedIndex, { 0, true, false, 2 });
+		auto edited = world.applyRoomLadderOptions(room, movedIndex, { 0, true, false, 2 });
 		if (!edited) return false;
-		core::Building::CreateLadderOptions options{};
-		rebuiltRoom = building.getSector(room);
+		core::World::CreateLadderOptions options{};
+		rebuiltRoom = world.getSector(room);
 		movedIndex = ~0u;
 		for (uint32_t i = 0; i < rebuiltRoom->getNumObjects(); ++i)
 			if (rebuiltRoom->getObject(i) == edited) { movedIndex = i; break; }
-		if (movedIndex == ~0u || !building.getRoomLadderOptions(room, movedIndex, options)
+		if (movedIndex == ~0u || !world.getRoomLadderOptions(room, movedIndex, options)
 			|| !options.extensible || options.startExtended
 			|| options.directionalBatchLimit != 2) return false;
 		uint32_t insetControls = 0;
@@ -987,14 +987,14 @@ namespace
 			if (std::abs(centerX - 3.8f) < 0.0001f) ++insetControls;
 		}
 		if (insetControls != 2) return false;
-		if (!building.removeRoomLadder(room, movedIndex)) return false;
-		rebuiltRoom = building.getSector(room);
+		if (!world.removeRoomLadder(room, movedIndex)) return false;
+		rebuiltRoom = world.getSector(room);
 		for (uint32_t i = 0; i < rebuiltRoom->getNumObjects(); ++i)
 		{
 			auto ladder = std::dynamic_pointer_cast<const core::LadderSectorObject>(rebuiltRoom->getObject(i));
 			if (ladder && ladder->getCellX() == 3 && ladder->getCellY() == 0) return false;
 		}
-		auto edge = building.addRoomLadder(room, 0, 4, { 0, true, true });
+		auto edge = world.addRoomLadder(room, 0, 4, { 0, true, true });
 		for (auto const& control : edge.controls)
 		{
 			auto button = control.sector->getObject(control.index)->_getObject();
@@ -1006,21 +1006,21 @@ namespace
 
 	bool deletingWalkwayPreservesUnrelatedRoomDoor()
 	{
-		core::Building building("Walkway deletion isolation", 16, 6);
-		building.addCorridor(4, 9, 4);
-		auto room = building.addRoom("Walkway room", 1, 3, 9, 4, 2);
-		core::Building::CreateObjectResult walkways[4];
+		core::World world("Walkway deletion isolation", 16, 6);
+		world.addCorridor(4, 9, 4);
+		auto room = world.addRoom("Walkway room", 1, 3, 9, 4, 2);
+		core::World::CreateObjectResult walkways[4];
 		for (uint32_t x = 0; x < 4; ++x)
-			walkways[x] = building.addSectorWalkway(room, 1, x);
-		building.addSectorDoor(0, 4, 12);
-		building.finishBuild();
-		building.pauseSimulation();
+			walkways[x] = world.addSectorWalkway(room, 1, x);
+		world.addSectorDoor(0, 4, 12);
+		world.finishBuild();
+		world.pauseSimulation();
 
 		try
 		{
 			// The Walkway at 11,4 is not beneath the Door at 12,4. Removing it
 			// must shrink the physical queue rather than invalidate the Door.
-			if (!building.removeSectorWalkway(room, walkways[2].index)) return false;
+			if (!world.removeSectorWalkway(room, walkways[2].index)) return false;
 		}
 		catch (std::exception const&)
 		{
@@ -1028,8 +1028,8 @@ namespace
 		}
 		uint32_t doorsInRoom = 0, remainingWalkways = 0;
 		bool walkwayAt11 = false, walkwayAt12 = false;
-		for (uint32_t i = 0; i < building.getSector(room)->getNumObjects(); ++i)
-			if (auto object = building.getSector(room)->getObject(i))
+		for (uint32_t i = 0; i < world.getSector(room)->getNumObjects(); ++i)
+			if (auto object = world.getSector(room)->getObject(i))
 			{
 				doorsInRoom += object->getObjectType() == core::SectorObjectType::Door;
 				if (object->getObjectType() != core::SectorObjectType::Walkway) continue;
@@ -1038,33 +1038,33 @@ namespace
 				walkwayAt12 = walkwayAt12 || object->getCellX() == 12;
 			}
 		return doorsInRoom == 1 && remainingWalkways == 3
-			&& !walkwayAt11 && walkwayAt12 && building.isTraversalTopologyValid()
-			&& building.getSimulationSnapshot().traversalResources.size() == 1;
+			&& !walkwayAt11 && walkwayAt12 && world.isTraversalTopologyValid()
+			&& world.getSimulationSnapshot().traversalResources.size() == 1;
 	}
 
 	bool ordinaryTraversalCommitsOnlyAtDestination()
 	{
-		core::Building building("Ordinary transition", 10, 2);
-		auto sourceSector = building.addCorridor(0, 0, 3);
-		auto destinationSector = building.addCorridor(0, 5, 3);
+		core::World world("Ordinary transition", 10, 2);
+		auto sourceSector = world.addCorridor(0, 0, 3);
+		auto destinationSector = world.addCorridor(0, 5, 3);
 		uint32_t sourceVertexId;
 		uint32_t destinationVertexId;
-		building.addSectorMarker(sourceSector, 0, 0.5f, &sourceVertexId);
-		building.addSectorMarker(destinationSector, 0, 1.5f, &destinationVertexId);
-		building.finishBuild();
+		world.addSectorMarker(sourceSector, 0, 0.5f, &sourceVertexId);
+		world.addSectorMarker(destinationSector, 0, 1.5f, &destinationVertexId);
+		world.finishBuild();
 
-		auto source = building.getGraph()->getVertexByIdentifier(sourceVertexId);
-		auto destination = building.getGraph()->getVertexByIdentifier(destinationVertexId);
-		auto agentId = building.createAgent("Ordinary traveller", sourceSector, 0, 0.5f);
-		auto agent = building.lookupAgent(agentId).entity;
+		auto source = world.getGraph()->getVertexByIdentifier(sourceVertexId);
+		auto destination = world.getGraph()->getVertexByIdentifier(destinationVertexId);
+		auto agentId = world.createAgent("Ordinary traveller", sourceSector, 0, 0.5f);
+		auto agent = world.lookupAgent(agentId).entity;
 		agent->setPath(twoNodePath(source, destination, std::make_shared<core::SectorEdge>()), true);
 
 		bool observedPermit = false;
 		while (agent->getState() != core::Agent::State::Idle
-			&& building.getSimulationTick() < MaximumSimulationTicks)
+			&& world.getSimulationTick() < MaximumSimulationTicks)
 		{
-			building.advanceTick();
-			auto snapshot = building.getSimulationSnapshot();
+			world.advanceTick();
+			auto snapshot = world.getSimulationSnapshot();
 			if (!snapshot.traversalPermits.empty())
 			{
 				observedPermit = snapshot.traversalPermits.size() == 1
@@ -1074,16 +1074,16 @@ namespace
 			}
 
 			if (agent->getState() != core::Agent::State::Idle
-				&& agent->getSector() != building.getSector(sourceSector).get())
+				&& agent->getSector() != world.getSector(sourceSector).get())
 			{
 				return false;
 			}
 		}
 
-		auto snapshot = building.getSimulationSnapshot();
+		auto snapshot = world.getSimulationSnapshot();
 		return observedPermit
 			&& agent->getState() == core::Agent::State::Idle
-			&& agent->getSector() == building.getSector(destinationSector).get()
+			&& agent->getSector() == world.getSector(destinationSector).get()
 			&& agent->getGlobalPosition().distanceTo(destination->getPosition()) < 0.001f
 			&& snapshot.traversalRequests.empty()
 			&& snapshot.traversalPermits.empty();
@@ -1091,24 +1091,24 @@ namespace
 
 	bool deniedTraversalCannotBeCrossed()
 	{
-		core::Building building("Denied transition", 7, 2);
-		auto corridor = building.addCorridor(0, 0, 6);
+		core::World world("Denied transition", 7, 2);
+		auto corridor = world.addCorridor(0, 0, 6);
 		uint32_t sourceVertexId;
 		uint32_t destinationVertexId;
-		building.addSectorMarker(corridor, 0, 0.5f, &sourceVertexId);
-		building.addSectorMarker(corridor, 0, 5.5f, &destinationVertexId);
-		building.finishBuild();
+		world.addSectorMarker(corridor, 0, 0.5f, &sourceVertexId);
+		world.addSectorMarker(corridor, 0, 5.5f, &destinationVertexId);
+		world.finishBuild();
 
-		auto source = building.getGraph()->getVertexByIdentifier(sourceVertexId);
-		auto destination = building.getGraph()->getVertexByIdentifier(destinationVertexId);
-		auto agentId = building.createAgent("Blocked traveller", corridor, 0, 0.5f);
-		auto agent = building.lookupAgent(agentId).entity;
+		auto source = world.getGraph()->getVertexByIdentifier(sourceVertexId);
+		auto destination = world.getGraph()->getVertexByIdentifier(destinationVertexId);
+		auto agentId = world.createAgent("Blocked traveller", corridor, 0, 0.5f);
+		auto agent = world.lookupAgent(agentId).entity;
 		agent->setPath(twoNodePath(source, destination, std::make_shared<core::GapEdge>()), true);
-		building.advanceTicks(30);
+		world.advanceTicks(30);
 
-		auto snapshot = building.getSimulationSnapshot();
+		auto snapshot = world.getSimulationSnapshot();
 		if (agent->getGlobalPosition().distanceTo(source->getPosition()) >= 0.001f
-			|| agent->getSector() != building.getSector(corridor).get()
+			|| agent->getSector() != world.getSector(corridor).get()
 			|| agent->getState() != core::Agent::State::WaitingForTraversal
 			|| snapshot.traversalRequests.size() != 1
 			|| snapshot.traversalRequests.front().state != core::TraversalRequestState::Denied
@@ -1119,69 +1119,69 @@ namespace
 		}
 
 		agent->clearPath();
-		snapshot = building.getSimulationSnapshot();
+		snapshot = world.getSimulationSnapshot();
 		return snapshot.traversalRequests.empty() && snapshot.traversalPermits.empty()
-			&& agent->getSector() == building.getSector(corridor).get();
+			&& agent->getSector() == world.getSector(corridor).get();
 	}
 
 	bool cancellationReleasesPermitWithoutCommitting()
 	{
-		core::Building building("Cancelled transition", 10, 2);
-		auto sourceSector = building.addCorridor(0, 0, 3);
-		auto destinationSector = building.addCorridor(0, 5, 3);
+		core::World world("Cancelled transition", 10, 2);
+		auto sourceSector = world.addCorridor(0, 0, 3);
+		auto destinationSector = world.addCorridor(0, 5, 3);
 		uint32_t sourceVertexId;
 		uint32_t destinationVertexId;
-		building.addSectorMarker(sourceSector, 0, 0.5f, &sourceVertexId);
-		building.addSectorMarker(destinationSector, 0, 1.5f, &destinationVertexId);
-		building.finishBuild();
+		world.addSectorMarker(sourceSector, 0, 0.5f, &sourceVertexId);
+		world.addSectorMarker(destinationSector, 0, 1.5f, &destinationVertexId);
+		world.finishBuild();
 
-		auto source = building.getGraph()->getVertexByIdentifier(sourceVertexId);
-		auto destination = building.getGraph()->getVertexByIdentifier(destinationVertexId);
-		auto agentId = building.createAgent("Cancelling traveller", sourceSector, 0, 0.5f);
-		auto agent = building.lookupAgent(agentId).entity;
+		auto source = world.getGraph()->getVertexByIdentifier(sourceVertexId);
+		auto destination = world.getGraph()->getVertexByIdentifier(destinationVertexId);
+		auto agentId = world.createAgent("Cancelling traveller", sourceSector, 0, 0.5f);
+		auto agent = world.lookupAgent(agentId).entity;
 		agent->setPath(twoNodePath(source, destination, std::make_shared<core::SectorEdge>()), true);
 
 		for (uint32_t i = 0; i < 10 && !agent->getTraversalPermitId(); ++i)
 		{
-			building.advanceTick();
+			world.advanceTick();
 		}
-		if (!agent->getTraversalPermitId() || agent->getSector() != building.getSector(sourceSector).get())
+		if (!agent->getTraversalPermitId() || agent->getSector() != world.getSector(sourceSector).get())
 		{
 			return false;
 		}
 
 		agent->clearPath();
-		building.advanceTicks(10);
-		auto snapshot = building.getSimulationSnapshot();
+		world.advanceTicks(10);
+		auto snapshot = world.getSimulationSnapshot();
 		return agent->getState() == core::Agent::State::Idle
-			&& agent->getSector() == building.getSector(sourceSector).get()
+			&& agent->getSector() == world.getSector(sourceSector).get()
 			&& snapshot.traversalRequests.empty()
 			&& snapshot.traversalPermits.empty();
 	}
 
 	bool typedLightingInteractionCoalescesAndCancelsByRequester()
 	{
-		core::Building building("Typed lighting interaction", 6, 2);
-		auto corridorIndex = building.addCorridor(0, 0, 5);
-		building.finishBuild();
+		core::World world("Typed lighting interaction", 6, 2);
+		auto corridorIndex = world.addCorridor(0, 0, 5);
+		world.finishBuild();
 		auto sectorId = core::SectorId{ (uint64_t)corridorIndex + 1 };
-		auto firstAgent = building.createAgent("First operator", corridorIndex, 0, 0.5f);
-		auto secondAgent = building.createAgent("Dependent operator", corridorIndex, 0, 0.7f);
+		auto firstAgent = world.createAgent("First operator", corridorIndex, 0, 0.5f);
+		auto secondAgent = world.createAgent("Dependent operator", corridorIndex, 0, 0.7f);
 
 		core::InteractionBinding binding;
 		binding.command = { core::DeviceCommandType::SetSectorLights, sectorId, false };
 		binding.requirement = core::InteractionBindingRequirement::Required;
-		auto point = building.createInteractionPoint("Typed light control", sectorId,
-			{ 3.5f, 0.5f }, 0.1f, core::Building::getFixedTimestep() * 3.0f, { binding });
-		auto firstRequest = building.requestInteraction(point, firstAgent);
-		auto secondRequest = building.requestInteraction(point, secondAgent);
+		auto point = world.createInteractionPoint("Typed light control", sectorId,
+			{ 3.5f, 0.5f }, 0.1f, core::World::getFixedTimestep() * 3.0f, { binding });
+		auto firstRequest = world.requestInteraction(point, firstAgent);
+		auto secondRequest = world.requestInteraction(point, secondAgent);
 		if (!firstRequest || !secondRequest)
 		{
 			return false;
 		}
 
-		auto first = building.lookupInteractionRequest(firstRequest);
-		auto second = building.lookupInteractionRequest(secondRequest);
+		auto first = world.lookupInteractionRequest(firstRequest);
+		auto second = world.lookupInteractionRequest(secondRequest);
 		if (!first || !second || first.entity->getOperations().size() != 1
 			|| second.entity->getOperations().size() != 1
 			|| first.entity->getOperations().front().first != second.entity->getOperations().front().first)
@@ -1192,19 +1192,19 @@ namespace
 
 		for (uint32_t i = 0; i < MaximumSimulationTicks; ++i)
 		{
-			building.advanceTick();
-			auto operation = building.lookupDeviceOperation(operationId);
+			world.advanceTick();
+			auto operation = world.lookupDeviceOperation(operationId);
 			if (operation && operation.entity->getState() == core::DeviceOperationState::Running)
 			{
 				break;
 			}
 		}
-		auto firstPosition = building.lookupAgent(firstAgent).entity->getGlobalPosition();
-		if (firstPosition.distanceTo({ 3.5f, 0.5f }) > 0.101f || !building.cancelInteraction(firstRequest))
+		auto firstPosition = world.lookupAgent(firstAgent).entity->getGlobalPosition();
+		if (firstPosition.distanceTo({ 3.5f, 0.5f }) > 0.101f || !world.cancelInteraction(firstRequest))
 		{
 			return false;
 		}
-		auto operation = building.lookupDeviceOperation(operationId);
+		auto operation = world.lookupDeviceOperation(operationId);
 		if (!operation || operation.entity->getState() == core::DeviceOperationState::Cancelled
 			|| operation.entity->getRequesters().size() != 1
 			|| !operation.entity->getRequesters().contains(secondAgent))
@@ -1212,13 +1212,13 @@ namespace
 			return false;
 		}
 
-		building.advanceTicks(3);
-		first = building.lookupInteractionRequest(firstRequest);
-		second = building.lookupInteractionRequest(secondRequest);
-		auto snapshot = building.getSimulationSnapshot();
+		world.advanceTicks(3);
+		first = world.lookupInteractionRequest(firstRequest);
+		second = world.lookupInteractionRequest(secondRequest);
+		auto snapshot = world.getSimulationSnapshot();
 		return first && first.entity->getResult() == core::InteractionResult::Cancelled
 			&& second && second.entity->getResult() == core::InteractionResult::Succeeded
-			&& !building.getSector(corridorIndex)->areLightsOn()
+			&& !world.getSector(corridorIndex)->areLightsOn()
 			&& snapshot.deviceOperations.size() == 1
 			&& snapshot.deviceOperations.front().hasCommand
 			&& snapshot.deviceOperations.front().command.type == core::DeviceCommandType::SetSectorLights
@@ -1228,54 +1228,54 @@ namespace
 
 	bool singleAgentDoorJourney(core::DoorActivationMode mode)
 	{
-		core::Building building("Single-agent door", 6, 2);
-		auto fore = building.addRoom("Fore", 0, 0, 0, 5, 1);
-		auto back = building.addRoom("Back", 1, 0, 0, 5, 1);
-		core::Building::CreateDoorOptions options;
+		core::World world("Single-agent door", 6, 2);
+		auto fore = world.addRoom("Fore", 0, 0, 0, 5, 1);
+		auto back = world.addRoom("Back", 1, 0, 0, 5, 1);
+		core::World::CreateDoorOptions options;
 		options.activationMode = mode;
-		options.holdOpenSeconds = core::Building::getFixedTimestep() * 8.0f;
-		auto created = building.addSectorDoor(0, 0, 2, options);
-		building.finishBuild();
+		options.holdOpenSeconds = core::World::getFixedTimestep() * 8.0f;
+		auto created = world.addSectorDoor(0, 0, 2, options);
+		world.finishBuild();
 
-		auto edgeIt = std::find_if(building.getGraph()->getEdges().begin(), building.getGraph()->getEdges().end(),
+		auto edgeIt = std::find_if(world.getGraph()->getEdges().begin(), world.getGraph()->getEdges().end(),
 			[](auto const& edge) { return edge->getType() == core::EdgeType::Door; });
-		if (edgeIt == building.getGraph()->getEdges().end() || !created.traversalResource)
+		if (edgeIt == world.getGraph()->getEdges().end() || !created.traversalResource)
 		{
 			return false;
 		}
 		auto edge = *edgeIt;
 		auto source = edge->getVertex(0)->getSector()->getIndex() == fore ? edge->getVertex(0) : edge->getVertex(1);
 		auto destination = edge->getOtherVertex(source);
-		auto agentId = building.createAgent("Door traveller", fore, 0, 0.5f);
-		auto agent = building.lookupAgent(agentId).entity;
+		auto agentId = world.createAgent("Door traveller", fore, 0, 0.5f);
+		auto agent = world.lookupAgent(agentId).entity;
 		agent->setPath(twoNodePath(source, destination, edge), true);
 
 		bool observedWaitingForFullOpen = false;
 		bool observedVisibleCrossingLease = false;
 		for (uint32_t i = 0; i < MaximumSimulationTicks && agent->getState() != core::Agent::State::Idle; ++i)
 		{
-			building.advanceTick();
-			auto snapshot = building.getSimulationSnapshot();
+			world.advanceTick();
+			auto snapshot = world.getSimulationSnapshot();
 			auto const& resource = snapshot.traversalResources.front();
 			if (resource.doorState == core::DoorSnapshotState::Opening
 				&& snapshot.traversalPermits.empty()
-				&& agent->getSector() == building.getSector(fore).get())
+				&& agent->getSector() == world.getSector(fore).get())
 			{
 				observedWaitingForFullOpen = true;
 			}
 			if (agent->getState() == core::Agent::State::TraversingEdge
 				&& resource.doorState == core::DoorSnapshotState::Open
 				&& resource.openLeaseCount == 1
-				&& agent->getSector() == building.getSector(fore).get())
+				&& agent->getSector() == world.getSector(fore).get())
 			{
 				observedVisibleCrossingLease = true;
 			}
 		}
 
-		auto completed = building.getSimulationSnapshot();
+		auto completed = world.getSimulationSnapshot();
 		if (!observedWaitingForFullOpen || !observedVisibleCrossingLease
 			|| agent->getState() != core::Agent::State::Idle
-			|| agent->getSector() != building.getSector(back).get()
+			|| agent->getSector() != world.getSector(back).get()
 			|| completed.deviceOperations.size() != 1
 			|| completed.deviceOperations.front().command.type != core::DeviceCommandType::OpenDoor
 			|| completed.deviceOperations.front().state != core::DeviceOperationState::Succeeded
@@ -1286,38 +1286,38 @@ namespace
 		}
 
 		for (uint32_t i = 0; i < 120
-			&& building.getSimulationSnapshot().traversalResources.front().doorState != core::DoorSnapshotState::Closed; ++i)
+			&& world.getSimulationSnapshot().traversalResources.front().doorState != core::DoorSnapshotState::Closed; ++i)
 		{
-			building.advanceTick();
+			world.advanceTick();
 		}
-		return building.getSimulationSnapshot().traversalResources.front().doorState == core::DoorSnapshotState::Closed;
+		return world.getSimulationSnapshot().traversalResources.front().doorState == core::DoorSnapshotState::Closed;
 	}
 
 	bool bulkheadAndWindowThresholdsUseTraversalResources()
 	{
 		// A bulkhead is horizontal and same-layer, but still queues and waits for
 		// its fully-open resource permit.
-		core::Building bulkheadBuilding("Bulkhead threshold", 8, 2);
-		auto left = bulkheadBuilding.addRoom("Left", 0, 0, 0, 3, 1);
-		auto right = bulkheadBuilding.addRoom("Right", 0, 0, 3, 3, 1);
-		core::Building::CreateBulkheadDoorOptions bulkheadOptions;
+		core::World bulkheadWorld("Bulkhead threshold", 8, 2);
+		auto left = bulkheadWorld.addRoom("Left", 0, 0, 0, 3, 1);
+		auto right = bulkheadWorld.addRoom("Right", 0, 0, 3, 3, 1);
+		core::World::CreateBulkheadDoorOptions bulkheadOptions;
 		bulkheadOptions.activationMode = core::DoorActivationMode::Manual;
 		bulkheadOptions.controls[0] = bulkheadOptions.controls[1] = false;
-		auto bulkhead = bulkheadBuilding.addSectorBulkheadDoor(0, 0, 3,
+		auto bulkhead = bulkheadWorld.addSectorBulkheadDoor(0, 0, 3,
 			CORE_SIDE_LEFT, bulkheadOptions);
-		bulkheadBuilding.finishBuild();
-		auto bulkheadEdge = std::find_if(bulkheadBuilding.getGraph()->getEdges().begin(),
-			bulkheadBuilding.getGraph()->getEdges().end(), [](auto const& edge)
+		bulkheadWorld.finishBuild();
+		auto bulkheadEdge = std::find_if(bulkheadWorld.getGraph()->getEdges().begin(),
+			bulkheadWorld.getGraph()->getEdges().end(), [](auto const& edge)
 			{ return edge->getType() == core::EdgeType::BulkheadDoor; });
-		if (bulkheadEdge == bulkheadBuilding.getGraph()->getEdges().end()
+		if (bulkheadEdge == bulkheadWorld.getGraph()->getEdges().end()
 			|| (*bulkheadEdge)->getTraversalResourceId() != bulkhead.traversalResource) return false;
 		auto source = (*bulkheadEdge)->getVertex(0)->getSector()->getIndex() == left
 			? (*bulkheadEdge)->getVertex(0) : (*bulkheadEdge)->getVertex(1);
 		auto destination = (*bulkheadEdge)->getOtherVertex(source);
-		auto agentId = bulkheadBuilding.createAgent("Left bulkhead traveller", left, 0, 1.0f);
-		auto opposingId = bulkheadBuilding.createAgent("Right bulkhead traveller", right, 0, 1.0f);
-		auto agent = bulkheadBuilding.lookupAgent(agentId).entity;
-		auto opposing = bulkheadBuilding.lookupAgent(opposingId).entity;
+		auto agentId = bulkheadWorld.createAgent("Left bulkhead traveller", left, 0, 1.0f);
+		auto opposingId = bulkheadWorld.createAgent("Right bulkhead traveller", right, 0, 1.0f);
+		auto agent = bulkheadWorld.lookupAgent(agentId).entity;
+		auto opposing = bulkheadWorld.lookupAgent(opposingId).entity;
 		agent->setPath(twoNodePath(source, destination, *bulkheadEdge), true);
 		opposing->setPath(twoNodePath(destination, source, *bulkheadEdge), true);
 		bool waitedForOpen = false;
@@ -1326,32 +1326,32 @@ namespace
 			&& (agent->getState() != core::Agent::State::Idle
 				|| opposing->getState() != core::Agent::State::Idle); ++i)
 		{
-			bulkheadBuilding.advanceTick();
-			auto const& snapshot = bulkheadBuilding.getSimulationSnapshot();
+			bulkheadWorld.advanceTick();
+			auto const& snapshot = bulkheadWorld.getSimulationSnapshot();
 			if (!snapshot.traversalResources.empty()
 				&& snapshot.traversalResources.front().doorState == core::DoorSnapshotState::Opening
 				&& snapshot.traversalPermits.empty()) waitedForOpen = true;
 			if (snapshot.traversalPermits.size() > 1) serializedContention = false;
 		}
 		if (!waitedForOpen || !serializedContention
-			|| agent->getSector() != bulkheadBuilding.getSector(right).get()
-			|| opposing->getSector() != bulkheadBuilding.getSector(left).get()
-			|| !bulkheadBuilding.getSimulationSnapshot().traversalRequests.empty()) return false;
+			|| agent->getSector() != bulkheadWorld.getSector(right).get()
+			|| opposing->getSector() != bulkheadWorld.getSector(left).get()
+			|| !bulkheadWorld.getSimulationSnapshot().traversalRequests.empty()) return false;
 
 		// Traversable windows contribute conditional topology, and only the clear,
 		// fully-open state can receive a permit.
-		core::Building windowBuilding("Window threshold", 6, 2);
-		auto fore = windowBuilding.addRoom("Fore", 0, 0, 0, 5, 1);
-		auto back = windowBuilding.addRoom("Back", 1, 0, 0, 5, 1);
-		core::Building::CreateWindowOptions windowOptions;
+		core::World windowWorld("Window threshold", 6, 2);
+		auto fore = windowWorld.addRoom("Fore", 0, 0, 0, 5, 1);
+		auto back = windowWorld.addRoom("Back", 1, 0, 0, 5, 1);
+		core::World::CreateWindowOptions windowOptions;
 		windowOptions.traversable = true;
 		windowOptions.initialState = core::Window::State::Open;
-		auto window = windowBuilding.addSectorWindow(0, 0, 2, 1, 1, windowOptions);
-		windowBuilding.finishBuild();
-		auto windowEdge = std::find_if(windowBuilding.getGraph()->getEdges().begin(),
-			windowBuilding.getGraph()->getEdges().end(), [](auto const& edge)
+		auto window = windowWorld.addSectorWindow(0, 0, 2, 1, 1, windowOptions);
+		windowWorld.finishBuild();
+		auto windowEdge = std::find_if(windowWorld.getGraph()->getEdges().begin(),
+			windowWorld.getGraph()->getEdges().end(), [](auto const& edge)
 			{ return edge->getType() == core::EdgeType::Window; });
-		if (windowEdge == windowBuilding.getGraph()->getEdges().end()
+		if (windowEdge == windowWorld.getGraph()->getEdges().end()
 			|| (*windowEdge)->getTraversalResourceId() != window.traversalResource
 			|| !window.object->isNormallyTraversable()) return false;
 		constexpr core::Window::State blockedStates[] = {
@@ -1374,51 +1374,51 @@ namespace
 		auto windowSource = (*windowEdge)->getVertex(0)->getSector()->getIndex() == fore
 			? (*windowEdge)->getVertex(0) : (*windowEdge)->getVertex(1);
 		auto windowDestination = (*windowEdge)->getOtherVertex(windowSource);
-		auto windowAgentId = windowBuilding.createAgent("Window traveller", fore, 0, 0.5f);
-		auto windowAgent = windowBuilding.lookupAgent(windowAgentId).entity;
+		auto windowAgentId = windowWorld.createAgent("Window traveller", fore, 0, 0.5f);
+		auto windowAgent = windowWorld.lookupAgent(windowAgentId).entity;
 		windowAgent->setPath(twoNodePath(windowSource, windowDestination, *windowEdge), true);
 		for (uint32_t i = 0; i < MaximumSimulationTicks && windowAgent->getState() != core::Agent::State::Idle; ++i)
-			windowBuilding.advanceTick();
-		return windowAgent->getSector() == windowBuilding.getSector(back).get()
-			&& windowBuilding.getSimulationSnapshot().traversalRequests.empty();
+			windowWorld.advanceTick();
+		return windowAgent->getSector() == windowWorld.getSector(back).get()
+			&& windowWorld.getSimulationSnapshot().traversalRequests.empty();
 	}
 
 	bool pausedTopologyRebuildIsAtomicAndCleansOwnership()
 	{
-		core::Building building("Paused topology rebuild", 8, 2);
-		auto fore = building.addRoom("Fore", 0, 0, 0, 7, 1);
-		auto back = building.addRoom("Back", 1, 0, 0, 7, 1);
-		core::Building::CreateDoorOptions options;
+		core::World world("Paused topology rebuild", 8, 2);
+		auto fore = world.addRoom("Fore", 0, 0, 0, 7, 1);
+		auto back = world.addRoom("Back", 1, 0, 0, 7, 1);
+		core::World::CreateDoorOptions options;
 		options.activationMode = core::DoorActivationMode::Manual;
-		options.holdOpenSeconds = core::Building::getFixedTimestep() * 8.0f;
-		auto door = building.addSectorDoor(0, 0, 3, options);
-		building.finishBuild();
-		auto generation = building.getTopologyGeneration();
-		auto oldGraph = building.getGraph();
+		options.holdOpenSeconds = core::World::getFixedTimestep() * 8.0f;
+		auto door = world.addSectorDoor(0, 0, 3, options);
+		world.finishBuild();
+		auto generation = world.getTopologyGeneration();
+		auto oldGraph = world.getGraph();
 		auto edge = *std::find_if(oldGraph->getEdges().begin(), oldGraph->getEdges().end(),
 			[](auto const& candidate) { return candidate->getType() == core::EdgeType::Door; });
 		auto source = edge->getVertex(0)->getSector()->getIndex() == fore
 			? edge->getVertex(0) : edge->getVertex(1);
 		auto destination = edge->getOtherVertex(source);
-		auto agentId = building.createAgent("Rebuild traveller", fore, 0,
-			source->getPosition().x - building.getSector(fore)->getPosition().x);
-		auto agent = building.lookupAgent(agentId).entity;
+		auto agentId = world.createAgent("Rebuild traveller", fore, 0,
+			source->getPosition().x - world.getSector(fore)->getPosition().x);
+		auto agent = world.lookupAgent(agentId).entity;
 		agent->setPath(twoNodePath(source, destination, edge), true);
-		building.advanceTicks(3);
-		auto active = building.getSimulationSnapshot();
+		world.advanceTicks(3);
+		auto active = world.getSimulationSnapshot();
 		if (active.traversalRequests.empty()) return false;
 
 		// An active simulation cannot be structurally changed.
 		bool rejected = false;
-		try { building.addSectorMarker(fore, 0, 0.5f); }
+		try { world.addSectorMarker(fore, 0, 0.5f); }
 		catch (std::exception const&) { rejected = true; }
-		if (!rejected || building.isSimulationPaused()) return false;
+		if (!rejected || world.isSimulationPaused()) return false;
 
-		building.pauseSimulation();
-		auto pausedTick = building.getSimulationTick();
-		building.advanceTicks(10);
-		auto paused = building.getSimulationSnapshot();
-		if (!paused.paused || building.getSimulationTick() != pausedTick
+		world.pauseSimulation();
+		auto pausedTick = world.getSimulationTick();
+		world.advanceTicks(10);
+		auto paused = world.getSimulationSnapshot();
+		if (!paused.paused || world.getSimulationTick() != pausedTick
 			|| !paused.traversalRequests.empty() || !paused.traversalPermits.empty()) return false;
 		for (auto const& resource : paused.traversalResources)
 		{
@@ -1430,18 +1430,18 @@ namespace
 		}
 
 		uint32_t marker;
-		building.addSectorMarker(fore, 0, 0.5f, &marker);
-		if (!building.isTraversalTopologyDirty() || !building.rebuildTraversalTopology()
-			|| building.getGraph() == oldGraph || building.getTopologyGeneration() != generation + 1
-			|| !building.getGraph()->getVertexByIdentifier(marker)
-			|| !building.resumeSimulation()) return false;
+		world.addSectorMarker(fore, 0, 0.5f, &marker);
+		if (!world.isTraversalTopologyDirty() || !world.rebuildTraversalTopology()
+			|| world.getGraph() == oldGraph || world.getTopologyGeneration() != generation + 1
+			|| !world.getGraph()->getVertexByIdentifier(marker)
+			|| !world.resumeSimulation()) return false;
 		for (uint32_t i = 0; i < MaximumSimulationTicks
-			&& agent->getState() != core::Agent::State::Idle; ++i) building.advanceTick();
-		if (agent->getSector() != building.getSector(back).get()) return false;
+			&& agent->getState() != core::Agent::State::Idle; ++i) world.advanceTick();
+		if (agent->getSector() != world.getSector(back).get()) return false;
 
 		// Candidate failure leaves the previous graph installed, the simulation
 		// paused, and removed handles permanently invalid.
-		core::Building invalid("Invalid paused rebuild", 6, 2);
+		core::World invalid("Invalid paused rebuild", 6, 2);
 		invalid.addRoom("Fore", 0, 0, 0, 5, 1);
 		invalid.addRoom("Back", 1, 0, 0, 5, 1);
 		auto invalidDoor = invalid.addSectorDoor(0, 0, 2);
@@ -1462,28 +1462,28 @@ namespace
 	{
 		// Reproduce the Citadel route: the Button's Interactable vertex is part of
 		// the in-sector path leading from the far Door to the controlled Door.
-		core::Building building("Opportunistic remote door", 8, 2);
-		auto corridor = building.addCorridor(0, 1, 5);
-		building.addRoom("Destination", 1, 0, 0, 3, 1);
-		building.addRoom("Far room", 1, 0, 4, 3, 1);
+		core::World world("Opportunistic remote door", 8, 2);
+		auto corridor = world.addCorridor(0, 1, 5);
+		world.addRoom("Destination", 1, 0, 0, 3, 1);
+		world.addRoom("Far room", 1, 0, 4, 3, 1);
 		uint32_t markerId;
-		building.addSectorMarker(1, 0, 0.5f, &markerId);
-		core::Building::CreateDoorOptions remote;
+		world.addSectorMarker(1, 0, 0.5f, &markerId);
+		core::World::CreateDoorOptions remote;
 		remote.activationMode = core::DoorActivationMode::RemoteControlled;
 		remote.controls[0] = true;
-		auto created = building.addSectorDoor(0, 0, 1, remote);
-		building.addSectorDoor(0, 0, 5);
-		building.finishBuild();
+		auto created = world.addSectorDoor(0, 0, 1, remote);
+		world.addSectorDoor(0, 0, 5);
+		world.finishBuild();
 
-		auto target = building.getGraph()->getVertexByIdentifier(markerId);
+		auto target = world.getGraph()->getVertexByIdentifier(markerId);
 		std::vector<core::AgentId> ids = {
-			building.createAgent("Early presser one", corridor, 0, 2.75f),
-			building.createAgent("Early presser two", corridor, 0, 2.75f)
+			world.createAgent("Early presser one", corridor, 0, 2.75f),
+			world.createAgent("Early presser two", corridor, 0, 2.75f)
 		};
 		for (auto id : ids)
 		{
-			auto agent = building.lookupAgent(id).entity;
-			auto path = building.getGraph()->calculatePath(agent, target);
+			auto agent = world.lookupAgent(id).entity;
+			auto path = world.getGraph()->calculatePath(agent, target);
 			if (!path || path->nodes.size() < 3) return false;
 			bool reachesButtonBeforeDoor = false;
 			for (auto const& node : path->nodes)
@@ -1499,8 +1499,8 @@ namespace
 		bool observedIndependentPressesBeforeDoorRequest = false;
 		for (uint32_t tick = 0; tick < MaximumSimulationTicks * 2; ++tick)
 		{
-			building.advanceTick();
-			auto snapshot = building.getSimulationSnapshot();
+			world.advanceTick();
+			auto snapshot = world.getSimulationSnapshot();
 			bool hasDoorRequest = std::any_of(snapshot.traversalRequests.begin(),
 				snapshot.traversalRequests.end(), [](auto const& request)
 					{ return request.edgeType == core::EdgeType::Door; });
@@ -1511,29 +1511,29 @@ namespace
 				observedIndependentPressesBeforeDoorRequest = true;
 			}
 			if (std::all_of(ids.begin(), ids.end(), [&](auto id)
-				{ return building.lookupAgent(id).entity->getState() == core::Agent::State::Idle; })) break;
+				{ return world.lookupAgent(id).entity->getState() == core::Agent::State::Idle; })) break;
 		}
 
 		return observedIndependentPressesBeforeDoorRequest
 			&& std::all_of(ids.begin(), ids.end(), [&](auto id)
 			{
-				return building.lookupAgent(id).entity->getSector() == building.getSector(1).get();
+				return world.lookupAgent(id).entity->getSector() == world.getSector(1).get();
 			})
-			&& building.lookupInteractionPoint(created.controls[0].interactionPoint).entity->getReach()
+			&& world.lookupInteractionPoint(created.controls[0].interactionPoint).entity->getReach()
 				== CORE_AGENT_MAX_HEIGHT * 0.4f;
 	}
 
 	bool remoteDoorUsesOnePhysicalOperatorAndSharedOperation()
 	{
-		core::Building building("Shared remote door", 7, 2);
-		auto fore = building.addRoom("Fore", 0, 0, 0, 6, 1);
-		auto back = building.addRoom("Back", 1, 0, 0, 6, 1);
-		core::Building::CreateDoorOptions options;
+		core::World world("Shared remote door", 7, 2);
+		auto fore = world.addRoom("Fore", 0, 0, 0, 6, 1);
+		auto back = world.addRoom("Back", 1, 0, 0, 6, 1);
+		core::World::CreateDoorOptions options;
 		options.activationMode = core::DoorActivationMode::RemoteControlled;
 		options.controls[0] = true;
 		options.controls[1] = true;
-		auto created = building.addSectorDoor(0, 0, 3, options);
-		building.finishBuild();
+		auto created = world.addSectorDoor(0, 0, 3, options);
+		world.finishBuild();
 
 		for (auto const& control : created.controls)
 		{
@@ -1541,17 +1541,17 @@ namespace
 			auto button = std::dynamic_pointer_cast<core::Button>(object);
 			if (!button || !control.interactionPoint
 				|| button->getInteractionPointId() != control.interactionPoint
-				|| !building.lookupInteractionPoint(control.interactionPoint)) return false;
+				|| !world.lookupInteractionPoint(control.interactionPoint)) return false;
 		}
 
-		auto edge = *std::find_if(building.getGraph()->getEdges().begin(), building.getGraph()->getEdges().end(),
+		auto edge = *std::find_if(world.getGraph()->getEdges().begin(), world.getGraph()->getEdges().end(),
 			[](auto const& candidate) { return candidate->getType() == core::EdgeType::Door; });
 		auto source = edge->getVertex(0)->getSector()->getIndex() == fore ? edge->getVertex(0) : edge->getVertex(1);
 		auto destination = edge->getOtherVertex(source);
-		auto firstId = building.createAgent("First remote waiter", fore, 0, 0.4f);
-		auto secondId = building.createAgent("Second remote waiter", fore, 0, 0.6f);
-		auto first = building.lookupAgent(firstId).entity;
-		auto second = building.lookupAgent(secondId).entity;
+		auto firstId = world.createAgent("First remote waiter", fore, 0, 0.4f);
+		auto secondId = world.createAgent("Second remote waiter", fore, 0, 0.6f);
+		auto first = world.lookupAgent(firstId).entity;
+		auto second = world.lookupAgent(secondId).entity;
 		first->setPath(twoNodePath(source, destination, edge), true);
 		second->setPath(twoNodePath(source, destination, edge), true);
 
@@ -1560,8 +1560,8 @@ namespace
 		for (uint32_t i = 0; i < MaximumSimulationTicks
 			&& second->getState() != core::Agent::State::Idle; ++i)
 		{
-			building.advanceTick();
-			auto snapshot = building.getSimulationSnapshot();
+			world.advanceTick();
+			auto snapshot = world.getSimulationSnapshot();
 			if (!cancelledFirst && snapshot.traversalRequests.size() == 2
 				&& snapshot.interactionRequests.size() == 1
 				&& snapshot.deviceOperations.size() == 1
@@ -1575,11 +1575,11 @@ namespace
 			}
 		}
 
-		auto snapshot = building.getSimulationSnapshot();
+		auto snapshot = world.getSimulationSnapshot();
 		return observedSharedPreparation && cancelledFirst
-			&& first->getSector() == building.getSector(fore).get()
+			&& first->getSector() == world.getSector(fore).get()
 			&& second->getState() == core::Agent::State::Idle
-			&& second->getSector() == building.getSector(back).get()
+			&& second->getSector() == world.getSector(back).get()
 			&& snapshot.deviceOperations.size() >= 1
 			&& std::any_of(snapshot.deviceOperations.begin(), snapshot.deviceOperations.end(), [](auto const& operation)
 				{ return operation.command.type == core::DeviceCommandType::OpenDoor
@@ -1588,24 +1588,24 @@ namespace
 
 	bool remoteDoorWithoutReachableControlIsUnavailable()
 	{
-		core::Building building("Uncontrolled remote door", 6, 2);
-		auto fore = building.addRoom("Fore", 0, 0, 0, 5, 1);
-		building.addRoom("Back", 1, 0, 0, 5, 1);
-		core::Building::CreateDoorOptions options;
+		core::World world("Uncontrolled remote door", 6, 2);
+		auto fore = world.addRoom("Fore", 0, 0, 0, 5, 1);
+		world.addRoom("Back", 1, 0, 0, 5, 1);
+		core::World::CreateDoorOptions options;
 		options.activationMode = core::DoorActivationMode::RemoteControlled;
 		options.controls[0] = false;
 		options.controls[1] = false;
-		auto created = building.addSectorDoor(0, 0, 2, options);
-		building.finishBuild();
-		auto edge = *std::find_if(building.getGraph()->getEdges().begin(), building.getGraph()->getEdges().end(),
+		auto created = world.addSectorDoor(0, 0, 2, options);
+		world.finishBuild();
+		auto edge = *std::find_if(world.getGraph()->getEdges().begin(), world.getGraph()->getEdges().end(),
 			[](auto const& candidate) { return candidate->getType() == core::EdgeType::Door; });
 		auto source = edge->getVertex(0)->getSector()->getIndex() == fore ? edge->getVertex(0) : edge->getVertex(1);
 		auto destination = edge->getOtherVertex(source);
-		auto agentId = building.createAgent("Stranded remote waiter", fore, 0, 0.5f);
-		auto agent = building.lookupAgent(agentId).entity;
+		auto agentId = world.createAgent("Stranded remote waiter", fore, 0, 0.5f);
+		auto agent = world.lookupAgent(agentId).entity;
 		agent->setPath(twoNodePath(source, destination, edge), true);
-		building.advanceTicks(400);
-		auto snapshot = building.getSimulationSnapshot();
+		world.advanceTicks(400);
+		auto snapshot = world.getSimulationSnapshot();
 		return snapshot.traversalRequests.size() == 1
 			&& snapshot.traversalRequests.front().state == core::TraversalRequestState::Denied
 			&& snapshot.traversalRequests.front().failureReason == core::TraversalFailureReason::NoReachableControl
@@ -1614,29 +1614,29 @@ namespace
 
 	bool fairDoorQueuesServeBothSidesInStableOrder()
 	{
-		core::Building building("Fair two-sided door", 8, 2);
-		auto fore = building.addRoom("Fore queue", 0, 0, 0, 7, 1);
-		auto back = building.addRoom("Back queue", 1, 0, 0, 7, 1);
-		core::Building::CreateDoorOptions options;
+		core::World world("Fair two-sided door", 8, 2);
+		auto fore = world.addRoom("Fore queue", 0, 0, 0, 7, 1);
+		auto back = world.addRoom("Back queue", 1, 0, 0, 7, 1);
+		core::World::CreateDoorOptions options;
 		options.activationMode = core::DoorActivationMode::Manual;
-		auto created = building.addSectorDoor(0, 0, 3, options);
-		building.finishBuild();
-		auto edge = *std::find_if(building.getGraph()->getEdges().begin(), building.getGraph()->getEdges().end(),
+		auto created = world.addSectorDoor(0, 0, 3, options);
+		world.finishBuild();
+		auto edge = *std::find_if(world.getGraph()->getEdges().begin(), world.getGraph()->getEdges().end(),
 			[](auto const& candidate) { return candidate->getType() == core::EdgeType::Door; });
 		auto foreVertex = edge->getVertex(0)->getSector()->getIndex() == fore ? edge->getVertex(0) : edge->getVertex(1);
 		auto backVertex = edge->getOtherVertex(foreVertex);
 
 		std::vector<core::AgentId> ids = {
-			building.createAgent("Fore first", fore, 0, 3.5f),
-			building.createAgent("Back first", back, 0, 3.5f),
-			building.createAgent("Fore second", fore, 0, 3.5f),
-			building.createAgent("Back second", back, 0, 3.5f)
+			world.createAgent("Fore first", fore, 0, 3.5f),
+			world.createAgent("Back first", back, 0, 3.5f),
+			world.createAgent("Fore second", fore, 0, 3.5f),
+			world.createAgent("Back second", back, 0, 3.5f)
 		};
 		for (size_t i = 0; i < ids.size(); ++i)
 		{
 			auto source = i % 2 == 0 ? foreVertex : backVertex;
 			auto destination = i % 2 == 0 ? backVertex : foreVertex;
-			building.lookupAgent(ids[i]).entity->setPath(twoNodePath(source, destination, edge), true);
+			world.lookupAgent(ids[i]).entity->setPath(twoNodePath(source, destination, edge), true);
 		}
 
 		bool observedSeparatedPositions = false;
@@ -1644,8 +1644,8 @@ namespace
 		std::vector<core::AgentId> completionOrder;
 		for (uint32_t tick = 0; tick < MaximumSimulationTicks * 2 && completionOrder.size() < ids.size(); ++tick)
 		{
-			building.advanceTick();
-			auto snapshot = building.getSimulationSnapshot();
+			world.advanceTick();
+			auto snapshot = world.getSimulationSnapshot();
 			if (snapshot.traversalPermits.size() > 1)
 			{
 				return false;
@@ -1676,37 +1676,37 @@ namespace
 			for (auto id : ids)
 			{
 				if (std::find(completionOrder.begin(), completionOrder.end(), id) == completionOrder.end()
-					&& building.lookupAgent(id).entity->getState() == core::Agent::State::Idle)
+					&& world.lookupAgent(id).entity->getState() == core::Agent::State::Idle)
 				{
 					completionOrder.push_back(id);
 				}
 			}
 		}
 		return completionOrder == ids && observedSeparatedPositions && observedQueueDiagnostics
-			&& building.getSimulationSnapshot().traversalResources.front().crossingOwner == core::TraversalRequestId{};
+			&& world.getSimulationSnapshot().traversalResources.front().crossingOwner == core::TraversalRequestId{};
 	}
 
 	bool queuePositionsPreferObjectProximityThenAgentProximity()
 	{
-		core::Building building("Nearest queue position", 8, 2);
-		auto fore = building.addRoom("Queue room", 0, 0, 0, 7, 1);
-		building.addRoom("Destination", 1, 0, 0, 7, 1);
-		building.addSectorDoor(0, 0, 3);
-		building.finishBuild();
-		auto edge = *std::find_if(building.getGraph()->getEdges().begin(), building.getGraph()->getEdges().end(),
+		core::World world("Nearest queue position", 8, 2);
+		auto fore = world.addRoom("Queue room", 0, 0, 0, 7, 1);
+		world.addRoom("Destination", 1, 0, 0, 7, 1);
+		world.addSectorDoor(0, 0, 3);
+		world.finishBuild();
+		auto edge = *std::find_if(world.getGraph()->getEdges().begin(), world.getGraph()->getEdges().end(),
 			[](auto const& candidate) { return candidate->getType() == core::EdgeType::Door; });
 		auto source = edge->getVertex(0)->getSector()->getIndex() == fore ? edge->getVertex(0) : edge->getVertex(1);
 		auto destination = edge->getOtherVertex(source);
 		std::vector<core::AgentId> ids = {
-			building.createAgent("Queue head", fore, 0, 3.5f),
-			building.createAgent("Second waiter", fore, 0, 3.5f),
-			building.createAgent("Third waiter", fore, 0, 3.5f)
+			world.createAgent("Queue head", fore, 0, 3.5f),
+			world.createAgent("Second waiter", fore, 0, 3.5f),
+			world.createAgent("Third waiter", fore, 0, 3.5f)
 		};
 		for (auto id : ids)
-			building.lookupAgent(id).entity->setPath(twoNodePath(source, destination, edge), true);
+			world.lookupAgent(id).entity->setPath(twoNodePath(source, destination, edge), true);
 
-		building.advanceTicks(3);
-		auto initial = building.getSimulationSnapshot();
+		world.advanceTicks(3);
+		auto initial = world.getSimulationSnapshot();
 		if (initial.traversalRequests.size() != 3) return false;
 		auto initialThird = std::find_if(initial.traversalRequests.begin(), initial.traversalRequests.end(),
 			[&](auto const& request) { return request.owner == ids[2]; });
@@ -1716,8 +1716,8 @@ namespace
 
 		for (uint32_t tick = 0; tick < MaximumSimulationTicks; ++tick)
 		{
-			building.advanceTick();
-			auto snapshot = building.getSimulationSnapshot();
+			world.advanceTick();
+			auto snapshot = world.getSimulationSnapshot();
 			auto first = std::find_if(snapshot.traversalRequests.begin(), snapshot.traversalRequests.end(),
 				[&](auto const& request) { return request.owner == ids[0]; });
 			auto second = std::find_if(snapshot.traversalRequests.begin(), snapshot.traversalRequests.end(),
@@ -1740,36 +1740,36 @@ namespace
 
 	bool doorQueueRequestsBeforeOccupiedTail()
 	{
-		core::Building building("Early Door queue", 8, 2);
-		auto fore = building.addRoom("Approach", 0, 0, 0, 7, 1);
-		building.addRoom("Destination", 1, 0, 0, 7, 1);
-		core::Building::CreateDoorOptions options;
+		core::World world("Early Door queue", 8, 2);
+		auto fore = world.addRoom("Approach", 0, 0, 0, 7, 1);
+		world.addRoom("Destination", 1, 0, 0, 7, 1);
+		core::World::CreateDoorOptions options;
 		options.activationMode = core::DoorActivationMode::Automatic;
-		auto created = building.addSectorDoor(0, 0, 3, options);
+		auto created = world.addSectorDoor(0, 0, 3, options);
 		uint32_t approachId;
-		building.addSectorMarker(fore, 0, 2.75f, &approachId);
-		building.finishBuild();
+		world.addSectorMarker(fore, 0, 2.75f, &approachId);
+		world.finishBuild();
 
-		auto edge = *find_if(building.getGraph()->getEdges().begin(),
-			building.getGraph()->getEdges().end(), [&](auto const& candidate)
+		auto edge = *find_if(world.getGraph()->getEdges().begin(),
+			world.getGraph()->getEdges().end(), [&](auto const& candidate)
 				{ return candidate->getTraversalResourceId() == created.traversalResource; });
 		auto source = edge->getVertex(0)->getSector()->getIndex() == fore
 			? edge->getVertex(0) : edge->getVertex(1);
 		auto destination = edge->getOtherVertex(source);
-		auto blocker = building.createAgent("Door queue head", fore, 0, source->getSectorOffset().x);
-		building.lookupAgent(blocker).entity->setPath(twoNodePath(source, destination, edge), true);
-		for (uint32_t tick = 0; tick < 20; ++tick) building.advanceTick();
+		auto blocker = world.createAgent("Door queue head", fore, 0, source->getSectorOffset().x);
+		world.lookupAgent(blocker).entity->setPath(twoNodePath(source, destination, edge), true);
+		for (uint32_t tick = 0; tick < 20; ++tick) world.advanceTick();
 
-		auto approach = building.getGraph()->getVertexByIdentifier(approachId);
-		auto waiter = building.createAgent("Door waiter", fore, 0, 2.75f);
-		auto waiterEntity = building.lookupAgent(waiter).entity;
-		auto path = building.getGraph()->calculatePath(waiterEntity, approach, destination);
+		auto approach = world.getGraph()->getVertexByIdentifier(approachId);
+		auto waiter = world.createAgent("Door waiter", fore, 0, 2.75f);
+		auto waiterEntity = world.lookupAgent(waiter).entity;
+		auto path = world.getGraph()->calculatePath(waiterEntity, approach, destination);
 		if (!path) return false;
 		waiterEntity->setPath(std::move(path), true);
 		for (uint32_t tick = 0; tick < MaximumSimulationTicks; ++tick)
 		{
-			building.advanceTick();
-			auto snapshot = building.getSimulationSnapshot();
+			world.advanceTick();
+			auto snapshot = world.getSimulationSnapshot();
 			auto request = find_if(snapshot.traversalRequests.begin(), snapshot.traversalRequests.end(),
 				[&](auto const& value) { return value.owner == waiter; });
 			if (request == snapshot.traversalRequests.end() || !request->hasQueuePosition) continue;
@@ -1789,32 +1789,32 @@ namespace
 
 	bool queuedCancellationReleasesAndAdvancesPositions()
 	{
-		core::Building building("Queue cancellation", 8, 2);
-		auto fore = building.addRoom("Queue room", 0, 0, 0, 7, 1);
-		building.addRoom("Destination", 1, 0, 0, 7, 1);
-		auto created = building.addSectorDoor(0, 0, 3);
-		building.finishBuild();
-		auto edge = *std::find_if(building.getGraph()->getEdges().begin(), building.getGraph()->getEdges().end(),
+		core::World world("Queue cancellation", 8, 2);
+		auto fore = world.addRoom("Queue room", 0, 0, 0, 7, 1);
+		world.addRoom("Destination", 1, 0, 0, 7, 1);
+		auto created = world.addSectorDoor(0, 0, 3);
+		world.finishBuild();
+		auto edge = *std::find_if(world.getGraph()->getEdges().begin(), world.getGraph()->getEdges().end(),
 			[](auto const& candidate) { return candidate->getType() == core::EdgeType::Door; });
 		auto source = edge->getVertex(0)->getSector()->getIndex() == fore ? edge->getVertex(0) : edge->getVertex(1);
 		auto destination = edge->getOtherVertex(source);
-		auto firstId = building.createAgent("First", fore, 0, 3.5f);
-		auto cancelledId = building.createAgent("Cancelled", fore, 0, 3.5f);
-		auto lastId = building.createAgent("Last", fore, 0, 3.5f);
+		auto firstId = world.createAgent("First", fore, 0, 3.5f);
+		auto cancelledId = world.createAgent("Cancelled", fore, 0, 3.5f);
+		auto lastId = world.createAgent("Last", fore, 0, 3.5f);
 		for (auto id : { firstId, cancelledId, lastId })
 		{
-			building.lookupAgent(id).entity->setPath(twoNodePath(source, destination, edge), true);
+			world.lookupAgent(id).entity->setPath(twoNodePath(source, destination, edge), true);
 		}
-		building.advanceTicks(3);
-		auto before = building.getSimulationSnapshot();
+		world.advanceTicks(3);
+		auto before = world.getSimulationSnapshot();
 		if (before.traversalRequests.size() != 3
 			|| std::count_if(before.traversalRequests.begin(), before.traversalRequests.end(),
 				[](auto const& request) { return request.queueTicket && request.hasQueuePosition; }) != 3)
 		{
 			return false;
 		}
-		building.lookupAgent(cancelledId).entity->clearPath();
-		auto after = building.getSimulationSnapshot();
+		world.lookupAgent(cancelledId).entity->clearPath();
+		auto after = world.getSimulationSnapshot();
 		if (after.traversalRequests.size() != 2
 			|| after.traversalResources.front().queueLanes.front().queue.size() != 2)
 		{
@@ -1827,43 +1827,43 @@ namespace
 				return false;
 			}
 		}
-		building.advanceTicks(MaximumSimulationTicks);
-		return building.lookupAgent(firstId).entity->getState() == core::Agent::State::Idle
-			&& building.lookupAgent(lastId).entity->getState() == core::Agent::State::Idle
-			&& building.lookupAgent(cancelledId).entity->getSector() == building.getSector(fore).get();
+		world.advanceTicks(MaximumSimulationTicks);
+		return world.lookupAgent(firstId).entity->getState() == core::Agent::State::Idle
+			&& world.lookupAgent(lastId).entity->getState() == core::Agent::State::Idle
+			&& world.lookupAgent(cancelledId).entity->getSector() == world.getSector(fore).get();
 	}
 
 	bool resilientWaitingRetainsPriorityAndExpiresPermits()
 	{
-		core::Building building("Resilient door waiting", 8, 2);
-		auto fore = building.addRoom("Waiting side", 0, 0, 0, 7, 1);
-		building.addRoom("Destination side", 1, 0, 0, 7, 1);
-		auto created = building.addSectorDoor(0, 0, 3);
-		building.finishBuild();
-		auto initialEdge = *std::find_if(building.getGraph()->getEdges().begin(), building.getGraph()->getEdges().end(),
+		core::World world("Resilient door waiting", 8, 2);
+		auto fore = world.addRoom("Waiting side", 0, 0, 0, 7, 1);
+		world.addRoom("Destination side", 1, 0, 0, 7, 1);
+		auto created = world.addSectorDoor(0, 0, 3);
+		world.finishBuild();
+		auto initialEdge = *std::find_if(world.getGraph()->getEdges().begin(), world.getGraph()->getEdges().end(),
 			[](auto const& candidate) { return candidate->getType() == core::EdgeType::Door; });
 		auto initialSource = initialEdge->getVertex(0)->getSector()->getIndex() == fore
 			? initialEdge->getVertex(0) : initialEdge->getVertex(1);
 
 		// One physical position deliberately forces logical overflow. Runtime queue
 		// geometry is a structural edit and therefore uses the paused rebuild seam.
-		building.pauseSimulation();
+		world.pauseSimulation();
 		auto sourceSectorId = core::SectorId{ (uint64_t)fore + 1 };
-		if (!building.configureDoorQueueLane(created.traversalResource, sourceSectorId,
+		if (!world.configureDoorQueueLane(created.traversalResource, sourceSectorId,
 			initialSource->getPosition(), { -1.0f, 0.0f }, 0.0f)
-			|| !building.rebuildTraversalTopology() || !building.resumeSimulation()) return false;
-		auto edge = *std::find_if(building.getGraph()->getEdges().begin(), building.getGraph()->getEdges().end(),
+			|| !world.rebuildTraversalTopology() || !world.resumeSimulation()) return false;
+		auto edge = *std::find_if(world.getGraph()->getEdges().begin(), world.getGraph()->getEdges().end(),
 			[](auto const& candidate) { return candidate->getType() == core::EdgeType::Door; });
 		auto source = edge->getVertex(0)->getSector()->getIndex() == fore ? edge->getVertex(0) : edge->getVertex(1);
 		auto destination = edge->getOtherVertex(source);
 		std::vector<core::AgentId> ids = {
-			building.createAgent("Queue head", fore, 0, 3.5f),
-			building.createAgent("Overflow one", fore, 0, 3.5f),
-			building.createAgent("Overflow two", fore, 0, 3.5f)
+			world.createAgent("Queue head", fore, 0, 3.5f),
+			world.createAgent("Overflow one", fore, 0, 3.5f),
+			world.createAgent("Overflow two", fore, 0, 3.5f)
 		};
-		for (auto id : ids) building.lookupAgent(id).entity->setPath(twoNodePath(source, destination, edge), true);
-		building.advanceTicks(2);
-		auto queued = building.getSimulationSnapshot();
+		for (auto id : ids) world.lookupAgent(id).entity->setPath(twoNodePath(source, destination, edge), true);
+		world.advanceTicks(2);
+		auto queued = world.getSimulationSnapshot();
 		if (queued.traversalRequests.size() != 3
 			|| std::count_if(queued.traversalRequests.begin(), queued.traversalRequests.end(),
 				[](auto const& request) { return (bool)request.queueTicket; }) != 3
@@ -1874,8 +1874,8 @@ namespace
 		}
 
 		auto firstRequest = queued.traversalRequests.front();
-		building.lookupAgent(ids.front()).entity->setPath(twoNodePath(source, destination, edge), true);
-		auto compatible = building.getSimulationSnapshot();
+		world.lookupAgent(ids.front()).entity->setPath(twoNodePath(source, destination, edge), true);
+		auto compatible = world.getSimulationSnapshot();
 		auto retained = std::find_if(compatible.traversalRequests.begin(), compatible.traversalRequests.end(),
 			[&](auto const& request) { return request.owner == ids.front(); });
 		if (retained == compatible.traversalRequests.end() || retained->id != firstRequest.id
@@ -1885,14 +1885,14 @@ namespace
 		// logical ticket before a later compatible route can queue afresh.
 		auto oldOverflow = *std::find_if(compatible.traversalRequests.begin(), compatible.traversalRequests.end(),
 			[&](auto const& request) { return request.owner == ids[1]; });
-		building.lookupAgent(ids[1]).entity->setPath(twoNodePath(source, destination,
+		world.lookupAgent(ids[1]).entity->setPath(twoNodePath(source, destination,
 			std::make_shared<core::SectorEdge>()), true);
-		auto incompatible = building.getSimulationSnapshot();
+		auto incompatible = world.getSimulationSnapshot();
 		if (std::any_of(incompatible.traversalRequests.begin(), incompatible.traversalRequests.end(),
 			[&](auto const& request) { return request.id == oldOverflow.id; })) return false;
-		building.lookupAgent(ids[1]).entity->setPath(twoNodePath(source, destination, edge), true);
-		building.advanceTicks(2);
-		auto fresh = building.getSimulationSnapshot();
+		world.lookupAgent(ids[1]).entity->setPath(twoNodePath(source, destination, edge), true);
+		world.advanceTicks(2);
+		auto fresh = world.getSimulationSnapshot();
 		auto freshOverflow = std::find_if(fresh.traversalRequests.begin(), fresh.traversalRequests.end(),
 			[&](auto const& request) { return request.owner == ids[1]; });
 		if (freshOverflow == fresh.traversalRequests.end() || freshOverflow->queueTicket == oldOverflow.queueTicket)
@@ -1901,21 +1901,21 @@ namespace
 		// Route estimation observes queue demand but creates no coordination state.
 		auto requestCount = fresh.traversalRequests.size();
 		auto permitCount = fresh.traversalPermits.size();
-		if (edge->getWeight(destination, building.lookupAgent(ids.front()).entity, true) <= 0.0f
-			|| building.getSimulationSnapshot().traversalRequests.size() != requestCount
-			|| building.getSimulationSnapshot().traversalPermits.size() != permitCount) return false;
+		if (edge->getWeight(destination, world.lookupAgent(ids.front()).entity, true) <= 0.0f
+			|| world.getSimulationSnapshot().traversalRequests.size() != requestCount
+			|| world.getSimulationSnapshot().traversalPermits.size() != permitCount) return false;
 
 		// A deliberately short no-progress deadline expires the coincident threshold
 		// crossing. The request and ticket survive and a fresh permit is assigned.
-		auto policy = building.getTraversalWaitingPolicy();
+		auto policy = world.getTraversalWaitingPolicy();
 		policy.permitProgressTimeoutTicks = 1;
-		building.setTraversalWaitingPolicy(policy);
+		world.setTraversalWaitingPolicy(policy);
 		core::TraversalPermitId firstPermit;
 		core::TraversalPermitId replacementPermit;
 		for (uint32_t i = 0; i < MaximumSimulationTicks && !replacementPermit; ++i)
 		{
-			building.advanceTick();
-			auto snapshot = building.getSimulationSnapshot();
+			world.advanceTick();
+			auto snapshot = world.getSimulationSnapshot();
 			for (auto const& permit : snapshot.traversalPermits)
 			{
 				if (permit.owner != ids.front()) continue;
@@ -1924,51 +1924,51 @@ namespace
 			}
 		}
 		if (!firstPermit || !replacementPermit) return false;
-		auto afterExpiry = building.getSimulationSnapshot();
+		auto afterExpiry = world.getSimulationSnapshot();
 		retained = std::find_if(afterExpiry.traversalRequests.begin(), afterExpiry.traversalRequests.end(),
 			[&](auto const& request) { return request.owner == ids.front(); });
 		if (retained == afterExpiry.traversalRequests.end() || retained->id != firstRequest.id
 			|| retained->queueTicket != firstRequest.queueTicket) return false;
 
 		policy.permitProgressTimeoutTicks = 120;
-		building.setTraversalWaitingPolicy(policy);
-		building.advanceTicks(MaximumSimulationTicks * 2);
+		world.setTraversalWaitingPolicy(policy);
+		world.advanceTicks(MaximumSimulationTicks * 2);
 		return std::all_of(ids.begin(), ids.end(), [&](auto id)
 		{
-			auto agent = building.lookupAgent(id).entity;
+			auto agent = world.lookupAgent(id).entity;
 			return agent->getState() == core::Agent::State::Idle
 				&& agent->getSector() == destination->getSector().get();
-		}) && building.getSimulationSnapshot().traversalRequests.empty()
-			&& building.getSimulationSnapshot().traversalPermits.empty();
+		}) && world.getSimulationSnapshot().traversalRequests.empty()
+			&& world.getSimulationSnapshot().traversalPermits.empty();
 	}
 
 	bool wideDoorLanesAndGracefulDisableAreSafe()
 	{
-		core::Building building("Wide safe door", 9, 2);
-		auto fore = building.addRoom("Wide fore", 0, 0, 0, 8, 1);
-		auto back = building.addRoom("Wide back", 1, 0, 0, 8, 1);
-		core::Building::CreateDoorOptions options;
+		core::World world("Wide safe door", 9, 2);
+		auto fore = world.addRoom("Wide fore", 0, 0, 0, 8, 1);
+		auto back = world.addRoom("Wide back", 1, 0, 0, 8, 1);
+		core::World::CreateDoorOptions options;
 		options.width = 2;
 		options.crossingLanes = 2;
 		options.activationMode = core::DoorActivationMode::Manual;
-		auto created = building.addSectorDoor(0, 0, 3, options);
-		building.finishBuild();
-		auto edge = *std::find_if(building.getGraph()->getEdges().begin(), building.getGraph()->getEdges().end(),
+		auto created = world.addSectorDoor(0, 0, 3, options);
+		world.finishBuild();
+		auto edge = *std::find_if(world.getGraph()->getEdges().begin(), world.getGraph()->getEdges().end(),
 			[](auto const& candidate) { return candidate->getType() == core::EdgeType::Door; });
 		auto source = edge->getVertex(0)->getSector()->getIndex() == fore ? edge->getVertex(0) : edge->getVertex(1);
 		auto destination = edge->getOtherVertex(source);
 		std::vector<core::AgentId> ids = {
-			building.createAgent("Wide first", fore, 0, 4.0f),
-			building.createAgent("Wide second", fore, 0, 4.0f),
-			building.createAgent("Disabled waiter", fore, 0, 4.0f)
+			world.createAgent("Wide first", fore, 0, 4.0f),
+			world.createAgent("Wide second", fore, 0, 4.0f),
+			world.createAgent("Disabled waiter", fore, 0, 4.0f)
 		};
-		for (auto id : ids) building.lookupAgent(id).entity->setPath(twoNodePath(source, destination, edge), true);
+		for (auto id : ids) world.lookupAgent(id).entity->setPath(twoNodePath(source, destination, edge), true);
 
 		bool disabledWithTwoCrossings = false;
 		for (uint32_t i = 0; i < MaximumSimulationTicks; ++i)
 		{
-			building.advanceTick();
-			auto snapshot = building.getSimulationSnapshot();
+			world.advanceTick();
+			auto snapshot = world.getSimulationSnapshot();
 			if (snapshot.traversalPermits.size() > 2 || snapshot.traversalResources.front().crossingLanes.size() != 2)
 				return false;
 			if (!disabledWithTwoCrossings && snapshot.traversalPermits.size() == 2)
@@ -1977,21 +1977,21 @@ namespace
 				if (!lanes[0].owner || !lanes[1].owner || lanes[0].owner == lanes[1].owner
 					|| snapshot.traversalResources.front().crossingLeaseCount != 2)
 					return false;
-				disabledWithTwoCrossings = building.setTraversalResourceEnabled(created.traversalResource, false);
+				disabledWithTwoCrossings = world.setTraversalResourceEnabled(created.traversalResource, false);
 			}
 			if (disabledWithTwoCrossings
-				&& building.lookupAgent(ids[0]).entity->getState() == core::Agent::State::Idle
-				&& building.lookupAgent(ids[1]).entity->getState() == core::Agent::State::Idle)
+				&& world.lookupAgent(ids[0]).entity->getState() == core::Agent::State::Idle
+				&& world.lookupAgent(ids[1]).entity->getState() == core::Agent::State::Idle)
 				break;
 		}
-		building.advanceTicks(3);
-		auto snapshot = building.getSimulationSnapshot();
+		world.advanceTicks(3);
+		auto snapshot = world.getSimulationSnapshot();
 		auto denied = std::find_if(snapshot.traversalRequests.begin(), snapshot.traversalRequests.end(),
 			[&](auto const& request) { return request.owner == ids[2]; });
 		return disabledWithTwoCrossings
-			&& building.lookupAgent(ids[0]).entity->getSector() == building.getSector(back).get()
-			&& building.lookupAgent(ids[1]).entity->getSector() == building.getSector(back).get()
-			&& building.lookupAgent(ids[2]).entity->getSector() == building.getSector(fore).get()
+			&& world.lookupAgent(ids[0]).entity->getSector() == world.getSector(back).get()
+			&& world.lookupAgent(ids[1]).entity->getSector() == world.getSector(back).get()
+			&& world.lookupAgent(ids[2]).entity->getSector() == world.getSector(fore).get()
 			&& denied != snapshot.traversalRequests.end()
 			&& denied->state == core::TraversalRequestState::Denied
 			&& denied->failureReason == core::TraversalFailureReason::ResourceDisabled
@@ -2021,18 +2021,18 @@ namespace
 	// physical doorway (cell width minus the x insets) minus the agent width.
 	bool doorVertexCarriesCrossingWidth()
 	{
-		core::Building building("Crossing width vertices", 8, 2);
-		building.addRoom("Width fore", 0, 0, 0, 7, 1);
-		building.addRoom("Width back", 1, 0, 0, 7, 1);
-		core::Building::CreateDoorOptions wide;
+		core::World world("Crossing width vertices", 8, 2);
+		world.addRoom("Width fore", 0, 0, 0, 7, 1);
+		world.addRoom("Width back", 1, 0, 0, 7, 1);
+		core::World::CreateDoorOptions wide;
 		wide.width = 3;
-		building.addSectorDoor(0, 0, 1);
-		building.addSectorDoor(0, 0, 3, wide);
-		building.finishBuild();
+		world.addSectorDoor(0, 0, 1);
+		world.addSectorDoor(0, 0, 3, wide);
+		world.finishBuild();
 
 		bool foundNarrow = false;
 		bool foundWide = false;
-		for (auto const& vertex : building.getGraph()->getVertices())
+		for (auto const& vertex : world.getGraph()->getVertices())
 		{
 			auto doorVertex = std::dynamic_pointer_cast<const core::DoorVertex>(vertex);
 			if (!doorVertex || !doorVertex->getDoor()) continue;
@@ -2065,17 +2065,17 @@ namespace
 	CrossingBandTrace runCrossingWidthGrantScenario(uint32_t cellsWide)
 	{
 		CrossingBandTrace trace;
-		core::Building building("Crossing width grant", 10, 2);
-		auto fore = building.addRoom("Band fore", 0, 0, 0, 9, 1);
-		auto back = building.addRoom("Band back", 1, 0, 0, 9, 1);
-		core::Building::CreateDoorOptions options;
+		core::World world("Crossing width grant", 10, 2);
+		auto fore = world.addRoom("Band fore", 0, 0, 0, 9, 1);
+		auto back = world.addRoom("Band back", 1, 0, 0, 9, 1);
+		core::World::CreateDoorOptions options;
 		options.width = cellsWide;
 		options.activationMode = core::DoorActivationMode::Manual;
-		auto created = building.addSectorDoor(0, 0, 3, options);
-		building.finishBuild();
+		auto created = world.addSectorDoor(0, 0, 3, options);
+		world.finishBuild();
 
-		auto edge = *std::find_if(building.getGraph()->getEdges().begin(),
-			building.getGraph()->getEdges().end(), [&](auto const& candidate)
+		auto edge = *std::find_if(world.getGraph()->getEdges().begin(),
+			world.getGraph()->getEdges().end(), [&](auto const& candidate)
 				{ return candidate->getTraversalResourceId() == created.traversalResource; });
 		auto source = edge->getVertex(0)->getSector()->getIndex() == fore
 			? edge->getVertex(0) : edge->getVertex(1);
@@ -2083,17 +2083,17 @@ namespace
 		auto const centre = source->getPosition();
 		auto const crossingWidth = CORE_DOOR_CROSSING_HALF_WIDTH(cellsWide);
 
-		auto blockerId = building.createAgent("Band blocker", fore, 0, 7.0f);
-		auto waiterId = building.createAgent("Band waiter", fore, 0, 8.0f);
-		building.lookupAgent(blockerId).entity->setPath(twoNodePath(source, destination, edge), true);
-		building.lookupAgent(waiterId).entity->setPath(twoNodePath(source, destination, edge), true);
+		auto blockerId = world.createAgent("Band blocker", fore, 0, 7.0f);
+		auto waiterId = world.createAgent("Band waiter", fore, 0, 8.0f);
+		world.lookupAgent(blockerId).entity->setPath(twoNodePath(source, destination, edge), true);
+		world.lookupAgent(waiterId).entity->setPath(twoNodePath(source, destination, edge), true);
 
 		bool firstObservation = true;
 
 		for (uint32_t tick = 0; tick < MaximumSimulationTicks * 2; ++tick)
 		{
-			building.advanceTick();
-			auto snapshot = building.getSimulationSnapshot();
+			world.advanceTick();
+			auto snapshot = world.getSimulationSnapshot();
 			auto waiter = std::find_if(snapshot.agents.begin(), snapshot.agents.end(),
 				[&](auto const& value) { return value.id == waiterId; });
 			auto request = std::find_if(snapshot.traversalRequests.begin(),
@@ -2129,9 +2129,9 @@ namespace
 			trace.grantedBeforeCentre = waiter->globalPosition.x > centre.x + 0.25f;
 			break;
 		}
-		building.advanceTicks(MaximumSimulationTicks);
-		trace.crossedOver = building.lookupAgent(waiterId).entity->getSector()
-			== building.getSector(back).get();
+		world.advanceTicks(MaximumSimulationTicks);
+		trace.crossedOver = world.lookupAgent(waiterId).entity->getSector()
+			== world.getSector(back).get();
 		return trace;
 	}
 
@@ -2177,19 +2177,19 @@ namespace
 	BandEntryTrace runBandEntryScenario(uint32_t cellsWide)
 	{
 		BandEntryTrace trace;
-		core::Building building("Band entry crossing", 10, 2);
-		auto fore = building.addRoom("Entry fore", 0, 0, 0, 9, 1);
-		auto back = building.addRoom("Entry back", 1, 0, 0, 9, 1);
-		core::Building::CreateDoorOptions options;
+		core::World world("Band entry crossing", 10, 2);
+		auto fore = world.addRoom("Entry fore", 0, 0, 0, 9, 1);
+		auto back = world.addRoom("Entry back", 1, 0, 0, 9, 1);
+		core::World::CreateDoorOptions options;
 		options.width = cellsWide;
 		options.activationMode = core::DoorActivationMode::Automatic;
-		auto created = building.addSectorDoor(0, 0, 3, options);
-		building.finishBuild();
+		auto created = world.addSectorDoor(0, 0, 3, options);
+		world.finishBuild();
 		// Hold the door open so the grant lands as soon as the request exists.
-		if (!building.acquireDoorOpenLease(created.traversalResource)) return trace;
+		if (!world.acquireDoorOpenLease(created.traversalResource)) return trace;
 
-		auto edge = *std::find_if(building.getGraph()->getEdges().begin(),
-			building.getGraph()->getEdges().end(), [&](auto const& candidate)
+		auto edge = *std::find_if(world.getGraph()->getEdges().begin(),
+			world.getGraph()->getEdges().end(), [&](auto const& candidate)
 				{ return candidate->getTraversalResourceId() == created.traversalResource; });
 		auto source = edge->getVertex(0)->getSector()->getIndex() == fore
 			? edge->getVertex(0) : edge->getVertex(1);
@@ -2197,20 +2197,20 @@ namespace
 		auto const centre = source->getPosition();
 		auto const crossingWidth = CORE_DOOR_CROSSING_HALF_WIDTH(cellsWide);
 
-		auto agentId = building.createAgent("Band arriver", fore, 0, centre.x + 2.5f);
-		building.lookupAgent(agentId).entity->setPath(twoNodePath(source, destination, edge), true);
+		auto agentId = world.createAgent("Band arriver", fore, 0, centre.x + 2.5f);
+		world.lookupAgent(agentId).entity->setPath(twoNodePath(source, destination, edge), true);
 
 		auto minDx = 1000.0f;
 		bool requestObserved = false;
 		bool granted = false;
 		for (uint32_t tick = 0; tick < MaximumSimulationTicks * 2; ++tick)
 		{
-			building.advanceTick();
-			if (building.lookupAgent(agentId).entity->getSector() == building.getSector(back).get())
+			world.advanceTick();
+			if (world.lookupAgent(agentId).entity->getSector() == world.getSector(back).get())
 			{
 				break;
 			}
-			auto snapshot = building.getSimulationSnapshot();
+			auto snapshot = world.getSimulationSnapshot();
 			auto agent = std::find_if(snapshot.agents.begin(), snapshot.agents.end(),
 				[&](auto const& value) { return value.id == agentId; });
 			if (agent == snapshot.agents.end()) return trace;
@@ -2239,10 +2239,10 @@ namespace
 				trace.grantedOffCentre = dx > 0.5f;
 			}
 		}
-		building.advanceTicks(MaximumSimulationTicks);
+		world.advanceTicks(MaximumSimulationTicks);
 		trace.neverNearedCentre = minDx > 0.5f;
-		trace.crossedOver = building.lookupAgent(agentId).entity->getSector()
-			== building.getSector(back).get();
+		trace.crossedOver = world.lookupAgent(agentId).entity->getSector()
+			== world.getSector(back).get();
 		return trace;
 	}
 
@@ -2262,17 +2262,17 @@ namespace
 	// stranded between the gates.
 	bool bandArrivalComposesWithEarlyStopForContendedDoor()
 	{
-		core::Building building("Band contention", 10, 2);
-		auto fore = building.addRoom("Contended fore", 0, 0, 0, 9, 1);
-		auto back = building.addRoom("Contended back", 1, 0, 0, 9, 1);
-		core::Building::CreateDoorOptions options;
+		core::World world("Band contention", 10, 2);
+		auto fore = world.addRoom("Contended fore", 0, 0, 0, 9, 1);
+		auto back = world.addRoom("Contended back", 1, 0, 0, 9, 1);
+		core::World::CreateDoorOptions options;
 		options.width = 3;
 		options.crossingLanes = 1;
 		options.activationMode = core::DoorActivationMode::Manual;
-		auto created = building.addSectorDoor(0, 0, 3, options);
-		building.finishBuild();
-		auto edge = *std::find_if(building.getGraph()->getEdges().begin(),
-			building.getGraph()->getEdges().end(), [&](auto const& candidate)
+		auto created = world.addSectorDoor(0, 0, 3, options);
+		world.finishBuild();
+		auto edge = *std::find_if(world.getGraph()->getEdges().begin(),
+			world.getGraph()->getEdges().end(), [&](auto const& candidate)
 				{ return candidate->getTraversalResourceId() == created.traversalResource; });
 		auto source = edge->getVertex(0)->getSector()->getIndex() == fore
 			? edge->getVertex(0) : edge->getVertex(1);
@@ -2280,8 +2280,8 @@ namespace
 		auto const centre = source->getPosition();
 		auto const crossingWidth = CORE_DOOR_CROSSING_HALF_WIDTH(3);
 
-		auto firstId = building.createAgent("Contended first", fore, 0, 7.0f);
-		building.lookupAgent(firstId).entity->setPath(twoNodePath(source, destination, edge), true);
+		auto firstId = world.createAgent("Contended first", fore, 0, 7.0f);
+		world.lookupAgent(firstId).entity->setPath(twoNodePath(source, destination, edge), true);
 
 		core::AgentId secondId{};
 		bool overlappedPending{ false };
@@ -2293,8 +2293,8 @@ namespace
 		std::string text;
 		for (uint32_t tick = 0; tick < MaximumSimulationTicks * 2; ++tick)
 		{
-			building.advanceTick();
-			auto snapshot = building.getSimulationSnapshot();
+			world.advanceTick();
+			auto snapshot = world.getSimulationSnapshot();
 			auto firstRequest = std::find_if(snapshot.traversalRequests.begin(),
 				snapshot.traversalRequests.end(),
 				[&](auto const& value) { return value.owner == firstId; });
@@ -2304,9 +2304,9 @@ namespace
 				&& firstRequest->state == core::TraversalRequestState::Pending
 				&& firstRequest->hasQueuePosition)
 			{
-				secondId = building.createAgent("Contended second", fore, 0,
+				secondId = world.createAgent("Contended second", fore, 0,
 					centre.x + crossingWidth + 0.25f);
-				building.lookupAgent(secondId).entity->setPath(
+				world.lookupAgent(secondId).entity->setPath(
 					twoNodePath(source, destination, edge), true);
 			}
 			if (!secondId) continue;
@@ -2346,17 +2346,17 @@ namespace
 				firstGrantedBeforeSecond = firstGrantTick >= 0 && firstGrantTick < secondGrantTick;
 			}
 			if (firstGrantedBeforeSecond && secondGrantTick >= 0
-				&& building.lookupAgent(firstId).entity->getSector() == building.getSector(back).get()
-				&& building.lookupAgent(secondId).entity->getSector() == building.getSector(back).get())
+				&& world.lookupAgent(firstId).entity->getSector() == world.getSector(back).get()
+				&& world.lookupAgent(secondId).entity->getSector() == world.getSector(back).get())
 			{
 				break;
 			}
 		}
-		building.advanceTicks(MaximumSimulationTicks);
+		world.advanceTicks(MaximumSimulationTicks);
 		return overlappedPending && secondCreatedOffCentre && secondHadQueuePosition
 			&& firstGrantedBeforeSecond
-			&& building.lookupAgent(firstId).entity->getSector() == building.getSector(back).get()
-			&& building.lookupAgent(secondId).entity->getSector() == building.getSector(back).get()
+			&& world.lookupAgent(firstId).entity->getSector() == world.getSector(back).get()
+			&& world.lookupAgent(secondId).entity->getSector() == world.getSector(back).get()
 			&& !text.empty();
 	}
 
@@ -2365,30 +2365,30 @@ namespace
 	// with no intent to cross never creates a traversal request.
 	bool bandArrivalLeavesNonCrossingAgentsUnaffected()
 	{
-		core::Building building("Band passer by", 10, 2);
-		auto fore = building.addRoom("Passer fore", 0, 0, 0, 9, 1);
-		building.addRoom("Passer back", 1, 0, 0, 9, 1);
-		core::Building::CreateDoorOptions options;
+		core::World world("Band passer by", 10, 2);
+		auto fore = world.addRoom("Passer fore", 0, 0, 0, 9, 1);
+		world.addRoom("Passer back", 1, 0, 0, 9, 1);
+		core::World::CreateDoorOptions options;
 		options.width = 3;
 		options.activationMode = core::DoorActivationMode::Automatic;
-		auto created = building.addSectorDoor(0, 0, 3, options);
+		auto created = world.addSectorDoor(0, 0, 3, options);
 		uint32_t pastDoorId;
-		building.addSectorMarker(fore, 0, 8.0f, &pastDoorId);
-		building.finishBuild();
+		world.addSectorMarker(fore, 0, 8.0f, &pastDoorId);
+		world.finishBuild();
 
-		auto walker = building.createAgent("Passer by", fore, 0, 1.0f);
-		auto walkerEntity = building.lookupAgent(walker).entity;
-		auto target = building.getGraph()->getVertexByIdentifier(pastDoorId);
+		auto walker = world.createAgent("Passer by", fore, 0, 1.0f);
+		auto walkerEntity = world.lookupAgent(walker).entity;
+		auto target = world.getGraph()->getVertexByIdentifier(pastDoorId);
 		if (!target) return false;
-		auto path = building.getGraph()->calculatePath(walkerEntity, target);
+		auto path = world.getGraph()->calculatePath(walkerEntity, target);
 		if (!path) return false;
 		walkerEntity->setPath(std::move(path), true);
 
 		bool crossedBandRow = false;
 		for (uint32_t tick = 0; tick < MaximumSimulationTicks; ++tick)
 		{
-			building.advanceTick();
-			auto snapshot = building.getSimulationSnapshot();
+			world.advanceTick();
+			auto snapshot = world.getSimulationSnapshot();
 			// Only a crossing intent arms the Door gate; the walker's ordinary
 			// Location-edge requests must never target the door resource.
 			for (auto const& request : snapshot.traversalRequests)
@@ -2403,72 +2403,72 @@ namespace
 
 	bool doorLeasesAndSensorObservationsPreventUnsafeClosure()
 	{
-		core::Building building("Door observation safety", 7, 2);
-		auto fore = building.addRoom("Sensor fore", 0, 0, 0, 6, 1);
-		building.addRoom("Sensor back", 1, 0, 0, 6, 1);
-		core::Building::CreateDoorOptions options;
+		core::World world("Door observation safety", 7, 2);
+		auto fore = world.addRoom("Sensor fore", 0, 0, 0, 6, 1);
+		world.addRoom("Sensor back", 1, 0, 0, 6, 1);
+		core::World::CreateDoorOptions options;
 		options.activationMode = core::DoorActivationMode::Automatic;
-		options.holdOpenSeconds = core::Building::getFixedTimestep() * 2.0f;
-		auto created = building.addSectorDoor(0, 0, 3, options);
-		building.finishBuild();
+		options.holdOpenSeconds = core::World::getFixedTimestep() * 2.0f;
+		auto created = world.addSectorDoor(0, 0, 3, options);
+		world.finishBuild();
 		auto sensor = core::DoorSensorId{ 1 };
-		if (!building.setDoorSensorObservation(created.traversalResource, sensor,
+		if (!world.setDoorSensorObservation(created.traversalResource, sensor,
 			core::DoorSensorObservation::Presence)) return false;
-		building.advanceTicks(90);
-		auto lease = building.acquireDoorOpenLease(created.traversalResource);
-		building.setDoorSensorObservation(created.traversalResource, sensor, core::DoorSensorObservation::Clear);
-		building.advanceTicks(30);
-		auto snapshot = building.getSimulationSnapshot();
+		world.advanceTicks(90);
+		auto lease = world.acquireDoorOpenLease(created.traversalResource);
+		world.setDoorSensorObservation(created.traversalResource, sensor, core::DoorSensorObservation::Clear);
+		world.advanceTicks(30);
+		auto snapshot = world.getSimulationSnapshot();
 		if (!lease || snapshot.traversalResources.front().doorState != core::DoorSnapshotState::Open
 			|| snapshot.traversalResources.front().externalOpenLeaseCount != 1) return false;
 
-		auto actor = building.createAgent("Close operator", fore, 0, 3.5f);
+		auto actor = world.createAgent("Close operator", fore, 0, 3.5f);
 		core::DeviceCommand close;
 		close.type = core::DeviceCommandType::OpenDoor;
 		close.desiredState = false;
 		close.traversalResource = created.traversalResource;
-		auto point = building.createInteractionPoint("Close door", core::SectorId{ (uint64_t)fore + 1 },
+		auto point = world.createInteractionPoint("Close door", core::SectorId{ (uint64_t)fore + 1 },
 			{ 3.5f, 0.0f }, 1.0f, 0.0f, { { close, core::InteractionBindingRequirement::Required } });
-		auto closeRequest = building.requestInteraction(point, actor);
-		building.advanceTicks(4);
-		if (building.lookupInteractionRequest(closeRequest).entity->getResult() != core::InteractionResult::Rejected
-			|| !building.releaseDoorOpenLease(created.traversalResource, lease)) return false;
+		auto closeRequest = world.requestInteraction(point, actor);
+		world.advanceTicks(4);
+		if (world.lookupInteractionRequest(closeRequest).entity->getResult() != core::InteractionResult::Rejected
+			|| !world.releaseDoorOpenLease(created.traversalResource, lease)) return false;
 
-		building.setDoorSensorObservation(created.traversalResource, sensor, core::DoorSensorObservation::Obstruction);
-		building.advanceTicks(20);
-		if (building.getSimulationSnapshot().traversalResources.front().doorState != core::DoorSnapshotState::Open) return false;
-		building.setDoorSensorObservation(created.traversalResource, sensor, core::DoorSensorObservation::Clear);
-		for (uint32_t i = 0; i < 10 && building.getSimulationSnapshot().traversalResources.front().doorState
-			!= core::DoorSnapshotState::Closing; ++i) building.advanceTick();
-		if (building.getSimulationSnapshot().traversalResources.front().doorState != core::DoorSnapshotState::Closing) return false;
-		building.setDoorSensorObservation(created.traversalResource, sensor, core::DoorSensorObservation::Obstruction);
-		building.advanceTick();
-		snapshot = building.getSimulationSnapshot();
+		world.setDoorSensorObservation(created.traversalResource, sensor, core::DoorSensorObservation::Obstruction);
+		world.advanceTicks(20);
+		if (world.getSimulationSnapshot().traversalResources.front().doorState != core::DoorSnapshotState::Open) return false;
+		world.setDoorSensorObservation(created.traversalResource, sensor, core::DoorSensorObservation::Clear);
+		for (uint32_t i = 0; i < 10 && world.getSimulationSnapshot().traversalResources.front().doorState
+			!= core::DoorSnapshotState::Closing; ++i) world.advanceTick();
+		if (world.getSimulationSnapshot().traversalResources.front().doorState != core::DoorSnapshotState::Closing) return false;
+		world.setDoorSensorObservation(created.traversalResource, sensor, core::DoorSensorObservation::Obstruction);
+		world.advanceTick();
+		snapshot = world.getSimulationSnapshot();
 		return snapshot.traversalResources.front().obstructionObserved
 			&& snapshot.traversalResources.front().doorState == core::DoorSnapshotState::Opening;
 	}
 
 	bool finiteCapacityLadderSerializesAdmissionAndClimbsAtConfiguredSpeed()
 	{
-		core::Building building("Finite ladder", 4, 4);
-		auto lower = building.addCorridor(0, 0, 3);
-		auto upper = building.addCorridor(1, 0, 3);
-		core::Building::CreateLadderOptions options{ 2, false, true };
-		auto created = building.addLadder(1, 0, 1, options);
-		building.finishBuild();
+		core::World world("Finite ladder", 4, 4);
+		auto lower = world.addCorridor(0, 0, 3);
+		auto upper = world.addCorridor(1, 0, 3);
+		core::World::CreateLadderOptions options{ 2, false, true };
+		auto created = world.addLadder(1, 0, 1, options);
+		world.finishBuild();
 		if (!created.traversalResource) return false;
 
-		auto const& graph = building.getGraph();
-		auto target = graph->getClosestVertexInSector(building.getSector(upper).get(), { 1.5f, 1.0f });
+		auto const& graph = world.getGraph();
+		auto target = graph->getClosestVertexInSector(world.getSector(upper).get(), { 1.5f, 1.0f });
 		if (!target) return false;
 		std::vector<core::AgentId> ids = {
-			building.createAgent("First climber", lower, 0, 1.5f),
-			building.createAgent("Second climber", lower, 0, 1.5f),
-			building.createAgent("Cancelled climber", lower, 0, 1.5f)
+			world.createAgent("First climber", lower, 0, 1.5f),
+			world.createAgent("Second climber", lower, 0, 1.5f),
+			world.createAgent("Cancelled climber", lower, 0, 1.5f)
 		};
 		for (auto id : ids)
 		{
-			auto agent = building.lookupAgent(id).entity;
+			auto agent = world.lookupAgent(id).entity;
 			auto path = graph->calculatePath(agent, target);
 			if (!path) return false;
 			agent->setPath(path, true);
@@ -2481,8 +2481,8 @@ namespace
 		uint64_t climbFinished = 0;
 		for (uint32_t i = 0; i < MaximumSimulationTicks * 3; ++i)
 		{
-			building.advanceTick();
-			auto snapshot = building.getSimulationSnapshot();
+			world.advanceTick();
+			auto snapshot = world.getSimulationSnapshot();
 			auto resource = std::find_if(snapshot.traversalResources.begin(), snapshot.traversalResources.end(),
 				[&](auto const& value) { return value.id == created.traversalResource; });
 			if (resource == snapshot.traversalResources.end() || !resource->isLadder
@@ -2502,33 +2502,33 @@ namespace
 			if (resource->occupantCount == 1)
 			{
 				observedFull = true;
-				if (!climbStarted && building.lookupAgent(ids[0]).entity->getState()
+				if (!climbStarted && world.lookupAgent(ids[0]).entity->getState()
 					== core::Agent::State::TraversingEdge)
-					climbStarted = building.getSimulationTick();
+					climbStarted = world.getSimulationTick();
 				if (!cancelledWaiter)
 				{
-					building.lookupAgent(ids[2]).entity->clearPath();
+					world.lookupAgent(ids[2]).entity->clearPath();
 					cancelledWaiter = true;
 				}
 			}
 			if (climbStarted && !climbFinished
-				&& building.lookupAgent(ids[0]).entity->getSector() == building.getSector(upper).get())
-				climbFinished = building.getSimulationTick();
-			if (building.lookupAgent(ids[0]).entity->getState() == core::Agent::State::Idle
-				&& building.lookupAgent(ids[1]).entity->getState() == core::Agent::State::Idle)
+				&& world.lookupAgent(ids[0]).entity->getSector() == world.getSector(upper).get())
+				climbFinished = world.getSimulationTick();
+			if (world.lookupAgent(ids[0]).entity->getState() == core::Agent::State::Idle
+				&& world.lookupAgent(ids[1]).entity->getState() == core::Agent::State::Idle)
 				break;
 		}
 
-		auto snapshot = building.getSimulationSnapshot();
+		auto snapshot = world.getSimulationSnapshot();
 		auto resource = std::find_if(snapshot.traversalResources.begin(), snapshot.traversalResources.end(),
 			[&](auto const& value) { return value.id == created.traversalResource; });
 		// One vertical unit at 0.25 units/second requires about 240 fixed ticks;
 		// this also detects accidentally using walking speed.
 		return observedFull && observedQueuePosition && cancelledWaiter && climbStarted && climbFinished
 			&& climbFinished - climbStarted >= 230
-			&& building.lookupAgent(ids[0]).entity->getSector() == building.getSector(upper).get()
-			&& building.lookupAgent(ids[1]).entity->getSector() == building.getSector(upper).get()
-			&& building.lookupAgent(ids[2]).entity->getSector() == building.getSector(lower).get()
+			&& world.lookupAgent(ids[0]).entity->getSector() == world.getSector(upper).get()
+			&& world.lookupAgent(ids[1]).entity->getSector() == world.getSector(upper).get()
+			&& world.lookupAgent(ids[2]).entity->getSector() == world.getSector(lower).get()
 			&& resource != snapshot.traversalResources.end()
 			&& resource->occupantCount == 0 && resource->admissionReservationCount == 0
 			&& resource->admissionQueue.empty();
@@ -2536,42 +2536,42 @@ namespace
 
 	bool ladderQueuePositionsPreferAgentApproachSide()
 	{
-		core::Building building("Ladder queue approach", 8, 4);
-		auto lower = building.addCorridor(0, 0, 7);
-		auto upper = building.addCorridor(1, 0, 7);
-		core::Building::CreateLadderOptions options{ 2, false, true };
-		auto created = building.addLadder(1, 0, 3, options);
+		core::World world("Ladder queue approach", 8, 4);
+		auto lower = world.addCorridor(0, 0, 7);
+		auto upper = world.addCorridor(1, 0, 7);
+		core::World::CreateLadderOptions options{ 2, false, true };
+		auto created = world.addLadder(1, 0, 3, options);
 		uint32_t lowerApproachId, upperApproachId;
-		building.addSectorMarker(lower, 0, 1.0f, &lowerApproachId);
-		building.addSectorMarker(upper, 0, 6.0f, &upperApproachId);
-		building.finishBuild();
+		world.addSectorMarker(lower, 0, 1.0f, &lowerApproachId);
+		world.addSectorMarker(upper, 0, 6.0f, &upperApproachId);
+		world.finishBuild();
 
-		auto lowerApproach = building.getGraph()->getVertexByIdentifier(lowerApproachId);
-		auto upperApproach = building.getGraph()->getVertexByIdentifier(upperApproachId);
-		auto upperTarget = building.getGraph()->getClosestVertexInSector(
-			building.getSector(upper).get(), { 3.5f, 1.0f });
-		auto lowerTarget = building.getGraph()->getClosestVertexInSector(
-			building.getSector(lower).get(), { 3.5f, 0.0f });
+		auto lowerApproach = world.getGraph()->getVertexByIdentifier(lowerApproachId);
+		auto upperApproach = world.getGraph()->getVertexByIdentifier(upperApproachId);
+		auto upperTarget = world.getGraph()->getClosestVertexInSector(
+			world.getSector(upper).get(), { 3.5f, 1.0f });
+		auto lowerTarget = world.getGraph()->getClosestVertexInSector(
+			world.getSector(lower).get(), { 3.5f, 0.0f });
 		if (!upperTarget || !lowerTarget) return false;
 
 		// Occupy the sole Ladder position so later Agents must claim queue spots
 		// before entering the queue footprint.
-		auto blocker = building.createAgent("Current climber", lower, 0, 3.5f);
-		auto blockerEntity = building.lookupAgent(blocker).entity;
-		auto blockerPath = building.getGraph()->calculatePath(blockerEntity, upperTarget);
+		auto blocker = world.createAgent("Current climber", lower, 0, 3.5f);
+		auto blockerEntity = world.lookupAgent(blocker).entity;
+		auto blockerPath = world.getGraph()->calculatePath(blockerEntity, upperTarget);
 		if (!blockerPath) return false;
 		blockerEntity->setPath(std::move(blockerPath), true);
 		for (uint32_t tick = 0; tick < MaximumSimulationTicks
 			&& blockerEntity->getSector() != created.ladder.sector.get(); ++tick)
-			building.advanceTick();
+			world.advanceTick();
 		if (blockerEntity->getSector() != created.ladder.sector.get()) return false;
 
-		auto lowerAgent = building.createAgent("Lower left approach", lower, 0, 1.0f);
-		auto upperAgent = building.createAgent("Upper right approach", upper, 0, 6.0f);
+		auto lowerAgent = world.createAgent("Lower left approach", lower, 0, 1.0f);
+		auto upperAgent = world.createAgent("Upper right approach", upper, 0, 6.0f);
 		auto assignPath = [&](core::AgentId id, auto const& source, auto const& target)
 		{
-			auto agent = building.lookupAgent(id).entity;
-			auto path = building.getGraph()->calculatePath(agent, source, target);
+			auto agent = world.lookupAgent(id).entity;
+			auto path = world.getGraph()->calculatePath(agent, source, target);
 			if (!path) return false;
 			agent->setPath(std::move(path), true);
 			return true;
@@ -2581,8 +2581,8 @@ namespace
 
 		for (uint32_t tick = 0; tick < MaximumSimulationTicks; ++tick)
 		{
-			building.advanceTick();
-			auto snapshot = building.getSimulationSnapshot();
+			world.advanceTick();
+			auto snapshot = world.getSimulationSnapshot();
 			if (snapshot.traversalRequests.size() < 2) continue;
 			auto resource = find_if(snapshot.traversalResources.begin(), snapshot.traversalResources.end(),
 				[&](auto const& value) { return value.id == created.traversalResource; });
@@ -2614,36 +2614,36 @@ namespace
 
 	bool extensibleForceBridgeCompletesThroughPhysicalControl()
 	{
-		core::Building building("Extensible force bridge", 6, 4);
-		auto room = building.addRoom("Bridge room", 1, 0, 0, 4, 3);
-		building.addSectorWalkway(room, 1, 0);
-		building.addSectorWalkway(room, 1, 2);
-		building.addSectorWalkway(room, 1, 3);
-		core::Building::CreateForceBridgeOptions options;
+		core::World world("Extensible force bridge", 6, 4);
+		auto room = world.addRoom("Bridge room", 1, 0, 0, 4, 3);
+		world.addSectorWalkway(room, 1, 0);
+		world.addSectorWalkway(room, 1, 2);
+		world.addSectorWalkway(room, 1, 3);
+		core::World::CreateForceBridgeOptions options;
 		options.fromSide = CORE_SIDE_LEFT;
 		options.extensible = true;
 		options.startExtended = false;
 		options.controlCount = 1;
-		auto bridge = building.addSectorForceBridge(room, 1, 1, options);
+		auto bridge = world.addSectorForceBridge(room, 1, 1, options);
 		auto bridgeObject = std::dynamic_pointer_cast<core::ForceBridgeSectorObject>(
 			bridge.forceBridge.sector->getObject(bridge.forceBridge.index));
 		if (!bridgeObject) return false;
 		auto forceBridge = bridgeObject->getForceBridge();
-		building.finishBuild();
+		world.finishBuild();
 
-		auto edgeIt = std::find_if(building.getGraph()->getEdges().begin(), building.getGraph()->getEdges().end(),
+		auto edgeIt = std::find_if(world.getGraph()->getEdges().begin(), world.getGraph()->getEdges().end(),
 			[](auto const& candidate) { return candidate->getType() == core::EdgeType::ForceBridge; });
-		if (edgeIt == building.getGraph()->getEdges().end()) return false;
+		if (edgeIt == world.getGraph()->getEdges().end()) return false;
 		auto edge = *edgeIt;
 		auto source = edge->getVertex(0)->getPosition().x < edge->getVertex(1)->getPosition().x
 			? edge->getVertex(0) : edge->getVertex(1);
 		auto destination = edge->getOtherVertex(source);
-		auto operatorId = building.createAgent("Bridge operator", room, 1, 0.5f);
-		auto followerId = building.createAgent("Bridge follower", room, 1, 0.1f);
-		auto bridgeOperator = building.lookupAgent(operatorId).entity;
-		auto follower = building.lookupAgent(followerId).entity;
-		auto operatorPath = building.getGraph()->calculatePath(bridgeOperator, source, destination);
-		auto followerPath = building.getGraph()->calculatePath(follower, source, destination);
+		auto operatorId = world.createAgent("Bridge operator", room, 1, 0.5f);
+		auto followerId = world.createAgent("Bridge follower", room, 1, 0.1f);
+		auto bridgeOperator = world.lookupAgent(operatorId).entity;
+		auto follower = world.lookupAgent(followerId).entity;
+		auto operatorPath = world.getGraph()->calculatePath(bridgeOperator, source, destination);
+		auto followerPath = world.getGraph()->calculatePath(follower, source, destination);
 		if (!operatorPath || !followerPath) return false;
 		bridgeOperator->setPath(std::move(operatorPath), true);
 		follower->setPath(std::move(followerPath), true);
@@ -2655,10 +2655,10 @@ namespace
 		bool sawFullyExtendedBeforeCrossing = false;
 		while ((bridgeOperator->getState() != core::Agent::State::Idle
 				|| follower->getState() != core::Agent::State::Idle)
-			&& building.getSimulationTick() < MaximumSimulationTicks)
+			&& world.getSimulationTick() < MaximumSimulationTicks)
 		{
-			building.advanceTick();
-			auto snapshot = building.getSimulationSnapshot();
+			world.advanceTick();
+			auto snapshot = world.getSimulationSnapshot();
 			auto resource = std::find_if(snapshot.traversalResources.begin(), snapshot.traversalResources.end(),
 				[&](auto const& value) { return value.id == bridge.traversalResource; });
 			if (resource == snapshot.traversalResources.end() || !resource->isForceBridge
@@ -2686,7 +2686,7 @@ namespace
 			sawFullyExtendedBeforeCrossing = sawFullyExtendedBeforeCrossing
 				|| (crossing && forceBridge->isExtended());
 		}
-		auto final = building.getSimulationSnapshot();
+		auto final = world.getSimulationSnapshot();
 		auto resource = std::find_if(final.traversalResources.begin(), final.traversalResources.end(),
 			[&](auto const& value) { return value.id == bridge.traversalResource; });
 		return sawPreparation && sawExtensionLease && sawQueueStops && sawFollowerQueueWhileExtending
@@ -2703,31 +2703,31 @@ namespace
 
 	bool ladderAdmissionsMaintainPhysicalSpacing()
 	{
-		// Mirrors resources/test-maps/sector-ladder-test-1.yaml: twelve Agents cross
+		// Mirrors resources/test-worlds/sector-ladder-test-1.world.yaml: twelve Agents cross
 		// a four-deck Ladder in both directions. Admission must stagger entry so
 		// equal-speed climbers never overlap on the span.
-		core::Building building("Ladder spacing", 16, 6);
-		auto lower = building.addCorridor(1, 0, 16);
-		auto upper = building.addCorridor(4, 0, 16);
-		core::Building::CreateLadderOptions options{ 4, false, true };
+		core::World world("Ladder spacing", 16, 6);
+		auto lower = world.addCorridor(1, 0, 16);
+		auto upper = world.addCorridor(4, 0, 16);
+		core::World::CreateLadderOptions options{ 4, false, true };
 		options.directionalBatchLimit = 4;
-		auto created = building.addLadder(1, 1, 8, options);
-		building.finishBuild();
+		auto created = world.addLadder(1, 1, 8, options);
+		world.finishBuild();
 		if (!created.traversalResource || !created.ladder.sector) return false;
 
-		auto graph = building.getGraph();
-		auto upperRight = graph->getClosestVertexInSector(building.getSector(upper).get(), { 15.5f, 4.0f });
-		auto upperLeft = graph->getClosestVertexInSector(building.getSector(upper).get(), { 0.5f, 4.0f });
-		auto lowerRight = graph->getClosestVertexInSector(building.getSector(lower).get(), { 15.5f, 1.0f });
-		auto lowerLeft = graph->getClosestVertexInSector(building.getSector(lower).get(), { 0.5f, 1.0f });
+		auto graph = world.getGraph();
+		auto upperRight = graph->getClosestVertexInSector(world.getSector(upper).get(), { 15.5f, 4.0f });
+		auto upperLeft = graph->getClosestVertexInSector(world.getSector(upper).get(), { 0.5f, 4.0f });
+		auto lowerRight = graph->getClosestVertexInSector(world.getSector(lower).get(), { 15.5f, 1.0f });
+		auto lowerLeft = graph->getClosestVertexInSector(world.getSector(lower).get(), { 0.5f, 1.0f });
 		if (!upperRight || !upperLeft || !lowerRight || !lowerLeft) return false;
 
 		std::vector<core::AgentId> ids;
 		auto addAgent = [&](char const* name, uint32_t sector, float x,
 			std::shared_ptr<const core::Vertex> const& target)
 		{
-			auto id = building.createAgent(name, sector, 0, x);
-			auto agent = building.lookupAgent(id).entity;
+			auto id = world.createAgent(name, sector, 0, x);
+			auto agent = world.lookupAgent(id).entity;
 			if (!agent) return false;
 			auto path = graph->calculatePath(agent, target);
 			if (!path) return false;
@@ -2753,11 +2753,11 @@ namespace
 		bool observedConcurrentClimbers = false;
 		for (uint32_t i = 0; i < MaximumSimulationTicks * 8; ++i)
 		{
-			building.advanceTick();
+			world.advanceTick();
 			std::vector<core::Vector2> climbers;
 			for (auto id : ids)
 			{
-				auto agent = building.lookupAgent(id).entity;
+				auto agent = world.lookupAgent(id).entity;
 				if (agent->getSector() == ladderSector.get())
 					climbers.push_back(agent->getGlobalPosition());
 			}
@@ -2767,32 +2767,32 @@ namespace
 					minimumSeparation = std::min(minimumSeparation,
 						climbers[a].distanceTo(climbers[b]));
 			if (std::all_of(ids.begin(), ids.end(), [&](auto id)
-				{ return building.lookupAgent(id).entity->getState() == core::Agent::State::Idle; }))
+				{ return world.lookupAgent(id).entity->getState() == core::Agent::State::Idle; }))
 				break;
 		}
 		return observedConcurrentClimbers
 			&& minimumSeparation >= CORE_AGENT_MAX_HEIGHT - 0.001f
 			&& std::all_of(ids.begin(), ids.end(), [&](auto id)
-				{ return building.lookupAgent(id).entity->getState() == core::Agent::State::Idle; });
+				{ return world.lookupAgent(id).entity->getState() == core::Agent::State::Idle; });
 	}
 
 	bool extensibleLadderUsesDesiredStateAndLeases()
 	{
-		core::Building building("Extensible ladder", 4, 4);
-		auto lower = building.addCorridor(0, 0, 3);
-		auto upper = building.addCorridor(2, 0, 3);
-		core::Building::CreateLadderOptions options{ 3, true, false };
-		auto created = building.addLadder(1, 0, 1, options);
-		building.finishBuild();
+		core::World world("Extensible ladder", 4, 4);
+		auto lower = world.addCorridor(0, 0, 3);
+		auto upper = world.addCorridor(2, 0, 3);
+		core::World::CreateLadderOptions options{ 3, true, false };
+		auto created = world.addLadder(1, 0, 1, options);
+		world.finishBuild();
 
-		auto target = building.getGraph()->getClosestVertexInSector(
-			building.getSector(upper).get(), { 1.5f, 2.0f });
-		auto first = building.createAgent("Extension owner", lower, 0, 1.5f);
-		auto second = building.createAgent("Shared extension owner", lower, 0, 1.5f);
+		auto target = world.getGraph()->getClosestVertexInSector(
+			world.getSector(upper).get(), { 1.5f, 2.0f });
+		auto first = world.createAgent("Extension owner", lower, 0, 1.5f);
+		auto second = world.createAgent("Shared extension owner", lower, 0, 1.5f);
 		for (auto id : { first, second })
 		{
-			auto agent = building.lookupAgent(id).entity;
-			auto path = building.getGraph()->calculatePath(agent, target);
+			auto agent = world.lookupAgent(id).entity;
+			auto path = world.getGraph()->calculatePath(agent, target);
 			if (!path) return false;
 			agent->setPath(path, true);
 		}
@@ -2801,8 +2801,8 @@ namespace
 		bool sawLease = false;
 		for (uint32_t i = 0; i < MaximumSimulationTicks * 3; ++i)
 		{
-			building.advanceTick();
-			auto snapshot = building.getSimulationSnapshot();
+			world.advanceTick();
+			auto snapshot = world.getSimulationSnapshot();
 			auto resource = std::find_if(snapshot.traversalResources.begin(), snapshot.traversalResources.end(),
 				[&](auto const& value) { return value.id == created.traversalResource; });
 			if (resource == snapshot.traversalResources.end() || !resource->isExtensible) return false;
@@ -2812,50 +2812,50 @@ namespace
 				if (operation.command.type == core::DeviceCommandType::SetExtendedState
 					&& operation.command.desiredState && operation.requesters.size() == 2)
 					sawSharedOperation = true;
-			if (building.lookupAgent(first).entity->getState() == core::Agent::State::Idle
-				&& building.lookupAgent(second).entity->getState() == core::Agent::State::Idle) break;
+			if (world.lookupAgent(first).entity->getState() == core::Agent::State::Idle
+				&& world.lookupAgent(second).entity->getState() == core::Agent::State::Idle) break;
 		}
-		auto snapshot = building.getSimulationSnapshot();
+		auto snapshot = world.getSimulationSnapshot();
 		auto resource = std::find_if(snapshot.traversalResources.begin(), snapshot.traversalResources.end(),
 			[&](auto const& value) { return value.id == created.traversalResource; });
 		return sawSharedOperation && sawLease && resource != snapshot.traversalResources.end()
 			&& resource->extended && resource->extensionRequestLeaseCount == 0
 			&& resource->extensionOccupantLeaseCount == 0
-			&& building.lookupAgent(first).entity->getSector() == building.getSector(upper).get()
-			&& building.lookupAgent(second).entity->getSector() == building.getSector(upper).get();
+			&& world.lookupAgent(first).entity->getSector() == world.getSector(upper).get()
+			&& world.lookupAgent(second).entity->getSector() == world.getSector(upper).get();
 	}
 
 	bool directionalLadderBoundsBatchesAndPreventsOpposingAdmission()
 	{
-		core::Building building("Directional ladder", 4, 5);
-		auto lower = building.addCorridor(0, 0, 3);
-		auto upper = building.addCorridor(3, 0, 3);
-		core::Building::CreateLadderOptions options{ 4, false, true };
+		core::World world("Directional ladder", 4, 5);
+		auto lower = world.addCorridor(0, 0, 3);
+		auto upper = world.addCorridor(3, 0, 3);
+		core::World::CreateLadderOptions options{ 4, false, true };
 		options.directionalBatchLimit = 4;
-		auto created = building.addLadder(1, 0, 1, options);
-		building.finishBuild();
+		auto created = world.addLadder(1, 0, 1, options);
+		world.finishBuild();
 
-		auto graph = building.getGraph();
-		auto upperTarget = graph->getClosestVertexInSector(building.getSector(upper).get(), { 1.5f, 3.0f });
-		auto lowerTarget = graph->getClosestVertexInSector(building.getSector(lower).get(), { 1.5f, 0.0f });
+		auto graph = world.getGraph();
+		auto upperTarget = graph->getClosestVertexInSector(world.getSector(upper).get(), { 1.5f, 3.0f });
+		auto lowerTarget = graph->getClosestVertexInSector(world.getSector(lower).get(), { 1.5f, 0.0f });
 		if (!upperTarget || !lowerTarget) return false;
 		std::vector<core::AgentId> ascending = {
-			building.createAgent("Ascending one", lower, 0, 1.5f),
-			building.createAgent("Ascending two", lower, 0, 1.5f),
-			building.createAgent("Ascending three", lower, 0, 1.5f),
-			building.createAgent("Ascending four", lower, 0, 1.5f),
-			building.createAgent("Ascending next batch", lower, 0, 1.5f)
+			world.createAgent("Ascending one", lower, 0, 1.5f),
+			world.createAgent("Ascending two", lower, 0, 1.5f),
+			world.createAgent("Ascending three", lower, 0, 1.5f),
+			world.createAgent("Ascending four", lower, 0, 1.5f),
+			world.createAgent("Ascending next batch", lower, 0, 1.5f)
 		};
-		auto descending = building.createAgent("Descending waiter", upper, 0, 1.5f);
+		auto descending = world.createAgent("Descending waiter", upper, 0, 1.5f);
 		for (auto id : ascending)
 		{
-			auto agent = building.lookupAgent(id).entity;
+			auto agent = world.lookupAgent(id).entity;
 			auto path = graph->calculatePath(agent, upperTarget);
 			if (!path) return false;
 			agent->setPath(path, true);
 		}
 		{
-			auto agent = building.lookupAgent(descending).entity;
+			auto agent = world.lookupAgent(descending).entity;
 			auto path = graph->calculatePath(agent, lowerTarget);
 			if (!path) return false;
 			agent->setPath(path, true);
@@ -2868,8 +2868,8 @@ namespace
 		uint64_t fifthAscendingFinished = 0;
 		for (uint32_t i = 0; i < MaximumSimulationTicks * 4; ++i)
 		{
-			building.advanceTick();
-			auto snapshot = building.getSimulationSnapshot();
+			world.advanceTick();
+			auto snapshot = world.getSimulationSnapshot();
 			auto resource = std::find_if(snapshot.traversalResources.begin(), snapshot.traversalResources.end(),
 				[&](auto const& value) { return value.id == created.traversalResource; });
 			if (resource == snapshot.traversalResources.end() || resource->capacity != 5
@@ -2894,12 +2894,12 @@ namespace
 				|| (resource->activeDirection == core::TraversalDirection::Ascending
 					&& resource->descendingWaitingCount == 1
 					&& resource->directionalBatchCount == 4);
-			if (!fourthAscendingFinished && building.lookupAgent(ascending[3]).entity->getState() == core::Agent::State::Idle)
-				fourthAscendingFinished = building.getSimulationTick();
-			if (!descendingFinished && building.lookupAgent(descending).entity->getState() == core::Agent::State::Idle)
-				descendingFinished = building.getSimulationTick();
-			if (!fifthAscendingFinished && building.lookupAgent(ascending[4]).entity->getState() == core::Agent::State::Idle)
-				fifthAscendingFinished = building.getSimulationTick();
+			if (!fourthAscendingFinished && world.lookupAgent(ascending[3]).entity->getState() == core::Agent::State::Idle)
+				fourthAscendingFinished = world.getSimulationTick();
+			if (!descendingFinished && world.lookupAgent(descending).entity->getState() == core::Agent::State::Idle)
+				descendingFinished = world.getSimulationTick();
+			if (!fifthAscendingFinished && world.lookupAgent(ascending[4]).entity->getState() == core::Agent::State::Idle)
+				fifthAscendingFinished = world.getSimulationTick();
 			if (fourthAscendingFinished && descendingFinished && fifthAscendingFinished) break;
 		}
 		return observedFourConcurrent && observedFullBatch
@@ -2910,17 +2910,17 @@ namespace
 
 	bool stairwellCoordinationIsExplicitlyOptIn()
 	{
-		core::Building ordinary("Ordinary stairwell", 5, 3);
+		core::World ordinary("Ordinary stairwell", 5, 3);
 		ordinary.addCorridor(0, 0, 4);
 		ordinary.addCorridor(1, 0, 4);
 		ordinary.addStairwell(1, 0, 1, 2, CORE_SIDE_LEFT);
 		ordinary.finishBuild();
 		if (!ordinary.getSimulationSnapshot().traversalResources.empty()) return false;
 
-		core::Building narrow("Narrow stairwell", 5, 3);
+		core::World narrow("Narrow stairwell", 5, 3);
 		narrow.addCorridor(0, 0, 4);
 		narrow.addCorridor(1, 0, 4);
-		core::Building::CreateStairwellOptions options{ 2, CORE_SIDE_LEFT };
+		core::World::CreateStairwellOptions options{ 2, CORE_SIDE_LEFT };
 		options.directionalCapacity = 1;
 		options.directionalBatchLimit = 3;
 		auto created = narrow.addStairwell(1, 0, 1, options);
@@ -2941,11 +2941,11 @@ namespace
 	bool platformLiftAuthoringReconcilesWalkwayStops()
 	{
 		{
-			core::Building offset("PlatformLift initial floor", 8, 6);
+			core::World offset("PlatformLift initial floor", 8, 6);
 			auto offsetRoom = offset.addRoom("Offset room", 0, 1, 0, 7, 4);
 			offset.addSectorWalkway(offsetRoom, 2, 2);
 			offset.addSectorWalkway(offsetRoom, 2, 3);
-			core::Building::CreateLiftOptions offsetOptions;
+			core::World::CreateLiftOptions offsetOptions;
 			offsetOptions.stopOffsets = { 0, 2 };
 			auto placed = offset.addSectorPlatformLift(offsetRoom, 0, 2, offsetOptions);
 			auto object = std::dynamic_pointer_cast<const core::LiftSectorObject>(
@@ -2961,25 +2961,25 @@ namespace
 				|| std::abs(resource->liftPosition - 1.0f) > 0.001f
 				|| hit.get() != object->getLift().get() || hitObject != object) return false;
 		}
-		core::Building building("PlatformLift authoring", 8, 5);
-		auto room = building.addRoom("Lift room", 0, 0, 0, 7, 4);
-		building.addSectorWalkway(room, 1, 2);
-		building.addSectorWalkway(room, 1, 3);
-		building.addSectorWalkway(room, 3, 2);
-		building.addSectorWalkway(room, 3, 3);
-		core::Building::CreateLiftOptions options;
+		core::World world("PlatformLift authoring", 8, 5);
+		auto room = world.addRoom("Lift room", 0, 0, 0, 7, 4);
+		world.addSectorWalkway(room, 1, 2);
+		world.addSectorWalkway(room, 1, 3);
+		world.addSectorWalkway(room, 3, 2);
+		world.addSectorWalkway(room, 3, 3);
+		core::World::CreateLiftOptions options;
 		options.cellsWide = 1; options.stopOffsets = { 0, 1 };
-		auto created = building.addSectorPlatformLift(room, 0, 2, options);
-		building.finishBuild(); building.pauseSimulation();
+		auto created = world.addSectorPlatformLift(room, 0, 2, options);
+		world.finishBuild(); world.pauseSimulation();
 		options.stopOffsets = { 0, 1, 3 };
-		auto edit = building.planPlatformLiftEdit(room, created.lift.index, options);
+		auto edit = world.planPlatformLiftEdit(room, created.lift.index, options);
 		if (!edit.valid) return false;
-		auto liftObject = building.applyPlatformLiftEdit(edit);
+		auto liftObject = world.applyPlatformLiftEdit(edit);
 		if (!liftObject) return false;
 
 		auto findObject = [&](core::SectorObjectType type, uint32_t x, uint32_t y)
 		{
-			auto sector = building.getSector(room);
+			auto sector = world.getSector(room);
 			for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
 			{
 				auto object = sector->getObject(i);
@@ -2989,18 +2989,18 @@ namespace
 			return ~0u;
 		};
 		auto lower = findObject(core::SectorObjectType::Walkway, 2, 1);
-		auto removal = building.planRemoveSectorWalkway(room, lower);
-		if (!removal.valid || !removal.consequences.empty() || !building.applyWalkwayEdit(removal)) return false;
+		auto removal = world.planRemoveSectorWalkway(room, lower);
+		if (!removal.valid || !removal.consequences.empty() || !world.applyWalkwayEdit(removal)) return false;
 		auto liftIndex = findObject(core::SectorObjectType::Lift, 2, 0);
-		core::Building::CreateLiftOptions retained;
-		if (liftIndex == ~0u || !building.getPlatformLiftOptions(room, liftIndex, retained)
+		core::World::CreateLiftOptions retained;
+		if (liftIndex == ~0u || !world.getPlatformLiftOptions(room, liftIndex, retained)
 			|| retained.stopOffsets != std::vector<uint32_t>({ 0, 3 })) return false;
 		auto upper = findObject(core::SectorObjectType::Walkway, 2, 3);
-		removal = building.planRemoveSectorWalkway(room, upper);
-		if (!removal.valid || removal.consequences.empty() || !building.applyWalkwayEdit(removal)) return false;
+		removal = world.planRemoveSectorWalkway(room, upper);
+		if (!removal.valid || removal.consequences.empty() || !world.applyWalkwayEdit(removal)) return false;
 		if (findObject(core::SectorObjectType::Lift, 2, 0) != ~0u) return false;
 
-		core::Building resized("PlatformLift resize", 8, 5);
+		core::World resized("PlatformLift resize", 8, 5);
 		auto resizedRoom = resized.addRoom("Lift room", 0, 0, 0, 7, 4);
 		resized.addSectorWalkway(resizedRoom, 1, 2); resized.addSectorWalkway(resizedRoom, 1, 3);
 		resized.addSectorWalkway(resizedRoom, 3, 2); resized.addSectorWalkway(resizedRoom, 3, 3);
@@ -3024,7 +3024,7 @@ namespace
 			if (auto object = resized.getSector(resizedRoom)->getObject(i);
 				object && object->getObjectType() == core::SectorObjectType::Lift) return false;
 
-		core::Building moving("PlatformLift movement", 9, 5);
+		core::World moving("PlatformLift movement", 9, 5);
 		auto movingRoom = moving.addRoom("Lift room", 0, 0, 0, 8, 4);
 		moving.addSectorWalkway(movingRoom, 1, 1); moving.addSectorWalkway(movingRoom, 1, 2);
 		moving.addSectorWalkway(movingRoom, 2, 3); moving.addSectorWalkway(movingRoom, 2, 4);
@@ -3056,28 +3056,28 @@ namespace
 
 	bool openPlatformLiftUsesVirtualBoundaryAndTransportPolicy()
 	{
-		core::Building building("Open platform lift", 7, 5);
-		auto room = building.addRoom("Platform room", 0, 0, 0, 6, 4);
-		core::Building::CreateLiftOptions options;
+		core::World world("Open platform lift", 7, 5);
+		auto room = world.addRoom("Platform room", 0, 0, 0, 6, 4);
+		core::World::CreateLiftOptions options;
 		options.cellsWide = 1;
 		options.stopOffsets = { 0, 2 };
 		options.capacity = 2;
 		options.platformStopDurationSeconds = 2.0f;
-		building.addSectorWalkway(room, 2, 0);
-		building.addSectorWalkway(room, 2, 1);
-		building.addSectorWalkway(room, 2, 2);
-		building.addSectorWalkway(room, 2, 3);
-		auto created = building.addSectorPlatformLift(room, 0, 2, options);
+		world.addSectorWalkway(room, 2, 0);
+		world.addSectorWalkway(room, 2, 1);
+		world.addSectorWalkway(room, 2, 2);
+		world.addSectorWalkway(room, 2, 3);
+		auto created = world.addSectorPlatformLift(room, 0, 2, options);
 		uint32_t destinationVertexId;
-		building.addSectorMarker(room, 2, 0.5f, &destinationVertexId);
-		building.finishBuild();
+		world.addSectorMarker(room, 2, 0.5f, &destinationVertexId);
+		world.finishBuild();
 		if (!created.traversalResource || !created.interiorSelector || created.buttons.size() != 2)
 			return false;
 
-		auto target = building.getGraph()->getVertexByIdentifier(destinationVertexId);
-		auto passengerId = building.createAgent("Platform passenger", room, 0, 0.5f);
-		auto passenger = building.lookupAgent(passengerId).entity;
-		auto path = building.getGraph()->calculatePath(passenger, target);
+		auto target = world.getGraph()->getVertexByIdentifier(destinationVertexId);
+		auto passengerId = world.createAgent("Platform passenger", room, 0, 0.5f);
+		auto passenger = world.lookupAgent(passengerId).entity;
+		auto path = world.getGraph()->calculatePath(passenger, target);
 		if (!path || std::count_if(path->nodes.begin(), path->nodes.end(), [](auto const& node)
 			{ return node.edge && node.edge->getType() == core::EdgeType::Lift; }) != 1) return false;
 		passenger->setPath(path, true);
@@ -3097,8 +3097,8 @@ namespace
 		for (uint32_t tick = 0; tick < MaximumSimulationTicks * 6
 			&& passenger->getState() != core::Agent::State::Idle; ++tick)
 		{
-			building.advanceTick();
-			auto snapshot = building.getSimulationSnapshot();
+			world.advanceTick();
+			auto snapshot = world.getSimulationSnapshot();
 			auto platform = std::find_if(snapshot.traversalResources.begin(), snapshot.traversalResources.end(),
 				[&](auto const& resource) { return resource.id == created.traversalResource; });
 			if (platform == snapshot.traversalResources.end() || !platform->isOpenPlatformLift
@@ -3113,7 +3113,7 @@ namespace
 					[&](auto const& request)
 					{ return request.owner == passengerId && request.hasQueuePosition; });
 			auto expectedStopTicks = (uint64_t)ceil(options.platformStopDurationSeconds
-				/ building.getFixedTimestep());
+				/ world.getFixedTimestep());
 			if (platform->liftBoardingCutoffTick >= platform->liftServiceStartedTick
 				&& platform->liftBoardingCutoffTick - platform->liftServiceStartedTick
 					== expectedStopTicks) sawConfiguredStopDuration = true;
@@ -3122,14 +3122,14 @@ namespace
 			if (onboard && !wasOnboard)
 			{
 				sawInstantBoarding = passenger->getGlobalPosition().distanceTo(previousPosition)
-					> passenger->getWalkSpeed() * building.getFixedTimestep() + 0.001f;
+					> passenger->getWalkSpeed() * world.getFixedTimestep() + 0.001f;
 				auto const centerX = passenger->getGlobalPosition().x;
 				fullyInsideWhenRegistered = centerX - CORE_AGENT_MAX_WIDTH * 0.5f >= 2.0f - 0.001f
 					&& centerX + CORE_AGENT_MAX_WIDTH * 0.5f <= 3.0f + 0.001f;
 			}
 			if (onboard)
 			{
-				auto assignedX = building.getSector(room)->getPosition().x
+				auto assignedX = world.getSector(room)->getPosition().x
 					+ platform->capacityPositions.front().position.x;
 				reachedAssignedPosition = reachedAssignedPosition
 					|| std::abs(passenger->getGlobalPosition().x - assignedX) < 0.01f;
@@ -3156,7 +3156,7 @@ namespace
 			wasOnboard = onboard;
 			previousPosition = passenger->getGlobalPosition();
 		}
-		auto final = building.getSimulationSnapshot();
+		auto final = world.getSimulationSnapshot();
 		auto platform = std::find_if(final.traversalResources.begin(), final.traversalResources.end(),
 			[&](auto const& resource) { return resource.id == created.traversalResource; });
 		return sawPhysicalQueuePosition && sawOnboard
@@ -3165,7 +3165,7 @@ namespace
 			&& reachedAssignedPosition
 			&& exitedTowardNextVertex && sawAttachedMotion && sawDestinationConfirmation
 			&& passenger->getState() == core::Agent::State::Idle
-			&& passenger->getSector() == building.getSector(room).get()
+			&& passenger->getSector() == world.getSector(room).get()
 			&& passenger->getGlobalPosition().distanceTo(target->getPosition()) < 0.001f
 			&& platform != final.traversalResources.end() && platform->occupantCount == 0
 			&& platform->virtualBoundaryCrossingCount == 0;
@@ -3173,29 +3173,29 @@ namespace
 
 	bool openPlatformLiftUsesOneJourneyAcrossIntermediateStops()
 	{
-		core::Building building("Multi-stop open platform lift", 7, 5);
-		auto room = building.addRoom("Platform room", 0, 0, 0, 6, 4);
-		core::Building::CreateLiftOptions options;
+		core::World world("Multi-stop open platform lift", 7, 5);
+		auto room = world.addRoom("Platform room", 0, 0, 0, 6, 4);
+		core::World::CreateLiftOptions options;
 		options.cellsWide = 1;
 		options.stopOffsets = { 0, 1, 2 };
 		options.capacity = 1;
 		options.minimumDwellSeconds = 0.1f;
 		options.maximumBoardingSeconds = 0.5f;
-		building.addSectorWalkway(room, 1, 2);
-		building.addSectorWalkway(room, 1, 3);
-		for (uint32_t x = 0; x < 4; ++x) building.addSectorWalkway(room, 2, x);
-		auto created = building.addSectorPlatformLift(room, 0, 2, options);
+		world.addSectorWalkway(room, 1, 2);
+		world.addSectorWalkway(room, 1, 3);
+		for (uint32_t x = 0; x < 4; ++x) world.addSectorWalkway(room, 2, x);
+		auto created = world.addSectorPlatformLift(room, 0, 2, options);
 		uint32_t sourceVertexId;
 		uint32_t destinationVertexId;
-		building.addSectorMarker(room, 0, 0.5f, &sourceVertexId);
-		building.addSectorMarker(room, 2, 0.5f, &destinationVertexId);
-		building.finishBuild();
+		world.addSectorMarker(room, 0, 0.5f, &sourceVertexId);
+		world.addSectorMarker(room, 2, 0.5f, &destinationVertexId);
+		world.finishBuild();
 
-		auto source = building.getGraph()->getVertexByIdentifier(sourceVertexId);
-		auto destination = building.getGraph()->getVertexByIdentifier(destinationVertexId);
-		auto passengerId = building.createAgent("Multi-stop platform passenger", room, 0, 0.5f);
-		auto passenger = building.lookupAgent(passengerId).entity;
-		auto path = building.getGraph()->calculatePath(passenger, source, destination);
+		auto source = world.getGraph()->getVertexByIdentifier(sourceVertexId);
+		auto destination = world.getGraph()->getVertexByIdentifier(destinationVertexId);
+		auto passengerId = world.createAgent("Multi-stop platform passenger", room, 0, 0.5f);
+		auto passenger = world.lookupAgent(passengerId).entity;
+		auto path = world.getGraph()->calculatePath(passenger, source, destination);
 		if (!path || std::count_if(path->nodes.begin(), path->nodes.end(), [](auto const& node)
 			{ return node.edge && node.edge->getType() == core::EdgeType::Lift; }) != 2) return false;
 		passenger->setPath(path, true);
@@ -3204,8 +3204,8 @@ namespace
 		for (uint32_t tick = 0; tick < MaximumSimulationTicks * 8
 			&& passenger->getState() != core::Agent::State::Idle; ++tick)
 		{
-			building.advanceTick();
-			auto snapshot = building.getSimulationSnapshot();
+			world.advanceTick();
+			auto snapshot = world.getSimulationSnapshot();
 			auto platform = std::find_if(snapshot.traversalResources.begin(),
 				snapshot.traversalResources.end(), [&](auto const& resource)
 				{ return resource.id == created.traversalResource; });
@@ -3221,26 +3221,26 @@ namespace
 
 	bool singlePassengerCompletesTwoStopLiftJourney()
 	{
-		core::Building building("Two-stop lift journey", 6, 4);
-		auto lower = building.addCorridor(0, 0, 5);
-		auto upper = building.addCorridor(2, 0, 5);
-		core::Building::CreateLiftOptions options;
+		core::World world("Two-stop lift journey", 6, 4);
+		auto lower = world.addCorridor(0, 0, 5);
+		auto upper = world.addCorridor(2, 0, 5);
+		core::World::CreateLiftOptions options;
 		options.cellsWide = 1;
 		options.stopOffsets = { 0, 2 };
-		auto created = building.addLift(1, 0, 2, options);
-		building.finishBuild();
+		auto created = world.addLift(1, 0, 2, options);
+		world.finishBuild();
 		if (!created.traversalResource || created.doors.size() != 2 || !created.interiorSelector)
 			return false;
-		auto initial = building.getSimulationSnapshot();
+		auto initial = world.getSimulationSnapshot();
 		auto initialLift = std::find_if(initial.traversalResources.begin(),
 			initial.traversalResources.end(),
 			[&](auto const& resource) { return resource.id == created.traversalResource; });
 		if (initialLift == initial.traversalResources.end() || initialLift->capacity != 2) return false;
-		auto target = building.getGraph()->getClosestVertexInSector(
-			building.getSector(upper).get(), { 2.5f, 2.0f });
-		auto passengerId = building.createAgent("Lift passenger", lower, 0, 0.5f);
-		auto passenger = building.lookupAgent(passengerId).entity;
-		auto path = building.getGraph()->calculatePath(passenger, target);
+		auto target = world.getGraph()->getClosestVertexInSector(
+			world.getSector(upper).get(), { 2.5f, 2.0f });
+		auto passengerId = world.createAgent("Lift passenger", lower, 0, 0.5f);
+		auto passenger = world.lookupAgent(passengerId).entity;
+		auto path = world.getGraph()->calculatePath(passenger, target);
 		if (!path) return false;
 		uint32_t boardingEdges = 0, rideEdges = 0;
 		for (auto const& node : path->nodes)
@@ -3263,11 +3263,11 @@ namespace
 		for (uint32_t i = 0; i < MaximumSimulationTicks * 4
 			&& passenger->getState() != core::Agent::State::Idle; ++i)
 		{
-			building.advanceTick();
-			if (passenger->getSector() == building.getSector(lower).get()
+			world.advanceTick();
+			if (passenger->getSector() == world.getSector(lower).get()
 				&& passenger->getGlobalPosition().y > 0.001f)
 				climbedTowardLandingCallButton = true;
-			auto snapshot = building.getSimulationSnapshot();
+			auto snapshot = world.getSimulationSnapshot();
 			auto lift = std::find_if(snapshot.traversalResources.begin(), snapshot.traversalResources.end(),
 				[&](auto const& resource) { return resource.id == created.traversalResource; });
 			if (lift == snapshot.traversalResources.end() || !lift->isLift) return false;
@@ -3294,7 +3294,7 @@ namespace
 				sawIntentWithoutDispatch = true;
 			sawReservedCapacity = sawReservedCapacity || lift->admissionReservationCount == 1;
 			sawOnboard = sawOnboard || (lift->liftPassenger == passengerId
-				&& passenger->getSector() == building.getSector(created.lift.sector->getIndex()).get());
+				&& passenger->getSector() == world.getSector(created.lift.sector->getIndex()).get());
 			for (auto const& operation : snapshot.deviceOperations)
 				if (operation.command.type == core::DeviceCommandType::SelectLiftDestination
 					&& operation.state == core::DeviceOperationState::Succeeded)
@@ -3309,7 +3309,7 @@ namespace
 					sawMovingAttachedPassenger = true;
 			}
 		}
-		auto final = building.getSimulationSnapshot();
+		auto final = world.getSimulationSnapshot();
 		auto lift = std::find_if(final.traversalResources.begin(), final.traversalResources.end(),
 			[&](auto const& resource) { return resource.id == created.traversalResource; });
 		return sawIntentWithoutDispatch && sawReservedCapacity && sawOnboard
@@ -3317,43 +3317,43 @@ namespace
 			&& sawQueuedDebug && sawEnteringDebug && sawInLiftDebug && sawExitingDebug
 			&& !climbedTowardLandingCallButton
 			&& passenger->getState() == core::Agent::State::Idle
-			&& passenger->getSector() == building.getSector(upper).get()
+			&& passenger->getSector() == world.getSector(upper).get()
 			&& lift != final.traversalResources.end() && !lift->liftPassenger
 			&& lift->occupantCount == 0;
 	}
 
 	bool liftDoorQueueRequestsBeforeOccupiedTail()
 	{
-		core::Building building("Early Lift Door queue", 8, 4);
-		auto lower = building.addCorridor(0, 0, 7);
-		auto upper = building.addCorridor(2, 0, 7);
-		core::Building::CreateLiftOptions options;
+		core::World world("Early Lift Door queue", 8, 4);
+		auto lower = world.addCorridor(0, 0, 7);
+		auto upper = world.addCorridor(2, 0, 7);
+		core::World::CreateLiftOptions options;
 		options.cellsWide = 1;
 		options.stopOffsets = { 0, 2 };
 		options.capacity = 1;
-		auto created = building.addLift(1, 0, 3, options);
+		auto created = world.addLift(1, 0, 3, options);
 		uint32_t approachId;
-		building.addSectorMarker(lower, 0, 2.75f, &approachId);
-		building.finishBuild();
+		world.addSectorMarker(lower, 0, 2.75f, &approachId);
+		world.finishBuild();
 
-		auto upperTarget = building.getGraph()->getClosestVertexInSector(
-			building.getSector(upper).get(), { 3.5f, 2.0f });
-		auto lowerTarget = building.getGraph()->getClosestVertexInSector(
-			building.getSector(lower).get(), { 3.5f, 0.0f });
+		auto upperTarget = world.getGraph()->getClosestVertexInSector(
+			world.getSector(upper).get(), { 3.5f, 2.0f });
+		auto lowerTarget = world.getGraph()->getClosestVertexInSector(
+			world.getSector(lower).get(), { 3.5f, 0.0f });
 		if (!upperTarget || !lowerTarget) return false;
 
 		// Send the sole-capacity car away with an occupant so the lower landing
 		// queue remains unavailable while the following Agents approach it.
-		auto rider = building.createAgent("Descending rider", upper, 0, 3.5f);
-		auto riderEntity = building.lookupAgent(rider).entity;
-		auto riderPath = building.getGraph()->calculatePath(riderEntity, lowerTarget);
+		auto rider = world.createAgent("Descending rider", upper, 0, 3.5f);
+		auto riderEntity = world.lookupAgent(rider).entity;
+		auto riderPath = world.getGraph()->calculatePath(riderEntity, lowerTarget);
 		if (!riderPath) return false;
 		riderEntity->setPath(std::move(riderPath), true);
 		bool descending = false;
 		for (uint32_t tick = 0; tick < MaximumSimulationTicks * 4; ++tick)
 		{
-			building.advanceTick();
-			auto snapshot = building.getSimulationSnapshot();
+			world.advanceTick();
+			auto snapshot = world.getSimulationSnapshot();
 			auto lift = find_if(snapshot.traversalResources.begin(), snapshot.traversalResources.end(),
 				[&](auto const& value) { return value.id == created.traversalResource; });
 			if (lift != snapshot.traversalResources.end() && lift->liftMoving
@@ -3366,16 +3366,16 @@ namespace
 		}
 		if (!descending) return false;
 
-		auto blocker = building.createAgent("Lift queue head", lower, 0, 3.5f);
-		auto blockerEntity = building.lookupAgent(blocker).entity;
-		auto blockerPath = building.getGraph()->calculatePath(blockerEntity, upperTarget);
+		auto blocker = world.createAgent("Lift queue head", lower, 0, 3.5f);
+		auto blockerEntity = world.lookupAgent(blocker).entity;
+		auto blockerPath = world.getGraph()->calculatePath(blockerEntity, upperTarget);
 		if (!blockerPath) return false;
 		blockerEntity->setPath(std::move(blockerPath), true);
 		bool queueEstablished = false;
 		for (uint32_t tick = 0; tick < MaximumSimulationTicks; ++tick)
 		{
-			building.advanceTick();
-			auto snapshot = building.getSimulationSnapshot();
+			world.advanceTick();
+			auto snapshot = world.getSimulationSnapshot();
 			auto landing = find_if(snapshot.traversalResources.begin(), snapshot.traversalResources.end(),
 				[&](auto const& value) { return value.id == created.doors.front().traversalResource; });
 			if (landing != snapshot.traversalResources.end()
@@ -3390,18 +3390,18 @@ namespace
 		}
 		if (!queueEstablished) return false;
 
-		auto approach = building.getGraph()->getVertexByIdentifier(approachId);
-		auto waiter = building.createAgent("Lift waiter", lower, 0, 2.75f);
-		auto waiterEntity = building.lookupAgent(waiter).entity;
-		auto path = building.getGraph()->calculatePath(waiterEntity, approach, upperTarget);
+		auto approach = world.getGraph()->getVertexByIdentifier(approachId);
+		auto waiter = world.createAgent("Lift waiter", lower, 0, 2.75f);
+		auto waiterEntity = world.lookupAgent(waiter).entity;
+		auto path = world.getGraph()->calculatePath(waiterEntity, approach, upperTarget);
 		if (!path) return false;
 		waiterEntity->setPath(std::move(path), true);
 		bool requestedBeforeOccupiedTail = false;
 		for (uint32_t tick = 0; tick < MaximumSimulationTicks; ++tick)
 		{
 			auto const positionBeforeTick = waiterEntity->getGlobalPosition();
-			building.advanceTick();
-			auto snapshot = building.getSimulationSnapshot();
+			world.advanceTick();
+			auto snapshot = world.getSimulationSnapshot();
 			auto request = find_if(snapshot.traversalRequests.begin(), snapshot.traversalRequests.end(),
 				[&](auto const& value) { return value.owner == waiter
 					&& value.resource == created.doors.front().traversalResource
@@ -3423,24 +3423,24 @@ namespace
 
 	bool liftCallOperatorDoesNotFightItsQueuePosition()
 	{
-		core::Building building("Lift call operator queue", 16, 3);
-		auto bottom = building.addCorridor(0, 0, 16);
-		auto middle = building.addCorridor(1, 0, 16);
-		auto top = building.addCorridor(2, 0, 16);
-		core::Building::CreateLiftOptions options;
+		core::World world("Lift call operator queue", 16, 3);
+		auto bottom = world.addCorridor(0, 0, 16);
+		auto middle = world.addCorridor(1, 0, 16);
+		auto top = world.addCorridor(2, 0, 16);
+		core::World::CreateLiftOptions options;
 		options.cellsWide = 1;
 		options.stopOffsets = { 0, 1, 2 };
 		options.capacity = 2;
 		options.minimumDwellSeconds = 0.75f;
 		options.maximumBoardingSeconds = 5.0f;
-		building.addLift(1, 0, 8, options);
+		world.addLift(1, 0, 8, options);
 		uint32_t bottomTargetId, middleTargetId, topTargetId;
-		building.addSectorMarker(bottom, 0, 0.5f, &bottomTargetId);
-		building.addSectorMarker(middle, 0, 0.5f, &middleTargetId);
-		building.addSectorMarker(top, 0, 0.5f, &topTargetId);
-		building.finishBuild();
+		world.addSectorMarker(bottom, 0, 0.5f, &bottomTargetId);
+		world.addSectorMarker(middle, 0, 0.5f, &middleTargetId);
+		world.addSectorMarker(top, 0, 0.5f, &topTargetId);
+		world.finishBuild();
 
-		auto graph = building.getGraph();
+		auto graph = world.getGraph();
 		auto bottomTarget = graph->getVertexByIdentifier(bottomTargetId);
 		auto middleTarget = graph->getVertexByIdentifier(middleTargetId);
 		auto topTarget = graph->getVertexByIdentifier(topTargetId);
@@ -3454,10 +3454,10 @@ namespace
 		for (auto const& group : groups)
 			for (uint32_t i = 0; i < 3; ++i)
 			{
-				auto id = building.createAgent(
+				auto id = world.createAgent(
 					std::string(group.name) + " " + std::to_string(i + 1),
 					group.sector, 0, 14.75f - i * 0.75f);
-				auto agent = building.lookupAgent(id).entity;
+				auto agent = world.lookupAgent(id).entity;
 				auto path = graph->calculatePath(agent, group.target);
 				if (!path) return false;
 				agent->setPath(std::move(path), true);
@@ -3466,50 +3466,50 @@ namespace
 
 		for (uint32_t tick = 0; tick < MaximumSimulationTicks * 12; ++tick)
 		{
-			building.advanceTick();
-			auto snapshot = building.getSimulationSnapshot();
+			world.advanceTick();
+			auto snapshot = world.getSimulationSnapshot();
 			if (std::any_of(snapshot.traversalRequests.begin(), snapshot.traversalRequests.end(),
 				[](auto const& request)
 				{ return request.failureReason == core::TraversalFailureReason::LocalGoalUnreachable; }))
 				return false;
 			if (std::all_of(agents.begin(), agents.end(), [&](auto id)
-				{ return building.lookupAgent(id).entity->getState() == core::Agent::State::Idle; }))
-				return building.lookupAgent(agents[4]).entity->getSector()
-					== building.getSector(bottom).get();
+				{ return world.lookupAgent(id).entity->getState() == core::Agent::State::Idle; }))
+				return world.lookupAgent(agents[4]).entity->getSector()
+					== world.getSector(bottom).get();
 		}
 		return false;
 	}
 
 	bool waitingLiftPassengersFillArrivingCar()
 	{
-		core::Building building("Arriving lift boards waiting capacity", 7, 4);
-		auto lower = building.addCorridor(0, 0, 6);
-		auto upper = building.addCorridor(2, 0, 6);
-		core::Building::CreateLiftOptions options;
+		core::World world("Arriving lift boards waiting capacity", 7, 4);
+		auto lower = world.addCorridor(0, 0, 6);
+		auto upper = world.addCorridor(2, 0, 6);
+		core::World::CreateLiftOptions options;
 		options.cellsWide = 1;
 		options.stopOffsets = { 0, 2 };
 		options.capacity = 2;
 		options.minimumDwellSeconds = 0.1f;
 		options.maximumBoardingSeconds = 0.5f;
-		auto created = building.addLift(1, 0, 2, options);
-		building.finishBuild();
+		auto created = world.addLift(1, 0, 2, options);
+		world.finishBuild();
 
-		auto lowerTarget = building.getGraph()->getClosestVertexInSector(
-			building.getSector(lower).get(), { 2.5f, 0.0f });
-		auto upperTarget = building.getGraph()->getClosestVertexInSector(
-			building.getSector(upper).get(), { 2.5f, 2.0f });
+		auto lowerTarget = world.getGraph()->getClosestVertexInSector(
+			world.getSector(lower).get(), { 2.5f, 0.0f });
+		auto upperTarget = world.getGraph()->getClosestVertexInSector(
+			world.getSector(upper).get(), { 2.5f, 2.0f });
 		if (!lowerTarget || !upperTarget) return false;
-		auto downId = building.createAgent("Down passenger", upper, 0, 2.0f);
-		auto down = building.lookupAgent(downId).entity;
-		auto downPath = building.getGraph()->calculatePath(down, lowerTarget);
+		auto downId = world.createAgent("Down passenger", upper, 0, 2.0f);
+		auto down = world.lookupAgent(downId).entity;
+		auto downPath = world.getGraph()->calculatePath(down, lowerTarget);
 		if (!downPath) return false;
 		down->setPath(downPath, true);
 
 		bool descending = false;
 		for (uint32_t tick = 0; tick < MaximumSimulationTicks * 4; ++tick)
 		{
-			building.advanceTick();
-			auto snapshot = building.getSimulationSnapshot();
+			world.advanceTick();
+			auto snapshot = world.getSimulationSnapshot();
 			auto lift = std::find_if(snapshot.traversalResources.begin(), snapshot.traversalResources.end(),
 				[&](auto const& resource) { return resource.id == created.traversalResource; });
 			if (lift != snapshot.traversalResources.end() && lift->liftMoving
@@ -3521,17 +3521,17 @@ namespace
 
 		for (uint32_t i = 0; i < 2; ++i)
 		{
-			auto id = building.createAgent("Waiting passenger", lower, 0, 1.7f - i * 0.35f);
-			auto agent = building.lookupAgent(id).entity;
-			auto path = building.getGraph()->calculatePath(agent, upperTarget);
+			auto id = world.createAgent("Waiting passenger", lower, 0, 1.7f - i * 0.35f);
+			auto agent = world.lookupAgent(id).entity;
+			auto path = world.getGraph()->calculatePath(agent, upperTarget);
 			if (!path) return false;
 			agent->setPath(path, true);
 		}
 		bool sawBothWaiting = false;
 		for (uint32_t tick = 0; tick < MaximumSimulationTicks * 5; ++tick)
 		{
-			building.advanceTick();
-			auto snapshot = building.getSimulationSnapshot();
+			world.advanceTick();
+			auto snapshot = world.getSimulationSnapshot();
 			auto lift = std::find_if(snapshot.traversalResources.begin(), snapshot.traversalResources.end(),
 				[&](auto const& resource) { return resource.id == created.traversalResource; });
 			if (lift == snapshot.traversalResources.end()) return false;
@@ -3549,18 +3549,18 @@ namespace
 
 	bool liftCapacityAndStopPhasesAreEnforced()
 	{
-		core::Building building("Finite lift", 7, 4);
-		auto lower = building.addCorridor(0, 0, 6);
-		auto upper = building.addCorridor(2, 0, 6);
-		core::Building::CreateLiftOptions options;
+		core::World world("Finite lift", 7, 4);
+		auto lower = world.addCorridor(0, 0, 6);
+		auto upper = world.addCorridor(2, 0, 6);
+		core::World::CreateLiftOptions options;
 		options.cellsWide = 1;
 		options.stopOffsets = { 0, 2 };
 		options.capacity = 2;
 		options.minimumDwellSeconds = 0.1f;
 		options.maximumBoardingSeconds = 0.5f;
-		auto created = building.addLift(1, 0, 2, options);
-		building.finishBuild();
-		auto initial = building.getSimulationSnapshot();
+		auto created = world.addLift(1, 0, 2, options);
+		world.finishBuild();
+		auto initial = world.getSimulationSnapshot();
 		for (auto const& door : created.doors)
 		{
 			auto resource = std::find_if(initial.traversalResources.begin(),
@@ -3570,7 +3570,7 @@ namespace
 			bool foundCarLane = false, foundCorridorLane = false;
 			for (auto const& lane : resource->queueLanes)
 			{
-				auto sector = building.getSector((uint32_t)lane.sector.value - 1);
+				auto sector = world.getSector((uint32_t)lane.sector.value - 1);
 				if (sector->getIndex() == created.lift.sector->getIndex())
 				{
 					foundCarLane = true;
@@ -3588,14 +3588,14 @@ namespace
 			}
 			if (!foundCarLane || !foundCorridorLane) return false;
 		}
-		auto target = building.getGraph()->getClosestVertexInSector(
-			building.getSector(upper).get(), { 2.5f, 2.0f });
+		auto target = world.getGraph()->getClosestVertexInSector(
+			world.getSector(upper).get(), { 2.5f, 2.0f });
 		std::vector<core::AgentId> passengers;
 		for (uint32_t i = 0; i < 3; ++i)
 		{
-			auto id = building.createAgent("Capacity passenger", lower, 0, 0.3f + i * 0.15f);
-			auto agent = building.lookupAgent(id).entity;
-			auto path = building.getGraph()->calculatePath(agent, target);
+			auto id = world.createAgent("Capacity passenger", lower, 0, 0.3f + i * 0.15f);
+			auto agent = world.lookupAgent(id).entity;
+			auto path = world.getGraph()->calculatePath(agent, target);
 			if (!path) return false;
 			agent->setPath(path, true);
 			passengers.push_back(id);
@@ -3607,8 +3607,8 @@ namespace
 		bool checkedFirstDepartureCapacity = false;
 		for (uint32_t tick = 0; tick < MaximumSimulationTicks * 8; ++tick)
 		{
-			building.advanceTick();
-			auto snapshot = building.getSimulationSnapshot();
+			world.advanceTick();
+			auto snapshot = world.getSimulationSnapshot();
 			std::vector<core::Vector2> corridorQueueTargets;
 			for (auto const& request : snapshot.traversalRequests)
 			{
@@ -3644,9 +3644,9 @@ namespace
 				sawCutoffHonorReservations = true;
 			if (std::all_of(passengers.begin(), passengers.end(), [&](auto id)
 				{
-					auto agent = building.lookupAgent(id).entity;
+					auto agent = world.lookupAgent(id).entity;
 					return agent && agent->getState() == core::Agent::State::Idle
-						&& agent->getSector() == building.getSector(upper).get();
+						&& agent->getSector() == world.getSector(upper).get();
 				}))
 			{
 				return sawFullCarWithWaitingPassenger && sawCutoffHonorReservations
@@ -3658,34 +3658,34 @@ namespace
 
 	bool multiStopLiftUsesDeterministicLookScheduling()
 	{
-		core::Building building("LOOK lift", 7, 7);
-		auto lower = building.addCorridor(0, 0, 6);
-		auto middle = building.addCorridor(2, 0, 6);
-		auto upper = building.addCorridor(5, 0, 6);
-		core::Building::CreateLiftOptions options;
+		core::World world("LOOK lift", 7, 7);
+		auto lower = world.addCorridor(0, 0, 6);
+		auto middle = world.addCorridor(2, 0, 6);
+		auto upper = world.addCorridor(5, 0, 6);
+		core::World::CreateLiftOptions options;
 		options.cellsWide = 1;
 		options.stopOffsets = { 0, 2, 5 }; // deliberately non-uniform
 		options.capacity = 2;
 		options.minimumDwellSeconds = 0.1f;
 		options.maximumBoardingSeconds = 3.0f;
-		auto created = building.addLift(1, 0, 2, options);
-		building.finishBuild();
+		auto created = world.addLift(1, 0, 2, options);
+		world.finishBuild();
 
-		auto graph = building.getGraph();
-		auto lowerTarget = graph->getClosestVertexInSector(building.getSector(lower).get(), { 2.5f, 0.0f });
-		auto middleTarget = graph->getClosestVertexInSector(building.getSector(middle).get(), { 2.5f, 2.0f });
-		auto upperTarget = graph->getClosestVertexInSector(building.getSector(upper).get(), { 2.5f, 5.0f });
+		auto graph = world.getGraph();
+		auto lowerTarget = graph->getClosestVertexInSector(world.getSector(lower).get(), { 2.5f, 0.0f });
+		auto middleTarget = graph->getClosestVertexInSector(world.getSector(middle).get(), { 2.5f, 2.0f });
+		auto upperTarget = graph->getClosestVertexInSector(world.getSector(upper).get(), { 2.5f, 5.0f });
 		if (!lowerTarget || !middleTarget || !upperTarget) return false;
 
 		struct Journey { core::AgentId id; std::shared_ptr<const core::Vertex> target; };
 		std::vector<Journey> journeys = {
-			{ building.createAgent("Up through run", lower, 0, 2.5f), upperTarget },
-			{ building.createAgent("Down middle", middle, 0, 2.5f), lowerTarget },
-			{ building.createAgent("Down upper", upper, 0, 2.5f), middleTarget }
+			{ world.createAgent("Up through run", lower, 0, 2.5f), upperTarget },
+			{ world.createAgent("Down middle", middle, 0, 2.5f), lowerTarget },
+			{ world.createAgent("Down upper", upper, 0, 2.5f), middleTarget }
 		};
 		for (auto const& journey : journeys)
 		{
-			auto agent = building.lookupAgent(journey.id).entity;
+			auto agent = world.lookupAgent(journey.id).entity;
 			auto path = graph->calculatePath(agent, journey.target);
 			if (!path) return false;
 			agent->setPath(path, true);
@@ -3697,8 +3697,8 @@ namespace
 		bool observedCoalescedMiddleDemand = false;
 		for (uint32_t tick = 0; tick < MaximumSimulationTicks * 12; ++tick)
 		{
-			building.advanceTick();
-			auto snapshot = building.getSimulationSnapshot();
+			world.advanceTick();
+			auto snapshot = world.getSimulationSnapshot();
 			auto lift = std::find_if(snapshot.traversalResources.begin(), snapshot.traversalResources.end(),
 				[&](auto const& resource) { return resource.id == created.traversalResource; });
 			if (lift == snapshot.traversalResources.end()) return false;
@@ -3719,36 +3719,36 @@ namespace
 			previousPhase = lift->liftStopPhase;
 			previousPosition = lift->liftPosition;
 			if (std::all_of(journeys.begin(), journeys.end(), [&](auto const& journey)
-				{ return building.lookupAgent(journey.id).entity->getState() == core::Agent::State::Idle; }))
+				{ return world.lookupAgent(journey.id).entity->getState() == core::Agent::State::Idle; }))
 				break;
 		}
 
 		return observedCoalescedMiddleDemand
 			&& serviceOrder == std::vector<uint32_t>({ 0, 2, 1, 0 })
-			&& building.lookupAgent(journeys[0].id).entity->getSector() == building.getSector(upper).get()
-			&& building.lookupAgent(journeys[1].id).entity->getSector() == building.getSector(lower).get()
-			&& building.lookupAgent(journeys[2].id).entity->getSector() == building.getSector(middle).get();
+			&& world.lookupAgent(journeys[0].id).entity->getSector() == world.getSector(upper).get()
+			&& world.lookupAgent(journeys[1].id).entity->getSector() == world.getSector(lower).get()
+			&& world.lookupAgent(journeys[2].id).entity->getSector() == world.getSector(middle).get();
 	}
 
 	bool shuttlePassengerWalksToForwardInteriorSpot()
 	{
-		core::Building building("Shuttle interior walking", 16, 2);
-		auto left = building.addRoom("Left platform", 0, 0, 0, 4, 1);
-		auto right = building.addRoom("Right platform", 0, 0, 10, 4, 1);
-		core::Building::CreateShuttleOptions options{ 1, 4, { 0, 10 }, 0 };
+		core::World world("Shuttle interior walking", 16, 2);
+		auto left = world.addRoom("Left platform", 0, 0, 0, 4, 1);
+		auto right = world.addRoom("Right platform", 0, 0, 10, 4, 1);
+		core::World::CreateShuttleOptions options{ 1, 4, { 0, 10 }, 0 };
 		options.capacity = 3;
 		options.doorMask = 0b0001;
 		options.minimumDwellSeconds = 0.0f;
 		options.maximumBoardingSeconds = 0.1f;
-		auto created = building.addShuttle(1, 0, 0, 15, options);
-		building.finishBuild();
+		auto created = world.addShuttle(1, 0, 0, 15, options);
+		world.finishBuild();
 
-		auto target = building.getGraph()->getClosestVertexInSector(
-			building.getSector(right).get(), { 11.5f, 0.0f });
+		auto target = world.getGraph()->getClosestVertexInSector(
+			world.getSector(right).get(), { 11.5f, 0.0f });
 		if (!target) return false;
-		auto passengerId = building.createAgent("Walking shuttle passenger", left, 0, 0.5f);
-		auto passenger = building.lookupAgent(passengerId).entity;
-		auto path = building.getGraph()->calculatePath(passenger, target);
+		auto passengerId = world.createAgent("Walking shuttle passenger", left, 0, 0.5f);
+		auto passenger = world.lookupAgent(passengerId).entity;
+		auto path = world.getGraph()->calculatePath(passenger, target);
 		if (!path) return false;
 		passenger->setPath(path, true);
 
@@ -3760,8 +3760,8 @@ namespace
 		float previousX = passenger->getGlobalPosition().x;
 		for (uint32_t tick = 0; tick < MaximumSimulationTicks * 8; ++tick)
 		{
-			building.advanceTick();
-			auto snapshot = building.getSimulationSnapshot();
+			world.advanceTick();
+			auto snapshot = world.getSimulationSnapshot();
 			auto shuttle = std::find_if(snapshot.traversalResources.begin(),
 				snapshot.traversalResources.end(), [&](auto const& resource)
 				{ return resource.id == created.traversalResource; });
@@ -3770,11 +3770,11 @@ namespace
 				|| shuttle->shuttleCarriages.front().positions.size() != options.capacity) return false;
 
 			auto onboard = passenger->getSector()
-				== building.getSector(created.shuttle.sector->getIndex()).get();
+				== world.getSector(created.shuttle.sector->getIndex()).get();
 			if (onboard && !wasOnboard)
 			{
 				boardedWithoutTeleport = std::abs(passenger->getGlobalPosition().x - previousX)
-					<= passenger->getWalkSpeed() * building.getFixedTimestep() + 0.001f;
+					<= passenger->getWalkSpeed() * world.getFixedTimestep() + 0.001f;
 				auto const& positions = shuttle->shuttleCarriages.front().positions;
 				selectedForwardmostSpot = positions.back().occupant == passengerId;
 			}
@@ -3790,27 +3790,27 @@ namespace
 			wasOnboard = onboard;
 			previousX = passenger->getGlobalPosition().x;
 			if (passenger->getState() == core::Agent::State::Idle
-				&& passenger->getSector() == building.getSector(right).get()) break;
+				&& passenger->getSector() == world.getSector(right).get()) break;
 		}
 		return boardedWithoutTeleport && selectedForwardmostSpot && reachedInteriorSpot
 			&& walkedWhileShuttleMoving && passenger->getState() == core::Agent::State::Idle
-			&& passenger->getSector() == building.getSector(right).get();
+			&& passenger->getSector() == world.getSector(right).get();
 	}
 
 	bool singleCarriageShuttleUsesTransportJourneyProtocol()
 	{
-		core::Building building("Single carriage shuttle", 12, 2);
-		auto left = building.addRoom("Left platform", 0, 0, 0, 3, 1);
-		auto right = building.addRoom("Right platform", 0, 0, 7, 3, 1);
-		core::Building::CreateShuttleOptions options{ 1, 3, { 0, 7 }, 0 };
+		core::World world("Single carriage shuttle", 12, 2);
+		auto left = world.addRoom("Left platform", 0, 0, 0, 3, 1);
+		auto right = world.addRoom("Right platform", 0, 0, 7, 3, 1);
+		core::World::CreateShuttleOptions options{ 1, 3, { 0, 7 }, 0 };
 		options.capacity = 2;
 		options.minimumDwellSeconds = 0.1f;
 		options.maximumBoardingSeconds = 0.5f;
-		auto created = building.addShuttle(1, 0, 0, 11, options);
-		building.finishBuild();
+		auto created = world.addShuttle(1, 0, 0, 11, options);
+		world.finishBuild();
 		if (!created.traversalResource || !created.interiorSelector || created.doors.size() != 2)
 			return false;
-		auto initial = building.getSimulationSnapshot();
+		auto initial = world.getSimulationSnapshot();
 		for (auto const& door : created.doors)
 		{
 			auto landing = std::find_if(initial.traversalResources.begin(),
@@ -3823,15 +3823,15 @@ namespace
 			if (carLane == landing->queueLanes.end()
 				|| carLane->positions.size() != options.capacity) return false;
 		}
-		auto target = building.getGraph()->getClosestVertexInSector(
-			building.getSector(right).get(), { 8.5f, 0.0f });
+		auto target = world.getGraph()->getClosestVertexInSector(
+			world.getSector(right).get(), { 8.5f, 0.0f });
 		if (!target) return false;
 		std::vector<core::AgentId> passengers;
 		for (uint32_t i = 0; i < 3; ++i)
 		{
-			auto id = building.createAgent("Shuttle passenger", left, 0, 1.0f + i * 0.15f);
-			auto agent = building.lookupAgent(id).entity;
-			auto path = building.getGraph()->calculatePath(agent, target);
+			auto id = world.createAgent("Shuttle passenger", left, 0, 1.0f + i * 0.15f);
+			auto agent = world.lookupAgent(id).entity;
+			auto path = world.getGraph()->calculatePath(agent, target);
 			if (!path) return false;
 			uint32_t rides = 0, doors = 0;
 			for (auto const& node : path->nodes) if (node.edge)
@@ -3852,8 +3852,8 @@ namespace
 		std::map<core::AgentId, float> previousCarriageX;
 		for (uint32_t tick = 0; tick < MaximumSimulationTicks * 14; ++tick)
 		{
-			building.advanceTick();
-			auto snapshot = building.getSimulationSnapshot();
+			world.advanceTick();
+			auto snapshot = world.getSimulationSnapshot();
 			auto shuttle = std::find_if(snapshot.traversalResources.begin(), snapshot.traversalResources.end(),
 				[&](auto const& resource) { return resource.id == created.traversalResource; });
 			if (shuttle == snapshot.traversalResources.end() || !shuttle->isShuttle
@@ -3870,8 +3870,8 @@ namespace
 			sawPlatformQueuePosition = sawPlatformQueuePosition || !platformQueueTargets.empty();
 			for (auto passengerId : passengers)
 			{
-				auto passenger = building.lookupAgent(passengerId).entity;
-				if (passenger->getSector() != building.getSector(created.shuttle.sector->getIndex()).get())
+				auto passenger = world.lookupAgent(passengerId).entity;
+				if (passenger->getSector() != world.getSector(created.shuttle.sector->getIndex()).get())
 				{
 					previousCarriageX.erase(passengerId);
 					continue;
@@ -3880,7 +3880,7 @@ namespace
 				if (auto previous = previousCarriageX.find(passengerId); previous != previousCarriageX.end())
 				{
 					if (std::abs(carriageX - previous->second) > passenger->getWalkSpeed()
-						* building.getFixedTimestep() + 0.001f) return false;
+						* world.getFixedTimestep() + 0.001f) return false;
 				}
 				previousCarriageX[passengerId] = carriageX;
 			}
@@ -3893,23 +3893,23 @@ namespace
 			}
 			for (auto const& passenger : passengers)
 			{
-				auto agent = building.lookupAgent(passenger).entity;
-				if (agent->getSector() == building.getSector(left).get()
+				auto agent = world.lookupAgent(passenger).entity;
+				if (agent->getSector() == world.getSector(left).get()
 					&& std::abs(agent->getGlobalPosition().y) > 0.001f) return false;
 			}
 			if (shuttle->liftMoving)
 				for (auto const& passenger : passengers)
 				{
-					auto agent = building.lookupAgent(passenger).entity;
-					if (agent->getSector() == building.getSector(created.shuttle.sector->getIndex()).get()
+					auto agent = world.lookupAgent(passenger).entity;
+					if (agent->getSector() == world.getSector(created.shuttle.sector->getIndex()).get()
 						&& agent->getGlobalPosition().x >= shuttle->liftPosition)
 						sawAttachedMotion = true;
 				}
 			if (std::all_of(passengers.begin(), passengers.end(), [&](auto id)
-				{ auto agent = building.lookupAgent(id).entity; return agent->getState() == core::Agent::State::Idle
-					&& agent->getSector() == building.getSector(right).get(); })) break;
+				{ auto agent = world.lookupAgent(id).entity; return agent->getState() == core::Agent::State::Idle
+					&& agent->getSector() == world.getSector(right).get(); })) break;
 		}
-		auto final = building.getSimulationSnapshot();
+		auto final = world.getSimulationSnapshot();
 		auto shuttle = std::find_if(final.traversalResources.begin(), final.traversalResources.end(),
 			[&](auto const& resource) { return resource.id == created.traversalResource; });
 		return sawPhysicalCall && sawFullWithWaiter && sawPlatformQueuePosition
@@ -3920,23 +3920,23 @@ namespace
 
 	bool shuttleArrivalFollowsFinalPathNodeWithoutBacktracking()
 	{
-		core::Building building("Multi-door Shuttle arrival", 48, 6);
-		auto left = building.addCorridor(1, 1, 6);
-		auto right = building.addCorridor(1, 15, 6);
-		core::Building::CreateShuttleOptions options{ 1, 3, { 0, 13 }, 0 };
+		core::World world("Multi-door Shuttle arrival", 48, 6);
+		auto left = world.addCorridor(1, 1, 6);
+		auto right = world.addCorridor(1, 15, 6);
+		core::World::CreateShuttleOptions options{ 1, 3, { 0, 13 }, 0 };
 		options.capacity = 5;
 		options.doorMask = 0b101;
 		options.minimumDwellSeconds = 0.75f;
 		options.maximumBoardingSeconds = 5.0f;
-		auto created = building.addShuttle(1, 1, 3, 16, options);
-		building.finishBuild();
+		auto created = world.addShuttle(1, 1, 3, 16, options);
+		world.finishBuild();
 
-		auto target = building.getGraph()->getClosestVertexInSector(
-			building.getSector(right).get(), { 20.5f, 1.0f });
+		auto target = world.getGraph()->getClosestVertexInSector(
+			world.getSector(right).get(), { 20.5f, 1.0f });
 		if (!target) return false;
-		auto passengerId = building.createAgent("Multi-door passenger", left, 0, 0.4f);
-		auto passenger = building.lookupAgent(passengerId).entity;
-		auto path = building.getGraph()->calculatePath(passenger, target);
+		auto passengerId = world.createAgent("Multi-door passenger", left, 0, 0.4f);
+		auto passenger = world.lookupAgent(passengerId).entity;
+		auto path = world.getGraph()->calculatePath(passenger, target);
 		if (!path) return false;
 		uint32_t shuttleEdges = 0;
 		float finalShuttleX = 0.0f;
@@ -3956,17 +3956,17 @@ namespace
 		bool sawBoardingWindowAfterDisembark = false;
 		for (uint32_t tick = 0; tick < MaximumSimulationTicks * 14; ++tick)
 		{
-			building.advanceTick();
-			auto snapshot = building.getSimulationSnapshot();
+			world.advanceTick();
+			auto snapshot = world.getSimulationSnapshot();
 			auto shuttle = std::find_if(snapshot.traversalResources.begin(),
 				snapshot.traversalResources.end(), [&](auto const& resource)
 				{ return resource.id == created.traversalResource; });
 			if (shuttle == snapshot.traversalResources.end()) return false;
-			passenger = building.lookupAgent(passengerId).entity;
+			passenger = world.lookupAgent(passengerId).entity;
 			if (!shuttle->liftMoving && shuttle->liftCurrentStop == 1)
 			{
 				if (passenger->getSector()
-					== building.getSector(created.shuttle.sector->getIndex()).get())
+					== world.getSector(created.shuttle.sector->getIndex()).get())
 					lastOccupiedAtDestination = snapshot.tick;
 				if (shuttle->liftStopPhase == core::LiftStopPhase::Disembarking)
 				{
@@ -3987,14 +3987,14 @@ namespace
 					&& lastOccupiedAtDestination)
 				{
 					auto boardingTicks = (uint64_t)std::ceil(options.maximumBoardingSeconds
-						/ building.getFixedTimestep());
+						/ world.getFixedTimestep());
 					if (shuttle->liftServiceStartedTick <= *lastOccupiedAtDestination
 						|| shuttle->liftBoardingCutoffTick
 							!= shuttle->liftServiceStartedTick + boardingTicks) return false;
 					sawBoardingWindowAfterDisembark = true;
 				}
 			}
-			if (passenger->getSector() == building.getSector(created.shuttle.sector->getIndex()).get()
+			if (passenger->getSector() == world.getSector(created.shuttle.sector->getIndex()).get()
 				&& !shuttle->liftMoving && shuttle->liftCurrentStop == 1)
 			{
 				auto x = passenger->getGlobalPosition().x;
@@ -4006,41 +4006,41 @@ namespace
 				previousStoppedX = x;
 			}
 			if (sawBoardingWindowAfterDisembark && passenger->getState() == core::Agent::State::Idle
-				&& passenger->getSector() == building.getSector(right).get()) break;
+				&& passenger->getSector() == world.getSector(right).get()) break;
 		}
 		return sawForwardAlignment && sawAllDestinationDoorsOpen && sawBoardingWindowAfterDisembark
 			&& passenger->getState() == core::Agent::State::Idle
-			&& passenger->getSector() == building.getSector(right).get();
+			&& passenger->getSector() == world.getSector(right).get();
 	}
 
 	bool multiCarriageShuttleCoordinatesIndependentCarriagesAndAccessZones()
 	{
-		core::Building building("Coupled shuttle", 20, 2);
-		auto leftA = building.addRoom("Left A", 0, 0, 0, 3, 1);
-		auto leftB = building.addRoom("Left B", 0, 0, 4, 3, 1);
-		auto rightA = building.addRoom("Right A", 0, 0, 12, 3, 1);
-		auto rightB = building.addRoom("Right B", 0, 0, 16, 3, 1);
-		core::Building::CreateShuttleOptions options{ 2, 3, { 0, 12 }, 0 };
+		core::World world("Coupled shuttle", 20, 2);
+		auto leftA = world.addRoom("Left A", 0, 0, 0, 3, 1);
+		auto leftB = world.addRoom("Left B", 0, 0, 4, 3, 1);
+		auto rightA = world.addRoom("Right A", 0, 0, 12, 3, 1);
+		auto rightB = world.addRoom("Right B", 0, 0, 16, 3, 1);
+		core::World::CreateShuttleOptions options{ 2, 3, { 0, 12 }, 0 };
 		options.capacity = 1;
 		options.minimumDwellSeconds = 0.1f;
 		options.maximumBoardingSeconds = 2.0f;
-		auto created = building.addShuttle(1, 0, 0, 19, options);
-		building.finishBuild();
+		auto created = world.addShuttle(1, 0, 0, 19, options);
+		world.finishBuild();
 		if (!created.traversalResource || created.doors.size() != 4) return false;
 
 		struct Journey { core::AgentId agent; uint32_t targetSector; float targetX; };
 		std::vector<Journey> journeys = {
-			{ building.createAgent("A first", leftA, 0, 1.35f), rightA, 13.5f },
-			{ building.createAgent("B", leftB, 0, 1.5f), rightB, 17.5f },
-			{ building.createAgent("A overflow", leftA, 0, 1.65f), rightA, 13.5f }
+			{ world.createAgent("A first", leftA, 0, 1.35f), rightA, 13.5f },
+			{ world.createAgent("B", leftB, 0, 1.5f), rightB, 17.5f },
+			{ world.createAgent("A overflow", leftA, 0, 1.65f), rightA, 13.5f }
 		};
 		for (auto const& journey : journeys)
 		{
-			auto agent = building.lookupAgent(journey.agent).entity;
-			auto target = building.getGraph()->getClosestVertexInSector(
-				building.getSector(journey.targetSector).get(), { journey.targetX, 0.0f });
+			auto agent = world.lookupAgent(journey.agent).entity;
+			auto target = world.getGraph()->getClosestVertexInSector(
+				world.getSector(journey.targetSector).get(), { journey.targetX, 0.0f });
 			if (!target) return false;
-			auto path = building.getGraph()->calculatePath(agent, target);
+			auto path = world.getGraph()->calculatePath(agent, target);
 			if (!path) return false;
 			agent->setPath(std::move(path), true);
 		}
@@ -4051,8 +4051,8 @@ namespace
 		bool sawBoundAssignment = false;
 		for (uint32_t tick = 0; tick < MaximumSimulationTicks * 24; ++tick)
 		{
-			building.advanceTick();
-			auto snapshot = building.getSimulationSnapshot();
+			world.advanceTick();
+			auto snapshot = world.getSimulationSnapshot();
 			auto shuttle = std::find_if(snapshot.traversalResources.begin(), snapshot.traversalResources.end(),
 				[&](auto const& resource) { return resource.id == created.traversalResource; });
 			if (shuttle == snapshot.traversalResources.end() || shuttle->shuttleCarriages.size() != 2
@@ -4074,14 +4074,14 @@ namespace
 				if (request.shuttleCarriage != ~0u && request.shuttleDoor)
 					sawBoundAssignment = true;
 			if (std::all_of(journeys.begin(), journeys.end(), [&](auto const& journey)
-				{ auto agent = building.lookupAgent(journey.agent).entity;
+				{ auto agent = world.lookupAgent(journey.agent).entity;
 					return agent->getState() == core::Agent::State::Idle
-						&& agent->getSector() == building.getSector(journey.targetSector).get(); })) break;
+						&& agent->getSector() == world.getSector(journey.targetSector).get(); })) break;
 		}
 		auto complete = std::all_of(journeys.begin(), journeys.end(), [&](auto const& journey)
-			{ auto agent = building.lookupAgent(journey.agent).entity;
+			{ auto agent = world.lookupAgent(journey.agent).entity;
 				return agent->getState() == core::Agent::State::Idle
-					&& agent->getSector() == building.getSector(journey.targetSector).get(); });
+					&& agent->getSector() == world.getSector(journey.targetSector).get(); });
 		return (sawIndependentFullCarriages || std::all_of(sawCarriageOccupied.begin(), sawCarriageOccupied.end(),
 			[](bool occupied) { return occupied; }))
 			&& sawSeparatedAccessZones && sawBoundAssignment && complete;
@@ -4092,31 +4092,31 @@ namespace
 		// Repeated selector failures keep the landing open and eventually return the
 		// passenger to the current stop without leaking lift ownership.
 		{
-			core::Building building("Failed lift selector", 6, 4);
-			auto lower = building.addCorridor(0, 0, 5);
-			auto upper = building.addCorridor(2, 0, 5);
-			core::Building::CreateLiftOptions options;
+			core::World world("Failed lift selector", 6, 4);
+			auto lower = world.addCorridor(0, 0, 5);
+			auto upper = world.addCorridor(2, 0, 5);
+			core::World::CreateLiftOptions options;
 			options.stopOffsets = { 0, 2 };
-			auto created = building.addLift(1, 0, 2, options);
-			building.finishBuild();
-			auto target = building.getGraph()->getClosestVertexInSector(
-				building.getSector(upper).get(), { 2.5f, 2.0f });
-			auto id = building.createAgent("Failed selector passenger", lower, 0, 2.5f);
-			auto agent = building.lookupAgent(id).entity;
-			agent->setPath(building.getGraph()->calculatePath(agent, target), true);
+			auto created = world.addLift(1, 0, 2, options);
+			world.finishBuild();
+			auto target = world.getGraph()->getClosestVertexInSector(
+				world.getSector(upper).get(), { 2.5f, 2.0f });
+			auto id = world.createAgent("Failed selector passenger", lower, 0, 2.5f);
+			auto agent = world.lookupAgent(id).entity;
+			agent->setPath(world.getGraph()->calculatePath(agent, target), true);
 			std::set<core::DeviceOperationId> failed;
 			bool stayedOpen = true;
 			for (uint32_t tick = 0; tick < MaximumSimulationTicks * 5; ++tick)
 			{
-				building.advanceTick();
-				auto snapshot = building.getSimulationSnapshot();
+				world.advanceTick();
+				auto snapshot = world.getSimulationSnapshot();
 				for (auto const& operation : snapshot.deviceOperations)
 				{
 					if (operation.command.type != core::DeviceCommandType::SelectLiftDestination
 						|| failed.contains(operation.id)
 						|| (operation.state != core::DeviceOperationState::Pending
 							&& operation.state != core::DeviceOperationState::Running)) continue;
-					building.lookupDeviceOperation(operation.id).entity->setState(core::DeviceOperationState::Failed);
+					world.lookupDeviceOperation(operation.id).entity->setState(core::DeviceOperationState::Failed);
 					failed.insert(operation.id);
 				}
 				auto lift = std::find_if(snapshot.traversalResources.begin(), snapshot.traversalResources.end(),
@@ -4124,9 +4124,9 @@ namespace
 				if (lift != snapshot.traversalResources.end() && lift->occupantCount > 0
 					&& lift->liftStopPhase == core::LiftStopPhase::Closing) stayedOpen = false;
 				if (failed.size() == 3 && agent->getState() == core::Agent::State::Idle
-					&& agent->getSector() == building.getSector(lower).get()) break;
+					&& agent->getSector() == world.getSector(lower).get()) break;
 			}
-			auto final = building.getSimulationSnapshot();
+			auto final = world.getSimulationSnapshot();
 			auto lift = std::find_if(final.traversalResources.begin(), final.traversalResources.end(),
 				[&](auto const& resource) { return resource.id == created.traversalResource; });
 			if (failed.size() != 3 || !stayedOpen || lift == final.traversalResources.end()
@@ -4137,35 +4137,35 @@ namespace
 		// Cancellation while moving and subsequent disable both preserve occupancy
 		// until alignment, reject fresh demand, and unload through a landing permit.
 		{
-			core::Building building("Disabled moving lift", 6, 4);
-			auto lower = building.addCorridor(0, 0, 5);
-			auto upper = building.addCorridor(2, 0, 5);
-			core::Building::CreateLiftOptions options;
+			core::World world("Disabled moving lift", 6, 4);
+			auto lower = world.addCorridor(0, 0, 5);
+			auto upper = world.addCorridor(2, 0, 5);
+			core::World::CreateLiftOptions options;
 			options.stopOffsets = { 0, 2 };
-			auto created = building.addLift(1, 0, 2, options);
-			building.finishBuild();
-			auto target = building.getGraph()->getClosestVertexInSector(
-				building.getSector(upper).get(), { 2.5f, 2.0f });
-			auto id = building.createAgent("Cancelled onboard passenger", lower, 0, 2.5f);
-			auto agent = building.lookupAgent(id).entity;
-			agent->setPath(building.getGraph()->calculatePath(agent, target), true);
+			auto created = world.addLift(1, 0, 2, options);
+			world.finishBuild();
+			auto target = world.getGraph()->getClosestVertexInSector(
+				world.getSector(upper).get(), { 2.5f, 2.0f });
+			auto id = world.createAgent("Cancelled onboard passenger", lower, 0, 2.5f);
+			auto agent = world.lookupAgent(id).entity;
+			agent->setPath(world.getGraph()->calculatePath(agent, target), true);
 			bool cancelledMoving = false;
 			for (uint32_t tick = 0; tick < MaximumSimulationTicks * 4; ++tick)
 			{
-				building.advanceTick();
-				auto snapshot = building.getSimulationSnapshot();
+				world.advanceTick();
+				auto snapshot = world.getSimulationSnapshot();
 				auto lift = std::find_if(snapshot.traversalResources.begin(), snapshot.traversalResources.end(),
 					[&](auto const& resource) { return resource.id == created.traversalResource; });
 				if (!cancelledMoving && lift != snapshot.traversalResources.end() && lift->liftMoving)
 				{
 					agent->clearPath();
-					cancelledMoving = building.setTraversalResourceEnabled(created.traversalResource, false);
+					cancelledMoving = world.setTraversalResourceEnabled(created.traversalResource, false);
 				}
 				if (cancelledMoving && agent->getState() == core::Agent::State::Idle
-					&& agent->getSector() == building.getSector(upper).get()) break;
+					&& agent->getSector() == world.getSector(upper).get()) break;
 			}
-			building.advanceTick(); // publish the terminal unavailable state after unload commit
-			auto final = building.getSimulationSnapshot();
+			world.advanceTick(); // publish the terminal unavailable state after unload commit
+			auto final = world.getSimulationSnapshot();
 			auto lift = std::find_if(final.traversalResources.begin(), final.traversalResources.end(),
 				[&](auto const& resource) { return resource.id == created.traversalResource; });
 			if (!cancelledMoving || lift == final.traversalResources.end() || lift->enabled
@@ -4178,115 +4178,115 @@ namespace
 
 	bool editorLiftAuthoringReconcilesOwnedLandings()
 	{
-		core::Building building("Editor lift authoring", 10, 8);
-		building.addCorridor(1, 0, 8);
-		building.addCorridor(4, 0, 8);
-		auto created = building.addLift(1, 0, 2, 2, 6);
-		building.finishBuild();
+		core::World world("Editor lift authoring", 10, 8);
+		world.addCorridor(1, 0, 8);
+		world.addCorridor(4, 0, 8);
+		auto created = world.addLift(1, 0, 2, 2, 6);
+		world.finishBuild();
 		auto lift = std::dynamic_pointer_cast<const core::LiftTransit>(created.lift.sector);
 		if (!lift || lift->getCellsWide() != 2 || lift->getDecksHigh() != 6
 			|| lift->getNumStops() != 2 || created.doors.size() != 2) return false;
 		for (auto const& door : created.doors)
-			if (!building.isLiftOwnedDoor(door.door.sector->getObject(door.door.index))) return false;
+			if (!world.isLiftOwnedDoor(door.door.sector->getObject(door.door.index))) return false;
 
-		building.pauseSimulation();
-		building.addCorridor(3, 0, 8);
-		building.finishBuild();
+		world.pauseSimulation();
+		world.addCorridor(3, 0, 8);
+		world.finishBuild();
 		lift = std::dynamic_pointer_cast<const core::LiftTransit>(
-			building.getSectorAtPosition(1, 2.0f, 0.0f));
+			world.getSectorAtPosition(1, 2.0f, 0.0f));
 		if (!lift || lift->getNumStops() != 2) return false; // Corridors do not create stops.
 		uint32_t landingX = 0, landingWidth = 0;
-		if (!building.getLiftLandingGeometry(1, 3, 3, landingX, landingWidth)
+		if (!world.getLiftLandingGeometry(1, 3, 3, landingX, landingWidth)
 			|| landingX != 2 || landingWidth != 2) return false;
-		auto added = building.addSectorDoor(0, 3, 3);
-		if (!building.isLiftOwnedDoor(added.door.sector->getObject(added.door.index))) return false;
+		auto added = world.addSectorDoor(0, 3, 3);
+		if (!world.isLiftOwnedDoor(added.door.sector->getObject(added.door.index))) return false;
 		lift = std::dynamic_pointer_cast<const core::LiftTransit>(
-			building.getSectorAtPosition(1, 2.0f, 0.0f));
+			world.getSectorAtPosition(1, 2.0f, 0.0f));
 		if (!lift || lift->getNumStops() != 3) return false;
 
-		auto move = building.planResizeLift(lift->getIndex(), 5, 0, 2, 6);
+		auto move = world.planResizeLift(lift->getIndex(), 5, 0, 2, 6);
 		if (!move.valid || !move.move) return false;
-		auto movedIndex = building.applyLiftEdit(move);
-		lift = std::dynamic_pointer_cast<const core::LiftTransit>(building.getSector(movedIndex));
+		auto movedIndex = world.applyLiftEdit(move);
+		lift = std::dynamic_pointer_cast<const core::LiftTransit>(world.getSector(movedIndex));
 		if (!lift || lift->getCellX() != 5 || lift->getDecksHigh() != 6
 			|| lift->getNumStops() != 3) return false;
 		for (uint32_t stop = 0; stop < lift->getNumStops(); ++stop)
 		{
 			auto floor = (uint32_t)((int)lift->getStop(stop).sector->getCellY()
 				+ lift->getStop(stop).sectorOffsetY);
-			auto const& cell = static_cast<core::Building const&>(building)
+			auto const& cell = static_cast<core::World const&>(world)
 				.getLayer(0)->getCellDefinition(5, floor);
-			auto door = building.getSector(cell.sectorIndex)->getObject(cell.sectorObjectIndex);
-			if (!building.isLiftOwnedDoor(door)) return false;
+			auto door = world.getSector(cell.sectorIndex)->getObject(cell.sectorObjectIndex);
+			if (!world.isLiftOwnedDoor(door)) return false;
 		}
-		auto removeStop = building.planRemoveLiftStop(lift->getIndex(), 1);
+		auto removeStop = world.planRemoveLiftStop(lift->getIndex(), 1);
 		if (!removeStop.valid || !removeStop.requiresConfirmation()) return false;
-		auto afterStopRemoval = building.applyLiftEdit(removeStop);
-		lift = std::dynamic_pointer_cast<const core::LiftTransit>(building.getSector(afterStopRemoval));
+		auto afterStopRemoval = world.applyLiftEdit(removeStop);
+		lift = std::dynamic_pointer_cast<const core::LiftTransit>(world.getSector(afterStopRemoval));
 		if (!lift || lift->getNumStops() != 2) return false;
-		auto remove = building.planRemoveLift(lift->getIndex());
+		auto remove = world.planRemoveLift(lift->getIndex());
 		if (!remove.valid) return false;
-		building.applyLiftEdit(remove);
-		return !building.getSectorAtPosition(1, 5.0f, 0.0f);
+		world.applyLiftEdit(remove);
+		return !world.getSectorAtPosition(1, 5.0f, 0.0f);
 	}
 
 	bool editorShuttleAuthoringReconcilesOwnedLandings()
 	{
-		core::Building building("Editor shuttle authoring", 32, 3);
-		building.addCorridor(0, 0, 31);
-		building.addCorridor(1, 0, 31);
-		core::Building::CreateShuttleOptions options{ 2, 3, { 0, 18 }, 0 };
+		core::World world("Editor shuttle authoring", 32, 3);
+		world.addCorridor(0, 0, 31);
+		world.addCorridor(1, 0, 31);
+		core::World::CreateShuttleOptions options{ 2, 3, { 0, 18 }, 0 };
 		options.doorMask = 0b101;
-		auto candidates = building.getValidShuttleStopOffsets(1, 0, 0, 27, 2, 3, false, 2);
+		auto candidates = world.getValidShuttleStopOffsets(1, 0, 0, 27, 2, 3, false, 2);
 		if (find(candidates.begin(), candidates.end(), 0) == candidates.end()
 			|| find(candidates.begin(), candidates.end(), 18) == candidates.end()) return false;
-		auto created = building.addShuttle(1, 0, 0, 27, options);
-		building.finishBuild();
+		auto created = world.addShuttle(1, 0, 0, 27, options);
+		world.finishBuild();
 		auto shuttle = dynamic_pointer_cast<const core::ShuttleTransit>(created.shuttle.sector);
 		if (!shuttle || shuttle->getNumStops() != 2 || created.doors.size() != 8) return false;
 		for (auto const& door : created.doors)
 		{
 			uint32_t owner, stop, carriage;
-			if (!building.isShuttleOwnedDoor(door.door.sector->getObject(door.door.index),
+			if (!world.isShuttleOwnedDoor(door.door.sector->getObject(door.door.index),
 				&owner, &stop, &carriage) || owner != shuttle->getIndex()
 				|| stop >= 2 || carriage >= 2) return false;
 		}
-		auto doorCandidates = building.getShuttleStopCandidatesForDoor(1, 0, 9);
+		auto doorCandidates = world.getShuttleStopCandidatesForDoor(1, 0, 9);
 		if (none_of(doorCandidates.begin(), doorCandidates.end(), [&](auto const& candidate)
 			{ return candidate.sectorIndex == shuttle->getIndex() && candidate.stopOffset == 9; })) return false;
 
-		building.pauseSimulation();
-		auto move = building.planResizeShuttle(shuttle->getIndex(), 1, 1, 27);
+		world.pauseSimulation();
+		auto move = world.planResizeShuttle(shuttle->getIndex(), 1, 1, 27);
 		if (!move.valid || !move.move || move.stopOffsets != std::vector<uint32_t>({ 0, 18 })) return false;
-		auto movedIndex = building.applyShuttleEdit(move);
-		shuttle = dynamic_pointer_cast<const core::ShuttleTransit>(building.getSector(movedIndex));
+		auto movedIndex = world.applyShuttleEdit(move);
+		shuttle = dynamic_pointer_cast<const core::ShuttleTransit>(world.getSector(movedIndex));
 		if (!shuttle || shuttle->getCellX() != 1 || shuttle->getCellY() != 1) return false;
 
-		auto resize = building.planResizeShuttle(movedIndex, 1, 1, 26);
+		auto resize = world.planResizeShuttle(movedIndex, 1, 1, 26);
 		if (!resize.valid || resize.move || resize.stopOffsets != std::vector<uint32_t>({ 0, 18 })) return false;
-		movedIndex = building.applyShuttleEdit(resize);
-		shuttle = dynamic_pointer_cast<const core::ShuttleTransit>(building.getSector(movedIndex));
+		movedIndex = world.applyShuttleEdit(resize);
+		shuttle = dynamic_pointer_cast<const core::ShuttleTransit>(world.getSector(movedIndex));
 		if (!shuttle || shuttle->getCellsWide() != 26) return false;
 
-		auto add = building.planAddShuttleStop(movedIndex, 9);
+		auto add = world.planAddShuttleStop(movedIndex, 9);
 		if (!add.valid || !add.requiresConfirmation()) return false;
-		movedIndex = building.applyShuttleEdit(add);
-		shuttle = dynamic_pointer_cast<const core::ShuttleTransit>(building.getSector(movedIndex));
+		movedIndex = world.applyShuttleEdit(add);
+		shuttle = dynamic_pointer_cast<const core::ShuttleTransit>(world.getSector(movedIndex));
 		if (!shuttle || shuttle->getNumStops() != 3) return false;
-		auto removeStop = building.planRemoveShuttleStop(movedIndex, 1);
+		auto removeStop = world.planRemoveShuttleStop(movedIndex, 1);
 		if (!removeStop.valid || !removeStop.requiresConfirmation()) return false;
-		movedIndex = building.applyShuttleEdit(removeStop);
-		shuttle = dynamic_pointer_cast<const core::ShuttleTransit>(building.getSector(movedIndex));
+		movedIndex = world.applyShuttleEdit(removeStop);
+		shuttle = dynamic_pointer_cast<const core::ShuttleTransit>(world.getSector(movedIndex));
 		if (!shuttle || shuttle->getNumStops() != 2) return false;
-		building.addSectorWindow(0, 1, 10, 1, 1);
-		auto remove = building.planRemoveShuttle(movedIndex);
+		world.addSectorWindow(0, 1, 10, 1, 1);
+		auto remove = world.planRemoveShuttle(movedIndex);
 		if (!remove.valid) return false;
-		building.applyShuttleEdit(remove);
-		if (building.getSectorAtPosition(1, 1.0f, 1.0f)) return false;
+		world.applyShuttleEdit(remove);
+		if (world.getSectorAtPosition(1, 1.0f, 1.0f)) return false;
 
-		core::Building manyDoors("Schematic Shuttle doors", 24, 2);
+		core::World manyDoors("Schematic Shuttle doors", 24, 2);
 		manyDoors.addCorridor(0, 0, 23);
-		core::Building::CreateShuttleOptions manyDoorOptions{ 1, 4, { 0, 10 }, 0 };
+		core::World::CreateShuttleOptions manyDoorOptions{ 1, 4, { 0, 10 }, 0 };
 		manyDoorOptions.doorMask = 0b1111;
 		auto manyDoorResult = manyDoors.addShuttle(1, 0, 0, 20, manyDoorOptions);
 		manyDoors.finishBuild();
@@ -4296,10 +4296,10 @@ namespace
 			if (manyDoorResult.doors[door].door.sector->getObject(
 				manyDoorResult.doors[door].door.index)->getCellX() != door) return false;
 
-		core::Building partial("Partial Shuttle authoring", 24, 2);
+		core::World partial("Partial Shuttle authoring", 24, 2);
 		partial.addCorridor(0, 0, 4);
 		partial.addCorridor(0, 10, 4);
-		core::Building::CreateShuttleOptions partialOptions{ 2, 3, { 0, 10 }, 0 };
+		core::World::CreateShuttleOptions partialOptions{ 2, 3, { 0, 10 }, 0 };
 		partialOptions.allowPartialLandings = true;
 		partialOptions.doorMask = 0b101;
 		auto partialCreated = partial.addShuttle(1, 0, 0, 20, partialOptions);
@@ -4317,33 +4317,33 @@ namespace
 
 	bool unavailableDoorRejectsTraversal()
 	{
-		core::Building building("Unavailable door", 6, 2);
-		auto fore = building.addRoom("Fore", 0, 0, 0, 5, 1);
-		building.addRoom("Back", 1, 0, 0, 5, 1);
-		core::Building::CreateDoorOptions options;
+		core::World world("Unavailable door", 6, 2);
+		auto fore = world.addRoom("Fore", 0, 0, 0, 5, 1);
+		world.addRoom("Back", 1, 0, 0, 5, 1);
+		core::World::CreateDoorOptions options;
 		options.activationMode = core::DoorActivationMode::Unavailable;
-		building.addSectorDoor(0, 0, 2, options);
-		building.finishBuild();
-		auto edge = *std::find_if(building.getGraph()->getEdges().begin(), building.getGraph()->getEdges().end(),
+		world.addSectorDoor(0, 0, 2, options);
+		world.finishBuild();
+		auto edge = *std::find_if(world.getGraph()->getEdges().begin(), world.getGraph()->getEdges().end(),
 			[](auto const& candidate) { return candidate->getType() == core::EdgeType::Door; });
 		auto source = edge->getVertex(0)->getSector()->getIndex() == fore ? edge->getVertex(0) : edge->getVertex(1);
 		auto destination = edge->getOtherVertex(source);
-		auto agentId = building.createAgent("Rejected traveller", fore, 0, 0.5f);
-		auto agent = building.lookupAgent(agentId).entity;
+		auto agentId = world.createAgent("Rejected traveller", fore, 0, 0.5f);
+		auto agent = world.lookupAgent(agentId).entity;
 		// This is the same two-step path assignment used by the UI for a
 		// player-directed agent: preview the route, then explicitly start it.
 		agent->setPath(twoNodePath(source, destination, edge), false);
-		building.advanceTick();
+		world.advanceTick();
 		if (agent->getState() != core::Agent::State::Idle
-			|| !building.getSimulationSnapshot().traversalRequests.empty()) return false;
+			|| !world.getSimulationSnapshot().traversalRequests.empty()) return false;
 		agent->startPathing();
 		for (uint32_t i = 0; i < MaximumSimulationTicks
-			&& building.getSimulationSnapshot().traversalRequests.empty(); ++i)
+			&& world.getSimulationSnapshot().traversalRequests.empty(); ++i)
 		{
-			building.advanceTick();
+			world.advanceTick();
 		}
-		auto snapshot = building.getSimulationSnapshot();
-		return agent->getSector() == building.getSector(fore).get()
+		auto snapshot = world.getSimulationSnapshot();
+		return agent->getSector() == world.getSector(fore).get()
 			&& agent->getState() == core::Agent::State::WaitingForTraversal
 			&& snapshot.traversalRequests.size() == 1
 			&& snapshot.traversalRequests.front().state == core::TraversalRequestState::Denied
@@ -4352,28 +4352,28 @@ namespace
 
 	bool interactionBindingAggregationIsMeaningful()
 	{
-		core::Building building("Binding aggregation", 3, 2);
-		auto corridorIndex = building.addCorridor(0, 0, 2);
-		building.finishBuild();
+		core::World world("Binding aggregation", 3, 2);
+		auto corridorIndex = world.addCorridor(0, 0, 2);
+		world.finishBuild();
 		auto sectorId = core::SectorId{ (uint64_t)corridorIndex + 1 };
-		auto actor = building.createAgent("Binding operator", corridorIndex, 0, 0.5f);
+		auto actor = world.createAgent("Binding operator", corridorIndex, 0, 0.5f);
 
 		core::InteractionBinding required{ { core::DeviceCommandType::SetSectorLights, sectorId, false },
 			core::InteractionBindingRequirement::Required };
 		core::InteractionBinding bestEffort{ { core::DeviceCommandType::SetSectorLights, sectorId, true },
 			core::InteractionBindingRequirement::BestEffort };
-		auto point = building.createInteractionPoint("Multi-binding control", sectorId,
+		auto point = world.createInteractionPoint("Multi-binding control", sectorId,
 			{ 0.5f, 0.0f }, 0.6f, 0.0f, { required, bestEffort });
-		auto requestId = building.requestInteraction(point, actor);
-		auto request = building.lookupInteractionRequest(requestId);
+		auto requestId = world.requestInteraction(point, actor);
+		auto request = world.lookupInteractionRequest(requestId);
 		if (!request || request.entity->getOperations().size() != 2)
 		{
 			return false;
 		}
 		auto failedBestEffort = request.entity->getOperations()[1].first;
-		building.lookupDeviceOperation(failedBestEffort).entity->setState(core::DeviceOperationState::Failed);
-		building.advanceTicks(4);
-		request = building.lookupInteractionRequest(requestId);
+		world.lookupDeviceOperation(failedBestEffort).entity->setState(core::DeviceOperationState::Failed);
+		world.advanceTicks(4);
+		request = world.lookupInteractionRequest(requestId);
 		if (!request || request.entity->getResult() != core::InteractionResult::SucceededWithBestEffortFailure)
 		{
 			return false;
@@ -4381,18 +4381,18 @@ namespace
 
 		core::InteractionBinding failingRequired{ { core::DeviceCommandType::SetSectorLights, sectorId, true },
 			core::InteractionBindingRequirement::Required };
-		auto requiredPoint = building.createInteractionPoint("Required control", sectorId,
+		auto requiredPoint = world.createInteractionPoint("Required control", sectorId,
 			{ 0.5f, 0.0f }, 0.6f, 0.0f, { failingRequired });
-		auto failedRequestId = building.requestInteraction(requiredPoint, actor);
-		auto failedRequest = building.lookupInteractionRequest(failedRequestId);
+		auto failedRequestId = world.requestInteraction(requiredPoint, actor);
+		auto failedRequest = world.lookupInteractionRequest(failedRequestId);
 		if (!failedRequest)
 		{
 			return false;
 		}
-		building.lookupDeviceOperation(failedRequest.entity->getOperations().front().first).entity->setState(
+		world.lookupDeviceOperation(failedRequest.entity->getOperations().front().first).entity->setState(
 			core::DeviceOperationState::Failed);
-		building.advanceTick();
-		return building.lookupInteractionRequest(failedRequestId).entity->getResult() == core::InteractionResult::Failed;
+		world.advanceTick();
+		return world.lookupInteractionRequest(failedRequestId).entity->getResult() == core::InteractionResult::Failed;
 	}
 
 	struct ScaleObservation
@@ -4435,25 +4435,25 @@ namespace
 	ScaleObservation runScaledWorld(uint32_t agentCount, uint64_t ticks)
 	{
 		constexpr uint32_t ResourceCount = 32;
-		core::Building building("Scale world", 80, 2);
-		auto corridor = building.addCorridor(0, 0, 79);
+		core::World world("Scale world", 80, 2);
+		auto corridor = world.addCorridor(0, 0, 79);
 		uint32_t sourceVertexId;
 		uint32_t destinationVertexId;
-		building.addSectorMarker(corridor, 0, 0.5f, &sourceVertexId);
-		building.addSectorMarker(corridor, 0, 70.5f, &destinationVertexId);
-		building.finishBuild();
+		world.addSectorMarker(corridor, 0, 0.5f, &sourceVertexId);
+		world.addSectorMarker(corridor, 0, 70.5f, &destinationVertexId);
+		world.finishBuild();
 		for (uint32_t i = 0; i < ResourceCount; ++i)
 		{
-			building.createTraversalResource("Scale resource " + std::to_string(i));
+			world.createTraversalResource("Scale resource " + std::to_string(i));
 		}
 
-		auto source = building.getGraph()->getVertexByIdentifier(sourceVertexId);
-		auto destination = building.getGraph()->getVertexByIdentifier(destinationVertexId);
+		auto source = world.getGraph()->getVertexByIdentifier(sourceVertexId);
+		auto destination = world.getGraph()->getVertexByIdentifier(destinationVertexId);
 		auto edge = std::make_shared<core::SectorEdge>();
 		for (uint32_t i = 0; i < agentCount; ++i)
 		{
-			auto id = building.createAgent("Scale agent " + std::to_string(i), corridor, 0, 0.5f);
-			building.lookupAgent(id).entity->setPath(twoNodePath(source, destination, edge), true);
+			auto id = world.createAgent("Scale agent " + std::to_string(i), corridor, 0, 0.5f);
+			world.lookupAgent(id).entity->setPath(twoNodePath(source, destination, edge), true);
 		}
 
 		ScaleObservation result;
@@ -4470,20 +4470,20 @@ namespace
 				digestValue(result.deterministicDigest, event.traversalPermit.id.value);
 			}
 		};
-		digestEvents(building.consumeSimulationEvents());
+		digestEvents(world.consumeSimulationEvents());
 		auto started = std::chrono::steady_clock::now();
 		for (uint64_t tick = 0; tick < ticks; ++tick)
 		{
-			building.advanceTick();
+			world.advanceTick();
 			// Event delivery is intentionally incremental in a long-running host.
-			if ((tick + 1) % 10 == 0) digestEvents(building.consumeSimulationEvents());
+			if ((tick + 1) % 10 == 0) digestEvents(world.consumeSimulationEvents());
 		}
-		digestEvents(building.consumeSimulationEvents());
+		digestEvents(world.consumeSimulationEvents());
 		result.elapsedMilliseconds = std::chrono::duration<double, std::milli>(
 			std::chrono::steady_clock::now() - started).count();
 		result.workingSetBytes = currentWorkingSetBytes();
 
-		auto snapshot = building.getSimulationSnapshot();
+		auto snapshot = world.getSimulationSnapshot();
 		std::set<uint64_t> requestOwners;
 		result.valid = snapshot.tick == ticks && snapshot.agents.size() == agentCount
 			&& snapshot.traversalResources.size() == ResourceCount;
@@ -4513,7 +4513,7 @@ namespace
 		return result;
 	}
 
-	// Ticket #14: a three-Layer Building whose back-most Layer carries a Transit
+	// Ticket #14: a three-Layer World whose back-most Layer carries a Transit
 	// landing on the Layer directly in front of it.  The Agent starts on the
 	// front-most Layer, crosses a Door authored on the 0<->1 pair into Layer 1,
 	// boards the Layer 2 Lift through its landing Doors, rides it, and disembarks
@@ -4530,31 +4530,31 @@ namespace
 	{
 		ThreeLayerJourneyResult result;
 
-		core::Building building("Three-layer transit traversal", 8, 4);
-		while (building.getLayerCount() < 3) building.addLayer();
-		if (building.getLayerCount() != 3) return result;
+		core::World world("Three-layer transit traversal", 8, 4);
+		while (world.getLayerCount() < 3) world.addLayer();
+		if (world.getLayerCount() != 3) return result;
 
 		// Layer 0 is the Agent's entry Layer, Layer 1 the Transit's landing Layer,
 		// and Layer 2 the Transit Layer itself.
-		auto entry = building.addCorridor(0, 0, 0, 6, 1);
-		auto lower = building.addCorridor(1, 0, 0, 6, 1);
-		auto upper = building.addCorridor(1, 2, 0, 6, 1);
+		auto entry = world.addCorridor(0, 0, 0, 6, 1);
+		auto lower = world.addCorridor(1, 0, 0, 6, 1);
+		auto upper = world.addCorridor(1, 2, 0, 6, 1);
 
-		core::Building::CreateLiftOptions liftOptions;
+		core::World::CreateLiftOptions liftOptions;
 		liftOptions.cellsWide = 1;
 		liftOptions.stopOffsets = { 0, 2 };
-		auto lift = building.addLift(2, 0, 4, liftOptions);
+		auto lift = world.addLift(2, 0, 4, liftOptions);
 
 		// A Door is authored on the front Layer of the pair it crosses.
-		auto door = building.addSectorDoor(0, 0, 1);
-		building.finishBuild();
+		auto door = world.addSectorDoor(0, 0, 1);
+		world.finishBuild();
 
-		if (!building.isTraversalTopologyValid() || lift.doors.size() != 2
+		if (!world.isTraversalTopologyValid() || lift.doors.size() != 2
 			|| door.door.type != core::SectorObjectType::Door) return result;
 
 		// The Transit sits on Layer 2 and every landing it owns is on Layer 1.
 		auto transit = std::dynamic_pointer_cast<const core::Transit>(
-			building.getSector(lift.lift.sector->getIndex()));
+			world.getSector(lift.lift.sector->getIndex()));
 		if (!transit || transit->getLayerIndex() != 2 || transit->getNumStops() != 2) return result;
 		if (transit->getStop(0).sector->getIndex() != lower
 			|| transit->getStop(1).sector->getIndex() != upper)
@@ -4562,14 +4562,14 @@ namespace
 		for (uint32_t stop = 0; stop < transit->getNumStops(); ++stop)
 			if (transit->getStop(stop).sector->getLayerIndex() != 1) return result;
 
-		auto target = building.getGraph()->getClosestVertexInSector(
-			building.getSector(upper).get(), { 5.5f, 2.0f });
+		auto target = world.getGraph()->getClosestVertexInSector(
+			world.getSector(upper).get(), { 5.5f, 2.0f });
 		if (!target) return result;
 
-		auto agentId = building.createAgent("Deep traveller", entry, 0, 0.5f);
-		auto agent = building.lookupAgent(agentId).entity;
+		auto agentId = world.createAgent("Deep traveller", entry, 0, 0.5f);
+		auto agent = world.lookupAgent(agentId).entity;
 		if (!agent) return result;
-		auto path = building.getGraph()->calculatePath(agent, target);
+		auto path = world.getGraph()->calculatePath(agent, target);
 		if (!path) return result;
 
 		// The route must cross into Layer 1 exactly once, board and leave the Layer 2
@@ -4593,29 +4593,29 @@ namespace
 
 		agent->setPath(path, true);
 		while (agent->getState() != core::Agent::State::Idle
-			&& building.getSimulationTick() < MaximumSimulationTicks * 4)
+			&& world.getSimulationTick() < MaximumSimulationTicks * 4)
 		{
-			building.advanceTick();
+			world.advanceTick();
 			if (agent->getSector() == transit.get()) result.sawTransitOccupant = true;
 		}
 
-		result.run.snapshot = building.getSimulationSnapshot();
-		result.run.events = building.consumeSimulationEvents();
+		result.run.snapshot = world.getSimulationSnapshot();
+		result.run.events = world.consumeSimulationEvents();
 		auto const finalPosition = agent->getGlobalPosition();
 		result.reachedDestination = result.sawTransitOccupant
 			&& agent->getState() == core::Agent::State::Idle
-			&& agent->getSector() == building.getSector(upper).get()
+			&& agent->getSector() == world.getSector(upper).get()
 			&& agent->getSector()->getLayerIndex() == 1
 			&& finalPosition.distanceTo(target->getPosition()) < 0.001f;
 		return result;
 	}
 
-	// Ticket #15: pulling a middle Layer out of a four-Layer Building while Agents
+	// Ticket #15: pulling a middle Layer out of a four-Layer World while Agents
 	// are still using it.  The plan the editor would confirm has to name every
 	// casualty: the Locations on the deleted Layer, the Transit on that Layer, the
 	// Lift one Layer behind which loses its landings, the Door crossing it, and
 	// the Agents standing in each doomed Sector.  Applying the plan must then
-	// leave a compacted Building whose surviving Layers are still valid and
+	// leave a compacted World whose surviving Layers are still valid and
 	// walkable, with the deeper Ladder and its landing pair moved forward intact.
 	struct MiddleLayerDeletionResult
 	{
@@ -4650,58 +4650,58 @@ namespace
 	// Ladder can land on two stacked Locations, and the two Doors are authored at
 	// different cells so the deletion counts the Door it really crosses rather
 	// than one which merely shares a cell.
-	MiddleLayerLayout authorMiddleLayerDeletionBuilding(core::Building& building)
+	MiddleLayerLayout authorMiddleLayerDeletionWorld(core::World& world)
 	{
-		while (building.getLayerCount() < 4) building.addLayer();
-		building.setLayerName(1, "Middle");
-		building.setLayerName(2, "Deep");
-		building.setLayerName(3, "Attic");
+		while (world.getLayerCount() < 4) world.addLayer();
+		world.setLayerName(1, "Middle");
+		world.setLayerName(2, "Deep");
+		world.setLayerName(3, "Attic");
 
 		MiddleLayerLayout layout;
-		layout.entry = building.addCorridor(0, 0, 0, 12, 1);
-		layout.lobby = building.addRoom("Lobby", 0, 1, 0, 12, 1);
-		layout.lowerLobby = building.addRoom("Lower Lobby", 0, 2, 0, 12, 1);
-		layout.middleDeck = building.addRoom("Middle Deck", 1, 0, 0, 12, 1);
-		layout.middleStore = building.addRoom("Middle Store", 1, 2, 0, 11, 1);
-		layout.doomedLadder = building.addLadder(1, 1, 11, { 2, false, true })
+		layout.entry = world.addCorridor(0, 0, 0, 12, 1);
+		layout.lobby = world.addRoom("Lobby", 0, 1, 0, 12, 1);
+		layout.lowerLobby = world.addRoom("Lower Lobby", 0, 2, 0, 12, 1);
+		layout.middleDeck = world.addRoom("Middle Deck", 1, 0, 0, 12, 1);
+		layout.middleStore = world.addRoom("Middle Store", 1, 2, 0, 11, 1);
+		layout.doomedLadder = world.addLadder(1, 1, 11, { 2, false, true })
 			.ladder.sector->getIndex();
-		layout.deepStore = building.addRoom("Deep Store", 2, 0, 0, 10, 1);
-		layout.deepCorridor = building.addRoom("Deep Corridor", 2, 1, 0, 10, 1);
-		layout.deepYard = building.addRoom("Deep Yard", 2, 2, 0, 10, 1);
+		layout.deepStore = world.addRoom("Deep Store", 2, 0, 0, 10, 1);
+		layout.deepCorridor = world.addRoom("Deep Corridor", 2, 1, 0, 10, 1);
+		layout.deepYard = world.addRoom("Deep Yard", 2, 2, 0, 10, 1);
 
-		core::Building::CreateLiftOptions liftOptions;
+		core::World::CreateLiftOptions liftOptions;
 		liftOptions.cellsWide = 1;
 		liftOptions.stopOffsets = { 0, 2 };
-		layout.doomedLift = building.addLift(2, 0, 10, liftOptions).lift.sector->getIndex();
+		layout.doomedLift = world.addLift(2, 0, 10, liftOptions).lift.sector->getIndex();
 
-		layout.annexe = building.addRoom("Annexe", 3, 0, 0, 10, 1);
-		layout.keptLadder = building.addLadder(3, 1, 9, { 2, false, true })
+		layout.annexe = world.addRoom("Annexe", 3, 0, 0, 10, 1);
+		layout.keptLadder = world.addLadder(3, 1, 9, { 2, false, true })
 			.ladder.sector->getIndex();
 
 		// A Door is authored on the front Layer of the pair it crosses.
-		building.addSectorDoor(0, 0, 4);
-		building.addSectorDoor(2, 0, 6);
-		building.addSectorMarker(layout.deepStore, 0, 1.5f, nullptr);
-		building.addSectorMarker(layout.annexe, 0, 8.5f, nullptr);
-		building.finishBuild();
+		world.addSectorDoor(0, 0, 4);
+		world.addSectorDoor(2, 0, 6);
+		world.addSectorMarker(layout.deepStore, 0, 1.5f, nullptr);
+		world.addSectorMarker(layout.annexe, 0, 8.5f, nullptr);
+		world.finishBuild();
 		return layout;
 	}
 
-	std::shared_ptr<const core::Sector> sectorByName(core::Building const& building, std::string const& name)
+	std::shared_ptr<const core::Sector> sectorByName(core::World const& world, std::string const& name)
 	{
-		for (uint32_t i = 0; i < building.getNumSectors(); ++i)
-			if (building.getSector(i)->getName() == name) return building.getSector(i);
+		for (uint32_t i = 0; i < world.getNumSectors(); ++i)
+			if (world.getSector(i)->getName() == name) return world.getSector(i);
 		return nullptr;
 	}
 
 	MiddleLayerDeletionResult runMiddleLayerDeletion()
 	{
 		MiddleLayerDeletionResult result;
-		core::Building building("Layer deletion smoke building", 12, 4);
-		auto const layout = authorMiddleLayerDeletionBuilding(building);
-		if (!building.isTraversalTopologyValid())
+		core::World world("Layer deletion smoke world", 12, 4);
+		auto const layout = authorMiddleLayerDeletionWorld(world);
+		if (!world.isTraversalTopologyValid())
 		{
-			result.diagnostic = "authored Building is invalid: " + building.getTopologyDiagnostic();
+			result.diagnostic = "authored World is invalid: " + world.getTopologyDiagnostic();
 			return result;
 		}
 
@@ -4709,9 +4709,9 @@ namespace
 		// on it, so both are casualties of the deletion even though only one of
 		// them is actually on it.
 		auto const doomedLift = std::dynamic_pointer_cast<const core::Transit>(
-			building.getSector(layout.doomedLift));
+			world.getSector(layout.doomedLift));
 		auto const doomedLadder = std::dynamic_pointer_cast<const core::Transit>(
-			building.getSector(layout.doomedLadder));
+			world.getSector(layout.doomedLadder));
 		if (!doomedLift || doomedLift->getLayerIndex() != 2 || doomedLift->getNumStops() != 2)
 		{
 			result.diagnostic = "the authored Lift does not sit on Layer 2 with two stops";
@@ -4731,43 +4731,43 @@ namespace
 
 		// One Agent stands in every kind of Sector the deletion touches, and two of
 		// them are mid-journey when the Layer is pulled out from under them.
-		auto const entryAgentId = building.createAgent("Entry walker", layout.entry, 0, 0.5f);
-		auto const sitterAgentId = building.createAgent("Middle sitter", layout.middleDeck, 0, 0.5f);
-		auto const climberAgentId = building.createAgent("Doomed climber", layout.doomedLadder, 0, 0.5f);
-		auto const riderAgentId = building.createAgent("Doomed rider", layout.doomedLift, 0, 0.5f);
-		auto const deepAgentId = building.createAgent("Deep traveller", layout.deepStore, 0, 0.5f);
-		auto const yardAgentId = building.createAgent("Yard keeper", layout.deepYard, 0, 0.5f);
+		auto const entryAgentId = world.createAgent("Entry walker", layout.entry, 0, 0.5f);
+		auto const sitterAgentId = world.createAgent("Middle sitter", layout.middleDeck, 0, 0.5f);
+		auto const climberAgentId = world.createAgent("Doomed climber", layout.doomedLadder, 0, 0.5f);
+		auto const riderAgentId = world.createAgent("Doomed rider", layout.doomedLift, 0, 0.5f);
+		auto const deepAgentId = world.createAgent("Deep traveller", layout.deepStore, 0, 0.5f);
+		auto const yardAgentId = world.createAgent("Yard keeper", layout.deepYard, 0, 0.5f);
 
-		auto const annexeBefore = building.getSector(layout.annexe).get();
-		auto const annexeTarget = building.getGraph()->getClosestVertexInSector(annexeBefore, { 8.5f, 0.0f });
+		auto const annexeBefore = world.getSector(layout.annexe).get();
+		auto const annexeTarget = world.getGraph()->getClosestVertexInSector(annexeBefore, { 8.5f, 0.0f });
 		if (!annexeTarget
 			|| annexeTarget->getPosition().distanceTo({ 8.5f, 0.0f }) > 0.001f)
 		{
 			result.diagnostic = "the Annexe destination Marker is not where the scenario authors it";
 			return result;
 		}
-		auto const traveller = building.lookupAgent(deepAgentId).entity;
+		auto const traveller = world.lookupAgent(deepAgentId).entity;
 		if (!traveller)
 		{
 			result.diagnostic = "the traveller Agent was not created";
 			return result;
 		}
-		auto const outbound = building.getGraph()->calculatePath(traveller, annexeTarget);
+		auto const outbound = world.getGraph()->calculatePath(traveller, annexeTarget);
 		if (!outbound)
 		{
-			result.diagnostic = "the authored Building has no route from the Deep Store to the Annexe";
+			result.diagnostic = "the authored World has no route from the Deep Store to the Annexe";
 			return result;
 		}
 		traveller->setPath(outbound, true);
-		for (uint64_t tick = 0; tick < 60; ++tick) building.advanceTick();
+		for (uint64_t tick = 0; tick < 60; ++tick) world.advanceTick();
 		if (traveller->getState() == core::Agent::State::Idle)
 		{
 			result.diagnostic = "the traveller finished before the deletion could catch it mid-journey";
 			return result;
 		}
 
-		building.pauseSimulation();
-		auto const plan = building.planDeleteLayer(1);
+		world.pauseSimulation();
+		auto const plan = world.planDeleteLayer(1);
 		result.planValid = plan.valid;
 		if (!plan.valid)
 		{
@@ -4791,7 +4791,7 @@ namespace
 			return result;
 		}
 
-		building.applyDeleteLayer(plan);
+		world.applyDeleteLayer(plan);
 
 		// Every casualty is gone: the two Locations and the Ladder on the deleted
 		// Layer, the Lift which lost its landings, and the three Agents which were
@@ -4799,9 +4799,9 @@ namespace
 		// was never touched.
 		uint32_t lifts{ 0 };
 		std::shared_ptr<const core::Sector> survivingLadder;
-		for (uint32_t i = 0; i < building.getNumSectors(); ++i)
+		for (uint32_t i = 0; i < world.getNumSectors(); ++i)
 		{
-			auto const sector = building.getSector(i);
+			auto const sector = world.getSector(i);
 			if (!sector) continue;
 			if (sector->getName() == "Middle Deck" || sector->getName() == "Middle Store")
 			{
@@ -4811,31 +4811,31 @@ namespace
 			if (sector->getType() == core::SectorType::Lift) ++lifts;
 			if (sector->getType() == core::SectorType::Ladder) survivingLadder = sector;
 		}
-		result.casualtiesRemoved = building.getNumSectors() == 8 && lifts == 0 && survivingLadder != nullptr
-			&& building.lookupAgent(sitterAgentId).entity == nullptr
-			&& building.lookupAgent(climberAgentId).entity == nullptr
-			&& building.lookupAgent(riderAgentId).entity == nullptr;
+		result.casualtiesRemoved = world.getNumSectors() == 8 && lifts == 0 && survivingLadder != nullptr
+			&& world.lookupAgent(sitterAgentId).entity == nullptr
+			&& world.lookupAgent(climberAgentId).entity == nullptr
+			&& world.lookupAgent(riderAgentId).entity == nullptr;
 		result.casualtiesRemoved = result.casualtiesRemoved
-			&& building.isSimulationPaused() && building.isTraversalTopologyValid();
+			&& world.isSimulationPaused() && world.isTraversalTopologyValid();
 		if (!result.casualtiesRemoved)
 		{
 			std::ostringstream detail;
-			detail << "sectors=" << building.getNumSectors() << ", lifts=" << lifts
-				<< ", topology=" << (building.isTraversalTopologyValid() ? "valid" : building.getTopologyDiagnostic());
+			detail << "sectors=" << world.getNumSectors() << ", lifts=" << lifts
+				<< ", topology=" << (world.isTraversalTopologyValid() ? "valid" : world.getTopologyDiagnostic());
 			result.diagnostic = detail.str();
 			return result;
 		}
 
 		// The Layers behind the deletion moved forward one, names and all, and the
 		// Sectors on them moved with their Layers.
-		result.layersCompacted = building.getLayerCount() == 3
-			&& building.getLayerName(1) == "Deep" && building.getLayerName(2) == "Attic";
+		result.layersCompacted = world.getLayerCount() == 3
+			&& world.getLayerName(1) == "Deep" && world.getLayerName(2) == "Attic";
 		for (auto const* name : { "Deep Store", "Deep Corridor", "Deep Yard" })
 		{
-			auto const sector = sectorByName(building, name);
+			auto const sector = sectorByName(world, name);
 			if (!sector || sector->getLayerIndex() != 1) result.layersCompacted = false;
 		}
-		auto const annexe = sectorByName(building, "Annexe");
+		auto const annexe = sectorByName(world, "Annexe");
 		auto const survivingTransit = std::dynamic_pointer_cast<const core::Transit>(survivingLadder);
 		if (!annexe || annexe->getLayerIndex() != 2) result.layersCompacted = false;
 		if (!survivingTransit || survivingTransit->getLayerIndex() != 2
@@ -4849,7 +4849,7 @@ namespace
 		// The Door which crossed the deleted Layer is gone; the one behind it now
 		// crosses the compacted pair.
 		uint32_t deletedCrossing{ 0 }, compactedCrossing{ 0 };
-		for (auto const& edge : building.getGraph()->getEdges())
+		for (auto const& edge : world.getGraph()->getEdges())
 		{
 			if (!edge || edge->getType() != core::EdgeType::Door) continue;
 			auto const a = edge->getVertex(0)->getSector()->getLayerIndex();
@@ -4861,7 +4861,7 @@ namespace
 		if (!result.layersCompacted)
 		{
 			std::ostringstream detail;
-			detail << "layers=" << building.getLayerCount() << ", door crossings into the deleted pair="
+			detail << "layers=" << world.getLayerCount() << ", door crossings into the deleted pair="
 				<< deletedCrossing << ", door crossings over the compacted pair=" << compactedCrossing;
 			result.diagnostic = detail.str();
 			return result;
@@ -4869,16 +4869,16 @@ namespace
 
 		// The Agents which were not in a doomed Sector are still there, resting on
 		// the Layer their Sector compacted to.
-		if (building.lookupAgent(entryAgentId).entity == nullptr
-			|| building.lookupAgent(deepAgentId).entity == nullptr
-			|| building.lookupAgent(yardAgentId).entity == nullptr)
+		if (world.lookupAgent(entryAgentId).entity == nullptr
+			|| world.lookupAgent(deepAgentId).entity == nullptr
+			|| world.lookupAgent(yardAgentId).entity == nullptr)
 		{
 			result.diagnostic = "a surviving Agent was removed by the deletion";
 			return result;
 		}
-		auto const entry = building.lookupAgent(entryAgentId).entity;
-		auto const deep = building.lookupAgent(deepAgentId).entity;
-		auto const yard = building.lookupAgent(yardAgentId).entity;
+		auto const entry = world.lookupAgent(entryAgentId).entity;
+		auto const deep = world.lookupAgent(deepAgentId).entity;
+		auto const yard = world.lookupAgent(yardAgentId).entity;
 		if (entry->getSector()->getLayerIndex() != 0
 			|| deep->getSector()->getName() != "Deep Store"
 			|| deep->getSector()->getLayerIndex() != 1
@@ -4889,13 +4889,13 @@ namespace
 			return result;
 		}
 
-		// And the compacted Building still works: one Agent crosses the surviving
+		// And the compacted World still works: one Agent crosses the surviving
 		// Door into the compacted back Layer, and the other rides the compacted
 		// Ladder between the two Locations which were never in danger.
-		building.resumeSimulation();
-		auto const annexeVertex = building.getGraph()->getClosestVertexInSector(annexe.get(), { 8.5f, 0.0f });
-		auto const corridorVertex = building.getGraph()->getClosestVertexInSector(
-			sectorByName(building, "Deep Corridor").get(), { 1.5f, 1.5f });
+		world.resumeSimulation();
+		auto const annexeVertex = world.getGraph()->getClosestVertexInSector(annexe.get(), { 8.5f, 0.0f });
+		auto const corridorVertex = world.getGraph()->getClosestVertexInSector(
+			sectorByName(world, "Deep Corridor").get(), { 1.5f, 1.5f });
 		// The destination Marker has to have followed its Sector through the record
 		// rewrite rather than landing on a renumbered neighbour.
 		if (!annexeVertex || annexeVertex->getPosition().distanceTo({ 8.5f, 0.0f }) > 0.001f
@@ -4904,11 +4904,11 @@ namespace
 			result.diagnostic = "a Marker did not follow its Sector through the compaction";
 			return result;
 		}
-		auto const deepPath = building.getGraph()->calculatePath(deep, annexeVertex);
-		auto const yardPath = building.getGraph()->calculatePath(yard, corridorVertex);
+		auto const deepPath = world.getGraph()->calculatePath(deep, annexeVertex);
+		auto const yardPath = world.getGraph()->calculatePath(yard, corridorVertex);
 		if (!deepPath || !yardPath)
 		{
-			result.diagnostic = "the compacted Building has no route for a surviving Agent";
+			result.diagnostic = "the compacted World has no route for a surviving Agent";
 			return result;
 		}
 
@@ -4924,43 +4924,43 @@ namespace
 		deep->setPath(deepPath, true);
 		yard->setPath(yardPath, true);
 		while ((deep->getState() != core::Agent::State::Idle || yard->getState() != core::Agent::State::Idle)
-			&& building.getSimulationTick() < MaximumSimulationTicks * 4)
+			&& world.getSimulationTick() < MaximumSimulationTicks * 4)
 		{
-			building.advanceTick();
+			world.advanceTick();
 		}
 
 		result.survivorsTraversable = deep->getState() == core::Agent::State::Idle
 			&& deep->getSector() == annexe.get()
 			&& deep->getGlobalPosition().distanceTo(annexeVertex->getPosition()) < 0.001f
 			&& yard->getState() == core::Agent::State::Idle
-			&& yard->getSector() == sectorByName(building, "Deep Corridor").get()
+			&& yard->getSector() == sectorByName(world, "Deep Corridor").get()
 			&& yard->getGlobalPosition().distanceTo(corridorVertex->getPosition()) < 0.001f;
 
-		result.run.snapshot = building.getSimulationSnapshot();
-		result.run.events = building.consumeSimulationEvents();
+		result.run.snapshot = world.getSimulationSnapshot();
+		result.run.events = world.consumeSimulationEvents();
 		return result;
 	}
 
 	ScenarioResult runOrdinaryPathScenario()
 	{
-		core::Building building("Headless smoke building", 7, 2);
-		auto corridor = building.addCorridor(0, 0, 6);
+		core::World world("Headless smoke world", 7, 2);
+		auto corridor = world.addCorridor(0, 0, 6);
 
 		uint32_t sourceVertexId;
 		uint32_t destinationVertexId;
-		building.addSectorMarker(corridor, 0, 0.5f, &sourceVertexId);
-		building.addSectorMarker(corridor, 0, 5.5f, &destinationVertexId);
-		building.finishBuild();
+		world.addSectorMarker(corridor, 0, 0.5f, &sourceVertexId);
+		world.addSectorMarker(corridor, 0, 5.5f, &destinationVertexId);
+		world.finishBuild();
 
-		auto agentId = building.createAgent("Headless smoke agent", corridor, 0, 0.5f);
-		auto agentLookup = building.lookupAgent(agentId);
+		auto agentId = world.createAgent("Headless smoke agent", corridor, 0, 0.5f);
+		auto agentLookup = world.lookupAgent(agentId);
 		if (!agentLookup)
 		{
 			return {};
 		}
 		auto agent = agentLookup.entity;
 
-		auto graph = building.getGraph();
+		auto graph = world.getGraph();
 		auto source = graph->getVertexByIdentifier(sourceVertexId);
 		auto destination = graph->getVertexByIdentifier(destinationVertexId);
 		auto path = graph->calculatePath(agent, source, destination);
@@ -4971,17 +4971,17 @@ namespace
 		agent->setPath(path, true);
 
 		while (agent->getState() != core::Agent::State::Idle
-			&& building.getSimulationTick() < MaximumSimulationTicks)
+			&& world.getSimulationTick() < MaximumSimulationTicks)
 		{
-			building.advanceTick();
+			world.advanceTick();
 		}
 
 		ScenarioResult result;
-		result.snapshot = building.getSimulationSnapshot();
-		result.events = building.consumeSimulationEvents();
+		result.snapshot = world.getSimulationSnapshot();
+		result.events = world.consumeSimulationEvents();
 		auto finalPosition = agent->getGlobalPosition();
 		result.reachedDestination = agent->getState() == core::Agent::State::Idle
-			&& agent->getSector() == building.getSector(corridor).get()
+			&& agent->getSector() == world.getSector(corridor).get()
 			&& finalPosition.distanceTo(destination->getPosition()) < 0.001f
 			&& phasesAreOrdered(result.events, result.snapshot.tick);
 		return result;
@@ -5069,7 +5069,7 @@ int main(int argc, char** argv)
 		}
 		if (!deepJourney.reachedDestination)
 		{
-			std::cerr << "FAIL: Agent did not traverse the three-layer building through its back-layer Transit\n";
+			std::cerr << "FAIL: Agent did not traverse the three-layer world through its back-layer Transit\n";
 			return 1;
 		}
 		auto const deepRepeat = runThreeLayerTransitJourney();
@@ -5105,7 +5105,7 @@ int main(int argc, char** argv)
 		}
 		if (!deletion.survivorsTraversable)
 		{
-			std::cerr << "FAIL: surviving Agents could not travel the compacted Building\n";
+			std::cerr << "FAIL: surviving Agents could not travel the compacted World\n";
 			return 1;
 		}
 		auto const deletionRepeat = runMiddleLayerDeletion();
@@ -5120,9 +5120,9 @@ int main(int argc, char** argv)
 			std::cerr << "FAIL: render-time accumulation did not advance exactly one whole tick\n";
 			return 1;
 		}
-		if (!buildingOwnsTypedEntitiesAndInvalidatesHandles())
+		if (!worldOwnsTypedEntitiesAndInvalidatesHandles())
 		{
-			std::cerr << "FAIL: typed building ownership or handle invalidation failed\n";
+			std::cerr << "FAIL: typed world ownership or handle invalidation failed\n";
 			return 1;
 		}
 		if (!inferredPathSourceDoesNotMakeAgentDoubleBack())

@@ -13,7 +13,7 @@ namespace core
 
 	class Door : public OpenableObject
 	{
-		friend class Building;
+		friend class World;
 	public:
 		// The authored visual manner in which the Door's leaf or leaves reveal its
 		// threshold. OpenApart's two leaves remain one logical Door. A tall OpenUp

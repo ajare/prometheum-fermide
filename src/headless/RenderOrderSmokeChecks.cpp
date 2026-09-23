@@ -1,4 +1,4 @@
-// Tickets #16, #25 and #26: rendering order for multi-layer Buildings.
+// Tickets #16, #25 and #26: rendering order for multi-layer Worlds.
 //
 // The viewport paints the selected Layer solid and whole. The Layer directly
 // behind it is painted by two passes: solid, clipped to the apertures the
@@ -23,7 +23,7 @@
 // shows the Agents standing inside it.
 //
 // The paint model below emits the same passes, in the same order, as
-// renderBuilding() does, and drives them through the very policy helpers the
+// renderWorld() does, and drives them through the very policy helpers the
 // renderer calls - renderPasses, shouldClipTransitToApertures, transitApertures,
 // shouldRenderSectorAgents, shouldFillBackground and shouldOutlineBackground -
 // so a change to that policy shows up here rather than only on a screen.
@@ -49,7 +49,7 @@
 
 #include "Render.h"
 #include "core/Background.h"
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/Defines.h"
 #include "core/Door.h"
 #include "core/DoorSectorObject.h"
@@ -282,16 +282,16 @@ namespace
 	}
 
 	std::vector<std::shared_ptr<const core::Sector>> locationsOn(
-		core::Building const& building, uint32_t layer)
+		core::World const& world, uint32_t layer)
 	{
 		std::vector<std::shared_ptr<const core::Sector>> locations;
-		for (auto const& sector : building.getSectors(layer))
+		for (auto const& sector : world.getSectors(layer))
 			if (std::dynamic_pointer_cast<const core::Location>(sector)) locations.push_back(sector);
 		return locations;
 	}
 
 	//
-	// Paints the whole Building for one selected Layer, exactly as the renderer
+	// Paints the whole World for one selected Layer, exactly as the renderer
 	// orders it: the selected Layer first and whole, then the Layer directly
 	// behind it solid through the selected Layer's apertures, then - overlay on -
 	// that same Layer outlined over the selection.
@@ -303,7 +303,7 @@ namespace
 	// the apertures a Door or clear Window gives a back-Layer Location, so a
 	// Location on the Layer behind is only painted here by the overlay pass.
 	//
-	LayerView snapshotView(core::Building const& building, uint32_t viewLayer,
+	LayerView snapshotView(core::World const& world, uint32_t viewLayer,
 		std::vector<std::shared_ptr<const core::Sector>> const& viewLocations, bool overlayEnabled)
 	{
 		LayerView view;
@@ -314,12 +314,12 @@ namespace
 			view.selectedLocations.push_back(rectOf(*location));
 		}
 
-		auto const layerCount = building.getLayerCount();
+		auto const layerCount = world.getLayerCount();
 
 		std::map<uint32_t, PaintedSector> painted;
-		for (uint32_t index = 0; index < building.getNumSectors(); ++index)
+		for (uint32_t index = 0; index < world.getNumSectors(); ++index)
 		{
-			auto const sector = building.getSector(index);
+			auto const sector = world.getSector(index);
 			if (!sector) continue;
 
 			auto& entry = painted[index];
@@ -348,7 +348,7 @@ namespace
 					// this model tracks.
 					if (isLocation || isBackground) continue;
 
-					for (auto const& aperture : transitApertures(building.getSector(index),
+					for (auto const& aperture : transitApertures(world.getSector(index),
 						viewLayer, viewLocations))
 					{
 						auto const piece = intersect(sector.footprint, rectOf(aperture));
@@ -392,9 +392,9 @@ namespace
 		return view;
 	}
 
-	LayerView snapshotView(core::Building const& building, uint32_t viewLayer, bool overlayEnabled = true)
+	LayerView snapshotView(core::World const& world, uint32_t viewLayer, bool overlayEnabled = true)
 	{
-		return snapshotView(building, viewLayer, locationsOn(building, viewLayer), overlayEnabled);
+		return snapshotView(world, viewLayer, locationsOn(world, viewLayer), overlayEnabled);
 	}
 
 	//
@@ -408,35 +408,35 @@ namespace
 	//   Layer 2  the Lift behind the Loft and Gallery, and the Deep Store and Yard
 	//   Layer 3  the Shuttle behind the Deep Store
 	//
-	void authorRenderOrderDepot(core::Building& building)
+	void authorRenderOrderDepot(core::World& world)
 	{
-		while (building.getLayerCount() < 4) building.addLayer();
+		while (world.getLayerCount() < 4) world.addLayer();
 
-		building.addRoom("Front Hall", 0, 0, 0, 14, 1);
-		building.addRoom("Front Shop", 0, 1, 0, 14, 1);
-		building.addRoom("Front Store", 0, 2, 0, 14, 1);
-		building.addRoom("Front Yard", 0, 3, 0, 14, 1);
+		world.addRoom("Front Hall", 0, 0, 0, 14, 1);
+		world.addRoom("Front Shop", 0, 1, 0, 14, 1);
+		world.addRoom("Front Store", 0, 2, 0, 14, 1);
+		world.addRoom("Front Yard", 0, 3, 0, 14, 1);
 
-		core::Building::CreateLadderOptions ladderOptions{ 2, false, true };
-		building.addLadder(1, 0, 10, ladderOptions);
+		core::World::CreateLadderOptions ladderOptions{ 2, false, true };
+		world.addLadder(1, 0, 10, ladderOptions);
 
-		building.addRoom("Back Loft", 1, 2, 0, 8, 1);
-		building.addRoom("Back Gallery", 1, 3, 0, 8, 1);
+		world.addRoom("Back Loft", 1, 2, 0, 8, 1);
+		world.addRoom("Back Gallery", 1, 3, 0, 8, 1);
 
-		building.addStairwell(1, 2, 8, 2, CORE_SIDE_RIGHT);
+		world.addStairwell(1, 2, 8, 2, CORE_SIDE_RIGHT);
 
-		core::Building::CreateLiftOptions liftOptions;
+		core::World::CreateLiftOptions liftOptions;
 		liftOptions.cellsWide = 1;
 		liftOptions.stopOffsets = { 0, 1 };
-		building.addLift(2, 2, 4, liftOptions);
+		world.addLift(2, 2, 4, liftOptions);
 
-		building.addRoom("Deep Store", 2, 0, 0, 14, 1);
-		building.addRoom("Deep Yard", 2, 1, 0, 14, 1);
+		world.addRoom("Deep Store", 2, 0, 0, 14, 1);
+		world.addRoom("Deep Yard", 2, 1, 0, 14, 1);
 
-		core::Building::CreateShuttleOptions shuttleOptions{ 2, 3, { 0, 7 }, 0 };
-		building.addShuttle(3, 0, 1, 15, shuttleOptions);
+		core::World::CreateShuttleOptions shuttleOptions{ 2, 3, { 0, 7 }, 0 };
+		world.addShuttle(3, 0, 1, 15, shuttleOptions);
 
-		building.finishBuild();
+		world.finishBuild();
 	}
 
 	// One Transit under test: which Layer it sits on and which Locations on the
@@ -458,11 +458,11 @@ namespace
 		};
 	}
 
-	std::shared_ptr<const core::Sector> sectorByName(core::Building const& building,
+	std::shared_ptr<const core::Sector> sectorByName(core::World const& world,
 		std::string_view name)
 	{
-		for (uint32_t index = 0; index < building.getNumSectors(); ++index)
-			if (building.getSector(index)->getName() == name) return building.getSector(index);
+		for (uint32_t index = 0; index < world.getNumSectors(); ++index)
+			if (world.getSector(index)->getName() == name) return world.getSector(index);
 		return nullptr;
 	}
 
@@ -500,17 +500,17 @@ namespace
 	//
 	void theDepotCarriesEveryClippedTransitBehindALayerOfLocations()
 	{
-		core::Building building("Render order depot", 16, 4);
-		authorRenderOrderDepot(building);
+		core::World world("Render order depot", 16, 4);
+		authorRenderOrderDepot(world);
 
-		require(building.getLayerCount() == 4, "the Depot is not four Layers deep");
-		require(building.isTraversalTopologyValid(),
-			("the Depot's traversal topology is invalid: " + building.getTopologyDiagnostic()).c_str());
+		require(world.getLayerCount() == 4, "the Depot is not four Layers deep");
+		require(world.isTraversalTopologyValid(),
+			("the Depot's traversal topology is invalid: " + world.getTopologyDiagnostic()).c_str());
 
 		for (auto const& want : depotTransits())
 		{
 			auto const transit = std::dynamic_pointer_cast<const core::Transit>(
-				sectorByName(building, want.name));
+				sectorByName(world, want.name));
 			require(transit != nullptr, ("the Depot has no Transit named " + std::string(want.name)).c_str());
 			require(transit->getLayerIndex() == want.layer,
 				("the Depot's " + std::string(want.name) + " is not on the Layer it is expected on").c_str());
@@ -530,16 +530,16 @@ namespace
 
 		// The Ladder's shaft rises past the ceiling of the Room it is seen through,
 		// so part of its footprint has no aperture at all.
-		auto const ladder = rectOf(*sectorByName(building, "Ladder"));
-		auto const shop = rectOf(*sectorByName(building, "Front Shop"));
+		auto const ladder = rectOf(*sectorByName(world, "Ladder"));
+		auto const shop = rectOf(*sectorByName(world, "Front Shop"));
 		Rect const aboveTheCeiling{ ladder.minX, shop.maxY, ladder.maxX, ladder.maxY };
 		require(aboveTheCeiling.area() > kAreaEpsilon,
 			("the Depot no longer leaves the Ladder's shaft above its landing ceiling: "
 				+ describeRect(aboveTheCeiling)).c_str());
 
 		// The Shuttle runs past the right-hand wall of the Room it is seen through.
-		auto const shuttle = rectOf(*sectorByName(building, "Shuttle"));
-		auto const store = rectOf(*sectorByName(building, "Deep Store"));
+		auto const shuttle = rectOf(*sectorByName(world, "Shuttle"));
+		auto const store = rectOf(*sectorByName(world, "Deep Store"));
 		Rect const pastTheWall{ store.maxX, shuttle.minY, shuttle.maxX, shuttle.maxY };
 		require(pastTheWall.area() > kAreaEpsilon,
 			("the Depot no longer runs the Shuttle past its landing Location: "
@@ -549,11 +549,11 @@ namespace
 		// left empty at the right-hand end, which is what makes "and not otherwise"
 		// a question with something to answer.
 		double frontRight{ 0.0 };
-		for (auto const& location : locationsOn(building, 0))
+		for (auto const& location : locationsOn(world, 0))
 		{
 			frontRight = std::max(frontRight, rectOf(*location).maxX);
 		}
-		require(frontRight + kAreaEpsilon < static_cast<double>(building.getCellsWide()),
+		require(frontRight + kAreaEpsilon < static_cast<double>(world.getCellsWide()),
 			"the Depot no longer leaves ground empty on its front Layer");
 	}
 
@@ -565,8 +565,8 @@ namespace
 	//
 	void aTransitBehindTheSelectionIsPaintedSolidThroughItsLocations()
 	{
-		core::Building building("Render order depot", 16, 4);
-		authorRenderOrderDepot(building);
+		core::World world("Render order depot", 16, 4);
+		authorRenderOrderDepot(world);
 
 		for (auto const& want : depotTransits())
 		{
@@ -574,8 +574,8 @@ namespace
 
 			for (auto const overlay : { false, true })
 			{
-				auto const view = snapshotView(building, viewLayer,
-					locationsOn(building, viewLayer), overlay);
+				auto const view = snapshotView(world, viewLayer,
+					locationsOn(world, viewLayer), overlay);
 				auto const& sector = paintedSector(view, want.name);
 				std::string const overlayState = overlay ? "with the overlay on" : "with the overlay off";
 
@@ -616,12 +616,12 @@ namespace
 	//
 	void aTransitIsNotPaintedWhereTheSelectedLayerDoesNotOpen()
 	{
-		core::Building building("Render order depot", 16, 4);
-		authorRenderOrderDepot(building);
+		core::World world("Render order depot", 16, 4);
+		authorRenderOrderDepot(world);
 
-		auto const view = snapshotView(building, 0);
+		auto const view = snapshotView(world, 0);
 		auto const& ladder = paintedSector(view, "Ladder");
-		auto const& shop = rectOf(*sectorByName(building, "Front Shop"));
+		auto const& shop = rectOf(*sectorByName(world, "Front Shop"));
 		auto const& ladderFootprint = ladder.footprint;
 
 		Rect const aboveTheCeiling{ ladderFootprint.minX, shop.maxY,
@@ -640,9 +640,9 @@ namespace
 		require(unionAreaClippedTo(ladder.rectsOf(false), { aboveTheCeiling }) > kAreaEpsilon,
 			"the overlay does not outline the Ladder above its landing ceiling");
 
-		auto const deepView = snapshotView(building, 2);
+		auto const deepView = snapshotView(world, 2);
 		auto const& shuttle = paintedSector(deepView, "Shuttle");
-		auto const& store = rectOf(*sectorByName(building, "Deep Store"));
+		auto const& store = rectOf(*sectorByName(world, "Deep Store"));
 		Rect const pastTheWall{ store.maxX, shuttle.footprint.minY,
 			shuttle.footprint.maxX, shuttle.footprint.maxY };
 		double paintedPast{ 0.0 };
@@ -659,9 +659,9 @@ namespace
 
 		// Stated generally, for every Layer the viewer can select: nothing of the
 		// Layer behind is filled where the selected Layer has no Location.
-		for (uint32_t viewLayer = 0; viewLayer + 1 < building.getLayerCount(); ++viewLayer)
+		for (uint32_t viewLayer = 0; viewLayer + 1 < world.getLayerCount(); ++viewLayer)
 		{
-			auto const layerView = snapshotView(building, viewLayer);
+			auto const layerView = snapshotView(world, viewLayer);
 			for (auto const& sector : layerView.sectors)
 			{
 				if (sector.layer != viewLayer + 1 || sector.sectorType == core::SectorType::Location)
@@ -685,14 +685,14 @@ namespace
 	//
 	void aLiftLandingDoorwayIsItsOwnThreshold()
 	{
-		core::Building building("Render order depot", 16, 4);
-		authorRenderOrderDepot(building);
+		core::World world("Render order depot", 16, 4);
+		authorRenderOrderDepot(world);
 
 		constexpr uint32_t viewLayer{ 1 };	// the Depot's Lift sits on Layer 2
-		auto const transit = sectorByName(building, "Lift");
+		auto const transit = sectorByName(world, "Lift");
 		require(transit != nullptr, "the Depot has no Lift");
 
-		auto const apertures = transitApertures(transit, viewLayer, locationsOn(building, viewLayer));
+		auto const apertures = transitApertures(transit, viewLayer, locationsOn(world, viewLayer));
 		require(!apertures.empty(), "the Lift exposes no aperture on the Layer in front of it");
 
 		for (auto const& aperture : apertures)
@@ -719,17 +719,17 @@ namespace
 	//
 	void aShuttleOpensThroughItsOwnCarriageDoors()
 	{
-		core::Building building("Render order depot", 16, 4);
-		authorRenderOrderDepot(building);
+		core::World world("Render order depot", 16, 4);
+		authorRenderOrderDepot(world);
 
 		constexpr uint32_t viewLayer{ 2 };	// the Depot's Shuttle sits on Layer 3
-		auto const transit = sectorByName(building, "Shuttle");
+		auto const transit = sectorByName(world, "Shuttle");
 		require(transit != nullptr, "the Depot has no Shuttle");
 		auto const shuttle = std::dynamic_pointer_cast<const core::ShuttleTransit>(transit);
 		require(shuttle != nullptr, "the Depot's Shuttle is not a ShuttleTransit");
 
 		std::vector<std::shared_ptr<const core::Door>> owned;
-		for (auto const& location : locationsOn(building, viewLayer))
+		for (auto const& location : locationsOn(world, viewLayer))
 			for (uint32_t i = 0; i < location->getNumObjects(); ++i)
 			{
 				auto const object = location->getObject(i);
@@ -742,7 +742,7 @@ namespace
 		// The Depot's Shuttle is two carriages at two stops, one door each.
 		require(owned.size() == 4, "the Depot's Shuttle does not own four carriage Doors");
 
-		auto const apertures = transitApertures(transit, viewLayer, locationsOn(building, viewLayer));
+		auto const apertures = transitApertures(transit, viewLayer, locationsOn(world, viewLayer));
 		require(apertures.size() == owned.size(),
 			"the Shuttle does not open one aperture per carriage Door it owns");
 
@@ -802,16 +802,16 @@ namespace
 	//
 	void aTransitIsNotPaintedFromAnyOtherLayer()
 	{
-		core::Building building("Render order depot", 16, 4);
-		authorRenderOrderDepot(building);
+		core::World world("Render order depot", 16, 4);
+		authorRenderOrderDepot(world);
 
-		auto const layerCount = building.getLayerCount();
+		auto const layerCount = world.getLayerCount();
 		for (uint32_t viewLayer = 0; viewLayer < layerCount; ++viewLayer)
 		{
 			for (auto const overlay : { false, true })
 			{
-				auto const view = snapshotView(building, viewLayer,
-					locationsOn(building, viewLayer), overlay);
+				auto const view = snapshotView(world, viewLayer,
+					locationsOn(world, viewLayer), overlay);
 				for (auto const& sector : view.sectors)
 				{
 					if (sector.sectorType == core::SectorType::Location)
@@ -841,14 +841,14 @@ namespace
 	//
 	void onlyALandingLocationOpensOntoATransit()
 	{
-		core::Building building("Render order depot", 16, 4);
-		authorRenderOrderDepot(building);
+		core::World world("Render order depot", 16, 4);
+		authorRenderOrderDepot(world);
 
 		for (auto const& want : depotTransits())
 		{
 			auto const viewLayer = want.layer - 1;
-			auto const transit = sectorByName(building, want.name);
-			auto const apertures = transitApertures(transit, viewLayer, locationsOn(building, viewLayer));
+			auto const transit = sectorByName(world, want.name);
+			auto const apertures = transitApertures(transit, viewLayer, locationsOn(world, viewLayer));
 			require(!apertures.empty(),
 				("the " + std::string(want.name) + " exposes no aperture on the Layer in front of it").c_str());
 
@@ -862,7 +862,7 @@ namespace
 
 			// Every other Location on the selected Layer keeps its floor: none of
 			// the Transit's apertures reach into it.
-			for (auto const& location : locationsOn(building, viewLayer))
+			for (auto const& location : locationsOn(world, viewLayer))
 			{
 				auto const isLanding = std::find(want.landingNames.begin(), want.landingNames.end(),
 					location->getName()) != want.landingNames.end();
@@ -877,7 +877,7 @@ namespace
 
 			// Nor does a Transit on the selected Layer act as an aperture: the
 			// deeper Transit must not appear through it.
-			for (auto const& other : building.getSectors(viewLayer))
+			for (auto const& other : world.getSectors(viewLayer))
 			{
 				if (other->getType() == core::SectorType::Location) continue;
 				for (auto const& aperture : apertures)
@@ -898,16 +898,16 @@ namespace
 	//
 	void aTransitOnlyOpensOntoTheLayerInFrontOfIt()
 	{
-		core::Building building("Render order depot", 16, 4);
-		authorRenderOrderDepot(building);
+		core::World world("Render order depot", 16, 4);
+		authorRenderOrderDepot(world);
 
 		for (auto const& want : depotTransits())
 		{
-			auto const transit = sectorByName(building, want.name);
-			for (uint32_t viewLayer = 0; viewLayer < building.getLayerCount(); ++viewLayer)
+			auto const transit = sectorByName(world, want.name);
+			for (uint32_t viewLayer = 0; viewLayer < world.getLayerCount(); ++viewLayer)
 			{
 				auto const apertures = transitApertures(transit, viewLayer,
-					locationsOn(building, viewLayer));
+					locationsOn(world, viewLayer));
 				if (viewLayer + 1 == want.layer)
 				{
 					require(!apertures.empty(),
@@ -930,22 +930,22 @@ namespace
 	//
 	void aStaircaseIsPaintedAcrossTheLocationsInView()
 	{
-		core::Building building("Staircase render order", 12, 3);
-		while (building.getLayerCount() < 2) building.addLayer();
-		building.addCorridor(0, 0, 6);
-		building.addCorridor(1, 0, 7);
-		auto const room = building.addRoom("Upper room", 0, 1, 7, 3, 1);
-		building.removeLocationWall(room, 0, CORE_SIDE_LEFT);
-		building.addStaircase(1, 0, 5,
-			core::Building::CreateStaircaseOptions{ 3, CORE_SIDE_RIGHT, 0.0f });
-		building.finishBuild();
-		require(building.isTraversalTopologyValid(),
-			("the Staircase Building's traversal topology is invalid: "
-				+ building.getTopologyDiagnostic()).c_str());
+		core::World world("Staircase render order", 12, 3);
+		while (world.getLayerCount() < 2) world.addLayer();
+		world.addCorridor(0, 0, 6);
+		world.addCorridor(1, 0, 7);
+		auto const room = world.addRoom("Upper room", 0, 1, 7, 3, 1);
+		world.removeLocationWall(room, 0, CORE_SIDE_LEFT);
+		world.addStaircase(1, 0, 5,
+			core::World::CreateStaircaseOptions{ 3, CORE_SIDE_RIGHT, 0.0f });
+		world.finishBuild();
+		require(world.isTraversalTopologyValid(),
+			("the Staircase World's traversal topology is invalid: "
+				+ world.getTopologyDiagnostic()).c_str());
 
 		for (auto const overlay : { false, true })
 		{
-			auto const view = snapshotView(building, 0, locationsOn(building, 0), overlay);
+			auto const view = snapshotView(world, 0, locationsOn(world, 0), overlay);
 			auto const& staircase = paintedSector(view, "Staircase");
 			std::string const overlayState = overlay ? "with the overlay on" : "with the overlay off";
 
@@ -965,7 +965,7 @@ namespace
 		// With nothing of the selected Layer in front of it, the Staircase has no
 		// aperture to be seen through at all.
 		std::vector<std::shared_ptr<const core::Sector>> none;
-		auto const emptyView = snapshotView(building, 0, none, true);
+		auto const emptyView = snapshotView(world, 0, none, true);
 		require(paintedSector(emptyView, "Staircase").solidArea() <= kAreaEpsilon,
 			"the Staircase is painted solid with no Location of the selected Layer in view");
 
@@ -973,14 +973,14 @@ namespace
 		// Corridor's ceiling.
 		std::vector<std::shared_ptr<const core::Sector>> lowerOnly;
 		Rect lowerCeiling{};
-		for (auto const& sector : building.getSectors(0))
+		for (auto const& sector : world.getSectors(0))
 		{
 			if (sector->getCellY() != 0) continue;
 			lowerOnly.push_back(sector);
 			lowerCeiling = rectOf(*sector);
 		}
-		require(!lowerOnly.empty(), "the Staircase Building has no lower Corridor");
-		auto const lowerView = snapshotView(building, 0, lowerOnly, true);
+		require(!lowerOnly.empty(), "the Staircase World has no lower Corridor");
+		auto const lowerView = snapshotView(world, 0, lowerOnly, true);
 		auto const& lowerStaircase = paintedSector(lowerView, "Staircase");
 		require(lowerStaircase.solidArea() > kAreaEpsilon,
 			"the Staircase vanished when only the lower Corridor is in view");
@@ -1040,15 +1040,15 @@ namespace
 		// outlines and nothing else. Every Sector's filled area, and whether any
 		// pass was allowed to paint its Agents, is exactly what it was with the
 		// overlay off.
-		core::Building building("Render order depot", 16, 4);
-		authorRenderOrderDepot(building);
+		core::World world("Render order depot", 16, 4);
+		authorRenderOrderDepot(world);
 
-		for (uint32_t viewLayer = 0; viewLayer < building.getLayerCount(); ++viewLayer)
+		for (uint32_t viewLayer = 0; viewLayer < world.getLayerCount(); ++viewLayer)
 		{
-			auto const without = snapshotView(building, viewLayer,
-				locationsOn(building, viewLayer), false);
-			auto const with = snapshotView(building, viewLayer,
-				locationsOn(building, viewLayer), true);
+			auto const without = snapshotView(world, viewLayer,
+				locationsOn(world, viewLayer), false);
+			auto const with = snapshotView(world, viewLayer,
+				locationsOn(world, viewLayer), true);
 
 			for (auto const& sector : without.sectors)
 			{
@@ -1068,12 +1068,12 @@ namespace
 	//
 	void theSelectedLayerPaintsItselfWhole()
 	{
-		core::Building building("Render order depot", 16, 4);
-		authorRenderOrderDepot(building);
+		core::World world("Render order depot", 16, 4);
+		authorRenderOrderDepot(world);
 
-		for (uint32_t viewLayer = 0; viewLayer < building.getLayerCount(); ++viewLayer)
+		for (uint32_t viewLayer = 0; viewLayer < world.getLayerCount(); ++viewLayer)
 		{
-			auto const view = snapshotView(building, viewLayer);
+			auto const view = snapshotView(world, viewLayer);
 			uint32_t selected{ 0 };
 			for (auto const& sector : view.sectors)
 			{
@@ -1103,15 +1103,15 @@ namespace
 	//
 	void theOverlayOutlinesTheWholeLayerBehind()
 	{
-		core::Building building("Render order depot", 16, 4);
-		authorRenderOrderDepot(building);
+		core::World world("Render order depot", 16, 4);
+		authorRenderOrderDepot(world);
 
-		for (uint32_t viewLayer = 0; viewLayer + 1 < building.getLayerCount(); ++viewLayer)
+		for (uint32_t viewLayer = 0; viewLayer + 1 < world.getLayerCount(); ++viewLayer)
 		{
-			auto const without = snapshotView(building, viewLayer,
-				locationsOn(building, viewLayer), false);
-			auto const with = snapshotView(building, viewLayer,
-				locationsOn(building, viewLayer), true);
+			auto const without = snapshotView(world, viewLayer,
+				locationsOn(world, viewLayer), false);
+			auto const with = snapshotView(world, viewLayer,
+				locationsOn(world, viewLayer), true);
 
 			uint32_t outlined{ 0 };
 			for (auto const& sector : with.sectors)
@@ -1133,7 +1133,7 @@ namespace
 	// The pass order itself: the selected Layer first and solid, then the Layer
 	// directly behind drawn solid through apertures, then one wireframe overlay of
 	// that same Layer, and nothing after that. renderPasses() is the very function
-	// renderBuilding() drives, so this is the renderer's own order.
+	// renderWorld() drives, so this is the renderer's own order.
 	//
 	void theRenderPassOrderDrawsTheSelectedLayerFirst()
 	{
@@ -1186,17 +1186,17 @@ namespace
 		digest *= 1099511628211ULL;
 	}
 
-	uint64_t snapshotDigest(core::Building const& building)
+	uint64_t snapshotDigest(core::World const& world)
 	{
 		uint64_t digest{ 1469598103934665603ULL };
-		for (uint32_t viewLayer = 0; viewLayer < building.getLayerCount(); ++viewLayer)
+		for (uint32_t viewLayer = 0; viewLayer < world.getLayerCount(); ++viewLayer)
 		{
 			for (uint32_t overlay = 0; overlay < 2; ++overlay)
 			{
 				digestValue(digest, viewLayer);
 				digestValue(digest, overlay);
-				auto const view = snapshotView(building, viewLayer,
-					locationsOn(building, viewLayer), overlay != 0);
+				auto const view = snapshotView(world, viewLayer,
+					locationsOn(world, viewLayer), overlay != 0);
 				for (auto const& sector : view.sectors)
 				{
 					digestValue(digest, sector.index);
@@ -1229,17 +1229,17 @@ namespace
 	//
 	void aClearWindowShowsItsBackgroundsOwnColour()
 	{
-		core::Building building("Backdrop render order", 12, 2);
-		while (building.getLayerCount() < 2) building.addLayer();
-		building.addRoom("Front", 0, 0, 0, 12, 1);
-		auto const backdropIndex = building.addBackground(1, 0, 0, 6, 1, { 255, 128, 0 });
-		building.addRoom("Behind", 1, 0, 6, 6, 1);
+		core::World world("Backdrop render order", 12, 2);
+		while (world.getLayerCount() < 2) world.addLayer();
+		world.addRoom("Front", 0, 0, 0, 12, 1);
+		auto const backdropIndex = world.addBackground(1, 0, 0, 6, 1, { 255, 128, 0 });
+		world.addRoom("Behind", 1, 0, 6, 6, 1);
 
-		auto const looking = building.addSectorWindow(0, 0, 1, 2, 1,
+		auto const looking = world.addSectorWindow(0, 0, 1, 2, 1,
 			{ false, core::Window::State::Closed, core::Window::Style::Clear });
-		auto const tinted = building.addSectorWindow(0, 0, 7, 2, 1,
+		auto const tinted = world.addSectorWindow(0, 0, 7, 2, 1,
 			{ false, core::Window::State::Closed, core::Window::Style::Clear });
-		building.finishBuild();
+		world.finishBuild();
 
 		require(looking.object != nullptr && tinted.object != nullptr,
 			"a clear Window was not created");
@@ -1249,7 +1249,7 @@ namespace
 
 		// The Aperture pass for the Layer behind the selection is the pass that
 		// receives the fill colour; renderPasses() is the renderer's own order.
-		auto const passes = renderPasses(0, building.getLayerCount(), false);
+		auto const passes = renderPasses(0, world.getLayerCount(), false);
 		bool hasAperturePass{ false };
 		for (auto const& pass : passes)
 		{
@@ -1303,15 +1303,15 @@ namespace
 		uint32_t rightIndex{ 0 };
 	};
 
-	BackdropLayout authorBackgroundBackdrop(core::Building& building)
+	BackdropLayout authorBackgroundBackdrop(core::World& world)
 	{
-		while (building.getLayerCount() < 2) building.addLayer();
-		building.addRoom("Front", 0, 0, 0, 8, 1);
+		while (world.getLayerCount() < 2) world.addLayer();
+		world.addRoom("Front", 0, 0, 0, 8, 1);
 
 		BackdropLayout layout;
-		layout.leftIndex = building.addBackground(1, 0, 0, 6, 1, { 200, 60, 40 });
-		layout.rightIndex = building.addBackground(1, 0, 6, 6, 1, { 200, 60, 40 });
-		building.finishBuild();
+		layout.leftIndex = world.addBackground(1, 0, 0, 6, 1, { 200, 60, 40 });
+		layout.rightIndex = world.addBackground(1, 0, 6, 6, 1, { 200, 60, 40 });
+		world.finishBuild();
 		return layout;
 	}
 
@@ -1352,15 +1352,15 @@ namespace
 	//
 	void aBackgroundBehindTheSelectionIsOutlinedWholeByTheOverlay()
 	{
-		core::Building building("Backdrop render order", 12, 2);
-		auto const layout = authorBackgroundBackdrop(building);
-		require(building.isTraversalTopologyValid(),
-			("the backdrop Building's traversal topology is invalid: "
-				+ building.getTopologyDiagnostic()).c_str());
+		core::World world("Backdrop render order", 12, 2);
+		auto const layout = authorBackgroundBackdrop(world);
+		require(world.isTraversalTopologyValid(),
+			("the backdrop World's traversal topology is invalid: "
+				+ world.getTopologyDiagnostic()).c_str());
 
 		constexpr uint32_t viewLayer{ 0 };
-		auto const with = snapshotView(building, viewLayer, locationsOn(building, viewLayer), true);
-		auto const without = snapshotView(building, viewLayer, locationsOn(building, viewLayer), false);
+		auto const with = snapshotView(world, viewLayer, locationsOn(world, viewLayer), true);
+		auto const without = snapshotView(world, viewLayer, locationsOn(world, viewLayer), false);
 
 		uint32_t behind{ 0 };
 		for (auto const& sector : with.sectors)
@@ -1388,8 +1388,8 @@ namespace
 		// The overlay is not clipped to the apertures the selected Layer has: the
 		// front Room stops at its own wall while the Backgrounds run on past it,
 		// and that ground is still outlined.
-		auto const front = rectOf(*sectorByName(building, "Front"));
-		auto const right = rectOf(*building.getSector(layout.rightIndex));
+		auto const front = rectOf(*sectorByName(world, "Front"));
+		auto const right = rectOf(*world.getSector(layout.rightIndex));
 		Rect const noAperture{ front.maxX, right.minY, right.maxX, right.maxY };
 		require(noAperture.area() > kAreaEpsilon,
 			("the backdrop no longer leaves Background ground with no Location in front of it: "
@@ -1414,11 +1414,11 @@ namespace
 	//
 	void adjacentBackgroundsMeetWithoutASeam()
 	{
-		core::Building building("Backdrop render order", 12, 2);
-		auto const layout = authorBackgroundBackdrop(building);
+		core::World world("Backdrop render order", 12, 2);
+		auto const layout = authorBackgroundBackdrop(world);
 
 		constexpr uint32_t viewLayer{ 1 };
-		auto const view = snapshotView(building, viewLayer, locationsOn(building, viewLayer), false);
+		auto const view = snapshotView(world, viewLayer, locationsOn(world, viewLayer), false);
 
 		uint32_t count{ 0 };
 		std::vector<Rect> fills;
@@ -1442,8 +1442,8 @@ namespace
 		}
 		require(count == 2, "the backdrop does not carry two Backgrounds on the selected Layer");
 
-		auto const left = rectOf(*building.getSector(layout.leftIndex));
-		auto const right = rectOf(*building.getSector(layout.rightIndex));
+		auto const left = rectOf(*world.getSector(layout.leftIndex));
+		auto const right = rectOf(*world.getSector(layout.rightIndex));
 		require(std::abs(left.maxX - right.minX) <= kAreaEpsilon,
 			("the two Backgrounds no longer share an edge: " + describeRect(left) + " against "
 				+ describeRect(right)).c_str());
@@ -1496,15 +1496,15 @@ namespace
 		constexpr core::BackgroundColour kSky{ 96, 128, 160 };
 		constexpr core::BackgroundColour kCarPark{ 112, 112, 112 };
 
-		core::Building building("Multi-background aperture", 12, 2);
-		while (building.getLayerCount() < 2) building.addLayer();
-		building.addRoom("Front", 0, 0, 0, 8, 1);
-		auto const skyIndex = building.addBackground(1, 0, 0, 6, 1, kSky);
-		auto const carIndex = building.addBackground(1, 0, 6, 6, 1, kCarPark);
+		core::World world("Multi-background aperture", 12, 2);
+		while (world.getLayerCount() < 2) world.addLayer();
+		world.addRoom("Front", 0, 0, 0, 8, 1);
+		auto const skyIndex = world.addBackground(1, 0, 0, 6, 1, kSky);
+		auto const carIndex = world.addBackground(1, 0, 6, 6, 1, kCarPark);
 
-		auto const spanning = building.addSectorWindow(0, 0, 4, 4, 1,
+		auto const spanning = world.addSectorWindow(0, 0, 4, 4, 1,
 			{ false, core::Window::State::Closed, core::Window::Style::Clear });
-		building.finishBuild();
+		world.finishBuild();
 
 		require(spanning.object != nullptr, "the spanning Window was not created");
 
@@ -1524,7 +1524,7 @@ namespace
 		require(wLo.x > 4.0f && wHi.x < 8.0f && wLo.y > 0.0f && wHi.y < 1.0f,
 			"the spanning Window is not where it was authored");
 
-		auto const regions = backgroundApertureRegions(building, 1, wLo, wHi);
+		auto const regions = backgroundApertureRegions(world, 1, wLo, wHi);
 		require(regions.size() == 2,
 			"a Window over two Backgrounds did not composite two regions");
 
@@ -1578,7 +1578,7 @@ namespace
 		// whose glass stops short of the seam takes no sliver of the
 		// neighbour: the clip ends at the Window's own edge, inside the sky
 		// Background, and the car park contributes nothing.
-		core::Building near("Near-seam apertures", 12, 2);
+		core::World near("Near-seam apertures", 12, 2);
 		while (near.getLayerCount() < 2) near.addLayer();
 		near.addRoom("Front", 0, 0, 0, 8, 1);
 		near.addBackground(1, 0, 0, 6, 1, kSky);
@@ -1592,7 +1592,7 @@ namespace
 		require(single.object != nullptr, "the single-Background Window was not created");
 		core::Vector2 sLo, sHi;
 		single.object->getFullShape(sLo, sHi);
-		auto const singleRegions = backgroundApertureRegions(building, 1, sLo, sHi);
+		auto const singleRegions = backgroundApertureRegions(world, 1, sLo, sHi);
 		require(singleRegions.size() == 1
 				&& singleRegions[0].background->getIndex() == skyIndex,
 			"a Window wholly over one Background did not yield exactly that Background's region");
@@ -1606,15 +1606,15 @@ namespace
 		core::Vector2 aLo, aHi;
 		abutting.object->getFullShape(aLo, aHi);
 		require(aHi.x < 6.0f, "the abutting Window's glass does not stop short of the seam");
-		auto const abuttingRegions = backgroundApertureRegions(building, 1, aLo, aHi);
+		auto const abuttingRegions = backgroundApertureRegions(world, 1, aLo, aHi);
 		require(abuttingRegions.size() == 1
 				&& abuttingRegions[0].background->getIndex() == skyIndex
 				&& abuttingRegions[0].max.x == aHi.x,
 			"a Window stopping short of the seam bleeds a region of the neighbour in");
 
-		// The order is deterministic: the same Building swept twice gives the
+		// The order is deterministic: the same World swept twice gives the
 		// same composite, which is what keeps the two-pass renderer stable.
-		auto const again = backgroundApertureRegions(building, 1, wLo, wHi);
+		auto const again = backgroundApertureRegions(world, 1, wLo, wHi);
 		require(again.size() == regions.size()
 				&& again[0].background->getIndex() == regions[0].background->getIndex()
 				&& again[1].background->getIndex() == regions[1].background->getIndex(),
@@ -1628,22 +1628,22 @@ namespace
 	//
 	void aMultiBackgroundApertureSpansEveryBackgroundAndSkipsNone()
 	{
-		core::Building building("Three-background aperture", 12, 2);
-		while (building.getLayerCount() < 2) building.addLayer();
-		building.addRoom("Front", 0, 0, 0, 12, 1);
-		auto const firstIndex = building.addBackground(1, 0, 0, 4, 1, { 10, 20, 30 });
-		auto const secondIndex = building.addBackground(1, 0, 4, 4, 1, { 40, 50, 60 });
-		auto const thirdIndex = building.addBackground(1, 0, 8, 4, 1, { 70, 80, 90 });
+		core::World world("Three-background aperture", 12, 2);
+		while (world.getLayerCount() < 2) world.addLayer();
+		world.addRoom("Front", 0, 0, 0, 12, 1);
+		auto const firstIndex = world.addBackground(1, 0, 0, 4, 1, { 10, 20, 30 });
+		auto const secondIndex = world.addBackground(1, 0, 4, 4, 1, { 40, 50, 60 });
+		auto const thirdIndex = world.addBackground(1, 0, 8, 4, 1, { 70, 80, 90 });
 
 		// A 6-wide Window from x = 3 crosses both seams at x = 4 and x = 8.
-		auto const spanning = building.addSectorWindow(0, 0, 3, 6, 1,
+		auto const spanning = world.addSectorWindow(0, 0, 3, 6, 1,
 			{ false, core::Window::State::Closed, core::Window::Style::Clear });
-		building.finishBuild();
+		world.finishBuild();
 		require(spanning.object != nullptr, "the three-Background spanning Window was not created");
 
 		core::Vector2 wLo, wHi;
 		spanning.object->getFullShape(wLo, wHi);
-		auto const regions = backgroundApertureRegions(building, 1, wLo, wHi);
+		auto const regions = backgroundApertureRegions(world, 1, wLo, wHi);
 		require(regions.size() == 3, "a Window over three Backgrounds did not composite three regions");
 		require(regions[0].background->getIndex() == firstIndex
 				&& regions[1].background->getIndex() == secondIndex
@@ -1661,7 +1661,7 @@ namespace
 		// The control: a Window looking into a Room, not a Background, yields
 		// no regions, so the caller keeps its single-sector path and the
 		// generic back-layer tint.
-		core::Building rooms("Room-only aperture", 12, 2);
+		core::World rooms("Room-only aperture", 12, 2);
 		while (rooms.getLayerCount() < 2) rooms.addLayer();
 		rooms.addRoom("Front", 0, 0, 0, 6, 1);
 		rooms.addRoom("Behind", 1, 0, 0, 6, 1);
@@ -1680,9 +1680,9 @@ namespace
 	//
 	void theRenderSnapshotIsDeterministic()
 	{
-		core::Building first("Render order depot", 16, 4);
+		core::World first("Render order depot", 16, 4);
 		authorRenderOrderDepot(first);
-		core::Building second("Render order depot", 16, 4);
+		core::World second("Render order depot", 16, 4);
 		authorRenderOrderDepot(second);
 
 		require(snapshotDigest(first) == snapshotDigest(second),

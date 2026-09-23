@@ -44,13 +44,13 @@ namespace core
 		return static_pointer_cast<Door>(_getObject());
 	}
 
-	vector<float> DoorSectorObject::calculateDoorQueueStopOffsets(Building const* building, shared_ptr<Vertex> vertex, uint32_t x, uint32_t y, uint32_t doorWidth) const
+	vector<float> DoorSectorObject::calculateDoorQueueStopOffsets(World const* world, shared_ptr<Vertex> vertex, uint32_t x, uint32_t y, uint32_t doorWidth) const
 	{
 		vector<float> stops;
 		const float stopWidth = CORE_DOOR_QUEUE_STOP_WIDTH;
 
 		auto sector = vertex->getSector();
-		auto layer = building->getLayer(sector->getLayerIndex());
+		auto layer = world->getLayer(sector->getLayerIndex());
 
 		int32_t ix0 = (int32_t)x;
 		int32_t ix1 = (int32_t)(x + doorWidth);

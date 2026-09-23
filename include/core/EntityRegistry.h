@@ -11,7 +11,7 @@
 
 namespace core
 {
-	// Building composes one registry per entity category. A registry is the sole
+	// World composes one registry per entity category. A registry is the sole
 	// owner of its entities and allocates monotonically increasing typed IDs.
 	//
 	// Zero is the null handle (see EntityId.h), so the allocator never issues

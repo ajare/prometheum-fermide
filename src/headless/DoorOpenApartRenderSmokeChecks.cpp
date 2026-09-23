@@ -33,7 +33,7 @@
 #include "imgui/imgui.h"
 
 #include "Render.h"
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/Defines.h"
 #include "core/Door.h"
 #include "core/DoorSectorObject.h"
@@ -63,7 +63,7 @@ namespace
 	// with a Room directly behind it on Layer 1.
 	struct DoorScene
 	{
-		std::unique_ptr<core::Building> building;
+		std::unique_ptr<core::World> world;
 		uint32_t frontSectorIndex{ 0 };
 		std::shared_ptr<core::Door> door;
 		// The Door aperture in world (cell) units.
@@ -219,21 +219,21 @@ namespace
 	DoorScene buildOpenApartDoorScene(uint32_t cellsWide)
 	{
 		DoorScene scene;
-		scene.building = std::make_unique<core::Building>("OpenApart door render", 8, 3);
-		auto& building = *scene.building;
-		while (building.getLayerCount() < 2) building.addLayer();
-		building.addRoom("Front", 0, 0, 0, 7, 1);
-		building.addRoom("Back", 1, 0, 0, 7, 1);
+		scene.world = std::make_unique<core::World>("OpenApart door render", 8, 3);
+		auto& world = *scene.world;
+		while (world.getLayerCount() < 2) world.addLayer();
+		world.addRoom("Front", 0, 0, 0, 7, 1);
+		world.addRoom("Back", 1, 0, 0, 7, 1);
 
-		core::Building::CreateDoorOptions doorOptions;
+		core::World::CreateDoorOptions doorOptions;
 		doorOptions.width = cellsWide;
 		doorOptions.openStyle = core::Door::OpenStyle::OpenApart;
-		auto const created = building.addSectorDoor(0, 0, 3, doorOptions);
-		building.finishBuild();
-		building.pauseSimulation();
+		auto const created = world.addSectorDoor(0, 0, 3, doorOptions);
+		world.finishBuild();
+		world.pauseSimulation();
 
 		scene.frontSectorIndex = created.door.sector->getIndex();
-		auto sector = building.getSector(scene.frontSectorIndex);
+		auto sector = world.getSector(scene.frontSectorIndex);
 		require(sector != nullptr, "The Door's front Sector vanished");
 		uint32_t doorObjects{ 0 };
 		for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
@@ -300,7 +300,7 @@ namespace
 		// empty clip; give the pass the viewport rect a real frame would, so the
 		// renderer's own PushClipRect intersects against something sane.
 		drawList->PushClipRect(ImVec2(0.0f, 0.0f), ImVec2(1280.0f, 720.0f), false);
-		renderSector(scene.building->getSector(scene.frontSectorIndex), 0, style, false,
+		renderSector(scene.world->getSector(scene.frontSectorIndex), 0, style, false,
 			kFrontRoomColour, drawList);
 		drawList->PopClipRect();
 	}

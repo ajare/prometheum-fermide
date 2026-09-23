@@ -15,43 +15,43 @@
 namespace core
 {
 	class AgentTagRegistry;
-	class Building;
+	class World;
 }
 
-// The create action is available only for a Building with a saved file and no
+// The create action is available only for a World with a saved file and no
 // registry reference. Exposed separately for headless editor checks.
-bool canCreateAgentTagRegistry(std::shared_ptr<const core::Building> const& building,
-	std::string const& buildingFilepath, std::string* diagnostic = nullptr);
+bool canCreateAgentTagRegistry(std::shared_ptr<const core::World> const& world,
+	std::string const& worldFilepath, std::string* diagnostic = nullptr);
 
-// Selection requires a saved Building location. It attaches an initial registry
+// Selection requires a saved World location. It attaches an initial registry
 // or switches directly when there are no assignments.
-bool canSelectAgentTagRegistry(std::shared_ptr<const core::Building> const& building,
-	std::string const& buildingFilepath, std::string* diagnostic = nullptr);
+bool canSelectAgentTagRegistry(std::shared_ptr<const core::World> const& world,
+	std::string const& worldFilepath, std::string* diagnostic = nullptr);
 
-// Building-reference edits own Building undo entries, never registry-history
+// World-reference edits own World undo entries, never registry-history
 // entries. Direct switching is refused while assignments exist. The clearing
 // variants are reserved for an explicitly confirmed destructive action.
 bool commitAgentTagRegistryDetach(
-	std::shared_ptr<core::Building> const& building, std::string& diagnostic);
+	std::shared_ptr<core::World> const& world, std::string& diagnostic);
 bool commitAgentTagRegistryDetachClearingAssignments(
-	std::shared_ptr<core::Building> const& building, std::string& diagnostic);
+	std::shared_ptr<core::World> const& world, std::string& diagnostic);
 bool commitAgentTagRegistrySwitch(
-	std::shared_ptr<core::Building> const& building,
-	std::string const& buildingFilepath, std::string const& registryFilepath,
+	std::shared_ptr<core::World> const& world,
+	std::string const& worldFilepath, std::string const& registryFilepath,
 	std::string& diagnostic);
 bool commitAgentTagRegistrySwitchClearingAssignments(
-	std::shared_ptr<core::Building> const& building,
-	std::string const& buildingFilepath, std::string const& registryFilepath,
+	std::shared_ptr<core::World> const& world,
+	std::string const& worldFilepath, std::string const& registryFilepath,
 	std::string& diagnostic);
 
 // Confirmation is state-free until confirm: requesting and cancelling change no
 // document and create no undo entry. The exposed text lists everything confirm
 // will clear and the resulting detach or replacement attachment.
 void requestAgentTagRegistryDetach(
-	std::shared_ptr<core::Building> const& building);
+	std::shared_ptr<core::World> const& world);
 void requestAgentTagRegistrySwitch(
-	std::shared_ptr<core::Building> const& building,
-	std::string buildingFilepath, std::string registryFilepath);
+	std::shared_ptr<core::World> const& world,
+	std::string worldFilepath, std::string registryFilepath);
 bool agentTagRegistryChangePending(std::string* consequence = nullptr);
 bool confirmPendingAgentTagRegistryChange(std::string& diagnostic);
 void cancelPendingAgentTagRegistryChange();
@@ -59,7 +59,7 @@ void cancelPendingAgentTagRegistryChange();
 using AgentTagRegistryPathSelector
 	= std::function<std::optional<std::string>()>;
 
-// Registry edits use a history that is separate from the Building history.
+// Registry edits use a history that is separate from the World history.
 // The same shared registry instance always resolves to the same history.
 DocumentHistory& agentTagRegistryDocumentHistory(
 	std::shared_ptr<core::AgentTagRegistry> const& registry);
@@ -104,9 +104,9 @@ bool commitAgentTagHeightModifierRemove(
 	std::shared_ptr<core::AgentTagRegistry> const& registry, core::AgentTagId id,
 	std::string& diagnostic);
 
-// Deletes a tag and every assignment in loaded dependent Buildings as one
+// Deletes a tag and every assignment in loaded dependent Worlds as one
 // registry-history transaction. A refusal changes neither registry nor
-// Building state and creates no history entry.
+// World state and creates no history entry.
 bool commitAgentTagDelete(
 	std::shared_ptr<core::AgentTagRegistry> const& registry, core::AgentTagId id,
 	std::string& diagnostic);
@@ -118,7 +118,7 @@ uint64_t loadedAgentTagUsageCount(core::AgentTagRegistry const& registry,
 	core::AgentTagId id);
 
 // Used tags are confirmed; unused tags delete immediately. Every confirmation
-// reports aggregate loaded usage and warns that closed Buildings are unknown.
+// reports aggregate loaded usage and warns that closed Worlds are unknown.
 bool agentTagDeleteRequiresConfirmation(core::AgentTagRegistry const& registry,
 	core::AgentTagId id);
 std::string agentTagDeleteConfirmationText(core::AgentTagRegistry const& registry,
@@ -135,7 +135,7 @@ void cancelPendingAgentTagDelete();
 bool restoreAgentTagRegistrySnapshot(
 	std::shared_ptr<core::AgentTagRegistry> const& registry, bool redo,
 	std::string* diagnostic = nullptr);
-// Reload refuses dirty state, validates all loaded dependent Buildings before
+// Reload refuses dirty state, validates all loaded dependent Worlds before
 // committing, and clears history only after the transactional core reload.
 bool reloadAgentTagRegistry(
 	std::shared_ptr<core::AgentTagRegistry> const& registry,
@@ -146,48 +146,48 @@ bool saveAgentTagRegistry(
 bool agentTagRegistryIsModified(
 	std::shared_ptr<core::AgentTagRegistry> const& registry);
 bool attachedAgentTagRegistryIsModified(
-	std::shared_ptr<const core::Building> const& building);
+	std::shared_ptr<const core::World> const& world);
 
-// A Building save target carries the separately persisted dependency path and
+// A World save target carries the separately persisted dependency path and
 // each editor document's own saved-state marker. During Save As, the explicit
-// registry path identifies the source directory; a different Building target
+// registry path identifies the source directory; a different World target
 // directory receives an independent adjacent registry copy.
-struct BuildingDocumentSaveTarget
+struct WorldDocumentSaveTarget
 {
-	std::shared_ptr<core::Building> building;
-	std::string buildingFilepath;
+	std::shared_ptr<core::World> world;
+	std::string worldFilepath;
 	std::string registryFilepath;
-	DocumentHistory* buildingHistory{ nullptr };
+	DocumentHistory* worldHistory{ nullptr };
 	// Source package path for the separately persisted Agent behaviour registry.
 	std::string behaviourPackagePath;
 
-	BuildingDocumentSaveTarget() = default;
-	BuildingDocumentSaveTarget(std::shared_ptr<core::Building> value,
-		std::string buildingPath, std::string tagRegistryPath,
+	WorldDocumentSaveTarget() = default;
+	WorldDocumentSaveTarget(std::shared_ptr<core::World> value,
+		std::string worldPath, std::string tagRegistryPath,
 		DocumentHistory* history, std::string behaviourPath = {})
-		: building(std::move(value)), buildingFilepath(std::move(buildingPath)),
-		  registryFilepath(std::move(tagRegistryPath)), buildingHistory(history),
+		: world(std::move(value)), worldFilepath(std::move(worldPath)),
+		  registryFilepath(std::move(tagRegistryPath)), worldHistory(history),
 		  behaviourPackagePath(std::move(behaviourPath))
 	{
 	}
 };
 
-// Save always writes a dirty attached registry before the requested Building.
+// Save always writes a dirty attached registry before the requested World.
 // Save All deduplicates shared registries, writes every dirty registry first,
-// and only then writes dirty Buildings. Any registry failure leaves every
-// Building untouched; successful documents advance only their own markers.
-bool saveBuildingDocument(BuildingDocumentSaveTarget const& target,
+// and only then writes dirty Worlds. Any registry failure leaves every
+// World untouched; successful documents advance only their own markers.
+bool saveWorldDocument(WorldDocumentSaveTarget const& target,
 	std::string* diagnostic = nullptr);
-bool saveAllDocuments(std::vector<BuildingDocumentSaveTarget> const& targets,
+bool saveAllDocuments(std::vector<WorldDocumentSaveTarget> const& targets,
 	std::string* diagnostic = nullptr);
 
 // Close/exit confirmation text lists each independently dirty document rather
 // than describing an attached but clean registry as unsaved.
-std::string unsavedDocumentPromptText(BuildingDocumentSaveTarget const& target);
+std::string unsavedDocumentPromptText(WorldDocumentSaveTarget const& target);
 
 // Drop transient editors and, when a document is closed or discarded, its
 // saved-state/undo bookkeeping. The registry object itself remains owned by
-// any other Building that shares it.
+// any other World that shares it.
 void resetTagsPanelState();
 void forgetAgentTagRegistryDocument(
 	std::shared_ptr<core::AgentTagRegistry> const& registry);
@@ -195,8 +195,8 @@ void forgetAgentTagRegistryDocument(
 // Renders attached-registry status, independent save/undo controls, an
 // alphabetical stack of per-tag sections with rename/delete/property
 // controls, and create/select/detach/switch actions.
-// Returns true after the Building reference changed, allowing the caller to
-// persist the changed Building immediately.
-bool renderTagsPanel(std::shared_ptr<core::Building> const& building,
-	std::string const& buildingFilepath,
+// Returns true after the World reference changed, allowing the caller to
+// persist the changed World immediately.
+bool renderTagsPanel(std::shared_ptr<core::World> const& world,
+	std::string const& worldFilepath,
 	AgentTagRegistryPathSelector const& selectRegistryPath = {});

@@ -7,7 +7,7 @@ This document describes the current movement and coordination model after the tr
 ## Authoritative model
 
 ```text
-Building
+World
 ├── Entity registries (stable typed IDs)
 │   ├── Agent
 │   ├── InteractionPoint / InteractionRequest
@@ -27,13 +27,13 @@ Responsibilities are deliberately separate:
 - A device operation exposes the progress and result of a state change.
 - A traversal resource owns admission, queues, capacity, reservations, leases, and permits.
 - A traversal permit authorizes exactly one committed sector transition.
-- `Building` owns the registries, advances the protocol, and performs transfers.
+- `World` owns the registries, advances the protocol, and performs transfers.
 
-Physical buttons are renderable state only. Each actionable button records the stable `InteractionPointId` for the building-owned interaction point that supplies its behaviour.
+Physical buttons are renderable state only. Each actionable button records the stable `InteractionPointId` for the world-owned interaction point that supplies its behaviour.
 
 ## Fixed-tick execution
 
-`Building::advanceTick()` runs six ordered phases:
+`World::advanceTick()` runs six ordered phases:
 
 1. **Resource advancement** — advance doors, extensible devices, lifts, shuttles, and device operations.
 2. **Intent collection** — collect interaction and traversal demand.
@@ -85,11 +85,11 @@ Stop demand is coalesced physically while requester ownership remains independen
 
 Interaction is requested with `InteractionPointId` and `AgentId`. Bindings contain typed `DeviceCommand` values and declare whether each command is required or optional. Requests may share a compatible physical operation while retaining independent requester ownership.
 
-Callers observe immutable snapshots and operation states (`Pending`, `Running`, and terminal outcomes) instead of receiving device-completion callbacks. UI interaction resolves the stable ID from a physical button and submits the request through `Building`; rendering reads physical state without mutating simulation objects.
+Callers observe immutable snapshots and operation states (`Pending`, `Running`, and terminal outcomes) instead of receiving device-completion callbacks. UI interaction resolves the stable ID from a physical button and submits the request through `World`; rendering reads physical state without mutating simulation objects.
 
 ## Ownership and topology
 
-`Building` is the authoritative lifetime owner for migrated entities. Relationships use typed IDs rather than owning or ambiguous raw pointers. Removing an entity invalidates its handle and cleans dependent ownership.
+`World` is the authoritative lifetime owner for migrated entities. Relationships use typed IDs rather than owning or ambiguous raw pointers. Removing an entity invalidates its handle and cleans dependent ownership.
 
 Structural graph edits are allowed while paused. Rebuild validates that each edge has exactly one authority or the immediate-permit policy, swaps topology atomically, restores valid path intent, and cleans requests and permits that referred to retired resources.
 

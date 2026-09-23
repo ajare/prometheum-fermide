@@ -4,7 +4,7 @@
 #include "core/SimulationCoordinator.h"
 
 #include "core/Agent.h"
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/Coordination.h"
 #include "core/Defines.h"
 #include "core/Lift.h"
@@ -15,12 +15,12 @@ namespace core
 
 	using namespace std;
 
-	// Open platform lift traversal allocation moved out of Building
+	// Open platform lift traversal allocation moved out of World
 	// (ADR 0004 stage 3). The behaviour is unchanged: the coordinator works on
-	// Building's traversal-resource, traversal-request, interaction-request,
+	// World's traversal-resource, traversal-request, interaction-request,
 	// device-operation and sector registries through friendship, calls its own
 	// lift scheduling and interaction helpers, and calls back through the
-	// Building facade for the machinery which has not moved out of Building
+	// World facade for the machinery which has not moved out of World
 	// yet - grants and denials, queue ticket attachment, and queue position
 	// refresh.
 	//
@@ -39,7 +39,7 @@ namespace core
 
 	void SimulationCoordinator::allocateOpenPlatformLiftTraversal(TraversalRequestId requestId, TraversalResource& resource)
 	{
-		auto request = mBuilding.mTraversalRequests.find(requestId);
+		auto request = mWorld.mTraversalRequests.find(requestId);
 		if (!request || request->mState != TraversalRequestState::Pending) return;
 		// Legacy platform topology contains co-located mount edges around each
 		// stop. The virtual boundary is owned by the journey edge, so these adapters
@@ -61,7 +61,7 @@ namespace core
 		auto existingIntent = resource.mLiftTripIntents.find(request->mOwner);
 		if (existingIntent != resource.mLiftTripIntents.end())
 			destination = existingIntent->second.destinationStop;
-		else if (auto actor = mBuilding.mAgents.find(request->mOwner))
+		else if (auto actor = mWorld.mAgents.find(request->mOwner))
 		{
 			auto journeyDestination = findAgentLiftDestination(*actor, resource);
 			if (journeyDestination < resource.mLiftStops.size()) destination = journeyDestination;
@@ -77,10 +77,10 @@ namespace core
 		{
 			if (!request->mQueueTicket)
 			{
-				request->mQueueTicket = QueueTicketId{ mBuilding.mNextQueueTicketValue++ };
-				request->mQueuedAtTick = mBuilding.mSimulationTick;
+				request->mQueueTicket = QueueTicketId{ mWorld.mNextQueueTicketValue++ };
+				request->mQueuedAtTick = mWorld.mSimulationTick;
 				resource.mAdmissionQueue.push_back(requestId);
-				resource.mLiftTripIntents[request->mOwner] = { origin, destination, mBuilding.mSimulationTick };
+				resource.mLiftTripIntents[request->mOwner] = { origin, destination, mWorld.mSimulationTick };
 			}
 			if (!request->mPreparationRequested)
 			{
@@ -88,13 +88,13 @@ namespace core
 				if (!control) { denyTraversalRequest(requestId, TraversalFailureReason::NoReachableControl); return; }
 				auto interactionId = requestInteractionForTraversal(control, request->mOwner);
 				if (!interactionId) return;
-				auto interaction = mBuilding.mInteractionRequests.find(interactionId);
+				auto interaction = mWorld.mInteractionRequests.find(interactionId);
 				request->mPreparationRequested = true;
 				if (interaction && !interaction->mOperations.empty())
 					request->mPreparationOperation = interaction->mOperations.front().first;
 				return;
 			}
-			auto operation = mBuilding.mDeviceOperations.find(request->mPreparationOperation);
+			auto operation = mWorld.mDeviceOperations.find(request->mPreparationOperation);
 			if (!operation || operation->mState == DeviceOperationState::Pending
 				|| operation->mState == DeviceOperationState::Running) return;
 			if (operation->mState != DeviceOperationState::Succeeded)
@@ -102,7 +102,7 @@ namespace core
 
 			// Calling the platform establishes logical priority; after the physical
 			// interaction completes, join this stop's ordinary reserved-position lane.
-			auto actor = mBuilding.mAgents.find(request->mOwner);
+			auto actor = mWorld.mAgents.find(request->mOwner);
 			if (request->mQueueApproach == ~0u) attachQueueTicket(requestId, resource);
 			if (request->mQueueApproach >= resource.mQueueLanes.size()
 				|| request->mQueuePosition == ~0u) return;
@@ -115,12 +115,12 @@ namespace core
 			// reached its queue head by the exact cutoff remains queued for the next visit.
 			if (resource.mLiftMoving || resource.mLiftCurrentStop != origin
 				|| resource.mLiftStopPhase != LiftStopPhase::Boarding
-				|| mBuilding.mSimulationTick >= resource.mLiftBoardingCutoffTick
+				|| mWorld.mSimulationTick >= resource.mLiftBoardingCutoffTick
 				|| !isLiftBoardingDirectionCompatible(resource, origin, destination)) return;
 			auto selected = find_if(resource.mAdmissionQueue.begin(), resource.mAdmissionQueue.end(),
 				[&](TraversalRequestId candidateId)
 				{
-					auto candidate = mBuilding.mTraversalRequests.find(candidateId);
+					auto candidate = mWorld.mTraversalRequests.find(candidateId);
 					if (!candidate) return false;
 					auto intent = resource.mLiftTripIntents.find(candidate->mOwner);
 					if (intent == resource.mLiftTripIntents.end()
@@ -146,7 +146,7 @@ namespace core
 			request->mPreparationRequested = false;
 			request->mPreparationOperation = {};
 
-			auto location = mBuilding.mSectors[(size_t)resource.mLiftSector.value - 1].get();
+			auto location = mWorld.mSectors[(size_t)resource.mLiftSector.value - 1].get();
 			auto const halfWidth = CORE_AGENT_MAX_WIDTH * 0.5f;
 			auto const platformX0 = resource.mLift->getPosition().x;
 			auto const platformX1 = platformX0 + resource.mLift->getSize().x;
@@ -168,22 +168,22 @@ namespace core
 			{
 				if (destination >= resource.mControls.size()) { denyTraversalRequest(requestId); return; }
 				resource.mLiftSelector = resource.mControls[destination];
-				if (auto selector = mBuilding.mInteractionPoints.find(resource.mLiftSelector))
-					if (auto actor = mBuilding.mAgents.find(request->mOwner)) selector->mPosition = actor->getGlobalPosition();
+				if (auto selector = mWorld.mInteractionPoints.find(resource.mLiftSelector))
+					if (auto actor = mWorld.mAgents.find(request->mOwner)) selector->mPosition = actor->getGlobalPosition();
 				auto interactionId = requestInteractionForTraversal(resource.mLiftSelector, request->mOwner);
 				if (!interactionId) return;
-				auto interaction = mBuilding.mInteractionRequests.find(interactionId);
+				auto interaction = mWorld.mInteractionRequests.find(interactionId);
 				request->mPreparationRequested = true;
 				if (interaction && !interaction->mOperations.empty())
 					request->mPreparationOperation = interaction->mOperations.front().first;
 				return;
 			}
-			auto operation = mBuilding.mDeviceOperations.find(request->mPreparationOperation);
+			auto operation = mWorld.mDeviceOperations.find(request->mPreparationOperation);
 			if (!operation || operation->mState == DeviceOperationState::Pending
 				|| operation->mState == DeviceOperationState::Running) return;
 			if (operation->mState != DeviceOperationState::Succeeded)
 			{
-				if (request->mPreparationAttempts++ < mBuilding.mTraversalWaitingPolicy.maximumDestinationRetries)
+				if (request->mPreparationAttempts++ < mWorld.mTraversalWaitingPolicy.maximumDestinationRetries)
 				{ request->mPreparationRequested = false; request->mPreparationOperation = {}; return; }
 				requestLiftPassengerSafeExit(request->mOwner, TraversalFailureReason::PreparationFailed);
 				denyTraversalRequest(requestId, TraversalFailureReason::PreparationFailed);

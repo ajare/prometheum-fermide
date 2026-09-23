@@ -8,7 +8,7 @@
 #include "core/Agent.h"
 #include "core/AgentTag.h"
 #include "core/AgentTagRegistry.h"
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/Log.h"
 #include "imgui/imgui.h"
 
@@ -16,10 +16,10 @@ using namespace std;
 
 namespace
 {
-	// The chip selection is transient per (Building, Agent) pair and clears when
+	// The chip selection is transient per (World, Agent) pair and clears when
 	// the selection changes or the panel state is reset.
 	core::AgentTagId gSelectedAssignedTag{};
-	core::Building const* gChipBuilding{ nullptr };
+	core::World const* gChipWorld{ nullptr };
 	core::AgentId gChipAgent{};
 
 	ImVec4 scaleColour(ImVec4 colour, float factor)
@@ -65,28 +65,28 @@ namespace
 	}
 }
 
-bool commitAgentTagAssignment(shared_ptr<core::Building> const& building,
+bool commitAgentTagAssignment(shared_ptr<core::World> const& world,
 	core::AgentId agent, core::AgentTagId tag, bool assigned, string& diagnostic)
 {
 	diagnostic.clear();
-	if (!building)
+	if (!world)
 	{
-		diagnostic = "There is no Building in which to edit an Agent tag assignment";
+		diagnostic = "There is no World in which to edit an Agent tag assignment";
 		return false;
 	}
 
-	// Capture before asking the Building to mutate. A failed capture must not
+	// Capture before asking the World to mutate. A failed capture must not
 	// produce an accepted but non-undoable edit.
-	auto undo = captureDocumentSnapshot(building);
+	auto undo = captureDocumentSnapshot(world);
 	if (!undo)
 	{
-		diagnostic = "Could not capture the Building before editing its Agent tag assignment";
+		diagnostic = "Could not capture the World before editing its Agent tag assignment";
 		return false;
 	}
 
 	bool const changed = assigned
-		? building->assignAgentTag(agent, tag, &diagnostic)
-		: building->removeAgentTag(agent, tag, &diagnostic);
+		? world->assignAgentTag(agent, tag, &diagnostic)
+		: world->removeAgentTag(agent, tag, &diagnostic);
 	if (!changed) return false;
 
 	commitDocumentEdit(std::move(undo));
@@ -96,16 +96,16 @@ bool commitAgentTagAssignment(shared_ptr<core::Building> const& building,
 void resetAgentTagAssignmentPanelState()
 {
 	gSelectedAssignedTag = {};
-	gChipBuilding = nullptr;
+	gChipWorld = nullptr;
 	gChipAgent = {};
 }
 
-void renderAgentEffectiveProperties(shared_ptr<core::Building> const& building,
+void renderAgentEffectiveProperties(shared_ptr<core::World> const& world,
 	core::AgentId agent)
 {
 	ImGui::SeparatorText("Effective Agent properties");
-	if (!building) return;
-	auto const lookup = building->lookupAgent(agent);
+	if (!world) return;
+	auto const lookup = world->lookupAgent(agent);
 	if (!lookup)
 	{
 		ImGui::TextDisabled("The selected Agent is no longer available.");
@@ -113,9 +113,9 @@ void renderAgentEffectiveProperties(shared_ptr<core::Building> const& building,
 	}
 
 	auto const effective = lookup.entity->getEffectiveColour();
-	if (effective.sourceTag && building->hasAttachedAgentTagRegistry())
+	if (effective.sourceTag && world->hasAttachedAgentTagRegistry())
 	{
-		auto const& registry = building->getAgentTagRegistry();
+		auto const& registry = world->getAgentTagRegistry();
 		ImGui::Text("Colour: RGB (%u, %u, %u) from #%s",
 			static_cast<unsigned>(effective.value.r),
 			static_cast<unsigned>(effective.value.g),
@@ -131,52 +131,52 @@ void renderAgentEffectiveProperties(shared_ptr<core::Building> const& building,
 	}
 
 	auto const walkSpeed = lookup.entity->getEffectiveWalkSpeedModifier();
-	if (walkSpeed.sourceTag && building->hasAttachedAgentTagRegistry())
+	if (walkSpeed.sourceTag && world->hasAttachedAgentTagRegistry())
 	{
-		auto const& registry = building->getAgentTagRegistry();
+		auto const& registry = world->getAgentTagRegistry();
 		ImGui::Text("Walk speed modifier: %.3fx from #%s", walkSpeed.value,
 			registry->getAgentTagName(walkSpeed.sourceTag).c_str());
 	}
 	else ImGui::Text("Walk speed modifier: 1.000x (base default)");
 
 	auto const height = lookup.entity->getEffectiveHeightModifier();
-	if (height.sourceTag && building->hasAttachedAgentTagRegistry())
+	if (height.sourceTag && world->hasAttachedAgentTagRegistry())
 	{
-		auto const& registry = building->getAgentTagRegistry();
+		auto const& registry = world->getAgentTagRegistry();
 		ImGui::Text("Height modifier: %.3fx from #%s", static_cast<double>(height.value),
 			registry->getAgentTagName(height.sourceTag).c_str());
 	}
 	else ImGui::Text("Height modifier: 1.000x (visual default)");
 }
 
-void renderAgentTagAssignmentChecklist(shared_ptr<core::Building> const& building,
+void renderAgentTagAssignmentChecklist(shared_ptr<core::World> const& world,
 	core::AgentId agent)
 {
 	ImGui::SeparatorText("Agent tags");
-	if (!building) return;
+	if (!world) return;
 
-	auto const agentLookup = building->lookupAgent(agent);
+	auto const agentLookup = world->lookupAgent(agent);
 	if (!agentLookup)
 	{
 		ImGui::TextDisabled("The selected Agent is no longer available.");
 		return;
 	}
-	if (!building->hasAttachedAgentTagRegistry())
+	if (!world->hasAttachedAgentTagRegistry())
 	{
 		ImGui::TextDisabled("No Agent tag registry attached.");
 		return;
 	}
 
-	if (gChipBuilding != building.get() || gChipAgent != agent)
+	if (gChipWorld != world.get() || gChipAgent != agent)
 	{
-		gChipBuilding = building.get();
+		gChipWorld = world.get();
 		gChipAgent = agent;
 		gSelectedAssignedTag = {};
 	}
 
-	auto const& registry = building->getAgentTagRegistry();
+	auto const& registry = world->getAgentTagRegistry();
 	auto const ids = registry->getAgentTagIdsAlphabetically();
-	auto const paused = building->isSimulationPaused();
+	auto const paused = world->isSimulationPaused();
 
 	// Assigned tags only, drawn as a wrapping row of coloured chips.
 	bool anyAssigned{ false };
@@ -207,7 +207,7 @@ void renderAgentTagAssignmentChecklist(shared_ptr<core::Building> const& buildin
 			&& ImGui::IsKeyPressed(ImGuiKey_Delete))
 		{
 			string diagnostic;
-			if (!commitAgentTagAssignment(building, agent, gSelectedAssignedTag,
+			if (!commitAgentTagAssignment(world, agent, gSelectedAssignedTag,
 				false, diagnostic))
 				core::addLogMessage("Agent tags", 0, core::LogLevel::Warning, diagnostic);
 			gSelectedAssignedTag = {};
@@ -227,7 +227,7 @@ void renderAgentTagAssignmentChecklist(shared_ptr<core::Building> const& buildin
 			anyAddable = true;
 			string assignmentDiagnostic;
 			bool const compatible
-				= building->canAssignAgentTag(agent, tag, &assignmentDiagnostic);
+				= world->canAssignAgentTag(agent, tag, &assignmentDiagnostic);
 			ImGui::PushID(tag.value);
 			ImGui::BeginDisabled(!compatible);
 			bool const chosen = ImGui::Selectable(
@@ -240,7 +240,7 @@ void renderAgentTagAssignmentChecklist(shared_ptr<core::Building> const& buildin
 			if (chosen)
 			{
 				string diagnostic;
-				if (!commitAgentTagAssignment(building, agent, tag, true, diagnostic))
+				if (!commitAgentTagAssignment(world, agent, tag, true, diagnostic))
 					core::addLogMessage("Agent tags", 0, core::LogLevel::Warning, diagnostic);
 				ImGui::CloseCurrentPopup();
 			}

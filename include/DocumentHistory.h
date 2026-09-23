@@ -1,7 +1,7 @@
 #pragma once
 
 // Reusable history and saved-state tracking for independently persisted editor
-// documents. The history owns only serialized document snapshots, so Building
+// documents. The history owns only serialized document snapshots, so World
 // documents and future external documents can each keep an isolated instance.
 
 #include <cstddef>
@@ -14,7 +14,7 @@
 
 // Optional document-specific state lets an editor transaction coordinate
 // dependent documents while the reusable history remains unaware of their
-// concrete types. Ordinary Building snapshots leave this empty.
+// concrete types. Ordinary World snapshots leave this empty.
 struct DocumentSnapshotContext
 {
 	virtual ~DocumentSnapshotContext() = default;

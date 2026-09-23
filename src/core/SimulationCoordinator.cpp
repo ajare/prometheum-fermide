@@ -1,6 +1,6 @@
 #include "core/SimulationCoordinator.h"
 
-#include "core/Building.h"
+#include "core/World.h"
 
 
 namespace core
@@ -25,9 +25,9 @@ namespace core
 	// fixed timestep, the simulation phases, lift and door resource advancement
 	// and tick event publication - in SimulationCoordinatorTick.cpp, and every
 	// snapshot builder in SimulationCoordinatorSnapshots.cpp. Nothing but
-	// world-structure editing and forwarding remains in Building.
-	SimulationCoordinator::SimulationCoordinator(Building& building)
-		: mBuilding(building)
+	// world-structure editing and forwarding remains in World.
+	SimulationCoordinator::SimulationCoordinator(World& world)
+		: mWorld(world)
 	{
 	}
 

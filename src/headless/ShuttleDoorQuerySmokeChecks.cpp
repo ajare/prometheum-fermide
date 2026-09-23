@@ -1,4 +1,4 @@
-// Independent-optionality checks for Building::isShuttleOwnedDoor, ticket #104.
+// Independent-optionality checks for World::isShuttleOwnedDoor, ticket #104.
 //
 // The query's outputs - Shuttle sector, stop, carriage, and compacted Door
 // index - are each independently optional. Resolving the compacted Door index
@@ -23,7 +23,7 @@
 #include <string>
 #include <vector>
 
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/Door.h"
 #include "core/DoorSectorObject.h"
 #include "core/Sector.h"
@@ -59,12 +59,12 @@ namespace
 		All = Sector | Stop | Carriage | Door,
 	};
 
-	Ownership query(core::Building const& building,
+	Ownership query(core::World const& world,
 		std::shared_ptr<const core::SectorObject> const& object, uint32_t mask)
 	{
 		uint32_t sector{ kUnset }, stop{ kUnset }, carriage{ kUnset }, door{ kUnset };
 		Ownership result{};
-		result.owned = building.isShuttleOwnedDoor(object,
+		result.owned = world.isShuttleOwnedDoor(object,
 			(mask & Output::Sector) ? &sector : nullptr,
 			(mask & Output::Stop) ? &stop : nullptr,
 			(mask & Output::Carriage) ? &carriage : nullptr,
@@ -100,13 +100,13 @@ namespace
 
 	// Every subset of the optional outputs must answer the fields it asked for
 	// with the reference values; the full query is the reference.
-	void requireOutputSubsets(core::Building const& building,
+	void requireOutputSubsets(core::World const& world,
 		std::shared_ptr<const core::SectorObject> const& object,
 		Ownership const& want, std::string const& what)
 	{
 		for (uint32_t mask = 0; mask <= Output::All; ++mask)
 		{
-			auto const got = query(building, object, mask);
+			auto const got = query(world, object, mask);
 			require(got.owned == want.owned,
 				what + ": ownership answer changed with output mask " + std::to_string(mask));
 			if (!got.owned) continue;
@@ -122,7 +122,7 @@ namespace
 	}
 
 	std::shared_ptr<const core::SectorObject> requireDoor(
-		core::Building::CreateObjectResult const& created, char const* what)
+		core::World::CreateObjectResult const& created, char const* what)
 	{
 		require(created.index != ~0u && created.sector != nullptr,
 			std::string(what) + " did not create a Door");
@@ -132,20 +132,20 @@ namespace
 		return object;
 	}
 
-	// Every Shuttle-owned Door in the Building, keyed by its grid identity.
+	// Every Shuttle-owned Door in the World, keyed by its grid identity.
 	std::map<std::array<uint32_t, 3>, std::shared_ptr<const core::SectorObject>>
-		shuttleDoorGrid(core::Building const& building, uint32_t shuttleSector)
+		shuttleDoorGrid(core::World const& world, uint32_t shuttleSector)
 	{
 		std::map<std::array<uint32_t, 3>, std::shared_ptr<const core::SectorObject>> grid;
-		for (uint32_t sectorIndex = 0; sectorIndex < building.getNumSectors(); ++sectorIndex)
+		for (uint32_t sectorIndex = 0; sectorIndex < world.getNumSectors(); ++sectorIndex)
 		{
-			auto const sector = building.getSector(sectorIndex);
+			auto const sector = world.getSector(sectorIndex);
 			if (!sector) continue;
 			for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
 			{
 				auto const object = sector->getObject(i);
 				if (!object || object->getObjectType() != core::SectorObjectType::Door) continue;
-				auto const owned = query(building, object, Output::All);
+				auto const owned = query(world, object, Output::All);
 				if (!owned.owned || owned.shuttleSector != shuttleSector) continue;
 				grid[{ owned.stopIndex, owned.carriageIndex, owned.doorIndex }] = object;
 			}
@@ -164,14 +164,14 @@ namespace
 		std::vector<uint32_t> const stopOffsets{ 0, 18 };
 		uint32_t const shuttleX = 0;
 
-		auto building = std::make_shared<core::Building>("Shuttle door query", 32, 3);
-		building->addCorridor(0, 0, 31);
-		building->addCorridor(1, 0, 31);
-		core::Building::CreateShuttleOptions options{ numCars, carWidth, stopOffsets, 0 };
+		auto world = std::make_shared<core::World>("Shuttle door query", 32, 3);
+		world->addCorridor(0, 0, 31);
+		world->addCorridor(1, 0, 31);
+		core::World::CreateShuttleOptions options{ numCars, carWidth, stopOffsets, 0 };
 		options.capacity = 2;
 		options.doorMask = doorMask;
-		auto const shuttle = building->addShuttle(1, 0, shuttleX, 27, options);
-		building->finishBuild();
+		auto const shuttle = world->addShuttle(1, 0, shuttleX, 27, options);
+		world->finishBuild();
 
 		auto const shuttleSector = shuttle.shuttle.sector->getIndex();
 		auto const offsets = core::SimulationCoordinator::shuttleDoorOffsets(carWidth, doorMask);
@@ -179,7 +179,7 @@ namespace
 		uint32_t const doorCount = static_cast<uint32_t>(offsets.size());
 		uint32_t const expectedDoors = static_cast<uint32_t>(stopOffsets.size()) * numCars * doorCount;
 
-		auto const grid = shuttleDoorGrid(*building, shuttleSector);
+		auto const grid = shuttleDoorGrid(*world, shuttleSector);
 		require(grid.size() == expectedDoors,
 			"The Shuttle generated " + std::to_string(grid.size())
 			+ " owned Doors, expected " + std::to_string(expectedDoors));
@@ -213,14 +213,14 @@ namespace
 		// used to dereference that null pointer.
 		for (auto const& [key, object] : grid)
 		{
-			auto const want = query(*building, object, Output::All);
+			auto const want = query(*world, object, Output::All);
 			require(want.owned, "The Shuttle Door stopped reading as Shuttle-owned");
 			require(want.shuttleSector == shuttleSector,
 				"The Shuttle Door names the wrong Shuttle sector");
 			require(want.doorIndex != ~0u && want.doorIndex < doorCount,
 				"The Shuttle Door has no compacted door index");
 
-			auto const doorOnly = query(*building, object, Output::Door);
+			auto const doorOnly = query(*world, object, Output::Door);
 			require(doorOnly.owned,
 				"Requesting only doorIndex stopped reporting the Door as Shuttle-owned");
 			require(doorOnly.doorIndex == want.doorIndex,
@@ -229,7 +229,7 @@ namespace
 
 			// Every other subset - single fields, pairs, triples, and the full
 			// query - must answer identically.
-			requireOutputSubsets(*building, object, want,
+			requireOutputSubsets(*world, object, want,
 				"Stop " + std::to_string(key[0]) + ", carriage " + std::to_string(key[1])
 				+ ", door " + std::to_string(key[2]));
 		}
@@ -237,12 +237,12 @@ namespace
 
 	// Doors the Shuttle does not own answer "not mine" for every output subset,
 	// including doorIndex alone.
-	void requireNotShuttleOwned(core::Building const& building,
+	void requireNotShuttleOwned(core::World const& world,
 		std::shared_ptr<const core::SectorObject> const& object, char const* what)
 	{
 		for (uint32_t mask = 0; mask <= Output::All; ++mask)
 		{
-			auto const got = query(building, object, mask);
+			auto const got = query(world, object, mask);
 			require(!got.owned, std::string(what)
 				+ ": reads as Shuttle-owned with output mask " + std::to_string(mask));
 		}
@@ -250,34 +250,34 @@ namespace
 
 	void checkLiftOwnedDoorIsNotShuttleOwned()
 	{
-		auto building = std::make_shared<core::Building>("Lift door query", 16, 3);
-		auto const hall = building->addRoom("Lift Hall", 0, 0, 0, 16, 3);
+		auto world = std::make_shared<core::World>("Lift door query", 16, 3);
+		auto const hall = world->addRoom("Lift Hall", 0, 0, 0, 16, 3);
 		for (uint32_t deck = 1; deck < 3; ++deck)
 			for (uint32_t x = 0; x < 16; ++x)
-				building->addSectorWalkway(hall, deck, x);
-		core::Building::CreateLiftOptions liftOptions;
+				world->addSectorWalkway(hall, deck, x);
+		core::World::CreateLiftOptions liftOptions;
 		liftOptions.cellsWide = 1;
 		liftOptions.decksHigh = 3;
 		liftOptions.stopOffsets = { 0, 1, 2 };
-		auto const lift = building->addLift(1, 0, 8, liftOptions);
+		auto const lift = world->addLift(1, 0, 8, liftOptions);
 		require(lift.doors.size() == 3, "The Lift did not generate one Door per stop");
-		building->finishBuild();
+		world->finishBuild();
 		auto const object = requireDoor(lift.doors[0].door, "The Lift Door");
-		require(building->isLiftOwnedDoor(object),
+		require(world->isLiftOwnedDoor(object),
 			"The test Lift Door does not read as Lift-owned");
-		requireNotShuttleOwned(*building, object, "A Lift-owned Door");
+		requireNotShuttleOwned(*world, object, "A Lift-owned Door");
 	}
 
 	void checkOrdinaryDoorIsNotShuttleOwned()
 	{
-		auto building = std::make_shared<core::Building>("Ordinary door query", 12, 3);
-		building->addRoom("Fore", 0, 0, 0, 11, 2);
-		building->addRoom("Aft", 1, 0, 0, 11, 2);
-		auto const ordinary = building->addSectorDoor(0, 0, 3, core::Building::CreateDoorOptions{});
-		building->finishBuild();
+		auto world = std::make_shared<core::World>("Ordinary door query", 12, 3);
+		world->addRoom("Fore", 0, 0, 0, 11, 2);
+		world->addRoom("Aft", 1, 0, 0, 11, 2);
+		auto const ordinary = world->addSectorDoor(0, 0, 3, core::World::CreateDoorOptions{});
+		world->finishBuild();
 		auto const object = requireDoor(ordinary.door, "The ordinary Door");
-		require(!building->isLiftOwnedDoor(object), "The ordinary Door reads as Lift-owned");
-		requireNotShuttleOwned(*building, object, "An ordinary Door");
+		require(!world->isLiftOwnedDoor(object), "The ordinary Door reads as Lift-owned");
+		requireNotShuttleOwned(*world, object, "An ordinary Door");
 	}
 }
 

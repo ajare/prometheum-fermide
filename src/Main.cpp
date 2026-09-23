@@ -56,7 +56,7 @@
 #include "imgui/imnodes.h"
 #include "imgui/IconsFontAwesome5.h"
 
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/Pathing.h"
 #include "core/Exceptions.h"
 #include "core/Log.h"
@@ -509,9 +509,9 @@ bool processEvents(SDL_Window* window)
 }
 
 
-std::shared_ptr<core::Building> createTestBuilding()
+std::shared_ptr<core::World> createTestWorld()
 {
-	auto building = make_shared<core::Building>("Citadel", 48, 6);
+	auto world = make_shared<core::World>("Citadel", 48, 6);
 
 	try
 	{
@@ -533,95 +533,95 @@ std::shared_ptr<core::Building> createTestBuilding()
 		// 
 
 		// First corridor
-		building->addCorridor(ReactorDeck, 1, 8);
+		world->addCorridor(ReactorDeck, 1, 8);
 		
-		building->addRoom("Pump Room", 1, ReactorDeck, 0, 4, 1);
+		world->addRoom("Pump Room", 1, ReactorDeck, 0, 4, 1);
 		
-		//building->addSectorLightSwitch(pumpRoomIndex, 0);
+		//world->addSectorLightSwitch(pumpRoomIndex, 0);
 
-		building->addRoom("Fuel Cells", 1, ReactorDeck, 5, 3, 1);
+		world->addRoom("Fuel Cells", 1, ReactorDeck, 5, 3, 1);
 		
-		building->addSectorDoor(0, ReactorDeck, 6);
+		world->addSectorDoor(0, ReactorDeck, 6);
 		
-		building->addSectorDoor(0, ReactorDeck, 2);
+		world->addSectorDoor(0, ReactorDeck, 2);
 		/*
-		building->addSectorWindow(0, ReactorDeck, 7, 1, 1);
+		world->addSectorWindow(0, ReactorDeck, 7, 1, 1);
 		
 		// Second corridor
-		auto corr2Index = building->addCorridor(ReactorDeck, 9, 6);
+		auto corr2Index = world->addCorridor(ReactorDeck, 9, 6);
 
 		// Reactor core
-		auto reactorCoreIndex = building->addRoom("Reactor Core", 1, ReactorDeck, 9, 4, 3);
+		auto reactorCoreIndex = world->addRoom("Reactor Core", 1, ReactorDeck, 9, 4, 3);
 		
-		building->addSectorWalkway(reactorCoreIndex, 1, 0);
-		building->addSectorWalkway(reactorCoreIndex, 1, 2);
-		building->addSectorWalkway(reactorCoreIndex, 1, 3);
-		building->addSectorWalkway(reactorCoreIndex, 2, 0);
-		building->addSectorWalkway(reactorCoreIndex, 2, 3);
+		world->addSectorWalkway(reactorCoreIndex, 1, 0);
+		world->addSectorWalkway(reactorCoreIndex, 1, 2);
+		world->addSectorWalkway(reactorCoreIndex, 1, 3);
+		world->addSectorWalkway(reactorCoreIndex, 2, 0);
+		world->addSectorWalkway(reactorCoreIndex, 2, 3);
 		
-		building->addSectorForceBridge(reactorCoreIndex, 1, 1, { 1, CORE_SIDE_RIGHT, true, true, 2 });
+		world->addSectorForceBridge(reactorCoreIndex, 1, 1, { 1, CORE_SIDE_RIGHT, true, true, 2 });
 		
-		building->addSectorLadder(reactorCoreIndex, 0, 0, { 2, true, true });
-		building->addSectorLadder(reactorCoreIndex, 1, 3, { 2, true, true });
+		world->addSectorLadder(reactorCoreIndex, 0, 0, { 2, true, true });
+		world->addSectorLadder(reactorCoreIndex, 1, 3, { 2, true, true });
 
-		building->addSectorMarker(reactorCoreIndex, 0, 3.0f);
+		world->addSectorMarker(reactorCoreIndex, 0, 3.0f);
 		
-		building->addSectorDoor(ReactorDeck, 10);
+		world->addSectorDoor(ReactorDeck, 10);
 
-		building->addSectorWindow(0, ReactorDeck, 1, 1, 1);
+		world->addSectorWindow(0, ReactorDeck, 1, 1, 1);
 		
 		// Decontamination
-		building->addRoom("Decontamination", 1, ReactorDeck, 14, 3, 1);
-		building->addSectorDoor(ReactorDeck, 14);
+		world->addRoom("Decontamination", 1, ReactorDeck, 14, 3, 1);
+		world->addSectorDoor(ReactorDeck, 14);
 
-		building->addSectorWindow(0, ReactorDeck, 11, 2, 1);
+		world->addSectorWindow(0, ReactorDeck, 11, 2, 1);
 
 		// Connect corridors
-		building->addSectorBulkheadDoor(0, ReactorDeck, 9, CORE_SIDE_LEFT);
+		world->addSectorBulkheadDoor(0, ReactorDeck, 9, CORE_SIDE_LEFT);
 		
 		// Third corridor
-		building->addCorridor(ReactorDeck, 16, 14);
+		world->addCorridor(ReactorDeck, 16, 14);
 
-		building->addSectorDoor(ReactorDeck, 16);
+		world->addSectorDoor(ReactorDeck, 16);
 
 		// Fourth corridor
-		building->addCorridor(ReactorDeck, 34, 9);
+		world->addCorridor(ReactorDeck, 34, 9);
 
-		building->addSectorDoor(ReactorDeck, 38);
+		world->addSectorDoor(ReactorDeck, 38);
 
-		building->addShuttle(ReactorDeck, 24, 17, { 2, 3, { 0, 10 }, 0 });
+		world->addShuttle(ReactorDeck, 24, 17, { 2, 3, { 0, 10 }, 0 });
 */
 /*
 		//
 		// Hospital
 		//
-		building->addCorridor(HospitalDeck, 1, 4);
-		building->addCorridor(HospitalDeck, 6, 10);
-		auto corrIndex = building->addCorridor(HospitalDeck, 17, 4, 2);
+		world->addCorridor(HospitalDeck, 1, 4);
+		world->addCorridor(HospitalDeck, 6, 10);
+		auto corrIndex = world->addCorridor(HospitalDeck, 17, 4, 2);
 
-		building->addSectorWalkway(corrIndex, 1, 1);
-		building->addSectorWalkway(corrIndex, 1, 2);
-		building->addSectorWalkway(corrIndex, 1, 3);
+		world->addSectorWalkway(corrIndex, 1, 1);
+		world->addSectorWalkway(corrIndex, 1, 2);
+		world->addSectorWalkway(corrIndex, 1, 3);
 
-		auto icuIndex = building->addRoom("ICU", 1, HospitalDeck, 13, 3, 1, CORE_DOOR_HEIGHT + 0.1f);
-		building->addSectorDoor(HospitalDeck, 14);
+		auto icuIndex = world->addRoom("ICU", 1, HospitalDeck, 13, 3, 1, CORE_DOOR_HEIGHT + 0.1f);
+		world->addSectorDoor(HospitalDeck, 14);
 
-		building->removeLocationWall(icuIndex, 0, CORE_SIDE_LEFT);
+		world->removeLocationWall(icuIndex, 0, CORE_SIDE_LEFT);
 
-		auto acIndex = building->addRoom("Autoclaves", 1, HospitalDeck, 0, 3, 4, CORE_DOOR_HEIGHT + 0.1f);
+		auto acIndex = world->addRoom("Autoclaves", 1, HospitalDeck, 0, 3, 4, CORE_DOOR_HEIGHT + 0.1f);
 
-		building->addSectorWalkway(acIndex, 1, 0);
-		building->addSectorWalkway(acIndex, 1, 1);
-		building->addSectorWalkway(acIndex, 2, 0);
-		building->addSectorWalkway(acIndex, 2, 1);
+		world->addSectorWalkway(acIndex, 1, 0);
+		world->addSectorWalkway(acIndex, 1, 1);
+		world->addSectorWalkway(acIndex, 2, 0);
+		world->addSectorWalkway(acIndex, 2, 1);
 
-		building->addSectorPlatformLift(acIndex, 0, 0, { 1, { 0, 1, 2 } });
+		world->addSectorPlatformLift(acIndex, 0, 0, { 1, { 0, 1, 2 } });
 
-		building->addSectorDoor(HospitalDeck, 2);
+		world->addSectorDoor(HospitalDeck, 2);
 		
-		auto morgueCorrIndex = building->addCorridor(HospitalDeck, 22, 9);
-		auto morgueIndex = building->addRoom("Morgue", 1, HospitalDeck, 22, 9, 1);
-		building->addSectorDoor(HospitalDeck, 26);
+		auto morgueCorrIndex = world->addCorridor(HospitalDeck, 22, 9);
+		auto morgueIndex = world->addRoom("Morgue", 1, HospitalDeck, 22, 9, 1);
+		world->addSectorDoor(HospitalDeck, 26);
 
 		uint32_t vertexIdentifiers[20];
 		for (int i = 0; i < 9; ++i)
@@ -629,58 +629,58 @@ std::shared_ptr<core::Building> createTestBuilding()
 			if (i == 4) continue;
 
 			uint32_t vertexIdentifier;
-			building->addSectorMarker(morgueCorrIndex, 0, i + 0.5f, &vertexIdentifier);
+			world->addSectorMarker(morgueCorrIndex, 0, i + 0.5f, &vertexIdentifier);
 			vertexIdentifiers[i * 2] = vertexIdentifier;
 
-			building->addSectorMarker(morgueIndex, 0, i + 0.5f, &vertexIdentifier);
+			world->addSectorMarker(morgueIndex, 0, i + 0.5f, &vertexIdentifier);
 			vertexIdentifiers[i * 2 + 1] = vertexIdentifier;
 		}
 
 		uint32_t vertexIdentifier;
-		building->addSectorMarker(reactorCorr1, 0, 3.0f, &vertexIdentifier);
+		world->addSectorMarker(reactorCorr1, 0, 3.0f, &vertexIdentifier);
 		vertexIdentifiers[18] = vertexIdentifier;
-		building->addSectorMarker(pumpRoomIndex, 0, 1.5f, &vertexIdentifier);
+		world->addSectorMarker(pumpRoomIndex, 0, 1.5f, &vertexIdentifier);
 		vertexIdentifiers[19] = vertexIdentifier;
 
 
 		//
 		// Maintenance
 		//
-		building->addCorridor(MaintenanceDeck, 2, 3);
-		building->addCorridor(MaintenanceDeck, 6, 3);
+		world->addCorridor(MaintenanceDeck, 2, 3);
+		world->addCorridor(MaintenanceDeck, 6, 3);
 
 		//
 		// Storage
 		//
-		auto storageCorrIndex = building->addCorridor(StorageDeck, 6, 6);
-		building->addCorridor(StorageDeck, 15, 6);
+		auto storageCorrIndex = world->addCorridor(StorageDeck, 6, 6);
+		world->addCorridor(StorageDeck, 15, 6);
 
-		building->addShuttle(StorageDeck, 10, 7, { 1, 3, { 0, 4 }, 0 });
+		world->addShuttle(StorageDeck, 10, 7, { 1, 3, { 0, 4 }, 0 });
 
-		//building->addSectorWindow(0, StorageDeck, 10, 2, 1);
-		//building->addSectorWindow(1, StorageDeck, 13, 1, 1);
+		//world->addSectorWindow(0, StorageDeck, 10, 2, 1);
+		//world->addSectorWindow(1, StorageDeck, 13, 1, 1);
 
 		//
 		// Flight deck
 		//
-		building->addCorridor(FlightDeck, 6, 4);
+		world->addCorridor(FlightDeck, 6, 4);
 
 		//
 		// Join decks
 		//
-		building->addLadder(ReactorDeck, 4, { 3, true, true });
-		building->addLadder(HospitalDeck + 1, 18, { 2, true, true });
-		building->addStairwell(ReactorDeck, 19, 4, CORE_SIDE_LEFT);
-		building->addLift(ReactorDeck, 17, { 1, { 0, 1, 3 } });
-		building->addLift(HospitalDeck, 6, { 2, { 0, 1, 2, 3 } });
+		world->addLadder(ReactorDeck, 4, { 3, true, true });
+		world->addLadder(HospitalDeck + 1, 18, { 2, true, true });
+		world->addStairwell(ReactorDeck, 19, 4, CORE_SIDE_LEFT);
+		world->addLift(ReactorDeck, 17, { 1, { 0, 1, 3 } });
+		world->addLift(HospitalDeck, 6, { 2, { 0, 1, 2, 3 } });
 
 		// Add Windows now that we've placed objects on both Layers
-		building->addSectorWindow(1, HospitalDeck, 4, 1, 1);
-		building->addSectorWindow(0, MaintenanceDeck, 17, 1, 1);
-		building->addSectorWindow(1, MaintenanceDeck, 0, 1, 1);
-		building->addSectorWindow(1, MaintenanceDeck, 12, 1, 1);
+		world->addSectorWindow(1, HospitalDeck, 4, 1, 1);
+		world->addSectorWindow(0, MaintenanceDeck, 17, 1, 1);
+		world->addSectorWindow(1, MaintenanceDeck, 0, 1, 1);
+		world->addSectorWindow(1, MaintenanceDeck, 12, 1, 1);
 */
-		building->finishBuild();
+		world->finishBuild();
 
 		// Add agents
 
@@ -693,12 +693,12 @@ std::shared_ptr<core::Building> createTestBuilding()
 			int xx = i & 1 ? 9 - i : i / 2;
 			
 			// Fore
-			auto agentId = building->createAgent(format("PathAgentF {}", i + 1),
+			auto agentId = world->createAgent(format("PathAgentF {}", i + 1),
 				morgueCorrIndex, 0, xx + 0.5f);
-			auto agent = building->lookupAgent(agentId).entity;
+			auto agent = world->lookupAgent(agentId).entity;
 
 			// Generate path
-			auto graph = building->getGraph();
+			auto graph = world->getGraph();
 			auto vertex = graph->getVertexByIdentifier(vertexIdentifiers[i * 2 + 1]);
 			auto path = core::pathing::findPath(agent, graph.get(), nullptr, vertex);
 			agent->setPath(path, false);
@@ -715,14 +715,14 @@ std::shared_ptr<core::Building> createTestBuilding()
 		//auto agent = new core::Agent(format("PathAgent-ButtonTest"));
 
 		// Generate path
-		//auto graph = building->getGraph();
+		//auto graph = world->getGraph();
 		//auto vertex = graph->getVertexByIdentifier(vertexIdentifiers[19]);
 		//auto path = core::pathing::findPath(agent, graph.get(), nullptr, vertex);
 		//agent->setPath(path, false);
 	}
-	catch (core::BuildingException& e)
+	catch (core::WorldException& e)
 	{
-		auto const& buildLog = building->getBuildLog();
+		auto const& buildLog = world->getBuildLog();
 
 		for (auto const& entry : buildLog)
 		{
@@ -753,13 +753,13 @@ std::shared_ptr<core::Building> createTestBuilding()
 		throw e;
 	}
 
-	return building;
+	return world;
 }
 
 
 void run()
 {
-	shared_ptr<core::Building> building;// createTestBuilding();
+	shared_ptr<core::World> world;// createTestWorld();
 	std::shared_ptr<core::Agent> pathingAgent = make_shared<core::Agent>("Pather");
 
 	// Render settings
@@ -806,12 +806,12 @@ void run()
 		// Logic
 		float updateTimeSecs = updateTimeMicros / 1'000'000.0f;
 
-		if (building)
+		if (world)
 		{
-			building->update(gUISettings.worldPaused ? 0.0f : updateTimeSecs);
+			world->update(gUISettings.worldPaused ? 0.0f : updateTimeSecs);
 			// The current UI observes entity state directly. Drain value events until
 			// an event-driven UI consumer is introduced so the queue remains bounded.
-			(void)building->consumeSimulationEvents();
+			(void)world->consumeSimulationEvents();
 		}
 
 		// Set up rendering
@@ -828,9 +828,9 @@ void run()
 
 		ImGui::NewFrame();
 
-		if (closeRequested) done = requestApplicationClose(building);
-		handleShortcuts(building);
-		if (building) handleContinuousKeyboardInput(building, updateTimeMicros);
+		if (closeRequested) done = requestApplicationClose(world);
+		handleShortcuts(world);
+		if (world) handleContinuousKeyboardInput(world, updateTimeMicros);
 
 		if (ImGui::IsKeyPressed(ImGui::GetKeyIndex(ImGuiKey_F11)))
 		{
@@ -843,12 +843,12 @@ void run()
 			ImGui::ShowDemoWindow();
 		}
 
-		renderUI(building, pathingAgent);
+		renderUI(world, pathingAgent);
 
-		if (building)
+		if (world)
 		{
 			auto mouseButtonStatus = getMouseButtonStatus();
-			handleWorldInteraction(building, building->getGraph(), mouseButtonStatus);
+			handleWorldInteraction(world, world->getGraph(), mouseButtonStatus);
 		}
 
 		// Rendering

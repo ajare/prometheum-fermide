@@ -8,11 +8,11 @@
 
 namespace core
 {
-	class Building;
+	class World;
 
 	class Layer
 	{
-		Building const* mwBuilding;
+		World const* mwWorld;
 
 		uint32_t mCellsWide, mDecksHigh, mZ;
 
@@ -24,7 +24,7 @@ namespace core
 
 	public:
 
-		Layer(Building const* building, uint32_t cellsWide, uint32_t decksHigh, uint32_t z);
+		Layer(World const* world, uint32_t cellsWide, uint32_t decksHigh, uint32_t z);
 
 		uint32_t getCellsWide() const;
 

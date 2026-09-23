@@ -11,7 +11,7 @@
 #include "core/MarkerSectorObject.h"
 #include "core/Path.h"
 #include "core/Vertex.h"
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/Coordination.h"
 #include "core/Exceptions.h"
 #include "core/ExtensibleObject.h"
@@ -24,10 +24,10 @@ namespace core
 
 	using namespace std;
 
-	// Agent lifecycle moved out of Building (ADR 0004 stage 1). The behaviour is
-	// unchanged: the coordinator works on Building's registries through
-	// friendship, and calls back through the Building facade for the machinery
-	// which has not moved out of Building yet - the modified-state marker,
+	// Agent lifecycle moved out of World (ADR 0004 stage 1). The behaviour is
+	// unchanged: the coordinator works on World's registries through
+	// friendship, and calls back through the World facade for the machinery
+	// which has not moved out of World yet - the modified-state marker,
 	// sector lookup, interaction cancellation, and device-operation
 	// cancellation and removal. The Agent snapshots it publishes are built by
 	// the coordinator's own snapshot seam, which joined it in stage 5. The stop
@@ -39,31 +39,31 @@ namespace core
 	{
 		if (!agent)
 		{
-			throw invalid_argument("Building cannot own a null Agent");
+			throw invalid_argument("World cannot own a null Agent");
 		}
-		if (mBuilding.mAgentIds.contains(agent.get()))
+		if (mWorld.mAgentIds.contains(agent.get()))
 		{
-			throw invalid_argument("Agent is already owned by this Building");
+			throw invalid_argument("Agent is already owned by this World");
 		}
 
-		auto sector = mBuilding._getSector(sectorId);
+		auto sector = mWorld._getSector(sectorId);
 		if (sector->getType() == SectorType::Background)
 		{
-			throw BuildingException(&mBuilding,
+			throw WorldException(&mWorld,
 				"An Agent cannot occupy a Background: it owns no walkable floor and takes no part in traversal");
 		}
 		auto rawAgent = agent.get();
-		rawAgent->attachToBuilding(&mBuilding);
+		rawAgent->attachToWorld(&mWorld);
 		sector->enterAgent(rawAgent, deckOffset, xOffset);
-		auto id = mBuilding.mAgents.add(std::move(agent));
-		mBuilding.mAgentIds.emplace(rawAgent, id);
+		auto id = mWorld.mAgents.add(std::move(agent));
+		mWorld.mAgentIds.emplace(rawAgent, id);
 
 		SimulationEvent event;
-		event.sequence = mBuilding.mNextEventSequence++;
-		event.tick = mBuilding.mSimulationTick;
+		event.sequence = mWorld.mNextEventSequence++;
+		event.tick = mWorld.mSimulationTick;
 		event.type = SimulationEventType::AgentAdded;
 		event.agent = makeAgentSnapshot(rawAgent);
-		mBuilding.mEvents.push_back(std::move(event));
+		mWorld.mEvents.push_back(std::move(event));
 		return id;
 	}
 
@@ -71,31 +71,31 @@ namespace core
 	{
 		if (!agent)
 		{
-			throw invalid_argument("Building cannot own a null Agent");
+			throw invalid_argument("World cannot own a null Agent");
 		}
-		if (mBuilding.mAgentIds.contains(agent.get()))
+		if (mWorld.mAgentIds.contains(agent.get()))
 		{
-			throw invalid_argument("Agent is already owned by this Building");
+			throw invalid_argument("Agent is already owned by this World");
 		}
 
-		auto sector = mBuilding._getSector(sectorId);
+		auto sector = mWorld._getSector(sectorId);
 		if (sector->getType() == SectorType::Background)
 		{
-			throw BuildingException(&mBuilding,
+			throw WorldException(&mWorld,
 				"An Agent cannot occupy a Background: it owns no walkable floor and takes no part in traversal");
 		}
 		auto rawAgent = agent.get();
-		rawAgent->attachToBuilding(&mBuilding);
+		rawAgent->attachToWorld(&mWorld);
 		sector->enterAgent(rawAgent);
-		auto id = mBuilding.mAgents.add(std::move(agent));
-		mBuilding.mAgentIds.emplace(rawAgent, id);
+		auto id = mWorld.mAgents.add(std::move(agent));
+		mWorld.mAgentIds.emplace(rawAgent, id);
 
 		SimulationEvent event;
-		event.sequence = mBuilding.mNextEventSequence++;
-		event.tick = mBuilding.mSimulationTick;
+		event.sequence = mWorld.mNextEventSequence++;
+		event.tick = mWorld.mSimulationTick;
 		event.type = SimulationEventType::AgentAdded;
 		event.agent = makeAgentSnapshot(rawAgent);
-		mBuilding.mEvents.push_back(std::move(event));
+		mWorld.mEvents.push_back(std::move(event));
 		return id;
 	}
 
@@ -111,7 +111,7 @@ namespace core
 
 	void SimulationCoordinator::wakeAllAgents()
 	{
-		for (auto const& [id, agent] : mBuilding.mAgents.entries())
+		for (auto const& [id, agent] : mWorld.mAgents.entries())
 		{
 			(void)id;
 			// A deactivated Agent is not simulated, so waking the world must not
@@ -129,7 +129,7 @@ namespace core
 			if (diagnostic) *diagnostic = found.diagnostic;
 			return false;
 		}
-		if (!mBuilding.mSimulationPaused)
+		if (!mWorld.mSimulationPaused)
 		{
 			if (diagnostic)
 				*diagnostic = "Agents cannot be activated or deactivated while the simulation is running";
@@ -141,57 +141,57 @@ namespace core
 	bool SimulationCoordinator::setAgentActive(AgentId id, bool active, string* diagnostic)
 	{
 		if (!canSetAgentActive(id, active, diagnostic)) return false;
-		auto* agent = mBuilding.mAgents.find(id);
+		auto* agent = mWorld.mAgents.find(id);
 		if (agent->isActive() == active) return true;
 		agent->setActive(active);
 
 		SimulationEvent event;
-		event.sequence = mBuilding.mNextEventSequence++;
-		event.tick = mBuilding.mSimulationTick;
+		event.sequence = mWorld.mNextEventSequence++;
+		event.tick = mWorld.mSimulationTick;
 		event.type = active ? SimulationEventType::AgentActivated
 			: SimulationEventType::AgentDeactivated;
 		event.agent = makeAgentSnapshot(agent);
 		if (agent->getBehaviourAssignment())
-			mBuilding.mAgentBehaviourRuntime->observeActivation(event);
-		mBuilding.mEvents.push_back(std::move(event));
+			mWorld.mAgentBehaviourRuntime->observeActivation(event);
+		mWorld.mEvents.push_back(std::move(event));
 		return true;
 	}
 
 	EntityLookup<Agent> SimulationCoordinator::lookupAgent(AgentId id)
 	{
-		auto entity = mBuilding.mAgents.find(id);
+		auto entity = mWorld.mAgents.find(id);
 		return entity ? EntityLookup<Agent>{ entity, {} }
 			: EntityLookup<Agent>{ nullptr, format("Agent handle {} is invalid or has been removed", id.value) };
 	}
 
 	EntityLookup<Agent const> SimulationCoordinator::lookupAgent(AgentId id) const
 	{
-		auto entity = mBuilding.mAgents.find(id);
+		auto entity = mWorld.mAgents.find(id);
 		return entity ? EntityLookup<Agent const>{ entity, {} }
 			: EntityLookup<Agent const>{ nullptr, format("Agent handle {} is invalid or has been removed", id.value) };
 	}
 
 	AgentId SimulationCoordinator::getAgentId(Agent const* agent) const
 	{
-		auto found = mBuilding.mAgentIds.find(agent);
-		return found == mBuilding.mAgentIds.end() ? AgentId{} : found->second;
+		auto found = mWorld.mAgentIds.find(agent);
+		return found == mWorld.mAgentIds.end() ? AgentId{} : found->second;
 	}
 
 	bool SimulationCoordinator::holdsTraversalOwnership(AgentId id) const
 	{
 		if (!id) return false;
 
-		for (auto const& [requestId, request] : mBuilding.mTraversalRequests.entries())
+		for (auto const& [requestId, request] : mWorld.mTraversalRequests.entries())
 		{
 			(void)requestId;
 			if (request->mOwner == id) return true;
 		}
-		for (auto const& [permitId, permit] : mBuilding.mTraversalPermits.entries())
+		for (auto const& [permitId, permit] : mWorld.mTraversalPermits.entries())
 		{
 			(void)permitId;
 			if (permit->mOwner == id) return true;
 		}
-		for (auto const& [resourceId, resource] : mBuilding.mTraversalResources.entries())
+		for (auto const& [resourceId, resource] : mWorld.mTraversalResources.entries())
 		{
 			(void)resourceId;
 			if (find(resource->mOccupants.begin(), resource->mOccupants.end(), id)
@@ -248,13 +248,13 @@ namespace core
 		// keyed by request - queue lanes, admission reservations, door open leases,
 		// extension request leases - and cancelling the request surrenders them all
 		// through the same paths ordinary cancellation uses. No safe transport exit is
-		// requested: the Agent is on its way out of the Building entirely.
+		// requested: the Agent is on its way out of the World entirely.
 		std::vector<TraversalRequestId> requests;
-		for (auto const& [requestId, request] : mBuilding.mTraversalRequests.entries())
+		for (auto const& [requestId, request] : mWorld.mTraversalRequests.entries())
 			if (request->mOwner == id) requests.push_back(requestId);
 		for (auto requestId : requests)
 		{
-			auto request = mBuilding.mTraversalRequests.find(requestId);
+			auto request = mWorld.mTraversalRequests.find(requestId);
 			if (!request) continue;
 			auto const permitId = request->mPermit;
 			cancelTraversal(requestId, permitId, false);
@@ -263,11 +263,11 @@ namespace core
 
 		// A permit whose request has already gone is still the Agent's handle.
 		std::vector<TraversalPermitId> permits;
-		for (auto const& [permitId, permit] : mBuilding.mTraversalPermits.entries())
+		for (auto const& [permitId, permit] : mWorld.mTraversalPermits.entries())
 			if (permit->mOwner == id) permits.push_back(permitId);
 		for (auto permitId : permits)
 		{
-			auto permit = mBuilding.mTraversalPermits.find(permitId);
+			auto permit = mWorld.mTraversalPermits.find(permitId);
 			if (!permit) continue;
 			releaseTraversal(permit->mRequest, permitId);
 		}
@@ -275,7 +275,7 @@ namespace core
 		// Finally the claims keyed by Agent itself, which survive every request having
 		// been released: the manifest slot of a car the Agent boarded, its stop
 		// requests, its pending safe exit, and its occupant leases.
-		for (auto const& [resourceId, resource] : mBuilding.mTraversalResources.entries())
+		for (auto const& [resourceId, resource] : mWorld.mTraversalResources.entries())
 		{
 			(void)resourceId;
 			releaseAgentFromResource(*resource, id);
@@ -285,18 +285,18 @@ namespace core
 	MovementCommandResult SimulationCoordinator::inspectMoveAgentToMarker(
 		AgentId id, MarkerId marker, bool behaviourCommand) const
 	{
-		auto agent = mBuilding.mAgents.find(id);
+		auto agent = mWorld.mAgents.find(id);
 		if (!agent) return { MovementCommandStatus::UnknownAgent };
-		if (!behaviourCommand && mBuilding.agentBehaviourOwnsMovement(id))
+		if (!behaviourCommand && mWorld.agentBehaviourOwnsMovement(id))
 			return { MovementCommandStatus::BehaviourOwned };
 		if (!agent->isActive()) return { MovementCommandStatus::InactiveAgent };
-		if (!mBuilding.lookupMarker(marker)) return { MovementCommandStatus::UnknownMarker };
-		if (auto it = mBuilding.mMovementGoals.find(id); it != mBuilding.mMovementGoals.end())
+		if (!mWorld.lookupMarker(marker)) return { MovementCommandStatus::UnknownMarker };
+		if (auto it = mWorld.mMovementGoals.find(id); it != mWorld.mMovementGoals.end())
 			return { !it->second.cancelling && it->second.marker == marker
 				? MovementCommandStatus::NoOp : MovementCommandStatus::AgentBusy };
-		if (agent->mPath.path || mBuilding.mPausedPathIntents.contains(id) || holdsTraversalOwnership(id))
+		if (agent->mPath.path || mWorld.mPausedPathIntents.contains(id) || holdsTraversalOwnership(id))
 			return { MovementCommandStatus::AgentBusy };
-		if (!mBuilding.mGraph || mBuilding.mTopologyDirty || !mBuilding.mTopologyValid)
+		if (!mWorld.mGraph || mWorld.mTopologyDirty || !mWorld.mTopologyValid)
 			return { MovementCommandStatus::TopologyUnavailable };
 		return { MovementCommandStatus::Accepted };
 	}
@@ -306,15 +306,15 @@ namespace core
 	{
 		auto const inspected = inspectMoveAgentToMarker(id, marker, behaviourCommand);
 		if (inspected.status != MovementCommandStatus::Accepted) return inspected;
-		auto agent = mBuilding.mAgents.find(id);
+		auto agent = mWorld.mAgents.find(id);
 		shared_ptr<const Vertex> target;
-		for (auto const& sector : mBuilding.mSectors)
+		for (auto const& sector : mWorld.mSectors)
 			for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
 				if (auto object = dynamic_pointer_cast<MarkerSectorObject>(sector->getObject(i));
 					object && object->getMarker()->getId() == marker)
-					target = mBuilding.mGraph->getVertexForObject(object);
-		auto path = target ? mBuilding.mGraph->calculatePath(agent, target) : nullptr;
-		mBuilding.mMovementGoals[id] = { marker, target ? target->getPosition() : Vector2::ZERO, false,
+					target = mWorld.mGraph->getVertexForObject(object);
+		auto path = target ? mWorld.mGraph->calculatePath(agent, target) : nullptr;
+		mWorld.mMovementGoals[id] = { marker, target ? target->getPosition() : Vector2::ZERO, false,
 			target ? SectorId{ (uint64_t)target->getSector()->getIndex() + 1 } : SectorId{},
 			!path || path->nodes.empty() ? RouteLossReason::Unreachable : RouteLossReason::None,
 			behaviourCommand };
@@ -325,15 +325,15 @@ namespace core
 	MovementCommandResult SimulationCoordinator::inspectCancelAgentMovement(
 		AgentId id, bool behaviourCommand) const
 	{
-		auto agent = mBuilding.mAgents.find(id);
+		auto agent = mWorld.mAgents.find(id);
 		if (!agent) return { MovementCommandStatus::UnknownAgent };
-		if (!behaviourCommand && mBuilding.agentBehaviourOwnsMovement(id))
+		if (!behaviourCommand && mWorld.agentBehaviourOwnsMovement(id))
 			return { MovementCommandStatus::BehaviourOwned };
 		if (!agent->isActive()) return { MovementCommandStatus::InactiveAgent };
-		auto it = mBuilding.mMovementGoals.find(id);
-		if (it == mBuilding.mMovementGoals.end() && !agent->mPath.path && !holdsTraversalOwnership(id))
+		auto it = mWorld.mMovementGoals.find(id);
+		if (it == mWorld.mMovementGoals.end() && !agent->mPath.path && !holdsTraversalOwnership(id))
 			return { MovementCommandStatus::NoOp };
-		if (it != mBuilding.mMovementGoals.end() && it->second.cancelling)
+		if (it != mWorld.mMovementGoals.end() && it->second.cancelling)
 			return { MovementCommandStatus::NoOp };
 		return { MovementCommandStatus::Accepted };
 	}
@@ -343,17 +343,17 @@ namespace core
 	{
 		auto const inspected = inspectCancelAgentMovement(id, behaviourCommand);
 		if (inspected.status != MovementCommandStatus::Accepted) return inspected;
-		auto& goal = mBuilding.mMovementGoals[id];
+		auto& goal = mWorld.mMovementGoals[id];
 		goal.cancelling = true;
 		return inspected;
 	}
 
 	void SimulationCoordinator::clearAgentMovementForBehaviourEdit(AgentId id)
 	{
-		auto agent = mBuilding.mAgents.find(id);
+		auto agent = mWorld.mAgents.find(id);
 		if (!agent) return;
-		mBuilding.mMovementGoals.erase(id);
-		mBuilding.mPausedPathIntents.erase(id);
+		mWorld.mMovementGoals.erase(id);
+		mWorld.mPausedPathIntents.erase(id);
 		agent->clearRuntimePath();
 		agent->mResetPosition = agent->mPosition;
 		agent->mResetPath.reset();
@@ -361,22 +361,22 @@ namespace core
 		releaseTraversalOwnership(id);
 
 		vector<InteractionRequestId> interactions;
-		for (auto const& [requestId, request] : mBuilding.mInteractionRequests.entries())
+		for (auto const& [requestId, request] : mWorld.mInteractionRequests.entries())
 			if (request->getActor() == id && request->getResult() == InteractionResult::Pending)
 				interactions.push_back(requestId);
 		for (auto requestId : interactions) cancelInteraction(requestId);
-		for (auto const& [operationId, operation] : mBuilding.mDeviceOperations.entries())
+		for (auto const& [operationId, operation] : mWorld.mDeviceOperations.entries())
 			if (operation->getRequesters().contains(id)) cancelDeviceOperation(operationId, id);
 	}
 
 	void SimulationCoordinator::updateMovementGoals()
 	{
-		for (auto it = mBuilding.mMovementGoals.begin(); it != mBuilding.mMovementGoals.end();)
+		for (auto it = mWorld.mMovementGoals.begin(); it != mWorld.mMovementGoals.end();)
 		{
 			auto id = it->first;
 			auto const& goal = it->second;
-			auto agent = mBuilding.mAgents.find(id);
-			if (!agent) { it = mBuilding.mMovementGoals.erase(it); continue; }
+			auto agent = mWorld.mAgents.find(id);
+			if (!agent) { it = mWorld.mMovementGoals.erase(it); continue; }
 			if (!agent->isActive()) { ++it; continue; }
 			if (goal.cancelling)
 			{
@@ -384,7 +384,7 @@ namespace core
 				// Transport cancellation uses the already scheduled destination stop:
 				// do not release a manifest slot or strand a passenger in a Transit.
 				bool riding = false;
-				for (auto const& [resourceId, resource] : mBuilding.mTraversalResources.entries())
+				for (auto const& [resourceId, resource] : mWorld.mTraversalResources.entries())
 				{
 					(void)resourceId;
 					if (find(resource->mOccupants.begin(), resource->mOccupants.end(), id) != resource->mOccupants.end()) riding = true;
@@ -398,37 +398,37 @@ namespace core
 				agent->clearRuntimePath();
 				releaseTraversalOwnership(id);
 				vector<InteractionRequestId> interactions;
-				for (auto const& [requestId, request] : mBuilding.mInteractionRequests.entries())
+				for (auto const& [requestId, request] : mWorld.mInteractionRequests.entries())
 					if (request->getActor() == id && request->getResult() == InteractionResult::Pending) interactions.push_back(requestId);
 				for (auto requestId : interactions) cancelInteraction(requestId);
-				for (auto const& [operationId, operation] : mBuilding.mDeviceOperations.entries())
+				for (auto const& [operationId, operation] : mWorld.mDeviceOperations.entries())
 					if (operation->getRequesters().contains(id)) cancelDeviceOperation(operationId, id);
 			}
 			else if (agent->mPath.path) { ++it; continue; }
 			SimulationEvent event;
-			event.sequence = mBuilding.mNextEventSequence++;
-			event.tick = mBuilding.mSimulationTick;
-			event.phase = mBuilding.mCurrentPhase;
+			event.sequence = mWorld.mNextEventSequence++;
+			event.tick = mWorld.mSimulationTick;
+			event.phase = mWorld.mCurrentPhase;
 			event.agent = makeAgentSnapshot(agent);
 			event.destinationMarker = goal.marker;
 			event.type = goal.cancelling ? SimulationEventType::MovementCancelled
 				: goal.routeLossReason == RouteLossReason::None
-					&& mBuilding.lookupMarker(goal.marker) && agent->getSector()
+					&& mWorld.lookupMarker(goal.marker) && agent->getSector()
 					&& SectorId{ (uint64_t)agent->getSector()->getIndex() + 1 } == goal.sector
 					&& agent->getGlobalPosition().distanceTo(goal.position) < 0.001f
 					? SimulationEventType::DestinationReached : SimulationEventType::RouteLost;
 			if (event.type == SimulationEventType::RouteLost)
-				event.routeLossReason = !mBuilding.lookupMarker(goal.marker)
+				event.routeLossReason = !mWorld.lookupMarker(goal.marker)
 					? RouteLossReason::DestinationRemoved
 					: goal.routeLossReason == RouteLossReason::None
 						? RouteLossReason::TopologyChanged : goal.routeLossReason;
 			else if (event.type == SimulationEventType::MovementCancelled)
 				event.movementCancellationReason = MovementCancellationReason::Explicit;
-			it = mBuilding.mMovementGoals.erase(it);
+			it = mWorld.mMovementGoals.erase(it);
 			// Runtime observation is a separate subscription: it never drains or
 			// mutates the public simulation event queue.
-			mBuilding.mAgentBehaviourRuntime->observeOutcome(event);
-			mBuilding.mEvents.push_back(std::move(event));
+			mWorld.mAgentBehaviourRuntime->observeOutcome(event);
+			mWorld.mEvents.push_back(std::move(event));
 		}
 	}
 
@@ -455,7 +455,7 @@ namespace core
 		// a rider off when it is next safe rather than ejecting them from a moving
 		// car, so the manifest keeps naming the Agent after its route is gone. Every
 		// one of those claims is surrendered here; a handle left behind could never
-		// disembark, and the capacity would be lost for the life of the Building.
+		// disembark, and the capacity would be lost for the life of the World.
 		found.entity->cancelTraversal();
 		releaseTraversalOwnership(id);
 		if (holdsTraversalOwnership(id))
@@ -464,7 +464,7 @@ namespace core
 		}
 
 		vector<InteractionRequestId> ownedRequests;
-		for (auto const& [requestId, request] : mBuilding.mInteractionRequests.entries())
+		for (auto const& [requestId, request] : mWorld.mInteractionRequests.entries())
 		{
 			if (request->getActor() == id && request->getResult() == InteractionResult::Pending)
 			{
@@ -473,11 +473,11 @@ namespace core
 		}
 		for (auto requestId : ownedRequests)
 		{
-			mBuilding.cancelInteraction(requestId);
+			mWorld.cancelInteraction(requestId);
 		}
 
 		vector<DeviceOperationId> ownedOperations;
-		for (auto const& [operationId, operation] : mBuilding.mDeviceOperations.entries())
+		for (auto const& [operationId, operation] : mWorld.mDeviceOperations.entries())
 		{
 			if (operation->getRequesters().contains(id))
 			{
@@ -486,10 +486,10 @@ namespace core
 		}
 		for (auto operationId : ownedOperations)
 		{
-			mBuilding.cancelDeviceOperation(operationId, id);
-			if (auto operation = mBuilding.mDeviceOperations.find(operationId); operation && operation->getRequesters().empty())
+			mWorld.cancelDeviceOperation(operationId, id);
+			if (auto operation = mWorld.mDeviceOperations.find(operationId); operation && operation->getRequesters().empty())
 			{
-				(void)mBuilding.removeDeviceOperation(operationId);
+				(void)mWorld.removeDeviceOperation(operationId);
 			}
 		}
 
@@ -501,18 +501,18 @@ namespace core
 		// Removing an assigned Agent is also the end of its private behaviour
 		// lifetime. Best-effort on_stop runs while the final read-only Agent state
 		// is still available and cannot veto removal.
-		mBuilding.mAgentBehaviourRuntime->removeInstance(mBuilding, id,
+		mWorld.mAgentBehaviourRuntime->removeInstance(mWorld, id,
 			AgentBehaviourTeardownReason::Unassignment);
-		mBuilding.mAgentIds.erase(found.entity);
-		mBuilding.mAgents.remove(id);
+		mWorld.mAgentIds.erase(found.entity);
+		mWorld.mAgents.remove(id);
 
 		SimulationEvent event;
-		event.sequence = mBuilding.mNextEventSequence++;
-		event.tick = mBuilding.mSimulationTick;
+		event.sequence = mWorld.mNextEventSequence++;
+		event.tick = mWorld.mSimulationTick;
 		event.type = SimulationEventType::AgentRemoved;
 		event.agent = std::move(snapshot);
-		mBuilding.mEvents.push_back(std::move(event));
-		mBuilding.markModified();
+		mWorld.mEvents.push_back(std::move(event));
+		mWorld.markModified();
 		return { true, {} };
 	}
 

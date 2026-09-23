@@ -1,8 +1,8 @@
 // Agent groups through copy, cut and paste, for ticket #113.
 //
 // The hazard this file circles is an ID crossing a document boundary. An
-// AgentGroupId is a receipt for one Building's registry; handed to another
-// Building it names nothing, or worse, something else. So the clipboard
+// AgentGroupId is a receipt for one World's registry; handed to another
+// World it names nothing, or worse, something else. So the clipboard
 // carries the Agent group by name (ADR 0006), and the destination resolves
 // that name when the paste lands: reuse the group it already defines, or
 // make one.
@@ -16,7 +16,7 @@
 // What gets pinned down:
 //
 //   a copied Agent's payload carries its Agent group by name and its
-//   Building-local AgentGroupId nowhere
+//   World-local AgentGroupId nowhere
 //   an ungrouped Agent's payload says nothing about a group at all, for a
 //   copy and for a cut alike
 //   a payload written before grouping existed - no `group` key - still
@@ -49,7 +49,7 @@
 
 #include "core/Agent.h"
 #include "core/AgentGroup.h"
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/EntityId.h"
 #include "core/Sector.h"
 #include "core/SerializationWorkData.h"
@@ -71,36 +71,36 @@ namespace
 		if (!condition) throw std::runtime_error(message);
 	}
 
-	// The shared Building history outlives each check, so every check starts
+	// The shared World history outlives each check, so every check starts
 	// from a clean instance rather than whatever the check before it left.
 	void resetUndoHistory()
 	{
-		gBuildingDocumentHistory.clear();
+		gWorldDocumentHistory.clear();
 	}
 
 	// The editor's own undo and redo, the same shape as UI.cpp's
 	// restoreDocumentSnapshot(): the live state crosses to the other stack
-	// and the newest snapshot on the source stack becomes the live Building.
-	void restoreDocument(std::shared_ptr<core::Building>& building, bool redo)
+	// and the newest snapshot on the source stack becomes the live World.
+	void restoreDocument(std::shared_ptr<core::World>& world, bool redo)
 	{
-		auto const current = captureDocumentSnapshot(building);
+		auto const current = captureDocumentSnapshot(world);
 		require(current.has_value(), "The live document could not be captured");
 
-		std::shared_ptr<core::Building> loaded;
+		std::shared_ptr<core::World> loaded;
 		auto restore = [&loaded](DocumentSnapshot const& target)
 		{
-			loaded = std::make_shared<core::Building>("Restored Building", 1, 1);
+			loaded = std::make_shared<core::World>("Restored World", 1, 1);
 			core::SerializationWorkData workData;
 			auto reader = core::YamlSerializer::fromString(target.yaml);
 			reader->deserialize();
 			return loaded->deserialize(*reader, workData);
 		};
 		auto const restored = redo
-			? gBuildingDocumentHistory.redo(current, restore)
-			: gBuildingDocumentHistory.undo(current, restore);
+			? gWorldDocumentHistory.redo(current, restore)
+			: gWorldDocumentHistory.undo(current, restore);
 		require(restored, redo ? "There is no redo entry to restore"
 			: "There is no undo entry to restore");
-		building = std::move(loaded);
+		world = std::move(loaded);
 	}
 
 	// ---------------------------------------------------------------- world
@@ -110,7 +110,7 @@ namespace
 	// walkable floor and refuses an Agent outright.
 	struct PasteWorld
 	{
-		std::shared_ptr<core::Building> building;
+		std::shared_ptr<core::World> world;
 		uint32_t corridor{ 0 };
 		uint32_t room{ 0 };
 		uint32_t background{ 0 };
@@ -119,51 +119,51 @@ namespace
 	PasteWorld buildPasteWorld(std::string const& name)
 	{
 		PasteWorld world;
-		world.building = std::make_shared<core::Building>(name, 12, 3);
-		world.corridor = world.building->addCorridor(0, 0, 12);
-		world.room = world.building->addRoom("Workshop", 0, 2, 0, 6, 1);
-		world.background = world.building->addBackground(1, 0, 0, 4, 1);
-		world.building->finishBuild();
+		world.world = std::make_shared<core::World>(name, 12, 3);
+		world.corridor = world.world->addCorridor(0, 0, 12);
+		world.room = world.world->addRoom("Workshop", 0, 2, 0, 6, 1);
+		world.background = world.world->addBackground(1, 0, 0, 4, 1);
+		world.world->finishBuild();
 		return world;
 	}
 
-	std::size_t agentCount(core::Building const& building)
+	std::size_t agentCount(core::World const& world)
 	{
-		return building.getSimulationSnapshot().agents.size();
+		return world.getSimulationSnapshot().agents.size();
 	}
 
-	int countGroupsNamed(core::Building const& building, std::string const& name)
+	int countGroupsNamed(core::World const& world, std::string const& name)
 	{
 		int count{ 0 };
-		for (auto const id : building.getAgentGroupIds())
+		for (auto const id : world.getAgentGroupIds())
 		{
-			auto const group = building.lookupAgentGroup(id);
+			auto const group = world.lookupAgentGroup(id);
 			if (group && group.entity->getName() == name) ++count;
 		}
 		return count;
 	}
 
-	core::AgentGroupId findGroupNamed(core::Building const& building,
+	core::AgentGroupId findGroupNamed(core::World const& world,
 		std::string const& name)
 	{
-		for (auto const id : building.getAgentGroupIds())
+		for (auto const id : world.getAgentGroupIds())
 		{
-			auto const group = building.lookupAgentGroup(id);
+			auto const group = world.lookupAgentGroup(id);
 			if (group && group.entity->getName() == name) return id;
 		}
 		return {};
 	}
 
-	core::AgentId createAgent(core::Building& building, std::string const& name,
+	core::AgentId createAgent(core::World& world, std::string const& name,
 		uint32_t sector)
 	{
-		return building.createAgent(name, sector, 0, 2.0f);
+		return world.createAgent(name, sector, 0, 2.0f);
 	}
 
-	void assign(core::Building& building, core::AgentId agent, core::AgentGroupId group)
+	void assign(core::World& world, core::AgentId agent, core::AgentGroupId group)
 	{
 		std::string diagnostic;
-		require(building.setAgentGroup(agent, group, &diagnostic),
+		require(world.setAgentGroup(agent, group, &diagnostic),
 			("Assigning an Agent for a clipboard check failed: " + diagnostic).c_str());
 	}
 
@@ -171,7 +171,7 @@ namespace
 
 	// The clipboard text a copy of `agent` produces, written by the same
 	// payload builder and text writer the editor's copy keystroke calls.
-	std::string copyText(core::Building const& source, core::AgentId agent,
+	std::string copyText(core::World const& source, core::AgentId agent,
 		std::string const& copyName, bool cut = false)
 	{
 		return makeAgentClipboardText(makeAgentClipboardPayload(source, agent, copyName), cut);
@@ -233,7 +233,7 @@ namespace
 	}
 
 	// ... and the values, as text, so a check can say that none of them is
-	// some Building-local number.
+	// some World-local number.
 	std::vector<std::string> clipboardObjectValues(std::string const& text)
 	{
 		std::vector<std::string> values;
@@ -244,13 +244,13 @@ namespace
 
 	// Land a payload at a target through the shared placement the editor's
 	// pegman landing calls.
-	core::AgentId place(std::shared_ptr<core::Building> const& building,
+	core::AgentId place(std::shared_ptr<core::World> const& world,
 		AgentClipboardPayload const& payload, std::shared_ptr<const core::Sector> sector,
 		uint32_t deckOffset = 0, float localX = 2.0f)
 	{
 		core::AgentId placed{};
 		std::string diagnostic;
-		require(commitAgentPlacement(building, payload, sector, deckOffset, localX,
+		require(commitAgentPlacement(world, payload, sector, deckOffset, localX,
 			placed, diagnostic), "Placing the pasted Agent failed: " + diagnostic);
 		require(!!placed, "The placement reported success without naming an Agent");
 		return placed;
@@ -264,11 +264,11 @@ namespace
 	{
 		resetUndoHistory();
 		auto world = buildPasteWorld("Copy source");
-		auto const crew = world.building->addAgentGroup("Crew");
-		auto const alice = createAgent(*world.building, "Alice", world.room);
-		assign(*world.building, alice, crew);
+		auto const crew = world.world->addAgentGroup("Crew");
+		auto const alice = createAgent(*world.world, "Alice", world.room);
+		assign(*world.world, alice, crew);
 
-		auto const text = copyText(*world.building, alice, "Alice copy");
+		auto const text = copyText(*world.world, alice, "Alice copy");
 		auto const read = readClipboard(text);
 
 		require(read.payload.name == "Alice copy",
@@ -280,7 +280,7 @@ namespace
 
 		// No ID of any kind crosses. The clipboard object map holds a name,
 		// flags and the Agent group name - nothing else - and none of those
-		// values is the group's Building-local AgentGroupId, which would be
+		// values is the group's World-local AgentGroupId, which would be
 		// meaningless to whatever pastes this.
 		auto const keys = clipboardObjectKeys(text);
 		require(keys == std::vector<std::string>{ "flags", "group", "name" },
@@ -299,11 +299,11 @@ namespace
 	{
 		resetUndoHistory();
 		auto world = buildPasteWorld("Ungrouped source");
-		auto const freelance = createAgent(*world.building, "Freelance", world.corridor);
+		auto const freelance = createAgent(*world.world, "Freelance", world.corridor);
 
 		for (bool const cut : { false, true })
 		{
-			auto const text = copyText(*world.building, freelance, "Freelance copy", cut);
+			auto const text = copyText(*world.world, freelance, "Freelance copy", cut);
 			require(text.find("group") == std::string::npos,
 				"An ungrouped Agent's clipboard payload named a group anyway: " + text);
 
@@ -316,14 +316,14 @@ namespace
 			core::AgentId placed{};
 			std::string diagnostic;
 			PendingAgentPlacement pending;
-			require(armAgentPlacement(pending, *world.building, read.payload,
-				world.building->getSector(world.corridor), 0, 3.0f, diagnostic),
+			require(armAgentPlacement(pending, *world.world, read.payload,
+				world.world->getSector(world.corridor), 0, 3.0f, diagnostic),
 				"Arming an ungrouped paste failed: " + diagnostic);
-			require(commitPendingAgentPlacement(pending, world.building, placed, diagnostic),
+			require(commitPendingAgentPlacement(pending, world.world, placed, diagnostic),
 				"Pasting an ungrouped Agent failed: " + diagnostic);
-			require(!world.building->getAgentGroup(placed),
+			require(!world.world->getAgentGroup(placed),
 				"Pasting an ungrouped Agent gave it an Agent group");
-			require(world.building->getAgentGroupCount() == 0,
+			require(world.world->getAgentGroupCount() == 0,
 				"Pasting an ungrouped Agent created an Agent group");
 		}
 	}
@@ -334,7 +334,7 @@ namespace
 	{
 		resetUndoHistory();
 		auto world = buildPasteWorld("Legacy target");
-		auto const before = agentCount(*world.building);
+		auto const before = agentCount(*world.world);
 
 		auto const read = readClipboard(legacyClipboardText(
 			"    name: Legacy hand\n"
@@ -344,18 +344,18 @@ namespace
 		require(read.payload.name == "Legacy hand",
 			"A legacy payload lost its name");
 
-		auto const placed = place(world.building, read.payload,
-			world.building->getSector(world.corridor), 0, 4.0f);
-		require(agentCount(*world.building) == before + 1,
+		auto const placed = place(world.world, read.payload,
+			world.world->getSector(world.corridor), 0, 4.0f);
+		require(agentCount(*world.world) == before + 1,
 			"The legacy paste did not add exactly one Agent");
-		require(!world.building->getAgentGroup(placed),
+		require(!world.world->getAgentGroup(placed),
 			"A legacy paste gave the Agent an Agent group it never named");
-		require(world.building->getAgentGroupCount() == 0,
+		require(world.world->getAgentGroupCount() == 0,
 			"A legacy paste created an Agent group out of an absent key");
 	}
 
 	// A `group` that is not a name is refused outright. Reading `group: 42`
-	// as the name "42" would let a Building-local ID back in through the
+	// as the name "42" would let a World-local ID back in through the
 	// side door, and reading a bad value as "no group" would drop the
 	// classification without telling anyone.
 	void aClipboardAgentGroupThatIsNotANameIsRefused()
@@ -385,11 +385,11 @@ namespace
 
 		// And the refusal stops there: nothing was placed and nothing was
 		// committed.
-		require(agentCount(*world.building) == 0,
+		require(agentCount(*world.world) == 0,
 			"A refused clipboard payload placed an Agent");
-		require(world.building->getAgentGroupCount() == 0,
+		require(world.world->getAgentGroupCount() == 0,
 			"A refused clipboard payload created an Agent group");
-		require(!gBuildingDocumentHistory.canUndo(),
+		require(!gWorldDocumentHistory.canUndo(),
 			"A refused clipboard payload committed an undo entry");
 	}
 
@@ -399,55 +399,55 @@ namespace
 	{
 		resetUndoHistory();
 		auto world = buildPasteWorld("Destination with the group");
-		auto const crew = world.building->addAgentGroup("Crew");
-		auto const local = createAgent(*world.building, "Local hand", world.room);
-		assign(*world.building, local, crew);
-		auto const groupsBefore = world.building->getAgentGroupCount();
+		auto const crew = world.world->addAgentGroup("Crew");
+		auto const local = createAgent(*world.world, "Local hand", world.room);
+		assign(*world.world, local, crew);
+		auto const groupsBefore = world.world->getAgentGroupCount();
 
-		// A payload naming "Crew", as a copy from another Building would
+		// A payload naming "Crew", as a copy from another World would
 		// carry it.
 		AgentClipboardPayload payload;
 		payload.name = "Transplant";
 		payload.group = "Crew";
 
-		auto const placed = place(world.building, payload,
-			world.building->getSector(world.corridor), 0, 5.0f);
+		auto const placed = place(world.world, payload,
+			world.world->getSector(world.corridor), 0, 5.0f);
 
-		require(world.building->getAgentGroup(placed) == crew,
+		require(world.world->getAgentGroup(placed) == crew,
 			"The pasted Agent did not join the destination's own group");
-		require(world.building->getAgentGroupCount() == groupsBefore,
+		require(world.world->getAgentGroupCount() == groupsBefore,
 			"Reusing an Agent group created a second group");
-		require(countGroupsNamed(*world.building, "Crew") == 1,
+		require(countGroupsNamed(*world.world, "Crew") == 1,
 			"The destination ended up with two groups named Crew");
-		require(world.building->getAgentGroupMemberCount(crew) == 2,
+		require(world.world->getAgentGroupMemberCount(crew) == 2,
 			"The reused group does not count the pasted Agent");
-		require(gBuildingDocumentHistory.undoCount() == 1,
+		require(gWorldDocumentHistory.undoCount() == 1,
 			"A paste is one document edit");
 	}
 
 	// Group identity is not name equality across case: "crew" is a different
-	// group from "Crew", exactly as the Building's own uniqueness rule says.
+	// group from "Crew", exactly as the World's own uniqueness rule says.
 	void aPasteMatchesAnAgentGroupNameExactlyAndCaseSensitively()
 	{
 		resetUndoHistory();
 		auto world = buildPasteWorld("Case sensitive target");
-		auto const crew = world.building->addAgentGroup("Crew");
-		auto const groupsBefore = world.building->getAgentGroupCount();
+		auto const crew = world.world->addAgentGroup("Crew");
+		auto const groupsBefore = world.world->getAgentGroupCount();
 
 		AgentClipboardPayload payload;
 		payload.name = "Night hand";
 		payload.group = "crew";
 
-		auto const placed = place(world.building, payload,
-			world.building->getSector(world.corridor), 0, 6.0f);
+		auto const placed = place(world.world, payload,
+			world.world->getSector(world.corridor), 0, 6.0f);
 
-		require(world.building->getAgentGroup(placed) != crew,
+		require(world.world->getAgentGroup(placed) != crew,
 			"A pasted Agent joined a group whose name differs by case");
-		require(world.building->getAgentGroupCount() == groupsBefore + 1,
+		require(world.world->getAgentGroupCount() == groupsBefore + 1,
 			"A case-different Agent group was not created");
-		require(countGroupsNamed(*world.building, "crew") == 1,
+		require(countGroupsNamed(*world.world, "crew") == 1,
 			"The lower-case Agent group is not the one the paste named");
-		require(world.building->getAgentGroupMemberCount(crew) == 0,
+		require(world.world->getAgentGroupMemberCount(crew) == 0,
 			"The existing group took a member the payload never assigned to it");
 	}
 
@@ -457,30 +457,30 @@ namespace
 	{
 		resetUndoHistory();
 		auto world = buildPasteWorld("Missing group target");
-		auto const groupsBefore = world.building->getAgentGroupCount();
-		auto const agentsBefore = agentCount(*world.building);
+		auto const groupsBefore = world.world->getAgentGroupCount();
+		auto const agentsBefore = agentCount(*world.world);
 
 		AgentClipboardPayload payload;
 		payload.name = "Welder";
 		payload.flags = 3;
 		payload.group = "Welders";
 
-		auto const placed = place(world.building, payload,
-			world.building->getSector(world.room), 0, 1.5f);
+		auto const placed = place(world.world, payload,
+			world.world->getSector(world.room), 0, 1.5f);
 
-		auto const created = findGroupNamed(*world.building, "Welders");
+		auto const created = findGroupNamed(*world.world, "Welders");
 		require(!!created, "The paste did not create the missing Agent group");
-		require(world.building->getAgentGroupCount() == groupsBefore + 1,
+		require(world.world->getAgentGroupCount() == groupsBefore + 1,
 			"Creating a missing Agent group disturbed the other groups");
-		require(world.building->getAgentGroup(placed) == created,
+		require(world.world->getAgentGroup(placed) == created,
 			"The pasted Agent was not assigned to the group the paste created");
-		require(world.building->getAgentGroupMemberCount(created) == 1,
+		require(world.world->getAgentGroupMemberCount(created) == 1,
 			"The created group does not count the pasted Agent");
-		require(agentCount(*world.building) == agentsBefore + 1,
+		require(agentCount(*world.world) == agentsBefore + 1,
 			"The paste did not add exactly one Agent");
-		require(world.building->lookupAgent(placed).entity->getFlags() == 3,
+		require(world.world->lookupAgent(placed).entity->getFlags() == 3,
 			"The pasted Agent lost the flags its payload carried");
-		require(gBuildingDocumentHistory.undoCount() == 1,
+		require(gWorldDocumentHistory.undoCount() == 1,
 			"A paste that creates a group is one document edit, not several");
 	}
 
@@ -490,7 +490,7 @@ namespace
 	{
 		resetUndoHistory();
 		auto world = buildPasteWorld("Arming target");
-		auto const agentsBefore = agentCount(*world.building);
+		auto const agentsBefore = agentCount(*world.world);
 
 		AgentClipboardPayload payload;
 		payload.name = "Rescuer";
@@ -498,15 +498,15 @@ namespace
 
 		PendingAgentPlacement pending;
 		std::string diagnostic;
-		require(armAgentPlacement(pending, *world.building, payload,
-			world.building->getSector(world.corridor), 0, 2.5f, diagnostic),
+		require(armAgentPlacement(pending, *world.world, payload,
+			world.world->getSector(world.corridor), 0, 2.5f, diagnostic),
 			"Arming a valid deferred paste failed: " + diagnostic);
 		require(pending.armed(), "Arming a paste left no pending placement");
-		require(agentCount(*world.building) == agentsBefore,
+		require(agentCount(*world.world) == agentsBefore,
 			"Arming a paste created an Agent");
-		require(world.building->getAgentGroupCount() == 0,
+		require(world.world->getAgentGroupCount() == 0,
 			"Arming a paste created an Agent group");
-		require(!gBuildingDocumentHistory.canUndo(), "Arming a paste committed an undo entry");
+		require(!gWorldDocumentHistory.canUndo(), "Arming a paste committed an undo entry");
 	}
 
 	// A cancelled fall is a dropped struct: there is nothing left that could
@@ -515,7 +515,7 @@ namespace
 	{
 		resetUndoHistory();
 		auto world = buildPasteWorld("Cancel target");
-		auto const agentsBefore = agentCount(*world.building);
+		auto const agentsBefore = agentCount(*world.world);
 
 		AgentClipboardPayload payload;
 		payload.name = "Rescuer";
@@ -523,28 +523,28 @@ namespace
 
 		PendingAgentPlacement pending;
 		std::string diagnostic;
-		require(armAgentPlacement(pending, *world.building, payload,
-			world.building->getSector(world.corridor), 0, 2.5f, diagnostic),
+		require(armAgentPlacement(pending, *world.world, payload,
+			world.world->getSector(world.corridor), 0, 2.5f, diagnostic),
 			"Arming a deferred paste failed: " + diagnostic);
 
 		pending.cancel();
 
 		require(!pending.armed(), "A cancelled placement is still armed");
-		require(agentCount(*world.building) == agentsBefore,
+		require(agentCount(*world.world) == agentsBefore,
 			"Cancelling a paste created an Agent");
-		require(world.building->getAgentGroupCount() == 0,
+		require(world.world->getAgentGroupCount() == 0,
 			"Cancelling a paste created an Agent group");
-		require(!gBuildingDocumentHistory.canUndo(), "Cancelling a paste committed an undo entry");
+		require(!gWorldDocumentHistory.canUndo(), "Cancelling a paste committed an undo entry");
 
 		core::AgentId placed{};
-		require(!commitPendingAgentPlacement(pending, world.building, placed, diagnostic),
+		require(!commitPendingAgentPlacement(pending, world.world, placed, diagnostic),
 			"A cancelled placement landed anyway");
 		require(!placed, "A cancelled placement named an Agent it never made");
-		require(agentCount(*world.building) == agentsBefore,
+		require(agentCount(*world.world) == agentsBefore,
 			"Landing a cancelled placement created an Agent");
-		require(world.building->getAgentGroupCount() == 0,
+		require(world.world->getAgentGroupCount() == 0,
 			"Landing a cancelled placement created an Agent group");
-		require(!gBuildingDocumentHistory.canUndo(), "Landing a cancelled placement committed an undo entry");
+		require(!gWorldDocumentHistory.canUndo(), "Landing a cancelled placement committed an undo entry");
 	}
 
 	// A placement that cannot be performed is refused whole. The Agent is
@@ -554,7 +554,7 @@ namespace
 	{
 		resetUndoHistory();
 		auto world = buildPasteWorld("Failure target");
-		auto const agentsBefore = agentCount(*world.building);
+		auto const agentsBefore = agentCount(*world.world);
 
 		AgentClipboardPayload payload;
 		payload.name = "Rescuer";
@@ -562,30 +562,30 @@ namespace
 
 		core::AgentId placed{};
 		std::string diagnostic;
-		require(!commitAgentPlacement(world.building, payload,
-			world.building->getSector(world.background), 0, 1.0f, placed, diagnostic),
+		require(!commitAgentPlacement(world.world, payload,
+			world.world->getSector(world.background), 0, 1.0f, placed, diagnostic),
 			"A placement into a Background was accepted");
 		require(!placed, "A refused placement named an Agent it never made");
 		require(!diagnostic.empty(), "A refused placement reported no reason");
-		require(agentCount(*world.building) == agentsBefore,
+		require(agentCount(*world.world) == agentsBefore,
 			"A failed placement added an Agent anyway");
-		require(world.building->getAgentGroupCount() == 0,
+		require(world.world->getAgentGroupCount() == 0,
 			"A failed placement created the Agent group the payload named");
-		require(!gBuildingDocumentHistory.canUndo(), "A failed placement committed an undo entry");
+		require(!gWorldDocumentHistory.canUndo(), "A failed placement committed an undo entry");
 
 		// The same refusal for a placement with nothing to place into.
 		resetUndoHistory();
-		require(!commitAgentPlacement(world.building, payload, nullptr, 0, 1.0f,
+		require(!commitAgentPlacement(world.world, payload, nullptr, 0, 1.0f,
 			placed, diagnostic), "A placement with no sector was accepted");
 		require(!diagnostic.empty(), "A placement with no sector reported no reason");
-		require(!gBuildingDocumentHistory.canUndo(),
+		require(!gWorldDocumentHistory.canUndo(),
 			"A placement with no sector committed an undo entry");
 
 		resetUndoHistory();
 		require(!commitAgentPlacement(nullptr, payload,
-			world.building->getSector(world.corridor), 0, 1.0f, placed, diagnostic),
-			"A placement with no Building was accepted");
-		require(!diagnostic.empty(), "A placement with no Building reported no reason");
+			world.world->getSector(world.corridor), 0, 1.0f, placed, diagnostic),
+			"A placement with no World was accepted");
+		require(!diagnostic.empty(), "A placement with no World reported no reason");
 	}
 
 	// An unusable group name is refused whole: not truncated to fit the
@@ -610,8 +610,8 @@ namespace
 
 			std::string diagnostic;
 			PendingAgentPlacement pending;
-			require(!armAgentPlacement(pending, *world.building, payload,
-				world.building->getSector(world.corridor), 0, 1.0f, diagnostic),
+			require(!armAgentPlacement(pending, *world.world, payload,
+				world.world->getSector(world.corridor), 0, 1.0f, diagnostic),
 				std::string("Arming ") + what + " was accepted");
 			require(!pending.armed(),
 				std::string("Arming ") + what + " left a placement pending");
@@ -619,8 +619,8 @@ namespace
 				std::string("Arming ") + what + " reported no reason");
 
 			core::AgentId placed{};
-			require(!commitAgentPlacement(world.building, payload,
-				world.building->getSector(world.corridor), 0, 1.0f, placed, diagnostic),
+			require(!commitAgentPlacement(world.world, payload,
+				world.world->getSector(world.corridor), 0, 1.0f, placed, diagnostic),
 				std::string("Placing ") + what + " was accepted");
 			require(!placed, std::string("Placing ") + what + " named an Agent");
 			require(!diagnostic.empty(),
@@ -630,11 +630,11 @@ namespace
 		// Nothing was made, at any length: the overlong name was not cut
 		// down to the limit and stored, and the blank one was not replaced
 		// with a group of no name.
-		require(world.building->getAgentGroupCount() == 0,
+		require(world.world->getAgentGroupCount() == 0,
 			"An invalid clipboard Agent group name created a group anyway");
-		require(agentCount(*world.building) == 0,
+		require(agentCount(*world.world) == 0,
 			"A refused Agent group name still placed an Agent");
-		require(!gBuildingDocumentHistory.canUndo(),
+		require(!gWorldDocumentHistory.canUndo(),
 			"An invalid clipboard Agent group name committed an undo entry");
 	}
 
@@ -644,39 +644,39 @@ namespace
 	{
 		resetUndoHistory();
 		auto world = buildPasteWorld("Undo target");
-		auto const agentsBefore = agentCount(*world.building);
-		auto const groupsBefore = world.building->getAgentGroupCount();
+		auto const agentsBefore = agentCount(*world.world);
+		auto const groupsBefore = world.world->getAgentGroupCount();
 
 		AgentClipboardPayload payload;
 		payload.name = "Welder";
 		payload.group = "Welders";
 
-		auto const placed = place(world.building, payload,
-			world.building->getSector(world.room), 0, 1.5f);
-		auto const created = findGroupNamed(*world.building, "Welders");
-		require(gBuildingDocumentHistory.undoCount() == 1, "The paste committed one undo entry");
+		auto const placed = place(world.world, payload,
+			world.world->getSector(world.room), 0, 1.5f);
+		auto const created = findGroupNamed(*world.world, "Welders");
+		require(gWorldDocumentHistory.undoCount() == 1, "The paste committed one undo entry");
 
-		restoreDocument(world.building, false);
+		restoreDocument(world.world, false);
 
-		require(agentCount(*world.building) == agentsBefore,
+		require(agentCount(*world.world) == agentsBefore,
 			"Undo left the pasted Agent in the document");
-		require(world.building->getAgentGroupCount() == groupsBefore,
+		require(world.world->getAgentGroupCount() == groupsBefore,
 			"Undo left the Agent group the paste created");
-		require(countGroupsNamed(*world.building, "Welders") == 0,
+		require(countGroupsNamed(*world.world, "Welders") == 0,
 			"Undo left a group named Welders behind");
 
-		restoreDocument(world.building, true);
+		restoreDocument(world.world, true);
 
-		require(agentCount(*world.building) == agentsBefore + 1,
+		require(agentCount(*world.world) == agentsBefore + 1,
 			"Redo did not bring the pasted Agent back");
-		require(countGroupsNamed(*world.building, "Welders") == 1,
+		require(countGroupsNamed(*world.world, "Welders") == 1,
 			"Redo did not bring the created Agent group back");
-		auto const restored = findGroupNamed(*world.building, "Welders");
+		auto const restored = findGroupNamed(*world.world, "Welders");
 		require(restored == created,
 			"Redo restored the Agent group under a different identity");
-		require(world.building->getAgentGroup(placed) == restored,
+		require(world.world->getAgentGroup(placed) == restored,
 			"Redo restored the Agent and the group but not the assignment");
-		require(world.building->getAgentGroupMemberCount(restored) == 1,
+		require(world.world->getAgentGroupMemberCount(restored) == 1,
 			"The restored group does not count the restored Agent");
 	}
 
@@ -686,25 +686,25 @@ namespace
 	{
 		resetUndoHistory();
 		auto world = buildPasteWorld("Reuse undo target");
-		auto const crew = world.building->addAgentGroup("Crew");
-		auto const local = createAgent(*world.building, "Local hand", world.room);
-		assign(*world.building, local, crew);
+		auto const crew = world.world->addAgentGroup("Crew");
+		auto const local = createAgent(*world.world, "Local hand", world.room);
+		assign(*world.world, local, crew);
 
 		AgentClipboardPayload payload;
 		payload.name = "Transplant";
 		payload.group = "Crew";
 
-		place(world.building, payload, world.building->getSector(world.corridor), 0, 5.0f);
-		require(world.building->getAgentGroupMemberCount(crew) == 2,
+		place(world.world, payload, world.world->getSector(world.corridor), 0, 5.0f);
+		require(world.world->getAgentGroupMemberCount(crew) == 2,
 			"The reused group did not take the pasted Agent");
 
-		restoreDocument(world.building, false);
+		restoreDocument(world.world, false);
 
-		require(!!world.building->lookupAgentGroup(crew),
+		require(!!world.world->lookupAgentGroup(crew),
 			"Undoing a paste that only reused an Agent group deleted it");
-		require(world.building->getAgentGroupMemberCount(crew) == 1,
+		require(world.world->getAgentGroupMemberCount(crew) == 1,
 			"Undoing a paste left its Agent assigned to the reused group");
-		require(world.building->getAgentGroup(local) == crew,
+		require(world.world->getAgentGroup(local) == crew,
 			"Undoing a paste disturbed an Agent it never touched");
 	}
 
@@ -715,81 +715,81 @@ namespace
 	{
 		resetUndoHistory();
 		auto world = buildPasteWorld("Cut target");
-		auto const crew = world.building->addAgentGroup("Crew");
-		auto const alice = createAgent(*world.building, "Alice", world.room);
-		auto const bob = createAgent(*world.building, "Bob", world.room);
-		assign(*world.building, alice, crew);
-		assign(*world.building, bob, crew);
+		auto const crew = world.world->addAgentGroup("Crew");
+		auto const alice = createAgent(*world.world, "Alice", world.room);
+		auto const bob = createAgent(*world.world, "Bob", world.room);
+		assign(*world.world, alice, crew);
+		assign(*world.world, bob, crew);
 
 		// The copy step runs before the removal, exactly as a cut performs
 		// it: the payload names the group while the Agent still holds it.
-		auto const text = copyText(*world.building, alice, "Alice", true);
+		auto const text = copyText(*world.world, alice, "Alice", true);
 		require(text.find("group: Crew") != std::string::npos,
 			"A cut payload did not name the Agent's group: " + text);
 
 		std::string diagnostic;
-		require(cutAgent(world.building, alice, diagnostic),
+		require(cutAgent(world.world, alice, diagnostic),
 			"Cutting a grouped Agent failed: " + diagnostic);
 
-		require(!world.building->lookupAgent(alice),
-			"The cut Agent is still in the Building");
-		require(!!world.building->lookupAgentGroup(crew),
+		require(!world.world->lookupAgent(alice),
+			"The cut Agent is still in the World");
+		require(!!world.world->lookupAgentGroup(crew),
 			"Cutting a grouped Agent deleted its Agent group");
-		require(world.building->getAgentGroupMemberCount(crew) == 1,
+		require(world.world->getAgentGroupMemberCount(crew) == 1,
 			"Cutting one member changed how many the group counts");
-		require(world.building->getAgentGroup(bob) == crew,
+		require(world.world->getAgentGroup(bob) == crew,
 			"Cutting one member disturbed another member's assignment");
-		require(agentCount(*world.building) == 1,
+		require(agentCount(*world.world) == 1,
 			"Cutting one Agent removed more than that Agent");
 
 		// And the payload the cut left behind still pastes into the group it
-		// names, in the same Building or any other.
+		// names, in the same World or any other.
 		auto const read = readClipboard(text);
 		require(read.cut, "A cut payload read back as a copy");
 		require(read.payload.group.has_value() && *read.payload.group == "Crew",
 			"A cut payload lost the Agent group name");
 	}
 
-	// The whole trip: copy in one Building, paste in another that already
-	// defines the same group name. The two Buildings' Agent group IDs are
+	// The whole trip: copy in one World, paste in another that already
+	// defines the same group name. The two Worlds' Agent group IDs are
 	// unrelated, and the paste lands on the destination's own.
-	void anAgentCopiedBetweenBuildingsJoinsTheDestinationGroup()
+	void anAgentCopiedBetweenWorldsJoinsTheDestinationGroup()
 	{
 		resetUndoHistory();
-		auto const source = buildPasteWorld("Source Building");
-		auto const destination = buildPasteWorld("Destination Building");
+		auto const source = buildPasteWorld("Source World");
+		auto const destination = buildPasteWorld("Destination World");
 
-		auto const sourceCrew = source.building->addAgentGroup("Crew");
-		auto const alice = createAgent(*source.building, "Alice", source.room);
-		assign(*source.building, alice, sourceCrew);
+		auto const sourceCrew = source.world->addAgentGroup("Crew");
+		auto const alice = createAgent(*source.world, "Alice", source.room);
+		assign(*source.world, alice, sourceCrew);
 
 		// The destination defines its own groups first, so its "Crew" is a
 		// different AgentGroupId from the source's. Had the clipboard
 		// carried the source's ID, the paste would have landed on "Alpha".
-		destination.building->addAgentGroup("Alpha");
-		destination.building->addAgentGroup("Bravo");
-		auto const destinationCrew = destination.building->addAgentGroup("Crew");
+		destination.world->addAgentGroup("Alpha");
+		destination.world->addAgentGroup("Bravo");
+		auto const destinationCrew = destination.world->addAgentGroup("Crew");
 		require(destinationCrew != sourceCrew,
-			"The fixture gave both Buildings the same Agent group ID, which makes"
+			"The fixture gave both Worlds the same Agent group ID, which makes"
 			" this check prove nothing");
 
-		auto const text = copyText(*source.building, alice, "Alice copy");
+		auto const text = copyText(*source.world, alice, "Alice copy");
 		require(text.find("group: Crew") != std::string::npos,
 			"The copied payload did not name the Agent group: " + text);
 		auto const read = readClipboard(text);
 
-		auto const placed = place(destination.building, read.payload,
-			destination.building->getSector(destination.corridor), 0, 7.0f);
+		auto const placed = place(destination.world, read.payload,
+			destination.world->getSector(destination.corridor), 0, 7.0f);
 
-		require(destination.building->getAgentGroup(placed) == destinationCrew,
-			"A pasted Agent joined a group by its source Building's ID rather"
+		require(destination.world->getAgentGroup(placed) == destinationCrew,
+			"A pasted Agent joined a group by its source World's ID rather"
 			" than the destination's own");
-		require(destination.building->getAgentGroupCount() == 3,
-			"Pasting into a Building that already had the group added another");
-		require(destination.building->getAgentGroupMemberCount(destinationCrew) == 1,
+		require(destination.world->getAgentGroupCount() == 3,
+			"Pasting into a World that already had the group added another");
+		require(destination.world->getAgentGroupMemberCount(destinationCrew) == 1,
 			"The destination's own group did not take the pasted Agent");
-		require(source.building->getAgentGroupMemberCount(sourceCrew) == 1,
-			"Pasting into another Building disturbed the source group");
+		require(source.world->getAgentGroupMemberCount(sourceCrew) == 1,
+			"Pasting into another World disturbed the source group");
 	}
 }
 
@@ -809,5 +809,5 @@ void runAgentGroupClipboardSmokeChecks()
 	undoTakesThePastedAgentAndItsNewGroupTogether();
 	undoOfAReusingPasteLeavesTheDestinationGroupAlone();
 	cuttingAGroupedAgentLeavesItsSourceGroupDefined();
-	anAgentCopiedBetweenBuildingsJoinsTheDestinationGroup();
+	anAgentCopiedBetweenWorldsJoinsTheDestinationGroup();
 }

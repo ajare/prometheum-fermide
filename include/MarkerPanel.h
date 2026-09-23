@@ -6,7 +6,7 @@
 
 namespace core
 {
-	class Building;
+	class World;
 	class SectorObject;
 }
 
@@ -16,6 +16,6 @@ namespace core
 using MarkerPanelErrorReporter = std::function<void(std::string const&)>;
 
 void renderMarkerEditorPanel(
-	std::shared_ptr<core::Building> const& building,
+	std::shared_ptr<core::World> const& world,
 	std::shared_ptr<const core::SectorObject> const& object,
 	MarkerPanelErrorReporter const& reportError = {});

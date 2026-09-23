@@ -5,7 +5,7 @@
 #include <stdexcept>
 #include <string>
 
-#include "core/Building.h"
+#include "core/World.h"
 
 
 namespace core
@@ -59,15 +59,15 @@ namespace core
 		}
 	};
 
-	class BuildingException : public Exception
+	class WorldException : public Exception
 	{
-		Building const* mwBuilding;
+		World const* mwWorld;
 
 	public:
 
-		BuildingException(Building const* building, std::string const& message)
-			: Exception(std::format("{}: {}", building->getName(), message))
-			, mwBuilding(building)
+		WorldException(World const* world, std::string const& message)
+			: Exception(std::format("{}: {}", world->getName(), message))
+			, mwWorld(world)
 		{
 		}
 	};

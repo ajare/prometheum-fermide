@@ -5,7 +5,7 @@
 #include <stdexcept>
 #include <string>
 
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/CellDefinition.h"
 #include "core/Edge.h"
 #include "core/EdgeType.h"
@@ -23,28 +23,28 @@ namespace
 
 	struct ThreeLayerRooms
 	{
-		core::Building building{ "Threshold overlap", 12, 3 };
+		core::World world{ "Threshold overlap", 12, 3 };
 		uint32_t sectors[3]{};
 
 		ThreeLayerRooms()
 		{
-			building.addLayer();
+			world.addLayer();
 			for (uint32_t layer = 0; layer < 3; ++layer)
-				sectors[layer] = building.addRoom("Room " + std::to_string(layer),
+				sectors[layer] = world.addRoom("Room " + std::to_string(layer),
 					layer, 0, 0, 12, 1);
 		}
 	};
 
-	core::CellDefinition const& cell(core::Building const& building,
+	core::CellDefinition const& cell(core::World const& world,
 		uint32_t layer, uint32_t x, uint32_t y)
 	{
-		return building.getLayer(layer)->getCellDefinition(x, y);
+		return world.getLayer(layer)->getCellDefinition(x, y);
 	}
 
-	uint32_t edgeCount(core::Building const& building, core::EdgeType type)
+	uint32_t edgeCount(core::World const& world, core::EdgeType type)
 	{
 		uint32_t count{ 0 };
-		for (auto const& edge : building.getGraph()->getEdges())
+		for (auto const& edge : world.getGraph()->getEdges())
 			if (edge && edge->getType() == type) ++count;
 		return count;
 	}
@@ -52,27 +52,27 @@ namespace
 	void aBackLayerMarkerDoesNotBlockAWindow()
 	{
 		ThreeLayerRooms layout;
-		layout.building.addSectorMarker(layout.sectors[1], 0, 3.5f);
+		layout.world.addSectorMarker(layout.sectors[1], 0, 3.5f);
 
 		std::string diagnostic;
-		auto const allowed = layout.building.canAddSectorWindow(0, 0, 3, 1, 1, &diagnostic);
+		auto const allowed = layout.world.canAddSectorWindow(0, 0, 3, 1, 1, &diagnostic);
 		require(allowed, ("A back-Layer Marker blocked a Window: " + diagnostic).c_str());
-		layout.building.addSectorWindow(0, 0, 3, 1, 1,
+		layout.world.addSectorWindow(0, 0, 3, 1, 1,
 			{ false, core::Window::State::Closed, core::Window::Style::Clear });
-		require(cell(layout.building, 1, 3, 0).markers.size() == 1,
+		require(cell(layout.world, 1, 3, 0).markers.size() == 1,
 			"Adding a Window disturbed the Marker on the Layer behind");
 	}
 
 	void aBackLayerMarkerDoesNotBlockADoor()
 	{
 		ThreeLayerRooms layout;
-		layout.building.addSectorMarker(layout.sectors[1], 0, 3.5f);
+		layout.world.addSectorMarker(layout.sectors[1], 0, 3.5f);
 
 		std::string diagnostic;
-		auto const allowed = layout.building.canAddCorridorDoor(0, 0, 3, &diagnostic);
+		auto const allowed = layout.world.canAddCorridorDoor(0, 0, 3, &diagnostic);
 		require(allowed, ("A back-Layer Marker blocked a Door: " + diagnostic).c_str());
-		layout.building.addSectorDoor(0, 0, 3);
-		require(cell(layout.building, 1, 3, 0).markers.size() == 1,
+		layout.world.addSectorDoor(0, 0, 3);
+		require(cell(layout.world, 1, 3, 0).markers.size() == 1,
 			"Adding a Door disturbed the Marker on the Layer behind");
 	}
 
@@ -80,38 +80,38 @@ namespace
 	{
 		{
 			ThreeLayerRooms layout;
-			layout.building.addSectorWindow(1, 0, 6, 1, 1, { true });
-			auto const backAuthoredObject = cell(layout.building, 1, 6, 0).sectorObjectIndex;
+			layout.world.addSectorWindow(1, 0, 6, 1, 1, { true });
+			auto const backAuthoredObject = cell(layout.world, 1, 6, 0).sectorObjectIndex;
 
 			std::string diagnostic;
-			auto const allowed = layout.building.canAddSectorWindow(0, 0, 6, 1, 1, &diagnostic);
+			auto const allowed = layout.world.canAddSectorWindow(0, 0, 6, 1, 1, &diagnostic);
 			require(allowed, ("A Window on the Layer behind blocked a Window: " + diagnostic).c_str());
-			layout.building.addSectorWindow(0, 0, 6, 1, 1, { true });
-			require(cell(layout.building, 1, 6, 0).sectorObjectType == core::SectorObjectType::Window
-				&& cell(layout.building, 1, 6, 0).sectorObjectIndex == backAuthoredObject,
+			layout.world.addSectorWindow(0, 0, 6, 1, 1, { true });
+			require(cell(layout.world, 1, 6, 0).sectorObjectType == core::SectorObjectType::Window
+				&& cell(layout.world, 1, 6, 0).sectorObjectIndex == backAuthoredObject,
 				"A front Window replaced the Window authored on the Layer behind");
-			layout.building.finishBuild();
-			require(layout.building.isTraversalTopologyValid(),
+			layout.world.finishBuild();
+			require(layout.world.isTraversalTopologyValid(),
 				"Stacked traversable Windows produced invalid topology");
-			require(edgeCount(layout.building, core::EdgeType::Window) == 2,
+			require(edgeCount(layout.world, core::EdgeType::Window) == 2,
 				"Stacked traversable Windows did not both reach the Graph");
 		}
 		{
 			ThreeLayerRooms layout;
-			layout.building.addSectorDoor(1, 0, 6);
-			auto const backAuthoredObject = cell(layout.building, 1, 6, 0).sectorObjectIndex;
+			layout.world.addSectorDoor(1, 0, 6);
+			auto const backAuthoredObject = cell(layout.world, 1, 6, 0).sectorObjectIndex;
 
 			std::string diagnostic;
-			auto const allowed = layout.building.canAddCorridorDoor(0, 0, 6, &diagnostic);
+			auto const allowed = layout.world.canAddCorridorDoor(0, 0, 6, &diagnostic);
 			require(allowed, ("A Door on the Layer behind blocked a Door: " + diagnostic).c_str());
-			layout.building.addSectorDoor(0, 0, 6);
-			require(cell(layout.building, 1, 6, 0).sectorObjectType == core::SectorObjectType::Door
-				&& cell(layout.building, 1, 6, 0).sectorObjectIndex == backAuthoredObject,
+			layout.world.addSectorDoor(0, 0, 6);
+			require(cell(layout.world, 1, 6, 0).sectorObjectType == core::SectorObjectType::Door
+				&& cell(layout.world, 1, 6, 0).sectorObjectIndex == backAuthoredObject,
 				"A front Door replaced the Door authored on the Layer behind");
-			layout.building.finishBuild();
-			require(layout.building.isTraversalTopologyValid(),
+			layout.world.finishBuild();
+			require(layout.world.isTraversalTopologyValid(),
 				"Stacked Doors produced invalid topology");
-			require(edgeCount(layout.building, core::EdgeType::Door) == 2,
+			require(edgeCount(layout.world, core::EdgeType::Door) == 2,
 				"Stacked Doors did not both reach the Graph");
 		}
 	}

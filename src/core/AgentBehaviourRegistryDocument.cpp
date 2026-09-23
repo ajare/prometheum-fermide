@@ -9,7 +9,8 @@
 #include <vector>
 
 #include "core/AgentBehaviourRegistry.h"
-#include "core/Building.h"
+#include "core/World.h"
+#include "core/WorldDocument.h"
 #include "core/SerializationException.h"
 #include "core/YamlSerializer.h"
 
@@ -26,8 +27,8 @@ namespace core
 		};
 
 		// The manager keeps dirty unreferenced packages alive so detaching one
-		// Building cannot silently discard unsaved shared work. Clean packages
-		// are removed as soon as no loaded Building references them.
+		// World cannot silently discard unsaved shared work. Clean packages
+		// are removed as soon as no loaded World references them.
 		std::vector<LoadedAgentBehaviourRegistry> gLoadedAgentBehaviourRegistries;
 
 		void discardUnreferencedRegistries()
@@ -35,7 +36,7 @@ namespace core
 			std::erase_if(gLoadedAgentBehaviourRegistries,
 				[](LoadedAgentBehaviourRegistry const& entry)
 				{
-					return !entry.registry || (!entry.registry->hasLoadedBuildings()
+					return !entry.registry || (!entry.registry->hasLoadedWorlds()
 						&& !entry.registry->isModified());
 				});
 		}
@@ -98,20 +99,21 @@ namespace core
 			return canonical;
 		}
 
-		std::filesystem::path requireSavedBuildingPath(
-			std::filesystem::path const& buildingFilepath)
+		std::filesystem::path requireSavedWorldPath(
+			std::filesystem::path const& worldFilepath)
 		{
-			if (buildingFilepath.empty())
+			if (worldFilepath.empty())
 			{
 				throw SerializationException(
-					"Save the Building before creating, selecting, or loading an Agent behaviour registry");
+					"Save the World before creating, selecting, or loading an Agent behaviour registry");
 			}
+			requireWorldDocumentPath(worldFilepath);
 			std::error_code error;
-			auto const canonical = std::filesystem::canonical(buildingFilepath, error);
+			auto const canonical = std::filesystem::canonical(worldFilepath, error);
 			if (error || !std::filesystem::is_regular_file(canonical, error) || error)
 			{
 				throw SerializationException(
-					"Save the Building before creating, selecting, or loading an Agent behaviour registry");
+					"Save the World before creating, selecting, or loading an Agent behaviour registry");
 			}
 			return canonical;
 		}
@@ -138,7 +140,7 @@ namespace core
 			if (expectedUuid && registry.getUuid() != *expectedUuid)
 			{
 				throw SerializationException(std::format(
-					"Agent behaviour registry UUID mismatch: Building expects {}, file contains {}",
+					"Agent behaviour registry UUID mismatch: World expects {}, file contains {}",
 					*expectedUuid, registry.getUuid()));
 			}
 		}
@@ -171,7 +173,7 @@ namespace core
 				if (loaded->fileHasExternalChanges(requireManifest(canonicalDirectory).string()))
 				{
 					throw SerializationException(std::format(
-						"Agent behaviour registry package {} changed outside the editor; reload it before attaching another Building",
+						"Agent behaviour registry package {} changed outside the editor; reload it before attaching another World",
 						canonicalDirectory.string()));
 				}
 				return loaded;
@@ -220,13 +222,12 @@ namespace core
 	}
 
 	std::filesystem::path defaultAgentBehaviourRegistryPackagePath(
-		std::filesystem::path const& buildingFilepath)
+		std::filesystem::path const& worldFilepath)
 	{
-		if (buildingFilepath.empty()) return {};
-		auto filename = buildingFilepath.filename();
-		filename.replace_extension();
-		filename += ".behaviours";
-		return buildingFilepath.parent_path() / filename;
+		if (worldFilepath.empty()) return {};
+		auto path = worldDocumentBasePath(worldFilepath);
+		path += ".behaviours";
+		return path;
 	}
 
 	std::filesystem::path agentBehaviourRegistryManifestPath(
@@ -237,16 +238,16 @@ namespace core
 	}
 
 	std::shared_ptr<AgentBehaviourRegistry> createAndAttachAgentBehaviourRegistry(
-		Building& building, std::filesystem::path const& buildingFilepath)
+		World& world, std::filesystem::path const& worldFilepath)
 	{
-		if (!building.isSimulationPaused())
-			throw SerializationException("Pause the Building before creating an Agent behaviour registry");
-		if (building.hasAgentBehaviourRegistryReference())
+		if (!world.isSimulationPaused())
+			throw SerializationException("Pause the World before creating an Agent behaviour registry");
+		if (world.hasAgentBehaviourRegistryReference())
 		{
-			throw SerializationException("The Building already references an Agent behaviour registry");
+			throw SerializationException("The World already references an Agent behaviour registry");
 		}
-		auto const savedBuilding = requireSavedBuildingPath(buildingFilepath);
-		auto const packageDirectory = defaultAgentBehaviourRegistryPackagePath(savedBuilding);
+		auto const savedWorld = requireSavedWorldPath(worldFilepath);
+		auto const packageDirectory = defaultAgentBehaviourRegistryPackagePath(savedWorld);
 		std::error_code error;
 		auto const status = std::filesystem::symlink_status(packageDirectory, error);
 		if (!error && status.type() != std::filesystem::file_type::not_found)
@@ -265,7 +266,7 @@ namespace core
 		auto registry = AgentBehaviourRegistry::create();
 		// YamlSerializer installs the completed temporary manifest with one
 		// rename. Attachment happens afterwards, so a failed write cannot leave
-		// the Building referring to a partial or absent package.
+		// the World referring to a partial or absent package.
 		error.clear();
 		auto const created = std::filesystem::create_directory(packageDirectory, error);
 		if (!created || error)
@@ -285,7 +286,7 @@ namespace core
 			std::filesystem::remove_all(packageDirectory, ignored);
 			throw;
 		}
-		building.attachAgentBehaviourRegistry(packageDirectory.filename().string(), registry);
+		world.attachAgentBehaviourRegistry(packageDirectory.filename().string(), registry);
 		return registry;
 	}
 
@@ -357,84 +358,84 @@ namespace core
 	}
 
 	std::shared_ptr<AgentBehaviourRegistry> selectAndAttachAgentBehaviourRegistry(
-		Building& building, std::filesystem::path const& buildingFilepath,
+		World& world, std::filesystem::path const& worldFilepath,
 		std::filesystem::path const& packageDirectory)
 	{
-		if (!building.isSimulationPaused())
-			throw SerializationException("Pause the Building before selecting an Agent behaviour registry");
-		auto const savedBuilding = requireSavedBuildingPath(buildingFilepath);
+		if (!world.isSimulationPaused())
+			throw SerializationException("Pause the World before selecting an Agent behaviour registry");
+		auto const savedWorld = requireSavedWorldPath(worldFilepath);
 		auto const canonicalDirectory = requireCanonicalPackageDirectory(packageDirectory);
-		if (canonicalDirectory.parent_path() != savedBuilding.parent_path())
+		if (canonicalDirectory.parent_path() != savedWorld.parent_path())
 		{
 			throw SerializationException(
-				"An Agent behaviour registry package must be in the same directory as its Building");
+				"An Agent behaviour registry package must be in the same directory as its World");
 		}
 
 		auto registry = loadSharedRegistry(canonicalDirectory);
 		auto const packageName = canonicalDirectory.filename().string();
-		if (building.hasAgentBehaviourRegistryReference()
-			&& !building.hasAttachedAgentBehaviourRegistry()
-			&& building.getAgentBehaviourRegistryPackageName() == packageName
-			&& building.getExpectedAgentBehaviourRegistryUuid() == registry->getUuid())
+		if (world.hasAgentBehaviourRegistryReference()
+			&& !world.hasAttachedAgentBehaviourRegistry()
+			&& world.getAgentBehaviourRegistryPackageName() == packageName
+			&& world.getExpectedAgentBehaviourRegistryUuid() == registry->getUuid())
 		{
 			// Repairing the persisted expected dependency preserves its reference and
 			// uses the open-time schema reconciliation/runtime transaction.
-			building.resolveAgentBehaviourRegistry(registry);
+			world.resolveAgentBehaviourRegistry(registry);
 		}
-		else building.attachAgentBehaviourRegistry(packageName, registry);
+		else world.attachAgentBehaviourRegistry(packageName, registry);
 		return registry;
 	}
 
 	std::shared_ptr<AgentBehaviourRegistry>
 	selectAndAttachAgentBehaviourRegistryClearingAssignments(
-		Building& building, std::filesystem::path const& buildingFilepath,
+		World& world, std::filesystem::path const& worldFilepath,
 		std::filesystem::path const& packageDirectory)
 	{
-		if (!building.isSimulationPaused())
-			throw SerializationException("Pause the Building before replacing an Agent behaviour registry");
-		auto const savedBuilding = requireSavedBuildingPath(buildingFilepath);
+		if (!world.isSimulationPaused())
+			throw SerializationException("Pause the World before replacing an Agent behaviour registry");
+		auto const savedWorld = requireSavedWorldPath(worldFilepath);
 		auto const canonicalDirectory = requireCanonicalPackageDirectory(packageDirectory);
-		if (canonicalDirectory.parent_path() != savedBuilding.parent_path())
+		if (canonicalDirectory.parent_path() != savedWorld.parent_path())
 		{
 			throw SerializationException(
-				"An Agent behaviour registry package must be in the same directory as its Building");
+				"An Agent behaviour registry package must be in the same directory as its World");
 		}
 
 		// loadSharedRegistry parses the complete manifest, contains every source
-		// path, and preflights the package before the destructive Building method
+		// path, and preflights the package before the destructive World method
 		// can clear a single authored value.
 		auto registry = loadSharedRegistry(canonicalDirectory);
-		building.attachAgentBehaviourRegistryAndClearAssignments(
+		world.attachAgentBehaviourRegistryAndClearAssignments(
 			canonicalDirectory.filename().string(), registry);
 		return registry;
 	}
 
 	std::shared_ptr<AgentBehaviourRegistry> loadAndAttachAgentBehaviourRegistry(
-		Building& building, std::filesystem::path const& buildingFilepath)
+		World& world, std::filesystem::path const& worldFilepath)
 	{
-		if (!building.hasAgentBehaviourRegistryReference()) return {};
+		if (!world.hasAgentBehaviourRegistryReference()) return {};
 		std::shared_ptr<AgentBehaviourRegistry> registry;
 		try
 		{
-			auto const savedBuilding = requireSavedBuildingPath(buildingFilepath);
-			auto const packageDirectory = savedBuilding.parent_path()
-				/ building.getAgentBehaviourRegistryPackageName();
+			auto const savedWorld = requireSavedWorldPath(worldFilepath);
+			auto const packageDirectory = savedWorld.parent_path()
+				/ world.getAgentBehaviourRegistryPackageName();
 			auto const canonical = requireCanonicalPackageDirectory(packageDirectory);
-			if (canonical.parent_path() != savedBuilding.parent_path())
-				throw SerializationException("Agent behaviour package must remain beside its Building");
+			if (canonical.parent_path() != savedWorld.parent_path())
+				throw SerializationException("Agent behaviour package must remain beside its World");
 			registry = loadSharedRegistry(canonical,
-				building.getExpectedAgentBehaviourRegistryUuid());
-			building.resolveAgentBehaviourRegistry(registry);
+				world.getExpectedAgentBehaviourRegistryUuid());
+			world.resolveAgentBehaviourRegistry(registry);
 			return registry;
 		}
 		catch (std::exception const& error)
 		{
-			// Dependency failure is recoverable Building state. A registry first
-			// encountered by this attempt is released unless another loaded Building
+			// Dependency failure is recoverable World state. A registry first
+			// encountered by this attempt is released unless another loaded World
 			// already owns it; authored structure, reference, and assignments survive.
 			registry.reset();
 			discardUnreferencedRegistries();
-			building.markAgentBehaviourRegistryUnavailable(error.what());
+			world.markAgentBehaviourRegistryUnavailable(error.what());
 			return {};
 		}
 	}
@@ -590,7 +591,7 @@ namespace core
 	bool unloadAgentBehaviourRegistryDocumentIfUnused(
 		std::shared_ptr<AgentBehaviourRegistry> const& registry, bool discardDirty)
 	{
-		if (!registry || registry->hasLoadedBuildings()) return false;
+		if (!registry || registry->hasLoadedWorlds()) return false;
 		if (registry->isModified() && !discardDirty) return false;
 		std::erase_if(gLoadedAgentBehaviourRegistries,
 			[&registry](LoadedAgentBehaviourRegistry const& entry)

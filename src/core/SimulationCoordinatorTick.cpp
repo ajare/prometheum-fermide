@@ -6,7 +6,7 @@
 
 #include "core/Agent.h"
 #include "core/AgentBehaviourRuntime.h"
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/Coordination.h"
 #include "core/Defines.h"
 #include "core/Edge.h"
@@ -25,22 +25,22 @@ namespace core
 
 	using namespace std;
 
-	// The tick pipeline moved out of Building (ADR 0004 stage 5): the fixed
+	// The tick pipeline moved out of World (ADR 0004 stage 5): the fixed
 	// timestep accumulator, the six simulation phases and the per-phase
 	// advancement of lift, shuttle and door resources, tick event publication,
 	// the simulation clock queries and event consumption.
 	//
 	// The behaviour is unchanged. The clock, the phase marker, the event queue
-	// and every registry stay in Building (ADR 0001: Building owns simulation
+	// and every registry stay in World (ADR 0001: World owns simulation
 	// entities, and no state moves in ADR 0004); the coordinator drives them
-	// through the Building it was given and calls its own interaction, queue,
+	// through the World it was given and calls its own interaction, queue,
 	// admission, lease, lift and snapshot seams directly instead of calling
-	// back through the Building facade (design pattern, not the Facade sector
+	// back through the World facade (design pattern, not the Facade sector
 	// type).
 	//
 	// The last four methods serve the edit/simulation boundary. Pausing and
 	// resuming around a topology rebuild is deliberately not a coordinator
-	// entry point of its own: the protocol belongs to Building's structural-edit
+	// entry point of its own: the protocol belongs to World's structural-edit
 	// contract, which refuses an edit unless the simulation is paused and
 	// refuses to resume over dirty topology. What the coordinator supplies is
 	// the simulation-side work that protocol performs - taking every live
@@ -49,14 +49,14 @@ namespace core
 
 	void SimulationCoordinator::advanceLiftResources()
 	{
-		for (auto const& [resourceId, resourcePtr] : mBuilding.mTraversalResources.entries())
+		for (auto const& [resourceId, resourcePtr] : mWorld.mTraversalResources.entries())
 		{
 			(void)resourceId;
 			auto& resource = *resourcePtr;
 			if ((!resource.mLift && !resource.mShuttle) || resource.mLiftStops.empty()) continue;
 			for (auto requestId : resource.mOpenPlatformMissedBoarding)
-				if (auto request = mBuilding.mTraversalRequests.find(requestId); request)
-					if (auto actor = mBuilding.mAgents.find(request->mOwner))
+				if (auto request = mWorld.mTraversalRequests.find(requestId); request)
+					if (auto actor = mWorld.mAgents.find(request->mOwner))
 					{
 						actor->mTraversalLocalGoal.reset();
 						auto held = resource.mOpenPlatformMissedPositions.find(requestId);
@@ -70,17 +70,17 @@ namespace core
 				if (resource.mShuttle)
 				{
 					for (auto const& door : resource.mShuttleDoors)
-						callback(door.stopIndex, mBuilding.mTraversalResources.find(door.landingResource));
+						callback(door.stopIndex, mWorld.mTraversalResources.find(door.landingResource));
 				}
 				else for (uint32_t stop = 0; stop < resource.mLiftStops.size(); ++stop)
-					callback(stop, mBuilding.mTraversalResources.find(resource.mLiftStops[stop].landingResource));
+					callback(stop, mWorld.mTraversalResources.find(resource.mLiftStops[stop].landingResource));
 			};
 			auto hasWaitingAdmissionAtStop = [&](uint32_t stop)
 			{
 				return any_of(resource.mAdmissionQueue.begin(), resource.mAdmissionQueue.end(),
 					[&](TraversalRequestId id)
 					{
-						auto request = mBuilding.mTraversalRequests.find(id);
+						auto request = mWorld.mTraversalRequests.find(id);
 						if (!request) return false;
 						if (resource.mOpenPlatformLift)
 						{
@@ -88,7 +88,7 @@ namespace core
 							return intent != resource.mLiftTripIntents.end()
 								&& intent->second.originStop == stop;
 						}
-						auto landing = mBuilding.mTraversalResources.find(request->mResource);
+						auto landing = mWorld.mTraversalResources.find(request->mResource);
 						return landing && landing->mLiftStopIndex == stop;
 					});
 			};
@@ -98,7 +98,7 @@ namespace core
 				if (resource.mOpenPlatformLift)
 				{
 					for (auto requestId : resource.mAdmissionQueue)
-						if (auto request = mBuilding.mTraversalRequests.find(requestId); request)
+						if (auto request = mWorld.mTraversalRequests.find(requestId); request)
 						{
 							auto intent = resource.mLiftTripIntents.find(request->mOwner);
 							if (intent != resource.mLiftTripIntents.end()
@@ -113,8 +113,8 @@ namespace core
 				// A nonzero cutoff belongs to an existing boarding window, such as
 				// one temporarily reopened by an obstruction during closure.
 				if (resource.mLiftBoardingCutoffTick) return;
-				resource.mLiftServiceStartedTick = mBuilding.mSimulationTick;
-				resource.mLiftBoardingCutoffTick = mBuilding.mSimulationTick + resource.mLiftMaximumBoardingTicks;
+				resource.mLiftServiceStartedTick = mWorld.mSimulationTick;
+				resource.mLiftBoardingCutoffTick = mWorld.mSimulationTick + resource.mLiftMaximumBoardingTicks;
 			};
 
 			// A safety hold or obstruction at the aligned landing overrides closure.
@@ -170,7 +170,7 @@ namespace core
 				if (resource.mLiftStopPhase == LiftStopPhase::Moving)
 				{
 					auto amount = (resource.mShuttle ? CORE_SHUTTLE_SPEED : CORE_LIFT_SPEED)
-						* Building::getFixedTimestep();
+						* World::getFixedTimestep();
 					if (target > resource.mLiftPosition)
 						resource.mLiftPosition = min(target, resource.mLiftPosition + amount);
 					else resource.mLiftPosition = max(target, resource.mLiftPosition - amount);
@@ -180,9 +180,9 @@ namespace core
 						resource.mLiftCurrentStop = resource.mLiftTargetStop;
 						resource.mLiftMoving = false;
 						resource.mLiftStopPhase = LiftStopPhase::Opening;
-						resource.mLiftServiceStartedTick = mBuilding.mSimulationTick;
+						resource.mLiftServiceStartedTick = mWorld.mSimulationTick;
 						resource.mLiftBoardingCutoffTick = resource.mShuttle ? 0
-							: mBuilding.mSimulationTick + resource.mLiftMaximumBoardingTicks;
+							: mWorld.mSimulationTick + resource.mLiftMaximumBoardingTicks;
 					}
 				}
 			}
@@ -192,9 +192,9 @@ namespace core
 			{
 				resource.mLiftMoving = false;
 				resource.mLiftStopPhase = LiftStopPhase::Opening;
-				resource.mLiftServiceStartedTick = mBuilding.mSimulationTick;
+				resource.mLiftServiceStartedTick = mWorld.mSimulationTick;
 				resource.mLiftBoardingCutoffTick = resource.mShuttle ? 0
-					: mBuilding.mSimulationTick + resource.mLiftMaximumBoardingTicks;
+					: mWorld.mSimulationTick + resource.mLiftMaximumBoardingTicks;
 			}
 			else if (resource.mLiftTargetStop == resource.mLiftCurrentStop
 				&& resource.mLiftStopPhase == LiftStopPhase::Closing)
@@ -224,7 +224,7 @@ namespace core
 				});
 
 			if (!resource.mLiftMoving && resource.mLiftStopPhase == LiftStopPhase::Opening
-				&& mBuilding.mSimulationTick > resource.mLiftServiceStartedTick)
+				&& mWorld.mSimulationTick > resource.mLiftServiceStartedTick)
 			{
 				if (liftHasDisembarkDemand(resource, resource.mLiftCurrentStop))
 					resource.mLiftStopPhase = LiftStopPhase::Disembarking;
@@ -259,20 +259,20 @@ namespace core
 				{
 					// A Platform Lift has one exact per-stop timer. Waiting callers neither
 					// shorten nor extend it; callers missing the cutoff retain their requests.
-					closeStop = mBuilding.mSimulationTick >= resource.mLiftBoardingCutoffTick;
+					closeStop = mWorld.mSimulationTick >= resource.mLiftBoardingCutoffTick;
 				}
-				else closeStop = mBuilding.mSimulationTick
+				else closeStop = mWorld.mSimulationTick
 						>= resource.mLiftServiceStartedTick + resource.mLiftMinimumDwellTicks
 					&& !crossing && !reserved && !unresolvedDestination
 					&& !resource.mLiftActiveConfirmation
 					&& (occupied == resource.mCapacity
-						|| mBuilding.mSimulationTick > resource.mLiftBoardingCutoffTick || !waitingHere);
+						|| mWorld.mSimulationTick > resource.mLiftBoardingCutoffTick || !waitingHere);
 			}
 			if (closeStop)
 			{
 				if (resource.mOpenPlatformLift)
 					for (auto requestId : resource.mAdmissionQueue)
-						if (auto request = mBuilding.mTraversalRequests.find(requestId); request)
+						if (auto request = mWorld.mTraversalRequests.find(requestId); request)
 						{
 							auto intent = resource.mLiftTripIntents.find(request->mOwner);
 							if (intent != resource.mLiftTripIntents.end()
@@ -280,7 +280,7 @@ namespace core
 							{
 								resource.mOpenPlatformMissedBoarding.insert(requestId);
 								addLiftStopRequest(resource, intent->second.originStop, request->mOwner);
-								if (auto actor = mBuilding.mAgents.find(request->mOwner))
+								if (auto actor = mWorld.mAgents.find(request->mOwner))
 								{
 									actor->mTraversalLocalGoal.reset();
 									resource.mOpenPlatformMissedPositions[requestId]
@@ -312,9 +312,9 @@ namespace core
 			if (resource.mLift) resource.mLift->setCoordinatedPosition(resource.mLiftPosition);
 			else resource.mShuttle->setCoordinatedPosition(resource.mLiftPosition);
 			for (uint32_t i = 0; i < resource.mOccupants.size(); ++i)
-				if (auto passenger = mBuilding.mAgents.find(resource.mOccupants[i]))
+				if (auto passenger = mWorld.mAgents.find(resource.mOccupants[i]))
 				{
-					auto transit = mBuilding.mSectors[(size_t)resource.mLiftSector.value - 1].get();
+					auto transit = mWorld.mSectors[(size_t)resource.mLiftSector.value - 1].get();
 					auto local = resource.mCapacityPositions[i];
 					if (resource.mShuttle)
 					{
@@ -353,7 +353,7 @@ namespace core
 
 	void SimulationCoordinator::advanceDoorResources()
 	{
-		for (auto const& [resourceId, resourcePtr] : mBuilding.mTraversalResources.entries())
+		for (auto const& [resourceId, resourcePtr] : mWorld.mTraversalResources.entries())
 		{
 			auto& resource = *resourcePtr;
 			if (!resource.mDoor) continue;
@@ -377,7 +377,7 @@ namespace core
 			if (!resource.mEnabled && !activeCrossing)
 			{
 				vector<TraversalRequestId> pending;
-				for (auto const& [requestId, request] : mBuilding.mTraversalRequests.entries())
+				for (auto const& [requestId, request] : mWorld.mTraversalRequests.entries())
 				{
 					if (request->mResource == resourceId && request->mState == TraversalRequestState::Pending)
 						pending.push_back(requestId);
@@ -389,13 +389,13 @@ namespace core
 
 	void SimulationCoordinator::runSimulationPhase(SimulationPhase phase)
 	{
-		mBuilding.mCurrentPhase = phase;
-		auto const timestep = Building::getFixedTimestep();
+		mWorld.mCurrentPhase = phase;
+		auto const timestep = World::getFixedTimestep();
 
 		switch (phase)
 		{
 		case SimulationPhase::ResourceAdvancement:
-			for (auto const& sector : mBuilding.mSectors)
+			for (auto const& sector : mWorld.mSectors)
 			{
 				sector->advanceResources(timestep);
 			}
@@ -405,7 +405,7 @@ namespace core
 			break;
 
 		case SimulationPhase::IntentCollection:
-			for (auto const& [id, agent] : mBuilding.mAgents.entries())
+			for (auto const& [id, agent] : mWorld.mAgents.entries())
 			{
 				(void)id;
 				if (!agent->isActive()) continue;
@@ -414,7 +414,7 @@ namespace core
 			break;
 
 		case SimulationPhase::Allocation:
-			for (auto const& [id, agent] : mBuilding.mAgents.entries())
+			for (auto const& [id, agent] : mWorld.mAgents.entries())
 			{
 				(void)id;
 				if (!agent->isActive()) continue;
@@ -424,7 +424,7 @@ namespace core
 			break;
 
 		case SimulationPhase::Movement:
-			for (auto const& [id, agent] : mBuilding.mAgents.entries())
+			for (auto const& [id, agent] : mWorld.mAgents.entries())
 			{
 				(void)id;
 				// A deactivated Agent is not simulated (#118): no phase of the
@@ -444,7 +444,7 @@ namespace core
 			break;
 
 		case SimulationPhase::Commit:
-			for (auto const& [id, agent] : mBuilding.mAgents.entries())
+			for (auto const& [id, agent] : mWorld.mAgents.entries())
 			{
 				(void)id;
 				if (!agent->isActive()) continue;
@@ -454,7 +454,7 @@ namespace core
 
 		case SimulationPhase::CleanupAndEventPublication:
 			updateTraversalProgressAndTimeouts();
-			for (auto const& [id, agent] : mBuilding.mAgents.entries())
+			for (auto const& [id, agent] : mWorld.mAgents.entries())
 			{
 				(void)id;
 				if (!agent->isActive()) continue;
@@ -476,11 +476,11 @@ namespace core
 			SimulationPhase::CleanupAndEventPublication })
 		{
 			SimulationEvent event;
-			event.sequence = mBuilding.mNextEventSequence++;
-			event.tick = mBuilding.mSimulationTick;
+			event.sequence = mWorld.mNextEventSequence++;
+			event.tick = mWorld.mSimulationTick;
 			event.type = SimulationEventType::PhaseCompleted;
 			event.phase = phase;
-			mBuilding.mEvents.push_back(std::move(event));
+			mWorld.mEvents.push_back(std::move(event));
 		}
 
 		auto after = getSimulationSnapshot();
@@ -517,14 +517,14 @@ namespace core
 			if (changed)
 			{
 				SimulationEvent event;
-				event.sequence = mBuilding.mNextEventSequence++;
-				event.tick = mBuilding.mSimulationTick;
+				event.sequence = mWorld.mNextEventSequence++;
+				event.tick = mWorld.mSimulationTick;
 				event.type = SimulationEventType::AgentChanged;
 				event.phase = SimulationPhase::CleanupAndEventPublication;
 				event.hasPreviousAgent = true;
 				event.previousAgent = previous;
 				event.agent = current;
-				mBuilding.mEvents.push_back(std::move(event));
+				mWorld.mEvents.push_back(std::move(event));
 			}
 		}
 
@@ -541,25 +541,25 @@ namespace core
 				&& before.deviceOperations[previousOperationIndex].state != current.state)
 			{
 				SimulationEvent event;
-				event.sequence = mBuilding.mNextEventSequence++;
-				event.tick = mBuilding.mSimulationTick;
+				event.sequence = mWorld.mNextEventSequence++;
+				event.tick = mWorld.mSimulationTick;
 				event.type = SimulationEventType::DeviceOperationChanged;
 				event.phase = SimulationPhase::CleanupAndEventPublication;
 				event.deviceOperation = current;
-				mBuilding.mEvents.push_back(std::move(event));
+				mWorld.mEvents.push_back(std::move(event));
 			}
 		}
 	}
 
 	bool SimulationCoordinator::advanceTick()
 	{
-		if (mBuilding.mSimulationPaused) return false;
+		if (mWorld.mSimulationPaused) return false;
 		// The boundary runs with no active phase. Instances are synchronized before
 		// deterministic startup/outcome callbacks enqueue commands; those commands
 		// are applied here before this tick can collect traversal intent.
-		if (!mBuilding.mAgentBehaviourRuntime->runBoundary(mBuilding)) return false;
+		if (!mWorld.mAgentBehaviourRuntime->runBoundary(mWorld)) return false;
 		auto before = getSimulationSnapshot();
-		++mBuilding.mSimulationTick;
+		++mWorld.mSimulationTick;
 		updateMovementGoals();
 
 		runSimulationPhase(SimulationPhase::ResourceAdvancement);
@@ -569,7 +569,7 @@ namespace core
 		runSimulationPhase(SimulationPhase::Commit);
 		runSimulationPhase(SimulationPhase::CleanupAndEventPublication);
 		publishTickEvents(before);
-		mBuilding.mCurrentPhase = SimulationPhase::None;
+		mWorld.mCurrentPhase = SimulationPhase::None;
 		return true;
 	}
 
@@ -582,52 +582,52 @@ namespace core
 
 	void SimulationCoordinator::update(float elapsedSeconds)
 	{
-		if (mBuilding.mSimulationPaused) return;
+		if (mWorld.mSimulationPaused) return;
 		if (elapsedSeconds <= 0.0f)
 		{
 			return;
 		}
 
-		mBuilding.mAccumulatedTime += elapsedSeconds;
-		auto const timestep = (double)Building::getFixedTimestep();
-		while (mBuilding.mAccumulatedTime + timestep * 1e-9 >= timestep)
+		mWorld.mAccumulatedTime += elapsedSeconds;
+		auto const timestep = (double)World::getFixedTimestep();
+		while (mWorld.mAccumulatedTime + timestep * 1e-9 >= timestep)
 		{
 			if (!advanceTick()) break;
-			mBuilding.mAccumulatedTime -= timestep;
+			mWorld.mAccumulatedTime -= timestep;
 		}
 
-		if (mBuilding.mAccumulatedTime < 0.0)
+		if (mWorld.mAccumulatedTime < 0.0)
 		{
-			mBuilding.mAccumulatedTime = 0.0;
+			mWorld.mAccumulatedTime = 0.0;
 		}
 	}
 
 	uint64_t SimulationCoordinator::getSimulationTick() const
 	{
-		return mBuilding.mSimulationTick;
+		return mWorld.mSimulationTick;
 	}
 
 	SimulationPhase SimulationCoordinator::getCurrentSimulationPhase() const
 	{
-		return mBuilding.mCurrentPhase;
+		return mWorld.mCurrentPhase;
 	}
 
 	vector<SimulationEvent> SimulationCoordinator::consumeSimulationEvents()
 	{
-		auto result = std::move(mBuilding.mEvents);
-		mBuilding.mEvents.clear();
+		auto result = std::move(mWorld.mEvents);
+		mWorld.mEvents.clear();
 		return result;
 	}
 
 	void SimulationCoordinator::publishTopologyEvent(SimulationEventType type, string diagnostic)
 	{
 		SimulationEvent event;
-		event.sequence = mBuilding.mNextEventSequence++;
-		event.tick = mBuilding.mSimulationTick;
+		event.sequence = mWorld.mNextEventSequence++;
+		event.tick = mWorld.mSimulationTick;
 		event.type = type;
 		event.phase = SimulationPhase::None;
 		event.diagnostic = std::move(diagnostic);
-		mBuilding.mEvents.push_back(std::move(event));
+		mWorld.mEvents.push_back(std::move(event));
 	}
 
 	void SimulationCoordinator::cancelTraversalForTopologyRebuild(Agent& agent)
@@ -664,29 +664,29 @@ namespace core
 
 	void SimulationCoordinator::restorePausedPathIntents()
 	{
-		for (auto const& [id, intent] : mBuilding.mPausedPathIntents)
+		for (auto const& [id, intent] : mWorld.mPausedPathIntents)
 		{
-			auto agent = mBuilding.mAgents.find(id);
+			auto agent = mWorld.mAgents.find(id);
 			// A deactivated Agent is not simulated (#118): its retained route must
 			// not be replayed onto the graph. The intent still drops with the map,
 			// so reactivation later does not resurrect a route the pause had
 			// already torn down.
 			if (!agent || !agent->isActive() || !agent->getSector()) continue;
-			auto goal = mBuilding.mMovementGoals.find(id);
+			auto goal = mWorld.mMovementGoals.find(id);
 			try
 			{
-				auto source = mBuilding.mGraph->getClosestVertexInSector(
+				auto source = mWorld.mGraph->getClosestVertexInSector(
 					agent->getSector(), agent->getGlobalPosition());
 				shared_ptr<const Vertex> destination;
-				if (goal != mBuilding.mMovementGoals.end())
+				if (goal != mWorld.mMovementGoals.end())
 				{
 					// Marker identity survives structural replay. Re-resolve its new graph
 					// vertex rather than restoring a stale Sector/position pair.
-					for (auto const& sector : mBuilding.mSectors)
+					for (auto const& sector : mWorld.mSectors)
 						for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
 							if (auto object = dynamic_pointer_cast<MarkerSectorObject>(sector->getObject(i));
 								object && object->getMarker()->getId() == goal->second.marker)
-								destination = mBuilding.mGraph->getVertexForObject(object);
+								destination = mWorld.mGraph->getVertexForObject(object);
 					if (!destination)
 					{
 						goal->second.routeLossReason = RouteLossReason::DestinationRemoved;
@@ -699,43 +699,43 @@ namespace core
 				else
 				{
 					if (!intent.destinationSector
-						|| intent.destinationSector.value > mBuilding.mSectors.size()) continue;
-					auto destinationSector = mBuilding.mSectors[
+						|| intent.destinationSector.value > mWorld.mSectors.size()) continue;
+					auto destinationSector = mWorld.mSectors[
 						(size_t)intent.destinationSector.value - 1];
-					destination = mBuilding.mGraph->getClosestVertexInSector(
+					destination = mWorld.mGraph->getClosestVertexInSector(
 						destinationSector.get(), intent.destinationPosition);
 				}
-				auto path = mBuilding.mGraph->calculatePath(agent, source, destination);
+				auto path = mWorld.mGraph->calculatePath(agent, source, destination);
 				if (path && !path->nodes.empty())
 				{
 					agent->assignPath(std::move(path), intent.wasPathing, false);
-					if (goal != mBuilding.mMovementGoals.end())
+					if (goal != mWorld.mMovementGoals.end())
 						goal->second.routeLossReason = RouteLossReason::None;
 				}
-				else if (goal != mBuilding.mMovementGoals.end())
+				else if (goal != mWorld.mMovementGoals.end())
 					goal->second.routeLossReason = RouteLossReason::TopologyChanged;
 			}
 			catch (Exception const&)
 			{
 				// The destination was structurally removed or disconnected. The Agent
 				// remains safely idle; this does not invalidate otherwise usable topology.
-				if (goal != mBuilding.mMovementGoals.end())
+				if (goal != mWorld.mMovementGoals.end())
 					goal->second.routeLossReason = RouteLossReason::TopologyChanged;
 			}
 		}
-		mBuilding.mPausedPathIntents.clear();
+		mWorld.mPausedPathIntents.clear();
 	}
 
 	void SimulationCoordinator::cancelAllTraversalForTopologyRebuild()
 	{
-		mBuilding.mPausedPathIntents.clear();
-		for (auto const& [id, agent] : mBuilding.mAgents.entries())
+		mWorld.mPausedPathIntents.clear();
+		for (auto const& [id, agent] : mWorld.mAgents.entries())
 		{
 			if (agent->mPath.path && !agent->mPath.path->nodes.empty())
 			{
 				auto destination = agent->mPath.path->nodes.back().targetVertex;
 				if (destination && destination->getSector())
-					mBuilding.mPausedPathIntents[id] = {
+					mWorld.mPausedPathIntents[id] = {
 						SectorId{ (uint64_t)destination->getSector()->getIndex() + 1 },
 						destination->getPosition(), agent->mState != Agent::State::Idle };
 			}
@@ -745,14 +745,14 @@ namespace core
 		// Defensive cleanup also handles requests whose owning Agent was removed or
 		// whose task was already detached. Typed IDs are never recycled.
 		vector<TraversalRequestId> orphaned;
-		for (auto const& [id, request] : mBuilding.mTraversalRequests.entries())
+		for (auto const& [id, request] : mWorld.mTraversalRequests.entries())
 		{
 			(void)request;
 			orphaned.push_back(id);
 		}
 		for (auto id : orphaned)
 		{
-			auto request = mBuilding.mTraversalRequests.find(id);
+			auto request = mWorld.mTraversalRequests.find(id);
 			auto permit = request ? request->mPermit : TraversalPermitId{};
 			cancelTraversal(id, permit, false);
 			releaseTraversal(id, permit);

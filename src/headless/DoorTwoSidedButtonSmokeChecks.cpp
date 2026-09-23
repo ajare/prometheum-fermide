@@ -2,7 +2,7 @@
 //
 // Giving a Door a Button must give it Buttons on both sides of the threshold:
 // agents approaching from the Layer behind were stuck, because the single
-// Button sat on the front side only. These checks drive the real Building
+// Button sat on the front side only. These checks drive the real World
 // edit actions and renderer:
 //
 //   * Add Door Button creates the missing Button on each side, binds both to
@@ -33,7 +33,7 @@
 #include "Render.h"
 #include "UISettings.h"
 
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/Button.h"
 #include "core/Coordination.h"
 #include "core/Door.h"
@@ -62,11 +62,11 @@ namespace
 
 	// The ordinary Door in a freshly built two-Room scene, wherever it
 	// registered itself.
-	DoorLocation findDoor(core::Building const& building)
+	DoorLocation findDoor(core::World const& world)
 	{
-		for (uint32_t s = 0; s < building.getNumSectors(); ++s)
+		for (uint32_t s = 0; s < world.getNumSectors(); ++s)
 		{
-			auto sector = building.getSector(s);
+			auto sector = world.getSector(s);
 			if (!sector) continue;
 			for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
 			{
@@ -78,11 +78,11 @@ namespace
 		return {};
 	}
 
-	std::vector<std::shared_ptr<const core::Button>> buttonsIn(core::Building const& building,
+	std::vector<std::shared_ptr<const core::Button>> buttonsIn(core::World const& world,
 		uint32_t sectorIndex)
 	{
 		std::vector<std::shared_ptr<const core::Button>> buttons;
-		auto sector = building.getSector(sectorIndex);
+		auto sector = world.getSector(sectorIndex);
 		require(sector != nullptr, "The Sector vanished");
 		for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
 		{
@@ -98,30 +98,30 @@ namespace
 	// doorOptions, when given, are applied to the Door at creation.
 	struct Scene
 	{
-		std::unique_ptr<core::Building> building;
+		std::unique_ptr<core::World> world;
 		DoorLocation door;
 		uint32_t frontSector{ ~0u };
 		uint32_t backSector{ ~0u };
 
-		core::Building& operator*() const { return *building; }
-		core::Building* operator->() const { return building.get(); }
+		core::World& operator*() const { return *world; }
+		core::World* operator->() const { return world.get(); }
 	};
 
 	Scene buildTwoRoomScene(char const* name, uint32_t foreWidth = 8, uint32_t foreX = 0,
-		core::Building::CreateDoorOptions const* doorOptions = nullptr, uint32_t doorX = ~0u)
+		core::World::CreateDoorOptions const* doorOptions = nullptr, uint32_t doorX = ~0u)
 	{
 		Scene scene;
-		scene.building = std::make_unique<core::Building>(name, 16, 2);
-		while (scene.building->getLayerCount() < 2) scene.building->addLayer();
-		scene.building->addRoom("Fore", 0, 0, foreX, foreWidth, 1);
-		scene.building->addRoom("Aft", 1, 0, 0, 16, 1);
+		scene.world = std::make_unique<core::World>(name, 16, 2);
+		while (scene.world->getLayerCount() < 2) scene.world->addLayer();
+		scene.world->addRoom("Fore", 0, 0, foreX, foreWidth, 1);
+		scene.world->addRoom("Aft", 1, 0, 0, 16, 1);
 		if (doorX == ~0u) doorX = foreX + 2;
 		auto const created = doorOptions
-			? scene.building->addSectorDoor(0, 0, doorX, *doorOptions)
-			: scene.building->addSectorDoor(0, 0, doorX, {});
-		scene.building->finishBuild();
+			? scene.world->addSectorDoor(0, 0, doorX, *doorOptions)
+			: scene.world->addSectorDoor(0, 0, doorX, {});
+		scene.world->finishBuild();
 		scene.frontSector = created.door.sector->getIndex();
-		scene.door = findDoor(*scene.building);
+		scene.door = findDoor(*scene.world);
 		require(scene.door.object != nullptr, "The scene's Door could not be found");
 		scene.backSector = scene.door.object->getDoor()->getBackSector()->getIndex();
 		return scene;
@@ -129,8 +129,8 @@ namespace
 
 	void requireBothSidesHaveOneButton(Scene const& scene, char const* what)
 	{
-		auto const front = buttonsIn(*scene.building, scene.frontSector);
-		auto const back = buttonsIn(*scene.building, scene.backSector);
+		auto const front = buttonsIn(*scene.world, scene.frontSector);
+		auto const back = buttonsIn(*scene.world, scene.backSector);
 		require(front.size() == 1 && back.size() == 1,
 			std::string(what) + ": the Door should carry exactly one Button per side");
 		require(front[0]->getThresholdLayer() == 0 && back[0]->getThresholdLayer() == 0,
@@ -143,7 +143,7 @@ namespace
 		// Add from the back side's registration: the action must not care which
 		// side of the pair the selected Sector sits on.
 		uint32_t backObjectIndex{ ~0u };
-		auto backSector = scene.building->getSector(scene.backSector);
+		auto backSector = scene.world->getSector(scene.backSector);
 		for (uint32_t i = 0; i < backSector->getNumObjects(); ++i)
 			if (backSector->getObject(i) == scene.door.object) backObjectIndex = i;
 		require(backObjectIndex != ~0u, "The Door is not registered on its back Sector");
@@ -165,7 +165,7 @@ namespace
 		require(resource && resource.entity->getControls().size() == 2,
 			"Both Buttons should bind to the Door's traversal resource");
 
-		core::Building::CreateDoorOptions options;
+		core::World::CreateDoorOptions options;
 		require(scene->getSectorDoorOptions(0, 0, scene.door.object->getCellX(),
 				scene.door.object->getDoor()->getCellsWide(), options),
 			"The Door's record could not be read back");
@@ -177,12 +177,12 @@ namespace
 	void addingCompletesALegacyOneSidedDoor()
 	{
 		// A Door authored with only its fore Button, as older builds produced.
-		core::Building::CreateDoorOptions authored;
+		core::World::CreateDoorOptions authored;
 		authored.controls[0] = true;
 		authored.activationMode = core::DoorActivationMode::RemoteControlled;
 		Scene scene = buildTwoRoomScene("Complete a legacy one-sided Door", 8, 0, &authored);
-		require(buttonsIn(*scene.building, scene.frontSector).size() == 1
-			&& buttonsIn(*scene.building, scene.backSector).empty(),
+		require(buttonsIn(*scene.world, scene.frontSector).size() == 1
+			&& buttonsIn(*scene.world, scene.backSector).empty(),
 			"The authored Door should start with exactly its fore Button");
 
 		scene->pauseSimulation();
@@ -204,8 +204,8 @@ namespace
 			"The scene's Door should span its fore Room exactly");
 
 		scene->pauseSimulation();
-		auto const buttonsBefore = buttonsIn(*scene.building, scene.frontSector).size()
-			+ buttonsIn(*scene.building, scene.backSector).size();
+		auto const buttonsBefore = buttonsIn(*scene.world, scene.frontSector).size()
+			+ buttonsIn(*scene.world, scene.backSector).size();
 		bool refused = false;
 		try
 		{
@@ -216,8 +216,8 @@ namespace
 			refused = true;
 		}
 		require(refused, "An add with no space on one side should be refused");
-		auto const buttonsAfter = buttonsIn(*scene.building, scene.frontSector).size()
-			+ buttonsIn(*scene.building, scene.backSector).size();
+		auto const buttonsAfter = buttonsIn(*scene.world, scene.frontSector).size()
+			+ buttonsIn(*scene.world, scene.backSector).size();
 		require(buttonsBefore == 0 && buttonsAfter == 0,
 			"A refused add must not leave a Button behind on either side");
 		require(scene->canAddSectorDoorButton(scene.frontSector, scene.door.objectIndex),
@@ -246,7 +246,7 @@ namespace
 
 	void authoredButtonsCanBeRemoved()
 	{
-		core::Building::CreateDoorOptions authored;
+		core::World::CreateDoorOptions authored;
 		authored.controls[0] = true;
 		authored.controls[1] = true;
 		authored.activationMode = core::DoorActivationMode::RemoteControlled;
@@ -259,11 +259,11 @@ namespace
 		auto const rebuilt = scene->removeSectorDoorButton(scene.frontSector,
 			scene.door.objectIndex);
 		require(rebuilt != nullptr, "Removing authored Buttons should rebuild the Door");
-		require(buttonsIn(*scene.building, scene.frontSector).empty()
-			&& buttonsIn(*scene.building, scene.backSector).empty(),
+		require(buttonsIn(*scene.world, scene.frontSector).empty()
+			&& buttonsIn(*scene.world, scene.backSector).empty(),
 			"Removing authored Buttons should take both away");
 
-		core::Building::CreateDoorOptions options;
+		core::World::CreateDoorOptions options;
 		require(scene->getSectorDoorOptions(0, 0, rebuilt->getCellX(),
 				rebuilt->getDoor()->getCellsWide(), options),
 			"The Door record could not be read after removing authored Buttons");
@@ -288,15 +288,15 @@ namespace
 		require(rebuilt->getCellX() == doorX && rebuilt->getDoor()->getCellsWide() == doorWidth,
 			"Removal returned a Door at the wrong position");
 
-		require(buttonsIn(*scene.building, scene.frontSector).empty()
-			&& buttonsIn(*scene.building, scene.backSector).empty(),
+		require(buttonsIn(*scene.world, scene.frontSector).empty()
+			&& buttonsIn(*scene.world, scene.backSector).empty(),
 			"Removal should take both Buttons away");
 		auto const resource = scene->lookupTraversalResource(
 			rebuilt->getDoor()->getTraversalResourceId());
 		require(resource && resource.entity->getControls().empty(),
 			"Removal should unbind every Button from the traversal resource");
 
-		core::Building::CreateDoorOptions options;
+		core::World::CreateDoorOptions options;
 		require(scene->getSectorDoorOptions(0, 0, doorX, doorWidth, options),
 			"The rebuilt Door's record could not be read back");
 		require(!options.controls[0] && !options.controls[1]
@@ -304,7 +304,7 @@ namespace
 			"Removal should restore the Door's pre-Button activation mode");
 
 		uint32_t rebuiltIndex{ ~0u };
-		auto sector = scene.building->getSector(scene.frontSector);
+		auto sector = scene.world->getSector(scene.frontSector);
 		for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
 			if (sector->getObject(i) == rebuilt) rebuiltIndex = i;
 		require(rebuiltIndex != ~0u, "The rebuilt Door is not on its front Sector");
@@ -329,13 +329,13 @@ namespace
 		require(yaml.find("preButtonActivation") != std::string::npos,
 			"The pre-Button activation mode did not persist");
 
-		auto loaded = std::make_unique<core::Building>("placeholder", 1, 1);
+		auto loaded = std::make_unique<core::World>("placeholder", 1, 1);
 		auto reader = core::YamlSerializer::fromString(yaml);
 		reader->deserialize();
 		loaded->deserialize(*reader, workData);
 
 		auto const loadedDoor = findDoor(*loaded);
-		require(loadedDoor.object != nullptr, "The loaded Building has no Door");
+		require(loadedDoor.object != nullptr, "The loaded World has no Door");
 		require(buttonsIn(*loaded, loadedDoor.object->getDoor()->getFrontSector()->getIndex()).size() == 1
 			&& buttonsIn(*loaded, loadedDoor.object->getDoor()->getBackSector()->getIndex()).size() == 1,
 			"The loaded Door did not keep one Button per side");
@@ -355,9 +355,9 @@ namespace
 
 		auto graph = scene->getGraph();
 		auto foreTarget = graph->getClosestVertexInSector(
-			scene.building->getSector(scene.frontSector).get(), { 2.0f, 0.0f });
+			scene.world->getSector(scene.frontSector).get(), { 2.0f, 0.0f });
 		auto backTarget = graph->getClosestVertexInSector(
-			scene.building->getSector(scene.backSector).get(), { 13.0f, 0.0f });
+			scene.world->getSector(scene.backSector).get(), { 13.0f, 0.0f });
 		require(foreTarget && backTarget, "The scene needs a target vertex on each side");
 
 		auto const foreWalker = scene->createAgent("Fore walker", scene.frontSector, 0, 2.0f);
@@ -440,8 +440,8 @@ namespace
 		scene->addSectorDoorButton(scene.frontSector, scene.door.objectIndex);
 		scene->finishBuild();
 
-		auto const frontSector = scene.building->getSector(scene.frontSector);
-		auto const backSector = scene.building->getSector(scene.backSector);
+		auto const frontSector = scene.world->getSector(scene.frontSector);
+		auto const backSector = scene.world->getSector(scene.backSector);
 		ImColor const roomColour(192, 192, 255);
 
 		// The front Layer drawn solid (the front Button's own Layer): the front

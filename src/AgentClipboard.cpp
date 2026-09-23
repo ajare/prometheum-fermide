@@ -2,8 +2,8 @@
 //
 // Three rules hold this file together.
 //
-// The clipboard carries the Agent group by name. A Building-local
-// AgentGroupId is a receipt for one Building's registry and says nothing to
+// The clipboard carries the Agent group by name. A World-local
+// AgentGroupId is a receipt for one World's registry and says nothing to
 // the next one, so it never crosses the clipboard at all (ADR 0006).
 //
 // Agent tag IDs cross only with their registry UUID. The complete assignment
@@ -34,7 +34,7 @@
 #include "core/AgentGroup.h"
 #include "core/AgentTagRegistry.h"
 #include "core/AgentBehaviourRegistry.h"
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/Marker.h"
 #include "core/Exceptions.h"
 #include "core/Sector.h"
@@ -112,27 +112,27 @@ namespace
 				payload.heightModifierSample);
 	}
 
-	bool clipboardTagStateFitsBuilding(core::Building const& building,
+	bool clipboardTagStateFitsWorld(core::World const& world,
 		AgentClipboardPayload const& payload, string& diagnostic)
 	{
 		if (!clipboardTagStateIsWellFormed(payload, diagnostic)) return false;
 		if (payload.agentTags.empty()) return true;
-		if (!building.hasAttachedAgentTagRegistry())
+		if (!world.hasAttachedAgentTagRegistry())
 		{
-			diagnostic = "Tagged Agents can only be pasted into a Building with the same attached Agent tag registry";
+			diagnostic = "Tagged Agents can only be pasted into a World with the same attached Agent tag registry";
 			return false;
 		}
-		auto const& registry = building.getAgentTagRegistry();
+		auto const& registry = world.getAgentTagRegistry();
 		if (registry->getUuid() != *payload.agentTagRegistryUuid)
 		{
-			diagnostic = "Tagged Agents can only be pasted into a Building using the same Agent tag registry UUID";
+			diagnostic = "Tagged Agents can only be pasted into a World using the same Agent tag registry UUID";
 			return false;
 		}
-		return building.validateAgentTagAssignments(payload.agentTags,
+		return world.validateAgentTagAssignments(payload.agentTags,
 			payload.walkSpeedModifierSample, payload.heightModifierSample, &diagnostic);
 	}
 
-	AgentClipboardConfigurationValue portableValue(core::Building const& building,
+	AgentClipboardConfigurationValue portableValue(core::World const& world,
 		core::AgentBehaviourConfigurationValue const& source)
 	{
 		AgentClipboardConfigurationValue result;
@@ -141,7 +141,7 @@ namespace
 			using T = decay_t<decltype(typed)>;
 			if constexpr (is_same_v<T, core::MarkerId>)
 			{
-				auto marker = building.lookupMarker(typed);
+				auto marker = world.lookupMarker(typed);
 				if (!marker) throw runtime_error(format(
 					"Agent behaviour configuration references unknown Marker {}", typed.value));
 				result.value = AgentClipboardMarker{ marker->getName() };
@@ -149,14 +149,14 @@ namespace
 			else if constexpr (is_same_v<T, core::AgentBehaviourConfigurationList>)
 			{
 				AgentClipboardConfigurationList list;
-				for (auto const& item : typed) list.push_back(portableValue(building, item));
+				for (auto const& item : typed) list.push_back(portableValue(world, item));
 				result.value = std::move(list);
 			}
 			else if constexpr (is_same_v<T, core::AgentBehaviourConfigurationRecord>)
 			{
 				AgentClipboardConfigurationRecord record;
 				for (auto const& [name, item] : typed)
-					record.emplace(name, portableValue(building, item));
+					record.emplace(name, portableValue(world, item));
 				result.value = std::move(record);
 			}
 			else result.value = typed;
@@ -290,7 +290,7 @@ namespace
 		return true;
 	}
 
-	bool resolvePortableValue(core::Building const& building,
+	bool resolvePortableValue(core::World const& world,
 		AgentClipboardConfigurationValue const& source,
 		core::AgentBehaviourConfigurationValue& result, string const& path,
 		vector<string>& failures)
@@ -301,13 +301,13 @@ namespace
 			if constexpr (is_same_v<T, AgentClipboardMarker>)
 			{
 				vector<core::MarkerId> matches;
-				for (auto id : building.getMarkerIds())
+				for (auto id : world.getMarkerIds())
 				{
-					auto marker = building.lookupMarker(id);
+					auto marker = world.lookupMarker(id);
 					if (marker && marker->getName() == typed.name) matches.push_back(id);
 				}
 				if (matches.size() != 1)
-					failures.push_back(format("Configuration field '{}': Marker '{}' has {} matches in the destination Building (expected exactly one)",
+					failures.push_back(format("Configuration field '{}': Marker '{}' has {} matches in the destination World (expected exactly one)",
 						path, typed.name, matches.size()));
 				else result.value = matches.front();
 			}
@@ -317,7 +317,7 @@ namespace
 				for (size_t index = 0; index < typed.size(); ++index)
 				{
 					core::AgentBehaviourConfigurationValue item;
-					resolvePortableValue(building, typed[index], item,
+					resolvePortableValue(world, typed[index], item,
 						path + "[" + to_string(index) + "]", failures);
 					list.push_back(std::move(item));
 				}
@@ -329,7 +329,7 @@ namespace
 				for (auto const& [name, item] : typed)
 				{
 					core::AgentBehaviourConfigurationValue converted;
-					resolvePortableValue(building, item, converted,
+					resolvePortableValue(world, item, converted,
 						path.empty() ? name : path + "." + name, failures);
 					record.emplace(name, std::move(converted));
 				}
@@ -340,7 +340,7 @@ namespace
 		return failures.empty();
 	}
 
-	bool clipboardBehaviourFitsBuilding(core::Building const& building,
+	bool clipboardBehaviourFitsWorld(core::World const& world,
 		AgentClipboardPayload const& payload,
 		core::AgentBehaviourConfiguration* configuration, string& diagnostic)
 	{
@@ -353,24 +353,24 @@ namespace
 			failures.push_back("Clipboard Agent behaviour identity cannot be zero");
 		if (!assignment.revision)
 			failures.push_back("Clipboard Agent behaviour revision cannot be zero");
-		if (!building.hasAttachedAgentBehaviourRegistry())
-			failures.push_back("The destination Building has no attached Agent behaviour registry");
-		else if (building.getAgentBehaviourRegistry()->getUuid() != assignment.registryUuid)
+		if (!world.hasAttachedAgentBehaviourRegistry())
+			failures.push_back("The destination World has no attached Agent behaviour registry");
+		else if (world.getAgentBehaviourRegistry()->getUuid() != assignment.registryUuid)
 			failures.push_back(format("Agent behaviour registry identity mismatch: clipboard has {}, destination has {}",
-				assignment.registryUuid, building.getAgentBehaviourRegistry()->getUuid()));
+				assignment.registryUuid, world.getAgentBehaviourRegistry()->getUuid()));
 
 		core::AgentBehaviourConfiguration converted;
 		for (auto const& [name, value] : assignment.configuration)
 		{
 			core::AgentBehaviourConfigurationValue item;
-			resolvePortableValue(building, value, item, name, failures);
+			resolvePortableValue(world, value, item, name, failures);
 			converted.emplace(name, std::move(item));
 		}
-		if (building.hasAttachedAgentBehaviourRegistry()
-			&& building.getAgentBehaviourRegistry()->getUuid() == assignment.registryUuid)
+		if (world.hasAttachedAgentBehaviourRegistry()
+			&& world.getAgentBehaviourRegistry()->getUuid() == assignment.registryUuid)
 		{
 			string schemaDiagnostic;
-			if (!building.validateAgentBehaviourAssignment(assignment.behaviour,
+			if (!world.validateAgentBehaviourAssignment(assignment.behaviour,
 				assignment.revision, converted, nullptr, &schemaDiagnostic))
 				failures.push_back(std::move(schemaDiagnostic));
 		}
@@ -386,13 +386,13 @@ namespace
 	}
 }
 
-AgentClipboardPayload makeAgentClipboardPayload(core::Building const& building,
+AgentClipboardPayload makeAgentClipboardPayload(core::World const& world,
 	core::AgentId agent, string name)
 {
 	AgentClipboardPayload payload;
 	payload.name = std::move(name);
 
-	auto const lookup = building.lookupAgent(agent);
+	auto const lookup = world.lookupAgent(agent);
 	if (!lookup) return payload;
 
 	payload.flags = lookup.entity->getFlags();
@@ -402,34 +402,34 @@ AgentClipboardPayload makeAgentClipboardPayload(core::Building const& building,
 	payload.heightModifierSample = lookup.entity->getHeightModifierSample();
 	if (!payload.agentTags.empty())
 	{
-		if (!building.hasAgentTagRegistryReference())
+		if (!world.hasAgentTagRegistryReference())
 			throw runtime_error(
-				"A tagged Agent's Building has no Agent tag registry identity");
-		payload.agentTagRegistryUuid = building.getExpectedAgentTagRegistryUuid();
+				"A tagged Agent's World has no Agent tag registry identity");
+		payload.agentTagRegistryUuid = world.getExpectedAgentTagRegistryUuid();
 	}
 	if (auto const& assignment = lookup.entity->getBehaviourAssignment())
 	{
-		if (!building.hasAgentBehaviourRegistryReference())
+		if (!world.hasAgentBehaviourRegistryReference())
 			throw runtime_error(
-				"An assigned Agent's Building has no Agent behaviour registry identity");
+				"An assigned Agent's World has no Agent behaviour registry identity");
 		AgentClipboardBehaviourAssignment portable;
-		portable.registryUuid = building.getExpectedAgentBehaviourRegistryUuid();
+		portable.registryUuid = world.getExpectedAgentBehaviourRegistryUuid();
 		portable.behaviour = assignment->behaviour;
 		portable.revision = assignment->revision;
 		for (auto const& [field, value] : assignment->configuration)
-			portable.configuration.emplace(field, portableValue(building, value));
+			portable.configuration.emplace(field, portableValue(world, value));
 		payload.behaviour = std::move(portable);
 	}
 
 	// The group's name crosses; its ID stays home. An Agent holding an ID the
-	// Building cannot resolve reads back as ungrouped rather than inventing a
-	// name for a group that is gone - a state the Building is not supposed to
+	// World cannot resolve reads back as ungrouped rather than inventing a
+	// name for a group that is gone - a state the World is not supposed to
 	// reach at all, since deleting a group takes every assignment with it
 	// (#112).
 	auto const assigned = lookup.entity->getAgentGroupId();
 	if (assigned)
 	{
-		auto const group = building.lookupAgentGroup(assigned);
+		auto const group = world.lookupAgentGroup(assigned);
 		if (group) payload.group = group.entity->getName();
 	}
 
@@ -754,21 +754,21 @@ bool readAgentClipboardObject(YAML::Node const& object,
 	return clipboardTagStateIsWellFormed(payload, diagnostic);
 }
 
-core::AgentGroupId findAgentGroupByName(core::Building const& building,
+core::AgentGroupId findAgentGroupByName(core::World const& world,
 	string const& name)
 {
-	// Stored names are already trimmed, so this is the Building's own
+	// Stored names are already trimmed, so this is the World's own
 	// comparison: exact, and case-sensitive. "Crew" never matches "crew".
-	for (auto const id : building.getAgentGroupIds())
+	for (auto const id : world.getAgentGroupIds())
 	{
-		auto const group = building.lookupAgentGroup(id);
+		auto const group = world.lookupAgentGroup(id);
 		if (group && group.entity->getName() == name) return id;
 	}
 	return {};
 }
 
 bool armAgentPlacement(PendingAgentPlacement& pending,
-	core::Building const& building, AgentClipboardPayload const& payload,
+	core::World const& world, AgentClipboardPayload const& payload,
 	shared_ptr<const core::Sector> sector,
 	uint32_t deckOffset, float localX, string& diagnostic)
 {
@@ -786,7 +786,7 @@ bool armAgentPlacement(PendingAgentPlacement& pending,
 		return false;
 	}
 
-	// Judged now, at the keystroke: an Agent group name that the Building
+	// Judged now, at the keystroke: an Agent group name that the World
 	// would refuse has no business being deferred into a fall that is only
 	// going to fail with it later.
 	if (payload.group)
@@ -794,9 +794,9 @@ bool armAgentPlacement(PendingAgentPlacement& pending,
 		string trimmed;
 		if (!groupNameUsable(*payload.group, trimmed, diagnostic)) return false;
 	}
-	if (!clipboardTagStateFitsBuilding(building, payload, diagnostic)) return false;
-	if (!clipboardBehaviourFitsBuilding(building, payload, nullptr, diagnostic)) return false;
-	if (payload.behaviour && !building.isSimulationPaused())
+	if (!clipboardTagStateFitsWorld(world, payload, diagnostic)) return false;
+	if (!clipboardBehaviourFitsWorld(world, payload, nullptr, diagnostic)) return false;
+	if (payload.behaviour && !world.isSimulationPaused())
 	{
 		diagnostic = "Pause the simulation before pasting an Agent with a behaviour";
 		return false;
@@ -809,7 +809,7 @@ bool armAgentPlacement(PendingAgentPlacement& pending,
 	return true;
 }
 
-bool commitAgentPlacement(shared_ptr<core::Building> const& building,
+bool commitAgentPlacement(shared_ptr<core::World> const& world,
 	AgentClipboardPayload const& payload,
 	shared_ptr<const core::Sector> sector,
 	uint32_t deckOffset, float localX,
@@ -818,9 +818,9 @@ bool commitAgentPlacement(shared_ptr<core::Building> const& building,
 	placed = {};
 	diagnostic.clear();
 
-	if (!building)
+	if (!world)
 	{
-		diagnostic = "There is no Building to place an Agent in";
+		diagnostic = "There is no World to place an Agent in";
 		return false;
 	}
 	if (!sector)
@@ -844,12 +844,12 @@ bool commitAgentPlacement(shared_ptr<core::Building> const& building,
 		if (!groupNameUsable(*payload.group, trimmed, diagnostic)) return false;
 		groupName = trimmed;
 	}
-	if (!clipboardTagStateFitsBuilding(*building, payload, diagnostic)) return false;
+	if (!clipboardTagStateFitsWorld(*world, payload, diagnostic)) return false;
 	core::AgentBehaviourConfiguration behaviourConfiguration;
-	if (!clipboardBehaviourFitsBuilding(*building, payload,
+	if (!clipboardBehaviourFitsWorld(*world, payload,
 		&behaviourConfiguration, diagnostic)) return false;
 	if ((!payload.agentTags.empty() || payload.behaviour)
-		&& !building->isSimulationPaused())
+		&& !world->isSimulationPaused())
 	{
 		diagnostic = payload.behaviour
 			? "Pause the simulation before pasting an Agent with a behaviour"
@@ -860,7 +860,7 @@ bool commitAgentPlacement(shared_ptr<core::Building> const& building,
 	// Captured before the first write, so the undo entry holds the document
 	// exactly as it stood before the paste. Every refusal below drops it
 	// uncommitted: no entry, and nothing to undo.
-	auto const undo = captureDocumentSnapshot(building);
+	auto const undo = captureDocumentSnapshot(world);
 	if (!undo)
 	{
 		diagnostic = "Could not capture the editor state for the Agent placement";
@@ -879,13 +879,13 @@ bool commitAgentPlacement(shared_ptr<core::Building> const& building,
 		string compensation;
 		if (agentId)
 		{
-			auto const removal = building->removeAgent(agentId);
+			auto const removal = world->removeAgent(agentId);
 			if (!removal.removed) compensation += "; and " + removal.diagnostic;
 		}
 		if (createdGroup)
 		{
 			string groupDiagnostic;
-			if (!building->deleteAgentGroup(createdGroup, &groupDiagnostic))
+			if (!world->deleteAgentGroup(createdGroup, &groupDiagnostic))
 				compensation += "; and " + groupDiagnostic;
 		}
 		return compensation;
@@ -895,11 +895,11 @@ bool commitAgentPlacement(shared_ptr<core::Building> const& building,
 	{
 		// The Agent is created first: if that is refused, no group has been
 		// made yet, so the common failure leaves nothing behind at all.
-		agentId = building->createAgent(payload.name, sector->getIndex(), deckOffset, localX);
-		auto const created = building->lookupAgent(agentId).entity;
+		agentId = world->createAgent(payload.name, sector->getIndex(), deckOffset, localX);
+		auto const created = world->lookupAgent(agentId).entity;
 		if (!created)
 		{
-			diagnostic = "The placed Agent could not be found in the Building" + rollBack();
+			diagnostic = "The placed Agent could not be found in the World" + rollBack();
 			return false;
 		}
 		created->setFlags(payload.flags);
@@ -914,14 +914,14 @@ bool commitAgentPlacement(shared_ptr<core::Building> const& building,
 			// The destination's own group when it already defines this exact
 			// name - a paste is never how a duplicate group gets made - and a
 			// new one only where the name is genuinely missing.
-			auto groupId = findAgentGroupByName(*building, *groupName);
+			auto groupId = findAgentGroupByName(*world, *groupName);
 			if (!groupId)
 			{
-				groupId = building->addAgentGroup(*groupName);
+				groupId = world->addAgentGroup(*groupName);
 				createdGroup = groupId;
 			}
 			string assignDiagnostic;
-			if (!building->setAgentGroup(agentId, groupId, &assignDiagnostic))
+			if (!world->setAgentGroup(agentId, groupId, &assignDiagnostic))
 			{
 				diagnostic = "The pasted Agent could not be assigned to its Agent group: "
 					+ assignDiagnostic + rollBack();
@@ -931,7 +931,7 @@ bool commitAgentPlacement(shared_ptr<core::Building> const& building,
 		if (!payload.agentTags.empty())
 		{
 			string assignDiagnostic;
-			if (!building->restoreAgentTagAssignments(agentId, payload.agentTags,
+			if (!world->restoreAgentTagAssignments(agentId, payload.agentTags,
 				payload.walkSpeedModifierSample, payload.heightModifierSample,
 				&assignDiagnostic))
 			{
@@ -943,7 +943,7 @@ bool commitAgentPlacement(shared_ptr<core::Building> const& building,
 		if (payload.behaviour)
 		{
 			string assignDiagnostic;
-			if (!building->setAgentBehaviourAssignment(agentId,
+			if (!world->setAgentBehaviourAssignment(agentId,
 				payload.behaviour->behaviour, payload.behaviour->revision,
 				behaviourConfiguration, &assignDiagnostic))
 			{
@@ -972,7 +972,7 @@ bool commitAgentPlacement(shared_ptr<core::Building> const& building,
 }
 
 bool commitPendingAgentPlacement(PendingAgentPlacement& pending,
-	shared_ptr<core::Building> const& building,
+	shared_ptr<core::World> const& world,
 	core::AgentId& placed, string& diagnostic)
 {
 	if (!pending.armed())
@@ -991,18 +991,18 @@ bool commitPendingAgentPlacement(PendingAgentPlacement& pending,
 	auto const localX = pending.localX;
 	pending.cancel();
 
-	return commitAgentPlacement(building, payload, sector, deckOffset, localX,
+	return commitAgentPlacement(world, payload, sector, deckOffset, localX,
 		placed, diagnostic);
 }
 
-bool cutAgent(shared_ptr<core::Building> const& building,
+bool cutAgent(shared_ptr<core::World> const& world,
 	core::AgentId agent, string& diagnostic)
 {
 	diagnostic.clear();
 
-	if (!building)
+	if (!world)
 	{
-		diagnostic = "There is no Building to cut an Agent from";
+		diagnostic = "There is no World to cut an Agent from";
 		return false;
 	}
 	if (!agent)
@@ -1011,20 +1011,20 @@ bool cutAgent(shared_ptr<core::Building> const& building,
 		return false;
 	}
 
-	auto const lookup = building->lookupAgent(agent);
+	auto const lookup = world->lookupAgent(agent);
 	if (!lookup)
 	{
-		diagnostic = lookup.diagnostic.empty() ? "The Agent is not one this Building owns"
+		diagnostic = lookup.diagnostic.empty() ? "The Agent is not one this World owns"
 			: lookup.diagnostic;
 		return false;
 	}
 
-	// Only the Agent is taken. The Building's Agent group registry is not
+	// Only the Agent is taken. The World's Agent group registry is not
 	// touched, so the group the cut Agent belonged to stays defined - for
 	// its remaining members now, and for the paste this cut put on the
 	// clipboard afterwards.
 	lookup.entity->clearPath();
-	auto const removal = building->removeAgent(agent);
+	auto const removal = world->removeAgent(agent);
 	if (!removal.removed)
 	{
 		diagnostic = removal.diagnostic;

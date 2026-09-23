@@ -26,7 +26,7 @@ namespace core
 		String,
 		// A whole-number simulation-tick duration.
 		Duration,
-		// A reference to a named Building-owned Marker.
+		// A reference to a named World-owned Marker.
 		Marker,
 		// An ordered collection of one element type.
 		List,
@@ -204,7 +204,7 @@ namespace core
 	// A durable, reusable Agent behaviour definition owned by an Agent
 	// behaviour registry. Its ID is registry-local, stable across rename, and
 	// never reused. The revision increases monotonically whenever the authored
-	// definition a Building's configuration was validated against changes.
+	// definition a World's configuration was validated against changes.
 	// The source module path is registry-relative: it identifies one managed
 	// Lua file inside the registry package and never names an absolute path or
 	// a location outside the package directory.
@@ -217,7 +217,7 @@ namespace core
 		std::string mSourceModulePath;
 		std::vector<AgentBehaviourSchemaField> mSchema;
 		// Every schema revision remains ordinary registry metadata. Keeping the
-		// historical shape lets a Building opened after an external package edit
+		// historical shape lets a World opened after an external package edit
 		// classify its authored revision without executing Lua or guessing from
 		// the current values.
 		std::map<uint64_t, std::vector<AgentBehaviourSchemaField>> mSchemaHistory;

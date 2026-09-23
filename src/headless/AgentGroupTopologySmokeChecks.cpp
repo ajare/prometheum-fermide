@@ -1,19 +1,19 @@
 // Topology edits carry Agent group assignments, for ticket #122.
 //
-// Almost every structural edit in the Building is a reset and replay: the live
+// Almost every structural edit in the World is a reset and replay: the live
 // world is torn down with resetForDeserialization(), the authored construction
-// records are replayed against the empty Building, and the Agents that were
+// records are replayed against the empty World, and the Agents that were
 // standing there are put back by hand. Each of those hand-restorations kept the
 // Agent's name, flags, Layer and position and quietly dropped its Agent group,
 // so moving a Room, deleting a Layer, removing a Door or a Window, moving an
 // object, or editing a Background returned every surviving Agent to no Agent
 // group at all. The group definitions stayed; the membership did not.
 //
-// Every check here drives a real edit through the public Building API and reads
+// Every check here drives a real edit through the public World API and reads
 // the result back through the public assignment seam. Two things are asserted
 // each time, before and after: the Agent group each Agent carries, and the live
 // member count each group reports. A count is derived from the expectation
-// rather than from the Building, so a member that survives but stops counting -
+// rather than from the World, so a member that survives but stops counting -
 // and a member that counts but lost its assignment - both fail.
 //
 // The seven reset/replay paths covered are the plain construction-record
@@ -26,7 +26,7 @@
 //
 // The last two checks leave the edit behind and keep going: the document is
 // saved and reopened, and the editor's own undo and redo is driven over it,
-// because an assignment that only survives in the live Building would be lost
+// because an assignment that only survives in the live World would be lost
 // the first time the user saved or pressed Ctrl+Z.
 
 #include <algorithm>
@@ -38,7 +38,7 @@
 #include <vector>
 
 #include "core/Agent.h"
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/EntityId.h"
 #include "core/Exceptions.h"
 #include "core/Sector.h"
@@ -68,33 +68,33 @@ namespace
 		return id ? std::to_string(id.value) : std::string("<none>");
 	}
 
-	std::string serializeBuilding(core::Building& building)
+	std::string serializeWorld(core::World& world)
 	{
 		core::SerializationWorkData workData;
 		auto writer = core::YamlSerializer::toString();
-		building.serialize(*writer, workData);
+		world.serialize(*writer, workData);
 		writer->serialize();
 		return writer->getSerializedString();
 	}
 
 	// A whole-document load, the way the editor opens a file.
-	std::shared_ptr<core::Building> loadBuilding(std::string const& yaml)
+	std::shared_ptr<core::World> loadWorld(std::string const& yaml)
 	{
-		auto loaded = std::make_shared<core::Building>("Reopened Building", 1, 1);
+		auto loaded = std::make_shared<core::World>("Reopened World", 1, 1);
 		core::SerializationWorkData workData;
 		auto reader = core::YamlSerializer::fromString(yaml);
 		reader->deserialize();
-		require(reader != nullptr, "The serialised Building could not be read back");
-		require(loaded->deserialize(*reader, workData), "The Building did not reload");
+		require(reader != nullptr, "The serialised World could not be read back");
+		require(loaded->deserialize(*reader, workData), "The World did not reload");
 		return loaded;
 	}
 
-	std::vector<core::Agent const*> allAgents(core::Building const& building)
+	std::vector<core::Agent const*> allAgents(core::World const& world)
 	{
 		std::vector<core::Agent const*> agents;
-		for (uint32_t layer = 0; layer < building.getLayerCount(); ++layer)
+		for (uint32_t layer = 0; layer < world.getLayerCount(); ++layer)
 		{
-			for (auto const& sector : building.getSectors(layer))
+			for (auto const& sector : world.getSectors(layer))
 			{
 				if (!sector) continue;
 				for (auto* agent : sector->getAgents())
@@ -104,10 +104,10 @@ namespace
 		return agents;
 	}
 
-	void assign(core::Building& building, core::AgentId agent, core::AgentGroupId group)
+	void assign(core::World& world, core::AgentId agent, core::AgentGroupId group)
 	{
 		std::string diagnostic;
-		require(building.setAgentGroup(agent, group, &diagnostic),
+		require(world.setAgentGroup(agent, group, &diagnostic),
 			"Assigning an Agent for a topology check failed: " + diagnostic);
 	}
 
@@ -126,18 +126,18 @@ namespace
 		core::AgentId ungrouped{};
 	};
 
-	Crew authorCrew(core::Building& building, uint32_t frontRoom, uint32_t backRoom)
+	Crew authorCrew(core::World& world, uint32_t frontRoom, uint32_t backRoom)
 	{
 		Crew crew;
-		crew.crew = building.addAgentGroup("Crew");
-		crew.gang = building.addAgentGroup("Gang");
-		crew.crewFront = building.createAgent("Front desk", frontRoom, 0, 1.0f);
-		crew.ungrouped = building.createAgent("Freelance", frontRoom, 0, 2.0f);
-		crew.crewBack = building.createAgent("Back office", backRoom, 0, 1.0f);
-		crew.gangBack = building.createAgent("Back guard", backRoom, 0, 2.0f);
-		assign(building, crew.crewFront, crew.crew);
-		assign(building, crew.crewBack, crew.crew);
-		assign(building, crew.gangBack, crew.gang);
+		crew.crew = world.addAgentGroup("Crew");
+		crew.gang = world.addAgentGroup("Gang");
+		crew.crewFront = world.createAgent("Front desk", frontRoom, 0, 1.0f);
+		crew.ungrouped = world.createAgent("Freelance", frontRoom, 0, 2.0f);
+		crew.crewBack = world.createAgent("Back office", backRoom, 0, 1.0f);
+		crew.gangBack = world.createAgent("Back guard", backRoom, 0, 2.0f);
+		assign(world, crew.crewFront, crew.crew);
+		assign(world, crew.crewBack, crew.crew);
+		assign(world, crew.gangBack, crew.gang);
 		return crew;
 	}
 
@@ -159,36 +159,36 @@ namespace
 		return { crew.crew, crew.gang };
 	}
 
-	// Nothing an Agent carries may name a group this Building does not own. A
-	// Building in that state cannot even be saved and read back - the file
+	// Nothing an Agent carries may name a group this World does not own. A
+	// World in that state cannot even be saved and read back - the file
 	// format refuses an assignment to a group the document never defines - so
 	// a replay that introduced one would only be found the next time the user
 	// saved.
-	void requireNoDanglingAssignment(core::Building const& building, std::string const& when)
+	void requireNoDanglingAssignment(core::World const& world, std::string const& when)
 	{
-		for (auto const* agent : allAgents(building))
+		for (auto const* agent : allAgents(world))
 		{
 			auto const group = agent->getAgentGroupId();
 			if (!group) continue;
-			auto const lookup = building.lookupAgentGroup(group);
+			auto const lookup = world.lookupAgentGroup(group);
 			require(lookup.entity != nullptr,
-				"An Agent carries an Agent group this Building does not own " + when + ": "
+				"An Agent carries an Agent group this World does not own " + when + ": "
 				+ std::string(agent->getName()) + " points at " + text(group));
 		}
 	}
 
 	// The whole assignment picture, checked against the caller's expectation.
 	// The member count is derived from the expectation rather than read off
-	// the Building, so a group whose count drifted from its members fails here
+	// the World, so a group whose count drifted from its members fails here
 	// even when every individual assignment survived.
-	void expectAssignments(core::Building const& building,
+	void expectAssignments(core::World const& world,
 		std::vector<Expectation> const& expected,
 		std::vector<core::AgentGroupId> const& groups,
 		std::string const& when)
 	{
 		for (auto const& [agent, group] : expected)
 		{
-			auto const actual = building.getAgentGroup(agent);
+			auto const actual = world.getAgentGroup(agent);
 			require(actual == group,
 				"The Agent group is wrong " + when + ": " + text(agent) + " reads "
 				+ groupText(actual) + ", expected " + groupText(group));
@@ -201,85 +201,85 @@ namespace
 				(void)agent;
 				if (memberOf == group) ++expectedCount;
 			}
-			auto const actual = building.getAgentGroupMemberCount(group);
+			auto const actual = world.getAgentGroupMemberCount(group);
 			require(actual == expectedCount,
 				"The live member count is wrong " + when + ": " + text(group) + " counts "
 				+ std::to_string(actual) + ", expected " + std::to_string(expectedCount));
 		}
-		requireNoDanglingAssignment(building, when);
+		requireNoDanglingAssignment(world, when);
 	}
 
-	void requireGone(core::Building const& building, core::AgentId agent, std::string const& when)
+	void requireGone(core::World const& world, core::AgentId agent, std::string const& when)
 	{
-		require(building.lookupAgent(agent).entity == nullptr,
+		require(world.lookupAgent(agent).entity == nullptr,
 			"An Agent the edit was meant to remove is still here " + when + ": " + text(agent));
 	}
 
-	void requireHere(core::Building const& building, core::AgentId agent, std::string const& when)
+	void requireHere(core::World const& world, core::AgentId agent, std::string const& when)
 	{
-		require(building.lookupAgent(agent).entity != nullptr,
+		require(world.lookupAgent(agent).entity != nullptr,
 			"An Agent the edit was meant to keep is gone " + when + ": " + text(agent));
 	}
 
 	// The editor's own undo and redo, the same shape as UI.cpp's
 	// restoreDocumentSnapshot(): the live state crosses to the other stack and
-	// the newest snapshot on the source stack becomes the live Building.
-	void restoreDocument(std::shared_ptr<core::Building>& building, bool redo)
+	// the newest snapshot on the source stack becomes the live World.
+	void restoreDocument(std::shared_ptr<core::World>& world, bool redo)
 	{
-		auto const current = captureDocumentSnapshot(building);
+		auto const current = captureDocumentSnapshot(world);
 		require(current.has_value(), "The live document could not be captured");
 
-		std::shared_ptr<core::Building> loaded;
+		std::shared_ptr<core::World> loaded;
 		auto restore = [&loaded](DocumentSnapshot const& target)
 		{
-			loaded = loadBuilding(target.yaml);
+			loaded = loadWorld(target.yaml);
 			loaded->markModified();
 			return true;
 		};
 		auto const restored = redo
-			? gBuildingDocumentHistory.redo(current, restore)
-			: gBuildingDocumentHistory.undo(current, restore);
+			? gWorldDocumentHistory.redo(current, restore)
+			: gWorldDocumentHistory.undo(current, restore);
 		require(restored, redo ? "There is no redo entry to restore"
 			: "There is no undo entry to restore");
-		building = std::move(loaded);
+		world = std::move(loaded);
 	}
 
 	void resetUndoHistory()
 	{
-		gBuildingDocumentHistory.clear();
+		gWorldDocumentHistory.clear();
 	}
 
 	// ---------------------------------------------------------------- checks
 
 	// Path 1: the plain construction-record replay. applyLiftEdit() rebuilds
-	// the whole Building from its records with no Sector moved, which is the
+	// the whole World from its records with no Sector moved, which is the
 	// shape rebuildFromConstructionRecords() takes when a Lift, Shuttle,
 	// Stairwell or Bulkhead Door edit replays the world behind its back.
 	void aPlainConstructionRecordReplayKeepsEveryAssignment()
 	{
-		core::Building building("Plain replay", 12, 3);
-		while (building.getLayerCount() < 2) building.addLayer();
-		auto const frontRoom = building.addRoom("Landing A", 0, 0, 0, 12, 1);
-		auto const backRoom = building.addRoom("Landing B", 0, 1, 0, 12, 1);
-		building.addRoom("Landing C", 0, 2, 0, 12, 1);
-		auto const lift = building.addLift(1, 0, 2, 1, 3);
-		building.finishBuild();
+		core::World world("Plain replay", 12, 3);
+		while (world.getLayerCount() < 2) world.addLayer();
+		auto const frontRoom = world.addRoom("Landing A", 0, 0, 0, 12, 1);
+		auto const backRoom = world.addRoom("Landing B", 0, 1, 0, 12, 1);
+		world.addRoom("Landing C", 0, 2, 0, 12, 1);
+		auto const lift = world.addLift(1, 0, 2, 1, 3);
+		world.finishBuild();
 
-		auto const crew = authorCrew(building, frontRoom, backRoom);
+		auto const crew = authorCrew(world, frontRoom, backRoom);
 		auto const liftSector = lift.lift.sector->getIndex();
-		expectAssignments(building, expectedOf(crew), bothGroups(crew),
+		expectAssignments(world, expectedOf(crew), bothGroups(crew),
 			"before a plain construction-record replay");
 
-		building.pauseSimulation();
-		auto const plan = building.planResizeLift(liftSector, 2, 0, 1, 3);
+		world.pauseSimulation();
+		auto const plan = world.planResizeLift(liftSector, 2, 0, 1, 3);
 		require(plan.valid, "The unchanged-topology Lift rebuild plan was refused: " + plan.diagnostic);
-		building.applyLiftEdit(plan);
+		world.applyLiftEdit(plan);
 
-		requireHere(building, crew.crewFront, "after a plain construction-record replay");
-		requireHere(building, crew.crewBack, "after a plain construction-record replay");
-		requireHere(building, crew.gangBack, "after a plain construction-record replay");
-		requireHere(building, crew.ungrouped, "after a plain construction-record replay");
-		expectAssignments(building, expectedOf(crew), bothGroups(crew),
+		requireHere(world, crew.crewFront, "after a plain construction-record replay");
+		requireHere(world, crew.crewBack, "after a plain construction-record replay");
+		requireHere(world, crew.gangBack, "after a plain construction-record replay");
+		requireHere(world, crew.ungrouped, "after a plain construction-record replay");
+		expectAssignments(world, expectedOf(crew), bothGroups(crew),
 			"after a plain construction-record replay");
 	}
 
@@ -288,16 +288,16 @@ namespace
 	// Agents that were somewhere else keep exactly what they had.
 	void layerDeletionKeepsSurvivorsAndStopsCountingTheGone()
 	{
-		core::Building building("Layer deletion", 12, 3);
-		while (building.getLayerCount() < 3) building.addLayer();
-		auto const frontRoom = building.addRoom("Front room", 0, 0, 0, 6, 1);
-		auto const backRoom = building.addRoom("Back room", 1, 0, 0, 6, 1);
-		auto const doomedRoom = building.addRoom("Top room", 2, 0, 0, 6, 1);
-		building.finishBuild();
+		core::World world("Layer deletion", 12, 3);
+		while (world.getLayerCount() < 3) world.addLayer();
+		auto const frontRoom = world.addRoom("Front room", 0, 0, 0, 6, 1);
+		auto const backRoom = world.addRoom("Back room", 1, 0, 0, 6, 1);
+		auto const doomedRoom = world.addRoom("Top room", 2, 0, 0, 6, 1);
+		world.finishBuild();
 
-		auto const crew = authorCrew(building, frontRoom, backRoom);
-		auto const crewTop = building.createAgent("Top floor hand", doomedRoom, 0, 1.0f);
-		assign(building, crewTop, crew.crew);
+		auto const crew = authorCrew(world, frontRoom, backRoom);
+		auto const crewTop = world.createAgent("Top floor hand", doomedRoom, 0, 1.0f);
+		assign(world, crewTop, crew.crew);
 
 		auto const before = expectedOf(crew);
 		auto const beforeWithTop = [&crew, crewTop]()
@@ -306,76 +306,76 @@ namespace
 			expected.push_back({ crewTop, crew.crew });
 			return expected;
 		}();
-		expectAssignments(building, beforeWithTop, bothGroups(crew),
+		expectAssignments(world, beforeWithTop, bothGroups(crew),
 			"before a Layer deletion");
-		require(building.getAgentGroupMemberCount(crew.crew) == 3,
+		require(world.getAgentGroupMemberCount(crew.crew) == 3,
 			"The fixture did not put three Agents in the Crew group");
 
-		building.pauseSimulation();
-		auto const plan = building.planDeleteLayer(2);
+		world.pauseSimulation();
+		auto const plan = world.planDeleteLayer(2);
 		require(plan.valid, "The Layer deletion plan was refused: " + plan.diagnostic);
-		require(building.applyDeleteLayer(plan), "The Layer deletion was not applied");
+		require(world.applyDeleteLayer(plan), "The Layer deletion was not applied");
 
-		requireGone(building, crewTop, "after a Layer deletion");
-		requireHere(building, crew.crewFront, "after a Layer deletion");
-		requireHere(building, crew.crewBack, "after a Layer deletion");
+		requireGone(world, crewTop, "after a Layer deletion");
+		requireHere(world, crew.crewFront, "after a Layer deletion");
+		requireHere(world, crew.crewBack, "after a Layer deletion");
 		// The deleted Agent is not counted: the group's live count is its
 		// surviving members, not its former ones.
-		expectAssignments(building, before, bothGroups(crew), "after a Layer deletion");
-		require(building.getAgentGroupMemberCount(crew.crew) == 2,
+		expectAssignments(world, before, bothGroups(crew), "after a Layer deletion");
+		require(world.getAgentGroupMemberCount(crew.crew) == 2,
 			"The Crew group still counts an Agent its Layer deleted");
 	}
 
 	// Path 3: Door removal.
 	void doorRemovalKeepsEveryAssignment()
 	{
-		core::Building building("Door removal", 12, 3);
-		while (building.getLayerCount() < 2) building.addLayer();
-		auto const frontRoom = building.addRoom("Front room", 0, 0, 0, 8, 1);
-		auto const backRoom = building.addRoom("Back room", 1, 0, 0, 8, 1);
-		auto const door = building.addSectorDoor(0, 0, 3);
-		building.finishBuild();
+		core::World world("Door removal", 12, 3);
+		while (world.getLayerCount() < 2) world.addLayer();
+		auto const frontRoom = world.addRoom("Front room", 0, 0, 0, 8, 1);
+		auto const backRoom = world.addRoom("Back room", 1, 0, 0, 8, 1);
+		auto const door = world.addSectorDoor(0, 0, 3);
+		world.finishBuild();
 
-		auto const crew = authorCrew(building, frontRoom, backRoom);
-		expectAssignments(building, expectedOf(crew), bothGroups(crew),
+		auto const crew = authorCrew(world, frontRoom, backRoom);
+		expectAssignments(world, expectedOf(crew), bothGroups(crew),
 			"before a Door removal");
 
-		building.pauseSimulation();
-		require(building.removeSectorDoor(door.door.sector->getIndex(), door.door.index),
+		world.pauseSimulation();
+		require(world.removeSectorDoor(door.door.sector->getIndex(), door.door.index),
 			"The Door could not be removed");
 
-		requireHere(building, crew.crewFront, "after a Door removal");
-		requireHere(building, crew.crewBack, "after a Door removal");
-		requireHere(building, crew.gangBack, "after a Door removal");
-		requireHere(building, crew.ungrouped, "after a Door removal");
-		expectAssignments(building, expectedOf(crew), bothGroups(crew),
+		requireHere(world, crew.crewFront, "after a Door removal");
+		requireHere(world, crew.crewBack, "after a Door removal");
+		requireHere(world, crew.gangBack, "after a Door removal");
+		requireHere(world, crew.ungrouped, "after a Door removal");
+		expectAssignments(world, expectedOf(crew), bothGroups(crew),
 			"after a Door removal");
 	}
 
 	// Path 4: Window removal.
 	void windowRemovalKeepsEveryAssignment()
 	{
-		core::Building building("Window removal", 12, 3);
-		while (building.getLayerCount() < 3) building.addLayer();
-		auto const frontRoom = building.addRoom("Front room", 0, 0, 0, 8, 1);
-		auto const backRoom = building.addRoom("Back room", 1, 0, 0, 8, 1);
-		building.addRoom("Cellar", 2, 0, 0, 8, 1);
-		auto const window = building.addSectorWindow(1, 0, 5, 1, 1, { true });
-		building.finishBuild();
+		core::World world("Window removal", 12, 3);
+		while (world.getLayerCount() < 3) world.addLayer();
+		auto const frontRoom = world.addRoom("Front room", 0, 0, 0, 8, 1);
+		auto const backRoom = world.addRoom("Back room", 1, 0, 0, 8, 1);
+		world.addRoom("Cellar", 2, 0, 0, 8, 1);
+		auto const window = world.addSectorWindow(1, 0, 5, 1, 1, { true });
+		world.finishBuild();
 
-		auto const crew = authorCrew(building, frontRoom, backRoom);
-		expectAssignments(building, expectedOf(crew), bothGroups(crew),
+		auto const crew = authorCrew(world, frontRoom, backRoom);
+		expectAssignments(world, expectedOf(crew), bothGroups(crew),
 			"before a Window removal");
 
-		building.pauseSimulation();
-		require(building.removeSectorWindow(window.window.sector->getIndex(), window.window.index),
+		world.pauseSimulation();
+		require(world.removeSectorWindow(window.window.sector->getIndex(), window.window.index),
 			"The Window could not be removed");
 
-		requireHere(building, crew.crewFront, "after a Window removal");
-		requireHere(building, crew.crewBack, "after a Window removal");
-		requireHere(building, crew.gangBack, "after a Window removal");
-		requireHere(building, crew.ungrouped, "after a Window removal");
-		expectAssignments(building, expectedOf(crew), bothGroups(crew),
+		requireHere(world, crew.crewFront, "after a Window removal");
+		requireHere(world, crew.crewBack, "after a Window removal");
+		requireHere(world, crew.gangBack, "after a Window removal");
+		requireHere(world, crew.ungrouped, "after a Window removal");
+		expectAssignments(world, expectedOf(crew), bothGroups(crew),
 			"after a Window removal");
 	}
 
@@ -383,30 +383,30 @@ namespace
 	// are rebuilt where they were and come back assigned as they were.
 	void objectMovementKeepsEveryAssignment()
 	{
-		core::Building building("Object movement", 12, 4);
-		while (building.getLayerCount() < 2) building.addLayer();
-		auto const frontRoom = building.addRoom("Front room", 0, 0, 0, 4, 3);
-		auto const backRoom = building.addRoom("Back room", 1, 0, 0, 4, 3);
-		auto const walkway = building.addSectorWalkway(frontRoom, 1, 1);
-		building.finishBuild();
+		core::World world("Object movement", 12, 4);
+		while (world.getLayerCount() < 2) world.addLayer();
+		auto const frontRoom = world.addRoom("Front room", 0, 0, 0, 4, 3);
+		auto const backRoom = world.addRoom("Back room", 1, 0, 0, 4, 3);
+		auto const walkway = world.addSectorWalkway(frontRoom, 1, 1);
+		world.finishBuild();
 
-		auto const crew = authorCrew(building, frontRoom, backRoom);
-		expectAssignments(building, expectedOf(crew), bothGroups(crew),
+		auto const crew = authorCrew(world, frontRoom, backRoom);
+		expectAssignments(world, expectedOf(crew), bothGroups(crew),
 			"before an object move");
 
-		building.pauseSimulation();
-		auto const plan = building.planMoveSectorObject(frontRoom, walkway.index, 2, 1);
+		world.pauseSimulation();
+		auto const plan = world.planMoveSectorObject(frontRoom, walkway.index, 2, 1);
 		require(plan.valid, "The object move plan was refused: " + plan.diagnostic);
-		auto const moved = building.applyObjectMove(plan);
+		auto const moved = world.applyObjectMove(plan);
 		require(moved != nullptr, "The object move produced no object");
 		require(moved->getCellX() == 2 && moved->getCellY() == 1,
 			"The object did not move to the planned cell");
 
-		requireHere(building, crew.crewFront, "after an object move");
-		requireHere(building, crew.crewBack, "after an object move");
-		requireHere(building, crew.gangBack, "after an object move");
-		requireHere(building, crew.ungrouped, "after an object move");
-		expectAssignments(building, expectedOf(crew), bothGroups(crew),
+		requireHere(world, crew.crewFront, "after an object move");
+		requireHere(world, crew.crewBack, "after an object move");
+		requireHere(world, crew.gangBack, "after an object move");
+		requireHere(world, crew.ungrouped, "after an object move");
+		expectAssignments(world, expectedOf(crew), bothGroups(crew),
 			"after an object move");
 	}
 
@@ -416,32 +416,32 @@ namespace
 	// assignment.
 	void locationEditingKeepsEveryAssignment()
 	{
-		core::Building building("Location editing", 12, 3);
-		while (building.getLayerCount() < 2) building.addLayer();
-		auto const frontRoom = building.addRoom("Front room", 0, 0, 0, 4, 1);
-		auto const backRoom = building.addRoom("Back room", 1, 0, 0, 4, 1);
-		building.finishBuild();
+		core::World world("Location editing", 12, 3);
+		while (world.getLayerCount() < 2) world.addLayer();
+		auto const frontRoom = world.addRoom("Front room", 0, 0, 0, 4, 1);
+		auto const backRoom = world.addRoom("Back room", 1, 0, 0, 4, 1);
+		world.finishBuild();
 
-		auto const crew = authorCrew(building, frontRoom, backRoom);
-		expectAssignments(building, expectedOf(crew), bothGroups(crew),
+		auto const crew = authorCrew(world, frontRoom, backRoom);
+		expectAssignments(world, expectedOf(crew), bothGroups(crew),
 			"before a Location move");
 
-		building.pauseSimulation();
-		auto const plan = building.planResizeLocation(frontRoom, 6, 0, 4, 1);
+		world.pauseSimulation();
+		auto const plan = world.planResizeLocation(frontRoom, 6, 0, 4, 1);
 		require(plan.valid, "The Location move plan was refused: " + plan.diagnostic);
 		require(plan.move, "The plan did not read as a move, so it would not exercise the shift");
-		building.applyLocationEdit(plan);
+		world.applyLocationEdit(plan);
 
-		requireHere(building, crew.crewFront, "after a Location move");
-		requireHere(building, crew.crewBack, "after a Location move");
-		requireHere(building, crew.gangBack, "after a Location move");
-		requireHere(building, crew.ungrouped, "after a Location move");
+		requireHere(world, crew.crewFront, "after a Location move");
+		requireHere(world, crew.crewBack, "after a Location move");
+		requireHere(world, crew.gangBack, "after a Location move");
+		requireHere(world, crew.ungrouped, "after a Location move");
 		// The Agents that were in the moved Room came along with it, and are
 		// still in the same groups they were in before it moved.
-		expectAssignments(building, expectedOf(crew), bothGroups(crew),
+		expectAssignments(world, expectedOf(crew), bothGroups(crew),
 			"after a Location move");
 
-		auto const movedRoom = building.getSectorAtPosition(0, 7.5f, 0.5f);
+		auto const movedRoom = world.getSectorAtPosition(0, 7.5f, 0.5f);
 		require(movedRoom != nullptr, "The moved Room cannot be found where it was placed");
 		auto const carried = movedRoom->getAgents();
 		require(carried.size() == 2,
@@ -449,100 +449,100 @@ namespace
 	}
 
 	// Path 7: Background editing. Nothing walks a Background, but editing one
-	// replays every other Sector and every Agent in the Building.
+	// replays every other Sector and every Agent in the World.
 	void backgroundEditingKeepsEveryAssignment()
 	{
-		core::Building building("Background editing", 12, 3);
-		while (building.getLayerCount() < 3) building.addLayer();
-		auto const frontRoom = building.addRoom("Front room", 0, 0, 0, 4, 1);
-		auto const backRoom = building.addRoom("Back room", 1, 0, 0, 4, 1);
-		auto const background = building.addBackground(2, 0, 0, 4, 1, { 10, 20, 30 });
-		building.finishBuild();
+		core::World world("Background editing", 12, 3);
+		while (world.getLayerCount() < 3) world.addLayer();
+		auto const frontRoom = world.addRoom("Front room", 0, 0, 0, 4, 1);
+		auto const backRoom = world.addRoom("Back room", 1, 0, 0, 4, 1);
+		auto const background = world.addBackground(2, 0, 0, 4, 1, { 10, 20, 30 });
+		world.finishBuild();
 
-		auto const crew = authorCrew(building, frontRoom, backRoom);
-		expectAssignments(building, expectedOf(crew), bothGroups(crew),
+		auto const crew = authorCrew(world, frontRoom, backRoom);
+		expectAssignments(world, expectedOf(crew), bothGroups(crew),
 			"before a Background edit");
 
-		building.pauseSimulation();
-		auto const plan = building.planResizeBackground(background, 0, 0, 6, 1);
+		world.pauseSimulation();
+		auto const plan = world.planResizeBackground(background, 0, 0, 6, 1);
 		require(plan.valid, "The Background resize plan was refused: " + plan.diagnostic);
-		building.applyBackgroundEdit(plan);
+		world.applyBackgroundEdit(plan);
 
-		requireHere(building, crew.crewFront, "after a Background edit");
-		requireHere(building, crew.crewBack, "after a Background edit");
-		requireHere(building, crew.gangBack, "after a Background edit");
-		requireHere(building, crew.ungrouped, "after a Background edit");
-		expectAssignments(building, expectedOf(crew), bothGroups(crew),
+		requireHere(world, crew.crewFront, "after a Background edit");
+		requireHere(world, crew.crewBack, "after a Background edit");
+		requireHere(world, crew.gangBack, "after a Background edit");
+		requireHere(world, crew.ungrouped, "after a Background edit");
+		expectAssignments(world, expectedOf(crew), bothGroups(crew),
 			"after a Background edit");
 	}
 
 	// The assignments the edit left behind have to survive the file: the saved
-	// document carries them, and a reopen agrees with the live Building about
+	// document carries them, and a reopen agrees with the live World about
 	// every Agent and every count.
 	void anEditSurvivesSavingAndReopening()
 	{
-		core::Building building("Save and reopen", 12, 3);
-		while (building.getLayerCount() < 2) building.addLayer();
-		auto const frontRoom = building.addRoom("Front room", 0, 0, 0, 4, 1);
-		auto const backRoom = building.addRoom("Back room", 1, 0, 0, 4, 1);
-		building.finishBuild();
+		core::World world("Save and reopen", 12, 3);
+		while (world.getLayerCount() < 2) world.addLayer();
+		auto const frontRoom = world.addRoom("Front room", 0, 0, 0, 4, 1);
+		auto const backRoom = world.addRoom("Back room", 1, 0, 0, 4, 1);
+		world.finishBuild();
 
-		auto const crew = authorCrew(building, frontRoom, backRoom);
-		building.pauseSimulation();
-		auto const plan = building.planResizeLocation(frontRoom, 6, 0, 4, 1);
+		auto const crew = authorCrew(world, frontRoom, backRoom);
+		world.pauseSimulation();
+		auto const plan = world.planResizeLocation(frontRoom, 6, 0, 4, 1);
 		require(plan.valid, "The Location move plan was refused: " + plan.diagnostic);
-		building.applyLocationEdit(plan);
-		expectAssignments(building, expectedOf(crew), bothGroups(crew),
+		world.applyLocationEdit(plan);
+		expectAssignments(world, expectedOf(crew), bothGroups(crew),
 			"after the edit, before saving");
 
-		auto const reopened = loadBuilding(serializeBuilding(building));
+		auto const reopened = loadWorld(serializeWorld(world));
 		reopened->pauseSimulation();
-		// The reopened Building holds the same Agents under the same IDs, so
+		// The reopened World holds the same Agents under the same IDs, so
 		// the expectation above is the expectation for it too.
 		require(reopened->lookupAgent(crew.crewFront).entity != nullptr,
-			"The reopened Building lost an Agent the edit kept");
+			"The reopened World lost an Agent the edit kept");
 		require(reopened->lookupAgent(crew.ungrouped).entity != nullptr,
-			"The reopened Building lost the ungrouped Agent the edit kept");
+			"The reopened World lost the ungrouped Agent the edit kept");
 		expectAssignments(*reopened, expectedOf(crew), bothGroups(crew),
-			"after saving and reopening the edited Building");
+			"after saving and reopening the edited World");
 	}
 
 	// The editor's undo and redo over a topology edit. The snapshot taken
 	// before the edit is what undo restores, so both sides of the history have
-	// to agree with the live Building about every assignment.
+	// to agree with the live World about every assignment.
 	void anEditSurvivesUndoAndRedo()
 	{
 		resetUndoHistory();
-		auto building = std::make_shared<core::Building>("Undo and redo", 12, 3);
-		while (building->getLayerCount() < 2) building->addLayer();
-		auto const frontRoom = building->addRoom("Front room", 0, 0, 0, 4, 1);
-		auto const backRoom = building->addRoom("Back room", 1, 0, 0, 4, 1);
-		building->finishBuild();
+		auto world = std::make_shared<core::World>("Undo and redo", 12, 3);
+		while (world->getLayerCount() < 2) world->addLayer();
+		auto const frontRoom = world->addRoom("Front room", 0, 0, 0, 4, 1);
+		auto const backRoom = world->addRoom("Back room", 1, 0, 0, 4, 1);
+		world->finishBuild();
 
-		auto const crew = authorCrew(*building, frontRoom, backRoom);
-		building->pauseSimulation();
+		auto const crew = authorCrew(*world, frontRoom, backRoom);
+		world->pauseSimulation();
 
-		auto const snapshot = captureDocumentSnapshot(building);
+		auto const snapshot = captureDocumentSnapshot(world);
 		require(snapshot.has_value(), "The editor snapshot before the edit could not be captured");
-		auto const plan = building->planResizeLocation(frontRoom, 6, 0, 4, 1);
+		auto const plan = world->planResizeLocation(frontRoom, 6, 0, 4, 1);
 		require(plan.valid, "The Location move plan was refused: " + plan.diagnostic);
-		building->applyLocationEdit(plan);
+		world->applyLocationEdit(plan);
 		commitDocumentEdit(snapshot);
-		require(gBuildingDocumentHistory.undoCount() == 1, "The topology edit did not commit one undo entry");
-		require(!gBuildingDocumentHistory.canRedo(), "The topology edit produced a redo entry");
-		expectAssignments(*building, expectedOf(crew), bothGroups(crew),
+		require(gWorldDocumentHistory.undoCount() == 1, "The topology edit did not commit one undo entry");
+		require(!gWorldDocumentHistory.canRedo(), "The topology edit produced a redo entry");
+		expectAssignments(*world, expectedOf(crew), bothGroups(crew),
 			"after the edit, before undoing it");
 
-		restoreDocument(building, false);
-		requireHere(*building, crew.crewFront, "after undoing the edit");
-		requireHere(*building, crew.ungrouped, "after undoing the edit");
-		expectAssignments(*building, expectedOf(crew), bothGroups(crew),
+		restoreDocument(world, false);
+		requireHere(*world, crew.crewFront, "after undoing the edit");
+		requireHere(*world, crew.ungrouped, "after undoing the edit");
+		expectAssignments(*world, expectedOf(crew), bothGroups(crew),
 			"after undoing the topology edit");
 
-		restoreDocument(building, true);
-		requireHere(*building, crew.crewFront, "after redoing the edit");
-		requireHere(*building, crew.ungrouped, "after redoing the edit");
-		expectAssignments(*building, expectedOf(crew), bothGroups(crew),
+		restoreDocument(world, true);
+		requireHere(*world, crew.crewFront, "after redoing the edit");
+		requireHere(*world, crew.ungrouped, "after redoing the edit");
+		expectAssignments(*world, expectedOf(crew), bothGroups(crew),
 			"after redoing the topology edit");
 		resetUndoHistory();
 	}

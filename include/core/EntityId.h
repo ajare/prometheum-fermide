@@ -6,7 +6,7 @@
 namespace core
 {
 	// Every entity category has its own ID type. Zero is always the null handle;
-	// live IDs are monotonically allocated by the owning Building and never reused.
+	// live IDs are monotonically allocated by the owning World and never reused.
 	#define CORE_DEFINE_ENTITY_ID(TypeName) \
 		struct TypeName \
 		{ \

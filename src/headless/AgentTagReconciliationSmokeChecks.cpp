@@ -1,4 +1,4 @@
-// Closed-Building Agent tag registry reconciliation, ticket #138.
+// Closed-World Agent tag registry reconciliation, ticket #138.
 
 #include <chrono>
 #include <cmath>
@@ -16,7 +16,7 @@
 #include "core/Agent.h"
 #include "core/AgentTagRegistry.h"
 #include "core/AgentTagRegistryDocument.h"
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/SerializationWorkData.h"
 #include "core/YamlSerializer.h"
 
@@ -49,12 +49,12 @@ namespace
 		}
 	};
 
-	std::string serializeBuilding(core::Building const& building)
+	std::string serializeWorld(core::World const& world)
 	{
 		auto writer = core::YamlSerializer::toString();
 		core::SerializationWorkData work;
 		work.markSerializedUnmodified = false;
-		building.serialize(*writer, work);
+		world.serialize(*writer, work);
 		writer->serialize();
 		return writer->getSerializedString();
 	}
@@ -83,16 +83,16 @@ namespace
 		if (!output) throw std::runtime_error("Could not write reconciliation fixture");
 	}
 
-	void validClosedBuildingEvolutionIsReconciled()
+	void validClosedWorldEvolutionIsReconciled()
 	{
 		TemporaryDirectory temporary("valid");
-		auto const buildingPath = temporary.path / "station.yaml";
-		auto const evolverPath = temporary.path / "evolver.yaml";
-		auto source = std::make_shared<core::Building>("Closed station", 10, 3);
+		auto const worldPath = temporary.path / "station.world.yaml";
+		auto const evolverPath = temporary.path / "evolver.world.yaml";
+		auto source = std::make_shared<core::World>("Closed station", 10, 3);
 		auto const corridor = source->addCorridor(0, 0, 9);
 		source->finishBuild();
-		source->saveTo(buildingPath.string());
-		auto registry = core::createAndAttachAgentTagRegistry(*source, buildingPath);
+		source->saveTo(worldPath.string());
+		auto registry = core::createAndAttachAgentTagRegistry(*source, worldPath);
 		source->pauseSimulation();
 
 		auto const stale = registry->addAgentTag("stale");
@@ -124,11 +124,11 @@ namespace
 		auto const unchangedCarolWalk = *source->lookupAgent(carol).entity
 			->getWalkSpeedModifierSample();
 		registry->saveTo((temporary.path / "station.tags.yaml").string());
-		source->saveTo(buildingPath.string());
+		source->saveTo(worldPath.string());
 
-		// Keep the shared registry open through another Building while the tagged
-		// Building is closed, matching the user workflow in the ticket.
-		auto evolver = std::make_shared<core::Building>("Registry editor", 4, 2);
+		// Keep the shared registry open through another World while the tagged
+		// World is closed, matching the user workflow in the ticket.
+		auto evolver = std::make_shared<core::World>("Registry editor", 4, 2);
 		evolver->saveTo(evolverPath.string());
 		auto shared = core::selectAndAttachAgentTagRegistry(
 			*evolver, evolverPath, temporary.path / "station.tags.yaml");
@@ -148,9 +148,9 @@ namespace
 			unrelated, { 12, 34, 56 }, &diagnostic), diagnostic);
 		registry->saveTo((temporary.path / "station.tags.yaml").string());
 
-		auto reopened = core::loadBuildingDocument(buildingPath);
+		auto reopened = core::loadWorldDocument(worldPath);
 		require(reopened->isModified(),
-			"Repairing closed-Building samples did not mark the Building modified");
+			"Repairing closed-World samples did not mark the World modified");
 		auto const* reopenedAlice = reopened->lookupAgent(alice).entity;
 		auto const* reopenedBob = reopened->lookupAgent(bob).entity;
 		auto const* reopenedCarol = reopened->lookupAgent(carol).entity;
@@ -175,12 +175,12 @@ namespace
 			&& registry->getAgentTagName(unrelated) == "renamed",
 			"A tag rename or Colour-only edit resampled an unrelated modifier");
 
-		// Once the repaired Building is saved, another open is stable and clean.
+		// Once the repaired World is saved, another open is stable and clean.
 		auto const repairedAliceWalk = *aliceWalk;
 		auto const repairedAliceHeight = *aliceHeight;
-		reopened->saveTo(buildingPath.string());
+		reopened->saveTo(worldPath.string());
 		reopened.reset();
-		auto stable = core::loadBuildingDocument(buildingPath);
+		auto stable = core::loadWorldDocument(worldPath);
 		require(!stable->isModified()
 			&& stable->lookupAgent(alice).entity->getWalkSpeedModifierSample()
 				== std::optional<core::AgentPropertySample>{ repairedAliceWalk }
@@ -192,23 +192,23 @@ namespace
 	struct RefusalFixture
 	{
 		TemporaryDirectory temporary;
-		std::filesystem::path buildingPath;
+		std::filesystem::path worldPath;
 		std::filesystem::path registryPath;
-		std::shared_ptr<core::Building> current;
+		std::shared_ptr<core::World> current;
 		std::shared_ptr<core::AgentTagRegistry> registry;
 		core::AgentTagId primary{};
 		core::AgentTagId secondary{};
 
 		explicit RefusalFixture(std::string const& purpose)
 			: temporary(purpose)
-			, buildingPath(temporary.path / "closed.yaml")
+			, worldPath(temporary.path / "closed.world.yaml")
 			, registryPath(temporary.path / "closed.tags.yaml")
 		{
-			auto closed = std::make_shared<core::Building>("Closed invalid", 8, 2);
+			auto closed = std::make_shared<core::World>("Closed invalid", 8, 2);
 			auto const corridor = closed->addCorridor(0, 0, 7);
 			closed->finishBuild();
-			closed->saveTo(buildingPath.string());
-			registry = core::createAndAttachAgentTagRegistry(*closed, buildingPath);
+			closed->saveTo(worldPath.string());
+			registry = core::createAndAttachAgentTagRegistry(*closed, worldPath);
 			closed->pauseSimulation();
 			primary = registry->addAgentTag("primary");
 			secondary = registry->addAgentTag("secondary");
@@ -220,12 +220,12 @@ namespace
 			require(closed->assignAgentTag(alice, primary, &diagnostic)
 				&& closed->assignAgentTag(alice, secondary, &diagnostic), diagnostic);
 			registry->saveTo(registryPath.string());
-			closed->saveTo(buildingPath.string());
+			closed->saveTo(worldPath.string());
 
-			// This Building is the pre-existing registry-manager participant whose
+			// This World is the pre-existing registry-manager participant whose
 			// state every refused open must preserve.
-			current = std::make_shared<core::Building>("Current work", 5, 2);
-			auto const currentPath = temporary.path / "current.yaml";
+			current = std::make_shared<core::World>("Current work", 5, 2);
+			auto const currentPath = temporary.path / "current.world.yaml";
 			current->saveTo(currentPath.string());
 			auto shared = core::selectAndAttachAgentTagRegistry(
 				*current, currentPath, registryPath);
@@ -235,31 +235,31 @@ namespace
 			closed.reset();
 		}
 
-		YAML::Node buildingYaml() const
+		YAML::Node worldYaml() const
 		{
-			return YAML::Load(readText(buildingPath));
+			return YAML::Load(readText(worldPath));
 		}
 
-		void writeBuilding(YAML::Node const& document)
+		void writeWorld(YAML::Node const& document)
 		{
-			writeText(buildingPath, YAML::Dump(document));
+			writeText(worldPath, YAML::Dump(document));
 		}
 
 		void expectRefusal(std::vector<std::string> const& diagnosticParts)
 		{
 			auto const* identity = current.get();
-			auto const buildingBefore = serializeBuilding(*current);
+			auto const worldBefore = serializeWorld(*current);
 			auto const registryBefore = serializeRegistry(*registry);
 			auto const registryModifiedBefore = registry->isModified();
-			auto const buildingModifiedBefore = current->isModified();
+			auto const worldModifiedBefore = current->isModified();
 			auto const usageBefore = registry->getLoadedAgentTagUsage(secondary);
-			require(usageBefore.size() == 1 && usageBefore.front().building == identity,
+			require(usageBefore.size() == 1 && usageBefore.front().world == identity,
 				"The refusal fixture began with unexpected registry-manager state");
 
 			std::string diagnostic;
 			try
 			{
-				current = core::loadBuildingDocument(buildingPath);
+				current = core::loadWorldDocument(worldPath);
 			}
 			catch (std::exception const& error)
 			{
@@ -273,12 +273,12 @@ namespace
 			}
 			auto const usageAfter = registry->getLoadedAgentTagUsage(secondary);
 			require(current.get() == identity
-				&& serializeBuilding(*current) == buildingBefore
+				&& serializeWorld(*current) == worldBefore
 				&& serializeRegistry(*registry) == registryBefore
-				&& current->isModified() == buildingModifiedBefore
+				&& current->isModified() == worldModifiedBefore
 				&& registry->isModified() == registryModifiedBefore
-				&& usageAfter.size() == 1 && usageAfter.front().building == identity,
-				"A refused open changed the prior Building or registry-manager state");
+				&& usageAfter.size() == 1 && usageAfter.front().world == identity,
+				"A refused open changed the prior World or registry-manager state");
 		}
 	};
 
@@ -286,9 +286,9 @@ namespace
 	{
 		{
 			RefusalFixture fixture("unknown");
-			auto document = fixture.buildingYaml();
+			auto document = fixture.worldYaml();
 			document["agents"][0]["agent"]["tags"].push_back(9999);
-			fixture.writeBuilding(document);
+			fixture.writeWorld(document);
 			fixture.expectRefusal({ "Alice", "9999" });
 		}
 		{
@@ -312,10 +312,10 @@ namespace
 		}
 		{
 			RefusalFixture fixture("wrong-source");
-			auto document = fixture.buildingYaml();
+			auto document = fixture.worldYaml();
 			document["agents"][0]["agent"]["propertySamples"][0]["sourceTag"]
 				= fixture.secondary.value;
-			fixture.writeBuilding(document);
+			fixture.writeWorld(document);
 			fixture.expectRefusal({ "Alice", "Walk speed modifier", "#secondary", "#primary" });
 		}
 	}
@@ -324,17 +324,17 @@ namespace
 	{
 		{
 			RefusalFixture fixture("non-finite");
-			auto document = fixture.buildingYaml();
+			auto document = fixture.worldYaml();
 			document["agents"][0]["agent"]["propertySamples"][0]["value"]
 				= std::numeric_limits<float>::quiet_NaN();
-			fixture.writeBuilding(document);
+			fixture.writeWorld(document);
 			fixture.expectRefusal({ "Alice", "non-finite", "Walk speed modifier", "#primary" });
 		}
 		{
 			RefusalFixture fixture("out-of-range");
-			auto document = fixture.buildingYaml();
+			auto document = fixture.worldYaml();
 			document["agents"][0]["agent"]["propertySamples"][0]["value"] = 1.2f;
-			fixture.writeBuilding(document);
+			fixture.writeWorld(document);
 			fixture.expectRefusal({ "Alice", "current-revision", "Walk speed modifier",
 				"#primary", "outside" });
 		}
@@ -343,7 +343,7 @@ namespace
 
 void runAgentTagReconciliationSmokeChecks()
 {
-	validClosedBuildingEvolutionIsReconciled();
+	validClosedWorldEvolutionIsReconciled();
 	unknownAndDeletedTagsAreRefused();
 	inheritedConflictAndWrongSourceAreRefused();
 	invalidCurrentRevisionValuesAreRefused();

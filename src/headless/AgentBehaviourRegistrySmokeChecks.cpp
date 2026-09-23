@@ -14,7 +14,7 @@
 #include "imgui/imgui.h"
 #include "core/AgentBehaviourRegistry.h"
 #include "core/AgentBehaviourRegistryDocument.h"
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/Log.h"
 #include "core/YamlSerializer.h"
 
@@ -59,24 +59,24 @@ namespace
 		if (!output) throw std::runtime_error("Could not write behaviour package fixture");
 	}
 
-	std::string serializeBuilding(core::Building const& building)
+	std::string serializeWorld(core::World const& world)
 	{
 		auto writer = core::YamlSerializer::toString();
 		core::SerializationWorkData workData;
 		workData.markSerializedUnmodified = false;
-		building.serialize(*writer, workData);
+		world.serialize(*writer, workData);
 		writer->serialize();
 		return writer->getSerializedString();
 	}
 
-	std::shared_ptr<core::Building> loadBuilding(std::filesystem::path const& path)
+	std::shared_ptr<core::World> loadWorld(std::filesystem::path const& path)
 	{
-		auto loaded = std::make_shared<core::Building>("Loading", 1, 1);
+		auto loaded = std::make_shared<core::World>("Loading", 1, 1);
 		loaded->pauseSimulation();
 		auto reader = core::YamlSerializer::fromFile(path.string());
 		reader->deserialize();
 		core::SerializationWorkData workData;
-		require(loaded->deserialize(*reader, workData), "The Building did not reload");
+		require(loaded->deserialize(*reader, workData), "The World did not reload");
 		return loaded;
 	}
 
@@ -107,41 +107,41 @@ namespace
 		return schema;
 	}
 
-	void savedBuildingCreatesAndReopensAdjacentPackage()
+	void savedWorldCreatesAndReopensAdjacentPackage()
 	{
 		TemporaryDirectory temporary;
-		auto building = std::make_shared<core::Building>("Station", 4, 2);
-		building->pauseSimulation();
-		auto const buildingPath = temporary.path / "station.yaml";
+		auto world = std::make_shared<core::World>("Station", 4, 2);
+		world->pauseSimulation();
+		auto const worldPath = temporary.path / "station.world.yaml";
 
 		bool unsavedRefused{ false };
 		try
 		{
-			(void)core::createAndAttachAgentBehaviourRegistry(*building, buildingPath);
+			(void)core::createAndAttachAgentBehaviourRegistry(*world, worldPath);
 		}
 		catch (std::exception const& error)
 		{
 			unsavedRefused = std::string(error.what()).find("Save")
 				!= std::string::npos;
 		}
-		require(unsavedRefused && !building->hasAgentBehaviourRegistryReference(),
-			"Registry creation was enabled before the Building was saved");
+		require(unsavedRefused && !world->hasAgentBehaviourRegistryReference(),
+			"Registry creation was enabled before the World was saved");
 
-		building->saveTo(buildingPath.string());
-		auto registry = core::createAndAttachAgentBehaviourRegistry(*building, buildingPath);
+		world->saveTo(worldPath.string());
+		auto registry = core::createAndAttachAgentBehaviourRegistry(*world, worldPath);
 		auto const packageDirectory = temporary.path / "station.behaviours";
 		require(std::filesystem::is_directory(packageDirectory),
 			"The adjacent .behaviours package directory was not created");
 		require(std::filesystem::is_regular_file(manifestPath(packageDirectory)),
 			"The package manifest was not created");
-		require(building->hasAgentBehaviourRegistryReference()
-			&& building->hasAttachedAgentBehaviourRegistry(),
-			"The new registry was not attached to the Building");
-		require(building->getAgentBehaviourRegistryPackageName() == "station.behaviours",
-			"The Building did not retain a package-directory basename reference");
-		require(building->getExpectedAgentBehaviourRegistryUuid() == registry->getUuid()
+		require(world->hasAgentBehaviourRegistryReference()
+			&& world->hasAttachedAgentBehaviourRegistry(),
+			"The new registry was not attached to the World");
+		require(world->getAgentBehaviourRegistryPackageName() == "station.behaviours",
+			"The World did not retain a package-directory basename reference");
+		require(world->getExpectedAgentBehaviourRegistryUuid() == registry->getUuid()
 			&& core::AgentBehaviourRegistry::uuidIsValid(registry->getUuid()),
-			"The Building did not retain the registry's stable UUID");
+			"The World did not retain the registry's stable UUID");
 		require(registry->getNextBehaviourId() == 1 && registry->getBehaviourCount() == 0,
 			"A new registry did not start its allocator at one with no behaviours");
 
@@ -154,14 +154,14 @@ namespace
 
 		// Persist the attachment, then model closing both documents and reopening
 		// through the same core workflow used by the GUI.
-		building->saveTo(buildingPath.string());
-		auto const buildingYaml = readText(buildingPath);
-		require(buildingYaml.find("version: 14") != std::string::npos
-			&& buildingYaml.find("package: station.behaviours") != std::string::npos
-			&& buildingYaml.find("expectedUuid: " + registry->getUuid()) != std::string::npos,
-			"The Building did not persist its version-12 registry reference");
+		world->saveTo(worldPath.string());
+		auto const worldYaml = readText(worldPath);
+		require(worldYaml.find("version: 14") != std::string::npos
+			&& worldYaml.find("package: station.behaviours") != std::string::npos
+			&& worldYaml.find("expectedUuid: " + registry->getUuid()) != std::string::npos,
+			"The World did not persist its version-12 registry reference");
 
-		auto reopened = core::loadBuildingDocument(buildingPath);
+		auto reopened = core::loadWorldDocument(worldPath);
 		require(reopened->hasAgentBehaviourRegistryReference()
 			&& reopened->hasAttachedAgentBehaviourRegistry(),
 			"The referenced empty registry did not survive close and reopen");
@@ -171,9 +171,9 @@ namespace
 		// Replacing the manifest must not silently reinterpret the reference.
 		auto replacement = core::AgentBehaviourRegistry::create();
 		replacement->saveTo(manifestPath(packageDirectory).string());
-		auto substituted = loadBuilding(buildingPath);
+		auto substituted = loadWorld(worldPath);
 		auto unresolved = core::loadAndAttachAgentBehaviourRegistry(
-			*substituted, buildingPath);
+			*substituted, worldPath);
 		require(!unresolved && !substituted->hasAttachedAgentBehaviourRegistry()
 			&& !substituted->agentBehaviourConfigurationsAreValid()
 			&& substituted->getAgentBehaviourDependencyDiagnostic().find("UUID mismatch")
@@ -181,31 +181,31 @@ namespace
 			"A substituted registry did not leave a recoverable dependency diagnostic");
 	}
 
-	void olderBuildingWithoutReferenceStillLoads()
+	void olderWorldWithoutReferenceStillLoads()
 	{
-		core::Building source("Legacy", 4, 2);
+		core::World source("Legacy", 4, 2);
 		source.pauseSimulation();
-		auto yaml = serializeBuilding(source);
+		auto yaml = serializeWorld(source);
 		auto const version = yaml.find("version: 14");
-		require(version != std::string::npos, "The current Building schema was not version 14");
+		require(version != std::string::npos, "The current World schema was not version 14");
 		yaml.replace(version, std::string("version: 14").size(), "version: 12");
 
-		auto loaded = std::make_shared<core::Building>("Loading", 1, 1);
+		auto loaded = std::make_shared<core::World>("Loading", 1, 1);
 		loaded->pauseSimulation();
 		auto reader = core::YamlSerializer::fromString(yaml);
 		reader->deserialize();
 		core::SerializationWorkData workData;
-		require(loaded->deserialize(*reader, workData), "A version-12 Building did not load");
+		require(loaded->deserialize(*reader, workData), "A version-12 World did not load");
 		require(!loaded->hasAgentBehaviourRegistryReference()
 			&& !loaded->hasAttachedAgentBehaviourRegistry(),
-			"An older Building invented an Agent behaviour registry");
+			"An older World invented an Agent behaviour registry");
 
 		// Readers cap out at their own version, so a future document is refused
 		// at the version boundary instead of dropping fields it does not know.
-		auto future = serializeBuilding(source);
+		auto future = serializeWorld(source);
 		auto const futureVersion = future.find("version: 14");
 		future.replace(futureVersion, std::string("version: 14").size(), "version: 15");
-		auto refused = std::make_shared<core::Building>("Loading", 1, 1);
+		auto refused = std::make_shared<core::World>("Loading", 1, 1);
 		refused->pauseSimulation();
 		auto futureReader = core::YamlSerializer::fromString(future);
 		futureReader->deserialize();
@@ -219,7 +219,7 @@ namespace
 			futureRefused = std::string(error.what()).find("Unsupported")
 				!= std::string::npos;
 		}
-		require(futureRefused, "A future Building version was not refused at the boundary");
+		require(futureRefused, "A future World version was not refused at the boundary");
 	}
 
 	void selectionEnforcesPackageNamingAndDirectory()
@@ -235,20 +235,20 @@ namespace
 		writeText(manifestPath(packageDirectory), emptyManifestYaml(registry->getUuid()));
 		registry->saveTo(manifestPath(packageDirectory).string());
 
-		auto building = std::make_shared<core::Building>("Selection", 4, 2);
-		building->pauseSimulation();
-		auto const buildingPath = project / "selection.yaml";
-		building->saveTo(buildingPath.string());
+		auto world = std::make_shared<core::World>("Selection", 4, 2);
+		world->pauseSimulation();
+		auto const worldPath = project / "selection.world.yaml";
+		world->saveTo(worldPath.string());
 		auto selected = core::selectAndAttachAgentBehaviourRegistry(
-			*building, buildingPath, packageDirectory);
-		require(building->getAgentBehaviourRegistryPackageName() == "shared.behaviours",
+			*world, worldPath, packageDirectory);
+		require(world->getAgentBehaviourRegistryPackageName() == "shared.behaviours",
 			"Selection did not store only the package directory name");
 		require(selected->getUuid() == registry->getUuid(),
 			"Selection attached a registry with the wrong UUID");
 
-		auto refused = std::make_shared<core::Building>("Refused selection", 4, 2);
+		auto refused = std::make_shared<core::World>("Refused selection", 4, 2);
 		refused->pauseSimulation();
-		auto const refusedPath = project / "refused.yaml";
+		auto const refusedPath = project / "refused.world.yaml";
 		refused->saveTo(refusedPath.string());
 		auto wrongNameDirectory = project / "registry";
 		std::filesystem::create_directories(wrongNameDirectory);
@@ -267,7 +267,7 @@ namespace
 		}
 		require(namingRefused && !refused->hasAgentBehaviourRegistryReference()
 			&& !refused->isModified(),
-			"A package with the wrong directory name disturbed the Building");
+			"A package with the wrong directory name disturbed the World");
 
 		auto outsideDirectory = otherProject / "outside.behaviours";
 		std::filesystem::create_directories(outsideDirectory);
@@ -286,7 +286,7 @@ namespace
 		}
 		require(directoryRefused && !refused->hasAgentBehaviourRegistryReference()
 			&& !refused->isModified(),
-			"A package outside the Building directory disturbed the Building");
+			"A package outside the World directory disturbed the World");
 	}
 
 	void canonicalPackagesShareOneInstanceAndSameNamesNeverMerge()
@@ -299,7 +299,7 @@ namespace
 
 		// Two independently authored packages declare a same-named behaviour.
 		// Canonical package identity must keep them distinct: sharing merges
-		// nothing, and each Building sees only its own package's definition.
+		// nothing, and each World sees only its own package's definition.
 		auto const firstYaml = ""
 			"  version: 1\n"
 			"  uuid: 123e4567-e89b-42d3-a456-426614174000\n"
@@ -325,12 +325,12 @@ namespace
 		writeText(secondPackage / "second.lua", "-- second\n");
 		writeText(secondPackage / "behaviours.yaml", secondYaml);
 
-		auto first = std::make_shared<core::Building>("First", 4, 2);
+		auto first = std::make_shared<core::World>("First", 4, 2);
 		first->pauseSimulation();
-		auto second = std::make_shared<core::Building>("Second", 4, 2);
+		auto second = std::make_shared<core::World>("Second", 4, 2);
 		second->pauseSimulation();
-		auto const firstPath = firstDirectory / "first.yaml";
-		auto const secondPath = secondDirectory / "second.yaml";
+		auto const firstPath = firstDirectory / "first.world.yaml";
+		auto const secondPath = secondDirectory / "second.world.yaml";
 		first->saveTo(firstPath.string());
 		second->saveTo(secondPath.string());
 
@@ -352,10 +352,10 @@ namespace
 			&& firstBehaviour->getSourceModulePath() == "first.lua"
 			&& secondBehaviour->getSourceModulePath() == "second.lua",
 			"Same-named behaviour definitions were merged across packages");
-		require(sharedFirst->hasLoadedBuilding(first.get())
-			&& distinct->hasLoadedBuilding(second.get())
-			&& !sharedFirst->hasLoadedBuilding(second.get()),
-			"Loaded registries did not track exactly their dependent Buildings");
+		require(sharedFirst->hasLoadedWorld(first.get())
+			&& distinct->hasLoadedWorld(second.get())
+			&& !sharedFirst->hasLoadedWorld(second.get()),
+			"Loaded registries did not track exactly their dependent Worlds");
 
 		first->saveTo(firstPath.string());
 		second->saveTo(secondPath.string());
@@ -364,11 +364,11 @@ namespace
 		sharedFirst.reset();
 		distinct.reset();
 
-		auto reopenedFirst = core::loadBuildingDocument(firstPath);
-		auto reopenedSecond = core::loadBuildingDocument(secondPath);
+		auto reopenedFirst = core::loadWorldDocument(firstPath);
+		auto reopenedSecond = core::loadWorldDocument(secondPath);
 		require(reopenedFirst->getAgentBehaviourRegistry()
 			!= reopenedSecond->getAgentBehaviourRegistry(),
-			"Two reopened Buildings sharing a behaviour name merged their registries");
+			"Two reopened Worlds sharing a behaviour name merged their registries");
 	}
 
 	void duplicateUuidAndInvalidPackagesAreTransactional()
@@ -387,12 +387,12 @@ namespace
 		std::filesystem::copy(sourcePackage, duplicatePackage,
 			std::filesystem::copy_options::recursive);
 
-		auto first = std::make_shared<core::Building>("First", 4, 2);
+		auto first = std::make_shared<core::World>("First", 4, 2);
 		first->pauseSimulation();
-		auto second = std::make_shared<core::Building>("Second", 4, 2);
+		auto second = std::make_shared<core::World>("Second", 4, 2);
 		second->pauseSimulation();
-		auto const firstPath = firstDirectory / "first.yaml";
-		auto const secondPath = secondDirectory / "second.yaml";
+		auto const firstPath = firstDirectory / "first.world.yaml";
+		auto const secondPath = secondDirectory / "second.world.yaml";
 		first->saveTo(firstPath.string());
 		second->saveTo(secondPath.string());
 		auto loadedFirst = core::selectAndAttachAgentBehaviourRegistry(
@@ -424,9 +424,9 @@ namespace
 		require(loadedSecond != loadedFirst,
 			"A duplicate-UUID refusal left a stale registry loaded at its path");
 
-		auto refused = std::make_shared<core::Building>("Refused", 4, 2);
+		auto refused = std::make_shared<core::World>("Refused", 4, 2);
 		refused->pauseSimulation();
-		auto const refusedPath = firstDirectory / "refused.yaml";
+		auto const refusedPath = firstDirectory / "refused.world.yaml";
 		refused->saveTo(refusedPath.string());
 		auto const brokenPackage = firstDirectory / "broken.behaviours";
 
@@ -452,12 +452,12 @@ namespace
 		};
 
 		std::string const validUuid = core::AgentBehaviourRegistry::create()->getUuid();
-		expectRefused("A malformed manifest disturbed the Building", [&]
+		expectRefused("A malformed manifest disturbed the World", [&]
 		{
 			std::filesystem::create_directories(brokenPackage);
 			writeText(manifestPath(brokenPackage), "agentBehaviourRegistry: [not valid");
 		}, "Could not load");
-		expectRefused("An unsupported manifest schema disturbed the Building", [&]
+		expectRefused("An unsupported manifest schema disturbed the World", [&]
 		{
 			writeText(manifestPath(brokenPackage), ""
 				"  version: 2\n"
@@ -465,7 +465,7 @@ namespace
 				"  nextBehaviourId: 1\n"
 				"  behaviours: []\n");
 		}, "Unsupported");
-		expectRefused("A missing manifest disturbed the Building", [&]
+		expectRefused("A missing manifest disturbed the World", [&]
 		{
 			std::filesystem::create_directories(brokenPackage);
 		}, "missing");
@@ -525,22 +525,22 @@ namespace
 		}, "unique");
 	}
 
-	void refusedBuildingLoadKeepsCurrentStateAndUnloadsCandidateRegistry()
+	void refusedWorldLoadKeepsCurrentStateAndUnloadsCandidateRegistry()
 	{
 		TemporaryDirectory temporary;
 		auto const sourceDirectory = temporary.path / "source";
 		auto const destinationDirectory = temporary.path / "destination";
 		std::filesystem::create_directories(sourceDirectory);
 		std::filesystem::create_directories(destinationDirectory);
-		auto const buildingPath = sourceDirectory / "referencing.yaml";
+		auto const worldPath = sourceDirectory / "referencing.world.yaml";
 		auto const packageDirectory = sourceDirectory / "referencing.behaviours";
 
 		{
-			auto persisted = std::make_shared<core::Building>("Persisted", 4, 2);
+			auto persisted = std::make_shared<core::World>("Persisted", 4, 2);
 		persisted->pauseSimulation();
-			persisted->saveTo(buildingPath.string());
-			(void)core::createAndAttachAgentBehaviourRegistry(*persisted, buildingPath);
-			persisted->saveTo(buildingPath.string());
+			persisted->saveTo(worldPath.string());
+			(void)core::createAndAttachAgentBehaviourRegistry(*persisted, worldPath);
+			persisted->saveTo(worldPath.string());
 		}
 
 		auto replacement = core::AgentBehaviourRegistry::create();
@@ -552,50 +552,50 @@ namespace
 			std::filesystem::copy_options::recursive);
 		replacement.reset();
 
-		auto current = core::loadBuildingDocument(buildingPath);
+		auto current = core::loadWorldDocument(worldPath);
 		require(current->getName() == "Persisted" && current->getCellsWide() == 4
 			&& current->hasAgentBehaviourRegistryReference()
 			&& !current->hasAttachedAgentBehaviourRegistry()
 			&& !current->agentBehaviourConfigurationsAreValid()
 			&& current->getAgentBehaviourDependencyDiagnostic().find("UUID mismatch")
 				!= std::string::npos,
-			"A substituted dependency prevented the structural Building from loading");
+			"A substituted dependency prevented the structural World from loading");
 
 		// The replacement was parsed solely for the recoverable load above. It must no
 		// longer count as loaded, so the same UUID at this independent path is valid.
-		auto destination = std::make_shared<core::Building>("Destination", 4, 2);
+		auto destination = std::make_shared<core::World>("Destination", 4, 2);
 		destination->pauseSimulation();
-		auto const destinationPath = destinationDirectory / "destination.yaml";
+		auto const destinationPath = destinationDirectory / "destination.world.yaml";
 		destination->saveTo(destinationPath.string());
 		auto selected = core::selectAndAttachAgentBehaviourRegistry(
 			*destination, destinationPath, copiedPackage);
 		require(selected->getUuid() == replacementUuid,
-			"A registry loaded only for a failed Building load remained referenced");
+			"A registry loaded only for a failed World load remained referenced");
 	}
 
 	void failedAndOccupiedCreationLeavesNoReferenceOrDirectory()
 	{
 		TemporaryDirectory temporary;
-		core::Building building("Atomic", 4, 2);
-		building.pauseSimulation();
-		auto const buildingPath = temporary.path / "atomic.yaml";
-		building.saveTo(buildingPath.string());
+		core::World world("Atomic", 4, 2);
+		world.pauseSimulation();
+		auto const worldPath = temporary.path / "atomic.world.yaml";
+		world.saveTo(worldPath.string());
 		auto const packageDirectory
-			= core::defaultAgentBehaviourRegistryPackagePath(buildingPath);
+			= core::defaultAgentBehaviourRegistryPackagePath(worldPath);
 
 		// No-clobber: an occupied default directory refuses before any write.
 		std::filesystem::create_directories(packageDirectory);
 		bool occupiedRefused{ false };
 		try
 		{
-			(void)core::createAndAttachAgentBehaviourRegistry(building, buildingPath);
+			(void)core::createAndAttachAgentBehaviourRegistry(world, worldPath);
 		}
 		catch (std::exception const& error)
 		{
 			occupiedRefused = std::string(error.what()).find("already exists")
 				!= std::string::npos;
 		}
-		require(occupiedRefused && !building.hasAgentBehaviourRegistryReference(),
+		require(occupiedRefused && !world.hasAgentBehaviourRegistryReference(),
 			"An occupied package directory did not refuse no-clobber creation");
 		std::filesystem::remove_all(packageDirectory);
 
@@ -603,7 +603,7 @@ namespace
 		bool refused{ false };
 		try
 		{
-			(void)core::createAndAttachAgentBehaviourRegistry(building, buildingPath);
+			(void)core::createAndAttachAgentBehaviourRegistry(world, worldPath);
 		}
 		catch (std::exception const&)
 		{
@@ -613,18 +613,18 @@ namespace
 		require(refused, "The injected manifest write failure was not reported");
 		require(!std::filesystem::exists(packageDirectory),
 			"A failed registry creation left a partial package directory");
-		require(!building.hasAgentBehaviourRegistryReference(),
+		require(!world.hasAgentBehaviourRegistryReference(),
 			"A failed registry creation attached a nonexistent registry");
 	}
 
 	void definitionsPersistWithSchemasRevisionsAndModulePaths()
 	{
 		TemporaryDirectory temporary;
-		auto building = std::make_shared<core::Building>("Definitions", 4, 2);
-		building->pauseSimulation();
-		auto const buildingPath = temporary.path / "definitions.yaml";
-		building->saveTo(buildingPath.string());
-		auto registry = core::createAndAttachAgentBehaviourRegistry(*building, buildingPath);
+		auto world = std::make_shared<core::World>("Definitions", 4, 2);
+		world->pauseSimulation();
+		auto const worldPath = temporary.path / "definitions.world.yaml";
+		world->saveTo(worldPath.string());
+		auto registry = core::createAndAttachAgentBehaviourRegistry(*world, worldPath);
 		auto const packageDirectory = temporary.path / "definitions.behaviours";
 		writeText(packageDirectory / "schedule.lua", "-- schedule\n");
 		writeText(packageDirectory / "wander.lua", "-- wander\n");
@@ -639,7 +639,7 @@ namespace
 			&& core::AgentBehaviour::nameIsValid("caf\xc3\xa9", &diagnostic),
 			"Agent behaviour names did not enforce trim, UTF-8, and 63-byte rules");
 
-		building->pauseSimulation();
+		world->pauseSimulation();
 		auto const schedule = registry->addAgentBehaviour(
 			"Schedule", "schedule.lua", scheduleSchema());
 		auto const wander = registry->addAgentBehaviour("Wander", "wander.lua", {});
@@ -716,12 +716,12 @@ namespace
 	void reloadValidatesAndSharesReplacementAcrossDependents()
 	{
 		TemporaryDirectory temporary;
-		auto first = std::make_shared<core::Building>("First", 4, 2);
+		auto first = std::make_shared<core::World>("First", 4, 2);
 		first->pauseSimulation();
-		auto second = std::make_shared<core::Building>("Second", 4, 2);
+		auto second = std::make_shared<core::World>("Second", 4, 2);
 		second->pauseSimulation();
-		auto const firstPath = temporary.path / "first.yaml";
-		auto const secondPath = temporary.path / "second.yaml";
+		auto const firstPath = temporary.path / "first.world.yaml";
+		auto const secondPath = temporary.path / "second.world.yaml";
 		first->saveTo(firstPath.string());
 		second->saveTo(secondPath.string());
 		auto registry = core::createAndAttachAgentBehaviourRegistry(*first, firstPath);
@@ -733,12 +733,12 @@ namespace
 		(void)registry->addAgentBehaviour("Schedule", "schedule.lua", {});
 		registry->saveTo(manifestPath(packageDirectory).string());
 
-		// A second Building attaches the same canonical package and sees the
+		// A second World attaches the same canonical package and sees the
 		// same shared instance.
 		auto shared = core::selectAndAttachAgentBehaviourRegistry(
 			*second, secondPath, packageDirectory);
 		require(shared == registry,
-			"A second Building did not share the canonical package instance");
+			"A second World did not share the canonical package instance");
 
 		// External authoring adds a behaviour to the manifest; both dependents
 		// observe it only after the explicit managed reload.
@@ -776,7 +776,7 @@ namespace
 		// A dependent running simulation blocks the reload; the previous
 		// definitions remain available.
 		second->finishBuild();
-		require(second->resumeSimulation(), "Could not resume dependent Building");
+		require(second->resumeSimulation(), "Could not resume dependent World");
 		writeText(manifestPath(packageDirectory), ""
 			"  version: 1\n"
 			"  uuid: " + uuid + "\n"
@@ -808,7 +808,7 @@ namespace
 			"A refused reload changed live definitions");
 	}
 
-	void hotReloadIsAtomicAcrossSourceHelpersAndDependentBuildings()
+	void hotReloadIsAtomicAcrossSourceHelpersAndDependentWorlds()
 	{
 		TemporaryDirectory temporary;
 		auto const package = temporary.path / "atomic.behaviours";
@@ -859,64 +859,64 @@ namespace
 
 		struct Fixture
 		{
-			std::shared_ptr<core::Building> building;
+			std::shared_ptr<core::World> world;
 			std::filesystem::path path;
 			std::vector<core::AgentId> agents;
 		};
-		auto makeBuilding = [&](std::string name, std::string filename,
+		auto makeWorld = [&](std::string name, std::string filename,
 			unsigned agentCount)
 		{
 			Fixture fixture;
-			fixture.building = std::make_shared<core::Building>(std::move(name), 10, 2);
-			auto const room = fixture.building->addRoom("Room", 0, 0, 0, 10, 1);
-			fixture.building->addSectorMarker(room, 0, 8.5f, "Destination");
-			fixture.building->finishBuild();
+			fixture.world = std::make_shared<core::World>(std::move(name), 10, 2);
+			auto const room = fixture.world->addRoom("Room", 0, 0, 0, 10, 1);
+			fixture.world->addSectorMarker(room, 0, 8.5f, "Destination");
+			fixture.world->finishBuild();
 			for (unsigned index = 0; index < agentCount; ++index)
-				fixture.agents.push_back(fixture.building->createAgent(
+				fixture.agents.push_back(fixture.world->createAgent(
 					"Agent " + std::to_string(index + 1), room, 0,
 					0.5f + static_cast<float>(index)));
-			fixture.building->pauseSimulation();
+			fixture.world->pauseSimulation();
 			fixture.path = temporary.path / filename;
-			fixture.building->saveTo(fixture.path.string());
+			fixture.world->saveTo(fixture.path.string());
 			return fixture;
 		};
-		auto alpha = makeBuilding("Alpha", "alpha.yaml", 2);
-		auto zulu = makeBuilding("Zulu", "zulu.yaml", 1);
+		auto alpha = makeWorld("Alpha", "alpha.world.yaml", 2);
+		auto zulu = makeWorld("Zulu", "zulu.world.yaml", 1);
 
 		// Attach in reverse display order. Reload diagnostics must still use stable
-		// Building-name order and stable Agent-ID order.
+		// World-name order and stable Agent-ID order.
 		auto registry = core::selectAndAttachAgentBehaviourRegistry(
-			*zulu.building, zulu.path, package);
+			*zulu.world, zulu.path, package);
 		require(core::selectAndAttachAgentBehaviourRegistry(
-				*alpha.building, alpha.path, package) == registry,
+				*alpha.world, alpha.path, package) == registry,
 			"Atomic reload dependents did not share one registry");
 		auto const behaviour = core::AgentBehaviourId{ 1 };
 		auto assign = [&](Fixture& fixture, uint64_t& code)
 		{
 			for (auto agent : fixture.agents)
 			{
-				require(fixture.building->setAgentBehaviourAssignment(agent, behaviour, 1, {
+				require(fixture.world->setAgentBehaviourAssignment(agent, behaviour, 1, {
 					{ "expected", int64_t{ 7 } },
 					{ "code", static_cast<int64_t>(code++) },
-					{ "destination", fixture.building->getMarkerIds().front() }
+					{ "destination", fixture.world->getMarkerIds().front() }
 				}), "Could not assign an atomic reload fixture");
 			}
-			fixture.building->saveTo(fixture.path.string());
+			fixture.world->saveTo(fixture.path.string());
 		};
 		uint64_t code = 1;
 		assign(alpha, code);
 		assign(zulu, code);
-		require(!registry->isModified() && !alpha.building->isModified()
-			&& !zulu.building->isModified(),
+		require(!registry->isModified() && !alpha.world->isModified()
+			&& !zulu.world->isModified(),
 			"Atomic reload fixtures did not start with clean documents");
 
 		auto runStartBoundary = [&](Fixture& fixture)
 		{
-			require(fixture.building->resumeSimulation(),
+			require(fixture.world->resumeSimulation(),
 				"Could not resume an atomic reload fixture");
-			require(fixture.building->advanceTick(),
+			require(fixture.world->advanceTick(),
 				"A restarted atomic reload instance failed");
-			fixture.building->pauseSimulation();
+			fixture.world->pauseSimulation();
 		};
 		runStartBoundary(alpha);
 		runStartBoundary(zulu);
@@ -930,13 +930,13 @@ namespace
 
 		// One running dependent refuses the transaction before any scratch module
 		// executes or any live state changes.
-		require(zulu.building->resumeSimulation(),
+		require(zulu.world->resumeSimulation(),
 			"Could not run the dependent used by the reload refusal check");
 		require(!core::reloadAgentBehaviourRegistryDocument(registry, package,
 				&diagnostic, &reloadDiagnostics)
 			&& diagnostic.find("Zulu") != std::string::npos,
-			"A reload was not refused while a dependent Building was running");
-		zulu.building->pauseSimulation();
+			"A reload was not refused while a dependent World was running");
+		zulu.world->pauseSimulation();
 
 		require(core::reloadAgentBehaviourRegistryDocument(registry, package,
 				&diagnostic, &reloadDiagnostics)
@@ -951,7 +951,7 @@ namespace
 		require(stopCount == 3,
 			"Successful reload did not call read-only teardown on every old instance");
 		for (auto agent : alpha.agents)
-			require(!alpha.building->lookupAgent(agent).entity->getPath(),
+			require(!alpha.world->lookupAgent(agent).entity->getPath(),
 				"Successful reload retained old behaviour movement");
 
 		auto collectStarts = []
@@ -968,9 +968,9 @@ namespace
 		require(firstRestart.size() == 3,
 			"Reloaded instances were not recreated from all authored configurations");
 
-		auto const historyState = gBuildingDocumentHistory.currentStateId();
-		auto const undoCount = gBuildingDocumentHistory.undoCount();
-		auto const redoCount = gBuildingDocumentHistory.redoCount();
+		auto const historyState = gWorldDocumentHistory.currentStateId();
+		auto const undoCount = gWorldDocumentHistory.undoCount();
+		auto const redoCount = gWorldDocumentHistory.redoCount();
 		auto assertRollback = [&](std::string const& candidate,
 			core::AgentBehaviourReloadDiagnosticScope expectedScope)
 		{
@@ -982,11 +982,11 @@ namespace
 				&& reloadDiagnostics.front().scope == expectedScope
 				&& registry->lookupAgentBehaviour(behaviour)->getModuleStatus()
 					== core::AgentBehaviourModuleStatus::Loaded
-				&& !registry->isModified() && !alpha.building->isModified()
-				&& !zulu.building->isModified()
-				&& gBuildingDocumentHistory.currentStateId() == historyState
-				&& gBuildingDocumentHistory.undoCount() == undoCount
-				&& gBuildingDocumentHistory.redoCount() == redoCount,
+				&& !registry->isModified() && !alpha.world->isModified()
+				&& !zulu.world->isModified()
+				&& gWorldDocumentHistory.currentStateId() == historyState
+				&& gWorldDocumentHistory.undoCount() == undoCount
+				&& gWorldDocumentHistory.redoCount() == redoCount,
 				"A failed reload changed live registry/runtime document state or history");
 		};
 		assertRollback("return { api_version = 1, factory = function( }\n",
@@ -1010,8 +1010,8 @@ namespace
 					return item.scope
 						== core::AgentBehaviourReloadDiagnosticScope::Module;
 				})
-			&& !registry->isModified() && !alpha.building->isModified()
-			&& !zulu.building->isModified(),
+			&& !registry->isModified() && !alpha.world->isModified()
+			&& !zulu.world->isModified(),
 			"Helper-graph failures were not aggregated without mutation");
 		writeText(package / "helper.lua",
 			"return { expected = 7, generation = 'v2' }\n");
@@ -1026,23 +1026,23 @@ namespace
 			&& reloadDiagnostics.size() == 3
 			&& reloadDiagnostics[0].scope
 				== core::AgentBehaviourReloadDiagnosticScope::Agent
-			&& reloadDiagnostics[0].buildingName == "Alpha"
+			&& reloadDiagnostics[0].worldName == "Alpha"
 			&& reloadDiagnostics[0].agent == alpha.agents[0]
-			&& reloadDiagnostics[1].buildingName == "Alpha"
+			&& reloadDiagnostics[1].worldName == "Alpha"
 			&& reloadDiagnostics[1].agent == alpha.agents[1]
-			&& reloadDiagnostics[2].buildingName == "Zulu"
+			&& reloadDiagnostics[2].worldName == "Zulu"
 			&& reloadDiagnostics[2].agent == zulu.agents[0],
-			"Per-configuration factory failures were not aggregated in stable Building/Agent order");
+			"Per-configuration factory failures were not aggregated in stable World/Agent order");
 
 		// All failed attempts leave the v2 instances and their timers intact. A
 		// restart would emit start again and postpone these timers.
 		for (auto* fixture : { &alpha, &zulu })
 		{
-			require(fixture->building->resumeSimulation(),
+			require(fixture->world->resumeSimulation(),
 				"Could not resume after a refused reload");
-			require(fixture->building->advanceTicks(3),
+			require(fixture->world->advanceTicks(3),
 				"The previous runtime failed after a refused reload");
-			fixture->building->pauseSimulation();
+			fixture->world->pauseSimulation();
 		}
 		auto retainedMessages = core::consumeLogMessages();
 		auto retainedTimers = std::count_if(retainedMessages.begin(), retainedMessages.end(),
@@ -1075,11 +1075,11 @@ namespace
 	void packageContainmentAndLifecycle()
 	{
 		TemporaryDirectory temporary;
-		auto building = std::make_shared<core::Building>("Containment", 4, 2);
-		building->pauseSimulation();
-		auto const path = temporary.path / "containment.yaml";
-		building->saveTo(path.string());
-		auto registry = core::createAndAttachAgentBehaviourRegistry(*building, path);
+		auto world = std::make_shared<core::World>("Containment", 4, 2);
+		world->pauseSimulation();
+		auto const path = temporary.path / "containment.world.yaml";
+		world->saveTo(path.string());
+		auto registry = core::createAndAttachAgentBehaviourRegistry(*world, path);
 		auto const package = core::defaultAgentBehaviourRegistryPackagePath(path);
 		writeText(package / "nested" / "source.lua",
 			"return {api_version=1,factory=function() return {on_start=function() error('must never execute') end} end}\n");
@@ -1092,10 +1092,10 @@ namespace
 			&& registry->lookupAgentBehaviour(id)->getModuleStatus()
 				== core::AgentBehaviourModuleStatus::Loaded,
 			"Nested managed source was refused or an Agent callback executed");
-		building->saveTo(path.string());
-		building->resetSimulation();
-		require(building->getAgentBehaviourRegistry() == registry
-			&& registry->hasLoadedBuilding(building.get()), "Reset lost the registry attachment");
+		world->saveTo(path.string());
+		world->resetSimulation();
+		require(world->getAgentBehaviourRegistry() == registry
+			&& registry->hasLoadedWorld(world.get()), "Reset lost the registry attachment");
 
 		// Escaping symlinks are rejected after canonicalization, including the
 		// manifest itself. Windows may not grant symlink creation privileges.
@@ -1133,13 +1133,13 @@ namespace
 			&& registry->getNextBehaviourId() == 2, "Malformed allocator changed live state");
 		writeText(manifestPath(package), valid);
 
-		building->finishBuild();
-		require(building->resumeSimulation(), "Could not resume lifecycle fixture");
+		world->finishBuild();
+		require(world->resumeSimulation(), "Could not resume lifecycle fixture");
 		bool refused = false;
-		try { building->detachAgentBehaviourRegistry(); }
+		try { world->detachAgentBehaviourRegistry(); }
 		catch (std::exception const&) { refused = true; }
-		require(refused && building->hasAttachedAgentBehaviourRegistry(), "Running detach succeeded");
-		building->pauseSimulation();
+		require(refused && world->hasAttachedAgentBehaviourRegistry(), "Running detach succeeded");
+		world->pauseSimulation();
 
 		// Exercise the actual extracted panel in a CPU-side ImGui context.
 		ImGui::CreateContext();
@@ -1151,13 +1151,13 @@ namespace
 		io.Fonts->GetTexDataAsRGBA32(&pixels, &width, &height);
 		ImGui::NewFrame();
 		ImGui::Begin("Behaviour registry smoke");
-		require(!renderBehavioursPanel(building, path.string()), "Inspection edited the Building");
+		require(!renderBehavioursPanel(world, path.string()), "Inspection edited the World");
 		ImGui::End();
 		ImGui::Render();
 		ImGui::DestroyContext();
 
-		building->detachAgentBehaviourRegistry();
-		require(!registry->hasLoadedBuildings()
+		world->detachAgentBehaviourRegistry();
+		require(!registry->hasLoadedWorlds()
 			&& readText(manifestPath(package)) == valid, "Detach changed the package or kept its dependent");
 		require(core::unloadAgentBehaviourRegistryDocumentIfUnused(registry), "Unused package did not unload");
 	}
@@ -1165,36 +1165,36 @@ namespace
 	void recoverDetachAndReplaceUsedRegistrySafely()
 	{
 		TemporaryDirectory temporary;
-		auto const buildingPath = temporary.path / "recovery.yaml";
+		auto const worldPath = temporary.path / "recovery.world.yaml";
 		auto const package = temporary.path / "recovery.behaviours";
 		auto const hiddenPackage = temporary.path / "recovery.hidden";
-		auto building = std::make_shared<core::Building>("Recovery", 8, 2);
-		auto const corridor = building->addCorridor(0, 0, 6);
-		building->finishBuild();
-		auto const agent = building->createAgent("Assigned", corridor, 0, 1.5f);
-		building->pauseSimulation();
-		building->saveTo(buildingPath.string());
+		auto world = std::make_shared<core::World>("Recovery", 8, 2);
+		auto const corridor = world->addCorridor(0, 0, 6);
+		world->finishBuild();
+		auto const agent = world->createAgent("Assigned", corridor, 0, 1.5f);
+		world->pauseSimulation();
+		world->saveTo(worldPath.string());
 		auto registry = core::createAndAttachAgentBehaviourRegistry(
-			*building, buildingPath);
+			*world, worldPath);
 		writeText(package / "worker.lua",
 			"return {api_version=1,factory=function(config) return {} end}\n");
 		auto const behaviour = registry->addAgentBehaviour("Worker", "worker.lua", {});
 		registry->saveTo(manifestPath(package).string());
 		std::string diagnostic;
-		require(building->setAgentBehaviourAssignment(agent, behaviour, 1, {},
+		require(world->setAgentBehaviourAssignment(agent, behaviour, 1, {},
 			&diagnostic), "Could not author the recovery assignment");
-		building->saveTo(buildingPath.string());
+		world->saveTo(worldPath.string());
 		auto const originalManifest = readText(manifestPath(package));
 		auto const originalSource = readText(package / "worker.lua");
 		auto const expectedUuid = registry->getUuid();
-		building.reset();
+		world.reset();
 		require(core::unloadAgentBehaviourRegistryDocumentIfUnused(registry),
 			"Could not release the recovery package before dependency fixtures");
 		registry.reset();
 
 		auto assertRecoverableOpen = [&](char const* expectedDiagnostic)
 		{
-			auto loaded = core::loadBuildingDocument(buildingPath);
+			auto loaded = core::loadWorldDocument(worldPath);
 			require(loaded->getName() == "Recovery" && loaded->getNumSectors() == 1
 				&& loaded->hasAgentBehaviourRegistryReference()
 				&& !loaded->hasAttachedAgentBehaviourRegistry()
@@ -1204,7 +1204,7 @@ namespace
 				&& loaded->getAgentBehaviourDependencyDiagnostic().find(expectedDiagnostic)
 					!= std::string::npos
 				&& !loaded->resumeSimulation(),
-				"A broken package did not preserve a blocked structural Building and its assignment");
+				"A broken package did not preserve a blocked structural World and its assignment");
 			return loaded;
 		};
 
@@ -1233,51 +1233,51 @@ namespace
 
 		// A syntactically valid package whose assigned factory fails is not a
 		// repair. Candidate construction happens before reference/runtime adoption.
-		gBuildingDocumentHistory.clear();
-		gBuildingDocumentHistory.markSaved();
-		auto const beforeFailedRepair = serializeBuilding(*unresolved);
+		gWorldDocumentHistory.clear();
+		gWorldDocumentHistory.markSaved();
+		auto const beforeFailedRepair = serializeWorld(*unresolved);
 		auto const beforeFailedRepairModified = unresolved->isModified();
 		writeText(package / "worker.lua",
 			"return {api_version=1,factory=function(config) error('broken repair') end}\n");
 		require(!commitAgentBehaviourRegistrySwitch(unresolved,
-			buildingPath.string(), package.string(), diagnostic)
+			worldPath.string(), package.string(), diagnostic)
 			&& diagnostic.find("runtime preflight failed") != std::string::npos
-			&& serializeBuilding(*unresolved) == beforeFailedRepair
+			&& serializeWorld(*unresolved) == beforeFailedRepair
 			&& unresolved->isModified() == beforeFailedRepairModified
-			&& !gBuildingDocumentHistory.canUndo(),
+			&& !gWorldDocumentHistory.canUndo(),
 			"A failed expected-package repair changed authored state, dirty state, or history");
 		writeText(package / "worker.lua", originalSource);
 
 		// Selecting the expected repaired package validates every authored
 		// configuration and constructs all factories before making it live. The
 		// persisted reference is unchanged, so recovery is not an authored edit.
-		gBuildingDocumentHistory.clear();
-		gBuildingDocumentHistory.markSaved();
-		auto const unresolvedYaml = serializeBuilding(*unresolved);
+		gWorldDocumentHistory.clear();
+		gWorldDocumentHistory.markSaved();
+		auto const unresolvedYaml = serializeWorld(*unresolved);
 		auto const unresolvedModified = unresolved->isModified();
 		require(commitAgentBehaviourRegistrySwitch(unresolved,
-			buildingPath.string(), package.string(), diagnostic),
+			worldPath.string(), package.string(), diagnostic),
 			"The repaired expected package did not attach");
 		require(unresolved->hasAttachedAgentBehaviourRegistry()
 			&& unresolved->agentBehaviourConfigurationsAreValid()
 			&& unresolved->getExpectedAgentBehaviourRegistryUuid() == expectedUuid
 			&& unresolved->getAgentBehaviourAssignment(agent)
 			&& unresolved->getAgentBehaviourAssignment(agent)->behaviour == behaviour
-			&& serializeBuilding(*unresolved) == unresolvedYaml
+			&& serializeWorld(*unresolved) == unresolvedYaml
 			&& unresolved->isModified() == unresolvedModified
-			&& !gBuildingDocumentHistory.canUndo(),
+			&& !gWorldDocumentHistory.canUndo(),
 			"Recovery changed authored state, assignment data, dirty state, or history");
 
-		// Another loaded Building proves that switching one dependent never unloads
+		// Another loaded World proves that switching one dependent never unloads
 		// a shared package. A third exercises confirmed destructive detachment.
-		auto shared = core::loadBuildingDocument(buildingPath);
+		auto shared = core::loadWorldDocument(worldPath);
 		shared->pauseSimulation();
 		require(shared->getAgentBehaviourRegistry()
 			== unresolved->getAgentBehaviourRegistry(),
 			"Canonical recovery packages did not share one loaded instance");
-		auto detacher = core::loadBuildingDocument(buildingPath);
+		auto detacher = core::loadWorldDocument(worldPath);
 		detacher->pauseSimulation();
-		gBuildingDocumentHistory.clear();
+		gWorldDocumentHistory.clear();
 		requestAgentBehaviourRegistryDetach(detacher);
 		std::string consequence;
 		require(agentBehaviourRegistryChangePending(&consequence)
@@ -1287,43 +1287,43 @@ namespace
 		require(confirmPendingAgentBehaviourRegistryChange(diagnostic)
 			&& !detacher->hasAgentBehaviourRegistryReference()
 			&& detacher->getAgentBehaviourAssignmentCount() == 0
-			&& gBuildingDocumentHistory.undoCount() == 1,
+			&& gWorldDocumentHistory.undoCount() == 1,
 			"Confirmed used detachment did not clear assignment/configuration atomically");
 
-		gBuildingDocumentHistory.clear();
-		gBuildingDocumentHistory.markSaved();
-		auto const before = serializeBuilding(*unresolved);
+		gWorldDocumentHistory.clear();
+		gWorldDocumentHistory.markSaved();
+		auto const before = serializeWorld(*unresolved);
 		auto const sourceRegistry = unresolved->getAgentBehaviourRegistry();
 		auto const modified = unresolved->isModified();
 		require(!commitAgentBehaviourRegistryDetach(unresolved, diagnostic)
 			&& diagnostic.find("confirmed destructive action") != std::string::npos
-			&& serializeBuilding(*unresolved) == before
+			&& serializeWorld(*unresolved) == before
 			&& unresolved->getAgentBehaviourRegistry() == sourceRegistry
 			&& unresolved->isModified() == modified
-			&& !gBuildingDocumentHistory.canUndo(),
+			&& !gWorldDocumentHistory.canUndo(),
 			"Direct used detachment changed state or history");
 		requestAgentBehaviourRegistryDetach(unresolved);
 		cancelPendingAgentBehaviourRegistryChange();
 		require(!agentBehaviourRegistryChangePending()
-			&& serializeBuilding(*unresolved) == before
+			&& serializeWorld(*unresolved) == before
 			&& unresolved->getAgentBehaviourRegistry() == sourceRegistry
-			&& !gBuildingDocumentHistory.canUndo(),
+			&& !gWorldDocumentHistory.canUndo(),
 			"Cancelling used detachment changed state or history");
 
-		requestAgentBehaviourRegistrySwitch(unresolved, buildingPath.string(),
+		requestAgentBehaviourRegistrySwitch(unresolved, worldPath.string(),
 			(temporary.path / "missing.behaviours").string());
 		require(!confirmPendingAgentBehaviourRegistryChange(diagnostic)
-			&& serializeBuilding(*unresolved) == before
+			&& serializeWorld(*unresolved) == before
 			&& unresolved->getAgentBehaviourRegistry() == sourceRegistry
 			&& unresolved->isModified() == modified
-			&& !gBuildingDocumentHistory.canUndo(),
+			&& !gWorldDocumentHistory.canUndo(),
 			"A failed destructive replacement cleared data, replaced runtime, or changed history");
 
 		auto const replacementPackage = temporary.path / "replacement.behaviours";
 		std::filesystem::create_directories(replacementPackage);
 		auto replacement = core::AgentBehaviourRegistry::create();
 		replacement->saveTo(manifestPath(replacementPackage).string());
-		requestAgentBehaviourRegistrySwitch(unresolved, buildingPath.string(),
+		requestAgentBehaviourRegistrySwitch(unresolved, worldPath.string(),
 			replacementPackage.string());
 		require(agentBehaviourRegistryChangePending(&consequence)
 			&& consequence.find("replacement.behaviours") != std::string::npos,
@@ -1333,11 +1333,11 @@ namespace
 				== "replacement.behaviours"
 			&& unresolved->getAgentBehaviourAssignmentCount() == 0
 			&& !unresolved->getAgentBehaviourAssignment(agent)
-			&& gBuildingDocumentHistory.undoCount() == 1,
+			&& gWorldDocumentHistory.undoCount() == 1,
 			"Confirmed replacement did not atomically clear assignments and change reference");
-		require(sourceRegistry->hasLoadedBuilding(shared.get())
+		require(sourceRegistry->hasLoadedWorld(shared.get())
 			&& !core::unloadAgentBehaviourRegistryDocumentIfUnused(sourceRegistry),
-			"Switching one Building unloaded a registry still shared by another");
+			"Switching one World unloaded a registry still shared by another");
 
 		// Dirty unreferenced package work survives ordinary detach/replacement and
 		// is released only by an explicit discard after the final dependent leaves.
@@ -1351,44 +1351,44 @@ namespace
 			&& core::unloadAgentBehaviourRegistryDocumentIfUnused(sourceRegistry, true),
 			"Dirty unreferenced package work was silently discarded or could not be explicitly discarded");
 		cancelPendingAgentBehaviourRegistryChange();
-		gBuildingDocumentHistory.clear();
+		gWorldDocumentHistory.clear();
 	}
 
-	void unsavedBuildingDocumentRefusesManagedOperations()
+	void unsavedWorldDocumentRefusesManagedOperations()
 	{
 		TemporaryDirectory temporary;
-		core::Building building("Unsaved", 4, 2);
-		building.pauseSimulation();
-		auto const buildingPath = temporary.path / "unsaved.yaml";
+		core::World world("Unsaved", 4, 2);
+		world.pauseSimulation();
+		auto const worldPath = temporary.path / "unsaved.world.yaml";
 		bool selectRefused{ false };
 		try
 		{
 			(void)core::selectAndAttachAgentBehaviourRegistry(
-				building, buildingPath, temporary.path / "any.behaviours");
+				world, worldPath, temporary.path / "any.behaviours");
 		}
 		catch (std::exception const& error)
 		{
 			selectRefused = std::string(error.what()).find("Save")
 				!= std::string::npos;
 		}
-		require(selectRefused && !building.hasAgentBehaviourRegistryReference(),
-			"Selecting a package for an unsaved Building was enabled");
+		require(selectRefused && !world.hasAgentBehaviourRegistryReference(),
+			"Selecting a package for an unsaved World was enabled");
 	}
 }
 
 void runAgentBehaviourRegistrySmokeChecks()
 {
-	savedBuildingCreatesAndReopensAdjacentPackage();
-	olderBuildingWithoutReferenceStillLoads();
+	savedWorldCreatesAndReopensAdjacentPackage();
+	olderWorldWithoutReferenceStillLoads();
 	selectionEnforcesPackageNamingAndDirectory();
 	canonicalPackagesShareOneInstanceAndSameNamesNeverMerge();
 	duplicateUuidAndInvalidPackagesAreTransactional();
-	refusedBuildingLoadKeepsCurrentStateAndUnloadsCandidateRegistry();
+	refusedWorldLoadKeepsCurrentStateAndUnloadsCandidateRegistry();
 	failedAndOccupiedCreationLeavesNoReferenceOrDirectory();
 	definitionsPersistWithSchemasRevisionsAndModulePaths();
 	reloadValidatesAndSharesReplacementAcrossDependents();
-	hotReloadIsAtomicAcrossSourceHelpersAndDependentBuildings();
+	hotReloadIsAtomicAcrossSourceHelpersAndDependentWorlds();
 	recoverDetachAndReplaceUsedRegistrySafely();
-	unsavedBuildingDocumentRefusesManagedOperations();
+	unsavedWorldDocumentRefusesManagedOperations();
 	packageContainmentAndLifecycle();
 }

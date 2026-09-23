@@ -5,18 +5,18 @@
 #include <utility>
 
 #include "DocumentEdit.h"
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/Log.h"
 #include "core/Marker.h"
 #include "core/MarkerSectorObject.h"
 #include "imgui/imgui.h"
 
 void renderMarkerEditorPanel(
-	std::shared_ptr<core::Building> const& building,
+	std::shared_ptr<core::World> const& world,
 	std::shared_ptr<const core::SectorObject> const& object,
 	MarkerPanelErrorReporter const& reportError)
 {
-	if (!building || !object
+	if (!world || !object
 		|| object->getObjectType() != core::SectorObjectType::Marker)
 	{
 		ImGui::TextDisabled("No Marker selected.");
@@ -43,9 +43,9 @@ void renderMarkerEditorPanel(
 		auto const trimmed = core::Marker::trimName(name.data());
 		if (trimmed != marker->getName())
 		{
-			auto undo = captureDocumentSnapshot(building);
+			auto undo = captureDocumentSnapshot(world);
 			std::string diagnostic;
-			if (building->renameMarker(marker->getId(), name.data(), &diagnostic))
+			if (world->renameMarker(marker->getId(), name.data(), &diagnostic))
 				commitDocumentEdit(std::move(undo));
 			else if (reportError)
 				reportError(diagnostic);

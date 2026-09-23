@@ -1,7 +1,7 @@
 #pragma once
 
-// Building snapshot integration for the reusable per-document history. The GUI
-// currently owns one Building document; external editor documents can own
+// World snapshot integration for the reusable per-document history. The GUI
+// currently owns one World document; external editor documents can own
 // separate DocumentHistory instances without sharing stacks or saved state.
 
 #include <memory>
@@ -11,13 +11,13 @@
 
 namespace core
 {
-	class Building;
+	class World;
 }
 
-extern DocumentHistory gBuildingDocumentHistory;
+extern DocumentHistory gWorldDocumentHistory;
 
 std::optional<DocumentSnapshot> captureDocumentSnapshot(
-	std::shared_ptr<const core::Building> const& building,
-	DocumentHistory const& history = gBuildingDocumentHistory);
+	std::shared_ptr<const core::World> const& world,
+	DocumentHistory const& history = gWorldDocumentHistory);
 void commitDocumentEdit(std::optional<DocumentSnapshot> snapshot,
-	DocumentHistory& history = gBuildingDocumentHistory);
+	DocumentHistory& history = gWorldDocumentHistory);

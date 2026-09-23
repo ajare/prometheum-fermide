@@ -18,7 +18,7 @@
 
 namespace core
 {
-	class Building;
+	class World;
 
 	// Which side of an adjacent Layer pair a threshold or Transit is being processed
 	// as.  A pair is always processed front-first, so the front Vertex of a pairing
@@ -88,7 +88,7 @@ namespace core
 
 	private:
 
-		Building* mwBuilding;
+		World* mwWorld;
 
 		std::vector<std::shared_ptr<const Vertex>> mVertices;
 
@@ -170,7 +170,7 @@ namespace core
 		void processLayerRow(uint32_t layerIndex, uint32_t y, RowVertices& row, CrossDeckVertexMap& crossDeckVertices);
 
 		// A threshold records its SectorObject against the Sector that owns the cell.
-		// Authoring a threshold on a Layer whose pair the Building cannot yet express
+		// Authoring a threshold on a Layer whose pair the World cannot yet express
 		// leaves an index that belongs to a different Sector, so resolve it defensively
 		// rather than trusting it.
 		std::shared_ptr<SectorObject> resolveSectorObject(std::shared_ptr<Sector> sector, uint32_t index,
@@ -193,7 +193,7 @@ namespace core
 
 	public:
 
-		explicit Graph(Building* building);
+		explicit Graph(World* world);
 
 		virtual ~Graph() = default;
 

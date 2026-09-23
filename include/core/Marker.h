@@ -14,7 +14,7 @@ namespace core
 
 	class Marker : public Object
 	{
-		friend class Building;
+		friend class World;
 		friend class MarkerSectorObject;
 
 		MarkerId mId;

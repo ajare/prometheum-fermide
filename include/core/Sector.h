@@ -24,12 +24,12 @@ namespace core
 
 	class Sector : public Area
 	{
-		friend class Building;
+		friend class World;
 		friend class Graph;
 		// Committing a traversal transfers sector membership at the destination
 		// endpoint with an explicitly authored, non-default position, which only
 		// the private SectorPosition overload carries. The coordinator therefore
-		// shares Building's friendship here rather than widening Sector's public
+		// shares World's friendship here rather than widening Sector's public
 		// surface (ADR 0004).
 		friend class SimulationCoordinator;
 
@@ -65,7 +65,7 @@ namespace core
 
 		SectorPosition findFreeAgentPosition(Agent const* agent) const;
 
-		// Following functions to be called by Building
+		// Following functions to be called by World
 		uint32_t createDoor(std::shared_ptr<const Sector> sector, std::shared_ptr<const Sector> backSector,
 			uint32_t x, uint32_t y, uint32_t cellsWide,
 			Door::Height height = Door::Height::Regular, uint32_t* vertexIdentifier = nullptr);
@@ -104,7 +104,7 @@ namespace core
 
 		void enterAgent(Agent* agent, SectorPosition const& pos, bool authored = true);
 
-		// Advance device and object state without moving agents. Building uses
+		// Advance device and object state without moving agents. World uses
 		// this to keep resource work in the first deterministic tick phase.
 		void advanceResources(float frameTime);
 

@@ -9,7 +9,7 @@
 namespace core
 {
 	// Visual representation of a physical control. Its actionable behaviour is
-	// represented by a building-owned InteractionPoint and typed bindings.
+	// represented by a world-owned InteractionPoint and typed bindings.
 	class Button : public Object
 	{
 		std::string mName;

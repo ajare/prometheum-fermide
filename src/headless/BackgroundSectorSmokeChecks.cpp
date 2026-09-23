@@ -3,7 +3,7 @@
 // A Background is a non-occupiable Sector that exists only to be seen through
 // apertures from the Layer in front. This ticket landed it dormant: the type, the
 // class, its colour, and a render-safe path. Ticket #30 added the creation path
-// (Building::addBackground) and the version 5 persistence form, so the dormancy
+// (World::addBackground) and the version 5 persistence form, so the dormancy
 // check that used to close this file has gone; placement and round-trip coverage
 // lives in BackgroundPlacementSmokeChecks.
 
@@ -13,7 +13,7 @@
 #include <stdexcept>
 
 #include "core/Background.h"
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/CellDefinition.h"
 #include "core/Defines.h"
 #include "core/Location.h"

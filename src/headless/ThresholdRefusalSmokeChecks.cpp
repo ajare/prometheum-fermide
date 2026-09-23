@@ -27,7 +27,7 @@
 #include <string>
 
 #include "core/Background.h"
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/CellDefinition.h"
 #include "core/Defines.h"
 #include "core/Sector.h"
@@ -91,78 +91,78 @@ namespace
 	// A Door with a Background directly behind it: the back-side refusal.
 	void doorRefusesABackgroundBehindIt()
 	{
-		core::Building building("Door vs bg-behind", 12, 3);
-		building.addLayer();
-		building.addCorridor(0, 0, 0, 6, 1);
-		building.addBackground(1, 0, 0, 6, 1);
+		core::World world("Door vs bg-behind", 12, 3);
+		world.addLayer();
+		world.addCorridor(0, 0, 0, 6, 1);
+		world.addBackground(1, 0, 0, 6, 1);
 
 		std::string diagnostic;
 		refusedQuery("A Door with a Background behind it",
-			building.canAddCorridorDoor(0, 0, 2, &diagnostic), diagnostic);
+			world.canAddCorridorDoor(0, 0, 2, &diagnostic), diagnostic);
 		refusedThrow("addSectorDoor with a Background behind it",
-			[&] { building.addSectorDoor(0, 0, 2); });
+			[&] { world.addSectorDoor(0, 0, 2); });
 	}
 
 	// A Door that would be authored inside a Background, looking into a Room
 	// behind: the front-side refusal.
 	void doorRefusesToBeAuthoredInABackground()
 	{
-		core::Building building("Door in bg", 12, 3);
-		building.addLayer();
-		building.addBackground(1, 0, 0, 6, 1);
-		building.addRoom("Behind", 2, 0, 0, 6, 1);
+		core::World world("Door in bg", 12, 3);
+		world.addLayer();
+		world.addBackground(1, 0, 0, 6, 1);
+		world.addRoom("Behind", 2, 0, 0, 6, 1);
 
 		std::string diagnostic;
 		refusedQuery("A Door authored in a Background",
-			building.canAddCorridorDoor(1, 0, 2, &diagnostic), diagnostic);
+			world.canAddCorridorDoor(1, 0, 2, &diagnostic), diagnostic);
 		refusedThrow("addSectorDoor authored in a Background",
-			[&] { building.addSectorDoor(1, 0, 2); });
+			[&] { world.addSectorDoor(1, 0, 2); });
 	}
 
 	// Same-layer BulkheadDoors are included: a Background is not a room, so
 	// there is nothing to bulkhead. Test the shared edge from both sides.
 	void bulkheadDoorRefusesABackgroundOnEitherSide()
 	{
-		core::Building building("Bulkhead vs bg", 12, 3);
-		building.addLayer();
-		building.addBackground(1, 0, 0, 3, 1);
-		building.addRoom("Room", 1, 0, 3, 4, 1);
+		core::World world("Bulkhead vs bg", 12, 3);
+		world.addLayer();
+		world.addBackground(1, 0, 0, 3, 1);
+		world.addRoom("Room", 1, 0, 3, 4, 1);
 
 		std::string diagnostic;
 		refusedQuery("A BulkheadDoor with a Background on its left",
-			building.canAddSectorBulkheadDoor(1, 0, 3, CORE_SIDE_LEFT, {}, &diagnostic), diagnostic);
+			world.canAddSectorBulkheadDoor(1, 0, 3, CORE_SIDE_LEFT, {}, &diagnostic), diagnostic);
 		refusedQuery("A BulkheadDoor with a Background on its right",
-			building.canAddSectorBulkheadDoor(1, 0, 2, CORE_SIDE_RIGHT, {}, &diagnostic), diagnostic);
+			world.canAddSectorBulkheadDoor(1, 0, 2, CORE_SIDE_RIGHT, {}, &diagnostic), diagnostic);
 		refusedThrow("addSectorBulkheadDoor against a Background",
-			[&] { building.addSectorBulkheadDoor(1, 0, 3, CORE_SIDE_LEFT); });
+			[&] { world.addSectorBulkheadDoor(1, 0, 3, CORE_SIDE_LEFT); });
 	}
 
 	// A Ladder may not land on a Background at either end of its span.
 	void ladderRefusesABackgroundLanding()
 	{
 		{
-			core::Building building("Ladder lower=bg", 12, 3);
-			building.addLayer();
-			building.addBackground(1, 0, 0, 2, 1);
-			building.addRoom("Upper", 1, 1, 0, 4, 1);
+			core::World world("Ladder lower=bg", 12, 3);
+			world.addLayer();
+			world.addBackground(1, 0, 0, 2, 1);
+			world.addRoom("Upper", 1, 1, 0, 4, 1);
 
 			std::string diagnostic;
 			refusedQuery("A Ladder landing on a Background below",
-				building.canAddLadder(2, 0, 0, 2, &diagnostic), diagnostic);
+				world.canAddLadder(2, 0, 0, 2, &diagnostic), diagnostic);
 			refusedThrow("addLadder landing on a Background below",
-				[&] { building.addLadder(2, 0, 0, { 2, false, true }); });
+				[&] { world.addLadder(2, 0, 0, { 2, false, true }); });
 		}
 		{
-			core::Building building("Ladder upper=bg", 12, 3);
-			building.addLayer();
-			building.addRoom("Lower", 1, 0, 0, 4, 1);
-			building.addBackground(1, 1, 0, 2, 1);
+			core::World world("Ladder upper=bg", 12, 3);
+			world.addLayer();
+			world.addRoom("Lower", 1, 0, 0, 4, 1);
+			world.addBackground(1, 1, 0, 2, 1);
 
 			std::string diagnostic;
 			refusedQuery("A Ladder landing on a Background above",
-				building.canAddLadder(2, 0, 0, 2, &diagnostic), diagnostic);
+				world.canAddLadder(2, 0, 0, 2, &diagnostic), diagnostic);
 			refusedThrow("addLadder landing on a Background above",
-				[&] { building.addLadder(2, 0, 0, { 2, false, true }); });
+				[&] { world.addLadder(2, 0, 0, { 2, false, true }); });
 		}
 	}
 
@@ -170,68 +170,68 @@ namespace
 	// other Sector on that Layer.
 	void ladderRefusesABackgroundInItsShaft()
 	{
-		core::Building building("Ladder shaft=bg", 12, 3);
-		building.addLayer();
-		building.addRoom("Lower", 1, 0, 0, 4, 1);
-		building.addRoom("Upper", 1, 1, 0, 4, 1);
-		building.addBackground(2, 0, 0, 4, 2);
+		core::World world("Ladder shaft=bg", 12, 3);
+		world.addLayer();
+		world.addRoom("Lower", 1, 0, 0, 4, 1);
+		world.addRoom("Upper", 1, 1, 0, 4, 1);
+		world.addBackground(2, 0, 0, 4, 2);
 
 		std::string diagnostic;
 		refusedQuery("A Ladder whose shaft crosses a Background",
-			building.canAddLadder(2, 0, 0, 2, &diagnostic), diagnostic);
+			world.canAddLadder(2, 0, 0, 2, &diagnostic), diagnostic);
 	}
 
 	// A Room Ladder cannot be hosted by a Background either.
 	void roomLadderRefusesABackgroundHost()
 	{
-		core::Building building("Room ladder on bg", 12, 3);
-		building.addLayer();
-		auto const backdrop = building.addBackground(1, 0, 0, 4, 2);
+		core::World world("Room ladder on bg", 12, 3);
+		world.addLayer();
+		auto const backdrop = world.addBackground(1, 0, 0, 4, 2);
 
 		std::string diagnostic;
 		refusedQuery("A Room Ladder hosted by a Background",
-			building.canAddRoomLadder(backdrop, 0, 0, nullptr, &diagnostic), diagnostic);
+			world.canAddRoomLadder(backdrop, 0, 0, nullptr, &diagnostic), diagnostic);
 		refusedThrow("addRoomLadder hosted by a Background",
-			[&] { building.addRoomLadder(backdrop, 0, 0); });
+			[&] { world.addRoomLadder(backdrop, 0, 0); });
 	}
 
 	// A Stairwell may not land on a Background.
 	void stairwellRefusesABackgroundLanding()
 	{
-		core::Building building("Stairwell vs bg", 12, 3);
-		building.addLayer();
-		building.addBackground(1, 0, 0, 2, 2);
+		core::World world("Stairwell vs bg", 12, 3);
+		world.addLayer();
+		world.addBackground(1, 0, 0, 2, 2);
 
 		std::string diagnostic;
 		refusedQuery("A Stairwell landing on a Background",
-			building.canAddStairwell(2, 0, 0, 2, &diagnostic), diagnostic);
+			world.canAddStairwell(2, 0, 0, 2, &diagnostic), diagnostic);
 		refusedThrow("addStairwell landing on a Background",
-			[&] { building.addStairwell(2, 0, 0, { 2, CORE_SIDE_LEFT }); });
+			[&] { world.addStairwell(2, 0, 0, { 2, CORE_SIDE_LEFT }); });
 	}
 
 	// A Staircase may not land on a Background at either endpoint.
 	void staircaseRefusesABackgroundLanding()
 	{
-		core::Building building("Staircase vs bg", 12, 3);
-		building.addLayer();
-		building.addBackground(1, 0, 0, 4, 2);
+		core::World world("Staircase vs bg", 12, 3);
+		world.addLayer();
+		world.addBackground(1, 0, 0, 4, 2);
 
 		std::string diagnostic;
 		refusedQuery("A Staircase landing on a Background",
-			building.canAddStaircase(2, 0, 0, 2, CORE_SIDE_RIGHT, &diagnostic), diagnostic);
+			world.canAddStaircase(2, 0, 0, 2, CORE_SIDE_RIGHT, &diagnostic), diagnostic);
 		refusedThrow("addStaircase landing on a Background",
-			[&] { building.addStaircase(2, 0, 0, { 2, CORE_SIDE_RIGHT, 0.0f }); });
+			[&] { world.addStaircase(2, 0, 0, { 2, CORE_SIDE_RIGHT, 0.0f }); });
 	}
 
 	// An enclosed Lift may not stop at a Background.
 	void liftRefusesABackgroundLanding()
 	{
-		core::Building building("Lift vs bg", 12, 3);
-		building.addLayer();
-		building.addBackground(1, 0, 0, 4, 2);
+		core::World world("Lift vs bg", 12, 3);
+		world.addLayer();
+		world.addBackground(1, 0, 0, 4, 2);
 
 		refusedThrow("addLift stopping at a Background",
-			[&] { building.addLift(2, 0, 0, { 1, { 0, 1 } }); });
+			[&] { world.addLift(2, 0, 0, { 1, { 0, 1 } }); });
 	}
 
 	// A Shuttle refuses a Background landing in every mode: strict refuses
@@ -240,35 +240,35 @@ namespace
 	void shuttleRefusesABackgroundLanding()
 	{
 		{
-			core::Building building("Shuttle all bg", 12, 3);
-			building.addLayer();
-			building.addBackground(1, 0, 0, 8, 1);
+			core::World world("Shuttle all bg", 12, 3);
+			world.addLayer();
+			world.addBackground(1, 0, 0, 8, 1);
 
 			refusedThrow("addShuttle landing on a Background",
-				[&] { building.addShuttle(2, 0, 0, 8, { 1, 3, { 0, 4 }, 0 }); });
+				[&] { world.addShuttle(2, 0, 0, 8, { 1, 3, { 0, 4 }, 0 }); });
 			refusedThrow("addShuttle landing on a Background, partial mode",
 				[&]
 				{
-					core::Building::CreateShuttleOptions options{ 1, 3, { 0, 4 }, 0 };
+					core::World::CreateShuttleOptions options{ 1, 3, { 0, 4 }, 0 };
 					options.allowPartialLandings = true;
-					building.addShuttle(2, 0, 0, 8, options);
+					world.addShuttle(2, 0, 0, 8, options);
 				});
 		}
 		{
 			// Partial mode beside a Room: the shuttle is accepted, but the
 			// carriage door that would have faced the Background is omitted -
 			// no threshold is built that touches the Background.
-			core::Building building("Shuttle mixed landing", 12, 3);
-			building.addLayer();
-			building.addBackground(1, 0, 0, 2, 1);
-			building.addRoom("Stop room", 1, 0, 2, 10, 1);
+			core::World world("Shuttle mixed landing", 12, 3);
+			world.addLayer();
+			world.addBackground(1, 0, 0, 2, 1);
+			world.addRoom("Stop room", 1, 0, 2, 10, 1);
 
-			core::Building::CreateShuttleOptions options{ 1, 3, { 0, 4 }, 0 };
+			core::World::CreateShuttleOptions options{ 1, 3, { 0, 4 }, 0 };
 			options.allowPartialLandings = true;
 			// Doors at carriage cells 0 and 2: at stop 0 those sit over the
 			// Background and the Room respectively.
 			options.doorMask = (1u << 0) | (1u << 2);
-			auto result = building.addShuttle(2, 0, 0, 8, options);
+			auto result = world.addShuttle(2, 0, 0, 8, options);
 
 			require(result.doors.size() == 4, "Shuttle door result grid changed shape");
 			require(result.doors[0].door.sector == nullptr,
@@ -287,17 +287,17 @@ namespace
 	// Background as its back side.
 	void windowMayLookIntoABackground()
 	{
-		core::Building building("Window looks into bg", 12, 3);
-		building.addLayer();
-		building.addRoom("Front", 0, 0, 0, 6, 1);
-		building.addBackground(1, 0, 0, 6, 1);
+		core::World world("Window looks into bg", 12, 3);
+		world.addLayer();
+		world.addRoom("Front", 0, 0, 0, 6, 1);
+		world.addBackground(1, 0, 0, 6, 1);
 
 		std::string diagnostic;
-		require(building.canAddSectorWindow(0, 0, 1, 2, 1, &diagnostic),
+		require(world.canAddSectorWindow(0, 0, 1, 2, 1, &diagnostic),
 			("A Window was refused looking into a Background: " + diagnostic).c_str());
 		require(!throws([&]
 			{
-				building.addSectorWindow(0, 0, 1, 2, 1,
+				world.addSectorWindow(0, 0, 1, 2, 1,
 					{ false, core::Window::State::Closed, core::Window::Style::Clear });
 			}),
 			"addSectorWindow refused to look into a Background");
@@ -308,34 +308,34 @@ namespace
 	void windowExceptionStaysLookingOnly()
 	{
 		{
-			core::Building building("Window in bg", 12, 3);
-			building.addLayer();
-			building.addBackground(1, 0, 0, 6, 1);
-			building.addRoom("Behind", 2, 0, 0, 6, 1);
+			core::World world("Window in bg", 12, 3);
+			world.addLayer();
+			world.addBackground(1, 0, 0, 6, 1);
+			world.addRoom("Behind", 2, 0, 0, 6, 1);
 
 			std::string diagnostic;
 			refusedQuery("A Window authored in a Background",
-				building.canAddSectorWindow(1, 0, 1, 2, 1, &diagnostic), diagnostic);
+				world.canAddSectorWindow(1, 0, 1, 2, 1, &diagnostic), diagnostic);
 			refusedThrow("addSectorWindow authored in a Background",
-				[&] { building.addSectorWindow(1, 0, 1, 2, 1); });
+				[&] { world.addSectorWindow(1, 0, 1, 2, 1); });
 		}
 		{
-			core::Building building("Traversable window vs bg", 12, 3);
-			building.addLayer();
-			building.addRoom("Front", 0, 0, 0, 6, 1);
-			building.addBackground(1, 0, 0, 6, 1);
+			core::World world("Traversable window vs bg", 12, 3);
+			world.addLayer();
+			world.addRoom("Front", 0, 0, 0, 6, 1);
+			world.addBackground(1, 0, 0, 6, 1);
 
 			refusedThrow("A traversable Window facing a Background",
 				[&]
 				{
-					building.addSectorWindow(0, 0, 1, 2, 1,
+					world.addSectorWindow(0, 0, 1, 2, 1,
 						{ true, core::Window::State::Open, core::Window::Style::Clear });
 				});
 			// The same placement without traversal is still fine: the refusal
 			// is about crossing, not looking.
 			require(!throws([&]
 				{
-					building.addSectorWindow(0, 0, 1, 2, 1,
+					world.addSectorWindow(0, 0, 1, 2, 1,
 						{ false, core::Window::State::Closed, core::Window::Style::Clear });
 				}),
 				"A looking Window was refused after the traversable refusal");

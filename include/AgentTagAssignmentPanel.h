@@ -1,10 +1,10 @@
 #pragma once
 
 // The selected Agent's assigned Agent tags drawn as coloured chips with an
-// add-tag combo (ticket #131). The Building remains the sole assignment
+// add-tag combo (ticket #131). The World remains the sole assignment
 // mutation boundary; this panel only captures one pre-edit snapshot, asks the
-// Building to assign or remove one stable tag ID, and commits one
-// Building-history entry on success.
+// World to assign or remove one stable tag ID, and commits one
+// World-history entry on success.
 
 #include <memory>
 #include <string>
@@ -13,15 +13,15 @@
 
 namespace core
 {
-	class Building;
+	class World;
 }
 
 // Moves one Agent/tag association to `assigned`. Re-assigning an already
-// assigned tag and removing an unassigned tag are refused by Building, as are
+// assigned tag and removing an unassigned tag are refused by World, as are
 // unknown IDs, absent registries, and edits while simulation is running. A
-// refusal mutates neither the Building nor its undo history.
+// refusal mutates neither the World nor its undo history.
 bool commitAgentTagAssignment(
-	std::shared_ptr<core::Building> const& building,
+	std::shared_ptr<core::World> const& world,
 	core::AgentId agent, core::AgentTagId tag, bool assigned,
 	std::string& diagnostic);
 
@@ -29,7 +29,7 @@ bool commitAgentTagAssignment(
 // and sampled Height modifier, including source tags or their defaults. Kept separate
 // so the headless ImGui seam exercises the Selection panel's read-only content.
 void renderAgentEffectiveProperties(
-	std::shared_ptr<core::Building> const& building, core::AgentId agent);
+	std::shared_ptr<core::World> const& world, core::AgentId agent);
 
 // Renders only the tags the selected Agent has as a wrapping group of
 // coloured chips (tag Colour property when present, neutral grey otherwise),
@@ -39,8 +39,8 @@ void renderAgentEffectiveProperties(
 // remain visible but disabled with the core validation diagnostic. All
 // assignment edits are disabled while the simulation is running.
 void renderAgentTagAssignmentChecklist(
-	std::shared_ptr<core::Building> const& building, core::AgentId agent);
+	std::shared_ptr<core::World> const& world, core::AgentId agent);
 
-// Clears the transient chip selection whenever the selected Building document
+// Clears the transient chip selection whenever the selected World document
 // is closed, replaced, or restored through undo.
 void resetAgentTagAssignmentPanelState();

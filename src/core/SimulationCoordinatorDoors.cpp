@@ -1,6 +1,6 @@
 #include "core/SimulationCoordinator.h"
 
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/Coordination.h"
 #include "core/Door.h"
 #include "core/ExtensibleObject.h"
@@ -11,9 +11,9 @@ namespace core
 
 	using namespace std;
 
-	// Door and extensible traversal preparation moved out of Building
+	// Door and extensible traversal preparation moved out of World
 	// (ADR 0004 stage 3). The behaviour is unchanged: the coordinator works on
-	// Building's traversal-request, interaction and device-operation registries
+	// World's traversal-request, interaction and device-operation registries
 	// through friendship and calls its own queue refresh, ladder admission,
 	// grant and denial machinery directly - that queue and admission core joined
 	// the coordinator in stage 4, so no facade callback is left in this seam.
@@ -23,7 +23,7 @@ namespace core
 		constexpr uint32_t MaximumPreparationAttempts = 2;
 		constexpr uint64_t RetryDelayTicks = 3;
 
-		auto request = mBuilding.mTraversalRequests.find(requestId);
+		auto request = mWorld.mTraversalRequests.find(requestId);
 		if (!request || request->mState != TraversalRequestState::Pending)
 		{
 			return;
@@ -33,7 +33,7 @@ namespace core
 		{
 			for (auto pointId : resource.mControls)
 			{
-				auto point = mBuilding.mInteractionPoints.find(pointId);
+				auto point = mWorld.mInteractionPoints.find(pointId);
 				if (point && point->mSector == candidate.mSourceSector)
 				{
 					return pointId;
@@ -55,14 +55,14 @@ namespace core
 		bool completedPreparation = false;
 		if (resource.mActivePreparation)
 		{
-			auto active = mBuilding.mInteractionRequests.find(resource.mActivePreparation);
+			auto active = mWorld.mInteractionRequests.find(resource.mActivePreparation);
 			if (active && active->mResult == InteractionResult::Pending)
 			{
 				bool interactionStarted = false;
 				for (auto const& [operationId, requirement] : active->mOperations)
 				{
 					(void)requirement;
-					if (auto operation = mBuilding.mDeviceOperations.find(operationId))
+					if (auto operation = mWorld.mDeviceOperations.find(operationId))
 					{
 						interactionStarted = interactionStarted || operation->mActivated;
 						operation->mRequesters.insert(request->mOwner);
@@ -106,7 +106,7 @@ namespace core
 			{
 				failedPreparation = true;
 				++resource.mPreparationAttempts;
-				resource.mNextPreparationTick = mBuilding.mSimulationTick + RetryDelayTicks;
+				resource.mNextPreparationTick = mWorld.mSimulationTick + RetryDelayTicks;
 			}
 			resource.mActivePreparation = {};
 			resource.mPreparationOperator = {};
@@ -126,14 +126,14 @@ namespace core
 			denyTraversalRequest(requestId, TraversalFailureReason::PreparationFailed);
 			return;
 		}
-		if (mBuilding.mSimulationTick < resource.mNextPreparationTick)
+		if (mWorld.mSimulationTick < resource.mNextPreparationTick)
 		{
 			return; // A temporary block uses a stable, tick-based retry delay.
 		}
 
 		TraversalRequestId selected;
 		InteractionPointId selectedControl;
-		for (auto const& [candidateId, candidate] : mBuilding.mTraversalRequests.entries())
+		for (auto const& [candidateId, candidate] : mWorld.mTraversalRequests.entries())
 		{
 			if (candidate->mResource != request->mResource
 				|| candidate->mState != TraversalRequestState::Pending)
@@ -157,10 +157,10 @@ namespace core
 		{
 			// Another locomotion/interaction task can make the control temporarily
 			// busy. Do not turn that scheduling condition into permanent rejection.
-			resource.mNextPreparationTick = mBuilding.mSimulationTick + RetryDelayTicks;
+			resource.mNextPreparationTick = mWorld.mSimulationTick + RetryDelayTicks;
 			return;
 		}
-		auto interaction = mBuilding.mInteractionRequests.find(interactionId);
+		auto interaction = mWorld.mInteractionRequests.find(interactionId);
 		if (!interaction || interaction->mOperations.empty())
 		{
 			denyTraversalRequest(requestId, TraversalFailureReason::ControlRejected);
@@ -171,7 +171,7 @@ namespace core
 		resource.mPreparationOperator = requestId;
 		refreshQueuePositions(resource);
 		resource.mSharedPreparationOperation = interaction->mOperations.front().first;
-		for (auto const& [candidateId, candidate] : mBuilding.mTraversalRequests.entries())
+		for (auto const& [candidateId, candidate] : mWorld.mTraversalRequests.entries())
 		{
 			(void)candidateId;
 			if (candidate->mResource != request->mResource
@@ -184,7 +184,7 @@ namespace core
 			for (auto const& [operationId, requirement] : interaction->mOperations)
 			{
 				(void)requirement;
-				if (auto operation = mBuilding.mDeviceOperations.find(operationId))
+				if (auto operation = mWorld.mDeviceOperations.find(operationId))
 				{
 					operation->mRequesters.insert(candidate->mOwner);
 				}
@@ -194,7 +194,7 @@ namespace core
 
 	void SimulationCoordinator::allocateExtensiblePreparation(TraversalRequestId requestId, TraversalResource& resource)
 	{
-		auto request = mBuilding.mTraversalRequests.find(requestId);
+		auto request = mWorld.mTraversalRequests.find(requestId);
 		if (!request || request->mState != TraversalRequestState::Pending) return;
 		if (!resource.mEnabled)
 		{
@@ -227,7 +227,7 @@ namespace core
 		auto controlFor = [&](TraversalRequest const& candidate)
 		{
 			for (auto pointId : resource.mControls)
-				if (auto point = mBuilding.mInteractionPoints.find(pointId); point && point->mSector == candidate.mSourceSector)
+				if (auto point = mWorld.mInteractionPoints.find(pointId); point && point->mSector == candidate.mSourceSector)
 					return pointId;
 			return InteractionPointId{};
 		};
@@ -239,7 +239,7 @@ namespace core
 
 		if (resource.mActivePreparation)
 		{
-			auto active = mBuilding.mInteractionRequests.find(resource.mActivePreparation);
+			auto active = mWorld.mInteractionRequests.find(resource.mActivePreparation);
 			if (active && active->mResult == InteractionResult::Pending)
 			{
 				request->mPreparationRequested = true;
@@ -247,7 +247,7 @@ namespace core
 				{
 					(void)requirement;
 					request->mPreparationOperation = operationId;
-					if (auto operation = mBuilding.mDeviceOperations.find(operationId))
+					if (auto operation = mWorld.mDeviceOperations.find(operationId))
 						operation->mRequesters.insert(request->mOwner);
 				}
 				return;
@@ -273,14 +273,14 @@ namespace core
 		}
 
 		TraversalRequestId selected;
-		for (auto const& [candidateId, candidate] : mBuilding.mTraversalRequests.entries())
+		for (auto const& [candidateId, candidate] : mWorld.mTraversalRequests.entries())
 			if (candidate->mResource == request->mResource
 				&& candidate->mState == TraversalRequestState::Pending && controlFor(*candidate)
 				&& (!selected || candidateId < selected)) selected = candidateId;
 		if (selected != requestId) return;
 		auto interactionId = requestInteractionForTraversal(controlFor(*request), request->mOwner);
 		if (!interactionId) return;
-		auto interaction = mBuilding.mInteractionRequests.find(interactionId);
+		auto interaction = mWorld.mInteractionRequests.find(interactionId);
 		if (!interaction || interaction->mOperations.empty())
 		{
 			denyTraversalRequest(requestId, TraversalFailureReason::ControlRejected);
@@ -297,7 +297,7 @@ namespace core
 	DoorOpenLeaseId SimulationCoordinator::acquireDoorOpenLease(TraversalResource& resource,
 		DoorOpenLeaseKind kind, TraversalRequestId request)
 	{
-		auto id = DoorOpenLeaseId{ mBuilding.mNextDoorOpenLeaseValue++ };
+		auto id = DoorOpenLeaseId{ mWorld.mNextDoorOpenLeaseValue++ };
 		resource.mOpenLeases.emplace(id, DoorOpenLease{ kind, request });
 		resource.mDoor->acquireOpenLease();
 		// Safety and locally activated preparation have priority over a close.
@@ -320,14 +320,14 @@ namespace core
 
 	DoorOpenLeaseId SimulationCoordinator::acquireDoorOpenLease(TraversalResourceId resourceId, DoorOpenLeaseKind kind)
 	{
-		auto resource = mBuilding.mTraversalResources.find(resourceId);
+		auto resource = mWorld.mTraversalResources.find(resourceId);
 		if (!resource || !resource->mDoor || !resource->mEnabled) return {};
 		return acquireDoorOpenLease(*resource, kind);
 	}
 
 	bool SimulationCoordinator::releaseDoorOpenLease(TraversalResourceId resourceId, DoorOpenLeaseId lease)
 	{
-		auto resource = mBuilding.mTraversalResources.find(resourceId);
+		auto resource = mWorld.mTraversalResources.find(resourceId);
 		return resource && resource->mDoor && releaseDoorOpenLease(*resource, lease);
 	}
 

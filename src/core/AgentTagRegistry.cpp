@@ -12,7 +12,7 @@
 #include <stdexcept>
 #include <utility>
 
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/SerializationException.h"
 #include "core/YamlSerializer.h"
 
@@ -269,14 +269,14 @@ namespace core
 		return tag->getHeightModifier();
 	}
 
-	void AgentTagRegistry::registerBuilding(Building& building)
+	void AgentTagRegistry::registerWorld(World& world)
 	{
-		mLoadedBuildings.insert(&building);
+		mLoadedWorlds.insert(&world);
 	}
 
-	void AgentTagRegistry::unregisterBuilding(Building& building)
+	void AgentTagRegistry::unregisterWorld(World& world)
 	{
-		mLoadedBuildings.erase(&building);
+		mLoadedWorlds.erase(&world);
 	}
 
 	std::vector<LoadedAgentTagUsage> AgentTagRegistry::getLoadedAgentTagUsage(
@@ -287,11 +287,11 @@ namespace core
 				"Agent tag {} is not defined in this registry", id.value));
 
 		std::vector<LoadedAgentTagUsage> usage;
-		usage.reserve(mLoadedBuildings.size());
-		for (auto const* building : mLoadedBuildings)
+		usage.reserve(mLoadedWorlds.size());
+		for (auto const* world : mLoadedWorlds)
 		{
-			if (!building) continue;
-			usage.push_back({ building, building->countAgentTagAssignments(id) });
+			if (!world) continue;
+			usage.push_back({ world, world->countAgentTagAssignments(id) });
 		}
 		return usage;
 	}
@@ -303,14 +303,14 @@ namespace core
 		return count;
 	}
 
-	bool AgentTagRegistry::hasLoadedBuilding(Building const* building) const
+	bool AgentTagRegistry::hasLoadedWorld(World const* world) const
 	{
-		return building && mLoadedBuildings.contains(const_cast<Building*>(building));
+		return world && mLoadedWorlds.contains(const_cast<World*>(world));
 	}
 
-	bool AgentTagRegistry::hasLoadedBuildings() const
+	bool AgentTagRegistry::hasLoadedWorlds() const
 	{
-		return !mLoadedBuildings.empty();
+		return !mLoadedWorlds.empty();
 	}
 
 	bool AgentTagRegistry::fileHasExternalChanges(std::string const& filepath) const
@@ -349,24 +349,24 @@ namespace core
 		}
 		if (!definitionEditsAreAllowed(diagnostic)) return false;
 
-		struct BuildingRepairs
+		struct WorldRepairs
 		{
-			Building* building{ nullptr };
-			std::vector<Building::AgentTagReconciliation> repairs;
+			World* world{ nullptr };
+			std::vector<World::AgentTagReconciliation> repairs;
 		};
-		std::vector<BuildingRepairs> transaction;
-		transaction.reserve(mLoadedBuildings.size());
-		for (auto* building : mLoadedBuildings)
+		std::vector<WorldRepairs> transaction;
+		transaction.reserve(mLoadedWorlds.size());
+		for (auto* world : mLoadedWorlds)
 		{
-			if (!building) continue;
-			BuildingRepairs entry;
-			entry.building = building;
+			if (!world) continue;
+			WorldRepairs entry;
+			entry.world = world;
 			std::string validationDiagnostic;
-			if (!building->inspectAgentTagAssignments(replacement, true,
+			if (!world->inspectAgentTagAssignments(replacement, true,
 				&entry.repairs, &validationDiagnostic))
 			{
-				return reject(std::format("Building '{}': {}",
-					building->getName(), validationDiagnostic));
+				return reject(std::format("World '{}': {}",
+					world->getName(), validationDiagnostic));
 			}
 			transaction.push_back(std::move(entry));
 		}
@@ -379,22 +379,22 @@ namespace core
 		mSavedDocumentContents = std::move(replacement.mSavedDocumentContents);
 		markUnmodified();
 		for (auto& entry : transaction)
-			entry.building->applyAgentTagReconciliations(entry.repairs);
+			entry.world->applyAgentTagReconciliations(entry.repairs);
 		if (diagnostic) diagnostic->clear();
 		return true;
 	}
 
 	bool AgentTagRegistry::definitionEditsAreAllowed(std::string* diagnostic) const
 	{
-		for (auto const* building : mLoadedBuildings)
+		for (auto const* world : mLoadedWorlds)
 		{
-			if (building && !building->isSimulationPaused())
+			if (world && !world->isSimulationPaused())
 			{
 				if (diagnostic)
 				{
 					*diagnostic = std::format(
-						"Pause Building '{}' before editing this Agent tag registry",
-						building->getName());
+						"Pause World '{}' before editing this Agent tag registry",
+						world->getName());
 				}
 				return false;
 			}
@@ -438,10 +438,10 @@ namespace core
 			return reject(std::format(
 				"Agent tag {} is not defined in this registry", id.value));
 
-		for (auto const* building : mLoadedBuildings)
+		for (auto const* world : mLoadedWorlds)
 		{
-			if (!building) continue;
-			for (auto const& [agentId, agent] : building->mAgents.entries())
+			if (!world) continue;
+			for (auto const& [agentId, agent] : world->mAgents.entries())
 			{
 				(void)agentId;
 				if (!agent || !agent->hasAgentTag(id)) continue;
@@ -451,8 +451,8 @@ namespace core
 					auto const* source = mTags.find(assigned);
 					if (!source || !source->getColour()) continue;
 					return reject(std::format(
-						"Cannot add Colour to Agent tag #{}: Agent '{}' in Building '{}' already inherits Colour from #{}",
-						target->getName(), agent->getName(), building->getName(),
+						"Cannot add Colour to Agent tag #{}: Agent '{}' in World '{}' already inherits Colour from #{}",
+						target->getName(), agent->getName(), world->getName(),
 						source->getName()));
 				}
 			}
@@ -474,10 +474,10 @@ namespace core
 			return reject(std::format(
 				"Agent tag {} is not defined in this registry", id.value));
 
-		for (auto const* building : mLoadedBuildings)
+		for (auto const* world : mLoadedWorlds)
 		{
-			if (!building) continue;
-			for (auto const& [agentId, agent] : building->mAgents.entries())
+			if (!world) continue;
+			for (auto const& [agentId, agent] : world->mAgents.entries())
 			{
 				(void)agentId;
 				if (!agent || !agent->hasAgentTag(id)) continue;
@@ -487,8 +487,8 @@ namespace core
 					auto const* source = mTags.find(assigned);
 					if (!source || !source->getWalkSpeedModifier()) continue;
 					return reject(std::format(
-						"Cannot add Walk speed modifier to Agent tag #{}: Agent '{}' in Building '{}' already inherits Walk speed modifier from #{}",
-						target->getName(), agent->getName(), building->getName(),
+						"Cannot add Walk speed modifier to Agent tag #{}: Agent '{}' in World '{}' already inherits Walk speed modifier from #{}",
+						target->getName(), agent->getName(), world->getName(),
 						source->getName()));
 				}
 			}
@@ -510,10 +510,10 @@ namespace core
 			return reject(std::format(
 				"Agent tag {} is not defined in this registry", id.value));
 
-		for (auto const* building : mLoadedBuildings)
+		for (auto const* world : mLoadedWorlds)
 		{
-			if (!building) continue;
-			for (auto const& [agentId, agent] : building->mAgents.entries())
+			if (!world) continue;
+			for (auto const& [agentId, agent] : world->mAgents.entries())
 			{
 				(void)agentId;
 				if (!agent || !agent->hasAgentTag(id)) continue;
@@ -523,8 +523,8 @@ namespace core
 					auto const* source = mTags.find(assigned);
 					if (!source || !source->getHeightModifier()) continue;
 					return reject(std::format(
-						"Cannot add Height modifier to Agent tag #{}: Agent '{}' in Building '{}' already inherits Height modifier from #{}",
-						target->getName(), agent->getName(), building->getName(),
+						"Cannot add Height modifier to Agent tag #{}: Agent '{}' in World '{}' already inherits Height modifier from #{}",
+						target->getName(), agent->getName(), world->getName(),
 						source->getName()));
 				}
 			}
@@ -587,15 +587,15 @@ namespace core
 			return reject(std::format(
 				"Agent tag {} is not defined in this registry", id.value));
 
-		// Judge every dependent Building before mutating any of them. Even a
-		// Building with no assignment depends on this shared definition document.
+		// Judge every dependent World before mutating any of them. Even a
+		// World with no assignment depends on this shared definition document.
 		if (!definitionEditsAreAllowed(diagnostic)) return false;
 
 		// Every loaded assignment goes before the definition. From the first
-		// write onward no loaded Building can be left with a stale reference, and
+		// write onward no loaded World can be left with a stale reference, and
 		// no later step can refuse after the complete preflight above.
-		for (auto* building : mLoadedBuildings)
-			if (building) building->clearAgentTagAssignments(id);
+		for (auto* world : mLoadedWorlds)
+			if (world) world->clearAgentTagAssignments(id);
 		mTags.remove(id);
 		modify();
 		if (diagnostic) diagnostic->clear();
@@ -706,8 +706,8 @@ namespace core
 		try { revision = allocatePropertyRevision(); }
 		catch (std::exception const& error) { return reject(error.what()); }
 		tag->setWalkSpeedModifier({ DefaultAgentWalkSpeedModifierRange, revision });
-		for (auto* building : mLoadedBuildings)
-			if (building) building->addAgentTagWalkSpeedModifierSamples(
+		for (auto* world : mLoadedWorlds)
+			if (world) world->addAgentTagWalkSpeedModifierSamples(
 				id, *tag->getWalkSpeedModifier());
 		modify();
 		if (diagnostic) diagnostic->clear();
@@ -741,9 +741,9 @@ namespace core
 		tag->setWalkSpeedModifier({ range, revision });
 		// Install the new definition before sampling so every replacement carries
 		// the same newly allocated provenance. Each loaded assigned Agent is visited
-		// once; Buildings with no such Agent remain untouched.
-		for (auto* building : mLoadedBuildings)
-			if (building) building->addAgentTagWalkSpeedModifierSamples(
+		// once; Worlds with no such Agent remain untouched.
+		for (auto* world : mLoadedWorlds)
+			if (world) world->addAgentTagWalkSpeedModifierSamples(
 				id, *tag->getWalkSpeedModifier());
 		modify();
 		if (diagnostic) diagnostic->clear();
@@ -766,8 +766,8 @@ namespace core
 			return reject(std::format(
 				"Agent tag #{} has no Walk speed modifier", tag->getName()));
 		if (!definitionEditsAreAllowed(diagnostic)) return false;
-		for (auto* building : mLoadedBuildings)
-			if (building) building->clearAgentTagWalkSpeedModifierSamples(id);
+		for (auto* world : mLoadedWorlds)
+			if (world) world->clearAgentTagWalkSpeedModifierSamples(id);
 		tag->removeWalkSpeedModifier();
 		modify();
 		if (diagnostic) diagnostic->clear();
@@ -796,8 +796,8 @@ namespace core
 		try { revision = allocatePropertyRevision(); }
 		catch (std::exception const& error) { return reject(error.what()); }
 		tag->setHeightModifier({ DefaultAgentHeightModifierRange, revision });
-		for (auto* building : mLoadedBuildings)
-			if (building) building->addAgentTagHeightModifierSamples(
+		for (auto* world : mLoadedWorlds)
+			if (world) world->addAgentTagHeightModifierSamples(
 				id, *tag->getHeightModifier());
 		modify();
 		if (diagnostic) diagnostic->clear();
@@ -829,8 +829,8 @@ namespace core
 		try { revision = allocatePropertyRevision(); }
 		catch (std::exception const& error) { return reject(error.what()); }
 		tag->setHeightModifier({ range, revision });
-		for (auto* building : mLoadedBuildings)
-			if (building) building->addAgentTagHeightModifierSamples(
+		for (auto* world : mLoadedWorlds)
+			if (world) world->addAgentTagHeightModifierSamples(
 				id, *tag->getHeightModifier());
 		modify();
 		if (diagnostic) diagnostic->clear();
@@ -853,23 +853,23 @@ namespace core
 			return reject(std::format(
 				"Agent tag #{} has no Height modifier", tag->getName()));
 		if (!definitionEditsAreAllowed(diagnostic)) return false;
-		for (auto* building : mLoadedBuildings)
-			if (building) building->clearAgentTagHeightModifierSamples(id);
+		for (auto* world : mLoadedWorlds)
+			if (world) world->clearAgentTagHeightModifierSamples(id);
 		tag->removeHeightModifier();
 		modify();
 		if (diagnostic) diagnostic->clear();
 		return true;
 	}
 
-	bool AgentTagRegistry::loadedBuildingAssignmentsAreValid(
+	bool AgentTagRegistry::loadedWorldAssignmentsAreValid(
 		AgentTagRegistry const& definitions, std::string* diagnostic,
-		std::vector<Building const*> const& excludedBuildings) const
+		std::vector<World const*> const& excludedWorlds) const
 	{
-		for (auto const* building : mLoadedBuildings)
+		for (auto const* world : mLoadedWorlds)
 		{
-			if (!building || std::find(excludedBuildings.begin(), excludedBuildings.end(),
-				building) != excludedBuildings.end()) continue;
-			if (!building->agentTagAssignmentsAreValid(definitions, diagnostic))
+			if (!world || std::find(excludedWorlds.begin(), excludedWorlds.end(),
+				world) != excludedWorlds.end()) continue;
+			if (!world->agentTagAssignmentsAreValid(definitions, diagnostic))
 				return false;
 		}
 		if (diagnostic) diagnostic->clear();

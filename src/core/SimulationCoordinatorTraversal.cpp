@@ -4,7 +4,7 @@
 #include "core/SimulationCoordinator.h"
 
 #include "core/Agent.h"
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/Coordination.h"
 #include "core/Edge.h"
 #include "core/ExtensibleObject.h"
@@ -18,38 +18,38 @@ namespace core
 
 	using namespace std;
 
-	// The traversal transaction lifecycle moved out of Building (ADR 0004
+	// The traversal transaction lifecycle moved out of World (ADR 0004
 	// stage 4): granting a permit, allocating a pending request across the
 	// resource families, denying, committing, cancelling, and releasing a
 	// traversal and its permit.
 	//
-	// The behaviour is unchanged. The coordinator works on Building's
+	// The behaviour is unchanged. The coordinator works on World's
 	// traversal-request, traversal-permit, interaction and device-operation
 	// registries through friendship, calls the queue, admission, lease, lift and
 	// snapshot machinery now living beside it directly, and keeps no callback to
-	// the Building facade (design pattern, not the Facade sector type) in this
+	// the World facade (design pattern, not the Facade sector type) in this
 	// seam.
 
 	TraversalPermitId SimulationCoordinator::grantTraversalRequest(TraversalRequestId requestId)
 	{
-		auto request = mBuilding.mTraversalRequests.find(requestId);
+		auto request = mWorld.mTraversalRequests.find(requestId);
 		if (!request || request->mState != TraversalRequestState::Pending)
 		{
 			return {};
 		}
 
-		auto permitId = mBuilding.mTraversalPermits.add(unique_ptr<TraversalPermit>(
+		auto permitId = mWorld.mTraversalPermits.add(unique_ptr<TraversalPermit>(
 			new TraversalPermit(requestId, request->mOwner)));
-		auto permit = mBuilding.mTraversalPermits.find(permitId);
-		permit->mExpiresAtTick = mBuilding.mSimulationTick + mBuilding.mTraversalWaitingPolicy.permitProgressTimeoutTicks;
-		if (auto agent = mBuilding.mAgents.find(request->mOwner))
+		auto permit = mWorld.mTraversalPermits.find(permitId);
+		permit->mExpiresAtTick = mWorld.mSimulationTick + mWorld.mTraversalWaitingPolicy.permitProgressTimeoutTicks;
+		if (auto agent = mWorld.mAgents.find(request->mOwner))
 		{
 			permit->mBestDestinationDistance = agent->getGlobalPosition().distanceTo(request->mDestinationEndpoint);
 		}
 		request->mPermit = permitId;
 		request->mState = TraversalRequestState::Granted;
 		request->mFailureReason = TraversalFailureReason::None;
-		if (auto resource = mBuilding.mTraversalResources.find(request->mResource); resource && resource->mDoor)
+		if (auto resource = mWorld.mTraversalResources.find(request->mResource); resource && resource->mDoor)
 		{
 			request->mCrossingLease = acquireDoorOpenLease(*resource, DoorOpenLeaseKind::Crossing, requestId);
 			if (request->mPreparationLease)
@@ -60,27 +60,27 @@ namespace core
 		}
 
 		SimulationEvent requestEvent;
-		requestEvent.sequence = mBuilding.mNextEventSequence++;
-		requestEvent.tick = mBuilding.mSimulationTick;
+		requestEvent.sequence = mWorld.mNextEventSequence++;
+		requestEvent.tick = mWorld.mSimulationTick;
 		requestEvent.type = SimulationEventType::TraversalRequestChanged;
-		requestEvent.phase = mBuilding.mCurrentPhase;
+		requestEvent.phase = mWorld.mCurrentPhase;
 		requestEvent.traversalRequest = makeTraversalRequestSnapshot(requestId, *request);
-		mBuilding.mEvents.push_back(std::move(requestEvent));
+		mWorld.mEvents.push_back(std::move(requestEvent));
 
 		SimulationEvent permitEvent;
-		permitEvent.sequence = mBuilding.mNextEventSequence++;
-		permitEvent.tick = mBuilding.mSimulationTick;
+		permitEvent.sequence = mWorld.mNextEventSequence++;
+		permitEvent.tick = mWorld.mSimulationTick;
 		permitEvent.type = SimulationEventType::TraversalPermitAdded;
-		permitEvent.phase = mBuilding.mCurrentPhase;
-		permitEvent.traversalPermit = makeTraversalPermitSnapshot(permitId, *mBuilding.mTraversalPermits.find(permitId));
-		mBuilding.mEvents.push_back(std::move(permitEvent));
+		permitEvent.phase = mWorld.mCurrentPhase;
+		permitEvent.traversalPermit = makeTraversalPermitSnapshot(permitId, *mWorld.mTraversalPermits.find(permitId));
+		mWorld.mEvents.push_back(std::move(permitEvent));
 		return permitId;
 	}
 
 	void SimulationCoordinator::allocateTraversalRequest(TraversalRequestId requestId,
 		shared_ptr<const Edge> const& edge, shared_ptr<const Vertex> const& destination)
 	{
-		auto request = mBuilding.mTraversalRequests.find(requestId);
+		auto request = mWorld.mTraversalRequests.find(requestId);
 		if (!request || request->mState != TraversalRequestState::Pending || !edge || !destination)
 		{
 			return;
@@ -88,7 +88,7 @@ namespace core
 
 		if (request->mResource)
 		{
-			auto resource = mBuilding.mTraversalResources.find(request->mResource);
+			auto resource = mWorld.mTraversalResources.find(request->mResource);
 			if (!resource)
 			{
 				denyTraversalRequest(requestId);
@@ -194,14 +194,14 @@ namespace core
 				command.desiredState = true;
 				command.traversalResource = request->mResource;
 				request->mPreparationOperation = findOrCreateDeviceOperation(command, request->mOwner);
-				if (auto operation = mBuilding.mDeviceOperations.find(request->mPreparationOperation))
+				if (auto operation = mWorld.mDeviceOperations.find(request->mPreparationOperation))
 				{
 					// Presence activates an automatic door; reaching the threshold and
 					// requesting traversal is the manual interaction for a manual door.
 					operation->mActivated = true;
 				}
 			}
-			if (auto operation = mBuilding.mDeviceOperations.find(request->mPreparationOperation);
+			if (auto operation = mWorld.mDeviceOperations.find(request->mPreparationOperation);
 				!operation || operation->mState == DeviceOperationState::Failed
 				|| operation->mState == DeviceOperationState::Rejected
 				|| operation->mState == DeviceOperationState::Cancelled)
@@ -212,7 +212,7 @@ namespace core
 			return;
 		}
 
-		shared_ptr<const Agent> agentView(mBuilding.mAgents.find(request->mOwner), [](Agent const*) {});
+		shared_ptr<const Agent> agentView(mWorld.mAgents.find(request->mOwner), [](Agent const*) {});
 		if (edge->isTraversable(destination, agentView))
 		{
 			grantTraversalRequest(requestId);
@@ -235,14 +235,14 @@ namespace core
 
 	void SimulationCoordinator::denyTraversalRequest(TraversalRequestId requestId, TraversalFailureReason reason)
 	{
-		auto request = mBuilding.mTraversalRequests.find(requestId);
+		auto request = mWorld.mTraversalRequests.find(requestId);
 		if (!request || request->mState != TraversalRequestState::Pending)
 		{
 			return;
 		}
 		request->mState = TraversalRequestState::Denied;
 		request->mFailureReason = reason;
-		if (auto resource = mBuilding.mTraversalResources.find(request->mResource); resource)
+		if (auto resource = mWorld.mTraversalResources.find(request->mResource); resource)
 		{
 			if (resource->mExtensible && resource->mExtensionRequestLeases.erase(requestId))
 				resource->mExtensible->releaseExtensionLease();
@@ -252,7 +252,7 @@ namespace core
 					releaseDoorOpenLease(*resource, request->mPreparationLease);
 				request->mPreparationLease = {};
 				releaseDoorQueueOwnership(requestId, *resource);
-				if (auto lift = mBuilding.mTraversalResources.find(resource->mLiftCoordinator))
+				if (auto lift = mWorld.mTraversalResources.find(resource->mLiftCoordinator))
 					releaseLiftAdmission(requestId, *lift);
 			}
 			else if (resource->mLift || resource->mShuttle)
@@ -267,19 +267,19 @@ namespace core
 		}
 
 		SimulationEvent event;
-		event.sequence = mBuilding.mNextEventSequence++;
-		event.tick = mBuilding.mSimulationTick;
+		event.sequence = mWorld.mNextEventSequence++;
+		event.tick = mWorld.mSimulationTick;
 		event.type = SimulationEventType::TraversalRequestChanged;
-		event.phase = mBuilding.mCurrentPhase;
+		event.phase = mWorld.mCurrentPhase;
 		event.traversalRequest = makeTraversalRequestSnapshot(requestId, *request);
-		mBuilding.mEvents.push_back(std::move(event));
+		mWorld.mEvents.push_back(std::move(event));
 	}
 
 	bool SimulationCoordinator::commitTraversal(Agent& agent, TraversalRequestId requestId, TraversalPermitId permitId,
 		shared_ptr<const Vertex> const& destination)
 	{
-		auto request = mBuilding.mTraversalRequests.find(requestId);
-		auto permit = mBuilding.mTraversalPermits.find(permitId);
+		auto request = mWorld.mTraversalRequests.find(requestId);
+		auto permit = mWorld.mTraversalPermits.find(permitId);
 		auto owner = getAgentId(&agent);
 		auto const commitsAtQueueBoundary = request && agent.mQueuedTraversalTask
 			&& request->mEdgeType == EdgeType::Location
@@ -312,14 +312,14 @@ namespace core
 			return false;
 		}
 
-		auto ladderResource = mBuilding.mTraversalResources.find(request->mResource);
+		auto ladderResource = mWorld.mTraversalResources.find(request->mResource);
 		if (ladderResource && ladderResource->mOpenPlatformLift && request->mEdgeType == EdgeType::Lift
 			&& find(ladderResource->mOccupants.begin(), ladderResource->mOccupants.end(), owner)
 				== ladderResource->mOccupants.end()) return false;
-		if (auto landing = mBuilding.mTraversalResources.find(request->mResource);
+		if (auto landing = mWorld.mTraversalResources.find(request->mResource);
 			landing && landing->mLiftCoordinator && request->mDestinationSector != request->mSourceSector)
 		{
-			auto lift = mBuilding.mTraversalResources.find(landing->mLiftCoordinator);
+			auto lift = mWorld.mTraversalResources.find(landing->mLiftCoordinator);
 			if (!lift) return false;
 			if (request->mDestinationSector == lift->mLiftSector
 				&& (request->mCapacityPosition >= lift->mCapacity
@@ -358,10 +358,10 @@ namespace core
 			}
 		}
 
-		if (auto landing = mBuilding.mTraversalResources.find(request->mResource);
+		if (auto landing = mWorld.mTraversalResources.find(request->mResource);
 			landing && landing->mLiftCoordinator)
 		{
-			auto lift = mBuilding.mTraversalResources.find(landing->mLiftCoordinator);
+			auto lift = mWorld.mTraversalResources.find(landing->mLiftCoordinator);
 			if (!lift) return false;
 			if (request->mSourceSector != lift->mLiftSector
 				&& request->mDestinationSector == lift->mLiftSector)
@@ -464,7 +464,7 @@ namespace core
 			tryGrantLadderAdmissions(*resource);
 		}
 
-		if (auto resource = mBuilding.mTraversalResources.find(request->mResource);
+		if (auto resource = mWorld.mTraversalResources.find(request->mResource);
 			resource && resource->mForceBridge
 			&& resource->mExtensionRequestLeases.erase(requestId))
 			resource->mExtensible->releaseExtensionLease();
@@ -472,37 +472,37 @@ namespace core
 		request->mState = TraversalRequestState::Committed;
 
 		SimulationEvent permitEvent;
-		permitEvent.sequence = mBuilding.mNextEventSequence++;
-		permitEvent.tick = mBuilding.mSimulationTick;
+		permitEvent.sequence = mWorld.mNextEventSequence++;
+		permitEvent.tick = mWorld.mSimulationTick;
 		permitEvent.type = SimulationEventType::TraversalPermitChanged;
-		permitEvent.phase = mBuilding.mCurrentPhase;
+		permitEvent.phase = mWorld.mCurrentPhase;
 		permitEvent.traversalPermit = makeTraversalPermitSnapshot(permitId, *permit);
-		mBuilding.mEvents.push_back(std::move(permitEvent));
+		mWorld.mEvents.push_back(std::move(permitEvent));
 
 		SimulationEvent requestEvent;
-		requestEvent.sequence = mBuilding.mNextEventSequence++;
-		requestEvent.tick = mBuilding.mSimulationTick;
+		requestEvent.sequence = mWorld.mNextEventSequence++;
+		requestEvent.tick = mWorld.mSimulationTick;
 		requestEvent.type = SimulationEventType::TraversalRequestChanged;
-		requestEvent.phase = mBuilding.mCurrentPhase;
+		requestEvent.phase = mWorld.mCurrentPhase;
 		requestEvent.traversalRequest = makeTraversalRequestSnapshot(requestId, *request);
-		mBuilding.mEvents.push_back(std::move(requestEvent));
+		mWorld.mEvents.push_back(std::move(requestEvent));
 		return true;
 	}
 
 	void SimulationCoordinator::cancelTraversal(TraversalRequestId requestId, TraversalPermitId permitId,
 		bool requestSafeTransportExit)
 	{
-		if (auto request = mBuilding.mTraversalRequests.find(requestId))
+		if (auto request = mWorld.mTraversalRequests.find(requestId))
 		{
 			// Ordinary route cancellation is not permission to leave a moving car.
 			// A topology rebuild is different: the manifest survives and will be
 			// rebound to the replacement graph, so it must not invent an exit demand.
 			if (requestSafeTransportExit)
 				requestLiftPassengerSafeExit(request->mOwner, TraversalFailureReason::None);
-			if (auto resource = mBuilding.mTraversalResources.find(request->mResource);
+			if (auto resource = mWorld.mTraversalResources.find(request->mResource);
 				resource && resource->mExtensible && resource->mExtensionRequestLeases.erase(requestId))
 				resource->mExtensible->releaseExtensionLease();
-			if (auto resource = mBuilding.mTraversalResources.find(request->mResource);
+			if (auto resource = mWorld.mTraversalResources.find(request->mResource);
 				resource && resource->mPreparationOperator == requestId)
 			{
 				if (resource->mActivePreparation)
@@ -512,13 +512,13 @@ namespace core
 				resource->mActivePreparation = {};
 				resource->mPreparationOperator = {};
 				resource->mSharedPreparationOperation = {};
-				resource->mNextPreparationTick = mBuilding.mSimulationTick + 1;
+				resource->mNextPreparationTick = mWorld.mSimulationTick + 1;
 			}
-			if (auto resource = mBuilding.mTraversalResources.find(request->mResource); resource)
+			if (auto resource = mWorld.mTraversalResources.find(request->mResource); resource)
 			{
 				if (resource->mDoor || resource->mForceBridge)
 					releaseDoorQueueOwnership(requestId, *resource);
-				if (auto lift = mBuilding.mTraversalResources.find(resource->mLiftCoordinator))
+				if (auto lift = mWorld.mTraversalResources.find(resource->mLiftCoordinator))
 					releaseLiftAdmission(requestId, *lift);
 				else if (resource->mOpenPlatformLift)
 				{
@@ -536,45 +536,45 @@ namespace core
 				}
 			}
 			vector<InteractionRequestId> ownedInteractions;
-			for (auto const& [interactionId, interaction] : mBuilding.mInteractionRequests.entries())
+			for (auto const& [interactionId, interaction] : mWorld.mInteractionRequests.entries())
 				if (interaction->mActor == request->mOwner
 					&& interaction->mResult == InteractionResult::Pending)
 					ownedInteractions.push_back(interactionId);
 			for (auto interactionId : ownedInteractions) cancelInteraction(interactionId);
 		}
 
-		if (auto permit = mBuilding.mTraversalPermits.find(permitId);
+		if (auto permit = mWorld.mTraversalPermits.find(permitId);
 			permit && permit->mState == TraversalPermitState::Active)
 		{
 			permit->mState = TraversalPermitState::Cancelled;
 			SimulationEvent event;
-			event.sequence = mBuilding.mNextEventSequence++;
-			event.tick = mBuilding.mSimulationTick;
+			event.sequence = mWorld.mNextEventSequence++;
+			event.tick = mWorld.mSimulationTick;
 			event.type = SimulationEventType::TraversalPermitChanged;
-			event.phase = mBuilding.mCurrentPhase;
+			event.phase = mWorld.mCurrentPhase;
 			event.traversalPermit = makeTraversalPermitSnapshot(permitId, *permit);
-			mBuilding.mEvents.push_back(std::move(event));
+			mWorld.mEvents.push_back(std::move(event));
 		}
 
-		if (auto request = mBuilding.mTraversalRequests.find(requestId);
+		if (auto request = mWorld.mTraversalRequests.find(requestId);
 			request && request->mState != TraversalRequestState::Committed)
 		{
 			request->mState = TraversalRequestState::Cancelled;
 			SimulationEvent event;
-			event.sequence = mBuilding.mNextEventSequence++;
-			event.tick = mBuilding.mSimulationTick;
+			event.sequence = mWorld.mNextEventSequence++;
+			event.tick = mWorld.mSimulationTick;
 			event.type = SimulationEventType::TraversalRequestChanged;
-			event.phase = mBuilding.mCurrentPhase;
+			event.phase = mWorld.mCurrentPhase;
 			event.traversalRequest = makeTraversalRequestSnapshot(requestId, *request);
-			mBuilding.mEvents.push_back(std::move(event));
+			mWorld.mEvents.push_back(std::move(event));
 		}
 	}
 
 	void SimulationCoordinator::releaseTraversal(TraversalRequestId requestId, TraversalPermitId permitId)
 	{
-		if (auto request = mBuilding.mTraversalRequests.find(requestId))
+		if (auto request = mWorld.mTraversalRequests.find(requestId))
 		{
-			if (auto resource = mBuilding.mTraversalResources.find(request->mResource); resource)
+			if (auto resource = mWorld.mTraversalResources.find(request->mResource); resource)
 			{
 				if (resource->mExtensible && resource->mExtensionRequestLeases.erase(requestId))
 					resource->mExtensible->releaseExtensionLease();
@@ -587,7 +587,7 @@ namespace core
 					request->mPreparationLease = {};
 					request->mCrossingLease = {};
 					releaseDoorQueueOwnership(requestId, *resource);
-					if (auto lift = mBuilding.mTraversalResources.find(resource->mLiftCoordinator))
+					if (auto lift = mWorld.mTraversalResources.find(resource->mLiftCoordinator))
 						releaseLiftAdmission(requestId, *lift);
 				}
 				else if (resource->mOpenPlatformLift)
@@ -606,10 +606,10 @@ namespace core
 			}
 			if (request->mState == TraversalRequestState::Cancelled && request->mPreparationOperation)
 			{
-				if (auto resource = mBuilding.mTraversalResources.find(request->mResource);
+				if (auto resource = mWorld.mTraversalResources.find(request->mResource);
 					resource && resource->mActivePreparation)
 				{
-					if (auto interaction = mBuilding.mInteractionRequests.find(resource->mActivePreparation))
+					if (auto interaction = mWorld.mInteractionRequests.find(resource->mActivePreparation))
 					{
 						for (auto const& [operationId, requirement] : interaction->mOperations)
 						{
@@ -625,30 +625,30 @@ namespace core
 			}
 		}
 
-		if (auto permit = mBuilding.mTraversalPermits.find(permitId))
+		if (auto permit = mWorld.mTraversalPermits.find(permitId))
 		{
 			auto snapshot = makeTraversalPermitSnapshot(permitId, *permit);
-			mBuilding.mTraversalPermits.remove(permitId);
+			mWorld.mTraversalPermits.remove(permitId);
 			SimulationEvent event;
-			event.sequence = mBuilding.mNextEventSequence++;
-			event.tick = mBuilding.mSimulationTick;
+			event.sequence = mWorld.mNextEventSequence++;
+			event.tick = mWorld.mSimulationTick;
 			event.type = SimulationEventType::TraversalPermitRemoved;
-			event.phase = mBuilding.mCurrentPhase;
+			event.phase = mWorld.mCurrentPhase;
 			event.traversalPermit = std::move(snapshot);
-			mBuilding.mEvents.push_back(std::move(event));
+			mWorld.mEvents.push_back(std::move(event));
 		}
 
-		if (auto request = mBuilding.mTraversalRequests.find(requestId))
+		if (auto request = mWorld.mTraversalRequests.find(requestId))
 		{
 			auto snapshot = makeTraversalRequestSnapshot(requestId, *request);
-			mBuilding.mTraversalRequests.remove(requestId);
+			mWorld.mTraversalRequests.remove(requestId);
 			SimulationEvent event;
-			event.sequence = mBuilding.mNextEventSequence++;
-			event.tick = mBuilding.mSimulationTick;
+			event.sequence = mWorld.mNextEventSequence++;
+			event.tick = mWorld.mSimulationTick;
 			event.type = SimulationEventType::TraversalRequestRemoved;
-			event.phase = mBuilding.mCurrentPhase;
+			event.phase = mWorld.mCurrentPhase;
 			event.traversalRequest = std::move(snapshot);
-			mBuilding.mEvents.push_back(std::move(event));
+			mWorld.mEvents.push_back(std::move(event));
 		}
 	}
 

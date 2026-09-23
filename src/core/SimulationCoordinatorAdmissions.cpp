@@ -3,7 +3,7 @@
 #include "core/SimulationCoordinator.h"
 
 #include "core/Agent.h"
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/Coordination.h"
 #include "core/Defines.h"
 #include "core/ExtensibleObject.h"
@@ -17,12 +17,12 @@ namespace core
 	using namespace std;
 
 	// The ladder admission half of the queue-and-admission core moved out of
-	// Building (ADR 0004 stage 4): which requests are admission-controlled,
+	// World (ADR 0004 stage 4): which requests are admission-controlled,
 	// how they join the deterministic admission queue, the entry-spacing rule
 	// which keeps climbers from overlapping on the span, the directional
 	// batch grant, and the release of admission and occupancy.
 	//
-	// The behaviour is unchanged. The coordinator works on Building's
+	// The behaviour is unchanged. The coordinator works on World's
 	// traversal-request and agent registries through friendship and calls its
 	// own queue refresh, grant and denial machinery directly, so no facade
 	// callback (design pattern, not the Facade sector type) is needed in this
@@ -63,7 +63,7 @@ namespace core
 	void SimulationCoordinator::attachLadderAdmissionRequest(TraversalRequestId requestId,
 		TraversalResource& resource)
 	{
-		auto request = mBuilding.mTraversalRequests.find(requestId);
+		auto request = mWorld.mTraversalRequests.find(requestId);
 		if (!request) return;
 		if (request->mDirection == TraversalDirection::None)
 		{
@@ -97,8 +97,8 @@ namespace core
 			sort(resource.mAdmissionQueue.begin(), resource.mAdmissionQueue.end(),
 				[&](auto lhs, auto rhs)
 				{
-					auto left = mBuilding.mTraversalRequests.find(lhs);
-					auto right = mBuilding.mTraversalRequests.find(rhs);
+					auto left = mWorld.mTraversalRequests.find(lhs);
+					auto right = mWorld.mTraversalRequests.find(rhs);
 					if (!left || !right) return lhs < rhs;
 					return left->mQueuedAtTick != right->mQueuedAtTick
 						? left->mQueuedAtTick < right->mQueuedAtTick
@@ -120,7 +120,7 @@ namespace core
 			+ (ascending ? 0.0f : (float)(resource.mLadder->getDecksHigh() - 1));
 		auto cleared = [&](AgentId id)
 		{
-			auto agent = mBuilding.mAgents.find(id);
+			auto agent = mWorld.mAgents.find(id);
 			if (!agent) return true;
 			auto const progress = ascending
 				? agent->getGlobalPosition().y - entryAltitude
@@ -136,7 +136,7 @@ namespace core
 		for (auto reservation : resource.mAdmissionReservations)
 		{
 			if (!reservation) continue;
-			auto request = mBuilding.mTraversalRequests.find(reservation);
+			auto request = mWorld.mTraversalRequests.find(reservation);
 			if (request && !cleared(request->mOwner)) return false;
 		}
 		return true;
@@ -160,7 +160,7 @@ namespace core
 		{
 			for (auto requestId : resource.mAdmissionQueue)
 			{
-				if (auto request = mBuilding.mTraversalRequests.find(requestId);
+				if (auto request = mWorld.mTraversalRequests.find(requestId);
 					request && request->mState == TraversalRequestState::Pending)
 					return request->mDirection;
 			}
@@ -171,7 +171,7 @@ namespace core
 			return any_of(resource.mAdmissionQueue.begin(), resource.mAdmissionQueue.end(),
 				[&](auto id)
 				{
-					auto request = mBuilding.mTraversalRequests.find(id);
+					auto request = mWorld.mTraversalRequests.find(id);
 					return request && request->mState == TraversalRequestState::Pending
 						&& request->mDirection == direction;
 				});
@@ -220,11 +220,11 @@ namespace core
 			auto selected = find_if(resource.mAdmissionQueue.begin(), resource.mAdmissionQueue.end(),
 				[&](auto id)
 				{
-					auto request = mBuilding.mTraversalRequests.find(id);
+					auto request = mWorld.mTraversalRequests.find(id);
 					if (!request || request->mState != TraversalRequestState::Pending
 						|| request->mDirection != resource.mActiveDirection) return false;
 					if (!resource.mLadder) return true;
-					auto agent = mBuilding.mAgents.find(request->mOwner);
+					auto agent = mWorld.mAgents.find(request->mOwner);
 					if (agent && request->mPreferredQueueSide == 0
 						&& agent->getGlobalPosition().distanceTo(request->mSourceEndpoint) <= 0.001f)
 						return true;
@@ -238,13 +238,13 @@ namespace core
 			if (selected == resource.mAdmissionQueue.end()) break;
 			auto requestId = *selected;
 			resource.mAdmissionQueue.erase(selected);
-			auto request = mBuilding.mTraversalRequests.find(requestId);
+			auto request = mWorld.mTraversalRequests.find(requestId);
 			if (resource.mLadder)
 			{
 				auto& lane = resource.mQueueLanes[request->mQueueApproach];
 				lane.queue.erase(remove(lane.queue.begin(), lane.queue.end(), requestId), lane.queue.end());
 				request->mQueuePosition = ~0u;
-				if (auto agent = mBuilding.mAgents.find(request->mOwner)) agent->mTraversalLocalGoal.reset();
+				if (auto agent = mWorld.mAgents.find(request->mOwner)) agent->mTraversalLocalGoal.reset();
 				refreshQueuePositions(resource);
 			}
 			// Reserve before issuing the permit: movement and commit can now rely on
@@ -271,11 +271,11 @@ namespace core
 		{
 			if (reservation == requestId) reservation = {};
 		}
-		if (auto request = mBuilding.mTraversalRequests.find(requestId))
+		if (auto request = mWorld.mTraversalRequests.find(requestId))
 		{
 			request->mCapacityPosition = ~0u;
 			request->mQueuePosition = ~0u;
-			if (auto agent = mBuilding.mAgents.find(request->mOwner)) agent->mTraversalLocalGoal.reset();
+			if (auto agent = mWorld.mAgents.find(request->mOwner)) agent->mTraversalLocalGoal.reset();
 		}
 		refreshQueuePositions(resource);
 	}

@@ -15,7 +15,7 @@
 #include <string>
 
 #include "core/Agent.h"
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/Defines.h"
 #include "core/Sector.h"
 #include "core/SectorType.h"
@@ -52,13 +52,13 @@ inline bool locationHasCapacity(std::shared_ptr<const core::Sector> const& secto
 // The world-coordinate core of the pegman's Agent drop: everything the
 // canvas does after the canvas-rectangle test and the screen-to-world
 // translation in UI.cpp's getPegmanTarget().
-inline PegmanTarget pegmanAgentTargetAtWorld(std::shared_ptr<const core::Building> const& building,
-	core::Vector2 const& world)
+inline PegmanTarget pegmanAgentTargetAtWorld(std::shared_ptr<const core::World> const& world,
+	core::Vector2 const& worldPosition)
 {
-	auto sector = building->getSectorAtPosition(gUISettings.visibleLayer, world.x, world.y);
-	if (!locationHasCapacity(sector) || !sector->pointInBounds(world.x, world.y)) return {};
+	auto sector = world->getSectorAtPosition(gUISettings.visibleLayer, worldPosition.x, worldPosition.y);
+	if (!locationHasCapacity(sector) || !sector->pointInBounds(worldPosition.x, worldPosition.y)) return {};
 
-	auto cellY = (uint32_t)std::floor(world.y);
+	auto cellY = (uint32_t)std::floor(worldPosition.y);
 	if (cellY < sector->getCellY()) return {};
 	auto deckOffset = cellY - sector->getCellY();
 	if (deckOffset >= sector->getDecksHigh()) return {};
@@ -66,38 +66,38 @@ inline PegmanTarget pegmanAgentTargetAtWorld(std::shared_ptr<const core::Buildin
 	float halfAgentWidth = CORE_AGENT_MAX_WIDTH * 0.5f;
 	float minimumX = halfAgentWidth;
 	float maximumX = sector->getSize().x - halfAgentWidth;
-	float localX = world.x - sector->getPosition().x;
+	float localX = worldPosition.x - sector->getPosition().x;
 	localX = minimumX <= maximumX
 		? std::clamp(localX, minimumX, maximumX)
 		: sector->getSize().x * 0.5f;
 
-	return { sector, deckOffset, localX, world.y,
+	return { sector, deckOffset, localX, worldPosition.y,
 		(float)sector->getCellY() + deckOffset, {} };
 }
 
 // The drag-move target for a selected Agent, in world coordinates. An Agent
 // moving within its own Sector retains its capacity; crossing into another
 // Location - Room or Facade alike - must find capacity there.
-inline PegmanTarget getAgentMoveTarget(std::shared_ptr<const core::Building> const& building,
-	core::Agent const* agent, core::Vector2 const& world)
+inline PegmanTarget getAgentMoveTarget(std::shared_ptr<const core::World> const& world,
+	core::Agent const* agent, core::Vector2 const& worldPosition)
 {
-	if (world.x < 0.0f || world.y < 0.0f
-		|| world.x >= building->getCellsWide() || world.y >= building->getDecksHigh())
-		return { nullptr, 0, 0.0f, world.y, world.y, "Drop the Agent inside the world" };
-	auto sector = building->getSectorAtPosition(gUISettings.visibleLayer, world.x, world.y);
+	if (worldPosition.x < 0.0f || worldPosition.y < 0.0f
+		|| worldPosition.x >= world->getCellsWide() || worldPosition.y >= world->getDecksHigh())
+		return { nullptr, 0, 0.0f, worldPosition.y, worldPosition.y, "Drop the Agent inside the world" };
+	auto sector = world->getSectorAtPosition(gUISettings.visibleLayer, worldPosition.x, worldPosition.y);
 	bool const retainsCapacity = sector && agent && agent->getSector() == sector.get();
 	if (!sector || !core::isLocationLike(sector->getType())
 		|| (!retainsCapacity && !locationHasCapacity(sector))
-		|| !sector->pointInBounds(world.x, world.y))
-		return { nullptr, 0, 0.0f, world.y, world.y,
+		|| !sector->pointInBounds(worldPosition.x, worldPosition.y))
+		return { nullptr, 0, 0.0f, worldPosition.y, worldPosition.y,
 			"Agents require a viable sector with available capacity" };
 
-	auto cellY = (uint32_t)std::floor(world.y);
+	auto cellY = (uint32_t)std::floor(worldPosition.y);
 	if (cellY < sector->getCellY() || cellY >= sector->getCellY() + sector->getDecksHigh())
-		return { nullptr, 0, 0.0f, world.y, world.y, "Agent deck is outside the sector" };
+		return { nullptr, 0, 0.0f, worldPosition.y, worldPosition.y, "Agent deck is outside the sector" };
 	float halfWidth = CORE_AGENT_MAX_WIDTH * 0.5f;
-	float localX = std::clamp(world.x - sector->getPosition().x, halfWidth,
+	float localX = std::clamp(worldPosition.x - sector->getPosition().x, halfWidth,
 		std::max(halfWidth, sector->getSize().x - halfWidth));
-	return { sector, cellY - sector->getCellY(), localX, world.y,
+	return { sector, cellY - sector->getCellY(), localX, worldPosition.y,
 		(float)cellY, {} };
 }

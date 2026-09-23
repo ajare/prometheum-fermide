@@ -29,7 +29,7 @@
 
 #include "Render.h"
 #include "core/Background.h"
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/Defines.h"
 #include "core/Facade.h"
 #include "core/Sector.h"
@@ -138,34 +138,34 @@ namespace
 	//
 	struct Frontage
 	{
-		core::Building building{ "Facade frontage", 12, 2 };
+		core::World world{ "Facade frontage", 12, 2 };
 		uint32_t frontIndex{ 0 };
 		uint32_t facadeIndex{ 0 };
 		std::shared_ptr<const core::Facade> facade;
 		std::shared_ptr<const core::Window> window;
 
-		// Building is not copyable (it owns unique_ptrs), so the whole
+		// World is not copyable (it owns unique_ptrs), so the whole
 		// frontage is authored in place rather than returned from a helper.
 		Frontage()
 		{
-			while (building.getLayerCount() < 2) building.addLayer();
+			while (world.getLayerCount() < 2) world.addLayer();
 
-			frontIndex = building.addRoom("Front", 0, 0, 0, 12, 1);
-			facadeIndex = building.addFacade("Frontage", 1, 0, 2, 4, 1,
+			frontIndex = world.addRoom("Front", 0, 0, 0, 12, 1);
+			facadeIndex = world.addFacade("Frontage", 1, 0, 2, 4, 1,
 				CORE_ROOM_MAX_HEIGHT, kFacadeColour);
 
 			std::string diagnostic;
-			require(building.canAddSectorWindow(0, 0, 3, 2, 1, &diagnostic),
+			require(world.canAddSectorWindow(0, 0, 3, 2, 1, &diagnostic),
 				("a Window looking into a Facade was refused: " + diagnostic).c_str());
 
-			auto created = building.addSectorWindow(0, 0, 3, 2, 1,
+			auto created = world.addSectorWindow(0, 0, 3, 2, 1,
 				{ false, core::Window::State::Closed, core::Window::Style::Clear });
 			window = created.object;
 			require(window != nullptr, "the Window into the Facade was not created");
 			require(!created.traversalResource,
 				"a looking Window into a Facade was given a traversal resource");
 
-			auto sector = building.getSector(facadeIndex);
+			auto sector = world.getSector(facadeIndex);
 			require(sector != nullptr && sector->getType() == core::SectorType::Facade,
 				"the Sector behind the Window is not a Facade");
 			facade = std::static_pointer_cast<const core::Facade>(sector);
@@ -301,7 +301,7 @@ namespace
 
 		// The control: a Room's fill does follow its lights, so the bypass
 		// above is a rule about Facades, not a renderer that never tints.
-		core::Building control("Lights control", 12, 2);
+		core::World control("Lights control", 12, 2);
 		while (control.getLayerCount() < 2) control.addLayer();
 		auto const roomIndex = control.addRoom("Lit Room", 0, 0, 0, 4, 1);
 		auto room = control.getSector(roomIndex);
@@ -360,7 +360,7 @@ namespace
 		// Objects inside the Facade reach the glass: the aperture pass draws
 		// a Sector's objects because it draws solid, and the Facade really
 		// hosts one.
-		f.building.addSectorMarker(f.facadeIndex, 0, 1.5f, nullptr);
+		f.world.addSectorMarker(f.facadeIndex, 0, 1.5f, nullptr);
 		bool holdsMarker{ false };
 		for (uint32_t objectIndex = 0; objectIndex < f.facade->getNumObjects(); ++objectIndex)
 		{
@@ -372,7 +372,7 @@ namespace
 
 		// Agents inside the Facade reach the glass too, and the wireframe
 		// overlay still refuses to show them.
-		auto const agentId = f.building.createAgent("Frontage walker", f.facadeIndex, 0, 1.0f);
+		auto const agentId = f.world.createAgent("Frontage walker", f.facadeIndex, 0, 1.0f);
 		require(agentId != core::AgentId{}, "createAgent did not assign the Facade walker an id");
 		require(f.facade->getAgents().size() == 1,
 			"the Agent did not enter the Facade");
@@ -398,14 +398,14 @@ namespace
 	//
 	void aWindowCannotLookHalfIntoAFacadeAndHalfIntoABackground()
 	{
-		core::Building building("Mixed span", 12, 2);
-		while (building.getLayerCount() < 2) building.addLayer();
-		building.addRoom("Front", 0, 0, 0, 12, 1);
-		building.addFacade("Frontage", 1, 0, 2, 2, 1);
-		building.addBackground(1, 0, 4, 2, 1, core::BackgroundColour{ 10, 10, 10 });
+		core::World world("Mixed span", 12, 2);
+		while (world.getLayerCount() < 2) world.addLayer();
+		world.addRoom("Front", 0, 0, 0, 12, 1);
+		world.addFacade("Frontage", 1, 0, 2, 2, 1);
+		world.addBackground(1, 0, 4, 2, 1, core::BackgroundColour{ 10, 10, 10 });
 
 		std::string diagnostic;
-		require(!building.canAddSectorWindow(0, 0, 3, 2, 1, &diagnostic),
+		require(!world.canAddSectorWindow(0, 0, 3, 2, 1, &diagnostic),
 			"a Window spanning a Facade and a Background was accepted");
 		require(diagnostic.find("Background") != std::string::npos,
 			("the mixed-span refusal does not name the Background: " + diagnostic).c_str());

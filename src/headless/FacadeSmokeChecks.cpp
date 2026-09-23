@@ -32,7 +32,7 @@
 
 #include "core/Agent.h"
 #include "core/Background.h"
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/Button.h"
 #include "core/CellDefinition.h"
 #include "core/Defines.h"
@@ -110,10 +110,10 @@ namespace
 		return core::Facade("Frontage", 1, 3, 2, 1, 4, 2, CORE_ROOM_MAX_HEIGHT, colour);
 	}
 
-	std::shared_ptr<const core::Facade> facadeIn(core::Building const& building, uint32_t sectorIndex)
+	std::shared_ptr<const core::Facade> facadeIn(core::World const& world, uint32_t sectorIndex)
 	{
-		auto sector = building.getSector(sectorIndex);
-		require(sector != nullptr, "Building reported a null Sector");
+		auto sector = world.getSector(sectorIndex);
+		require(sector != nullptr, "World reported a null Sector");
 		require(sector->getType() == core::SectorType::Facade,
 			("Sector " + std::to_string(sectorIndex) + " is not a Facade").c_str());
 		auto facade = std::dynamic_pointer_cast<const core::Facade>(sector);
@@ -121,32 +121,32 @@ namespace
 		return facade;
 	}
 
-	std::string serializeBuilding(core::Building const& building)
+	std::string serializeWorld(core::World const& world)
 	{
 		core::SerializationWorkData workData;
 		auto writer = core::YamlSerializer::toString();
-		building.serialize(*writer, workData);
+		world.serialize(*writer, workData);
 		writer->serialize();
 		return writer->getSerializedString();
 	}
 
-	void loadInto(core::Building& target, std::string const& yaml)
+	void loadInto(core::World& target, std::string const& yaml)
 	{
 		core::SerializationWorkData workData;
 		auto reader = core::YamlSerializer::fromString(yaml);
 		reader->deserialize();
-		require(target.deserialize(*reader, workData), "Building YAML did not load");
+		require(target.deserialize(*reader, workData), "World YAML did not load");
 	}
 
 	// A stable description of every Sector, Facade colour included, used to
-	// compare a Building against its own replay.
-	std::string sectorSignature(core::Building const& building)
+	// compare a World against its own replay.
+	std::string sectorSignature(core::World const& world)
 	{
 		std::string signature;
-		for (uint32_t index = 0; index < building.getNumSectors(); ++index)
+		for (uint32_t index = 0; index < world.getNumSectors(); ++index)
 		{
-			auto const sector = building.getSector(index);
-			require(sector != nullptr, "Building reported a null Sector while signing");
+			auto const sector = world.getSector(index);
+			require(sector != nullptr, "World reported a null Sector while signing");
 			signature += std::format("{}:{}@{},{},{}x{} name={}", index,
 				core::getSectorTypeString(sector->getType()), sector->getLayerIndex(),
 				sector->getCellX(), sector->getCellY(), sector->getCellsWide(), sector->getDecksHigh(),
@@ -192,13 +192,13 @@ namespace
 	// Switches, Transit landings - are authored against a Sector index, so a
 	// replay that remapped indices wrongly would show up here as an object
 	// changing Sector rather than as a load failure.
-	std::string objectSignature(core::Building const& building)
+	std::string objectSignature(core::World const& world)
 	{
 		std::string signature;
-		for (uint32_t index = 0; index < building.getNumSectors(); ++index)
+		for (uint32_t index = 0; index < world.getNumSectors(); ++index)
 		{
-			auto const sector = building.getSector(index);
-			require(sector != nullptr, "Building reported a null Sector while signing objects");
+			auto const sector = world.getSector(index);
+			require(sector != nullptr, "World reported a null Sector while signing objects");
 			signature += std::format("{}[{}]:", index, core::getSectorTypeString(sector->getType()));
 			for (uint32_t object = 0; object < sector->getNumObjects(); ++object)
 			{
@@ -218,10 +218,10 @@ namespace
 
 	// Whether a Sector currently carries an object of the given type. Used to
 	// follow a sector-referencing record through a replay or a remapping edit.
-	bool sectorHasObject(core::Building const& building, uint32_t sectorIndex,
+	bool sectorHasObject(core::World const& world, uint32_t sectorIndex,
 		core::SectorObjectType type)
 	{
-		auto const sector = building.getSector(sectorIndex);
+		auto const sector = world.getSector(sectorIndex);
 		if (!sector) return false;
 		for (uint32_t object = 0; object < sector->getNumObjects(); ++object)
 		{
@@ -248,10 +248,10 @@ namespace
 	{
 		auto reader = core::YamlSerializer::fromString(yaml);
 		reader->deserialize();
-		reader->beginMap("building");
+		reader->beginMap("world");
 		auto const version = reader->readUint32("version");
 		if (version > PreFacadeVersionCeiling)
-			throw core::SerializationException("Unsupported Building serialization version");
+			throw core::SerializationException("Unsupported World serialization version");
 		reader->beginArray("construction");
 		while (reader->nextArrayItem())
 		{
@@ -259,7 +259,7 @@ namespace
 			auto const type = reader->readString("type");
 			if (PreFacadeRecordNames.find(type) == PreFacadeRecordNames.end())
 				throw core::SerializationException(
-					std::format("Unknown Building construction record type: {}", type));
+					std::format("Unknown World construction record type: {}", type));
 			reader->endMap();
 		}
 		reader->endArray();
@@ -321,34 +321,34 @@ namespace
 	// and a legal top deck height.
 	void placementValidationFollowsTheRoomRule()
 	{
-		core::Building building("Placement", 12, 3);
-		building.addRoom("Occupier", 1, 0, 0, 3, 1);
-		building.finishBuild();
-		building.pauseSimulation();
+		core::World world("Placement", 12, 3);
+		world.addRoom("Occupier", 1, 0, 0, 3, 1);
+		world.finishBuild();
+		world.pauseSimulation();
 
 		std::string diagnostic;
-		require(building.canAddFacade(0, 0, 0, 4, 2, CORE_ROOM_MAX_HEIGHT, &diagnostic),
+		require(world.canAddFacade(0, 0, 0, 4, 2, CORE_ROOM_MAX_HEIGHT, &diagnostic),
 			"A Facade was refused on a free front Layer cell block");
-		require(building.canAddFacade(1, 0, 3, 2, 1, CORE_ROOM_MAX_HEIGHT, &diagnostic),
+		require(world.canAddFacade(1, 0, 3, 2, 1, CORE_ROOM_MAX_HEIGHT, &diagnostic),
 			"A Facade was refused beside an existing Room on a free block");
-		require(!building.canAddFacade(1, 0, 0, 1, 1, CORE_ROOM_MAX_HEIGHT, &diagnostic),
+		require(!world.canAddFacade(1, 0, 0, 1, 1, CORE_ROOM_MAX_HEIGHT, &diagnostic),
 			"A Facade was accepted over a cell an existing Sector owns");
-		require(!building.canAddFacade(0, 0, 0, 0, 1, CORE_ROOM_MAX_HEIGHT, &diagnostic),
+		require(!world.canAddFacade(0, 0, 0, 0, 1, CORE_ROOM_MAX_HEIGHT, &diagnostic),
 			"A zero-wide Facade was accepted");
-		require(!building.canAddFacade(0, 0, 0, 1, 0, CORE_ROOM_MAX_HEIGHT, &diagnostic),
+		require(!world.canAddFacade(0, 0, 0, 1, 0, CORE_ROOM_MAX_HEIGHT, &diagnostic),
 			"A zero-high Facade was accepted");
-		require(!building.canAddFacade(0, 0, 0, 1, 1, CORE_ROOM_MAX_HEIGHT + 0.1f, &diagnostic),
+		require(!world.canAddFacade(0, 0, 0, 1, 1, CORE_ROOM_MAX_HEIGHT + 0.1f, &diagnostic),
 			"A Facade was accepted with a top deck height above CORE_ROOM_MAX_HEIGHT");
-		require(!building.canAddFacade(0, 0, 0, 1, 1, CORE_ROOM_MIN_HEIGHT - 0.1f, &diagnostic),
+		require(!world.canAddFacade(0, 0, 0, 1, 1, CORE_ROOM_MIN_HEIGHT - 0.1f, &diagnostic),
 			"A Facade was accepted with a top deck height below CORE_ROOM_MIN_HEIGHT");
-		require(!building.canAddFacade(0, 0, 11, 2, 1, CORE_ROOM_MAX_HEIGHT, &diagnostic),
-			"A Facade was accepted across the Building bounds");
-		require(!building.canAddFacade(9, 0, 0, 1, 1, CORE_ROOM_MAX_HEIGHT, &diagnostic),
+		require(!world.canAddFacade(0, 0, 11, 2, 1, CORE_ROOM_MAX_HEIGHT, &diagnostic),
+			"A Facade was accepted across the World bounds");
+		require(!world.canAddFacade(9, 0, 0, 1, 1, CORE_ROOM_MAX_HEIGHT, &diagnostic),
 			"A Facade was accepted on a nonexistent Layer");
 
-		building.addFacade(0, 1, 4, 4, 2, CORE_ROOM_MAX_HEIGHT, { 200, 30, 99 });
-		building.finishBuild();
-		auto const facade = facadeIn(building, 1);
+		world.addFacade(0, 1, 4, 4, 2, CORE_ROOM_MAX_HEIGHT, { 200, 30, 99 });
+		world.finishBuild();
+		auto const facade = facadeIn(world, 1);
 		require(facade->getLayerIndex() == 0 && facade->getCellY() == 1 && facade->getCellX() == 4
 			&& facade->getCellsWide() == 4 && facade->getDecksHigh() == 2,
 			"The Facade footprint is not where it was placed");
@@ -357,20 +357,20 @@ namespace
 
 		// A Facade owns walkable floor exactly as a Location does: ground on
 		// the bottom deck.
-		auto const layer = std::as_const(building).getLayer(0);
+		auto const layer = std::as_const(world).getLayer(0);
 		require(layer->getCellDefinition(4, 1).floorType == core::CellFloorType::Ground
 			&& layer->getCellDefinition(4, 1).isTraversableOnFoot(),
 			"A Facade's ground deck is not walkable");
 	}
 
-	// The open-end invariant on the live Building: every deck, both sides.
+	// The open-end invariant on the live World: every deck, both sides.
 	void everyWallEndIsOpenOnEveryDeck()
 	{
-		core::Building building("Open perimeter", 12, 3);
-		auto const index = building.addFacade(0, 0, 0, 5, 3);
-		building.finishBuild();
+		core::World world("Open perimeter", 12, 3);
+		auto const index = world.addFacade(0, 0, 0, 5, 3);
+		world.finishBuild();
 
-		auto const facade = facadeIn(building, index);
+		auto const facade = facadeIn(world, index);
 		require(facade->getDecksHigh() == 3, "The Facade did not keep its deck count");
 		everyEndIsOpen(*facade);
 	}
@@ -378,17 +378,17 @@ namespace
 	// An Agent belongs to a Facade exactly as it belongs to a Room.
 	void agentsMayBePlacedInAFacade()
 	{
-		core::Building building("Host", 12, 3);
-		auto const facadeIndex = building.addFacade(0, 0, 0, 4, 1);
-		building.finishBuild();
+		core::World world("Host", 12, 3);
+		auto const facadeIndex = world.addFacade(0, 0, 0, 4, 1);
+		world.finishBuild();
 
-		auto const agentId = building.createAgent("Frontage dweller", facadeIndex, 0, 1.5f);
-		auto const agent = building.lookupAgent(agentId).entity;
+		auto const agentId = world.createAgent("Frontage dweller", facadeIndex, 0, 1.5f);
+		auto const agent = world.lookupAgent(agentId).entity;
 		require(agent != nullptr, "The Facade Agent was not created");
 		require(agent->getSector() != nullptr
 			&& agent->getSector()->getIndex() == facadeIndex,
 			"The Agent does not belong to the Facade");
-		require(facadeIn(building, facadeIndex)->getAgents().size() == 1,
+		require(facadeIn(world, facadeIndex)->getAgents().size() == 1,
 			"The Facade does not report its Agent");
 	}
 
@@ -397,13 +397,13 @@ namespace
 	// Facade does not have.
 	void objectHostingParityWithARoom()
 	{
-		core::Building building("Parity", 12, 3);
-		auto const roomIndex = building.addRoom("Comparator", 0, 0, 0, 4, 2);
-		auto const facadeIndex = building.addFacade(0, 0, 4, 4, 2);
-		building.finishBuild();
+		core::World world("Parity", 12, 3);
+		auto const roomIndex = world.addRoom("Comparator", 0, 0, 0, 4, 2);
+		auto const facadeIndex = world.addFacade(0, 0, 4, 4, 2);
+		world.finishBuild();
 
-		auto const room = building.getSector(roomIndex);
-		auto const facade = building.getSector(facadeIndex);
+		auto const room = world.getSector(roomIndex);
+		auto const facade = world.getSector(facadeIndex);
 		require(room->getType() == core::SectorType::Location,
 			"The comparison Sector is not a plain Location");
 
@@ -429,55 +429,55 @@ namespace
 	// not just by predicate.
 	void roomSupportedObjectsPlaceInAFacade()
 	{
-		core::Building building("Host of objects", 12, 3);
-		auto const facadeIndex = building.addFacade(0, 0, 0, 4, 2, CORE_ROOM_MAX_HEIGHT,
+		core::World world("Host of objects", 12, 3);
+		auto const facadeIndex = world.addFacade(0, 0, 0, 4, 2, CORE_ROOM_MAX_HEIGHT,
 			{ 11, 222, 33 });
-		building.finishBuild();
-		building.pauseSimulation();
+		world.finishBuild();
+		world.pauseSimulation();
 
 		std::string diagnostic;
-		require(building.canAddSectorMarker(facadeIndex, 0, 1.5f, &diagnostic),
+		require(world.canAddSectorMarker(facadeIndex, 0, 1.5f, &diagnostic),
 			("A Marker was refused in a Facade: " + diagnostic).c_str());
-		auto const marker = building.addSectorMarker(facadeIndex, 0, 1.5f);
+		auto const marker = world.addSectorMarker(facadeIndex, 0, 1.5f);
 		require(marker.sector != nullptr, "The Facade Marker has no Sector");
 
-		require(building.canAddSectorWalkway(facadeIndex, 1, 0, &diagnostic),
+		require(world.canAddSectorWalkway(facadeIndex, 1, 0, &diagnostic),
 			("A Walkway was refused in a Facade: " + diagnostic).c_str());
-		building.addSectorWalkway(facadeIndex, 1, 0);
+		world.addSectorWalkway(facadeIndex, 1, 0);
 
 		// A light switch is an InteractionPoint control; a Room hosts it, so a
 		// Facade must take one too. There is no canAdd form; the add must not throw.
-		building.addSectorLightSwitch(facadeIndex, 1);
+		world.addSectorLightSwitch(facadeIndex, 1);
 
-		require(building.canAddRoomLadder(facadeIndex, 0, 0, nullptr, &diagnostic),
+		require(world.canAddRoomLadder(facadeIndex, 0, 0, nullptr, &diagnostic),
 			("A Room Ladder was refused under the Facade Walkway: " + diagnostic).c_str());
-		building.addRoomLadder(facadeIndex, 0, 0);
+		world.addRoomLadder(facadeIndex, 0, 0);
 
 		// The Facade still hosts nothing that a Room does not, and its perimeter
 		// is still open after all that object authoring.
-		everyEndIsOpen(*facadeIn(building, facadeIndex));
+		everyEndIsOpen(*facadeIn(world, facadeIndex));
 	}
 
 	// Ticket #51: hit-testing must resolve through a Facade exactly as it does
 	// through a Room, so hosted controls - light switches, door buttons - and
 	// other sector objects inside a Facade can be hovered and clicked by the
-	// UI. Before the fix, Building::getObjectAtPosition only delegated to the
+	// UI. Before the fix, World::getObjectAtPosition only delegated to the
 	// Sector for a plain Location, so a Facade always hit-tested empty.
 	void hostedObjectsAreHitTestableThroughAFacade()
 	{
-		core::Building building("Hit-testing through a Facade", 12, 3);
-		auto const facadeIndex = building.addFacade(0, 0, 0, 4, 2);
-		auto const roomIndex = building.addRoom("Comparator", 0, 0, 4, 4, 2);
-		building.finishBuild();
-		building.pauseSimulation();
+		core::World world("Hit-testing through a Facade", 12, 3);
+		auto const facadeIndex = world.addFacade(0, 0, 0, 4, 2);
+		auto const roomIndex = world.addRoom("Comparator", 0, 0, 4, 4, 2);
+		world.finishBuild();
+		world.pauseSimulation();
 
-		auto const facadeSwitch = building.addSectorLightSwitch(facadeIndex, 1);
-		auto const roomSwitch = building.addSectorLightSwitch(roomIndex, 1);
+		auto const facadeSwitch = world.addSectorLightSwitch(facadeIndex, 1);
+		auto const roomSwitch = world.addSectorLightSwitch(roomIndex, 1);
 
 		// Hit-test the centre of a light switch's Button and require that the
 		// hit resolves to that Button and its hosting SectorObject.
-		auto const hitSwitch = [](core::Building const& building,
-			core::Building::CreateObjectResult const& created, char const* what)
+		auto const hitSwitch = [](core::World const& world,
+			core::World::CreateObjectResult const& created, char const* what)
 		{
 			auto const object = created.sector->getObject(created.index);
 			require(object != nullptr
@@ -488,20 +488,20 @@ namespace
 				(std::string(what) + ": the InteractionPoint wraps no Button").c_str());
 			auto const center = button->getPosition() + button->getSize() * 0.5f;
 			std::shared_ptr<const core::SectorObject> hitObject;
-			auto const hit = building.getObjectAtPosition(0, center.x, center.y, &hitObject);
+			auto const hit = world.getObjectAtPosition(0, center.x, center.y, &hitObject);
 			require(hit.get() == button.get(),
 				(std::string(what) + ": the hover ray missed the light switch").c_str());
 			require(hitObject == object,
 				(std::string(what) + ": the hit resolved the wrong SectorObject").c_str());
 		};
 
-		hitSwitch(building, roomSwitch, "A light switch in a Room");
-		hitSwitch(building, facadeSwitch, "A light switch in a Facade");
+		hitSwitch(world, roomSwitch, "A light switch in a Room");
+		hitSwitch(world, facadeSwitch, "A light switch in a Facade");
 
 		// Non-control hover: a Marker inside the Facade is hit-testable too.
-		auto const marker = building.addSectorMarker(facadeIndex, 0, 1.5f);
+		auto const marker = world.addSectorMarker(facadeIndex, 0, 1.5f);
 		{
-			auto const object = building.getSector(facadeIndex)->getObject(marker.index);
+			auto const object = world.getSector(facadeIndex)->getObject(marker.index);
 			require(object != nullptr
 				&& object->getObjectType() == core::SectorObjectType::Marker,
 				"The Facade Marker went missing before its hit-test");
@@ -510,7 +510,7 @@ namespace
 			shape->getFullShape(minExtent, maxExtent);
 			auto const center = minExtent + (maxExtent - minExtent) * 0.5f;
 			std::shared_ptr<const core::SectorObject> hitObject;
-			auto const hit = building.getObjectAtPosition(0, center.x, center.y, &hitObject);
+			auto const hit = world.getObjectAtPosition(0, center.x, center.y, &hitObject);
 			require(hit.get() == shape.get() && hitObject == object,
 				"The hover ray missed the Marker inside the Facade");
 		}
@@ -519,7 +519,7 @@ namespace
 		// widening admits hit-tests, it does not make everything hittable.
 		{
 			std::shared_ptr<const core::SectorObject> hitObject;
-			auto const hit = building.getObjectAtPosition(0, 3.5f, 0.5f, &hitObject);
+			auto const hit = world.getObjectAtPosition(0, 3.5f, 0.5f, &hitObject);
 			require(hit == nullptr && hitObject == nullptr,
 				"An empty Facade cell hit-tested as if it held something");
 		}
@@ -531,38 +531,38 @@ namespace
 	// Facade-specific and not a broken check.
 	void bulkheadDoorsAreRefusedOnAFacade()
 	{
-		core::Building building("No bulkheads here", 16, 3);
-		auto const roomA = building.addRoom("Room A", 0, 0, 0, 4, 1);
-		building.addFacade(0, 0, 4, 4, 1);
-		auto const roomB = building.addRoom("Room B", 0, 0, 8, 4, 1);
-		building.finishBuild();
+		core::World world("No bulkheads here", 16, 3);
+		auto const roomA = world.addRoom("Room A", 0, 0, 0, 4, 1);
+		world.addFacade(0, 0, 4, 4, 1);
+		auto const roomB = world.addRoom("Room B", 0, 0, 8, 4, 1);
+		world.finishBuild();
 		(void)roomA; (void)roomB;
 
 		std::string diagnostic;
 		// Facade on the right of the boundary, Room A on the left.
-		require(!building.canAddSectorBulkheadDoor(0, 0, 4, CORE_SIDE_LEFT,
-				core::Building::CreateBulkheadDoorOptions{}, &diagnostic),
+		require(!world.canAddSectorBulkheadDoor(0, 0, 4, CORE_SIDE_LEFT,
+				core::World::CreateBulkheadDoorOptions{}, &diagnostic),
 			"A Bulkhead Door was accepted with a Facade on its right");
 		require(diagnostic.find("Facade") != std::string::npos,
 			("The Bulkhead Door refusal does not name the Facade: " + diagnostic).c_str());
-		require(throws([&] { building.addSectorBulkheadDoor(0, 0, 4, CORE_SIDE_LEFT); }),
+		require(throws([&] { world.addSectorBulkheadDoor(0, 0, 4, CORE_SIDE_LEFT); }),
 			"addSectorBulkheadDoor did not throw against a Facade boundary");
 
 		// Facade on the left of the boundary, Room B on the right.
-		require(!building.canAddSectorBulkheadDoor(0, 0, 7, CORE_SIDE_RIGHT,
-				core::Building::CreateBulkheadDoorOptions{}, &diagnostic),
+		require(!world.canAddSectorBulkheadDoor(0, 0, 7, CORE_SIDE_RIGHT,
+				core::World::CreateBulkheadDoorOptions{}, &diagnostic),
 			"A Bulkhead Door was accepted with a Facade on its left");
-		require(throws([&] { building.addSectorBulkheadDoor(0, 0, 7, CORE_SIDE_RIGHT); }),
+		require(throws([&] { world.addSectorBulkheadDoor(0, 0, 7, CORE_SIDE_RIGHT); }),
 			"addSectorBulkheadDoor did not throw against the Facade's other side");
 
 		// The same check still admits a Room-to-Room boundary away from the
 		// Facade: build a second pair and compare.
-		core::Building control("Bulkhead control", 16, 3);
+		core::World control("Bulkhead control", 16, 3);
 		control.addRoom("Left", 0, 0, 0, 4, 1);
 		control.addRoom("Right", 0, 0, 4, 4, 1);
 		control.finishBuild();
 		require(control.canAddSectorBulkheadDoor(0, 0, 4, CORE_SIDE_LEFT,
-				core::Building::CreateBulkheadDoorOptions{}, &diagnostic),
+				core::World::CreateBulkheadDoorOptions{}, &diagnostic),
 			("The Bulkhead Door check broke for plain Rooms too: " + diagnostic).c_str());
 	}
 
@@ -574,7 +574,7 @@ namespace
 	void doorAcceptsAFacadeOnEitherSide()
 	{
 		// The ticket repro: Facade on the front Layer, a Room directly behind.
-		core::Building front("Door on Facade front", 8, 1);
+		core::World front("Door on Facade front", 8, 1);
 		front.addLayer();
 		auto const facadeIndex = front.addFacade(0, 0, 0, 4, 1);
 		front.addRoom("Back", 1, 0, 0, 4, 1);
@@ -592,7 +592,7 @@ namespace
 			"The Door claimed object occupancy on its destination Layer");
 
 		// The mirror: a Room in front with the Facade directly behind.
-		core::Building back("Door on Facade back", 8, 1);
+		core::World back("Door on Facade back", 8, 1);
 		back.addLayer();
 		back.addRoom("Front", 0, 0, 0, 4, 1);
 		back.addFacade(1, 0, 0, 4, 1);
@@ -615,31 +615,31 @@ namespace
 	// already-open side, so neighbours can merge inward (ADR 0003).
 	void wallCommandsRefuseTheFacadeButNotTowardIt()
 	{
-		core::Building building("Wall rules", 16, 3);
-		auto const roomIndex = building.addRoom("Walled", 0, 0, 0, 4, 1);
-		auto const facadeIndex = building.addFacade(0, 0, 4, 4, 1);
-		building.finishBuild();
-		building.pauseSimulation();
+		core::World world("Wall rules", 16, 3);
+		auto const roomIndex = world.addRoom("Walled", 0, 0, 0, 4, 1);
+		auto const facadeIndex = world.addFacade(0, 0, 4, 4, 1);
+		world.finishBuild();
+		world.pauseSimulation();
 
 		std::string diagnostic;
 		// The Facade has no walls to remove and none to add.
-		require(!building.canRemoveLocationWall(facadeIndex, 0, CORE_SIDE_LEFT, &diagnostic),
+		require(!world.canRemoveLocationWall(facadeIndex, 0, CORE_SIDE_LEFT, &diagnostic),
 			"A wall removal was accepted on a Facade");
-		require(!building.canAddLocationWall(facadeIndex, 0, CORE_SIDE_LEFT, &diagnostic),
+		require(!world.canAddLocationWall(facadeIndex, 0, CORE_SIDE_LEFT, &diagnostic),
 			"A wall addition was accepted on a Facade");
 
 		// Opening the Room's wall into the Facade: the Facade side is already
 		// open, so only the Room's half changes.
-		require(building.canRemoveLocationWall(roomIndex, 0, CORE_SIDE_RIGHT, &diagnostic),
+		require(world.canRemoveLocationWall(roomIndex, 0, CORE_SIDE_RIGHT, &diagnostic),
 			("A Room could not open its own wall toward a Facade: " + diagnostic).c_str());
-		building.removeLocationWall(roomIndex, 0, CORE_SIDE_RIGHT);
-		require(building.getSector(roomIndex)->getEndType(0, CORE_SIDE_RIGHT)
+		world.removeLocationWall(roomIndex, 0, CORE_SIDE_RIGHT);
+		require(world.getSector(roomIndex)->getEndType(0, CORE_SIDE_RIGHT)
 			== core::SectorEndType::None,
 			"The Room's wall toward the Facade did not open");
-		everyEndIsOpen(*facadeIn(building, facadeIndex));
+		everyEndIsOpen(*facadeIn(world, facadeIndex));
 
 		// And it cannot be re-walled: the Facade refuses the other half.
-		require(!building.canAddLocationWall(roomIndex, 0, CORE_SIDE_RIGHT, &diagnostic),
+		require(!world.canAddLocationWall(roomIndex, 0, CORE_SIDE_RIGHT, &diagnostic),
 			"A wall was restored against a Facade");
 	}
 
@@ -647,29 +647,29 @@ namespace
 	// and packed colour; and replay is stable across saves.
 	void theFacadeRecordRoundTrips()
 	{
-		core::Building building("Record keeper", 12, 3);
-		building.addRoom("Room 0", 0, 0, 0, 4, 1);
-		building.addFacade(1, 1, 4, 4, 2, CORE_ROOM_MAX_HEIGHT, { 176, 160, 128 });
-		building.addFacade(1, 0, 8, 2, 1, CORE_ROOM_MAX_HEIGHT, { 12, 240, 6 });
-		building.finishBuild();
+		core::World world("Record keeper", 12, 3);
+		world.addRoom("Room 0", 0, 0, 0, 4, 1);
+		world.addFacade(1, 1, 4, 4, 2, CORE_ROOM_MAX_HEIGHT, { 176, 160, 128 });
+		world.addFacade(1, 0, 8, 2, 1, CORE_ROOM_MAX_HEIGHT, { 12, 240, 6 });
+		world.finishBuild();
 
-		auto const yaml = serializeBuilding(building);
+		auto const yaml = serializeWorld(world);
 		require(yaml.find("type: facade") != std::string::npos,
 			"The Facade record was not written as 'facade'");
 		require(yaml.find(std::format("colour: {}",
 				core::packBackgroundColour(core::BackgroundColour{ 12, 240, 6 }))) != std::string::npos,
 			"The Facade colour was not written packed");
 
-		core::Building loaded("placeholder", 1, 1);
+		core::World loaded("placeholder", 1, 1);
 		loadInto(loaded, yaml);
 		require(loaded.getNumSectors() == 3, "The Facade records did not replay into Sectors");
-		require(sectorSignature(loaded) == sectorSignature(building),
-			("Facade replay did not reproduce the Building\nexpected:\n"
-				+ sectorSignature(building) + "actual:\n" + sectorSignature(loaded)).c_str());
+		require(sectorSignature(loaded) == sectorSignature(world),
+			("Facade replay did not reproduce the World\nexpected:\n"
+				+ sectorSignature(world) + "actual:\n" + sectorSignature(loaded)).c_str());
 
-		// Re-saving a replayed Building changes nothing: the records are stable.
-		require(serializeBuilding(loaded) == yaml,
-			"Re-saving a replayed Facade Building changed its authored records");
+		// Re-saving a replayed World changes nothing: the records are stable.
+		require(serializeWorld(loaded) == yaml,
+			"Re-saving a replayed Facade World changed its authored records");
 	}
 
 	// A hand-authored facade record loads, and one with the colour left out
@@ -703,7 +703,7 @@ construction:
 agents: []
 )yaml";
 
-		core::Building loaded("placeholder", 1, 1);
+		core::World loaded("placeholder", 1, 1);
 		loadInto(loaded, yaml);
 		require(loaded.getNumSectors() == 2, "The hand-authored Facades did not replay");
 
@@ -728,19 +728,19 @@ agents: []
 	// unnamed creation path keeps the generic name.
 	void theFacadeRecordCarriesItsName()
 	{
-		core::Building building("Named frontage", 12, 3);
-		auto const named = building.addFacade("Shopfront", 0, 0, 0, 3, 1);
-		auto const plain = building.addFacade(0, 0, 4, 3, 1);
-		building.finishBuild();
+		core::World world("Named frontage", 12, 3);
+		auto const named = world.addFacade("Shopfront", 0, 0, 0, 3, 1);
+		auto const plain = world.addFacade(0, 0, 4, 3, 1);
+		world.finishBuild();
 
-		require(building.getSector(named)->getName() == "Shopfront",
+		require(world.getSector(named)->getName() == "Shopfront",
 			"addFacade() did not give the Sector the name it was handed");
 
-		auto const yaml = serializeBuilding(building);
+		auto const yaml = serializeWorld(world);
 		require(yaml.find("name: Shopfront") != std::string::npos,
 			"The Facade record did not carry its name");
 
-		core::Building loaded("placeholder", 1, 1);
+		core::World loaded("placeholder", 1, 1);
 		loadInto(loaded, yaml);
 		require(loaded.getSector(named)->getName() == "Shopfront",
 			"The Facade name was lost in the round-trip");
@@ -772,7 +772,7 @@ construction:
 agents: []
 )yaml";
 
-		core::Building loaded("placeholder", 1, 1);
+		core::World loaded("placeholder", 1, 1);
 		loadInto(loaded, yaml);
 		require(loaded.getNumSectors() == 1, "The nameless hand-authored Facade did not replay");
 		require(loaded.getSector(0)->getName() == core::Facade::defaultName(),
@@ -781,30 +781,30 @@ agents: []
 	}
 
 	// Acceptance #44: the save/load round-trip preserves the Facade's colour,
-	// its open ends, and the record-to-sector index mapping. The Building is
+	// its open ends, and the record-to-sector index mapping. The World is
 	// authored with a Ladder Transit written between sector producers, so
 	// canonical replay reorders the records - the exact case a Facade record
 	// left out of the sector-producing set would shift out of place.
 	void saveLoadPreservesColourOpenEndsAndSectorIndexMapping()
 	{
-		core::Building building("Index mapping", 12, 3);
-		auto const room = building.addRoom("Room A", 0, 0, 0, 6, 2);
-		auto const facade = building.addFacade("Frontage", 0, 0, 6, 3, 3,
+		core::World world("Index mapping", 12, 3);
+		auto const room = world.addRoom("Room A", 0, 0, 0, 6, 2);
+		auto const facade = world.addFacade("Frontage", 0, 0, 6, 3, 3,
 			CORE_ROOM_MAX_HEIGHT, { 210, 20, 130 });
 		uint32_t facadeMarker = 0;
-		building.addSectorMarker(facade, 0, 1.25f, &facadeMarker);
-		building.addSectorLightSwitch(room, 2);
+		world.addSectorMarker(facade, 0, 1.25f, &facadeMarker);
+		world.addSectorLightSwitch(room, 2);
 		// The Corridor behind the Room gives the Ladder its second landing, and
 		// is authored after the objects that reference the first two Sectors.
-		auto const backCorridor = building.addCorridor(0, 2, 0, 6, 1);
+		auto const backCorridor = world.addCorridor(0, 2, 0, 6, 1);
 		// A reference to a Sector that comes after the Facade in the producer
 		// order: this is the reference a mis-counted Facade would shift.
 		uint32_t backCorridorMarker = 0;
-		building.addSectorMarker(backCorridor, 0, 1.0f, &backCorridorMarker);
-		auto const ladder = building.addLadder(1, 0, 3, { 3, false, true }).ladder.sector->getIndex();
-		auto const background = building.addBackground(1, 0, 0, 3, 1);
-		auto const corridor = building.addCorridor(1, 2, 4, 4, 1);
-		building.finishBuild();
+		world.addSectorMarker(backCorridor, 0, 1.0f, &backCorridorMarker);
+		auto const ladder = world.addLadder(1, 0, 3, { 3, false, true }).ladder.sector->getIndex();
+		auto const background = world.addBackground(1, 0, 0, 3, 1);
+		auto const corridor = world.addCorridor(1, 2, 4, 4, 1);
+		world.finishBuild();
 
 		// Authored order: Room 0, Facade 1, Corridor 2, Ladder 3, Background 4,
 		// Corridor 5. Canonical replay moves the Transit behind the space
@@ -814,18 +814,18 @@ agents: []
 			&& background == 4 && corridor == 5,
 			"The authored Sector indices are not the shape this check replays against");
 
-		auto const yaml = serializeBuilding(building);
-		core::Building loaded("placeholder", 1, 1);
+		auto const yaml = serializeWorld(world);
+		core::World loaded("placeholder", 1, 1);
 		loadInto(loaded, yaml);
 
-		require(loaded.getNumSectors() == building.getNumSectors(),
+		require(loaded.getNumSectors() == world.getNumSectors(),
 			"The round-trip changed the Sector count");
-		require(sectorSignature(loaded) == sectorSignature(building),
-			("The round-trip changed a Sector\nexpected:\n" + sectorSignature(building)
+		require(sectorSignature(loaded) == sectorSignature(world),
+			("The round-trip changed a Sector\nexpected:\n" + sectorSignature(world)
 				+ "actual:\n" + sectorSignature(loaded)).c_str());
-		require(objectSignature(loaded) == objectSignature(building),
+		require(objectSignature(loaded) == objectSignature(world),
 			("The round-trip moved a SectorObject between Sectors\nexpected:\n"
-				+ objectSignature(building) + "actual:\n" + objectSignature(loaded)).c_str());
+				+ objectSignature(world) + "actual:\n" + objectSignature(loaded)).c_str());
 
 		// Spelled out for the Facade itself: same index, same name, same
 		// colour, and still every end open.
@@ -845,10 +845,10 @@ agents: []
 		require(sectorHasObject(loaded, backCorridor, core::SectorObjectType::Marker),
 			"The Marker authored in the back Corridor replayed into another Sector");
 
-		// Re-saving the replayed Building writes the same records: the
+		// Re-saving the replayed World writes the same records: the
 		// canonical form is a fixed point, so the Facade does not drift.
-		require(serializeBuilding(loaded) == yaml,
-			"Re-saving a replayed Facade Building changed its authored records");
+		require(serializeWorld(loaded) == yaml,
+			"Re-saving a replayed Facade World changed its authored records");
 
 		// The producer-set membership shows up again wherever records are
 		// addressed by Sector index: resizing a Sector authored after the
@@ -875,20 +875,20 @@ agents: []
 	// and the replay needs no wall edits to leave every end open.
 	void aFacadeNeverWritesWallRemovalRecords()
 	{
-		core::Building building("No walls to remove", 12, 3);
-		building.addFacade("Tall frontage", 0, 0, 0, 4, 3);
-		building.addFacade(1, 0, 6, 2, 2);
-		building.finishBuild();
+		core::World world("No walls to remove", 12, 3);
+		world.addFacade("Tall frontage", 0, 0, 0, 4, 3);
+		world.addFacade(1, 0, 6, 2, 2);
+		world.finishBuild();
 
-		auto const yaml = serializeBuilding(building);
+		auto const yaml = serializeWorld(world);
 		require(countOccurrences(yaml, "removeWall") == 0,
 			"A saved Facade wrote a wall-removal record");
 		require(countOccurrences(yaml, "type: facade") == 2,
 			"A Facade is not carried by exactly one construction record");
 		require(countOccurrences(yaml, "type: ") == 2,
-			"A Facade-only Building wrote records beyond its own");
+			"A Facade-only World wrote records beyond its own");
 
-		core::Building loaded("placeholder", 1, 1);
+		core::World loaded("placeholder", 1, 1);
 		loadInto(loaded, yaml);
 		require(loaded.getNumSectors() == 2, "The Facade records did not replay into two Sectors");
 		everyEndIsOpen(*facadeIn(loaded, 0));
@@ -907,11 +907,11 @@ agents: []
 				"layers: 2\nlayerNames:\n  - Layer 0\n  - Layer 1\nconstruction:\n")
 				+ facadeRecord + otherRecords + "agents: []\n";
 
-			core::Building loaded("placeholder", 1, 1);
+			core::World loaded("placeholder", 1, 1);
 			loadInto(loaded, yaml);
 			require(loaded.getNumSectors() == 2,
 				(std::string(what) + ": the Facade and Room did not both replay").c_str());
-			require(countOccurrences(serializeBuilding(loaded), "removeWall") == 0,
+			require(countOccurrences(serializeWorld(loaded), "removeWall") == 0,
 				(std::string(what) + ": replaying the Facade produced a wall-removal record").c_str());
 			for (uint32_t index = 0; index < loaded.getNumSectors(); ++index)
 			{
@@ -936,12 +936,12 @@ agents: []
 	// construction type rather than being dropped on the floor.
 	void aFacadeMapIsRejectedByPreFacadeCode()
 	{
-		core::Building building("Facade map", 12, 3);
-		building.addRoom("Room A", 0, 0, 0, 3, 1);
-		building.addFacade("Frontage", 0, 0, 3, 3, 1);
-		building.finishBuild();
+		core::World world("Facade map", 12, 3);
+		world.addRoom("Room A", 0, 0, 0, 3, 1);
+		world.addFacade("Frontage", 0, 0, 3, 3, 1);
+		world.finishBuild();
 
-		auto const yaml = serializeBuilding(building);
+		auto const yaml = serializeWorld(world);
 		require(yaml.find("version: 14") != std::string::npos,
 			"The writer did not raise the version above the pre-Door-style ceiling");
 
@@ -1043,7 +1043,7 @@ agents: []
 	// route at all - the opened boundary is what connects them.
 	void theFacadeTakesPartInTheGraph()
 	{
-		core::Building open("Merged", 16, 3);
+		core::World open("Merged", 16, 3);
 		auto const roomIndex = open.addRoom("Neighbour", 0, 0, 0, 4, 1);
 		auto const facadeIndex = open.addFacade(0, 0, 4, 4, 1);
 		uint32_t roomMarkerIdentifier = 0;
@@ -1064,7 +1064,7 @@ agents: []
 		require(path && !path->nodes.empty(),
 			"No path exists from a Room into a Facade through the opened boundary");
 
-		core::Building sealed("Sealed", 16, 3);
+		core::World sealed("Sealed", 16, 3);
 		auto const sealedRoom = sealed.addRoom("Neighbour", 0, 0, 0, 4, 1);
 		auto const sealedFacade = sealed.addFacade(0, 0, 4, 4, 1);
 		uint32_t sealedRoomMarker = 0;
@@ -1084,23 +1084,23 @@ agents: []
 	}
 
 	// A Layer deletion drops the Facades on it like any other Location and
-	// keeps the rest of the Building replayable.
+	// keeps the rest of the World replayable.
 	void layerDeletionHandlesFacadeRecords()
 	{
-		core::Building building("Compaction", 12, 3);
-		building.addRoom("Front", 0, 0, 0, 4, 1);
-		building.addFacade(1, 0, 0, 4, 2, CORE_ROOM_MAX_HEIGHT, { 99, 99, 99 });
-		building.addLayer();
-		building.finishBuild();
+		core::World world("Compaction", 12, 3);
+		world.addRoom("Front", 0, 0, 0, 4, 1);
+		world.addFacade(1, 0, 0, 4, 2, CORE_ROOM_MAX_HEIGHT, { 99, 99, 99 });
+		world.addLayer();
+		world.finishBuild();
 
-		auto const plan = building.planDeleteLayer(1);
+		auto const plan = world.planDeleteLayer(1);
 		require(plan.valid, ("Deleting the Facade's Layer was refused: " + plan.diagnostic).c_str());
 		require(plan.locationsRemoved == 1,
 			"The deleted Facade was not counted as a removed Location");
-		require(building.applyDeleteLayer(plan), "The Facade Layer deletion did not apply");
-		require(building.getNumSectors() == 1,
+		require(world.applyDeleteLayer(plan), "The Facade Layer deletion did not apply");
+		require(world.getNumSectors() == 1,
 			"The Facade Sector survived the deletion of its Layer");
-		require(building.getSector(0)->getType() == core::SectorType::Location,
+		require(world.getSector(0)->getType() == core::SectorType::Location,
 			"The surviving Sector is not the front Room");
 	}
 
@@ -1111,59 +1111,59 @@ agents: []
 	// The guard follows isLocationLike(), so a Facade is held to the same floor.
 	void restoreDropsAgentsOnNonTraversableFacadeCells()
 	{
-		auto const requireRestore = [](core::Building& building,
+		auto const requireRestore = [](core::World& world,
 			core::AgentId groundId, core::AgentId airId, char const* path)
 		{
-			require(building.lookupAgent(groundId).entity != nullptr,
+			require(world.lookupAgent(groundId).entity != nullptr,
 				(std::string("The Agent on the Facade's walkable floor was not restored across ")
 					+ path).c_str());
-			require(building.lookupAgent(airId).entity == nullptr,
+			require(world.lookupAgent(airId).entity == nullptr,
 				(std::string("The Agent on the Facade's non-traversable deck was restored across ")
 					+ path).c_str());
 		};
 
 		// Path 1: applyDeleteLayer.
 		{
-			core::Building building("Restore floor", 12, 3);
-			auto const facadeIndex = building.addFacade(1, 0, 0, 2, 2);
-			building.addLayer();
-			building.finishBuild();
-			require(!std::as_const(building).getLayer(1)->getCellDefinition(0, 1).isTraversableOnFoot(),
+			core::World world("Restore floor", 12, 3);
+			auto const facadeIndex = world.addFacade(1, 0, 0, 2, 2);
+			world.addLayer();
+			world.finishBuild();
+			require(!std::as_const(world).getLayer(1)->getCellDefinition(0, 1).isTraversableOnFoot(),
 				"The Facade's upper deck is unexpectedly walkable; the restore guard would be vacuous");
-			auto const groundId = building.createAgent("Grounded", facadeIndex, 0, 0.5f);
-			auto const airId = building.createAgent("On air", facadeIndex, 1, 0.5f);
-			auto const plan = building.planDeleteLayer(0);
+			auto const groundId = world.createAgent("Grounded", facadeIndex, 0, 0.5f);
+			auto const airId = world.createAgent("On air", facadeIndex, 1, 0.5f);
+			auto const plan = world.planDeleteLayer(0);
 			require(plan.valid, ("The front Layer delete plan was refused: " + plan.diagnostic).c_str());
-			require(building.applyDeleteLayer(plan), "The Layer delete did not apply");
-			requireRestore(building, groundId, airId, "a Layer delete");
+			require(world.applyDeleteLayer(plan), "The Layer delete did not apply");
+			requireRestore(world, groundId, airId, "a Layer delete");
 		}
 
 		// Path 2: applyLocationEdit (a Room resize elsewhere replays the world).
 		{
-			core::Building building("Restore edit", 12, 2);
-			auto const roomIndex = building.addRoom("Shifter", 0, 0, 0, 2, 1);
-			auto const facadeIndex = building.addFacade(0, 0, 4, 2, 2);
-			building.finishBuild();
-			auto const groundId = building.createAgent("Grounded", facadeIndex, 0, 0.5f);
-			auto const airId = building.createAgent("On air", facadeIndex, 1, 0.5f);
-			auto const plan = building.planResizeLocation(roomIndex, 0, 0, 3, 1);
+			core::World world("Restore edit", 12, 2);
+			auto const roomIndex = world.addRoom("Shifter", 0, 0, 0, 2, 1);
+			auto const facadeIndex = world.addFacade(0, 0, 4, 2, 2);
+			world.finishBuild();
+			auto const groundId = world.createAgent("Grounded", facadeIndex, 0, 0.5f);
+			auto const airId = world.createAgent("On air", facadeIndex, 1, 0.5f);
+			auto const plan = world.planResizeLocation(roomIndex, 0, 0, 3, 1);
 			require(plan.valid, ("The Room resize plan was refused: " + plan.diagnostic).c_str());
-			building.applyLocationEdit(plan);
-			requireRestore(building, groundId, airId, "a Location edit");
+			world.applyLocationEdit(plan);
+			requireRestore(world, groundId, airId, "a Location edit");
 		}
 
 		// Path 3: applyBackgroundEdit.
 		{
-			core::Building building("Restore bg edit", 12, 2);
-			auto const backgroundIndex = building.addBackground(1, 0, 0, 2, 1, { 10, 20, 30 });
-			auto const facadeIndex = building.addFacade(0, 0, 0, 2, 2);
-			building.finishBuild();
-			auto const groundId = building.createAgent("Grounded", facadeIndex, 0, 0.5f);
-			auto const airId = building.createAgent("On air", facadeIndex, 1, 0.5f);
-			auto const plan = building.planResizeBackground(backgroundIndex, 0, 0, 3, 1);
+			core::World world("Restore bg edit", 12, 2);
+			auto const backgroundIndex = world.addBackground(1, 0, 0, 2, 1, { 10, 20, 30 });
+			auto const facadeIndex = world.addFacade(0, 0, 0, 2, 2);
+			world.finishBuild();
+			auto const groundId = world.createAgent("Grounded", facadeIndex, 0, 0.5f);
+			auto const airId = world.createAgent("On air", facadeIndex, 1, 0.5f);
+			auto const plan = world.planResizeBackground(backgroundIndex, 0, 0, 3, 1);
 			require(plan.valid, ("The Background resize plan was refused: " + plan.diagnostic).c_str());
-			building.applyBackgroundEdit(plan);
-			requireRestore(building, groundId, airId, "a Background edit");
+			world.applyBackgroundEdit(plan);
+			requireRestore(world, groundId, airId, "a Background edit");
 		}
 	}
 
@@ -1171,14 +1171,14 @@ agents: []
 	// does; only an unnamed Facade reads as "Facade".
 	void theDescriptionCarriesTheFacadeName()
 	{
-		core::Building building("Naming", 12, 2);
-		auto const named = building.addFacade("Frontage", 0, 0, 0, 2, 1);
-		auto const unnamed = building.addFacade(0, 0, 2, 2, 1);
-		building.finishBuild();
-		require(facadeIn(building, named)->getDescription() == "Frontage at 0,0 on Layer 0",
-			("The named Facade describes itself as '" + facadeIn(building, named)->getDescription() + "'").c_str());
-		require(facadeIn(building, unnamed)->getDescription() == "Facade at 2,0 on Layer 0",
-			("The unnamed Facade describes itself as '" + facadeIn(building, unnamed)->getDescription() + "'").c_str());
+		core::World world("Naming", 12, 2);
+		auto const named = world.addFacade("Frontage", 0, 0, 0, 2, 1);
+		auto const unnamed = world.addFacade(0, 0, 2, 2, 1);
+		world.finishBuild();
+		require(facadeIn(world, named)->getDescription() == "Frontage at 0,0 on Layer 0",
+			("The named Facade describes itself as '" + facadeIn(world, named)->getDescription() + "'").c_str());
+		require(facadeIn(world, unnamed)->getDescription() == "Facade at 2,0 on Layer 0",
+			("The unnamed Facade describes itself as '" + facadeIn(world, unnamed)->getDescription() + "'").c_str());
 	}
 
 	// Ticket #55: the height range check is a negated in-range test so a NaN
@@ -1186,25 +1186,25 @@ agents: []
 	// comparisons - the same flaw the plain < / > pair had in addRoom.
 	void nanTopDeckHeightIsRejected()
 	{
-		core::Building building("NaN", 12, 2);
-		building.finishBuild();
+		core::World world("NaN", 12, 2);
+		world.finishBuild();
 		float const nan = std::numeric_limits<float>::quiet_NaN();
 		std::string diagnostic;
-		require(!building.canAddFacade(0, 0, 0, 2, 1, nan, &diagnostic),
+		require(!world.canAddFacade(0, 0, 0, 2, 1, nan, &diagnostic),
 			"canAddFacade accepted a NaN topDeckHeight");
-		require(throws([&] { building.addFacade(0, 0, 0, 2, 1, nan); }),
+		require(throws([&] { world.addFacade(0, 0, 0, 2, 1, nan); }),
 			"addFacade accepted a NaN topDeckHeight");
-		require(throws([&] { building.addRoom("NaN room", 0, 0, 0, 2, 1, nan); }),
+		require(throws([&] { world.addRoom("NaN room", 0, 0, 0, 2, 1, nan); }),
 			"addRoom accepted a NaN topDeckHeight");
 	}
 
-	bool hasPath(core::Building const& building, core::Agent const* agent,
+	bool hasPath(core::World const& world, core::Agent const* agent,
 		uint32_t fromIdentifier, uint32_t toIdentifier)
 	{
-		auto const source = building.getGraph()->getVertexByIdentifier(fromIdentifier);
-		auto const target = building.getGraph()->getVertexByIdentifier(toIdentifier);
+		auto const source = world.getGraph()->getVertexByIdentifier(fromIdentifier);
+		auto const target = world.getGraph()->getVertexByIdentifier(toIdentifier);
 		if (!source || !target) return false;
-		auto const path = building.getGraph()->calculatePath(agent, source, target);
+		auto const path = world.getGraph()->calculatePath(agent, source, target);
 		return path && !path->nodes.empty();
 	}
 
@@ -1215,28 +1215,28 @@ agents: []
 	// ordinary Sector Edges - no threshold of any kind joins them.
 	void facadeBetweenTwoAlignedRoomsIsOneContinuousFloor()
 	{
-		core::Building building("Three in a row", 16, 3);
-		auto const roomA = building.addRoom("Room A", 0, 0, 0, 4, 1);
-		auto const facade = building.addFacade(0, 0, 4, 4, 1);
-		auto const roomB = building.addRoom("Room B", 0, 0, 8, 4, 1);
+		core::World world("Three in a row", 16, 3);
+		auto const roomA = world.addRoom("Room A", 0, 0, 0, 4, 1);
+		auto const facade = world.addFacade(0, 0, 4, 4, 1);
+		auto const roomB = world.addRoom("Room B", 0, 0, 8, 4, 1);
 		uint32_t markerA = 0;
 		uint32_t markerF = 0;
 		uint32_t markerB = 0;
-		building.addSectorMarker(roomA, 0, 1.0f, &markerA);
-		building.addSectorMarker(facade, 0, 2.0f, &markerF);
-		building.addSectorMarker(roomB, 0, 1.0f, &markerB);
-		building.pauseSimulation();
-		building.removeLocationWall(roomA, 0, CORE_SIDE_RIGHT);
-		building.removeLocationWall(roomB, 0, CORE_SIDE_LEFT);
-		building.finishBuild();
-		auto const agentAId = building.createAgent("Room A route checker", roomA, 0, 1.0f);
-		auto const agentFId = building.createAgent("Facade route checker", facade, 0, 2.0f);
-		auto const agentA = building.lookupAgent(agentAId).entity;
-		auto const agentF = building.lookupAgent(agentFId).entity;
+		world.addSectorMarker(roomA, 0, 1.0f, &markerA);
+		world.addSectorMarker(facade, 0, 2.0f, &markerF);
+		world.addSectorMarker(roomB, 0, 1.0f, &markerB);
+		world.pauseSimulation();
+		world.removeLocationWall(roomA, 0, CORE_SIDE_RIGHT);
+		world.removeLocationWall(roomB, 0, CORE_SIDE_LEFT);
+		world.finishBuild();
+		auto const agentAId = world.createAgent("Room A route checker", roomA, 0, 1.0f);
+		auto const agentFId = world.createAgent("Facade route checker", facade, 0, 2.0f);
+		auto const agentA = world.lookupAgent(agentAId).entity;
+		auto const agentF = world.lookupAgent(agentFId).entity;
 		require(agentA != nullptr && agentF != nullptr,
 			"The continuous-floor route checkers were not created");
 
-		auto const graph = building.getGraph();
+		auto const graph = world.getGraph();
 		auto const source = graph->getVertexByIdentifier(markerA);
 		auto const target = graph->getVertexByIdentifier(markerB);
 		require(source != nullptr && target != nullptr,
@@ -1259,8 +1259,8 @@ agents: []
 		}
 		require(throughFacade,
 			"The Room-to-Room path did not cross the Facade");
-		require(hasPath(building, agentA, markerA, markerF)
-			&& hasPath(building, agentF, markerF, markerB),
+		require(hasPath(world, agentA, markerA, markerF)
+			&& hasPath(world, agentF, markerF, markerB),
 			"The merged run is not walkable in both directions through the Facade");
 	}
 
@@ -1276,7 +1276,7 @@ agents: []
 
 		// Facade floor: row 0. Room floors: rows 1-2, one deck higher at the
 		// boundary.
-		core::Building mismatched("Mismatched", 12, 3);
+		core::World mismatched("Mismatched", 12, 3);
 		auto const facade = mismatched.addFacade(0, 0, 0, 4, 1);
 		auto const room = mismatched.addRoom("Higher", 0, 1, 4, 2, 1);
 		uint32_t facadeMarker = 0;
@@ -1295,7 +1295,7 @@ agents: []
 
 		// Control: the same pair sharing row 0 merges once the Room opens its
 		// wall into the Facade's open half.
-		core::Building aligned("Aligned", 12, 3);
+		core::World aligned("Aligned", 12, 3);
 		auto const facade2 = aligned.addFacade(0, 0, 0, 1, 1);
 		auto const room2 = aligned.addRoom("Sharing", 0, 0, 1, 2, 1);
 		uint32_t facadeMarker2 = 0;
@@ -1321,47 +1321,47 @@ agents: []
 	// neighbour-side acceptance is the widening.)
 	void wallRemovalAcceptsFacadeNeighboursBothWays()
 	{
-		core::Building building("Both ways", 16, 3);
-		auto const facade = building.addFacade(0, 0, 4, 4, 1);
-		auto const roomLeft = building.addRoom("Left", 0, 0, 0, 4, 1);
-		auto const roomRight = building.addRoom("Right", 0, 0, 8, 4, 1);
-		building.finishBuild();
-		building.pauseSimulation();
+		core::World world("Both ways", 16, 3);
+		auto const facade = world.addFacade(0, 0, 4, 4, 1);
+		auto const roomLeft = world.addRoom("Left", 0, 0, 0, 4, 1);
+		auto const roomRight = world.addRoom("Right", 0, 0, 8, 4, 1);
+		world.finishBuild();
+		world.pauseSimulation();
 
 		std::string diagnostic;
-		require(building.canRemoveLocationWall(roomLeft, 0, CORE_SIDE_RIGHT, &diagnostic),
+		require(world.canRemoveLocationWall(roomLeft, 0, CORE_SIDE_RIGHT, &diagnostic),
 			("A Room could not open its wall toward a Facade on its right: " + diagnostic).c_str());
-		require(building.canRemoveLocationWall(roomRight, 0, CORE_SIDE_LEFT, &diagnostic),
+		require(world.canRemoveLocationWall(roomRight, 0, CORE_SIDE_LEFT, &diagnostic),
 			("A Room could not open its wall toward a Facade on its left: " + diagnostic).c_str());
-		require(!building.canRemoveLocationWall(facade, 0, CORE_SIDE_LEFT, &diagnostic),
+		require(!world.canRemoveLocationWall(facade, 0, CORE_SIDE_LEFT, &diagnostic),
 			"A wall removal was accepted on a Facade (left side)");
-		require(!building.canRemoveLocationWall(facade, 0, CORE_SIDE_RIGHT, &diagnostic),
+		require(!world.canRemoveLocationWall(facade, 0, CORE_SIDE_RIGHT, &diagnostic),
 			"A wall removal was accepted on a Facade (right side)");
 
-		building.removeLocationWall(roomLeft, 0, CORE_SIDE_RIGHT);
-		building.removeLocationWall(roomRight, 0, CORE_SIDE_LEFT);
-		require(building.getSector(roomLeft)->getEndType(0, CORE_SIDE_RIGHT) == core::SectorEndType::None
-			&& building.getSector(roomRight)->getEndType(0, CORE_SIDE_LEFT) == core::SectorEndType::None,
+		world.removeLocationWall(roomLeft, 0, CORE_SIDE_RIGHT);
+		world.removeLocationWall(roomRight, 0, CORE_SIDE_LEFT);
+		require(world.getSector(roomLeft)->getEndType(0, CORE_SIDE_RIGHT) == core::SectorEndType::None
+			&& world.getSector(roomRight)->getEndType(0, CORE_SIDE_LEFT) == core::SectorEndType::None,
 			"An opened Room wall did not open toward the Facade");
-		everyEndIsOpen(*facadeIn(building, facade));
+		everyEndIsOpen(*facadeIn(world, facade));
 	}
 
 	// Ticket #45: a Facade beside a Background has no pathing interaction in
 	// either direction. The Background contributes no Vertices, and the
-	// Facade grows nothing toward it: the only Vertex in the Building is the
+	// Facade grows nothing toward it: the only Vertex in the World is the
 	// Facade's own Marker.
 	void facadeBesideBackgroundHasNoPathingInteraction()
 	{
 		auto const check = [](uint32_t facadeX, uint32_t backgroundX, char const* what)
 		{
-			core::Building building("Facade beside Background", 12, 3);
-			auto const facade = building.addFacade(0, 0, facadeX, 3, 1);
-			auto const background = building.addBackground(0, 0, backgroundX, 3, 1);
+			core::World world("Facade beside Background", 12, 3);
+			auto const facade = world.addFacade(0, 0, facadeX, 3, 1);
+			auto const background = world.addBackground(0, 0, backgroundX, 3, 1);
 			uint32_t marker = 0;
-			building.addSectorMarker(facade, 0, 1.0f, &marker);
-			building.finishBuild();
+			world.addSectorMarker(facade, 0, 1.0f, &marker);
+			world.finishBuild();
 
-			auto const graph = building.getGraph();
+			auto const graph = world.getGraph();
 			require(graph->getVertexByIdentifier(marker) != nullptr,
 				(std::string(what) + ": the Facade Marker lost its Vertex").c_str());
 			for (auto const& vertex : graph->getVertices())
@@ -1373,7 +1373,7 @@ agents: []
 			}
 			require(graph->getVertices().size() == 1,
 				(std::string(what) + ": the Facade grew Vertices toward the Background").c_str());
-			require(building.getSector(background)->getType() == core::SectorType::Background,
+			require(world.getSector(background)->getType() == core::SectorType::Background,
 				(std::string(what) + ": the Background Sector went missing").c_str());
 		};
 
@@ -1405,17 +1405,17 @@ agents: []
 		return "Unknown";
 	}
 
-	uint32_t addLanding(core::Building& building, LandingKind kind, uint32_t layer,
+	uint32_t addLanding(core::World& world, LandingKind kind, uint32_t layer,
 		uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t decksHigh)
 	{
 		switch (kind)
 		{
 		case LandingKind::Facade:
-			return building.addFacade(layer, y, x, cellsWide, decksHigh);
+			return world.addFacade(layer, y, x, cellsWide, decksHigh);
 		case LandingKind::Room:
-			return building.addRoom("Landing", layer, y, x, cellsWide, decksHigh);
+			return world.addRoom("Landing", layer, y, x, cellsWide, decksHigh);
 		case LandingKind::Background:
-			return building.addBackground(layer, y, x, cellsWide, decksHigh);
+			return world.addBackground(layer, y, x, cellsWide, decksHigh);
 		}
 		throw std::runtime_error("Unknown landing kind");
 	}
@@ -1457,22 +1457,22 @@ agents: []
 			// Ladder: the Sector under test is the lower landing, a fixed Room
 			// the upper one, both on the Layer in front of the Ladder's own.
 			{
-				core::Building building("Ladder landing", 8, 3);
-				addLanding(building, kind, 0, 0, 0, 1, 1);
-				building.addRoom("Above", 0, 1, 0, 1, 2);
-				verdict("Ladder", building.canAddLadder(1, 0, 0, 2, &diagnostic));
-				auto const refusal = addRefusal([&] { building.addLadder(1, 0, 0, { 2, false, true }); });
+				core::World world("Ladder landing", 8, 3);
+				addLanding(world, kind, 0, 0, 0, 1, 1);
+				world.addRoom("Above", 0, 1, 0, 1, 2);
+				verdict("Ladder", world.canAddLadder(1, 0, 0, 2, &diagnostic));
+				auto const refusal = addRefusal([&] { world.addLadder(1, 0, 0, { 2, false, true }); });
 				require(refusal.empty() == expected,
 					std::format("addLadder() over a {} landing said: {}", nameOf(kind), refusal).c_str());
 			}
 
 			// Stairwell: two cells of the Sector under test on each landing deck.
 			{
-				core::Building building("Stairwell landing", 8, 3);
-				addLanding(building, kind, 0, 0, 0, 2, 1);
-				building.addRoom("Above", 0, 1, 0, 2, 2);
-				verdict("Stairwell", building.canAddStairwell(1, 0, 0, 2, &diagnostic));
-				auto const refusal = addRefusal([&] { building.addStairwell(1, 0, 0, 2, CORE_SIDE_RIGHT); });
+				core::World world("Stairwell landing", 8, 3);
+				addLanding(world, kind, 0, 0, 0, 2, 1);
+				world.addRoom("Above", 0, 1, 0, 2, 2);
+				verdict("Stairwell", world.canAddStairwell(1, 0, 0, 2, &diagnostic));
+				auto const refusal = addRefusal([&] { world.addStairwell(1, 0, 0, 2, CORE_SIDE_RIGHT); });
 				require(refusal.empty() == expected,
 					std::format("addStairwell() over a {} landing said: {}", nameOf(kind), refusal).c_str());
 			}
@@ -1483,20 +1483,20 @@ agents: []
 			// rows are the same read the palette preview uses, and the add
 			// follows them.
 			{
-				core::Building building("Lift landing", 8, 3);
-				addLanding(building, kind, 0, 0, 0, 3, 1);
-				addLanding(building, kind, 0, 1, 0, 3, 1);
-				core::Building::CreateLiftOptions options;
+				core::World world("Lift landing", 8, 3);
+				addLanding(world, kind, 0, 0, 0, 3, 1);
+				addLanding(world, kind, 0, 1, 0, 3, 1);
+				core::World::CreateLiftOptions options;
 				options.cellsWide = 1;
 				options.stopOffsets = { 0, 1 };
-				auto const rows = building.getLiftLandingRows(1, 0, 1, 1, 2);
+				auto const rows = world.getLiftLandingRows(1, 0, 1, 1, 2);
 				size_t usable = 0;
 				for (auto const& row : rows)
 					if (row.usableForStop()) ++usable;
 				require(usable == (expected ? 2u : 0u),
 					std::format("The Lift found {} usable landing rows over a {} (expected {})",
 						usable, nameOf(kind), expected ? 2u : 0u).c_str());
-				auto const refusal = addRefusal([&] { building.addLift(1, 0, 1, options); });
+				auto const refusal = addRefusal([&] { world.addLift(1, 0, 1, options); });
 				require(refusal.empty() == expected,
 					std::format("addLift() over a {} landing said: {}", nameOf(kind), refusal).c_str());
 			}
@@ -1504,10 +1504,10 @@ agents: []
 			// Shuttle: one carriage whose door cell lands on the Sector under
 			// test at both stops.
 			{
-				core::Building building("Shuttle landing", 16, 3);
-				addLanding(building, kind, 0, 0, 6, 7, 1);
-				core::Building::CreateShuttleOptions options{ 1, 3, { 0, 4 }, 0 };
-				auto const refusal = addRefusal([&] { building.addShuttle(1, 0, 6, 7, options); });
+				core::World world("Shuttle landing", 16, 3);
+				addLanding(world, kind, 0, 0, 6, 7, 1);
+				core::World::CreateShuttleOptions options{ 1, 3, { 0, 4 }, 0 };
+				auto const refusal = addRefusal([&] { world.addShuttle(1, 0, 6, 7, options); });
 				require(refusal.empty() == expected,
 					std::format("addShuttle() landing its carriage doors on a {} said: {}",
 						nameOf(kind), refusal).c_str());
@@ -1518,29 +1518,29 @@ agents: []
 			// the open right wall the two share (a Facade's half is already
 			// open, so only the neighbour's wall comes down).
 			{
-				core::Building building("Staircase landing", 8, 3);
-				auto const landing = addLanding(building, kind, 0, 0, 0, 2, 2);
-				auto const next = building.addRoom("Next", 0, 1, 2, 1, 1);
+				core::World world("Staircase landing", 8, 3);
+				auto const landing = addLanding(world, kind, 0, 0, 0, 2, 2);
+				auto const next = world.addRoom("Next", 0, 1, 2, 1, 1);
 				if (expected)
 				{
-					building.pauseSimulation();
+					world.pauseSimulation();
 					// One removal opens both halves of the boundary; a Facade's
 					// half is already open, so there the neighbour's wall is the
 					// only one standing.
 					if (kind == LandingKind::Room)
-						building.removeLocationWall(landing, 1, CORE_SIDE_RIGHT);
+						world.removeLocationWall(landing, 1, CORE_SIDE_RIGHT);
 					else
-						building.removeLocationWall(next, 0, CORE_SIDE_LEFT);
+						world.removeLocationWall(next, 0, CORE_SIDE_LEFT);
 				}
-				verdict("Staircase", building.canAddStaircase(1, 0, 0, 2, CORE_SIDE_RIGHT, &diagnostic));
-				auto const refusal = addRefusal([&] { building.addStaircase(1, 0, 0, 2, CORE_SIDE_RIGHT, 0.5f); });
+				verdict("Staircase", world.canAddStaircase(1, 0, 0, 2, CORE_SIDE_RIGHT, &diagnostic));
+				auto const refusal = addRefusal([&] { world.addStaircase(1, 0, 0, 2, CORE_SIDE_RIGHT, 0.5f); });
 				require(refusal.empty() == expected,
 					std::format("addStaircase() over a {} landing said: {}", nameOf(kind), refusal).c_str());
 			}
 		}
 	}
 
-	// One Building with every Transit type landing on a Facade: the Ladder and
+	// One World with every Transit type landing on a Facade: the Ladder and
 	// the Stairwell take a Facade below and a Room above, the Lift shaft sits
 	// inside a column of Facades one per stop row, the Shuttle's carriage
 	// doors land on one long Facade, and the Staircase rises from a Facade
@@ -1551,37 +1551,37 @@ agents: []
 	//
 	// Every Facade landing row is its own Facade, because only a Sector's own
 	// bottom deck carries walkable floor.
-	void authorFacadeLandingMenagerie(core::Building& building,
+	void authorFacadeLandingMenagerie(core::World& world,
 		uint32_t* facadeMarker = nullptr, uint32_t* upperMarker = nullptr)
 	{
-		auto const belowLadder = building.addFacade(0, 0, 0, 1, 1);
-		auto const aboveLadder = building.addRoom("Above the ladder", 0, 1, 0, 1, 2);
+		auto const belowLadder = world.addFacade(0, 0, 0, 1, 1);
+		auto const aboveLadder = world.addRoom("Above the ladder", 0, 1, 0, 1, 2);
 		if (facadeMarker != nullptr)
-			building.addSectorMarker(belowLadder, 0, 0.5f, facadeMarker);
+			world.addSectorMarker(belowLadder, 0, 0.5f, facadeMarker);
 		if (upperMarker != nullptr)
-			building.addSectorMarker(aboveLadder, 0, 0.5f, upperMarker);
-		building.addLadder(1, 0, 0, { 2, false, true });
+			world.addSectorMarker(aboveLadder, 0, 0.5f, upperMarker);
+		world.addLadder(1, 0, 0, { 2, false, true });
 
-		building.addFacade(0, 0, 2, 2, 1);
-		building.addRoom("Above the stairwell", 0, 1, 2, 2, 2);
-		building.addStairwell(1, 0, 2, 2, CORE_SIDE_RIGHT);
+		world.addFacade(0, 0, 2, 2, 1);
+		world.addRoom("Above the stairwell", 0, 1, 2, 2, 2);
+		world.addStairwell(1, 0, 2, 2, CORE_SIDE_RIGHT);
 
-		building.addFacade(0, 0, 5, 3, 1);
-		building.addFacade(0, 1, 5, 3, 1);
-		core::Building::CreateLiftOptions liftOptions;
+		world.addFacade(0, 0, 5, 3, 1);
+		world.addFacade(0, 1, 5, 3, 1);
+		core::World::CreateLiftOptions liftOptions;
 		liftOptions.cellsWide = 1;
 		liftOptions.stopOffsets = { 0, 1 };
-		building.addLift(1, 0, 6, liftOptions);
+		world.addLift(1, 0, 6, liftOptions);
 
-		building.addFacade(0, 0, 9, 7, 1);
-		core::Building::CreateShuttleOptions shuttleOptions{ 1, 3, { 0, 4 }, 0 };
-		building.addShuttle(1, 0, 9, 7, shuttleOptions);
+		world.addFacade(0, 0, 9, 7, 1);
+		core::World::CreateShuttleOptions shuttleOptions{ 1, 3, { 0, 4 }, 0 };
+		world.addShuttle(1, 0, 9, 7, shuttleOptions);
 
-		building.addFacade(0, 0, 17, 2, 2);
-		building.addFacade(0, 1, 19, 1, 1);
-		building.addStaircase(1, 0, 17, 2, CORE_SIDE_RIGHT, 0.5f);
+		world.addFacade(0, 0, 17, 2, 2);
+		world.addFacade(0, 1, 19, 1, 1);
+		world.addStaircase(1, 0, 17, 2, CORE_SIDE_RIGHT, 0.5f);
 
-		building.finishBuild();
+		world.finishBuild();
 	}
 
 	// The Vertex constructors pick a landing Vertex's VertexType from the
@@ -1590,11 +1590,11 @@ agents: []
 	// transit's own traversal rules instead of the floor's.
 	void aFacadeLandingVertexIsALocationVertex()
 	{
-		core::Building building("Facade landing vertices", 22, 3);
-		authorFacadeLandingMenagerie(building);
+		core::World world("Facade landing vertices", 22, 3);
+		authorFacadeLandingMenagerie(world);
 
-		auto const graph = building.getGraph();
-		require(graph != nullptr, "The menagerie Building has no Graph");
+		auto const graph = world.getGraph();
+		require(graph != nullptr, "The menagerie World has no Graph");
 
 		uint32_t facadeVertices = 0;
 		uint32_t transitVertices = 0;
@@ -1626,17 +1626,17 @@ agents: []
 	// shaft and not merely tolerated at validation time.
 	void agentsCanRouteFromAFacadeThroughATransit()
 	{
-		core::Building building("Facade routing", 22, 3);
+		core::World world("Facade routing", 22, 3);
 		uint32_t facadeMarker = 0;
 		uint32_t upperMarker = 0;
-		authorFacadeLandingMenagerie(building, &facadeMarker, &upperMarker);
-		auto const agentId = building.createAgent("Transit route checker", 0, 0, 0.5f);
-		auto const agent = building.lookupAgent(agentId).entity;
+		authorFacadeLandingMenagerie(world, &facadeMarker, &upperMarker);
+		auto const agentId = world.createAgent("Transit route checker", 0, 0, 0.5f);
+		auto const agent = world.lookupAgent(agentId).entity;
 		require(agent != nullptr, "The Transit route checker was not created");
 
-		require(hasPath(building, agent, facadeMarker, upperMarker),
+		require(hasPath(world, agent, facadeMarker, upperMarker),
 			"No route from a Facade floor up the Ladder to the Room above it");
-		require(hasPath(building, agent, upperMarker, facadeMarker),
+		require(hasPath(world, agent, upperMarker, facadeMarker),
 			"No route back down the Ladder into the Facade");
 	}
 
@@ -1646,23 +1646,23 @@ agents: []
 	// against.
 	void transitLandingsOnAFacadeRoundTrip()
 	{
-		core::Building building("Facade landing replay", 22, 3);
-		authorFacadeLandingMenagerie(building);
+		core::World world("Facade landing replay", 22, 3);
+		authorFacadeLandingMenagerie(world);
 
-		auto const yaml = serializeBuilding(building);
-		core::Building loaded("placeholder", 1, 1);
+		auto const yaml = serializeWorld(world);
+		core::World loaded("placeholder", 1, 1);
 		loadInto(loaded, yaml);
 
-		require(loaded.getNumSectors() == building.getNumSectors(),
+		require(loaded.getNumSectors() == world.getNumSectors(),
 			"The Facade-landing replay changed the Sector count");
-		require(sectorSignature(loaded) == sectorSignature(building),
-			("The Facade-landing replay moved a Sector\nexpected:\n" + sectorSignature(building)
+		require(sectorSignature(loaded) == sectorSignature(world),
+			("The Facade-landing replay moved a Sector\nexpected:\n" + sectorSignature(world)
 				+ "actual:\n" + sectorSignature(loaded)).c_str());
-		require(objectSignature(loaded) == objectSignature(building),
+		require(objectSignature(loaded) == objectSignature(world),
 			("The Facade-landing replay moved a SectorObject\nexpected:\n"
-				+ objectSignature(building) + "actual:\n" + objectSignature(loaded)).c_str());
-		require(serializeBuilding(loaded) == yaml,
-			"Re-saving the replayed Facade-landing Building changed its authored records");
+				+ objectSignature(world) + "actual:\n" + objectSignature(loaded)).c_str());
+		require(serializeWorld(loaded) == yaml,
+			"Re-saving the replayed Facade-landing World changed its authored records");
 	}
 }
 

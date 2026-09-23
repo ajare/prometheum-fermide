@@ -1,5 +1,5 @@
 // Inherited Agent Colour, ticket #133. Everything here is CPU-side: registry
-// persistence, Building validation, Selection-panel text, and the real Agent
+// persistence, World validation, Selection-panel text, and the real Agent
 // renderer's ImDrawList output are exercised without a window or GPU.
 
 #include "AgentTagAssignmentPanel.h"
@@ -22,7 +22,7 @@
 #include "core/Agent.h"
 #include "core/AgentTag.h"
 #include "core/AgentTagRegistry.h"
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/SerializationWorkData.h"
 #include "core/YamlSerializer.h"
 
@@ -75,12 +75,12 @@ namespace
 		return writer->getSerializedString();
 	}
 
-	std::string serializeBuilding(core::Building const& building)
+	std::string serializeWorld(core::World const& world)
 	{
 		auto writer = core::YamlSerializer::toString();
 		core::SerializationWorkData work;
 		work.markSerializedUnmodified = false;
-		building.serialize(*writer, work);
+		world.serialize(*writer, work);
 		writer->serialize();
 		return writer->getSerializedString();
 	}
@@ -95,14 +95,14 @@ namespace
 		return registry;
 	}
 
-	std::shared_ptr<core::Building> deserializeBuilding(std::string const& yaml)
+	std::shared_ptr<core::World> deserializeWorld(std::string const& yaml)
 	{
-		auto building = std::make_shared<core::Building>("Loading", 1, 1);
+		auto world = std::make_shared<core::World>("Loading", 1, 1);
 		auto reader = core::YamlSerializer::fromString(yaml);
 		reader->deserialize();
 		core::SerializationWorkData work;
-		require(building->deserialize(*reader, work), "The Building did not deserialize");
-		return building;
+		require(world->deserialize(*reader, work), "The World did not deserialize");
+		return world;
 	}
 
 	void colourIsUniqueRevisionedAndPersisted()
@@ -199,8 +199,8 @@ namespace
 	struct ColourFixture
 	{
 		std::shared_ptr<core::AgentTagRegistry> registry{ core::AgentTagRegistry::create() };
-		std::shared_ptr<core::Building> building{
-			std::make_shared<core::Building>("Colours", 8, 2) };
+		std::shared_ptr<core::World> world{
+			std::make_shared<core::World>("Colours", 8, 2) };
 		core::AgentTagId red{ registry->addAgentTag("red") };
 		core::AgentTagId blue{ registry->addAgentTag("blue") };
 		core::AgentTagId plain{ registry->addAgentTag("plain") };
@@ -212,13 +212,13 @@ namespace
 			std::string diagnostic;
 			require(registry->addAgentTagColour(red, &diagnostic), diagnostic);
 			require(registry->setAgentTagColour(red, { 12, 34, 56 }, &diagnostic), diagnostic);
-			building->attachAgentTagRegistry("colours.tags.yaml", registry);
-			auto const corridor = building->addCorridor(0, 0, 7);
-			building->finishBuild();
-			coloured = building->createAgent("Coloured", corridor, 0, 1.5f);
-			fallback = building->createAgent("Fallback", corridor, 0, 3.5f);
-			building->pauseSimulation();
-			require(building->assignAgentTag(coloured, red, &diagnostic), diagnostic);
+			world->attachAgentTagRegistry("colours.tags.yaml", registry);
+			auto const corridor = world->addCorridor(0, 0, 7);
+			world->finishBuild();
+			coloured = world->createAgent("Coloured", corridor, 0, 1.5f);
+			fallback = world->createAgent("Fallback", corridor, 0, 3.5f);
+			world->pauseSimulation();
+			require(world->assignAgentTag(coloured, red, &diagnostic), diagnostic);
 		}
 	};
 
@@ -227,19 +227,19 @@ namespace
 		ColourFixture fixture;
 		std::string diagnostic;
 		require(fixture.registry->addAgentTagColour(fixture.blue, &diagnostic), diagnostic);
-		auto const beforeAssignment = serializeBuilding(*fixture.building);
-		require(!fixture.building->assignAgentTag(
+		auto const beforeAssignment = serializeWorld(*fixture.world);
+		require(!fixture.world->assignAgentTag(
 			fixture.coloured, fixture.blue, &diagnostic)
 			&& diagnostic.find("Colour") != std::string::npos
 			&& diagnostic.find("#red") != std::string::npos
 			&& diagnostic.find("#blue") != std::string::npos
-			&& serializeBuilding(*fixture.building) == beforeAssignment,
+			&& serializeWorld(*fixture.world) == beforeAssignment,
 			"A conflicting Colour assignment was not refused atomically with both sources");
 
 		// Assigning property-free tags is still unrestricted. Adding Colour to
 		// one afterwards must preflight every loaded Agent before consuming a
 		// revision or touching the tag.
-		require(fixture.building->assignAgentTag(
+		require(fixture.world->assignAgentTag(
 			fixture.coloured, fixture.plain, &diagnostic), diagnostic);
 		forgetAgentTagRegistryDocument(fixture.registry);
 		auto& history = agentTagRegistryDocumentHistory(fixture.registry);
@@ -256,29 +256,29 @@ namespace
 		forgetAgentTagRegistryDocument(fixture.registry);
 	}
 
-	void closedBuildingConflictsAreRejectedWhenTheRegistryIsResolved()
+	void closedWorldConflictsAreRejectedWhenTheRegistryIsResolved()
 	{
 		auto registry = core::AgentTagRegistry::create();
 		auto const first = registry->addAgentTag("first");
 		auto const second = registry->addAgentTag("second");
 		std::string yaml;
 		{
-			auto building = std::make_shared<core::Building>("Closed", 6, 2);
-			building->attachAgentTagRegistry("closed.tags.yaml", registry);
-			auto const corridor = building->addCorridor(0, 0, 5);
-			building->finishBuild();
-			auto const agent = building->createAgent("Conflict", corridor);
-			building->pauseSimulation();
+			auto world = std::make_shared<core::World>("Closed", 6, 2);
+			world->attachAgentTagRegistry("closed.tags.yaml", registry);
+			auto const corridor = world->addCorridor(0, 0, 5);
+			world->finishBuild();
+			auto const agent = world->createAgent("Conflict", corridor);
+			world->pauseSimulation();
 			std::string diagnostic;
-			require(building->assignAgentTag(agent, first, &diagnostic)
-				&& building->assignAgentTag(agent, second, &diagnostic), diagnostic);
-			yaml = serializeBuilding(*building);
+			require(world->assignAgentTag(agent, first, &diagnostic)
+				&& world->assignAgentTag(agent, second, &diagnostic), diagnostic);
+			yaml = serializeWorld(*world);
 		}
 
 		std::string diagnostic;
 		require(registry->addAgentTagColour(first, &diagnostic)
 			&& registry->addAgentTagColour(second, &diagnostic), diagnostic);
-		auto reopened = deserializeBuilding(yaml);
+		auto reopened = deserializeWorld(yaml);
 		bool refused{ false };
 		try { reopened->resolveAgentTagRegistry(registry); }
 		catch (std::exception const& error)
@@ -289,7 +289,7 @@ namespace
 				&& text.find("#second") != std::string::npos;
 		}
 		require(refused && !reopened->hasAttachedAgentTagRegistry(),
-			"A closed Building with duplicate inherited Colour sources was attached");
+			"A closed World with duplicate inherited Colour sources was attached");
 	}
 
 	void editorCommitsRevisionedColourAndUndoRedoExactly()
@@ -329,24 +329,24 @@ namespace
 		(void)agentTagRegistryDocumentHistory(registry);
 		require(commitAgentTagColourAdd(registry, target, diagnostic), diagnostic);
 
-		auto building = std::make_shared<core::Building>("Redo conflict", 6, 2);
-		building->attachAgentTagRegistry("redo.tags.yaml", registry);
-		auto const corridor = building->addCorridor(0, 0, 5);
-		building->finishBuild();
-		auto const agent = building->createAgent("Redo Agent", corridor);
-		building->pauseSimulation();
-		require(building->assignAgentTag(agent, target, &diagnostic), diagnostic);
+		auto world = std::make_shared<core::World>("Redo conflict", 6, 2);
+		world->attachAgentTagRegistry("redo.tags.yaml", registry);
+		auto const corridor = world->addCorridor(0, 0, 5);
+		world->finishBuild();
+		auto const agent = world->createAgent("Redo Agent", corridor);
+		world->pauseSimulation();
+		require(world->assignAgentTag(agent, target, &diagnostic), diagnostic);
 		require(restoreAgentTagRegistrySnapshot(registry, false, &diagnostic)
 			&& !registry->getAgentTagColour(target),
 			"Undo did not remove the newly added Colour: " + diagnostic);
-		require(building->assignAgentTag(agent, source, &diagnostic), diagnostic);
+		require(world->assignAgentTag(agent, source, &diagnostic), diagnostic);
 
 		auto const registryBefore = serializeRegistry(*registry);
-		auto const buildingBefore = serializeBuilding(*building);
+		auto const worldBefore = serializeWorld(*world);
 		require(!restoreAgentTagRegistrySnapshot(registry, true, &diagnostic)
 			&& diagnostic.find("Colour") != std::string::npos
 			&& serializeRegistry(*registry) == registryBefore
-			&& serializeBuilding(*building) == buildingBefore,
+			&& serializeWorld(*world) == worldBefore,
 			"Redo introduced a conflicting Colour or partially changed loaded state");
 		forgetAgentTagRegistryDocument(registry);
 	}
@@ -369,8 +369,8 @@ namespace
 	void effectiveInspectionAndRealRenderingUseInheritedFallbackAndGold()
 	{
 		ColourFixture fixture;
-		auto const coloured = fixture.building->lookupAgent(fixture.coloured).entity;
-		auto const fallback = fixture.building->lookupAgent(fixture.fallback).entity;
+		auto const coloured = fixture.world->lookupAgent(fixture.coloured).entity;
+		auto const fallback = fixture.world->lookupAgent(fixture.fallback).entity;
 		auto const effective = coloured->getEffectiveColour();
 		require(effective.value == (core::AgentColour{ 12, 34, 56 })
 			&& effective.sourceTag == fixture.red,
@@ -414,8 +414,8 @@ namespace
 		ImGui::NewFrame();
 		ImGui::Begin("Selection");
 		ImGui::LogToClipboard();
-		renderAgentEffectiveProperties(fixture.building, fixture.coloured);
-		renderAgentEffectiveProperties(fixture.building, fixture.fallback);
+		renderAgentEffectiveProperties(fixture.world, fixture.coloured);
+		renderAgentEffectiveProperties(fixture.world, fixture.fallback);
 		ImGui::End();
 		ImGui::Render();
 		std::string visible;
@@ -465,7 +465,7 @@ void runAgentColourSmokeChecks()
 	colourIsUniqueRevisionedAndPersisted();
 	displayColourIsRandomAtCreationBackfilledAndPersisted();
 	assignmentAndPropertyAdditionConflictsAreAtomic();
-	closedBuildingConflictsAreRejectedWhenTheRegistryIsResolved();
+	closedWorldConflictsAreRejectedWhenTheRegistryIsResolved();
 	editorCommitsRevisionedColourAndUndoRedoExactly();
 	conflictingColourRedoIsRefusedAtomically();
 	effectiveInspectionAndRealRenderingUseInheritedFallbackAndGold();

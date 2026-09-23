@@ -5,7 +5,7 @@
 #include "core/SimulationCoordinator.h"
 
 #include "core/Agent.h"
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/Coordination.h"
 #include "core/Defines.h"
 #include "core/Edge.h"
@@ -21,14 +21,14 @@ namespace core
 
 	using namespace std;
 
-	// The queue side of the queue-and-admission core moved out of Building
+	// The queue side of the queue-and-admission core moved out of World
 	// (ADR 0004 stage 4). Traversal-request creation, queue tickets, queue
 	// positions and their refresh, the door queue grant and release, traversal
 	// progress and timeouts, and permit expiry all live here now.
 	//
-	// The behaviour is unchanged. The coordinator works on Building's
+	// The behaviour is unchanged. The coordinator works on World's
 	// traversal-request, traversal-permit and agent registries through
-	// friendship (ADR 0001 keeps the registries with Building). The request and
+	// friendship (ADR 0001 keeps the registries with World). The request and
 	// permit snapshots its lifecycle events carry are built by the coordinator's
 	// own snapshot seam, which joined it in stage 5.
 
@@ -43,9 +43,9 @@ namespace core
 
 		auto sourceSector = SectorId{ (uint64_t)source->getSector()->getIndex() + 1 };
 		auto destinationSector = SectorId{ (uint64_t)destination->getSector()->getIndex() + 1 };
-		auto id = mBuilding.mTraversalRequests.add(unique_ptr<TraversalRequest>(new TraversalRequest(owner,
+		auto id = mWorld.mTraversalRequests.add(unique_ptr<TraversalRequest>(new TraversalRequest(owner,
 			edge->getType(), sourceSector, destinationSector, source->getPosition(), destination->getPosition())));
-		auto request = mBuilding.mTraversalRequests.find(id);
+		auto request = mWorld.mTraversalRequests.find(id);
 		request->mResource = edge->getTraversalResourceId();
 		request->mPreferredQueueSide = agent.mEarlyQueueApproachDirectionX;
 		request->mQueueSelectionPosition = request->mPreferredQueueSide
@@ -56,7 +56,7 @@ namespace core
 			auto const& previous = agent.mPath.path->nodes[agent.mPath.targetNode - 1].targetVertex;
 			if (previous) request->mQueueSelectionPosition = previous->getPosition();
 		}
-		if (auto resource = mBuilding.mTraversalResources.find(request->mResource); resource)
+		if (auto resource = mWorld.mTraversalResources.find(request->mResource); resource)
 		{
 			if (resource->mExtensible && resource->mExtensionRequestLeases.insert(id).second)
 				resource->mExtensible->acquireExtensionLease();
@@ -68,18 +68,18 @@ namespace core
 		}
 
 		SimulationEvent event;
-		event.sequence = mBuilding.mNextEventSequence++;
-		event.tick = mBuilding.mSimulationTick;
+		event.sequence = mWorld.mNextEventSequence++;
+		event.tick = mWorld.mSimulationTick;
 		event.type = SimulationEventType::TraversalRequestAdded;
-		event.phase = mBuilding.mCurrentPhase;
-		event.traversalRequest = makeTraversalRequestSnapshot(id, *mBuilding.mTraversalRequests.find(id));
-		mBuilding.mEvents.push_back(std::move(event));
+		event.phase = mWorld.mCurrentPhase;
+		event.traversalRequest = makeTraversalRequestSnapshot(id, *mWorld.mTraversalRequests.find(id));
+		mWorld.mEvents.push_back(std::move(event));
 		return id;
 	}
 
 	void SimulationCoordinator::attachQueueTicket(TraversalRequestId requestId, TraversalResource& resource)
 	{
-		auto request = mBuilding.mTraversalRequests.find(requestId);
+		auto request = mWorld.mTraversalRequests.find(requestId);
 		if (!request || (request->mQueueTicket && request->mQueueApproach != ~0u))
 		{
 			return;
@@ -100,16 +100,16 @@ namespace core
 		if (approach == ~0u) return;
 		if (!request->mQueueTicket)
 		{
-			request->mQueueTicket = QueueTicketId{ mBuilding.mNextQueueTicketValue++ };
-			request->mQueuedAtTick = mBuilding.mSimulationTick;
+			request->mQueueTicket = QueueTicketId{ mWorld.mNextQueueTicketValue++ };
+			request->mQueuedAtTick = mWorld.mSimulationTick;
 		}
 		request->mQueueApproach = approach;
 		auto& queue = resource.mQueueLanes[approach].queue;
 		if (find(queue.begin(), queue.end(), requestId) == queue.end()) queue.push_back(requestId);
 		sort(queue.begin(), queue.end(), [&](auto left, auto right)
 		{
-			auto lhs = mBuilding.mTraversalRequests.find(left);
-			auto rhs = mBuilding.mTraversalRequests.find(right);
+			auto lhs = mWorld.mTraversalRequests.find(left);
+			auto rhs = mWorld.mTraversalRequests.find(right);
 			return lhs && rhs ? lhs->mQueueTicket < rhs->mQueueTicket : left < right;
 		});
 		refreshQueuePositions(resource);
@@ -120,7 +120,7 @@ namespace core
 		float movementDistance)
 	{
 		if (!edge || movementDistance < 0.0f || !agent.getSector()) return false;
-		auto resource = mBuilding.mTraversalResources.find(edge->getTraversalResourceId());
+		auto resource = mWorld.mTraversalResources.find(edge->getTraversalResourceId());
 		if (!resource || (!resource->mDoor && !resource->mLadder && !resource->mForceBridge
 			&& !resource->mOpenPlatformLift)) return false;
 
@@ -207,7 +207,7 @@ namespace core
 		// doors keep their centre-based alignment interlocks, so only plain Door
 		// resources without a lift coordinator take the band.
 		if (!edge || edge->getType() != EdgeType::Door || !agent.getSector()) return false;
-		auto resource = mBuilding.mTraversalResources.find(edge->getTraversalResourceId());
+		auto resource = mWorld.mTraversalResources.find(edge->getTraversalResourceId());
 		if (!resource || !resource->mDoor || resource->mLiftCoordinator) return false;
 		return isWithinDoorCrossingBand(agent.getGlobalPosition(), threshold,
 			CORE_DOOR_CROSSING_HALF_WIDTH(resource->mDoor->getCellsWide()));
@@ -227,22 +227,22 @@ namespace core
 			fill(lane.positionOwners.begin(), lane.positionOwners.end(), TraversalRequestId{});
 			for (auto requestId : lane.queue)
 			{
-				auto request = mBuilding.mTraversalRequests.find(requestId);
+				auto request = mWorld.mTraversalRequests.find(requestId);
 				if (!request || request->mState != TraversalRequestState::Pending)
 				{
 					continue;
 				}
 				request->mQueuePosition = ~0u;
-				if (auto agent = mBuilding.mAgents.find(request->mOwner)) agent->mTraversalLocalGoal.reset();
+				if (auto agent = mWorld.mAgents.find(request->mOwner)) agent->mTraversalLocalGoal.reset();
 
 				// Operators and timed-out assignments keep their logical place while
 				// releasing the scarce physical position.
 				if (resource.mPreparationOperator == requestId
-					|| mBuilding.mSimulationTick < request->mPositionRetryAtTick)
+					|| mWorld.mSimulationTick < request->mPositionRetryAtTick)
 				{
 					continue;
 				}
-				auto agent = mBuilding.mAgents.find(request->mOwner);
+				auto agent = mWorld.mAgents.find(request->mOwner);
 				auto const selectionPosition = request->mHasHeldQueuePosition && agent
 					? agent->getGlobalPosition() : request->mQueueSelectionPosition;
 				uint32_t position = ~0u;
@@ -284,8 +284,8 @@ namespace core
 						auto previous = previousPositions.find(requestId);
 						if (previous == previousPositions.end() || previous->second != position)
 						{
-							request->mPositionAssignedAtTick = mBuilding.mSimulationTick;
-							request->mLastPositionProgressTick = mBuilding.mSimulationTick;
+							request->mPositionAssignedAtTick = mWorld.mSimulationTick;
+							request->mLastPositionProgressTick = mWorld.mSimulationTick;
 							request->mBestPositionDistance = distance;
 						}
 					}
@@ -297,19 +297,19 @@ namespace core
 	void SimulationCoordinator::updateTraversalProgressAndTimeouts()
 	{
 		vector<TraversalPermitId> expiredPermits;
-		for (auto const& [permitId, permit] : mBuilding.mTraversalPermits.entries())
+		for (auto const& [permitId, permit] : mWorld.mTraversalPermits.entries())
 		{
 			if (permit->mState != TraversalPermitState::Active) continue;
-			auto request = mBuilding.mTraversalRequests.find(permit->mRequest);
-			auto agent = request ? mBuilding.mAgents.find(request->mOwner) : nullptr;
+			auto request = mWorld.mTraversalRequests.find(permit->mRequest);
+			auto agent = request ? mWorld.mAgents.find(request->mOwner) : nullptr;
 			if (!request || !agent) { expiredPermits.push_back(permitId); continue; }
 			auto distance = agent->getGlobalPosition().distanceTo(request->mDestinationEndpoint);
 			if (distance + 0.001f < permit->mBestDestinationDistance)
 			{
 				permit->mBestDestinationDistance = distance;
-				permit->mExpiresAtTick = mBuilding.mSimulationTick + mBuilding.mTraversalWaitingPolicy.permitProgressTimeoutTicks;
+				permit->mExpiresAtTick = mWorld.mSimulationTick + mWorld.mTraversalWaitingPolicy.permitProgressTimeoutTicks;
 			}
-			else if (mBuilding.mSimulationTick >= permit->mExpiresAtTick)
+			else if (mWorld.mSimulationTick >= permit->mExpiresAtTick)
 			{
 				expiredPermits.push_back(permitId);
 			}
@@ -317,7 +317,7 @@ namespace core
 		for (auto permitId : expiredPermits) expireTraversalPermit(permitId);
 
 		vector<TraversalRequestId> unreachableRequests;
-		for (auto const& [resourceId, resource] : mBuilding.mTraversalResources.entries())
+		for (auto const& [resourceId, resource] : mWorld.mTraversalResources.entries())
 		{
 			(void)resourceId;
 			if (none_of(resource->mQueueLanes.begin(), resource->mQueueLanes.end(),
@@ -328,36 +328,36 @@ namespace core
 				for (auto requestId : lane.queue)
 				{
 					if (resource->mOpenPlatformMissedBoarding.contains(requestId)) continue;
-					auto request = mBuilding.mTraversalRequests.find(requestId);
+					auto request = mWorld.mTraversalRequests.find(requestId);
 					if (!request) continue;
 					if (request->mQueuePosition == ~0u)
 					{
 						if (request->mPositionRetryAtTick != 0
-							&& mBuilding.mSimulationTick >= request->mPositionRetryAtTick)
+							&& mWorld.mSimulationTick >= request->mPositionRetryAtTick)
 						{
 							request->mPositionRetryAtTick = 0;
 							refresh = true;
 						}
 						continue;
 					}
-					auto agent = mBuilding.mAgents.find(request->mOwner);
+					auto agent = mWorld.mAgents.find(request->mOwner);
 					if (!agent || request->mQueuePosition >= lane.positions.size()) continue;
 					auto distance = agent->getGlobalPosition().distanceTo(lane.positions[request->mQueuePosition]);
 					if (distance + 0.001f < request->mBestPositionDistance)
 					{
 						request->mBestPositionDistance = distance;
-						request->mLastPositionProgressTick = mBuilding.mSimulationTick;
+						request->mLastPositionProgressTick = mWorld.mSimulationTick;
 					}
-					else if (distance > 0.001f && mBuilding.mSimulationTick - request->mLastPositionProgressTick
-						>= mBuilding.mTraversalWaitingPolicy.localGoalTimeoutTicks)
+					else if (distance > 0.001f && mWorld.mSimulationTick - request->mLastPositionProgressTick
+						>= mWorld.mTraversalWaitingPolicy.localGoalTimeoutTicks)
 					{
 						request->mQueuePosition = ~0u;
-						request->mPositionRetryAtTick = mBuilding.mSimulationTick
-							+ mBuilding.mTraversalWaitingPolicy.localGoalRetryDelayTicks;
+						request->mPositionRetryAtTick = mWorld.mSimulationTick
+							+ mWorld.mTraversalWaitingPolicy.localGoalRetryDelayTicks;
 						++request->mPositionRetryCount;
 						if (agent) agent->mTraversalLocalGoal.reset();
 						refresh = true;
-						if (request->mPositionRetryCount > mBuilding.mTraversalWaitingPolicy.maximumLocalGoalRetries)
+						if (request->mPositionRetryCount > mWorld.mTraversalWaitingPolicy.maximumLocalGoalRetries)
 						{
 							unreachableRequests.push_back(requestId);
 						}
@@ -374,25 +374,25 @@ namespace core
 
 	void SimulationCoordinator::expireTraversalPermit(TraversalPermitId permitId)
 	{
-		auto permit = mBuilding.mTraversalPermits.find(permitId);
+		auto permit = mWorld.mTraversalPermits.find(permitId);
 		if (!permit || permit->mState != TraversalPermitState::Active) return;
 		auto requestId = permit->mRequest;
-		auto request = mBuilding.mTraversalRequests.find(requestId);
+		auto request = mWorld.mTraversalRequests.find(requestId);
 		if (!request) return;
 
 		permit->mState = TraversalPermitState::Cancelled;
 		SimulationEvent permitChanged;
-		permitChanged.sequence = mBuilding.mNextEventSequence++;
-		permitChanged.tick = mBuilding.mSimulationTick;
+		permitChanged.sequence = mWorld.mNextEventSequence++;
+		permitChanged.tick = mWorld.mSimulationTick;
 		permitChanged.type = SimulationEventType::TraversalPermitChanged;
-		permitChanged.phase = mBuilding.mCurrentPhase;
+		permitChanged.phase = mWorld.mCurrentPhase;
 		permitChanged.traversalPermit = makeTraversalPermitSnapshot(permitId, *permit);
-		mBuilding.mEvents.push_back(std::move(permitChanged));
+		mWorld.mEvents.push_back(std::move(permitChanged));
 
 		request->mPermit = {};
 		request->mState = TraversalRequestState::Pending;
 		request->mFailureReason = TraversalFailureReason::PermitExpired;
-		if (auto resource = mBuilding.mTraversalResources.find(request->mResource);
+		if (auto resource = mWorld.mTraversalResources.find(request->mResource);
 			resource && (resource->mLadder || resource->mStairwell))
 		{
 			if (isLadderAdmission(*request, *resource))
@@ -401,7 +401,7 @@ namespace core
 				attachLadderAdmissionRequest(requestId, *resource);
 			}
 		}
-		else if (auto resource = mBuilding.mTraversalResources.find(request->mResource);
+		else if (auto resource = mWorld.mTraversalResources.find(request->mResource);
 			resource && resource->mDoor && resource->mLiftCoordinator)
 		{
 			for (auto& owner : resource->mCrossingOwners) if (owner == requestId) owner = {};
@@ -411,7 +411,7 @@ namespace core
 			if (request->mCrossingLease) releaseDoorOpenLease(*resource, request->mCrossingLease);
 			request->mCrossingLease = {};
 			request->mCrossingLane = ~0u;
-			auto coordinator = mBuilding.mTraversalResources.find(resource->mLiftCoordinator);
+			auto coordinator = mWorld.mTraversalResources.find(resource->mLiftCoordinator);
 			if (coordinator && request->mSourceSector != coordinator->mLiftSector)
 			{
 				for (uint32_t approach = 0; approach < resource->mQueueLanes.size(); ++approach)
@@ -423,8 +423,8 @@ namespace core
 						queueLane.queue.push_back(requestId);
 					sort(queueLane.queue.begin(), queueLane.queue.end(), [&](auto left, auto right)
 					{
-						auto lhs = mBuilding.mTraversalRequests.find(left);
-						auto rhs = mBuilding.mTraversalRequests.find(right);
+						auto lhs = mWorld.mTraversalRequests.find(left);
+						auto rhs = mWorld.mTraversalRequests.find(right);
 						return lhs && rhs ? lhs->mQueueTicket < rhs->mQueueTicket : left < right;
 					});
 					refreshQueuePositions(*resource);
@@ -432,7 +432,7 @@ namespace core
 				}
 			}
 		}
-		else if (auto resource = mBuilding.mTraversalResources.find(request->mResource);
+		else if (auto resource = mWorld.mTraversalResources.find(request->mResource);
 			resource && (resource->mDoor || resource->mForceBridge))
 		{
 			for (auto& owner : resource->mCrossingOwners) if (owner == requestId) owner = {};
@@ -451,33 +451,33 @@ namespace core
 			queue.push_back(requestId);
 			sort(queue.begin(), queue.end(), [&](TraversalRequestId lhs, TraversalRequestId rhs)
 			{
-				return mBuilding.mTraversalRequests.find(lhs)->mQueueTicket < mBuilding.mTraversalRequests.find(rhs)->mQueueTicket;
+				return mWorld.mTraversalRequests.find(lhs)->mQueueTicket < mWorld.mTraversalRequests.find(rhs)->mQueueTicket;
 			});
 			refreshQueuePositions(*resource);
 		}
-		if (auto agent = mBuilding.mAgents.find(request->mOwner); agent && agent->mTraversalTask)
+		if (auto agent = mWorld.mAgents.find(request->mOwner); agent && agent->mTraversalTask)
 		{
 			agent->mTraversalTask->permit = {};
 			agent->mState = Agent::State::WaitingForTraversal;
 		}
 
 		auto removed = makeTraversalPermitSnapshot(permitId, *permit);
-		mBuilding.mTraversalPermits.remove(permitId);
+		mWorld.mTraversalPermits.remove(permitId);
 		SimulationEvent permitRemoved;
-		permitRemoved.sequence = mBuilding.mNextEventSequence++;
-		permitRemoved.tick = mBuilding.mSimulationTick;
+		permitRemoved.sequence = mWorld.mNextEventSequence++;
+		permitRemoved.tick = mWorld.mSimulationTick;
 		permitRemoved.type = SimulationEventType::TraversalPermitRemoved;
-		permitRemoved.phase = mBuilding.mCurrentPhase;
+		permitRemoved.phase = mWorld.mCurrentPhase;
 		permitRemoved.traversalPermit = std::move(removed);
-		mBuilding.mEvents.push_back(std::move(permitRemoved));
+		mWorld.mEvents.push_back(std::move(permitRemoved));
 
 		SimulationEvent requestChanged;
-		requestChanged.sequence = mBuilding.mNextEventSequence++;
-		requestChanged.tick = mBuilding.mSimulationTick;
+		requestChanged.sequence = mWorld.mNextEventSequence++;
+		requestChanged.tick = mWorld.mSimulationTick;
 		requestChanged.type = SimulationEventType::TraversalRequestChanged;
-		requestChanged.phase = mBuilding.mCurrentPhase;
+		requestChanged.phase = mWorld.mCurrentPhase;
 		requestChanged.traversalRequest = makeTraversalRequestSnapshot(requestId, *request);
-		mBuilding.mEvents.push_back(std::move(requestChanged));
+		mWorld.mEvents.push_back(std::move(requestChanged));
 	}
 
 	void SimulationCoordinator::tryGrantDoorQueue(TraversalResource& resource)
@@ -510,13 +510,13 @@ namespace core
 			{
 				if (lane.queue.empty()) continue;
 				auto candidateId = lane.queue.front();
-				auto candidate = mBuilding.mTraversalRequests.find(candidateId);
+				auto candidate = mWorld.mTraversalRequests.find(candidateId);
 				if (!candidate || candidate->mState != TraversalRequestState::Pending
 					|| candidate->mQueuePosition == ~0u || resource.mPreparationOperator == candidateId)
 				{
 					continue;
 				}
-				auto agent = mBuilding.mAgents.find(candidate->mOwner);
+				auto agent = mWorld.mAgents.find(candidate->mOwner);
 				if (!agent)
 				{
 					continue;
@@ -538,7 +538,7 @@ namespace core
 					selected = candidateId;
 					continue;
 				}
-				auto current = mBuilding.mTraversalRequests.find(selected);
+				auto current = mWorld.mTraversalRequests.find(selected);
 				if (candidate->mQueuedAtTick < current->mQueuedAtTick
 					|| (candidate->mQueuedAtTick == current->mQueuedAtTick && candidate->mOwner < current->mOwner))
 				{
@@ -547,13 +547,13 @@ namespace core
 			}
 			if (!selected) break;
 
-			auto selectedRequest = mBuilding.mTraversalRequests.find(selected);
+			auto selectedRequest = mWorld.mTraversalRequests.find(selected);
 			auto& queueLane = resource.mQueueLanes[selectedRequest->mQueueApproach];
 			queueLane.queue.erase(remove(queueLane.queue.begin(), queueLane.queue.end(), selected), queueLane.queue.end());
 			selectedRequest->mQueuePosition = ~0u;
 			selectedRequest->mCrossingLane = crossingLane;
 			resource.mCrossingOwners[crossingLane] = selected;
-			if (auto agent = mBuilding.mAgents.find(selectedRequest->mOwner)) agent->mTraversalLocalGoal.reset();
+			if (auto agent = mWorld.mAgents.find(selectedRequest->mOwner)) agent->mTraversalLocalGoal.reset();
 			queueChanged = true;
 			grantTraversalRequest(selected);
 		}
@@ -570,11 +570,11 @@ namespace core
 		{
 			if (owner == requestId) owner = {};
 		}
-		if (auto request = mBuilding.mTraversalRequests.find(requestId))
+		if (auto request = mWorld.mTraversalRequests.find(requestId))
 		{
 			request->mQueuePosition = ~0u;
 			request->mCrossingLane = ~0u;
-			if (auto agent = mBuilding.mAgents.find(request->mOwner))
+			if (auto agent = mWorld.mAgents.find(request->mOwner))
 			{
 				agent->mTraversalLocalGoal.reset();
 			}

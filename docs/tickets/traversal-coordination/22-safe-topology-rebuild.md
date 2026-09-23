@@ -4,7 +4,7 @@
 
 **Difficulty:** hard
 
-**What to build:** Allow structural building edits to replace affected graph and resource topology only while simulation ticks are paused. Active ownership is cancelled or brought to a safe boundary, rebuilt configuration is validated, and simulation resumes without stale handles.
+**What to build:** Allow structural world edits to replace affected graph and resource topology only while simulation ticks are paused. Active ownership is cancelled or brought to a safe boundary, rebuilt configuration is validated, and simulation resumes without stale handles.
 
 **Blocked by:**
 - 13 — Hold extensible ladders and force bridges safely

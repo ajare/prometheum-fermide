@@ -15,11 +15,11 @@
 
 namespace core
 {
-	class Building;
+	class World;
 
 	struct LoadedAgentTagUsage
 	{
-		Building const* building{ nullptr };
+		World const* world{ nullptr };
 		uint32_t agentCount{ 0 };
 	};
 
@@ -40,9 +40,9 @@ namespace core
 		// a different on-disk revision.
 		std::optional<std::filesystem::path> mDocumentPath;
 		std::string mSavedDocumentContents;
-		// Buildings register while this shared registry is attached. Raw pointers
-		// are safe here because Building unregisters before destruction.
-		std::set<Building*> mLoadedBuildings;
+		// Worlds register while this shared registry is attached. Raw pointers
+		// are safe here because World unregisters before destruction.
+		std::set<World*> mLoadedWorlds;
 
 		bool childrenModified() const override;
 		void serializeImpl(Serializer& serializer, SerializationWorkData& workData) const override;
@@ -56,16 +56,16 @@ namespace core
 			std::string* diagnostic) const;
 		bool heightModifierAdditionIsValid(AgentTagId id,
 			std::string* diagnostic) const;
-		void registerBuilding(Building& building);
-		void unregisterBuilding(Building& building);
+		void registerWorld(World& world);
+		void unregisterWorld(World& world);
 
-		friend class Building;
+		friend class World;
 
 	public:
 		static std::shared_ptr<AgentTagRegistry> create();
 		static std::shared_ptr<AgentTagRegistry> loadFrom(std::string const& filepath);
 
-		// Produces a separate namespace for Building Save As. Authored tag IDs,
+		// Produces a separate namespace for World Save As. Authored tag IDs,
 		// allocator high-water marks, property revisions, names, and values are
 		// copied exactly; only the registry document UUID changes.
 		static std::shared_ptr<AgentTagRegistry> copyWithNewUuid(
@@ -88,12 +88,12 @@ namespace core
 		AgentHeightModifierProperty const* getAgentTagHeightModifier(
 			AgentTagId id) const;
 
-		// Live usage is derived from every loaded Building sharing this exact
-		// registry instance. Closed Buildings are deliberately unknowable.
+		// Live usage is derived from every loaded World sharing this exact
+		// registry instance. Closed Worlds are deliberately unknowable.
 		std::vector<LoadedAgentTagUsage> getLoadedAgentTagUsage(AgentTagId id) const;
 		uint64_t getLoadedAgentTagUsageCount(AgentTagId id) const;
-		bool hasLoadedBuilding(Building const* building) const;
-		bool hasLoadedBuildings() const;
+		bool hasLoadedWorld(World const* world) const;
+		bool hasLoadedWorlds() const;
 
 		// Reports whether the tracked file's bytes differ from the revision loaded
 		// or saved by this document. Untracked new registries report no conflict.
@@ -105,7 +105,7 @@ namespace core
 			std::string* diagnostic);
 
 		// Registry definitions are shared authored state. Editing them is safe only
-		// when every loaded dependent Building is paused, including Buildings that
+		// when every loaded dependent World is paused, including Worlds that
 		// currently assign none of the edited tags.
 		bool definitionEditsAreAllowed(std::string* diagnostic = nullptr) const;
 
@@ -124,7 +124,7 @@ namespace core
 			std::string* diagnostic = nullptr);
 
 		// Colour is unique within a tag. Addition and assignment both preflight
-		// inherited-property conflicts across every loaded dependent Building.
+		// inherited-property conflicts across every loaded dependent World.
 		// Revisions are registry-wide, monotonic, persisted, and consumed only by
 		// an accepted addition or real value change.
 		bool addAgentTagColour(AgentTagId id, std::string* diagnostic = nullptr);
@@ -150,11 +150,11 @@ namespace core
 			std::string* diagnostic = nullptr);
 
 		// Used by registry undo/redo to reject a prospective definition set that
-		// would reinterpret any currently loaded Agent assignment. Buildings whose
+		// would reinterpret any currently loaded Agent assignment. Worlds whose
 		// coordinated snapshots have already been validated may be excluded.
-		bool loadedBuildingAssignmentsAreValid(AgentTagRegistry const& definitions,
+		bool loadedWorldAssignmentsAreValid(AgentTagRegistry const& definitions,
 			std::string* diagnostic = nullptr,
-			std::vector<Building const*> const& excludedBuildings = {}) const;
+			std::vector<World const*> const& excludedWorlds = {}) const;
 
 		void saveTo(std::string const& filepath);
 	};

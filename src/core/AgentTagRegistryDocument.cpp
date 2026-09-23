@@ -8,7 +8,8 @@
 
 #include "core/AgentTagRegistry.h"
 #include "core/AgentBehaviourRegistryDocument.h"
-#include "core/Building.h"
+#include "core/World.h"
+#include "core/WorldDocument.h"
 #include "core/SerializationException.h"
 #include "core/YamlSerializer.h"
 
@@ -23,8 +24,8 @@ namespace core
 		};
 
 		// The manager keeps dirty unreferenced documents alive so detaching one
-		// Building cannot silently discard unsaved shared work. Clean documents are
-		// removed as soon as no loaded Building references them.
+		// World cannot silently discard unsaved shared work. Clean documents are
+		// removed as soon as no loaded World references them.
 		std::vector<LoadedAgentTagRegistry> gLoadedAgentTagRegistries;
 
 		void discardUnreferencedRegistries()
@@ -32,7 +33,7 @@ namespace core
 			std::erase_if(gLoadedAgentTagRegistries,
 				[](LoadedAgentTagRegistry const& entry)
 				{
-					return !entry.registry || (!entry.registry->hasLoadedBuildings()
+					return !entry.registry || (!entry.registry->hasLoadedWorlds()
 						&& !entry.registry->isModified());
 				});
 		}
@@ -66,17 +67,18 @@ namespace core
 			return canonical;
 		}
 
-		std::filesystem::path requireSavedBuildingPath(
-			std::filesystem::path const& buildingFilepath)
+		std::filesystem::path requireSavedWorldPath(
+			std::filesystem::path const& worldFilepath)
 		{
+			requireWorldDocumentPath(worldFilepath);
 			try
 			{
-				return requireCanonicalRegularFile(buildingFilepath, "Building");
+				return requireCanonicalRegularFile(worldFilepath, "World");
 			}
 			catch (SerializationException const&)
 			{
 				throw SerializationException(
-					"Save the Building before creating, selecting, or loading an Agent tag registry");
+					"Save the World before creating, selecting, or loading an Agent tag registry");
 			}
 		}
 
@@ -111,7 +113,7 @@ namespace core
 			if (expectedUuid && registry.getUuid() != *expectedUuid)
 			{
 				throw SerializationException(std::format(
-					"Agent tag registry UUID mismatch: Building expects {}, file contains {}",
+					"Agent tag registry UUID mismatch: World expects {}, file contains {}",
 					*expectedUuid, registry.getUuid()));
 			}
 		}
@@ -146,7 +148,7 @@ namespace core
 				if (loaded->fileHasExternalChanges(canonicalPath.string()))
 				{
 					throw SerializationException(std::format(
-						"Agent tag registry {} changed outside the editor; reload it before attaching another Building",
+						"Agent tag registry {} changed outside the editor; reload it before attaching another World",
 						canonicalPath.string()));
 				}
 				return loaded;
@@ -195,24 +197,23 @@ namespace core
 	}
 
 	std::filesystem::path defaultAgentTagRegistryPath(
-		std::filesystem::path const& buildingFilepath)
+		std::filesystem::path const& worldFilepath)
 	{
-		if (buildingFilepath.empty()) return {};
-		auto filename = buildingFilepath.filename();
-		filename.replace_extension();
-		filename += ".tags.yaml";
-		return buildingFilepath.parent_path() / filename;
+		if (worldFilepath.empty()) return {};
+		auto path = worldDocumentBasePath(worldFilepath);
+		path += ".tags.yaml";
+		return path;
 	}
 
 	std::shared_ptr<AgentTagRegistry> createAndAttachAgentTagRegistry(
-		Building& building, std::filesystem::path const& buildingFilepath)
+		World& world, std::filesystem::path const& worldFilepath)
 	{
-		if (building.hasAgentTagRegistryReference())
+		if (world.hasAgentTagRegistryReference())
 		{
-			throw SerializationException("The Building already references an Agent tag registry");
+			throw SerializationException("The World already references an Agent tag registry");
 		}
-		auto const savedBuilding = requireSavedBuildingPath(buildingFilepath);
-		auto const registryPath = defaultAgentTagRegistryPath(savedBuilding);
+		auto const savedWorld = requireSavedWorldPath(worldFilepath);
+		auto const registryPath = defaultAgentTagRegistryPath(savedWorld);
 		std::error_code error;
 		if (std::filesystem::exists(registryPath, error) || error)
 		{
@@ -223,7 +224,7 @@ namespace core
 		auto registry = AgentTagRegistry::create();
 		// YamlSerializer installs the completed temporary file with one rename.
 		// Attachment happens afterwards, so a failed write cannot leave the
-		// Building referring to a partial or absent registry.
+		// World referring to a partial or absent registry.
 		registry->saveTo(registryPath.string());
 		try
 		{
@@ -234,7 +235,7 @@ namespace core
 			std::filesystem::remove(registryPath, error);
 			throw;
 		}
-		building.attachAgentTagRegistry(registryPath.filename().string(), registry);
+		world.attachAgentTagRegistry(registryPath.filename().string(), registry);
 		return registry;
 	}
 
@@ -318,75 +319,75 @@ namespace core
 	}
 
 	std::shared_ptr<AgentTagRegistry> selectAndAttachAgentTagRegistry(
-		Building& building, std::filesystem::path const& buildingFilepath,
+		World& world, std::filesystem::path const& worldFilepath,
 		std::filesystem::path const& registryFilepath)
 	{
-		if (building.getAgentTagAssignmentCount() != 0)
+		if (world.getAgentTagAssignmentCount() != 0)
 		{
 			throw SerializationException(
 				"Cannot switch Agent tag registries while Agent tag assignments exist; use the confirmed destructive action to clear assignments and samples first");
 		}
 		requireAgentTagRegistryFilename(registryFilepath);
-		auto const savedBuilding = requireSavedBuildingPath(buildingFilepath);
+		auto const savedWorld = requireSavedWorldPath(worldFilepath);
 		auto const canonicalRegistry = requireCanonicalRegularFile(
 			registryFilepath, "Agent tag registry");
 		requireAgentTagRegistryFilename(canonicalRegistry);
-		if (canonicalRegistry.parent_path() != savedBuilding.parent_path())
+		if (canonicalRegistry.parent_path() != savedWorld.parent_path())
 		{
 			throw SerializationException(
-				"An Agent tag registry must be in the same directory as its Building");
+				"An Agent tag registry must be in the same directory as its World");
 		}
 
 		auto registry = loadSharedRegistry(canonicalRegistry);
-		building.attachAgentTagRegistry(canonicalRegistry.filename().string(), registry);
+		world.attachAgentTagRegistry(canonicalRegistry.filename().string(), registry);
 		return registry;
 	}
 
 	std::shared_ptr<AgentTagRegistry> selectAndAttachAgentTagRegistryClearingAssignments(
-		Building& building, std::filesystem::path const& buildingFilepath,
+		World& world, std::filesystem::path const& worldFilepath,
 		std::filesystem::path const& registryFilepath)
 	{
 		requireAgentTagRegistryFilename(registryFilepath);
-		auto const savedBuilding = requireSavedBuildingPath(buildingFilepath);
+		auto const savedWorld = requireSavedWorldPath(worldFilepath);
 		auto const canonicalRegistry = requireCanonicalRegularFile(
 			registryFilepath, "Agent tag registry");
 		requireAgentTagRegistryFilename(canonicalRegistry);
-		if (canonicalRegistry.parent_path() != savedBuilding.parent_path())
+		if (canonicalRegistry.parent_path() != savedWorld.parent_path())
 		{
 			throw SerializationException(
-				"An Agent tag registry must be in the same directory as its Building");
+				"An Agent tag registry must be in the same directory as its World");
 		}
 
 		auto registry = loadSharedRegistry(canonicalRegistry);
-		building.attachAgentTagRegistryAndClearAssignments(
+		world.attachAgentTagRegistryAndClearAssignments(
 			canonicalRegistry.filename().string(), registry);
 		return registry;
 	}
 
 	std::shared_ptr<AgentTagRegistry> loadAndAttachAgentTagRegistry(
-		Building& building, std::filesystem::path const& buildingFilepath)
+		World& world, std::filesystem::path const& worldFilepath)
 	{
-		if (!building.hasAgentTagRegistryReference()) return {};
-		auto const savedBuilding = requireSavedBuildingPath(buildingFilepath);
-		auto const registryPath = savedBuilding.parent_path()
-			/ building.getAgentTagRegistryFilename();
+		if (!world.hasAgentTagRegistryReference()) return {};
+		auto const savedWorld = requireSavedWorldPath(worldFilepath);
+		auto const registryPath = savedWorld.parent_path()
+			/ world.getAgentTagRegistryFilename();
 		auto const canonicalRegistry = requireCanonicalRegularFile(
 			registryPath, "Agent tag registry");
 		requireAgentTagRegistryFilename(canonicalRegistry);
-		if (canonicalRegistry.parent_path() != savedBuilding.parent_path())
+		if (canonicalRegistry.parent_path() != savedWorld.parent_path())
 		{
 			throw SerializationException(
-				"An Agent tag registry must be in the same directory as its Building");
+				"An Agent tag registry must be in the same directory as its World");
 		}
 		auto registry = loadSharedRegistry(canonicalRegistry,
-			building.getExpectedAgentTagRegistryUuid());
+			world.getExpectedAgentTagRegistryUuid());
 		try
 		{
-			building.resolveAgentTagRegistry(registry);
+			world.resolveAgentTagRegistry(registry);
 		}
 		catch (...)
 		{
-			// A registry first encountered by a refused Building open must not
+			// A registry first encountered by a refused World open must not
 			// remain even as an expired manager entry. Existing shared registries
 			// retain their other owners and are therefore unaffected.
 			registry.reset();
@@ -456,7 +457,7 @@ namespace core
 	bool unloadAgentTagRegistryDocumentIfUnused(
 		std::shared_ptr<AgentTagRegistry> const& registry, bool discardDirty)
 	{
-		if (!registry || registry->hasLoadedBuildings()) return false;
+		if (!registry || registry->hasLoadedWorlds()) return false;
 		if (registry->isModified() && !discardDirty) return false;
 		std::erase_if(gLoadedAgentTagRegistries,
 			[&registry](LoadedAgentTagRegistry const& entry)
@@ -466,24 +467,26 @@ namespace core
 		return true;
 	}
 
-	std::shared_ptr<Building> loadBuildingDocument(
-		std::filesystem::path const& buildingFilepath)
+	std::shared_ptr<World> loadWorldDocument(
+		std::filesystem::path const& worldFilepath)
 	{
-		auto const canonicalBuilding = requireCanonicalRegularFile(
-			buildingFilepath, "Building");
-		auto loaded = std::make_shared<Building>("Loading", 1, 1);
-		auto serializer = YamlSerializer::fromFile(canonicalBuilding.string());
+		requireWorldDocumentPath(worldFilepath);
+		auto const canonicalWorld = requireCanonicalRegularFile(
+			worldFilepath, "World");
+		requireWorldDocumentPath(canonicalWorld);
+		auto loaded = std::make_shared<World>("Loading", 1, 1);
+		auto serializer = YamlSerializer::fromFile(canonicalWorld.string());
 		serializer->deserialize();
 		SerializationWorkData workData;
 		if (!loaded->deserialize(*serializer, workData))
 		{
-			throw SerializationException("Could not deserialize Building");
+			throw SerializationException("Could not deserialize World");
 		}
-		loadAndAttachAgentTagRegistry(*loaded, canonicalBuilding);
+		loadAndAttachAgentTagRegistry(*loaded, canonicalWorld);
 		// A behaviour-registry refusal propagates without replacing the caller's
-		// state; the temporary Building unregisters from every shared registry
+		// state; the temporary World unregisters from every shared registry
 		// in its destructor, so no dependent document keeps a stale pointer.
-		loadAndAttachAgentBehaviourRegistry(*loaded, canonicalBuilding);
+		loadAndAttachAgentBehaviourRegistry(*loaded, canonicalWorld);
 		return loaded;
 	}
 }

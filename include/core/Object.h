@@ -13,7 +13,7 @@ namespace core
 	class SensorSource;
 
 	// Physical simulation/rendering object. Interaction and device-operation state
-	// is owned by Building registries, not by this geometry base class.
+	// is owned by World registries, not by this geometry base class.
 	class Object : public Shape
 	{
 		std::shared_ptr<const SensorSource> mSensorSource;

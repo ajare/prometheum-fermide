@@ -72,6 +72,7 @@
 #include "core/YamlSerializer.h"
 #include "core/AgentTagRegistryDocument.h"
 #include "core/AgentBehaviourRegistryDocument.h"
+#include "core/WorldDocument.h"
 
 #include "Main.h"
 #include "RecentFiles.h"
@@ -120,13 +121,13 @@ void setSelectionMode(UISettings::SelectionMode mode);
 
 namespace
 {
-	bool applyAgentPathEdit(shared_ptr<const core::Building> const& building, core::Agent* agent,
+	bool applyAgentPathEdit(shared_ptr<const core::World> const& world, core::Agent* agent,
 		shared_ptr<core::Path> path, bool startPathing, bool replaceCurrentPath)
 	{
-		if (!building || !agent || !path) return false;
-		auto const agentId = building->getAgentId(agent);
-		if (agentId && building->agentBehaviourOwnsMovement(agentId)) return false;
-		auto undo = captureDocumentSnapshot(building);
+		if (!world || !agent || !path) return false;
+		auto const agentId = world->getAgentId(agent);
+		if (agentId && world->agentBehaviourOwnsMovement(agentId)) return false;
+		auto undo = captureDocumentSnapshot(world);
 		if (!undo) return false;
 
 		auto const* requestedPath = path.get();
@@ -204,11 +205,11 @@ namespace
 	UISettings::SelectionMode gPathSelectionPreviousMode{ UISettings::SelectionMode::Object };
 	bool gPathSelectionPreviouslyRenderedGraph{ false };
 
-	void beginAgentPathSelection(shared_ptr<core::Building> const& building)
+	void beginAgentPathSelection(shared_ptr<core::World> const& world)
 	{
 		if (!gSelectedAgent || gSelectingAgentPathDestination) return;
-		auto const id = building ? building->getAgentId(gSelectedAgent) : core::AgentId{};
-		if (building && id && building->agentBehaviourOwnsMovement(id)) return;
+		auto const id = world ? world->getAgentId(gSelectedAgent) : core::AgentId{};
+		if (world && id && world->agentBehaviourOwnsMovement(id)) return;
 		gSelectingAgentPathDestination = true;
 		gPathSelectionPreviousMode = gUISettings.selectionMode;
 		gPathSelectionPreviouslyRenderedGraph = gUISettings.renderGraph;
@@ -279,7 +280,7 @@ namespace
 
 	optional<ShuttleDraft> gShuttleDraft;
 	bool gOpenShuttleDraftPopup{ false };
-	vector<core::Building::ShuttleStopCandidate> gShuttleDoorCandidates;
+	vector<core::World::ShuttleStopCandidate> gShuttleDoorCandidates;
 	int gSelectedShuttleDoorCandidate{ 0 };
 	bool gOpenShuttleStopPopup{ false };
 
@@ -303,23 +304,23 @@ namespace
 		ResizeEdge edge{ ResizeEdge::None };
 		ImVec2 pressPosition{};
 		uint32_t originalX{ 0 }, originalY{ 0 }, originalWidth{ 0 }, originalHeight{ 0 };
-		core::Building::LocationEditPlan preview;
-		core::Building::LiftEditPlan liftPreview;
-		core::Building::ShuttleEditPlan shuttlePreview;
-		core::Building::LadderEditPlan ladderPreview;
-		core::Building::StairwellEditPlan stairwellPreview;
+		core::World::LocationEditPlan preview;
+		core::World::LiftEditPlan liftPreview;
+		core::World::ShuttleEditPlan shuttlePreview;
+		core::World::LadderEditPlan ladderPreview;
+		core::World::StairwellEditPlan stairwellPreview;
 	};
 
 	SectorResizeState gSectorResize;
-	optional<core::Building::LocationEditPlan> gPendingLocationEdit;
-	optional<core::Building::LiftEditPlan> gPendingLiftEdit;
-	optional<core::Building::ShuttleEditPlan> gPendingShuttleEdit;
-	optional<core::Building::LadderEditPlan> gPendingLadderEdit;
-	optional<core::Building::StairwellEditPlan> gPendingStairwellEdit;
-	optional<core::Building::PlatformLiftEditPlan> gPendingPlatformLiftEdit;
-	optional<core::Building::WalkwayEditPlan> gPendingWalkwayEdit;
-	optional<core::Building::ObjectMovePlan> gPendingObjectMove;
-	optional<core::Building::LayerDeletePlan> gPendingLayerDelete;
+	optional<core::World::LocationEditPlan> gPendingLocationEdit;
+	optional<core::World::LiftEditPlan> gPendingLiftEdit;
+	optional<core::World::ShuttleEditPlan> gPendingShuttleEdit;
+	optional<core::World::LadderEditPlan> gPendingLadderEdit;
+	optional<core::World::StairwellEditPlan> gPendingStairwellEdit;
+	optional<core::World::PlatformLiftEditPlan> gPendingPlatformLiftEdit;
+	optional<core::World::WalkwayEditPlan> gPendingWalkwayEdit;
+	optional<core::World::ObjectMovePlan> gPendingObjectMove;
+	optional<core::World::LayerDeletePlan> gPendingLayerDelete;
 
 	void reportEditorError(string const& source, string message);
 
@@ -329,7 +330,7 @@ namespace
 		ResizeEdge edge{ ResizeEdge::Move };
 		ImVec2 pressPosition{};
 		uint32_t originalX{ 0 }, originalY{ 0 }, originalWidth{ 0 }, originalHeight{ 0 };
-		core::Building::ObjectMovePlan preview;
+		core::World::ObjectMovePlan preview;
 	};
 
 	ObjectMoveState gObjectMove;
@@ -360,11 +361,11 @@ namespace
 		gAgentMove = {};
 	}
 
-	void beginObjectMove(shared_ptr<const core::Building> const& building,
+	void beginObjectMove(shared_ptr<const core::World> const& world,
 		shared_ptr<const core::SectorObject> const& object, uint32_t objectIndex,
 		ResizeEdge edge = ResizeEdge::Move)
 	{
-		if (!building || !object || gObjectMove.dragging) return;
+		if (!world || !object || gObjectMove.dragging) return;
 		auto owner = object->getSector();
 		gObjectMove.dragging = true;
 		gObjectMove.edge = edge;
@@ -386,13 +387,13 @@ namespace
 			++gObjectMove.originalX;
 		}
 		gObjectMove.preview = edge == ResizeEdge::Move
-			? building->planMoveSectorObject(owner->getIndex(), objectIndex,
+			? world->planMoveSectorObject(owner->getIndex(), objectIndex,
 				gObjectMove.originalX, gObjectMove.originalY)
 			: object->getObjectType() == core::SectorObjectType::Door
-				? building->planResizeSectorDoor(owner->getIndex(), objectIndex,
+				? world->planResizeSectorDoor(owner->getIndex(), objectIndex,
 					gObjectMove.originalX, gObjectMove.originalY,
 					gObjectMove.originalWidth, gObjectMove.originalHeight)
-				: building->planResizeSectorWindow(owner->getIndex(), objectIndex,
+				: world->planResizeSectorWindow(owner->getIndex(), objectIndex,
 					gObjectMove.originalX, gObjectMove.originalY,
 					gObjectMove.originalWidth, gObjectMove.originalHeight);
 	}
@@ -427,37 +428,37 @@ namespace
 		};
 	}
 
-	PegmanTarget getPegmanTarget(shared_ptr<const core::Building> const& building,
+	PegmanTarget getPegmanTarget(shared_ptr<const core::World> const& world,
 		ImVec2 feet, ImVec2 canvasPos, ImVec2 canvasSize)
 	{
 		if (!pointInRect(feet, canvasPos, canvasPos + canvasSize)) return {};
-		return pegmanAgentTargetAtWorld(building, screenToWorld(feet));
+		return pegmanAgentTargetAtWorld(world, screenToWorld(feet));
 	}
 
-	PegmanTarget getMarkerTarget(shared_ptr<const core::Building> const& building,
+	PegmanTarget getMarkerTarget(shared_ptr<const core::World> const& world,
 		ImVec2 position, ImVec2 canvasPos, ImVec2 canvasSize)
 	{
 		if (!pointInRect(position, canvasPos, canvasPos + canvasSize))
 			return { nullptr, 0, 0.0f, 0.0f, 0.0f, "Drop inside the world" };
 
-		auto world = screenToWorld(position);
-		auto sector = building->getSectorAtPosition(gUISettings.visibleLayer, world.x, world.y);
-		if (!sector || !sector->pointInBounds(world.x, world.y))
-			return { nullptr, 0, 0.0f, world.y, world.y, "Markers require a viable sector" };
+		auto worldPosition = screenToWorld(position);
+		auto sector = world->getSectorAtPosition(gUISettings.visibleLayer, worldPosition.x, worldPosition.y);
+		if (!sector || !sector->pointInBounds(worldPosition.x, worldPosition.y))
+			return { nullptr, 0, 0.0f, worldPosition.y, worldPosition.y, "Markers require a viable sector" };
 
-		auto cellY = (uint32_t)floor(world.y);
+		auto cellY = (uint32_t)floor(worldPosition.y);
 		if (cellY < sector->getCellY())
-			return { sector, 0, 0.0f, world.y, world.y, "Marker deck is outside the sector" };
+			return { sector, 0, 0.0f, worldPosition.y, worldPosition.y, "Marker deck is outside the sector" };
 		auto deckOffset = cellY - sector->getCellY();
-		auto localX = world.x - sector->getPosition().x;
+		auto localX = worldPosition.x - sector->getPosition().x;
 		string diagnostic;
-		building->canAddSectorMarker(sector->getIndex(), deckOffset, localX, &diagnostic);
+		world->canAddSectorMarker(sector->getIndex(), deckOffset, localX, &diagnostic);
 		return { sector, deckOffset, localX,
 			(float)sector->getCellY() + deckOffset,
 			(float)sector->getCellY() + deckOffset, std::move(diagnostic) };
 	}
 
-	PegmanTarget getDoorTarget(shared_ptr<const core::Building> const& building,
+	PegmanTarget getDoorTarget(shared_ptr<const core::World> const& world,
 		ImVec2 position, ImVec2 canvasPos, ImVec2 canvasSize)
 	{
 		PegmanTarget target;
@@ -467,28 +468,28 @@ namespace
 			return target;
 		}
 
-		auto world = screenToWorld(position);
-		if (world.x < 0.0f || world.y < 0.0f)
+		auto worldPosition = screenToWorld(position);
+		if (worldPosition.x < 0.0f || worldPosition.y < 0.0f)
 		{
-			target.diagnostic = "Door position is outside the building";
+			target.diagnostic = "Door position is outside the world";
 			return target;
 		}
-		target.cellX = (uint32_t)floor(world.x);
-		target.cellY = (uint32_t)floor(world.y);
+		target.cellX = (uint32_t)floor(worldPosition.x);
+		target.cellY = (uint32_t)floor(worldPosition.y);
 		uint32_t landingX, landingWidth;
-		if (building->getLiftLandingGeometry(gUISettings.visibleLayer + 1, target.cellY, target.cellX, landingX, landingWidth))
+		if (world->getLiftLandingGeometry(gUISettings.visibleLayer + 1, target.cellY, target.cellX, landingX, landingWidth))
 			target.cellX = landingX;
-		target.sector = building->getSectorAtPosition(gUISettings.visibleLayer,
-			(float)target.cellX, world.y);
+		target.sector = world->getSectorAtPosition(gUISettings.visibleLayer,
+			(float)target.cellX, worldPosition.y);
 		// A Shuttle serves the Door pair from the Layer directly behind the Layer the
 		// Door is authored on, so query the Layer behind the visible one.
-		auto shuttleStops = building->getShuttleStopCandidatesForDoor(gUISettings.visibleLayer + 1, target.cellY, target.cellX);
+		auto shuttleStops = world->getShuttleStopCandidatesForDoor(gUISettings.visibleLayer + 1, target.cellY, target.cellX);
 		if (!shuttleStops.empty()) target.diagnostic.clear();
-		else building->canAddCorridorDoor(gUISettings.visibleLayer, target.cellY, target.cellX, &target.diagnostic);
+		else world->canAddCorridorDoor(gUISettings.visibleLayer, target.cellY, target.cellX, &target.diagnostic);
 		return target;
 	}
 
-	PegmanTarget getBulkheadDoorTarget(shared_ptr<const core::Building> const& building,
+	PegmanTarget getBulkheadDoorTarget(shared_ptr<const core::World> const& world,
 		ImVec2 position, ImVec2 canvasPos, ImVec2 canvasSize)
 	{
 		PegmanTarget target;
@@ -497,22 +498,22 @@ namespace
 			target.diagnostic = "Drop inside the world";
 			return target;
 		}
-		auto world = screenToWorld(position);
-		if (world.x < 0.0f || world.y < 0.0f)
+		auto worldPosition = screenToWorld(position);
+		if (worldPosition.x < 0.0f || worldPosition.y < 0.0f)
 		{
-			target.diagnostic = "Bulkhead Door position is outside the building";
+			target.diagnostic = "Bulkhead Door position is outside the world";
 			return target;
 		}
-		target.cellX = (uint32_t)floor(world.x);
-		target.cellY = (uint32_t)floor(world.y);
-		target.sector = building->getSectorAtPosition(gUISettings.visibleLayer,
+		target.cellX = (uint32_t)floor(worldPosition.x);
+		target.cellY = (uint32_t)floor(worldPosition.y);
+		target.sector = world->getSectorAtPosition(gUISettings.visibleLayer,
 			(float)target.cellX + 0.5f, (float)target.cellY + 0.5f);
-		building->canAddSectorBulkheadDoor(gUISettings.visibleLayer, target.cellY,
+		world->canAddSectorBulkheadDoor(gUISettings.visibleLayer, target.cellY,
 			target.cellX, CORE_SIDE_LEFT, {}, &target.diagnostic);
 		return target;
 	}
 
-	PegmanTarget getWindowTarget(shared_ptr<const core::Building> const& building,
+	PegmanTarget getWindowTarget(shared_ptr<const core::World> const& world,
 		ImVec2 position, ImVec2 canvasPos, ImVec2 canvasSize)
 	{
 		PegmanTarget target;
@@ -521,21 +522,21 @@ namespace
 			target.diagnostic = "Drop inside the world";
 			return target;
 		}
-		auto world = screenToWorld(position);
-		if (world.x < 0.0f || world.y < 0.0f)
+		auto worldPosition = screenToWorld(position);
+		if (worldPosition.x < 0.0f || worldPosition.y < 0.0f)
 		{
-			target.diagnostic = "Window position is outside the building";
+			target.diagnostic = "Window position is outside the world";
 			return target;
 		}
-		target.cellX = (uint32_t)floor(world.x);
-		target.cellY = (uint32_t)floor(world.y);
-		target.sector = building->getSectorAtPosition(gUISettings.visibleLayer, world.x, world.y);
-		building->canAddSectorWindow(gUISettings.visibleLayer, target.cellY, target.cellX,
+		target.cellX = (uint32_t)floor(worldPosition.x);
+		target.cellY = (uint32_t)floor(worldPosition.y);
+		target.sector = world->getSectorAtPosition(gUISettings.visibleLayer, worldPosition.x, worldPosition.y);
+		world->canAddSectorWindow(gUISettings.visibleLayer, target.cellY, target.cellX,
 			1, 1, &target.diagnostic);
 		return target;
 	}
 
-	PegmanTarget getWalkwayTarget(shared_ptr<const core::Building> const& building,
+	PegmanTarget getWalkwayTarget(shared_ptr<const core::World> const& world,
 		ImVec2 position, ImVec2 canvasPos, ImVec2 canvasSize)
 	{
 		PegmanTarget target;
@@ -544,15 +545,15 @@ namespace
 			target.diagnostic = "Drop inside the world";
 			return target;
 		}
-		auto world = screenToWorld(position);
-		if (world.x < 0.0f || world.y < 0.0f)
+		auto worldPosition = screenToWorld(position);
+		if (worldPosition.x < 0.0f || worldPosition.y < 0.0f)
 		{
-			target.diagnostic = "Walkway position is outside the building";
+			target.diagnostic = "Walkway position is outside the world";
 			return target;
 		}
-		target.cellX = (uint32_t)floor(world.x);
-		target.cellY = (uint32_t)floor(world.y);
-		target.sector = building->getSectorAtPosition(gUISettings.visibleLayer, world.x, world.y);
+		target.cellX = (uint32_t)floor(worldPosition.x);
+		target.cellY = (uint32_t)floor(worldPosition.y);
+		target.sector = world->getSectorAtPosition(gUISettings.visibleLayer, worldPosition.x, worldPosition.y);
 		auto room = dynamic_pointer_cast<const core::Location>(target.sector);
 		if (!room || room->isCorridor())
 			target.diagnostic = "Walkways can only be placed in Rooms";
@@ -561,13 +562,13 @@ namespace
 			target.deckOffset = target.cellY >= target.sector->getCellY()
 				? target.cellY - target.sector->getCellY() : ~0u;
 			target.localX = (float)(target.cellX - target.sector->getCellX());
-			building->canAddSectorWalkway(target.sector->getIndex(), target.deckOffset,
+			world->canAddSectorWalkway(target.sector->getIndex(), target.deckOffset,
 				(uint32_t)target.localX, &target.diagnostic);
 		}
 		return target;
 	}
 
-	PegmanTarget getForceBridgeTarget(shared_ptr<const core::Building> const& building,
+	PegmanTarget getForceBridgeTarget(shared_ptr<const core::World> const& world,
 		ImVec2 position, ImVec2 canvasPos, ImVec2 canvasSize)
 	{
 		PegmanTarget target;
@@ -576,35 +577,35 @@ namespace
 			target.diagnostic = "Drop inside the world";
 			return target;
 		}
-		auto world = screenToWorld(position);
-		if (world.x < 0.0f || world.y < 0.0f)
+		auto worldPosition = screenToWorld(position);
+		if (worldPosition.x < 0.0f || worldPosition.y < 0.0f)
 		{
-			target.diagnostic = "Force Bridge position is outside the building";
+			target.diagnostic = "Force Bridge position is outside the world";
 			return target;
 		}
-		target.cellX = (uint32_t)floor(world.x);
-		target.cellY = (uint32_t)floor(world.y);
-		target.sector = building->getSectorAtPosition(gUISettings.visibleLayer, world.x, world.y);
+		target.cellX = (uint32_t)floor(worldPosition.x);
+		target.cellY = (uint32_t)floor(worldPosition.y);
+		target.sector = world->getSectorAtPosition(gUISettings.visibleLayer, worldPosition.x, worldPosition.y);
 		auto room = dynamic_pointer_cast<const core::Location>(target.sector);
 		if (!room || room->isCorridor()) target.diagnostic = "Force Bridges can only be placed in Rooms";
 		else
 		{
 			target.deckOffset = target.cellY - room->getCellY();
 			target.localX = (float)(target.cellX - room->getCellX());
-			core::Building::CreateForceBridgeOptions options;
-			if (building->calculateSectorForceBridgeWidthToRight(room->getIndex(),
+			core::World::CreateForceBridgeOptions options;
+			if (world->calculateSectorForceBridgeWidthToRight(room->getIndex(),
 				target.deckOffset, (uint32_t)target.localX, target.cellsWide,
 				&target.diagnostic))
 			{
 				options.width = target.cellsWide;
-				building->canAddSectorForceBridge(room->getIndex(), target.deckOffset,
+				world->canAddSectorForceBridge(room->getIndex(), target.deckOffset,
 					(uint32_t)target.localX, options, &target.diagnostic);
 			}
 		}
 		return target;
 	}
 
-	PegmanTarget getRoomLadderTarget(shared_ptr<const core::Building> const& building,
+	PegmanTarget getRoomLadderTarget(shared_ptr<const core::World> const& world,
 		ImVec2 position, ImVec2 canvasPos, ImVec2 canvasSize)
 	{
 		PegmanTarget target;
@@ -613,54 +614,54 @@ namespace
 			target.diagnostic = "Drop inside the world";
 			return target;
 		}
-		auto world = screenToWorld(position);
-		if (world.x < 0.0f || world.y < 0.0f)
+		auto worldPosition = screenToWorld(position);
+		if (worldPosition.x < 0.0f || worldPosition.y < 0.0f)
 		{
-			target.diagnostic = "Room Ladder position is outside the building";
+			target.diagnostic = "Room Ladder position is outside the world";
 			return target;
 		}
-		target.cellX = (uint32_t)floor(world.x);
-		target.cellY = (uint32_t)floor(world.y);
-		target.sector = building->getSectorAtPosition(gUISettings.visibleLayer, world.x, world.y);
+		target.cellX = (uint32_t)floor(worldPosition.x);
+		target.cellY = (uint32_t)floor(worldPosition.y);
+		target.sector = world->getSectorAtPosition(gUISettings.visibleLayer, worldPosition.x, worldPosition.y);
 		auto room = dynamic_pointer_cast<const core::Location>(target.sector);
-		if (!room || room->isCorridor() || !room->pointInBounds(world.x, world.y))
+		if (!room || room->isCorridor() || !room->pointInBounds(worldPosition.x, worldPosition.y))
 			target.diagnostic = "Room Ladders can only be placed in Rooms";
 		else
 		{
 			target.deckOffset = target.cellY - room->getCellY();
 			target.localX = (float)(target.cellX - room->getCellX());
 			uint32_t height{};
-			building->canAddRoomLadder(room->getIndex(), target.deckOffset,
+			world->canAddRoomLadder(room->getIndex(), target.deckOffset,
 				(uint32_t)target.localX, &height, &target.diagnostic);
 			target.floorY = (float)(target.cellY + height);
 		}
 		return target;
 	}
 
-	PegmanTarget getPlatformLiftTarget(shared_ptr<const core::Building> const& building,
+	PegmanTarget getPlatformLiftTarget(shared_ptr<const core::World> const& world,
 		ImVec2 position, ImVec2 canvasPos, ImVec2 canvasSize)
 	{
 		PegmanTarget target;
 		if (!pointInRect(position, canvasPos, canvasPos + canvasSize))
 		{ target.diagnostic = "Drop inside the world"; return target; }
-		auto world = screenToWorld(position);
-		if (world.x < 0.0f || world.y < 0.0f)
-		{ target.diagnostic = "PlatformLift position is outside the building"; return target; }
-		target.sector = building->getSectorAtPosition(gUISettings.visibleLayer, world.x, world.y);
+		auto worldPosition = screenToWorld(position);
+		if (worldPosition.x < 0.0f || worldPosition.y < 0.0f)
+		{ target.diagnostic = "PlatformLift position is outside the world"; return target; }
+		target.sector = world->getSectorAtPosition(gUISettings.visibleLayer, worldPosition.x, worldPosition.y);
 		auto room = dynamic_pointer_cast<const core::Location>(target.sector);
-		if (!room || room->isCorridor() || !room->pointInBounds(world.x, world.y))
+		if (!room || room->isCorridor() || !room->pointInBounds(worldPosition.x, worldPosition.y))
 		{ target.diagnostic = "PlatformLifts can only be placed in Rooms"; return target; }
-		target.cellX = (uint32_t)floor(world.x);
+		target.cellX = (uint32_t)floor(worldPosition.x);
 		target.cellY = room->getCellY();
 		target.deckOffset = 0;
 		target.localX = (float)(target.cellX - room->getCellX());
-		core::Building::CreateLiftOptions options;
+		core::World::CreateLiftOptions options;
 		options.cellsWide = 1;
-		for (auto const& candidate : building->getPlatformLiftStopCandidates(
+		for (auto const& candidate : world->getPlatformLiftStopCandidates(
 			room->getIndex(), (uint32_t)target.localX))
 		{
 			options.stopOffsets = { 0, candidate.deckOffset };
-			if (building->canAddPlatformLift(room->getIndex(), (uint32_t)target.localX,
+			if (world->canAddPlatformLift(room->getIndex(), (uint32_t)target.localX,
 				options, &target.diagnostic))
 			{
 				target.floorY = (float)(room->getCellY() + candidate.deckOffset + 1);
@@ -781,20 +782,20 @@ namespace
 	}
 
 	shared_ptr<const core::SectorObject> markerAtScreenPosition(
-		shared_ptr<const core::Building> const& building, ImVec2 position)
+		shared_ptr<const core::World> const& world, ImVec2 position)
 	{
-		for (auto const& sector : building->getSectors(gUISettings.visibleLayer))
+		for (auto const& sector : world->getSectors(gUISettings.visibleLayer))
 		{
 			for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
 			{
 				auto object = sector->getObject(i);
 				if (!object || object->getObjectType() != core::SectorObjectType::Marker) continue;
 				auto marker = static_pointer_cast<const core::MarkerSectorObject>(object)->getMarker();
-				auto world = marker->getPosition();
-				world.x += marker->getOffset();
+				auto worldPosition = marker->getPosition();
+				worldPosition.x += marker->getOffset();
 				// The icon is drawn MarkerDeckLift above the deck, so the hit box covers
 				// the icon and the gap down to the deck the Vertex stays on.
-				auto point = worldToScreen({ world.x, world.y + MarkerDeckLift });
+				auto point = worldToScreen({ worldPosition.x, worldPosition.y + MarkerDeckLift });
 				auto deckPad = MarkerDeckLift * CORE_DECK_HEIGHT_PIXELS + 2.0f;
 				if (pointInRect(position, point - ImVec2(MarkerIconSize * 0.5f, MarkerIconSize),
 					point + ImVec2(MarkerIconSize * 0.5f, deckPad))) return object;
@@ -804,11 +805,11 @@ namespace
 	}
 
 	shared_ptr<const core::SectorObject> bulkheadDoorAtScreenPosition(
-		shared_ptr<const core::Building> const& building, ImVec2 position)
+		shared_ptr<const core::World> const& world, ImVec2 position)
 	{
 		constexpr float tolerance = 7.0f;
 		set<void const*> visited;
-		for (auto const& sector : building->getSectors(gUISettings.visibleLayer))
+		for (auto const& sector : world->getSectors(gUISettings.visibleLayer))
 		{
 			for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
 			{
@@ -827,11 +828,11 @@ namespace
 	}
 
 	shared_ptr<const core::SectorObject> ladderAtScreenPosition(
-		shared_ptr<const core::Building> const& building, ImVec2 position)
+		shared_ptr<const core::World> const& world, ImVec2 position)
 	{
-		auto world = screenToWorld(position);
+		auto worldPosition = screenToWorld(position);
 		shared_ptr<const core::SectorObject> selected;
-		for (auto const& sector : building->getSectors(gUISettings.visibleLayer))
+		for (auto const& sector : world->getSectors(gUISettings.visibleLayer))
 		{
 			for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
 			{
@@ -841,8 +842,8 @@ namespace
 				core::Vector2 min, max;
 				ladder->getCurrentShape(min, max);
 				float tolerance = 5.0f / (float)CORE_CELL_WIDTH_PIXELS;
-				if (world.x < min.x - tolerance || world.x > max.x + tolerance
-					|| world.y < min.y - tolerance || world.y > max.y + tolerance) continue;
+				if (worldPosition.x < min.x - tolerance || worldPosition.x > max.x + tolerance
+					|| worldPosition.y < min.y - tolerance || worldPosition.y > max.y + tolerance) continue;
 				// At a shared endpoint the upper segment has the greater base deck.
 				if (!selected || object->getCellY() > selected->getCellY()) selected = object;
 			}
@@ -851,10 +852,10 @@ namespace
 	}
 
 	shared_ptr<const core::SectorObject> platformLiftAtScreenPosition(
-		shared_ptr<const core::Building> const& building, ImVec2 position)
+		shared_ptr<const core::World> const& world, ImVec2 position)
 	{
 		constexpr float tolerance = 5.0f;
-		for (auto const& sector : building->getSectors(gUISettings.visibleLayer))
+		for (auto const& sector : world->getSectors(gUISettings.visibleLayer))
 		{
 			for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
 			{
@@ -873,10 +874,10 @@ namespace
 	}
 
 	shared_ptr<const core::SectorObject> forceBridgeAtScreenPosition(
-		shared_ptr<const core::Building> const& building, ImVec2 position)
+		shared_ptr<const core::World> const& world, ImVec2 position)
 	{
 		constexpr float tolerance = 8.0f;
-		for (auto const& sector : building->getSectors(gUISettings.visibleLayer))
+		for (auto const& sector : world->getSectors(gUISettings.visibleLayer))
 		{
 			for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
 			{
@@ -894,10 +895,10 @@ namespace
 	}
 
 	shared_ptr<const core::SectorObject> walkwayAtScreenPosition(
-		shared_ptr<const core::Building> const& building, ImVec2 position)
+		shared_ptr<const core::World> const& world, ImVec2 position)
 	{
 		constexpr float tolerance = 8.0f;
-		for (auto const& sector : building->getSectors(gUISettings.visibleLayer))
+		for (auto const& sector : world->getSectors(gUISettings.visibleLayer))
 		{
 			for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
 			{
@@ -913,10 +914,10 @@ namespace
 		return nullptr;
 	}
 
-	string nextAgentName(shared_ptr<const core::Building> const& building)
+	string nextAgentName(shared_ptr<const core::World> const& world)
 	{
 		set<string> names;
-		for (auto const& agent : building->getSimulationSnapshot().agents)
+		for (auto const& agent : world->getSimulationSnapshot().agents)
 			names.insert(agent.name);
 
 		while (true)
@@ -926,12 +927,12 @@ namespace
 		}
 	}
 
-	string nextRoomName(shared_ptr<const core::Building> const& building)
+	string nextRoomName(shared_ptr<const core::World> const& world)
 	{
 		set<string> names;
-		for (uint32_t layer = 0; layer < building->getLayerCount(); ++layer)
+		for (uint32_t layer = 0; layer < world->getLayerCount(); ++layer)
 		{
-			for (auto const& sector : building->getSectors(layer))
+			for (auto const& sector : world->getSectors(layer))
 				names.insert(sector->getName());
 		}
 
@@ -942,12 +943,12 @@ namespace
 		}
 	}
 
-	string nextFacadeName(shared_ptr<const core::Building> const& building)
+	string nextFacadeName(shared_ptr<const core::World> const& world)
 	{
 		set<string> names;
-		for (uint32_t layer = 0; layer < building->getLayerCount(); ++layer)
+		for (uint32_t layer = 0; layer < world->getLayerCount(); ++layer)
 		{
-			for (auto const& sector : building->getSectors(layer))
+			for (auto const& sector : world->getSectors(layer))
 				names.insert(sector->getName());
 		}
 
@@ -958,17 +959,17 @@ namespace
 		}
 	}
 
-	vector<uint32_t> shuttleCandidates(shared_ptr<const core::Building> const& building,
+	vector<uint32_t> shuttleCandidates(shared_ptr<const core::World> const& world,
 		ShuttleDraft const& draft)
 	{
 		if (draft.numCars <= 0 || draft.carWidth < 3 || draft.carWidth > 5) return {};
-		return building->getValidShuttleStopOffsets((uint32_t)gUISettings.visibleLayer,
+		return world->getValidShuttleStopOffsets((uint32_t)gUISettings.visibleLayer,
 			draft.y, draft.x, draft.cellsWide,
 			(uint32_t)draft.numCars, (uint32_t)draft.carWidth, draft.allowPartialLandings,
 			draft.doorMask);
 	}
 
-	bool validateShuttleDraft(shared_ptr<const core::Building> const& building,
+	bool validateShuttleDraft(shared_ptr<const core::World> const& world,
 		ShuttleDraft& draft)
 	{
 		draft.diagnostic.clear();
@@ -981,7 +982,7 @@ namespace
 		else if (draft.minimumDwellSeconds < 0.0f
 			|| draft.maximumBoardingSeconds < draft.minimumDwellSeconds)
 			draft.diagnostic = "Maximum boarding time must be at least the non-negative minimum dwell";
-		auto candidates = shuttleCandidates(building, draft);
+		auto candidates = shuttleCandidates(world, draft);
 		draft.stopOffsets.erase(remove_if(draft.stopOffsets.begin(), draft.stopOffsets.end(),
 			[&](auto stop) { return find(candidates.begin(), candidates.end(), stop) == candidates.end(); }),
 			draft.stopOffsets.end());
@@ -999,12 +1000,12 @@ namespace
 		return draft.diagnostic.empty();
 	}
 
-	ShuttleDraft makeShuttleDraft(shared_ptr<const core::Building> const& building,
+	ShuttleDraft makeShuttleDraft(shared_ptr<const core::World> const& world,
 		uint32_t x, uint32_t y, uint32_t cellsWide)
 	{
 		ShuttleDraft draft;
 		draft.x = x; draft.y = y; draft.cellsWide = cellsWide;
-		auto candidates = shuttleCandidates(building, draft);
+		auto candidates = shuttleCandidates(world, draft);
 		auto shuttleWidth = (uint32_t)(draft.numCars * draft.carWidth + draft.numCars - 1);
 		if (!candidates.empty())
 		{
@@ -1013,23 +1014,23 @@ namespace
 				{ return value - candidates.front() >= shuttleWidth; });
 			if (last != candidates.rend()) draft.stopOffsets.push_back(*last);
 		}
-		validateShuttleDraft(building, draft);
+		validateShuttleDraft(world, draft);
 		return draft;
 	}
 
-	PaintRectangle getPaintRectangle(shared_ptr<const core::Building> const& building,
+	PaintRectangle getPaintRectangle(shared_ptr<const core::World> const& world,
 		ImVec2 mousePosition)
 	{
 		if (!gPaint.dragging || gPaint.anchorX < 0 || gPaint.anchorY < 0
-			|| gPaint.anchorX >= (int)building->getCellsWide()
-			|| gPaint.anchorY >= (int)building->getDecksHigh()) return {};
+			|| gPaint.anchorX >= (int)world->getCellsWide()
+			|| gPaint.anchorY >= (int)world->getDecksHigh()) return {};
 
-		auto layer = building->getLayer(gPaint.layer);
-		auto world = screenToWorld(mousePosition);
+		auto layer = world->getLayer(gPaint.layer);
+		auto worldPosition = screenToWorld(mousePosition);
 		if (gPaint.tool == PaintTool::Staircase)
 		{
-			int endX = clamp((int)floor(world.x), 0, (int)building->getCellsWide() - 1);
-			int endY = clamp((int)floor(world.y), 0, (int)building->getDecksHigh() - 1);
+			int endX = clamp((int)floor(worldPosition.x), 0, (int)world->getCellsWide() - 1);
+			int endY = clamp((int)floor(worldPosition.y), 0, (int)world->getDecksHigh() - 1);
 			int x = min(gPaint.anchorX, endX);
 			int y = min(gPaint.anchorY, endY);
 			uint32_t width = (uint32_t)(abs(endX - gPaint.anchorX) + 1);
@@ -1042,34 +1043,34 @@ namespace
 			{
 				int lowerX = gPaint.anchorY == y ? gPaint.anchorX : endX;
 				int riseSide = lowerX == x ? CORE_SIDE_RIGHT : CORE_SIDE_LEFT;
-				result.valid = building->canAddStaircase(gUISettings.visibleLayer, result.y, result.x, result.width,
+				result.valid = world->canAddStaircase(gUISettings.visibleLayer, result.y, result.x, result.width,
 					riseSide, &result.diagnostic);
 			}
 			return result;
 		}
 		if (gPaint.tool == PaintTool::Stairwell)
 		{
-			bool leftward = floor(world.x) < gPaint.anchorX;
+			bool leftward = floor(worldPosition.x) < gPaint.anchorX;
 			int x = leftward ? gPaint.anchorX - 1 : gPaint.anchorX;
-			if (x + 2 > (int)building->getCellsWide()) x = gPaint.anchorX - 1;
-			int endY = clamp((int)floor(world.y), 0, (int)building->getDecksHigh() - 1);
+			if (x + 2 > (int)world->getCellsWide()) x = gPaint.anchorX - 1;
+			int endY = clamp((int)floor(worldPosition.y), 0, (int)world->getDecksHigh() - 1);
 			int y = min(gPaint.anchorY, endY);
 			uint32_t height = (uint32_t)(abs(endY - gPaint.anchorY) + 1);
 			PaintRectangle result{ false, (uint32_t)max(0, x), (uint32_t)y, 2, height, {} };
-			if (x < 0 || x + 2 > (int)building->getCellsWide())
-				result.diagnostic = "The Stairwell is outside the Building bounds";
+			if (x < 0 || x + 2 > (int)world->getCellsWide())
+				result.diagnostic = "The Stairwell is outside the World bounds";
 			else
-				result.valid = building->canAddStairwell(gUISettings.visibleLayer, result.y, result.x, result.height,
+				result.valid = world->canAddStairwell(gUISettings.visibleLayer, result.y, result.x, result.height,
 					&result.diagnostic);
 			return result;
 		}
 		if (gPaint.tool == PaintTool::Ladder)
 		{
-			int endY = clamp((int)floor(world.y), 0, (int)building->getDecksHigh() - 1);
+			int endY = clamp((int)floor(worldPosition.y), 0, (int)world->getDecksHigh() - 1);
 			int y = min(gPaint.anchorY, endY);
 			uint32_t height = (uint32_t)(abs(endY - gPaint.anchorY) + 1);
 			PaintRectangle result{ false, (uint32_t)gPaint.anchorX, (uint32_t)y, 1, height, {} };
-			result.valid = building->canAddLadder(gUISettings.visibleLayer, result.y, result.x, result.height,
+			result.valid = world->canAddLadder(gUISettings.visibleLayer, result.y, result.x, result.height,
 				&result.diagnostic);
 			return result;
 		}
@@ -1079,25 +1080,25 @@ namespace
 			// the full dragged rectangle is the request, and any occupied cell inside
 			// it refuses the paint. canAddBackground() owns the rule and the
 			// diagnostic, so the preview turns red where the refusal lands.
-			int endX = clamp((int)floor(world.x), 0, (int)building->getCellsWide() - 1);
-			int endY = clamp((int)floor(world.y), 0, (int)building->getDecksHigh() - 1);
+			int endX = clamp((int)floor(worldPosition.x), 0, (int)world->getCellsWide() - 1);
+			int endY = clamp((int)floor(worldPosition.y), 0, (int)world->getDecksHigh() - 1);
 			int x = min(gPaint.anchorX, endX);
 			int y = min(gPaint.anchorY, endY);
 			PaintRectangle result{ false, (uint32_t)x, (uint32_t)y,
 				(uint32_t)(abs(endX - gPaint.anchorX) + 1),
 				(uint32_t)(abs(endY - gPaint.anchorY) + 1), {} };
-			result.valid = building->canAddBackground(gPaint.layer, result.y, result.x,
+			result.valid = world->canAddBackground(gPaint.layer, result.y, result.x,
 				result.width, result.height, &result.diagnostic);
 			return result;
 		}
 		if (layer->getCellDefinition(gPaint.anchorX, gPaint.anchorY).occupied()) return {};
 
-		int endX = clamp((int)floor(world.x), 0, (int)building->getCellsWide() - 1);
+		int endX = clamp((int)floor(worldPosition.x), 0, (int)world->getCellsWide() - 1);
 		if (gPaint.tool == PaintTool::Lift)
 			endX = clamp(endX, gPaint.anchorX - 1, gPaint.anchorX + 1);
 		int endY = (gPaint.tool == PaintTool::Corridor || gPaint.tool == PaintTool::Shuttle)
 			? gPaint.anchorY
-			: clamp((int)floor(world.y), 0, (int)building->getDecksHigh() - 1);
+			: clamp((int)floor(worldPosition.y), 0, (int)world->getDecksHigh() - 1);
 		int directionX = endX >= gPaint.anchorX ? 1 : -1;
 		int directionY = endY >= gPaint.anchorY ? 1 : -1;
 		int requestedWidth = abs(endX - gPaint.anchorX) + 1;
@@ -1138,7 +1139,7 @@ namespace
 			// The shaft is painted on the drag's Layer; its landings are read from the
 			// Layer directly in front, which is where the corridor rows live.
 			uint32_t stops = 0;
-			for (auto const& row : building->getLiftLandingRows(gPaint.layer, best.y, best.x,
+			for (auto const& row : world->getLiftLandingRows(gPaint.layer, best.y, best.x,
 				best.width, best.height))
 			{
 				if (!row.location || !row.fullyOverlapping || row.obstructed
@@ -1160,7 +1161,7 @@ namespace
 		}
 		else if (best.valid && gPaint.tool == PaintTool::Shuttle)
 		{
-			auto draft = makeShuttleDraft(building, best.x, best.y, best.width);
+			auto draft = makeShuttleDraft(world, best.x, best.y, best.width);
 			if (!draft.diagnostic.empty())
 			{
 				best.valid = false;
@@ -1179,35 +1180,35 @@ namespace
 		gPegman.pastedAgent.cancel();
 	}
 
-	void setWorldPaused(shared_ptr<core::Building> const& building, bool paused)
+	void setWorldPaused(shared_ptr<core::World> const& world, bool paused)
 	{
 		if (paused)
 		{
-			building->pauseSimulation();
+			world->pauseSimulation();
 			gUISettings.worldPaused = true;
 			return;
 		}
-		if (building->isSimulationPaused() && !building->resumeSimulation())
+		if (world->isSimulationPaused() && !world->resumeSimulation())
 		{
 			gUISettings.worldPaused = true;
 			core::addLogMessage("Object palette", 0, core::LogLevel::Error,
-				building->agentBehaviourConfigurationsAreValid()
-					? building->getTopologyDiagnostic()
-					: building->getAgentBehaviourDependencyDiagnostic());
+				world->agentBehaviourConfigurationsAreValid()
+					? world->getTopologyDiagnostic()
+					: world->getAgentBehaviourDependencyDiagnostic());
 			return;
 		}
 		gUISettings.worldPaused = false;
 	}
 
-	void placeMarker(shared_ptr<core::Building> const& building, PegmanTarget const& target)
+	void placeMarker(shared_ptr<core::World> const& world, PegmanTarget const& target)
 	{
-		auto undo = captureDocumentSnapshot(building);
+		auto undo = captureDocumentSnapshot(world);
 		try
 		{
-			if (!building->isSimulationPaused()) building->pauseSimulation();
-			auto created = building->addSectorMarker(target.sector->getIndex(),
+			if (!world->isSimulationPaused()) world->pauseSimulation();
+			auto created = world->addSectorMarker(target.sector->getIndex(),
 				target.deckOffset, target.localX);
-			building->finishBuild();
+			world->finishBuild();
 			setSelectionMode(UISettings::SelectionMode::Object);
 			gSelectedAgent = nullptr;
 			gSelectedSector.reset();
@@ -1224,21 +1225,21 @@ namespace
 		}
 	}
 
-	void placeDoor(shared_ptr<core::Building> const& building, PegmanTarget const& target)
+	void placeDoor(shared_ptr<core::World> const& world, PegmanTarget const& target)
 	{
 		// The Shuttle sits one Layer behind the Layer the Door is authored on.
-		gShuttleDoorCandidates = building->getShuttleStopCandidatesForDoor(gUISettings.visibleLayer + 1, target.cellY, target.cellX);
+		gShuttleDoorCandidates = world->getShuttleStopCandidatesForDoor(gUISettings.visibleLayer + 1, target.cellY, target.cellX);
 		if (!gShuttleDoorCandidates.empty())
 		{
 			gSelectedShuttleDoorCandidate = 0;
 			gOpenShuttleStopPopup = true;
 			return;
 		}
-		auto undo = captureDocumentSnapshot(building);
+		auto undo = captureDocumentSnapshot(world);
 		try
 		{
-			auto created = building->addSectorDoor(gUISettings.visibleLayer, target.cellY, target.cellX);
-			building->finishBuild();
+			auto created = world->addSectorDoor(gUISettings.visibleLayer, target.cellY, target.cellX);
+			world->finishBuild();
 			setSelectionMode(UISettings::SelectionMode::Object);
 			gSelectedAgent = nullptr;
 			gSelectedSector.reset();
@@ -1255,14 +1256,14 @@ namespace
 		}
 	}
 
-	void placeBulkheadDoor(shared_ptr<core::Building> const& building, PegmanTarget const& target)
+	void placeBulkheadDoor(shared_ptr<core::World> const& world, PegmanTarget const& target)
 	{
-		auto undo = captureDocumentSnapshot(building);
+		auto undo = captureDocumentSnapshot(world);
 		try
 		{
-			auto created = building->addSectorBulkheadDoor(gUISettings.visibleLayer,
+			auto created = world->addSectorBulkheadDoor(gUISettings.visibleLayer,
 				target.cellY, target.cellX, CORE_SIDE_LEFT);
-			building->finishBuild();
+			world->finishBuild();
 			setSelectionMode(UISettings::SelectionMode::Object);
 			gSelectedAgent = nullptr;
 			gSelectedSector.reset();
@@ -1279,14 +1280,14 @@ namespace
 		}
 	}
 
-	void placeWindow(shared_ptr<core::Building> const& building, PegmanTarget const& target)
+	void placeWindow(shared_ptr<core::World> const& world, PegmanTarget const& target)
 	{
-		auto undo = captureDocumentSnapshot(building);
+		auto undo = captureDocumentSnapshot(world);
 		try
 		{
-			auto created = building->addSectorWindow(gUISettings.visibleLayer,
+			auto created = world->addSectorWindow(gUISettings.visibleLayer,
 				target.cellY, target.cellX, 1, 1, {});
-			building->finishBuild();
+			world->finishBuild();
 			setSelectionMode(UISettings::SelectionMode::Object);
 			gSelectedAgent = nullptr;
 			gSelectedSector.reset();
@@ -1303,14 +1304,14 @@ namespace
 		}
 	}
 
-	void placeWalkway(shared_ptr<core::Building> const& building, PegmanTarget const& target)
+	void placeWalkway(shared_ptr<core::World> const& world, PegmanTarget const& target)
 	{
-		auto undo = captureDocumentSnapshot(building);
+		auto undo = captureDocumentSnapshot(world);
 		try
 		{
-			auto created = building->addSectorWalkway(target.sector->getIndex(),
+			auto created = world->addSectorWalkway(target.sector->getIndex(),
 				target.deckOffset, (uint32_t)target.localX);
-			building->finishBuild();
+			world->finishBuild();
 			setSelectionMode(UISettings::SelectionMode::Object);
 			gSelectedAgent = nullptr;
 			gSelectedSector.reset();
@@ -1327,23 +1328,23 @@ namespace
 		}
 	}
 
-	void placePlatformLift(shared_ptr<core::Building> const& building, PegmanTarget const& target)
+	void placePlatformLift(shared_ptr<core::World> const& world, PegmanTarget const& target)
 	{
-		auto undo = captureDocumentSnapshot(building);
+		auto undo = captureDocumentSnapshot(world);
 		try
 		{
-			core::Building::CreateLiftOptions options;
+			core::World::CreateLiftOptions options;
 			options.cellsWide = 1;
-			for (auto const& candidate : building->getPlatformLiftStopCandidates(
+			for (auto const& candidate : world->getPlatformLiftStopCandidates(
 				target.sector->getIndex(), (uint32_t)target.localX))
 			{
 				options.stopOffsets = { 0, candidate.deckOffset };
 				string diagnostic;
-				if (!building->canAddPlatformLift(target.sector->getIndex(),
+				if (!world->canAddPlatformLift(target.sector->getIndex(),
 					(uint32_t)target.localX, options, &diagnostic)) continue;
-				auto created = building->addSectorPlatformLift(target.sector->getIndex(), 0,
+				auto created = world->addSectorPlatformLift(target.sector->getIndex(), 0,
 					(uint32_t)target.localX, options);
-				building->finishBuild();
+				world->finishBuild();
 				setSelectionMode(UISettings::SelectionMode::Object);
 				gSelectedAgent = nullptr; gSelectedSector.reset();
 				gSelectedSectorObject = created.lift.sector->getObject(created.lift.index);
@@ -1358,16 +1359,16 @@ namespace
 		{ core::addLogMessage("PlatformLift editor", 0, core::LogLevel::Error, error.what()); }
 	}
 
-	void placeForceBridge(shared_ptr<core::Building> const& building, PegmanTarget const& target)
+	void placeForceBridge(shared_ptr<core::World> const& world, PegmanTarget const& target)
 	{
-		auto undo = captureDocumentSnapshot(building);
+		auto undo = captureDocumentSnapshot(world);
 		try
 		{
-			core::Building::CreateForceBridgeOptions options;
+			core::World::CreateForceBridgeOptions options;
 			options.width = target.cellsWide;
-			auto created = building->addSectorForceBridge(target.sector->getIndex(),
+			auto created = world->addSectorForceBridge(target.sector->getIndex(),
 				target.deckOffset, (uint32_t)target.localX, options);
-			building->finishBuild();
+			world->finishBuild();
 			setSelectionMode(UISettings::SelectionMode::Object);
 			gSelectedAgent = nullptr;
 			gSelectedSector.reset();
@@ -1384,14 +1385,14 @@ namespace
 		}
 	}
 
-	void placeRoomLadder(shared_ptr<core::Building> const& building, PegmanTarget const& target)
+	void placeRoomLadder(shared_ptr<core::World> const& world, PegmanTarget const& target)
 	{
-		auto undo = captureDocumentSnapshot(building);
+		auto undo = captureDocumentSnapshot(world);
 		try
 		{
-			auto created = building->addRoomLadder(target.sector->getIndex(),
+			auto created = world->addRoomLadder(target.sector->getIndex(),
 				target.deckOffset, (uint32_t)target.localX);
-			building->finishBuild();
+			world->finishBuild();
 			setSelectionMode(UISettings::SelectionMode::Object);
 			gSelectedAgent = nullptr;
 			gSelectedSector.reset();
@@ -1408,7 +1409,7 @@ namespace
 		}
 	}
 
-	void landPegman(shared_ptr<core::Building> const& building)
+	void landPegman(shared_ptr<core::World> const& world)
 	{
 		if (gUISettings.worldPaused && locationHasCapacity(gPegman.sector))
 		{
@@ -1420,9 +1421,9 @@ namespace
 			// half-written document behind, and a placement that is refused
 			// says so instead of taking the crash silently.
 			auto const landed = gPegman.pastedAgent.armed()
-				? commitPendingAgentPlacement(gPegman.pastedAgent, building, placed, diagnostic)
-				: commitAgentPlacement(building,
-					AgentClipboardPayload{ nextAgentName(building), 0, true, nullopt },
+				? commitPendingAgentPlacement(gPegman.pastedAgent, world, placed, diagnostic)
+				: commitAgentPlacement(world,
+					AgentClipboardPayload{ nextAgentName(world), 0, true, nullopt },
 					gPegman.sector, gPegman.deckOffset, gPegman.localX, placed, diagnostic);
 			if (!landed)
 			{
@@ -1431,7 +1432,7 @@ namespace
 			else
 			{
 				setSelectionMode(UISettings::SelectionMode::Object);
-				gSelectedAgent = building->lookupAgent(placed).entity;
+				gSelectedAgent = world->lookupAgent(placed).entity;
 				gSelectedSector.reset();
 				gSelectedSectorObject.reset();
 			}
@@ -1439,7 +1440,7 @@ namespace
 		resetPegman();
 	}
 
-	void renderObjectPalette(shared_ptr<core::Building> const& building, ImVec2 canvasPos,
+	void renderObjectPalette(shared_ptr<core::World> const& world, ImVec2 canvasPos,
 		ImVec2 canvasSize, ImDrawList* drawList)
 	{
 		constexpr ImU32 yellow = IM_COL32(251, 188, 4, 255);
@@ -1467,7 +1468,7 @@ namespace
 				PegmanTerminalVelocity);
 			gPegman.feetY = max(gPegman.floorY,
 				gPegman.feetY - gPegman.velocity * frameTime);
-			if (gPegman.feetY <= gPegman.floorY) landPegman(building);
+			if (gPegman.feetY <= gPegman.floorY) landPegman(world);
 		}
 
 		auto const traySize = paletteTraySize();
@@ -1596,7 +1597,7 @@ namespace
 				resetPegman();
 				if (gPaint.tool != PaintTool::None)
 				{
-					if (!building->isSimulationPaused()) building->pauseSimulation();
+					if (!world->isSimulationPaused()) world->pauseSimulation();
 					gUISettings.worldPaused = true;
 				}
 			}
@@ -1636,11 +1637,11 @@ namespace
 		if (gPaint.tool != PaintTool::None && !gPaint.dragging && gWorldHovered
 			&& !overTray && !gViewPan.dragging && io.MouseClicked[0])
 		{
-			auto world = screenToWorld(io.MousePos);
-			int x = (int)floor(world.x);
-			int y = (int)floor(world.y);
-			if (x >= 0 && y >= 0 && x < (int)building->getCellsWide()
-				&& y < (int)building->getDecksHigh())
+			auto worldPosition = screenToWorld(io.MousePos);
+			int x = (int)floor(worldPosition.x);
+			int y = (int)floor(worldPosition.y);
+			if (x >= 0 && y >= 0 && x < (int)world->getCellsWide()
+				&& y < (int)world->getDecksHigh())
 			{
 				gPaint.dragging = true;
 				gPaint.layer = (uint32_t)gUISettings.visibleLayer;
@@ -1653,7 +1654,7 @@ namespace
 		if (gPaint.dragging)
 		{
 			paletteConsumedMouse = true;
-			paintRectangle = getPaintRectangle(building, io.MousePos);
+			paintRectangle = getPaintRectangle(world, io.MousePos);
 			if (paintRectangle.valid)
 			{
 				auto topLeft = worldToScreen({ (float)paintRectangle.x,
@@ -1686,15 +1687,15 @@ namespace
 				{
 					if (tool == PaintTool::Shuttle)
 					{
-						gShuttleDraft = makeShuttleDraft(building, paintRectangle.x,
+						gShuttleDraft = makeShuttleDraft(world, paintRectangle.x,
 							paintRectangle.y, paintRectangle.width);
 						gOpenShuttleDraftPopup = true;
 					}
 					else try
 					{
-						auto undo = captureDocumentSnapshot(building);
+						auto undo = captureDocumentSnapshot(world);
 						if (tool == PaintTool::Room)
-							building->addRoom(nextRoomName(building), gPaint.layer,
+							world->addRoom(nextRoomName(world), gPaint.layer,
 								paintRectangle.y, paintRectangle.x, paintRectangle.width,
 								paintRectangle.height, CORE_ROOM_MAX_HEIGHT);
 						else if (tool == PaintTool::Facade)
@@ -1702,32 +1703,32 @@ namespace
 							// Placed with the Room's validation - the drag already shrank to
 							// the largest free block - and selected on release so the colour
 							// picker is one click away.
-							auto const index = building->addFacade(nextFacadeName(building),
+							auto const index = world->addFacade(nextFacadeName(world),
 								gPaint.layer, paintRectangle.y, paintRectangle.x,
 								paintRectangle.width, paintRectangle.height, CORE_ROOM_MAX_HEIGHT);
 							setSelectionMode(UISettings::SelectionMode::Sector);
-							gSelectedSector = building->getSector(index);
+							gSelectedSector = world->getSector(index);
 						}
 						else if (tool == PaintTool::Corridor)
-							building->addCorridor(gPaint.layer, paintRectangle.y, paintRectangle.x,
+							world->addCorridor(gPaint.layer, paintRectangle.y, paintRectangle.x,
 								paintRectangle.width, 1);
 						else if (tool == PaintTool::Background)
 						{
 							// Painted on the drag's Layer. A Background is legal on any
 							// Layer, so it never takes the transit front-layer gate.
-							auto const index = building->addBackground(gPaint.layer, paintRectangle.y,
+							auto const index = world->addBackground(gPaint.layer, paintRectangle.y,
 								paintRectangle.x, paintRectangle.width, paintRectangle.height);
 							setSelectionMode(UISettings::SelectionMode::Sector);
-							gSelectedSector = building->getSector(index);
+							gSelectedSector = world->getSector(index);
 						}
 						else if (tool == PaintTool::Ladder)
-							building->addLadder(gUISettings.visibleLayer, paintRectangle.y, paintRectangle.x,
+							world->addLadder(gUISettings.visibleLayer, paintRectangle.y, paintRectangle.x,
 								{ paintRectangle.height, false, true });
 						else if (tool == PaintTool::Stairwell)
 						{
 							int mountSide = paintRectangle.x < (uint32_t)gPaint.anchorX
 								? CORE_SIDE_RIGHT : CORE_SIDE_LEFT;
-							building->addStairwell(gUISettings.visibleLayer, paintRectangle.y, paintRectangle.x,
+							world->addStairwell(gUISettings.visibleLayer, paintRectangle.y, paintRectangle.x,
 								{ paintRectangle.height, mountSide });
 						}
 						else if (tool == PaintTool::Staircase)
@@ -1738,12 +1739,12 @@ namespace
 									? (int)(paintRectangle.x + paintRectangle.width - 1) : (int)paintRectangle.x);
 							int riseSide = lowerX == (int)paintRectangle.x
 								? CORE_SIDE_RIGHT : CORE_SIDE_LEFT;
-							building->addStaircase(gUISettings.visibleLayer, paintRectangle.y, paintRectangle.x,
+							world->addStaircase(gUISettings.visibleLayer, paintRectangle.y, paintRectangle.x,
 								paintRectangle.width, riseSide);
 						}
-						else building->addLift(gUISettings.visibleLayer, paintRectangle.y, paintRectangle.x,
+						else world->addLift(gUISettings.visibleLayer, paintRectangle.y, paintRectangle.x,
 							paintRectangle.width, paintRectangle.height);
-						building->finishBuild();
+						world->finishBuild();
 						commitDocumentEdit(std::move(undo));
 					}
 					catch (core::Exception const& error)
@@ -1829,65 +1830,65 @@ namespace
 		{
 			paletteConsumedMouse = true;
 			if (gPegman.item == PaletteItem::Marker)
-				target = getMarkerTarget(building, io.MousePos, canvasPos, canvasSize);
+				target = getMarkerTarget(world, io.MousePos, canvasPos, canvasSize);
 			else if (gPegman.item == PaletteItem::Door)
-				target = getDoorTarget(building, io.MousePos, canvasPos, canvasSize);
+				target = getDoorTarget(world, io.MousePos, canvasPos, canvasSize);
 			else if (gPegman.item == PaletteItem::BulkheadDoor)
-				target = getBulkheadDoorTarget(building, io.MousePos, canvasPos, canvasSize);
+				target = getBulkheadDoorTarget(world, io.MousePos, canvasPos, canvasSize);
 			else if (gPegman.item == PaletteItem::Window)
-				target = getWindowTarget(building, io.MousePos, canvasPos, canvasSize);
+				target = getWindowTarget(world, io.MousePos, canvasPos, canvasSize);
 			else if (gPegman.item == PaletteItem::Walkway)
-				target = getWalkwayTarget(building, io.MousePos, canvasPos, canvasSize);
+				target = getWalkwayTarget(world, io.MousePos, canvasPos, canvasSize);
 			else if (gPegman.item == PaletteItem::ForceBridge)
-				target = getForceBridgeTarget(building, io.MousePos, canvasPos, canvasSize);
+				target = getForceBridgeTarget(world, io.MousePos, canvasPos, canvasSize);
 			else if (gPegman.item == PaletteItem::RoomLadder)
-				target = getRoomLadderTarget(building, io.MousePos, canvasPos, canvasSize);
+				target = getRoomLadderTarget(world, io.MousePos, canvasPos, canvasSize);
 			else if (gPegman.item == PaletteItem::PlatformLift)
-				target = getPlatformLiftTarget(building, io.MousePos, canvasPos, canvasSize);
+				target = getPlatformLiftTarget(world, io.MousePos, canvasPos, canvasSize);
 			else
-				target = getPegmanTarget(building, io.MousePos, canvasPos, canvasSize);
+				target = getPegmanTarget(world, io.MousePos, canvasPos, canvasSize);
 			if (!gUISettings.worldPaused) target.diagnostic = "Pause simulation to place objects";
 			if (ImGui::IsKeyPressed(ImGuiKey_Escape) || io.MouseClicked[1]) resetPegman();
 			else if (io.MouseReleased[0])
 			{
 				if (target && gPegman.item == PaletteItem::Marker)
 				{
-					placeMarker(building, target);
+					placeMarker(world, target);
 					resetPegman();
 				}
 				else if (target && gPegman.item == PaletteItem::Door)
 				{
-					placeDoor(building, target);
+					placeDoor(world, target);
 					resetPegman();
 				}
 				else if (target && gPegman.item == PaletteItem::BulkheadDoor)
 				{
-					placeBulkheadDoor(building, target);
+					placeBulkheadDoor(world, target);
 					resetPegman();
 				}
 				else if (target && gPegman.item == PaletteItem::Window)
 				{
-					placeWindow(building, target);
+					placeWindow(world, target);
 					resetPegman();
 				}
 				else if (target && gPegman.item == PaletteItem::Walkway)
 				{
-					placeWalkway(building, target);
+					placeWalkway(world, target);
 					resetPegman();
 				}
 				else if (target && gPegman.item == PaletteItem::ForceBridge)
 				{
-					placeForceBridge(building, target);
+					placeForceBridge(world, target);
 					resetPegman();
 				}
 				else if (target && gPegman.item == PaletteItem::RoomLadder)
 				{
-					placeRoomLadder(building, target);
+					placeRoomLadder(world, target);
 					resetPegman();
 				}
 				else if (target && gPegman.item == PaletteItem::PlatformLift)
 				{
-					placePlatformLift(building, target);
+					placePlatformLift(world, target);
 					resetPegman();
 				}
 				else if (target && gPegman.item == PaletteItem::Agent)
@@ -1899,7 +1900,7 @@ namespace
 					gPegman.feetY = target.feetY;
 					gPegman.floorY = target.floorY;
 					gPegman.velocity = 0.0f;
-					if (gPegman.feetY <= gPegman.floorY) landPegman(building);
+					if (gPegman.feetY <= gPegman.floorY) landPegman(world);
 				}
 				else resetPegman();
 			}
@@ -2131,12 +2132,12 @@ void clearSelections()
 
 namespace
 {
-	// Layer labels come from the Building's editable layer names.
-	string layerLabel(shared_ptr<const core::Building> const& building, uint32_t layer)
+	// Layer labels come from the World's editable layer names.
+	string layerLabel(shared_ptr<const core::World> const& world, uint32_t layer)
 	{
-		if (!building || layer >= building->getLayerCount())
+		if (!world || layer >= world->getLayerCount())
 			return format("Layer {}", layer);
-		return building->getLayerName(layer);
+		return world->getLayerName(layer);
 	}
 
 	constexpr size_t LayerNameBufferSize{ 64 };
@@ -2160,13 +2161,13 @@ namespace
 
 	// Inline editor for one layer's name.  The edit is committed when the field is
 	// submitted with Enter or loses focus, and is undoable as a single document edit.
-	void renderLayerNameEditor(shared_ptr<core::Building> const& building, uint32_t layer)
+	void renderLayerNameEditor(shared_ptr<core::World> const& world, uint32_t layer)
 	{
 		auto& edit = gLayerNameEdits[layer];
 
 		if (!edit.editing)
 		{
-			auto const& name = building->getLayerName(layer);
+			auto const& name = world->getLayerName(layer);
 			std::strncpy(edit.text.data(), name.c_str(), edit.text.size() - 1);
 			edit.text[edit.text.size() - 1] = '\0';
 		}
@@ -2180,7 +2181,7 @@ namespace
 			if (submitted || ImGui::IsItemActivated())
 			{
 				edit.editing = true;
-				edit.previous = building->getLayerName(layer);
+				edit.previous = world->getLayerName(layer);
 			}
 			return;
 		}
@@ -2192,10 +2193,10 @@ namespace
 		auto const next = trimLayerName(edit.text.data());
 		if (next.empty() || next == edit.previous) return;
 
-		auto undo = captureDocumentSnapshot(building);
+		auto undo = captureDocumentSnapshot(world);
 		try
 		{
-			building->setLayerName(layer, next);
+			world->setLayerName(layer, next);
 			commitDocumentEdit(std::move(undo));
 		}
 		catch (std::exception const& error)
@@ -2215,17 +2216,17 @@ namespace
 	};
 
 	constexpr size_t MaximumRecentFiles{ 5 };
-	string gBuildingFilepath;
+	string gWorldFilepath;
 	RecentFiles gRecentFiles{ MaximumRecentFiles };
 	string gPendingRecentFilepath;
 	PendingFileAction gPendingFileAction{ PendingFileAction::None };
 	bool gOpenUnsavedChangesPopup{ false };
-	bool gOpenNewBuildingPopup{ false };
+	bool gOpenNewWorldPopup{ false };
 	bool gOpenFileErrorPopup{ false };
 	string gFileError;
-	char gNewBuildingName[128]{ "Untitled" };
-	int gNewBuildingWidth{ 48 };
-	int gNewBuildingDecks{ 6 };
+	char gNewWorldName[128]{ "Untitled" };
+	int gNewWorldWidth{ 48 };
+	int gNewWorldDecks{ 6 };
 
 	void clearDocumentState(bool clearHistory = true)
 	{
@@ -2261,39 +2262,39 @@ namespace
 		resetTagsPanelState();
 		resetBehavioursPanelState();
 		gUISettings.worldPaused = false;
-		if (clearHistory) gBuildingDocumentHistory.clear();
+		if (clearHistory) gWorldDocumentHistory.clear();
 	}
 
-	bool restoreDocumentSnapshot(shared_ptr<core::Building>& building, bool redo)
+	bool restoreDocumentSnapshot(shared_ptr<core::World>& world, bool redo)
 	{
-		if (!building || (redo ? !gBuildingDocumentHistory.canRedo()
-			: !gBuildingDocumentHistory.canUndo())) return false;
+		if (!world || (redo ? !gWorldDocumentHistory.canRedo()
+			: !gWorldDocumentHistory.canUndo())) return false;
 
-		auto current = captureDocumentSnapshot(building);
+		auto current = captureDocumentSnapshot(world);
 		if (!current) return false;
 		try
 		{
-			shared_ptr<core::Building> loaded;
+			shared_ptr<core::World> loaded;
 			auto restore = [&loaded](DocumentSnapshot const& target)
 			{
-				loaded = make_shared<core::Building>("Loading", 1, 1);
+				loaded = make_shared<core::World>("Loading", 1, 1);
 				auto serializer = core::YamlSerializer::fromString(target.yaml);
 				serializer->deserialize();
 				core::SerializationWorkData workData;
 				if (!loaded->deserialize(*serializer, workData)) return false;
-				core::loadAndAttachAgentTagRegistry(*loaded, gBuildingFilepath);
-				core::loadAndAttachAgentBehaviourRegistry(*loaded, gBuildingFilepath);
+				core::loadAndAttachAgentTagRegistry(*loaded, gWorldFilepath);
+				core::loadAndAttachAgentBehaviourRegistry(*loaded, gWorldFilepath);
 				return true;
 			};
 			auto const restored = redo
-				? gBuildingDocumentHistory.redo(std::move(current), restore)
-				: gBuildingDocumentHistory.undo(std::move(current), restore);
+				? gWorldDocumentHistory.redo(std::move(current), restore)
+				: gWorldDocumentHistory.undo(std::move(current), restore);
 			if (!restored) return false;
-			if (gBuildingDocumentHistory.isModified()) loaded->markModified();
+			if (gWorldDocumentHistory.isModified()) loaded->markModified();
 
-			building = std::move(loaded);
+			world = std::move(loaded);
 			clearDocumentState(false);
-			setWorldPaused(building, true);
+			setWorldPaused(world, true);
 			return true;
 		}
 		catch (std::exception const& error)
@@ -2304,12 +2305,12 @@ namespace
 		}
 	}
 
-	bool isDocumentStale(shared_ptr<core::Building> const& building)
+	bool isDocumentStale(shared_ptr<core::World> const& world)
 	{
-		return building && (building->isModified()
-			|| gBuildingDocumentHistory.isModified()
-			|| attachedAgentTagRegistryIsModified(building)
-			|| attachedAgentBehaviourRegistryIsModified(building));
+		return world && (world->isModified()
+			|| gWorldDocumentHistory.isModified()
+			|| attachedAgentTagRegistryIsModified(world)
+			|| attachedAgentBehaviourRegistryIsModified(world));
 	}
 
 	void reportFileError(string message)
@@ -2320,44 +2321,44 @@ namespace
 	}
 
 	string currentAgentTagRegistryFilepath(
-		shared_ptr<core::Building> const& building)
+		shared_ptr<core::World> const& world)
 	{
-		if (!building || !building->hasAttachedAgentTagRegistry()
-			|| gBuildingFilepath.empty()) return {};
-		return (filesystem::path(gBuildingFilepath).parent_path()
-			/ building->getAgentTagRegistryFilename()).string();
+		if (!world || !world->hasAttachedAgentTagRegistry()
+			|| gWorldFilepath.empty()) return {};
+		return (filesystem::path(gWorldFilepath).parent_path()
+			/ world->getAgentTagRegistryFilename()).string();
 	}
 
 	string currentAgentBehaviourRegistryPackagePath(
-		shared_ptr<core::Building> const& building)
+		shared_ptr<core::World> const& world)
 	{
-		if (!building || !building->hasAttachedAgentBehaviourRegistry()
-			|| gBuildingFilepath.empty()) return {};
-		return (filesystem::path(gBuildingFilepath).parent_path()
-			/ building->getAgentBehaviourRegistryPackageName()).string();
+		if (!world || !world->hasAttachedAgentBehaviourRegistry()
+			|| gWorldFilepath.empty()) return {};
+		return (filesystem::path(gWorldFilepath).parent_path()
+			/ world->getAgentBehaviourRegistryPackageName()).string();
 	}
 
-	BuildingDocumentSaveTarget currentDocumentSaveTarget(
-		shared_ptr<core::Building> const& building, string buildingFilepath)
+	WorldDocumentSaveTarget currentDocumentSaveTarget(
+		shared_ptr<core::World> const& world, string worldFilepath)
 	{
-		return { building, std::move(buildingFilepath),
-			currentAgentTagRegistryFilepath(building), &gBuildingDocumentHistory,
-			currentAgentBehaviourRegistryPackagePath(building) };
+		return { world, std::move(worldFilepath),
+			currentAgentTagRegistryFilepath(world), &gWorldDocumentHistory,
+			currentAgentBehaviourRegistryPackagePath(world) };
 	}
 
-	bool saveBuilding(shared_ptr<core::Building> const& building, bool saveAs)
+	bool saveWorld(shared_ptr<core::World> const& world, bool saveAs)
 	{
-		if (!building) return false;
+		if (!world) return false;
 
-		string filepath = gBuildingFilepath;
+		string filepath = gWorldFilepath;
 		if (saveAs || filepath.empty())
 		{
 			nfdu8char_t* selectedPathRaw{ nullptr };
-			nfdu8filteritem_t const filters[] = { { "Building YAML", "yaml,yml" } };
+			nfdu8filteritem_t const filters[] = { { "World document", "world.yaml" } };
 			filesystem::path const current(filepath);
 			auto const directory = filepath.empty() ? string() : current.parent_path().string();
 			auto defaultName = filepath.empty()
-				? building->getName() + ".yaml"
+				? world->getName() + string(core::WorldDocumentFilenameSuffix)
 				: current.filename().string();
 			auto const result = NFD_SaveDialogU8(&selectedPathRaw, filters, 1,
 				directory.empty() ? nullptr : directory.c_str(), defaultName.c_str());
@@ -2372,28 +2373,34 @@ namespace
 			}
 			filepath = selectedPath.get();
 			filesystem::path selected(filepath);
-			if (!selected.has_extension()) filepath += ".yaml";
+			if (!selected.has_extension())
+				filepath += core::WorldDocumentFilenameSuffix;
+			else if (!core::isWorldDocumentPath(filepath))
+			{
+				reportFileError("A World document file must end with .world.yaml");
+				return false;
+			}
 		}
 
 		string diagnostic;
-		if (!saveBuildingDocument(currentDocumentSaveTarget(building, filepath),
+		if (!saveWorldDocument(currentDocumentSaveTarget(world, filepath),
 			&diagnostic))
 		{
 			reportFileError(std::move(diagnostic));
 			return false;
 		}
-		gBuildingFilepath = std::move(filepath);
+		gWorldFilepath = std::move(filepath);
 		return true;
 	}
 
-	bool saveAllOpenDocuments(shared_ptr<core::Building> const& building)
+	bool saveAllOpenDocuments(shared_ptr<core::World> const& world)
 	{
-		if (!building) return false;
-		// An untitled Building still needs the ordinary Save location chooser.
-		if (gBuildingFilepath.empty()) return saveBuilding(building, false);
+		if (!world) return false;
+		// An untitled World still needs the ordinary Save location chooser.
+		if (gWorldFilepath.empty()) return saveWorld(world, false);
 		string diagnostic;
 		if (!saveAllDocuments(
-			{ currentDocumentSaveTarget(building, gBuildingFilepath) }, &diagnostic))
+			{ currentDocumentSaveTarget(world, gWorldFilepath) }, &diagnostic))
 		{
 			reportFileError(std::move(diagnostic));
 			return false;
@@ -2423,61 +2430,73 @@ namespace
 		}
 	}
 
-	void openBuilding(shared_ptr<core::Building>& building, string const& filepath)
+	void openWorld(shared_ptr<core::World>& world, string const& filepath,
+		bool fromRecentFiles = false)
 	{
+		string normalized;
 		try
 		{
-			auto const normalized = normalizedFilepath(filepath);
-			auto loaded = core::loadBuildingDocument(normalized);
-			auto previousRegistry = building && building->hasAttachedAgentTagRegistry()
-				? building->getAgentTagRegistry() : nullptr;
-			auto previousBehaviourRegistry = building
-				&& building->hasAttachedAgentBehaviourRegistry()
-				? building->getAgentBehaviourRegistry() : nullptr;
-			building = std::move(loaded);
+			normalized = normalizedFilepath(filepath);
+			auto loaded = core::loadWorldDocument(normalized);
+			auto previousRegistry = world && world->hasAttachedAgentTagRegistry()
+				? world->getAgentTagRegistry() : nullptr;
+			auto previousBehaviourRegistry = world
+				&& world->hasAttachedAgentBehaviourRegistry()
+				? world->getAgentBehaviourRegistry() : nullptr;
+			world = std::move(loaded);
 			if (previousRegistry) forgetAgentTagRegistryDocument(previousRegistry);
 			if (previousBehaviourRegistry)
 				forgetAgentBehaviourRegistryDocument(previousBehaviourRegistry);
-			if (building->hasAttachedAgentTagRegistry())
-				(void)agentTagRegistryDocumentHistory(building->getAgentTagRegistry());
-			gBuildingFilepath = normalized;
-			addRecentFile(gBuildingFilepath);
+			if (world->hasAttachedAgentTagRegistry())
+				(void)agentTagRegistryDocumentHistory(world->getAgentTagRegistry());
+			gWorldFilepath = normalized;
+			addRecentFile(gWorldFilepath);
 			clearDocumentState();
-			gBuildingDocumentHistory.markSaved();
-			setWorldPaused(building, true);
+			gWorldDocumentHistory.markSaved();
+			setWorldPaused(world, true);
 			core::addLogMessage("File", 0, core::LogLevel::Info,
-				"Opened Building from " + gBuildingFilepath);
+				"Opened World from " + gWorldFilepath);
 		}
 		catch (std::exception const& error)
 		{
-			reportFileError("Could not open Building: " + string(error.what()));
+			if (fromRecentFiles)
+			{
+				try { (void)gRecentFiles.removeUnavailable(filepath); }
+				catch (std::exception const& recentError)
+				{
+					core::addLogMessage("File", 0, core::LogLevel::Error,
+						"Could not remove missing recent World: "
+						+ string(recentError.what()));
+				}
+			}
+			reportFileError("Could not open World: " + string(error.what()));
 		}
 	}
 
-	void openBuilding(shared_ptr<core::Building>& building)
+	void openWorld(shared_ptr<core::World>& world)
 	{
 		nfdu8char_t* selectedPathRaw{ nullptr };
-		nfdu8filteritem_t const filters[] = { { "Building YAML", "yaml,yml" } };
+		nfdu8filteritem_t const filters[] = { { "World document", "world.yaml" } };
 		auto const result = NFD_OpenDialogU8(&selectedPathRaw, filters, 1, nullptr);
 		unique_ptr<nfdu8char_t, decltype(&NFD_FreePathU8)> selectedPath(
 			selectedPathRaw, NFD_FreePathU8);
 		if (result == NFD_CANCEL) return;
 		if (result == NFD_ERROR)
 		{
-			reportFileError(string("Could not choose a Building file: ")
+			reportFileError(string("Could not choose a World file: ")
 				+ (NFD_GetError() ? NFD_GetError() : "unknown native dialog error"));
 			return;
 		}
 
-		openBuilding(building, selectedPath.get());
+		openWorld(world, selectedPath.get());
 	}
 
 	optional<string> chooseAgentTagRegistryPath()
 	{
 		nfdu8char_t* selectedPathRaw{ nullptr };
 		nfdu8filteritem_t const filters[] = { { "Agent tag registry", "yaml" } };
-		filesystem::path const buildingPath(gBuildingFilepath);
-		auto const directory = buildingPath.parent_path().string();
+		filesystem::path const worldPath(gWorldFilepath);
+		auto const directory = worldPath.parent_path().string();
 		auto const result = NFD_OpenDialogU8(&selectedPathRaw, filters, 1,
 			directory.empty() ? nullptr : directory.c_str());
 		unique_ptr<nfdu8char_t, decltype(&NFD_FreePathU8)> selectedPath(
@@ -2494,8 +2513,8 @@ namespace
 	optional<string> chooseAgentBehaviourRegistryPath()
 	{
 		nfdu8char_t* selectedPathRaw{ nullptr };
-		filesystem::path const buildingPath(gBuildingFilepath);
-		auto const directory = buildingPath.parent_path().string();
+		filesystem::path const worldPath(gWorldFilepath);
+		auto const directory = worldPath.parent_path().string();
 		auto const result = NFD_PickFolderU8(
 			&selectedPathRaw, directory.empty() ? nullptr : directory.c_str());
 		unique_ptr<nfdu8char_t, decltype(&NFD_FreePathU8)> selectedPath(
@@ -2509,30 +2528,30 @@ namespace
 		return string(selectedPath.get());
 	}
 
-	void executeFileAction(PendingFileAction action, shared_ptr<core::Building>& building)
+	void executeFileAction(PendingFileAction action, shared_ptr<core::World>& world)
 	{
 		switch (action)
 		{
 		case PendingFileAction::New:
-			gOpenNewBuildingPopup = true;
+			gOpenNewWorldPopup = true;
 			break;
 		case PendingFileAction::Open:
-			openBuilding(building);
+			openWorld(world);
 			break;
 		case PendingFileAction::OpenRecent:
 		{
 			auto const filepath = std::move(gPendingRecentFilepath);
 			gPendingRecentFilepath.clear();
-			openBuilding(building, filepath);
+			openWorld(world, filepath, true);
 			break;
 		}
 		case PendingFileAction::Close:
-			if (building && building->hasAttachedAgentTagRegistry())
-				forgetAgentTagRegistryDocument(building->getAgentTagRegistry());
-			if (building && building->hasAttachedAgentBehaviourRegistry())
-				forgetAgentBehaviourRegistryDocument(building->getAgentBehaviourRegistry());
-			building.reset();
-			gBuildingFilepath.clear();
+			if (world && world->hasAttachedAgentTagRegistry())
+				forgetAgentTagRegistryDocument(world->getAgentTagRegistry());
+			if (world && world->hasAttachedAgentBehaviourRegistry())
+				forgetAgentBehaviourRegistryDocument(world->getAgentBehaviourRegistry());
+			world.reset();
+			gWorldFilepath.clear();
 			clearDocumentState();
 			break;
 		case PendingFileAction::Exit:
@@ -2542,37 +2561,37 @@ namespace
 		}
 	}
 
-	void requestFileAction(PendingFileAction action, shared_ptr<core::Building>& building)
+	void requestFileAction(PendingFileAction action, shared_ptr<core::World>& world)
 	{
-		if (isDocumentStale(building))
+		if (isDocumentStale(world))
 		{
 			gPendingFileAction = action;
 			gOpenUnsavedChangesPopup = true;
 			return;
 		}
-		executeFileAction(action, building);
+		executeFileAction(action, world);
 	}
 
-	void requestRecentFile(string const& filepath, shared_ptr<core::Building>& building)
+	void requestRecentFile(string const& filepath, shared_ptr<core::World>& world)
 	{
 		gPendingRecentFilepath = filepath;
-		requestFileAction(PendingFileAction::OpenRecent, building);
+		requestFileAction(PendingFileAction::OpenRecent, world);
 	}
 
-	void commitLocationEdit(shared_ptr<core::Building> const& building,
-		core::Building::LocationEditPlan const& plan)
+	void commitLocationEdit(shared_ptr<core::World> const& world,
+		core::World::LocationEditPlan const& plan)
 	{
-		auto undo = captureDocumentSnapshot(building);
+		auto undo = captureDocumentSnapshot(world);
 		try
 		{
-			auto newIndex = building->applyLocationEdit(plan);
+			auto newIndex = world->applyLocationEdit(plan);
 			gUISettings.worldPaused = true;
 			gHoveredAgent = nullptr;
 			gHoveredSector.reset();
 			gHoveredSectorObject.reset();
 			gSelectedAgent = nullptr;
 			gSelectedSectorObject.reset();
-			gSelectedSector = plan.remove ? nullptr : building->getSector(newIndex);
+			gSelectedSector = plan.remove ? nullptr : world->getSector(newIndex);
 			commitDocumentEdit(std::move(undo));
 		}
 		catch (core::Exception const& error)
@@ -2586,30 +2605,30 @@ namespace
 		resetSectorResize();
 	}
 
-	void queueLocationEdit(shared_ptr<core::Building> const& building,
-		core::Building::LocationEditPlan const& plan)
+	void queueLocationEdit(shared_ptr<core::World> const& world,
+		core::World::LocationEditPlan const& plan)
 	{
-		if (!building->isSimulationPaused()) building->pauseSimulation();
+		if (!world->isSimulationPaused()) world->pauseSimulation();
 		gUISettings.worldPaused = true;
 		if (plan.requiresConfirmation())
 		{
 			gPendingLocationEdit = plan;
 			gOpenLocationEditPopup = true;
 		}
-		else commitLocationEdit(building, plan);
+		else commitLocationEdit(world, plan);
 	}
 
-	void commitLiftEdit(shared_ptr<core::Building> const& building,
-		core::Building::LiftEditPlan const& plan)
+	void commitLiftEdit(shared_ptr<core::World> const& world,
+		core::World::LiftEditPlan const& plan)
 	{
-		auto undo = captureDocumentSnapshot(building);
+		auto undo = captureDocumentSnapshot(world);
 		try
 		{
-			auto newIndex = building->applyLiftEdit(plan);
+			auto newIndex = world->applyLiftEdit(plan);
 			gUISettings.worldPaused = true;
 			gHoveredAgent = nullptr; gHoveredSector.reset(); gHoveredSectorObject.reset();
 			gSelectedAgent = nullptr; gSelectedSectorObject.reset();
-			gSelectedSector = plan.remove ? nullptr : building->getSector(newIndex);
+			gSelectedSector = plan.remove ? nullptr : world->getSector(newIndex);
 			commitDocumentEdit(std::move(undo));
 		}
 		catch (core::Exception const& error)
@@ -2619,30 +2638,30 @@ namespace
 		resetSectorResize();
 	}
 
-	void queueLiftEdit(shared_ptr<core::Building> const& building,
-		core::Building::LiftEditPlan const& plan)
+	void queueLiftEdit(shared_ptr<core::World> const& world,
+		core::World::LiftEditPlan const& plan)
 	{
-		if (!building->isSimulationPaused()) building->pauseSimulation();
+		if (!world->isSimulationPaused()) world->pauseSimulation();
 		gUISettings.worldPaused = true;
 		if (plan.requiresConfirmation())
 		{
 			gPendingLiftEdit = plan;
 			gOpenLocationEditPopup = true;
 		}
-		else commitLiftEdit(building, plan);
+		else commitLiftEdit(world, plan);
 	}
 
-	void commitShuttleEdit(shared_ptr<core::Building> const& building,
-		core::Building::ShuttleEditPlan const& plan)
+	void commitShuttleEdit(shared_ptr<core::World> const& world,
+		core::World::ShuttleEditPlan const& plan)
 	{
-		auto undo = captureDocumentSnapshot(building);
+		auto undo = captureDocumentSnapshot(world);
 		try
 		{
-			auto newIndex = building->applyShuttleEdit(plan);
+			auto newIndex = world->applyShuttleEdit(plan);
 			gUISettings.worldPaused = true;
 			gHoveredAgent = nullptr; gHoveredSector.reset(); gHoveredSectorObject.reset();
 			gSelectedAgent = nullptr; gSelectedSectorObject.reset();
-			gSelectedSector = plan.remove ? nullptr : building->getSector(newIndex);
+			gSelectedSector = plan.remove ? nullptr : world->getSector(newIndex);
 			commitDocumentEdit(std::move(undo));
 		}
 		catch (core::Exception const& error)
@@ -2652,30 +2671,30 @@ namespace
 		resetSectorResize();
 	}
 
-	void queueShuttleEdit(shared_ptr<core::Building> const& building,
-		core::Building::ShuttleEditPlan const& plan)
+	void queueShuttleEdit(shared_ptr<core::World> const& world,
+		core::World::ShuttleEditPlan const& plan)
 	{
-		if (!building->isSimulationPaused()) building->pauseSimulation();
+		if (!world->isSimulationPaused()) world->pauseSimulation();
 		gUISettings.worldPaused = true;
 		if (plan.requiresConfirmation())
 		{
 			gPendingShuttleEdit = plan;
 			gOpenLocationEditPopup = true;
 		}
-		else commitShuttleEdit(building, plan);
+		else commitShuttleEdit(world, plan);
 	}
 
-	void commitLadderEdit(shared_ptr<core::Building> const& building,
-		core::Building::LadderEditPlan const& plan)
+	void commitLadderEdit(shared_ptr<core::World> const& world,
+		core::World::LadderEditPlan const& plan)
 	{
-		auto undo = captureDocumentSnapshot(building);
+		auto undo = captureDocumentSnapshot(world);
 		try
 		{
-			auto newIndex = building->applyLadderEdit(plan);
+			auto newIndex = world->applyLadderEdit(plan);
 			gUISettings.worldPaused = true;
 			gHoveredAgent = nullptr; gHoveredSector.reset(); gHoveredSectorObject.reset();
 			gSelectedAgent = nullptr; gSelectedSectorObject.reset();
-			gSelectedSector = plan.remove ? nullptr : building->getSector(newIndex);
+			gSelectedSector = plan.remove ? nullptr : world->getSector(newIndex);
 			commitDocumentEdit(std::move(undo));
 		}
 		catch (core::Exception const& error)
@@ -2685,30 +2704,30 @@ namespace
 		resetSectorResize();
 	}
 
-	void queueLadderEdit(shared_ptr<core::Building> const& building,
-		core::Building::LadderEditPlan const& plan)
+	void queueLadderEdit(shared_ptr<core::World> const& world,
+		core::World::LadderEditPlan const& plan)
 	{
-		if (!building->isSimulationPaused()) building->pauseSimulation();
+		if (!world->isSimulationPaused()) world->pauseSimulation();
 		gUISettings.worldPaused = true;
 		if (plan.requiresConfirmation())
 		{
 			gPendingLadderEdit = plan;
 			gOpenLocationEditPopup = true;
 		}
-		else commitLadderEdit(building, plan);
+		else commitLadderEdit(world, plan);
 	}
 
-	void commitStairwellEdit(shared_ptr<core::Building> const& building,
-		core::Building::StairwellEditPlan const& plan)
+	void commitStairwellEdit(shared_ptr<core::World> const& world,
+		core::World::StairwellEditPlan const& plan)
 	{
-		auto undo = captureDocumentSnapshot(building);
+		auto undo = captureDocumentSnapshot(world);
 		try
 		{
-			auto newIndex = building->applyStairwellEdit(plan);
+			auto newIndex = world->applyStairwellEdit(plan);
 			gUISettings.worldPaused = true;
 			gHoveredAgent = nullptr; gHoveredSector.reset(); gHoveredSectorObject.reset();
 			gSelectedAgent = nullptr; gSelectedSectorObject.reset();
-			gSelectedSector = plan.remove ? nullptr : building->getSector(newIndex);
+			gSelectedSector = plan.remove ? nullptr : world->getSector(newIndex);
 			commitDocumentEdit(std::move(undo));
 		}
 		catch (core::Exception const& error)
@@ -2718,28 +2737,28 @@ namespace
 		resetSectorResize();
 	}
 
-	void queueStairwellEdit(shared_ptr<core::Building> const& building,
-		core::Building::StairwellEditPlan const& plan)
+	void queueStairwellEdit(shared_ptr<core::World> const& world,
+		core::World::StairwellEditPlan const& plan)
 	{
-		if (!building->isSimulationPaused()) building->pauseSimulation();
+		if (!world->isSimulationPaused()) world->pauseSimulation();
 		gUISettings.worldPaused = true;
 		if (plan.requiresConfirmation())
 		{
 			gPendingStairwellEdit = plan;
 			gOpenLocationEditPopup = true;
 		}
-		else commitStairwellEdit(building, plan);
+		else commitStairwellEdit(world, plan);
 	}
 
-	void commitPlatformLiftEdit(shared_ptr<core::Building> const& building,
-		core::Building::PlatformLiftEditPlan const& plan)
+	void commitPlatformLiftEdit(shared_ptr<core::World> const& world,
+		core::World::PlatformLiftEditPlan const& plan)
 	{
-		auto undo = captureDocumentSnapshot(building);
+		auto undo = captureDocumentSnapshot(world);
 		try
 		{
-			if (!building->isSimulationPaused()) building->pauseSimulation();
+			if (!world->isSimulationPaused()) world->pauseSimulation();
 			gUISettings.worldPaused = true;
-			gSelectedSectorObject = building->applyPlatformLiftEdit(plan);
+			gSelectedSectorObject = world->applyPlatformLiftEdit(plan);
 			gHoveredSectorObject.reset();
 			commitDocumentEdit(std::move(undo));
 		}
@@ -2749,24 +2768,24 @@ namespace
 		{ reportEditorError("PlatformLift editor", error.what()); }
 	}
 
-	void queuePlatformLiftEdit(shared_ptr<core::Building> const& building,
-		core::Building::PlatformLiftEditPlan const& plan)
+	void queuePlatformLiftEdit(shared_ptr<core::World> const& world,
+		core::World::PlatformLiftEditPlan const& plan)
 	{
-		if (!building->isSimulationPaused()) building->pauseSimulation();
+		if (!world->isSimulationPaused()) world->pauseSimulation();
 		gUISettings.worldPaused = true;
 		if (plan.requiresConfirmation()) { gPendingPlatformLiftEdit = plan; gOpenLocationEditPopup = true; }
-		else commitPlatformLiftEdit(building, plan);
+		else commitPlatformLiftEdit(world, plan);
 	}
 
-	void commitWalkwayEdit(shared_ptr<core::Building> const& building,
-		core::Building::WalkwayEditPlan const& plan)
+	void commitWalkwayEdit(shared_ptr<core::World> const& world,
+		core::World::WalkwayEditPlan const& plan)
 	{
-		auto undo = captureDocumentSnapshot(building);
+		auto undo = captureDocumentSnapshot(world);
 		try
 		{
-			if (!building->isSimulationPaused()) building->pauseSimulation();
+			if (!world->isSimulationPaused()) world->pauseSimulation();
 			gUISettings.worldPaused = true;
-			if (building->applyWalkwayEdit(plan))
+			if (world->applyWalkwayEdit(plan))
 			{
 				gSelectedSectorObject.reset(); gHoveredSectorObject.reset();
 				commitDocumentEdit(std::move(undo));
@@ -2776,24 +2795,24 @@ namespace
 		catch (std::exception const& error) { reportEditorError("Walkway editor", error.what()); }
 	}
 
-	void queueWalkwayEdit(shared_ptr<core::Building> const& building,
-		core::Building::WalkwayEditPlan const& plan)
+	void queueWalkwayEdit(shared_ptr<core::World> const& world,
+		core::World::WalkwayEditPlan const& plan)
 	{
-		if (!building->isSimulationPaused()) building->pauseSimulation();
+		if (!world->isSimulationPaused()) world->pauseSimulation();
 		gUISettings.worldPaused = true;
 		if (plan.requiresConfirmation()) { gPendingWalkwayEdit = plan; gOpenLocationEditPopup = true; }
-		else commitWalkwayEdit(building, plan);
+		else commitWalkwayEdit(world, plan);
 	}
 
-	void commitObjectMove(shared_ptr<core::Building> const& building,
-		core::Building::ObjectMovePlan const& plan)
+	void commitObjectMove(shared_ptr<core::World> const& world,
+		core::World::ObjectMovePlan const& plan)
 	{
-		auto undo = captureDocumentSnapshot(building);
+		auto undo = captureDocumentSnapshot(world);
 		try
 		{
-			if (!building->isSimulationPaused()) building->pauseSimulation();
+			if (!world->isSimulationPaused()) world->pauseSimulation();
 			gUISettings.worldPaused = true;
-			gSelectedSectorObject = building->applyObjectMove(plan);
+			gSelectedSectorObject = world->applyObjectMove(plan);
 			gHoveredSectorObject.reset(); gSelectedSector.reset(); gSelectedAgent = nullptr;
 			commitDocumentEdit(std::move(undo));
 		}
@@ -2802,24 +2821,24 @@ namespace
 		resetObjectMove();
 	}
 
-	void queueObjectMove(shared_ptr<core::Building> const& building,
-		core::Building::ObjectMovePlan const& plan)
+	void queueObjectMove(shared_ptr<core::World> const& world,
+		core::World::ObjectMovePlan const& plan)
 	{
-		if (!building->isSimulationPaused()) building->pauseSimulation();
+		if (!world->isSimulationPaused()) world->pauseSimulation();
 		gUISettings.worldPaused = true;
 		if (plan.requiresConfirmation()) { gPendingObjectMove = plan; gOpenLocationEditPopup = true; resetObjectMove(); }
-		else commitObjectMove(building, plan);
+		else commitObjectMove(world, plan);
 	}
 
-	void commitLayerDelete(shared_ptr<core::Building> const& building,
-		core::Building::LayerDeletePlan const& plan)
+	void commitLayerDelete(shared_ptr<core::World> const& world,
+		core::World::LayerDeletePlan const& plan)
 	{
-		auto undo = captureDocumentSnapshot(building);
+		auto undo = captureDocumentSnapshot(world);
 		try
 		{
-			if (!building->isSimulationPaused()) building->pauseSimulation();
+			if (!world->isSimulationPaused()) world->pauseSimulation();
 			gUISettings.worldPaused = true;
-			building->applyDeleteLayer(plan);
+			world->applyDeleteLayer(plan);
 
 			// Selections and inline name edits can point at Sectors, Agents, and
 			// Layers which no longer exist.
@@ -2831,7 +2850,7 @@ namespace
 			gSelectedSectorObject.reset();
 			gLayerNameEdits.clear();
 			gUISettings.visibleLayer = std::clamp(gUISettings.visibleLayer, 0,
-				static_cast<int>(building->getLayerCount()) - 1);
+				static_cast<int>(world->getLayerCount()) - 1);
 			commitDocumentEdit(std::move(undo));
 			core::addLogMessage("Layers", 0, core::LogLevel::Info,
 				format("Deleted {} and compacted the Layers behind it", plan.layerName));
@@ -2842,13 +2861,13 @@ namespace
 
 	// Layer deletion is always destructive, so it is planned first and only applied
 	// once the user confirms the consequence list.
-	void requestLayerDelete(shared_ptr<core::Building> const& building, uint32_t layer)
+	void requestLayerDelete(shared_ptr<core::World> const& world, uint32_t layer)
 	{
-		if (!building) return;
-		if (!building->isSimulationPaused()) building->pauseSimulation();
+		if (!world) return;
+		if (!world->isSimulationPaused()) world->pauseSimulation();
 		gUISettings.worldPaused = true;
 
-		auto const plan = building->planDeleteLayer(layer);
+		auto const plan = world->planDeleteLayer(layer);
 		if (!plan.valid)
 		{
 			reportEditorError("Layers", plan.diagnostic);
@@ -2859,7 +2878,7 @@ namespace
 		gOpenLocationEditPopup = true;
 	}
 
-	void renderFilePopups(shared_ptr<core::Building>& building)
+	void renderFilePopups(shared_ptr<core::World>& world)
 	{
 		if (gOpenUnsavedChangesPopup)
 		{
@@ -2869,19 +2888,19 @@ namespace
 		if (ImGui::BeginPopupModal("Unsaved changes", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
 		{
 			auto prompt = unsavedDocumentPromptText(
-				currentDocumentSaveTarget(building, gBuildingFilepath));
-			if (attachedAgentBehaviourRegistryIsModified(building))
+				currentDocumentSaveTarget(world, gWorldFilepath));
+			if (attachedAgentBehaviourRegistryIsModified(world))
 				prompt += "\n- Agent behaviour registry package '"
-					+ building->getAgentBehaviourRegistryPackageName() + "'";
+					+ world->getAgentBehaviourRegistryPackageName() + "'";
 			ImGui::TextUnformatted(prompt.c_str());
 			if (ImGui::Button("Save All"))
 			{
-				if (saveAllOpenDocuments(building))
+				if (saveAllOpenDocuments(world))
 				{
 					auto const action = gPendingFileAction;
 					gPendingFileAction = PendingFileAction::None;
 					ImGui::CloseCurrentPopup();
-					executeFileAction(action, building);
+					executeFileAction(action, world);
 				}
 			}
 			ImGui::SameLine();
@@ -2890,7 +2909,7 @@ namespace
 				auto const action = gPendingFileAction;
 				gPendingFileAction = PendingFileAction::None;
 				ImGui::CloseCurrentPopup();
-				executeFileAction(action, building);
+				executeFileAction(action, world);
 			}
 			ImGui::SameLine();
 			if (ImGui::Button("Cancel"))
@@ -2902,30 +2921,30 @@ namespace
 			ImGui::EndPopup();
 		}
 
-		if (gOpenNewBuildingPopup)
+		if (gOpenNewWorldPopup)
 		{
-			ImGui::OpenPopup("New Building");
-			gOpenNewBuildingPopup = false;
+			ImGui::OpenPopup("New World");
+			gOpenNewWorldPopup = false;
 		}
-		if (ImGui::BeginPopupModal("New Building", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+		if (ImGui::BeginPopupModal("New World", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
 		{
-			ImGui::InputText("Name", gNewBuildingName, sizeof(gNewBuildingName));
-			ImGui::InputInt("Width", &gNewBuildingWidth);
-			ImGui::InputInt("Decks", &gNewBuildingDecks);
-			bool const valid = gNewBuildingName[0] != '\0'
-				&& gNewBuildingWidth > 0 && gNewBuildingDecks > 0;
+			ImGui::InputText("Name", gNewWorldName, sizeof(gNewWorldName));
+			ImGui::InputInt("Width", &gNewWorldWidth);
+			ImGui::InputInt("Decks", &gNewWorldDecks);
+			bool const valid = gNewWorldName[0] != '\0'
+				&& gNewWorldWidth > 0 && gNewWorldDecks > 0;
 			if (ImGui::Button("Create") && valid)
 			{
-				if (building && building->hasAttachedAgentTagRegistry())
-					forgetAgentTagRegistryDocument(building->getAgentTagRegistry());
-				if (building && building->hasAttachedAgentBehaviourRegistry())
-					forgetAgentBehaviourRegistryDocument(building->getAgentBehaviourRegistry());
-				building = make_shared<core::Building>(gNewBuildingName,
-					static_cast<uint32_t>(gNewBuildingWidth),
-					static_cast<uint32_t>(gNewBuildingDecks));
-				gBuildingFilepath.clear();
+				if (world && world->hasAttachedAgentTagRegistry())
+					forgetAgentTagRegistryDocument(world->getAgentTagRegistry());
+				if (world && world->hasAttachedAgentBehaviourRegistry())
+					forgetAgentBehaviourRegistryDocument(world->getAgentBehaviourRegistry());
+				world = make_shared<core::World>(gNewWorldName,
+					static_cast<uint32_t>(gNewWorldWidth),
+					static_cast<uint32_t>(gNewWorldDecks));
+				gWorldFilepath.clear();
 				clearDocumentState();
-				setWorldPaused(building, true);
+				setWorldPaused(world, true);
 				ImGui::CloseCurrentPopup();
 			}
 			ImGui::SameLine();
@@ -2939,7 +2958,10 @@ namespace
 			ImGui::OpenPopup("File error");
 			gOpenFileErrorPopup = false;
 		}
-		if (ImGui::BeginPopupModal("File error", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+		ImGui::SetNextWindowSize(ImVec2(640.0f, 200.0f), ImGuiCond_Appearing);
+		ImGui::SetNextWindowSizeConstraints(ImVec2(420.0f, 140.0f),
+			ImVec2(800.0f, 450.0f));
+		if (ImGui::BeginPopupModal("File error"))
 		{
 			ImGui::TextWrapped("%s", gFileError.c_str());
 			if (ImGui::Button("OK")) ImGui::CloseCurrentPopup();
@@ -2953,7 +2975,7 @@ namespace
 		}
 		if (ImGui::BeginPopupModal("Create Shuttle", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
 		{
-			if (!building || !gShuttleDraft)
+			if (!world || !gShuttleDraft)
 			{
 				ImGui::CloseCurrentPopup();
 			}
@@ -2987,7 +3009,7 @@ namespace
 				ImGui::InputFloat("Maximum boarding (seconds)", &draft.maximumBoardingSeconds, 0.1f, 1.0f, "%.2f");
 				ImGui::Checkbox("Allow partial landings", &draft.allowPartialLandings);
 
-				auto candidates = shuttleCandidates(building, draft);
+				auto candidates = shuttleCandidates(world, draft);
 				draft.stopOffsets.erase(remove_if(draft.stopOffsets.begin(), draft.stopOffsets.end(),
 					[&](auto value) { return find(candidates.begin(), candidates.end(), value) == candidates.end(); }),
 					draft.stopOffsets.end());
@@ -3029,7 +3051,7 @@ namespace
 					// The track is drafted on the visible Layer; its carriage doors land
 					// on the Layer directly in front.  Candidates are never offered on the
 					// front-most Layer, so a landing Layer always exists here.
-					auto const landing = static_cast<core::Building const&>(*building)
+					auto const landing = static_cast<core::World const&>(*world)
 						.getLayer(core::layerInFront(gUISettings.visibleLayer));
 					uint32_t selectedDoors = 0;
 					for (int cell = 0; cell < draft.carWidth; ++cell)
@@ -3050,7 +3072,7 @@ namespace
 					&& ImGui::Button("Use endpoint suggestions"))
 					draft.stopOffsets = endpointSuggestions;
 				sort(draft.stopOffsets.begin(), draft.stopOffsets.end());
-				bool valid = validateShuttleDraft(building, draft);
+				bool valid = validateShuttleDraft(world, draft);
 				if (!draft.stopOffsets.empty())
 				{
 					vector<string> labels;
@@ -3066,16 +3088,16 @@ namespace
 				ImGui::BeginDisabled(!valid);
 				if (ImGui::Button("Create"))
 				{
-					auto undo = captureDocumentSnapshot(building);
+					auto undo = captureDocumentSnapshot(world);
 					try
 					{
-						core::Building::CreateShuttleOptions options{
+						core::World::CreateShuttleOptions options{
 							(uint32_t)draft.numCars, (uint32_t)draft.carWidth, draft.stopOffsets,
 							(uint32_t)draft.initialStop, (uint32_t)draft.capacity,
 							draft.minimumDwellSeconds, draft.maximumBoardingSeconds,
 							draft.allowPartialLandings, draft.doorMask };
-						auto created = building->addShuttle(gUISettings.visibleLayer, draft.y, draft.x, draft.cellsWide, options);
-						building->finishBuild();
+						auto created = world->addShuttle(gUISettings.visibleLayer, draft.y, draft.x, draft.cellsWide, options);
+						world->finishBuild();
 						setSelectionMode(UISettings::SelectionMode::Sector);
 						gSelectedSector = created.shuttle.sector;
 						commitDocumentEdit(std::move(undo));
@@ -3105,7 +3127,7 @@ namespace
 		}
 		if (ImGui::BeginPopupModal("Add Shuttle stop", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
 		{
-			if (!building || gShuttleDoorCandidates.empty()) ImGui::CloseCurrentPopup();
+			if (!world || gShuttleDoorCandidates.empty()) ImGui::CloseCurrentPopup();
 			else
 			{
 				string items;
@@ -3118,11 +3140,11 @@ namespace
 				if (ImGui::Button("Add stop"))
 				{
 					auto candidate = gShuttleDoorCandidates[(size_t)gSelectedShuttleDoorCandidate];
-					auto plan = building->planAddShuttleStop(candidate.sectorIndex, candidate.stopOffset);
+					auto plan = world->planAddShuttleStop(candidate.sectorIndex, candidate.stopOffset);
 					gShuttleDoorCandidates.clear();
 					ImGui::CloseCurrentPopup();
 					if (!plan.valid) core::addLogMessage("Shuttle editor", 0, core::LogLevel::Error, plan.diagnostic);
-					else queueShuttleEdit(building, plan);
+					else queueShuttleEdit(world, plan);
 				}
 				ImGui::SameLine();
 				if (ImGui::Button("Cancel"))
@@ -3173,7 +3195,7 @@ namespace
 				for (auto const& consequence : gPendingLayerDelete->consequences)
 					ImGui::BulletText("%s", consequence.c_str());
 			ImGui::Separator();
-			if (ImGui::Button("OK") && building
+			if (ImGui::Button("OK") && world
 				&& (gPendingLocationEdit || gPendingLiftEdit || gPendingShuttleEdit
 					|| gPendingLadderEdit || gPendingStairwellEdit || gPendingPlatformLiftEdit
 					|| gPendingWalkwayEdit || gPendingObjectMove || gPendingLayerDelete))
@@ -3192,15 +3214,15 @@ namespace
 				gPendingPlatformLiftEdit.reset(); gPendingWalkwayEdit.reset(); gPendingObjectMove.reset();
 				gPendingLayerDelete.reset();
 				ImGui::CloseCurrentPopup();
-				if (locationPlan) commitLocationEdit(building, *locationPlan);
-				else if (liftPlan) commitLiftEdit(building, *liftPlan);
-				else if (shuttlePlan) commitShuttleEdit(building, *shuttlePlan);
-				else if (ladderPlan) commitLadderEdit(building, *ladderPlan);
-				else if (stairwellPlan) commitStairwellEdit(building, *stairwellPlan);
-				else if (platformLiftPlan) commitPlatformLiftEdit(building, *platformLiftPlan);
-				else if (walkwayPlan) commitWalkwayEdit(building, *walkwayPlan);
-				else if (objectMove) commitObjectMove(building, *objectMove);
-				else if (layerDelete) commitLayerDelete(building, *layerDelete);
+				if (locationPlan) commitLocationEdit(world, *locationPlan);
+				else if (liftPlan) commitLiftEdit(world, *liftPlan);
+				else if (shuttlePlan) commitShuttleEdit(world, *shuttlePlan);
+				else if (ladderPlan) commitLadderEdit(world, *ladderPlan);
+				else if (stairwellPlan) commitStairwellEdit(world, *stairwellPlan);
+				else if (platformLiftPlan) commitPlatformLiftEdit(world, *platformLiftPlan);
+				else if (walkwayPlan) commitWalkwayEdit(world, *walkwayPlan);
+				else if (objectMove) commitObjectMove(world, *objectMove);
+				else if (layerDelete) commitLayerDelete(world, *layerDelete);
 			}
 			ImGui::SameLine();
 			if (ImGui::Button("Cancel"))
@@ -3227,12 +3249,12 @@ namespace
 		ClipboardObjectType type{};
 		bool cut{ false };
 		AgentClipboardPayload agent;
-		core::Building::CreateDoorOptions door;
-		core::Building::CreateBulkheadDoorOptions bulkheadDoor;
-		core::Building::CreateWindowOptions window;
-		core::Building::CreateForceBridgeOptions forceBridge{ 1, CORE_SIDE_LEFT, true, true, 1 };
-		core::Building::CreateLadderOptions ladder{ 0, false, true };
-		core::Building::CreateLiftOptions platformLift;
+		core::World::CreateDoorOptions door;
+		core::World::CreateBulkheadDoorOptions bulkheadDoor;
+		core::World::CreateWindowOptions window;
+		core::World::CreateForceBridgeOptions forceBridge{ 1, CORE_SIDE_LEFT, true, true, 1 };
+		core::World::CreateLadderOptions ladder{ 0, false, true };
+		core::World::CreateLiftOptions platformLift;
 		uint32_t width{ 1 }, height{ 1 };
 	};
 
@@ -3320,10 +3342,10 @@ namespace
 		return "Clear";
 	}
 
-	string uniqueAgentName(shared_ptr<const core::Building> const& building, string base)
+	string uniqueAgentName(shared_ptr<const core::World> const& world, string base)
 	{
 		set<string> names;
-		for (auto const& agent : building->getSimulationSnapshot().agents) names.insert(agent.name);
+		for (auto const& agent : world->getSimulationSnapshot().agents) names.insert(agent.name);
 		if (!names.contains(base)) return base;
 		for (uint32_t suffix = 2;; ++suffix)
 		{
@@ -3332,7 +3354,7 @@ namespace
 		}
 	}
 
-	optional<string> serializeClipboardSelection(shared_ptr<const core::Building> const& building,
+	optional<string> serializeClipboardSelection(shared_ptr<const core::World> const& world,
 		bool cut)
 	{
 		if (!hasClipboardSelection()) return nullopt;
@@ -3343,19 +3365,19 @@ namespace
 		if (gSelectedAgent)
 		{
 			auto name = cut ? gSelectedAgent->getName()
-				: uniqueAgentName(building, gSelectedAgent->getName() + " copy");
+				: uniqueAgentName(world, gSelectedAgent->getName() + " copy");
 			// The Agent group crosses the clipboard by name, never by its
-			// Building-local AgentGroupId: the next Building has never issued
+			// World-local AgentGroupId: the next World has never issued
 			// that ID and could not honour it (ADR 0006).
 			return makeAgentClipboardText(
-				makeAgentClipboardPayload(*building,
-					building->getAgentId(gSelectedAgent), name), cut);
+				makeAgentClipboardPayload(*world,
+					world->getAgentId(gSelectedAgent), name), cut);
 		}
 		else if (gSelectedSectorObject->getObjectType() == core::SectorObjectType::Door)
 		{
 			auto door = static_pointer_cast<const core::DoorSectorObject>(gSelectedSectorObject)->getDoor();
-			core::Building::CreateDoorOptions options;
-			if (!building->getSectorDoorOptions(door->getFrontSector()->getLayerIndex(),
+			core::World::CreateDoorOptions options;
+			if (!world->getSectorDoorOptions(door->getFrontSector()->getLayerIndex(),
 				gSelectedSectorObject->getCellY(), gSelectedSectorObject->getCellX(),
 				door->getCellsWide(), options))
 				throw runtime_error("The selected Door has no authored definition");
@@ -3378,8 +3400,8 @@ namespace
 			uint32_t index = ~0u;
 			for (uint32_t i = 0; i < owner->getNumObjects(); ++i)
 				if (owner->getObject(i) == gSelectedSectorObject) { index = i; break; }
-			core::Building::CreateBulkheadDoorOptions options;
-			if (index == ~0u || !building->getSectorBulkheadDoorOptions(owner->getIndex(), index, options))
+			core::World::CreateBulkheadDoorOptions options;
+			if (index == ~0u || !world->getSectorBulkheadDoorOptions(owner->getIndex(), index, options))
 				throw runtime_error("The selected Bulkhead Door has no authored definition");
 			output << YAML::Key << "type" << YAML::Value << "BulkheadDoor"
 				<< YAML::Key << "object" << YAML::Value << YAML::BeginMap
@@ -3393,10 +3415,10 @@ namespace
 		else if (gSelectedSectorObject->getObjectType() == core::SectorObjectType::Window)
 		{
 			auto window = static_pointer_cast<const core::WindowSectorObject>(gSelectedSectorObject)->getWindow();
-			core::Building::CreateWindowOptions options;
+			core::World::CreateWindowOptions options;
 			// A Window is authored on the front Layer of the pair it crosses, which is
 			// the Layer its definition is recorded against.
-			if (!building->getSectorWindowOptions(window->getFrontLayer(),
+			if (!world->getSectorWindowOptions(window->getFrontLayer(),
 				gSelectedSectorObject->getCellY(), gSelectedSectorObject->getCellX(),
 				window->getCellsWide(), window->getDecksHigh(), options))
 				throw runtime_error("The selected Window has no authored definition");
@@ -3420,8 +3442,8 @@ namespace
 			uint32_t index = ~0u;
 			for (uint32_t i = 0; i < owner->getNumObjects(); ++i)
 				if (owner->getObject(i) == gSelectedSectorObject) { index = i; break; }
-			core::Building::CreateForceBridgeOptions options;
-			if (index == ~0u || !building->getSectorForceBridgeOptions(owner->getIndex(), index, options))
+			core::World::CreateForceBridgeOptions options;
+			if (index == ~0u || !world->getSectorForceBridgeOptions(owner->getIndex(), index, options))
 				throw runtime_error("The selected Force Bridge has no authored definition");
 			output << YAML::Key << "type" << YAML::Value << "ForceBridge"
 				<< YAML::Key << "object" << YAML::Value << YAML::BeginMap
@@ -3439,8 +3461,8 @@ namespace
 			uint32_t index = ~0u;
 			for (uint32_t i = 0; i < owner->getNumObjects(); ++i)
 				if (owner->getObject(i) == gSelectedSectorObject) { index = i; break; }
-			core::Building::CreateLiftOptions options;
-			if (index == ~0u || !building->getPlatformLiftOptions(owner->getIndex(), index, options))
+			core::World::CreateLiftOptions options;
+			if (index == ~0u || !world->getPlatformLiftOptions(owner->getIndex(), index, options))
 				throw runtime_error("The selected PlatformLift has no authored definition");
 			output << YAML::Key << "type" << YAML::Value << "PlatformLift"
 				<< YAML::Key << "object" << YAML::Value << YAML::BeginMap
@@ -3455,8 +3477,8 @@ namespace
 			uint32_t index = ~0u;
 			for (uint32_t i = 0; i < owner->getNumObjects(); ++i)
 				if (owner->getObject(i) == gSelectedSectorObject) { index = i; break; }
-			core::Building::CreateLadderOptions options{};
-			if (index == ~0u || !building->getRoomLadderOptions(owner->getIndex(), index, options))
+			core::World::CreateLadderOptions options{};
+			if (index == ~0u || !world->getRoomLadderOptions(owner->getIndex(), index, options))
 				throw runtime_error("The selected Room Ladder has no authored definition");
 			output << YAML::Key << "type" << YAML::Value << "RoomLadder"
 				<< YAML::Key << "object" << YAML::Value << YAML::BeginMap
@@ -3637,18 +3659,18 @@ namespace
 		return definition;
 	}
 
-	bool removeClipboardSelection(shared_ptr<core::Building> const& building)
+	bool removeClipboardSelection(shared_ptr<core::World> const& world)
 	{
 		if (gSelectedAgent)
 		{
-			auto id = building->getAgentId(gSelectedAgent);
+			auto id = world->getAgentId(gSelectedAgent);
 			if (!id) return false;
 			auto selected = gSelectedAgent;
 			// Ticket #113: the cut takes the Agent and nothing else. Its Agent
 			// group stays defined behind it, which is what lets the clipboard
-			// payload it just wrote name a group the source Building still has.
+			// payload it just wrote name a group the source World still has.
 			string diagnostic;
-			if (!cutAgent(building, id, diagnostic))
+			if (!cutAgent(world, id, diagnostic))
 			{
 				reportEditorError("Agent editor", diagnostic);
 				return false;
@@ -3663,39 +3685,39 @@ namespace
 		for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
 		{
 			if (sector->getObject(i) != selected) continue;
-			if (!building->isSimulationPaused()) building->pauseSimulation();
+			if (!world->isSimulationPaused()) world->pauseSimulation();
 			gUISettings.worldPaused = true;
 			auto type = selected->getObjectType();
 			bool removed;
 			if (type == core::SectorObjectType::Lift)
 			{
-				building->applyPlatformLiftEdit(building->planRemovePlatformLift(sector->getIndex(), i));
+				world->applyPlatformLiftEdit(world->planRemovePlatformLift(sector->getIndex(), i));
 				removed = true;
 			}
 			else if (type == core::SectorObjectType::Marker)
 			{
 				string diagnostic;
-				removed = building->removeSectorMarker(sector->getIndex(), i, &diagnostic);
+				removed = world->removeSectorMarker(sector->getIndex(), i, &diagnostic);
 				if (!removed && !diagnostic.empty()) reportEditorError("Marker editor", diagnostic);
 			}
 			else removed = type == core::SectorObjectType::Door
-					? building->removeSectorDoor(sector->getIndex(), i)
+					? world->removeSectorDoor(sector->getIndex(), i)
 					: type == core::SectorObjectType::BulkheadDoor
-						? building->removeSectorBulkheadDoor(sector->getIndex(), i)
+						? world->removeSectorBulkheadDoor(sector->getIndex(), i)
 						: type == core::SectorObjectType::Window
-						? building->removeSectorWindow(sector->getIndex(), i)
+						? world->removeSectorWindow(sector->getIndex(), i)
 						: type == core::SectorObjectType::Ladder
-							? building->removeRoomLadder(sector->getIndex(), i)
+							? world->removeRoomLadder(sector->getIndex(), i)
 							: type == core::SectorObjectType::ForceBridge
-								? building->removeSectorForceBridge(sector->getIndex(), i)
-								: building->removeSectorWalkway(sector->getIndex(), i);
+								? world->removeSectorForceBridge(sector->getIndex(), i)
+								: world->removeSectorWalkway(sector->getIndex(), i);
 			if (!removed)
 			{
 				reportEditorError("Object editor", format("{} could not be deleted",
 					selected->getDescription()));
 				return false;
 			}
-			if (type == core::SectorObjectType::Marker) building->finishBuild();
+			if (type == core::SectorObjectType::Marker) world->finishBuild();
 			if (gHoveredSectorObject == selected) gHoveredSectorObject.reset();
 			gSelectedSectorObject.reset();
 			return true;
@@ -3703,15 +3725,15 @@ namespace
 		return false;
 	}
 
-	void restoreClipboardSnapshot(shared_ptr<core::Building>& building,
+	void restoreClipboardSnapshot(shared_ptr<core::World>& world,
 		DocumentSnapshot const& snapshot, bool wasPaused);
 
-	void copyOrCutSelection(shared_ptr<core::Building>& building, bool cut)
+	void copyOrCutSelection(shared_ptr<core::World>& world, bool cut)
 	{
-		if (!building || !hasClipboardSelection()) return;
+		if (!world || !hasClipboardSelection()) return;
 		try
 		{
-			auto text = serializeClipboardSelection(building, cut);
+			auto text = serializeClipboardSelection(world, cut);
 			if (!text) return;
 			auto previousClipboard = ImGui::GetClipboardText();
 			string const previousText = previousClipboard ? previousClipboard : "";
@@ -3723,14 +3745,14 @@ namespace
 				throw runtime_error("Could not update the system clipboard");
 			}
 			if (!cut) return;
-			auto undo = captureDocumentSnapshot(building);
+			auto undo = captureDocumentSnapshot(world);
 			if (!undo) throw runtime_error("Could not capture editor state");
-			bool const wasPaused = building->isSimulationPaused();
+			bool const wasPaused = world->isSimulationPaused();
 			try
 			{
-				if (!wasPaused) building->pauseSimulation();
+				if (!wasPaused) world->pauseSimulation();
 				gUISettings.worldPaused = true;
-				if (!removeClipboardSelection(building)) throw runtime_error("Could not remove the selected object");
+				if (!removeClipboardSelection(world)) throw runtime_error("Could not remove the selected object");
 				gConsumedCutClipboard.clear();
 				commitDocumentEdit(std::move(undo));
 			}
@@ -3738,7 +3760,7 @@ namespace
 			{
 				auto failure = current_exception();
 				ImGui::SetClipboardText(previousText.c_str());
-				restoreClipboardSnapshot(building, *undo, wasPaused);
+				restoreClipboardSnapshot(world, *undo, wasPaused);
 				rethrow_exception(failure);
 			}
 		}
@@ -3746,23 +3768,23 @@ namespace
 		catch (std::exception const& error) { reportClipboardError(error.what()); }
 	}
 
-	void restoreClipboardSnapshot(shared_ptr<core::Building>& building,
+	void restoreClipboardSnapshot(shared_ptr<core::World>& world,
 		DocumentSnapshot const& snapshot, bool wasPaused)
 	{
-		auto loaded = make_shared<core::Building>("Loading", 1, 1);
+		auto loaded = make_shared<core::World>("Loading", 1, 1);
 		auto serializer = core::YamlSerializer::fromString(snapshot.yaml);
 		serializer->deserialize();
 		core::SerializationWorkData workData;
 		loaded->deserialize(*serializer, workData);
-		building = std::move(loaded);
+		world = std::move(loaded);
 		clearDocumentState(false);
-		if (wasPaused) setWorldPaused(building, true);
+		if (wasPaused) setWorldPaused(world, true);
 		else gUISettings.worldPaused = false;
 	}
 
-	void pasteClipboard(shared_ptr<core::Building>& building, bool useCurrentCursor = false)
+	void pasteClipboard(shared_ptr<core::World>& world, bool useCurrentCursor = false)
 	{
-		if (!building) return;
+		if (!world) return;
 		if (gPegman.phase != PalettePhase::Home || gPaint.tool != PaintTool::None
 			|| gAgentMove.dragging || gObjectMove.dragging || gSectorResize.dragging
 			|| gPendingLocationEdit || gPendingLiftEdit || gPendingShuttleEdit
@@ -3797,14 +3819,14 @@ namespace
 		try
 		{
 			auto definition = parseClipboard(clipboardText);
-			auto world = *gLastWorldCursor;
-			if (world.x < 0.0f || world.y < 0.0f) throw runtime_error("Paste position is outside the building");
-			auto x = static_cast<uint32_t>(floor(world.x));
-			auto y = static_cast<uint32_t>(floor(world.y));
+			auto worldPosition = *gLastWorldCursor;
+			if (worldPosition.x < 0.0f || worldPosition.y < 0.0f) throw runtime_error("Paste position is outside the world");
+			auto x = static_cast<uint32_t>(floor(worldPosition.x));
+			auto y = static_cast<uint32_t>(floor(worldPosition.y));
 			if (definition.type == ClipboardObjectType::Agent)
 			{
-				auto sector = building->getSectorAtPosition(gUISettings.visibleLayer, world.x, world.y);
-				if (!locationHasCapacity(sector) || !sector->pointInBounds(world.x, world.y))
+				auto sector = world->getSectorAtPosition(gUISettings.visibleLayer, worldPosition.x, worldPosition.y);
+				if (!locationHasCapacity(sector) || !sector->pointInBounds(worldPosition.x, worldPosition.y))
 					throw runtime_error("Agents require a viable sector with available capacity");
 				if (y < sector->getCellY() || y >= sector->getCellY() + sector->getDecksHigh())
 					throw runtime_error("Agent deck is outside the sector");
@@ -3812,13 +3834,13 @@ namespace
 				auto payload = definition.agent;
 				if (definition.cut && !consumedCut)
 				{
-					auto unique = uniqueAgentName(building, payload.name);
+					auto unique = uniqueAgentName(world, payload.name);
 					if (unique != payload.name) throw runtime_error("An Agent with this name already exists");
 				}
-				else payload.name = uniqueAgentName(building,
+				else payload.name = uniqueAgentName(world,
 					consumedCut ? payload.name + " copy" : payload.name);
 				float halfWidth = CORE_AGENT_MAX_WIDTH * 0.5f;
-				float localX = clamp(world.x - sector->getPosition().x, halfWidth,
+				float localX = clamp(worldPosition.x - sector->getPosition().x, halfWidth,
 					max(halfWidth, sector->getSize().x - halfWidth));
 				// Arming judges the Agent group and Agent tag registry identity before
 				// anything is deferred, so an unusable payload is refused while the
@@ -3826,21 +3848,21 @@ namespace
 				// they left it. Nothing is written by arming: the Agent, group and tag
 				// assignments only exist if the fall is allowed to land.
 				string diagnostic;
-				if (!armAgentPlacement(gPegman.pastedAgent, *building, payload, sector,
+				if (!armAgentPlacement(gPegman.pastedAgent, *world, payload, sector,
 					y - sector->getCellY(), localX, diagnostic))
 					throw runtime_error(diagnostic);
-				if (!building->isSimulationPaused()) building->pauseSimulation();
+				if (!world->isSimulationPaused()) world->pauseSimulation();
 				gUISettings.worldPaused = true;
 				gPegman.phase = PalettePhase::Falling;
 				gPegman.item = PaletteItem::Agent;
 				gPegman.sector = sector;
 				gPegman.deckOffset = y - sector->getCellY();
 				gPegman.localX = localX;
-				gPegman.feetY = world.y;
+				gPegman.feetY = worldPosition.y;
 				gPegman.floorY = static_cast<float>(y);
 				gPegman.velocity = 0.0f;
 				if (definition.cut) gConsumedCutClipboard = clipboardText;
-				if (gPegman.feetY <= gPegman.floorY) landPegman(building);
+				if (gPegman.feetY <= gPegman.floorY) landPegman(world);
 				return;
 			}
 
@@ -3850,68 +3872,68 @@ namespace
 			if (definition.type == ClipboardObjectType::Door)
 			{
 				uint32_t landingX, landingWidth;
-				if (building->getLiftLandingGeometry(gUISettings.visibleLayer + 1, y, x, landingX, landingWidth))
+				if (world->getLiftLandingGeometry(gUISettings.visibleLayer + 1, y, x, landingX, landingWidth))
 				{
 					x = landingX;
 					definition.door = {};
 					definition.door.width = landingWidth;
 				}
-				if (!building->canAddCorridorDoor(gUISettings.visibleLayer, y, x, definition.door, &diagnostic))
+				if (!world->canAddCorridorDoor(gUISettings.visibleLayer, y, x, definition.door, &diagnostic))
 					throw runtime_error(diagnostic);
 			}
 			else if (definition.type == ClipboardObjectType::BulkheadDoor)
 			{
-				if (!building->canAddSectorBulkheadDoor(gUISettings.visibleLayer, y, x,
+				if (!world->canAddSectorBulkheadDoor(gUISettings.visibleLayer, y, x,
 					CORE_SIDE_LEFT, definition.bulkheadDoor, &diagnostic))
 					throw runtime_error(diagnostic);
 			}
 			else if (definition.type == ClipboardObjectType::Window)
 			{
-				if (!building->canAddSectorWindow(gUISettings.visibleLayer, y, x,
+				if (!world->canAddSectorWindow(gUISettings.visibleLayer, y, x,
 					definition.width, definition.height, &diagnostic)) throw runtime_error(diagnostic);
 			}
 			else if (definition.type == ClipboardObjectType::Walkway)
 			{
-				markerSector = building->getSectorAtPosition(gUISettings.visibleLayer, world.x, world.y);
+				markerSector = world->getSectorAtPosition(gUISettings.visibleLayer, worldPosition.x, worldPosition.y);
 				auto room = dynamic_pointer_cast<const core::Location>(markerSector);
-				if (!room || room->isCorridor() || !markerSector->pointInBounds(world.x, world.y))
+				if (!room || room->isCorridor() || !markerSector->pointInBounds(worldPosition.x, worldPosition.y))
 					throw runtime_error("Walkways can only be placed in Rooms");
-				if (!building->canAddSectorWalkway(markerSector->getIndex(),
+				if (!world->canAddSectorWalkway(markerSector->getIndex(),
 					y - markerSector->getCellY(), x - markerSector->getCellX(), &diagnostic))
 					throw runtime_error(diagnostic);
 			}
 			else if (definition.type == ClipboardObjectType::ForceBridge)
 			{
-				markerSector = building->getSectorAtPosition(gUISettings.visibleLayer, world.x, world.y);
+				markerSector = world->getSectorAtPosition(gUISettings.visibleLayer, worldPosition.x, worldPosition.y);
 				auto room = dynamic_pointer_cast<const core::Location>(markerSector);
-				if (!room || room->isCorridor() || !markerSector->pointInBounds(world.x, world.y))
+				if (!room || room->isCorridor() || !markerSector->pointInBounds(worldPosition.x, worldPosition.y))
 					throw runtime_error("Force Bridges can only be placed in Rooms");
-				if (!building->canAddSectorForceBridge(markerSector->getIndex(),
+				if (!world->canAddSectorForceBridge(markerSector->getIndex(),
 					y - markerSector->getCellY(), x - markerSector->getCellX(),
 					definition.forceBridge, &diagnostic)) throw runtime_error(diagnostic);
 			}
 			else if (definition.type == ClipboardObjectType::RoomLadder)
 			{
-				markerSector = building->getSectorAtPosition(gUISettings.visibleLayer, world.x, world.y);
+				markerSector = world->getSectorAtPosition(gUISettings.visibleLayer, worldPosition.x, worldPosition.y);
 				auto room = dynamic_pointer_cast<const core::Location>(markerSector);
-				if (!room || room->isCorridor() || !markerSector->pointInBounds(world.x, world.y))
+				if (!room || room->isCorridor() || !markerSector->pointInBounds(worldPosition.x, worldPosition.y))
 					throw runtime_error("Room Ladders can only be placed in Rooms");
-				if (!building->canAddRoomLadder(markerSector->getIndex(),
+				if (!world->canAddRoomLadder(markerSector->getIndex(),
 					y - markerSector->getCellY(), x - markerSector->getCellX(), nullptr, &diagnostic))
 					throw runtime_error(diagnostic);
 			}
 			else if (definition.type == ClipboardObjectType::PlatformLift)
 			{
-				markerSector = building->getSectorAtPosition(gUISettings.visibleLayer, world.x, world.y);
+				markerSector = world->getSectorAtPosition(gUISettings.visibleLayer, worldPosition.x, worldPosition.y);
 				auto room = dynamic_pointer_cast<const core::Location>(markerSector);
-				if (!room || room->isCorridor() || !markerSector->pointInBounds(world.x, world.y))
+				if (!room || room->isCorridor() || !markerSector->pointInBounds(worldPosition.x, worldPosition.y))
 					throw runtime_error("PlatformLifts can only be placed in Rooms");
 				auto xOffset = x - room->getCellX();
 				bool valid = false;
-				for (auto const& candidate : building->getPlatformLiftStopCandidates(room->getIndex(), xOffset))
+				for (auto const& candidate : world->getPlatformLiftStopCandidates(room->getIndex(), xOffset))
 				{
 					definition.platformLift.stopOffsets = { 0, candidate.deckOffset };
-					if (building->canAddPlatformLift(room->getIndex(), xOffset,
+					if (world->canAddPlatformLift(room->getIndex(), xOffset,
 						definition.platformLift, &diagnostic)) { valid = true; break; }
 				}
 				if (!valid) throw runtime_error(diagnostic.empty()
@@ -3919,71 +3941,71 @@ namespace
 			}
 			else
 			{
-				markerSector = building->getSectorAtPosition(gUISettings.visibleLayer, world.x, world.y);
-				if (!markerSector || !markerSector->pointInBounds(world.x, world.y))
+				markerSector = world->getSectorAtPosition(gUISettings.visibleLayer, worldPosition.x, worldPosition.y);
+				if (!markerSector || !markerSector->pointInBounds(worldPosition.x, worldPosition.y))
 					throw runtime_error("Markers require a viable sector");
-				markerOffset = world.x - markerSector->getPosition().x;
-				if (!building->canAddSectorMarker(markerSector->getIndex(),
+				markerOffset = worldPosition.x - markerSector->getPosition().x;
+				if (!world->canAddSectorMarker(markerSector->getIndex(),
 					y - markerSector->getCellY(), markerOffset, &diagnostic)) throw runtime_error(diagnostic);
 			}
 
-			auto undo = captureDocumentSnapshot(building);
+			auto undo = captureDocumentSnapshot(world);
 			if (!undo) throw runtime_error("Could not capture editor state");
-			bool wasPaused = building->isSimulationPaused();
+			bool wasPaused = world->isSimulationPaused();
 			try
 			{
-				if (!wasPaused) building->pauseSimulation();
+				if (!wasPaused) world->pauseSimulation();
 				gUISettings.worldPaused = true;
 				shared_ptr<const core::SectorObject> created;
 				if (definition.type == ClipboardObjectType::Door)
 				{
-					auto result = building->addSectorDoor(gUISettings.visibleLayer, y, x, definition.door);
+					auto result = world->addSectorDoor(gUISettings.visibleLayer, y, x, definition.door);
 					created = result.door.sector->getObject(result.door.index);
 				}
 				else if (definition.type == ClipboardObjectType::BulkheadDoor)
 				{
-					auto result = building->addSectorBulkheadDoor(gUISettings.visibleLayer,
+					auto result = world->addSectorBulkheadDoor(gUISettings.visibleLayer,
 						y, x, CORE_SIDE_LEFT, definition.bulkheadDoor);
 					created = result.door.sector->getObject(result.door.index);
 				}
 				else if (definition.type == ClipboardObjectType::Window)
 				{
-					auto result = building->addSectorWindow(gUISettings.visibleLayer, y, x,
+					auto result = world->addSectorWindow(gUISettings.visibleLayer, y, x,
 						definition.width, definition.height, definition.window);
 					created = result.window.sector->getObject(result.window.index);
 				}
 				else if (definition.type == ClipboardObjectType::Walkway)
 				{
-					auto result = building->addSectorWalkway(markerSector->getIndex(),
+					auto result = world->addSectorWalkway(markerSector->getIndex(),
 						y - markerSector->getCellY(), x - markerSector->getCellX());
 					created = result.sector->getObject(result.index);
 				}
 				else if (definition.type == ClipboardObjectType::ForceBridge)
 				{
-					auto result = building->addSectorForceBridge(markerSector->getIndex(),
+					auto result = world->addSectorForceBridge(markerSector->getIndex(),
 						y - markerSector->getCellY(), x - markerSector->getCellX(),
 						definition.forceBridge);
 					created = result.forceBridge.sector->getObject(result.forceBridge.index);
 				}
 				else if (definition.type == ClipboardObjectType::RoomLadder)
 				{
-					auto result = building->addRoomLadder(markerSector->getIndex(),
+					auto result = world->addRoomLadder(markerSector->getIndex(),
 						y - markerSector->getCellY(), x - markerSector->getCellX(), definition.ladder);
 					created = result.ladder.sector->getObject(result.ladder.index);
 				}
 				else if (definition.type == ClipboardObjectType::PlatformLift)
 				{
-					auto result = building->addSectorPlatformLift(markerSector->getIndex(), 0,
+					auto result = world->addSectorPlatformLift(markerSector->getIndex(), 0,
 						x - markerSector->getCellX(), definition.platformLift);
 					created = result.lift.sector->getObject(result.lift.index);
 				}
 				else
 				{
-					auto result = building->addSectorMarker(markerSector->getIndex(),
+					auto result = world->addSectorMarker(markerSector->getIndex(),
 						y - markerSector->getCellY(), markerOffset);
 					created = result.sector->getObject(result.index);
 				}
-				building->finishBuild();
+				world->finishBuild();
 				setSelectionMode(UISettings::SelectionMode::Object);
 				gSelectedAgent = nullptr;
 				gSelectedSector.reset();
@@ -3994,7 +4016,7 @@ namespace
 			catch (...)
 			{
 				auto failure = current_exception();
-				restoreClipboardSnapshot(building, *undo, wasPaused);
+				restoreClipboardSnapshot(world, *undo, wasPaused);
 				rethrow_exception(failure);
 			}
 		}
@@ -4003,20 +4025,20 @@ namespace
 	}
 }
 
-bool requestApplicationClose(shared_ptr<core::Building>& building)
+bool requestApplicationClose(shared_ptr<core::World>& world)
 {
-	if (!isDocumentStale(building)) return true;
-	requestFileAction(PendingFileAction::Exit, building);
+	if (!isDocumentStale(world)) return true;
+	requestFileAction(PendingFileAction::Exit, world);
 	return false;
 }
 
-void resetWorldSimulation(shared_ptr<core::Building> const& building)
+void resetWorldSimulation(shared_ptr<core::World> const& world)
 {
 	try
 	{
-		building->resetSimulation();
+		world->resetSimulation();
 		clearDocumentState(false);
-		gUISettings.worldPaused = building->isSimulationPaused();
+		gUISettings.worldPaused = world->isSimulationPaused();
 	}
 	catch (std::exception const& error)
 	{
@@ -4025,35 +4047,35 @@ void resetWorldSimulation(shared_ptr<core::Building> const& building)
 	}
 }
 
-void handleShortcuts(shared_ptr<core::Building>& building)
+void handleShortcuts(shared_ptr<core::World>& world)
 {
 	if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_N, 0, ImGuiInputFlags_RouteGlobalLow))
-		requestFileAction(PendingFileAction::New, building);
+		requestFileAction(PendingFileAction::New, world);
 	if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_O, 0, ImGuiInputFlags_RouteGlobalLow))
-		requestFileAction(PendingFileAction::Open, building);
-	if (isDocumentStale(building)
+		requestFileAction(PendingFileAction::Open, world);
+	if (isDocumentStale(world)
 		&& ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_S, 0, ImGuiInputFlags_RouteGlobalLow))
-		saveBuilding(building, false);
+		saveWorld(world, false);
 
-	if (!building) return;
+	if (!world) return;
 
 	bool const clipboardShortcutAvailable = !ImGui::IsAnyItemActive() && !ImGui::IsAnyItemFocused();
 	if (clipboardShortcutAvailable
 		&& ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_X, 0, ImGuiInputFlags_RouteGlobalLow))
-		copyOrCutSelection(building, true);
+		copyOrCutSelection(world, true);
 	if (clipboardShortcutAvailable
 		&& ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_C, 0, ImGuiInputFlags_RouteGlobalLow))
-		copyOrCutSelection(building, false);
+		copyOrCutSelection(world, false);
 	if (clipboardShortcutAvailable
 		&& ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_V, 0, ImGuiInputFlags_RouteGlobalLow))
 	{
-		pasteClipboard(building, true);
+		pasteClipboard(world, true);
 	}
 
 	if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Z, 0, ImGuiInputFlags_RouteGlobalLow))
-		restoreDocumentSnapshot(building, false);
+		restoreDocumentSnapshot(world, false);
 	if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Y, 0, ImGuiInputFlags_RouteGlobalLow))
-		restoreDocumentSnapshot(building, true);
+		restoreDocumentSnapshot(world, true);
 
 	if (gSelectingAgentPathDestination
 		&& ImGui::Shortcut(ImGuiKey_Escape, 0, ImGuiInputFlags_RouteGlobalLow))
@@ -4064,7 +4086,7 @@ void handleShortcuts(shared_ptr<core::Building>& building)
 	if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_P, 0, ImGuiInputFlags_RouteGlobalLow)
 		&& gSelectedAgent && !ImGui::IsAnyItemActive() && !ImGui::IsAnyItemFocused())
 	{
-		beginAgentPathSelection(building);
+		beginAgentPathSelection(world);
 	}
 
 	// Start or stop the simulation
@@ -4072,7 +4094,7 @@ void handleShortcuts(shared_ptr<core::Building>& building)
 	{
 		if (!ImGui::IsAnyItemActive() && !ImGui::IsAnyItemFocused())
 		{
-			setWorldPaused(building, !gUISettings.worldPaused);
+			setWorldPaused(world, !gUISettings.worldPaused);
 		}
 	}
 
@@ -4081,7 +4103,7 @@ void handleShortcuts(shared_ptr<core::Building>& building)
 	{
 		if (!ImGui::IsAnyItemActive() && !ImGui::IsAnyItemFocused())
 		{
-			resetWorldSimulation(building);
+			resetWorldSimulation(world);
 		}
 	}
 
@@ -4103,37 +4125,37 @@ void handleShortcuts(shared_ptr<core::Building>& building)
 			{
 				if (gSelectedSector->getType() == core::SectorType::Lift)
 				{
-					auto plan = building->planRemoveLift(gSelectedSector->getIndex());
+					auto plan = world->planRemoveLift(gSelectedSector->getIndex());
 					if (!plan.valid) core::addLogMessage("Lift editor", 0, core::LogLevel::Error, plan.diagnostic);
-					else queueLiftEdit(building, plan);
+					else queueLiftEdit(world, plan);
 				}
 				else if (gSelectedSector->getType() == core::SectorType::Shuttle)
 				{
-					auto plan = building->planRemoveShuttle(gSelectedSector->getIndex());
+					auto plan = world->planRemoveShuttle(gSelectedSector->getIndex());
 					if (!plan.valid) core::addLogMessage("Shuttle editor", 0, core::LogLevel::Error, plan.diagnostic);
-					else queueShuttleEdit(building, plan);
+					else queueShuttleEdit(world, plan);
 				}
 				else if (gSelectedSector->getType() == core::SectorType::Ladder)
 				{
-					auto plan = building->planRemoveLadder(gSelectedSector->getIndex());
+					auto plan = world->planRemoveLadder(gSelectedSector->getIndex());
 					if (!plan.valid) core::addLogMessage("Ladder editor", 0, core::LogLevel::Error, plan.diagnostic);
-					else queueLadderEdit(building, plan);
+					else queueLadderEdit(world, plan);
 				}
 				else if (gSelectedSector->getType() == core::SectorType::Stairwell)
 				{
-					auto plan = building->planRemoveStairwell(gSelectedSector->getIndex());
+					auto plan = world->planRemoveStairwell(gSelectedSector->getIndex());
 					if (!plan.valid) core::addLogMessage("Stairwell editor", 0, core::LogLevel::Error, plan.diagnostic);
-					else queueStairwellEdit(building, plan);
+					else queueStairwellEdit(world, plan);
 				}
 				else if (gSelectedSector->getType() == core::SectorType::Staircase)
 				{
-					auto plan = building->planRemoveStaircase(gSelectedSector->getIndex());
+					auto plan = world->planRemoveStaircase(gSelectedSector->getIndex());
 					if (!plan.valid) core::addLogMessage("Staircase editor", 0, core::LogLevel::Error, plan.diagnostic);
 					else try
 					{
-						auto undo = captureDocumentSnapshot(building);
-						if (!building->isSimulationPaused()) building->pauseSimulation();
-						building->applyStaircaseEdit(plan); commitDocumentEdit(std::move(undo)); clearSelections();
+						auto undo = captureDocumentSnapshot(world);
+						if (!world->isSimulationPaused()) world->pauseSimulation();
+						world->applyStaircaseEdit(plan); commitDocumentEdit(std::move(undo)); clearSelections();
 					}
 					catch (std::exception const& error) { core::addLogMessage("Staircase editor", 0, core::LogLevel::Error, error.what()); }
 				}
@@ -4142,38 +4164,38 @@ void handleShortcuts(shared_ptr<core::Building>& building)
 					// A Background exists to be looked into, so deleting it takes the
 					// Windows looking into it with it.  The plan names them and the shared
 					// confirmation popup spells the cascade out before anything is applied.
-					auto plan = building->planRemoveBackground(gSelectedSector->getIndex());
+					auto plan = world->planRemoveBackground(gSelectedSector->getIndex());
 					if (!plan.valid)
 						core::addLogMessage("Background editor", 0, core::LogLevel::Error, plan.diagnostic);
-					else queueLocationEdit(building, plan);
+					else queueLocationEdit(world, plan);
 				}
 				else if (gSelectedSector->getType() == core::SectorType::Facade)
 				{
 					// A Facade is occupiable like a Room, so the plan names the Agents
 					// inside and the hosted objects which go with it before anything
 					// is applied (ticket #53).
-					auto plan = building->planRemoveFacade(gSelectedSector->getIndex());
+					auto plan = world->planRemoveFacade(gSelectedSector->getIndex());
 					if (!plan.valid)
 						core::addLogMessage("Facade editor", 0, core::LogLevel::Error, plan.diagnostic);
-					else queueLocationEdit(building, plan);
+					else queueLocationEdit(world, plan);
 				}
 				else
 				{
-					auto plan = building->planRemoveLocation(gSelectedSector->getIndex());
+					auto plan = world->planRemoveLocation(gSelectedSector->getIndex());
 					if (!plan.valid)
 						core::addLogMessage("Sector editor", 0, core::LogLevel::Error, plan.diagnostic);
-					else queueLocationEdit(building, plan);
+					else queueLocationEdit(world, plan);
 				}
 			}
 			else if (gSelectedAgent)
 			{
-				auto id = building->getAgentId(gSelectedAgent);
+				auto id = world->getAgentId(gSelectedAgent);
 				if (id)
 				{
-					auto undo = captureDocumentSnapshot(building);
+					auto undo = captureDocumentSnapshot(world);
 					auto selected = gSelectedAgent;
 					selected->clearPath();
-					auto const removal = building->removeAgent(id);
+					auto const removal = world->removeAgent(id);
 					if (removal.removed)
 					{
 						if (gHoveredAgent == selected) gHoveredAgent = nullptr;
@@ -4198,17 +4220,17 @@ void handleShortcuts(shared_ptr<core::Building>& building)
 					|| gSelectedSectorObject->getObjectType() == core::SectorObjectType::Lift))
 			{
 				uint32_t liftIndex, stopIndex;
-				if (building->isLiftOwnedDoor(gSelectedSectorObject, &liftIndex, &stopIndex))
+				if (world->isLiftOwnedDoor(gSelectedSectorObject, &liftIndex, &stopIndex))
 				{
-					auto plan = building->planRemoveLiftStop(liftIndex, stopIndex);
+					auto plan = world->planRemoveLiftStop(liftIndex, stopIndex);
 					if (!plan.valid) reportEditorError("Lift editor", plan.diagnostic);
-					else queueLiftEdit(building, plan);
+					else queueLiftEdit(world, plan);
 				}
-				else if (building->isShuttleOwnedDoor(gSelectedSectorObject, &liftIndex, &stopIndex))
+				else if (world->isShuttleOwnedDoor(gSelectedSectorObject, &liftIndex, &stopIndex))
 				{
-					auto plan = building->planRemoveShuttleStop(liftIndex, stopIndex);
+					auto plan = world->planRemoveShuttleStop(liftIndex, stopIndex);
 					if (!plan.valid) reportEditorError("Shuttle editor", plan.diagnostic);
-					else queueShuttleEdit(building, plan);
+					else queueShuttleEdit(world, plan);
 				}
 				else if (gSelectedSectorObject->getObjectType() == core::SectorObjectType::Lift)
 				{
@@ -4216,9 +4238,9 @@ void handleShortcuts(shared_ptr<core::Building>& building)
 					uint32_t index = ~0u;
 					for (uint32_t i = 0; i < room->getNumObjects(); ++i)
 						if (room->getObject(i) == gSelectedSectorObject) { index = i; break; }
-					auto plan = building->planRemovePlatformLift(room->getIndex(), index);
+					auto plan = world->planRemovePlatformLift(room->getIndex(), index);
 					if (!plan.valid) reportEditorError("PlatformLift editor", plan.diagnostic);
-					else queuePlatformLiftEdit(building, plan);
+					else queuePlatformLiftEdit(world, plan);
 				}
 				else if (gSelectedSectorObject->getObjectType() == core::SectorObjectType::Walkway)
 				{
@@ -4226,40 +4248,40 @@ void handleShortcuts(shared_ptr<core::Building>& building)
 					uint32_t index = ~0u;
 					for (uint32_t i = 0; i < room->getNumObjects(); ++i)
 						if (room->getObject(i) == gSelectedSectorObject) { index = i; break; }
-					auto plan = building->planRemoveSectorWalkway(room->getIndex(), index);
+					auto plan = world->planRemoveSectorWalkway(room->getIndex(), index);
 					if (!plan.valid) reportEditorError("Walkway editor", plan.diagnostic);
-					else queueWalkwayEdit(building, plan);
+					else queueWalkwayEdit(world, plan);
 				}
 				else try
 				{
-					auto undo = captureDocumentSnapshot(building);
+					auto undo = captureDocumentSnapshot(world);
 					auto selected = gSelectedSectorObject;
 					auto sector = selected->getSector();
 					for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
 					{
 						if (sector->getObject(i) != selected) continue;
-						if (!building->isSimulationPaused()) building->pauseSimulation();
+						if (!world->isSimulationPaused()) world->pauseSimulation();
 						gUISettings.worldPaused = true;
 						auto type = selected->getObjectType();
 						bool removed{ false };
 						if (type == core::SectorObjectType::Marker)
 						{
 							string diagnostic;
-							removed = building->removeSectorMarker(sector->getIndex(), i, &diagnostic);
+							removed = world->removeSectorMarker(sector->getIndex(), i, &diagnostic);
 							if (!removed && !diagnostic.empty())
 								reportEditorError("Marker editor", diagnostic);
 						}
 						else removed = type == core::SectorObjectType::Door
-								? building->removeSectorDoor(sector->getIndex(), i)
+								? world->removeSectorDoor(sector->getIndex(), i)
 								: type == core::SectorObjectType::BulkheadDoor
-									? building->removeSectorBulkheadDoor(sector->getIndex(), i)
+									? world->removeSectorBulkheadDoor(sector->getIndex(), i)
 									: type == core::SectorObjectType::Window
-									? building->removeSectorWindow(sector->getIndex(), i)
+									? world->removeSectorWindow(sector->getIndex(), i)
 									: type == core::SectorObjectType::Ladder
-										? building->removeRoomLadder(sector->getIndex(), i)
+										? world->removeRoomLadder(sector->getIndex(), i)
 										: type == core::SectorObjectType::ForceBridge
-											? building->removeSectorForceBridge(sector->getIndex(), i)
-											: building->removeSectorWalkway(sector->getIndex(), i);
+											? world->removeSectorForceBridge(sector->getIndex(), i)
+											: world->removeSectorWalkway(sector->getIndex(), i);
 						if (!removed)
 							reportEditorError("Object editor", format("{} could not be deleted",
 								selected->getDescription()));
@@ -4269,7 +4291,7 @@ void handleShortcuts(shared_ptr<core::Building>& building)
 							gHoveredAgent = nullptr;
 							gSelectedAgent = nullptr;
 							gSelectedSectorObject.reset();
-							if (type == core::SectorObjectType::Marker) building->finishBuild();
+							if (type == core::SectorObjectType::Marker) world->finishBuild();
 							commitDocumentEdit(std::move(undo));
 						}
 						break;
@@ -4302,9 +4324,9 @@ void handleShortcuts(shared_ptr<core::Building>& building)
 	// View
 	if (ImGui::Shortcut(ImGuiKey_F2, 0, ImGuiInputFlags_RouteGlobalLow))
 	{
-		if (building)
+		if (world)
 		{
-			auto const layerCount = building->getLayerCount();
+			auto const layerCount = world->getLayerCount();
 			auto const current = static_cast<uint32_t>(std::clamp(gUISettings.visibleLayer, 0,
 				static_cast<int>(layerCount) - 1));
 			gUISettings.visibleLayer = static_cast<int>((current + 1) % layerCount);
@@ -4326,7 +4348,7 @@ void handleShortcuts(shared_ptr<core::Building>& building)
 }
 
 
-void handleWorldInteraction(shared_ptr<core::Building> building,
+void handleWorldInteraction(shared_ptr<core::World> world,
 	shared_ptr<const core::Graph> graph, MouseButtonStatus const& mouseStatus)
 {
 	if (!gPegmanConsumesLeftMouse
@@ -4340,7 +4362,7 @@ void handleWorldInteraction(shared_ptr<core::Building> building,
 				auto path = graph->calculatePath(gSelectedAgent, nullptr, gHoveredVertex);
 				if (path)
 				{
-					if (applyAgentPathEdit(building, gSelectedAgent, std::move(path), true, true))
+					if (applyAgentPathEdit(world, gSelectedAgent, std::move(path), true, true))
 						endAgentPathSelection();
 				}
 				else
@@ -4354,7 +4376,7 @@ void handleWorldInteraction(shared_ptr<core::Building> building,
 				if (gSelectedAgent)
 				{
 					auto path = graph->calculatePath(gSelectedAgent, nullptr, gHoveredVertex);
-					applyAgentPathEdit(building, gSelectedAgent, std::move(path), false, false);
+					applyAgentPathEdit(world, gSelectedAgent, std::move(path), false, false);
 				}
 			}
 			else
@@ -4372,8 +4394,8 @@ void handleWorldInteraction(shared_ptr<core::Building> building,
 		}
 		else if (gHoveredInteractionPoint && !gUISettings.worldPaused && gSelectedAgent)
 		{
-			auto actor = building->getAgentId(gSelectedAgent);
-			if (actor) building->requestInteraction(gHoveredInteractionPoint, actor);
+			auto actor = world->getAgentId(gSelectedAgent);
+			if (actor) world->requestInteraction(gHoveredInteractionPoint, actor);
 		}
 		else if (gHoveredSectorObject)
 		{
@@ -4410,7 +4432,7 @@ void handleWorldInteraction(shared_ptr<core::Building> building,
 	}
 }
 
-void handleContinuousKeyboardInput(std::shared_ptr<core::Building> /* building */, uint64_t updateTimeMicros)
+void handleContinuousKeyboardInput(std::shared_ptr<core::World> /* world */, uint64_t updateTimeMicros)
 {
 	const float MoveSpeed{ 500.0f };
 
@@ -4547,7 +4569,7 @@ void initializeRecentFiles(filesystem::path const& filepath)
 
 ImVec2 gMainMenuWindowSize;
 
-void renderMenu(shared_ptr<core::Building>& building)
+void renderMenu(shared_ptr<core::World>& world)
 {
 	optional<string> recentFileToOpen;
 	if (ImGui::BeginMainMenuBar())
@@ -4555,9 +4577,9 @@ void renderMenu(shared_ptr<core::Building>& building)
 		if (ImGui::BeginMenu("File"))
 		{
 			if (ImGui::MenuItem("New", "Ctrl+N"))
-				requestFileAction(PendingFileAction::New, building);
+				requestFileAction(PendingFileAction::New, world);
 			if (ImGui::MenuItem("Open...", "Ctrl+O"))
-				requestFileAction(PendingFileAction::Open, building);
+				requestFileAction(PendingFileAction::Open, world);
 			if (ImGui::BeginMenu("Open Recent", !gRecentFiles.empty()))
 			{
 				for (auto const& filepath : gRecentFiles.entries())
@@ -4567,17 +4589,17 @@ void renderMenu(shared_ptr<core::Building>& building)
 				ImGui::EndMenu();
 			}
 			ImGui::Separator();
-			if (ImGui::MenuItem("Save", "Ctrl+S", false, isDocumentStale(building)))
-				saveBuilding(building, false);
-			if (ImGui::MenuItem("Save All", nullptr, false, isDocumentStale(building)))
-				saveAllOpenDocuments(building);
-			if (ImGui::MenuItem("Save As...", nullptr, false, building != nullptr))
-				saveBuilding(building, true);
-			if (ImGui::MenuItem("Close", nullptr, false, building != nullptr))
-				requestFileAction(PendingFileAction::Close, building);
+			if (ImGui::MenuItem("Save", "Ctrl+S", false, isDocumentStale(world)))
+				saveWorld(world, false);
+			if (ImGui::MenuItem("Save All", nullptr, false, isDocumentStale(world)))
+				saveAllOpenDocuments(world);
+			if (ImGui::MenuItem("Save As...", nullptr, false, world != nullptr))
+				saveWorld(world, true);
+			if (ImGui::MenuItem("Close", nullptr, false, world != nullptr))
+				requestFileAction(PendingFileAction::Close, world);
 			ImGui::Separator();
 			if (ImGui::MenuItem("Exit"))
-				requestFileAction(PendingFileAction::Exit, building);
+				requestFileAction(PendingFileAction::Exit, world);
 
 			ImGui::EndMenu();
 		}
@@ -4585,18 +4607,18 @@ void renderMenu(shared_ptr<core::Building>& building)
 		if (ImGui::BeginMenu("Edit"))
 		{
 			if (ImGui::MenuItem("Undo", "Ctrl+Z", false,
-				building != nullptr && gBuildingDocumentHistory.canUndo()))
-				restoreDocumentSnapshot(building, false);
+				world != nullptr && gWorldDocumentHistory.canUndo()))
+				restoreDocumentSnapshot(world, false);
 			if (ImGui::MenuItem("Redo", "Ctrl+Y", false,
-				building != nullptr && gBuildingDocumentHistory.canRedo()))
-				restoreDocumentSnapshot(building, true);
+				world != nullptr && gWorldDocumentHistory.canRedo()))
+				restoreDocumentSnapshot(world, true);
 			ImGui::Separator();
-			bool const canCopy = building != nullptr && hasClipboardSelection();
-			if (ImGui::MenuItem("Cut", "Ctrl+X", false, canCopy)) copyOrCutSelection(building, true);
-			if (ImGui::MenuItem("Copy", "Ctrl+C", false, canCopy)) copyOrCutSelection(building, false);
+			bool const canCopy = world != nullptr && hasClipboardSelection();
+			if (ImGui::MenuItem("Cut", "Ctrl+X", false, canCopy)) copyOrCutSelection(world, true);
+			if (ImGui::MenuItem("Copy", "Ctrl+C", false, canCopy)) copyOrCutSelection(world, false);
 			auto clipboard = ImGui::GetClipboardText();
 			if (ImGui::MenuItem("Paste", "Ctrl+V", false,
-				building != nullptr && clipboard && *clipboard)) pasteClipboard(building);
+				world != nullptr && clipboard && *clipboard)) pasteClipboard(world);
 			ImGui::Separator();
 
 			if (ImGui::BeginMenu("Selection"))
@@ -4673,7 +4695,7 @@ void renderMenu(shared_ptr<core::Building>& building)
 
 			ImGui::MenuItem("Grid", "G", &gUISettings.renderGrid);
 			ImGui::MenuItem("Show next layer wireframe", "F3", &gUISettings.renderNextLayerWireframe);
-			ImGui::MenuItem("Building graph", "F4", &gUISettings.renderGraph);
+			ImGui::MenuItem("World graph", "F4", &gUISettings.renderGraph);
 			ImGui::MenuItem("Highlight nearest vertex", "F5", &gUISettings.highlightNearestVertex);
 
 			ImGui::EndMenu();
@@ -4683,11 +4705,11 @@ void renderMenu(shared_ptr<core::Building>& building)
 		ImGui::EndMainMenuBar();
 	}
 
-	if (recentFileToOpen) requestRecentFile(*recentFileToOpen, building);
+	if (recentFileToOpen) requestRecentFile(*recentFileToOpen, world);
 }
 
 
-void renderDocumentToolbar(shared_ptr<core::Building>& building)
+void renderDocumentToolbar(shared_ptr<core::World>& world)
 {
 	ImGuiViewportP* viewport = (ImGuiViewportP*)(void*)ImGui::GetMainViewport();
 	auto const& style = ImGui::GetStyle();
@@ -4703,52 +4725,52 @@ void renderDocumentToolbar(shared_ptr<core::Building>& building)
 	}
 
 	if (ImGui::Button(ICON_FA_FILE "##NewDocument"))
-		requestFileAction(PendingFileAction::New, building);
+		requestFileAction(PendingFileAction::New, world);
 	if (ImGui::IsItemHovered()) ImGui::SetTooltip("New (Ctrl+N)");
 
 	ImGui::SameLine();
 	if (ImGui::Button(ICON_FA_FOLDER_OPEN "##OpenDocument"))
-		requestFileAction(PendingFileAction::Open, building);
+		requestFileAction(PendingFileAction::Open, world);
 	if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open... (Ctrl+O)");
 
 	ImGui::SameLine();
-	ImGui::BeginDisabled(!isDocumentStale(building));
-	if (ImGui::Button(ICON_FA_SAVE "##SaveDocument")) saveBuilding(building, false);
+	ImGui::BeginDisabled(!isDocumentStale(world));
+	if (ImGui::Button(ICON_FA_SAVE "##SaveDocument")) saveWorld(world, false);
 	if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save (Ctrl+S)");
 	ImGui::EndDisabled();
 
 	ImGui::SameLine(0.0f, style.ItemSpacing.x * 2.0f);
-	ImGui::BeginDisabled(building == nullptr || !gBuildingDocumentHistory.canUndo());
-	if (ImGui::Button(ICON_FA_UNDO "##Undo")) restoreDocumentSnapshot(building, false);
+	ImGui::BeginDisabled(world == nullptr || !gWorldDocumentHistory.canUndo());
+	if (ImGui::Button(ICON_FA_UNDO "##Undo")) restoreDocumentSnapshot(world, false);
 	if (ImGui::IsItemHovered()) ImGui::SetTooltip("Undo (Ctrl+Z)");
 	ImGui::EndDisabled();
 
 	ImGui::SameLine();
-	ImGui::BeginDisabled(building == nullptr || !gBuildingDocumentHistory.canRedo());
-	if (ImGui::Button(ICON_FA_REDO "##Redo")) restoreDocumentSnapshot(building, true);
+	ImGui::BeginDisabled(world == nullptr || !gWorldDocumentHistory.canRedo());
+	if (ImGui::Button(ICON_FA_REDO "##Redo")) restoreDocumentSnapshot(world, true);
 	if (ImGui::IsItemHovered()) ImGui::SetTooltip("Redo (Ctrl+Y)");
 	ImGui::EndDisabled();
 
 	ImGui::SameLine(0.0f, style.ItemSpacing.x * 2.0f);
-	ImGui::BeginDisabled(building == nullptr || !hasClipboardSelection());
-	if (ImGui::Button(ICON_FA_CUT "##Cut")) copyOrCutSelection(building, true);
+	ImGui::BeginDisabled(world == nullptr || !hasClipboardSelection());
+	if (ImGui::Button(ICON_FA_CUT "##Cut")) copyOrCutSelection(world, true);
 	if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cut (Ctrl+X)");
 	ImGui::SameLine();
-	if (ImGui::Button(ICON_FA_COPY "##Copy")) copyOrCutSelection(building, false);
+	if (ImGui::Button(ICON_FA_COPY "##Copy")) copyOrCutSelection(world, false);
 	if (ImGui::IsItemHovered()) ImGui::SetTooltip("Copy (Ctrl+C)");
 	ImGui::EndDisabled();
 
 	auto clipboard = ImGui::GetClipboardText();
 	ImGui::SameLine();
-	ImGui::BeginDisabled(building == nullptr || !clipboard || !*clipboard);
-	if (ImGui::Button(ICON_FA_PASTE "##Paste")) pasteClipboard(building);
+	ImGui::BeginDisabled(world == nullptr || !clipboard || !*clipboard);
+	if (ImGui::Button(ICON_FA_PASTE "##Paste")) pasteClipboard(world);
 	if (ImGui::IsItemHovered()) ImGui::SetTooltip("Paste (Ctrl+V)");
 	ImGui::EndDisabled();
 
 	ImGui::SameLine(0.0f, style.ItemSpacing.x * 2.0f);
 	imgui::ToggleButton("ToggleNextLayerWireframe", "Next layer wireframe", &gUISettings.renderNextLayerWireframe);
 	ImGui::SameLine();
-	imgui::ToggleButton("ToggleGraph", "Building graph", &gUISettings.renderGraph);
+	imgui::ToggleButton("ToggleGraph", "World graph", &gUISettings.renderGraph);
 	ImGui::SameLine();
 	imgui::ToggleButton("Agent Debug", "Agent debug", &gUISettings.renderAgentDebug);
 
@@ -4756,11 +4778,11 @@ void renderDocumentToolbar(shared_ptr<core::Building>& building)
 }
 
 
-void renderToolbar(shared_ptr<core::Building> building)
+void renderToolbar(shared_ptr<core::World> world)
 {
 	if (ImGui::Button(gUISettings.worldPaused ? "Start" : "Stop"))
 	{
-		setWorldPaused(building, !gUISettings.worldPaused);
+		setWorldPaused(world, !gUISettings.worldPaused);
 	}
 	if (ImGui::IsItemHovered())
 	{
@@ -4770,19 +4792,19 @@ void renderToolbar(shared_ptr<core::Building> building)
 		ImGui::SameLine();
 		if (ImGui::Button("Reset"))
 		{
-			resetWorldSimulation(building);
+			resetWorldSimulation(world);
 		}
 		if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reset (R)");
 
 
 		// Select visible Layer
-		auto const layerCount = building ? building->getLayerCount() : 0u;
+		auto const layerCount = world ? world->getLayerCount() : 0u;
 
 		string layersStr;
 
 		for (uint32_t layer = 0; layer < layerCount; ++layer)
 		{
-			layersStr += layerLabel(building, layer);
+			layersStr += layerLabel(world, layer);
 			layersStr += '\0';
 		}
 
@@ -4825,7 +4847,7 @@ void renderToolbar(shared_ptr<core::Building> building)
 }
 
 
-void renderStatusBar(shared_ptr<const core::Building> const& building)
+void renderStatusBar(shared_ptr<const core::World> const& world)
 {
 	ImGuiViewportP* viewport = (ImGuiViewportP*)(void*)ImGui::GetMainViewport();
 
@@ -4841,7 +4863,7 @@ void renderStatusBar(shared_ptr<const core::Building> const& building)
 		if (ImGui::BeginMenuBar())
 		{
 			auto const shownLayer = static_cast<uint32_t>(max(gUISettings.visibleLayer, 0));
-			ImGui::Text("Layer: %s", layerLabel(building, shownLayer).c_str());
+			ImGui::Text("Layer: %s", layerLabel(world, shownLayer).c_str());
 
 			ImGui::SetNextItemWidth(128);
 
@@ -4893,17 +4915,17 @@ void renderStatusBar(shared_ptr<const core::Building> const& building)
 }
 
 
-void renderMarkerPanel(shared_ptr<core::Building> const& building,
+void renderMarkerPanel(shared_ptr<core::World> const& world,
 	shared_ptr<const core::SectorObject> object)
 {
-	renderMarkerEditorPanel(building, object, [](string const& diagnostic)
+	renderMarkerEditorPanel(world, object, [](string const& diagnostic)
 	{
 		reportEditorError("Marker editor", diagnostic);
 	});
 }
 
 
-void renderWalkwayPanel(shared_ptr<core::Building> const& building,
+void renderWalkwayPanel(shared_ptr<core::World> const& world,
 	shared_ptr<const core::SectorObject> object)
 {
 	auto walkway = static_pointer_cast<const core::WalkwaySectorObject>(object)->getWalkway();
@@ -4911,7 +4933,7 @@ void renderWalkwayPanel(shared_ptr<core::Building> const& building,
 	ImGui::TextUnformatted("Walkway");
 	ImGui::Text("Room: %s", room->getName().c_str());
 	ImGui::Text("Room index: %u", room->getIndex());
-	ImGui::Text("Layer: %s", layerLabel(building, room->getLayerIndex()).c_str());
+	ImGui::Text("Layer: %s", layerLabel(world, room->getLayerIndex()).c_str());
 	ImGui::Text("Position: %u, %u", walkway->getCellX(), walkway->getCellY());
 	ImGui::Text("Deck offset: %u", walkway->getCellY() - room->getCellY());
 	ImGui::Separator();
@@ -4920,16 +4942,16 @@ void renderWalkwayPanel(shared_ptr<core::Building> const& building,
 		uint32_t objectIndex = ~0u;
 		for (uint32_t i = 0; i < room->getNumObjects(); ++i)
 			if (room->getObject(i) == object) { objectIndex = i; break; }
-		auto plan = building->planRemoveSectorWalkway(room->getIndex(), objectIndex);
+		auto plan = world->planRemoveSectorWalkway(room->getIndex(), objectIndex);
 		if (!plan.valid) reportEditorError("Walkway editor", plan.diagnostic);
-		else queueWalkwayEdit(building, plan);
+		else queueWalkwayEdit(world, plan);
 	}
 	ImGui::SameLine();
 	ImGui::TextDisabled("Delete key");
 }
 
 
-void renderWindowPanel(shared_ptr<const core::Building> const& building,
+void renderWindowPanel(shared_ptr<const core::World> const& world,
 	shared_ptr<const core::SectorObject> object)
 {
 	auto window = static_pointer_cast<const core::WindowSectorObject>(object)->getWindow();
@@ -4965,7 +4987,7 @@ void renderWindowPanel(shared_ptr<const core::Building> const& building,
 	ImGui::Text("State: %s", state);
 	ImGui::Text("Traversable: %s", window->isTraversalConfigured() ? "Yes" : "No");
 	auto owner = object->getSector();
-	ImGui::Text("Layer: %s", layerLabel(building, owner->getLayerIndex()).c_str());
+	ImGui::Text("Layer: %s", layerLabel(world, owner->getLayerIndex()).c_str());
 	ImGui::Text("Sector: %s", owner->getDescription().c_str());
 	for (uint32_t pairSide = 0; pairSide < 2; ++pairSide)
 		if (auto sector = window->getSector(pairSide); sector && sector != owner)
@@ -4983,7 +5005,7 @@ void renderWindowPanel(shared_ptr<const core::Building> const& building,
 // There is deliberately no "Agents:" line. A Background hosts no agent, and a
 // permanently-zero readout reads as a broken panel rather than an empty one. No
 // wall editor, no capacity, no lights: none of those mean anything here.
-void renderBackgroundPanel(shared_ptr<core::Building> const& building,
+void renderBackgroundPanel(shared_ptr<core::World> const& world,
 	shared_ptr<const core::Sector> const& sector)
 {
 	auto const background = dynamic_pointer_cast<const core::Background>(sector);
@@ -4991,7 +5013,7 @@ void renderBackgroundPanel(shared_ptr<core::Building> const& building,
 
 	ImGui::Text("Background: %s", background->getName().c_str());
 	ImGui::Text("Sector index: %u", background->getIndex());
-	ImGui::Text("Layer: %s", layerLabel(building, background->getLayerIndex()).c_str());
+	ImGui::Text("Layer: %s", layerLabel(world, background->getLayerIndex()).c_str());
 	ImGui::Text("Position: %u, %u", background->getCellX(), background->getCellY());
 	ImGui::Text("Size: %u x %u cells", background->getCellsWide(), background->getDecksHigh());
 
@@ -5000,16 +5022,16 @@ void renderBackgroundPanel(shared_ptr<core::Building> const& building,
 	// The colour lives on the Background; the float triple is the widget's working
 	// copy, re-synced whenever the selection changes so a live drag never fights
 	// the value it is driving.
-	static core::Building const* editedBuilding = nullptr;
+	static core::World const* editedWorld = nullptr;
 	static core::Sector const* editedSector = nullptr;
 	static float rgb[3] = { 0.0f, 0.0f, 0.0f };
 	static optional<core::BackgroundColour> colourBeforeEdit;
 	static optional<DocumentSnapshot> pendingColourUndo;
 	static bool colourEditInFlight = false;
 
-	if (editedBuilding != building.get() || editedSector != sector.get())
+	if (editedWorld != world.get() || editedSector != sector.get())
 	{
-		editedBuilding = building.get();
+		editedWorld = world.get();
 		editedSector = sector.get();
 		// Any half-finished edit belongs to whatever was selected before, not to
 		// this Background, so it is dropped rather than carried across.
@@ -5022,7 +5044,7 @@ void renderBackgroundPanel(shared_ptr<core::Building> const& building,
 	auto applyColour = [&](core::BackgroundColour const& colour)
 	{
 		string diagnostic;
-		if (building->setBackgroundColour(sector->getIndex(), colour, &diagnostic)) return true;
+		if (world->setBackgroundColour(sector->getIndex(), colour, &diagnostic)) return true;
 		core::addLogMessage("Background editor", 0, core::LogLevel::Error, diagnostic);
 		editedSector = nullptr;
 		return false;
@@ -5044,7 +5066,7 @@ void renderBackgroundPanel(shared_ptr<core::Building> const& building,
 		{
 			colourEditInFlight = true;
 			colourBeforeEdit = background->getColour();
-			pendingColourUndo = captureDocumentSnapshot(building);
+			pendingColourUndo = captureDocumentSnapshot(world);
 		}
 		applyColour(core::backgroundColourFromFloats(rgb));
 	}
@@ -5057,7 +5079,7 @@ void renderBackgroundPanel(shared_ptr<core::Building> const& building,
 	}
 	else if (cancelled)
 	{
-		// Escape puts the widget back where it started; the Building follows it and
+		// Escape puts the widget back where it started; the World follows it and
 		// the half-finished undo entry is dropped.
 		if (colourBeforeEdit) applyColour(*colourBeforeEdit);
 		colourBeforeEdit.reset();
@@ -5070,14 +5092,14 @@ void renderBackgroundPanel(shared_ptr<core::Building> const& building,
 		// Deleting a Background takes every Window looking into it with it. The plan
 		// names them and the shared "Confirm sector edit" popup spells the cascade out
 		// before anything is applied.
-		auto plan = building->planRemoveBackground(sector->getIndex());
+		auto plan = world->planRemoveBackground(sector->getIndex());
 		if (!plan.valid)
 			core::addLogMessage("Background editor", 0, core::LogLevel::Error, plan.diagnostic);
 		else
 		{
 			// The Sector this panel has been driving may not survive the confirmation.
 			editedSector = nullptr;
-			queueLocationEdit(building, plan);
+			queueLocationEdit(world, plan);
 		}
 	}
 	ImGui::SameLine();
@@ -5093,7 +5115,7 @@ void renderBackgroundPanel(shared_ptr<core::Building> const& building,
 // wall commands against it refuse rather than blur the type. The colour picker
 // reuses Background's picker arithmetic wholesale: the same 0..1 float triple,
 // the same no-alpha widget, the same pack/unpack pair on the way back.
-void renderFacadePanel(shared_ptr<core::Building> const& building,
+void renderFacadePanel(shared_ptr<core::World> const& world,
 	shared_ptr<const core::Sector> const& sector)
 {
 	auto const facade = dynamic_pointer_cast<const core::Facade>(sector);
@@ -5101,7 +5123,7 @@ void renderFacadePanel(shared_ptr<core::Building> const& building,
 
 	ImGui::Text("Facade: %s", facade->getName().c_str());
 	ImGui::Text("Sector index: %u", facade->getIndex());
-	ImGui::Text("Layer: %s", layerLabel(building, facade->getLayerIndex()).c_str());
+	ImGui::Text("Layer: %s", layerLabel(world, facade->getLayerIndex()).c_str());
 	ImGui::Text("Position: %u, %u", facade->getCellX(), facade->getCellY());
 	ImGui::Text("Size: %u x %u cells", facade->getCellsWide(), facade->getDecksHigh());
 	ImGui::Text("Agents: %u", (uint32_t)facade->getAgents().size());
@@ -5111,16 +5133,16 @@ void renderFacadePanel(shared_ptr<core::Building> const& building,
 	// The colour lives on the Facade; the float triple is the widget's working
 	// copy, re-synced whenever the selection changes so a live drag never fights
 	// the value it is driving. Same shape as the Background panel's widget.
-	static core::Building const* editedBuilding = nullptr;
+	static core::World const* editedWorld = nullptr;
 	static core::Sector const* editedSector = nullptr;
 	static float rgb[3] = { 0.0f, 0.0f, 0.0f };
 	static optional<core::BackgroundColour> colourBeforeEdit;
 	static optional<DocumentSnapshot> pendingColourUndo;
 	static bool colourEditInFlight = false;
 
-	if (editedBuilding != building.get() || editedSector != sector.get())
+	if (editedWorld != world.get() || editedSector != sector.get())
 	{
-		editedBuilding = building.get();
+		editedWorld = world.get();
 		editedSector = sector.get();
 		// Any half-finished edit belongs to whatever was selected before, not to
 		// this Facade, so it is dropped rather than carried across.
@@ -5133,7 +5155,7 @@ void renderFacadePanel(shared_ptr<core::Building> const& building,
 	auto applyColour = [&](core::BackgroundColour const& colour)
 	{
 		string diagnostic;
-		if (building->setFacadeColour(sector->getIndex(), colour, &diagnostic)) return true;
+		if (world->setFacadeColour(sector->getIndex(), colour, &diagnostic)) return true;
 		core::addLogMessage("Facade editor", 0, core::LogLevel::Error, diagnostic);
 		editedSector = nullptr;
 		return false;
@@ -5153,7 +5175,7 @@ void renderFacadePanel(shared_ptr<core::Building> const& building,
 		{
 			colourEditInFlight = true;
 			colourBeforeEdit = facade->getColour();
-			pendingColourUndo = captureDocumentSnapshot(building);
+			pendingColourUndo = captureDocumentSnapshot(world);
 		}
 		applyColour(core::backgroundColourFromFloats(rgb));
 	}
@@ -5166,7 +5188,7 @@ void renderFacadePanel(shared_ptr<core::Building> const& building,
 	}
 	else if (cancelled)
 	{
-		// Escape puts the widget back where it started; the Building follows it and
+		// Escape puts the widget back where it started; the World follows it and
 		// the half-finished undo entry is dropped.
 		if (colourBeforeEdit) applyColour(*colourBeforeEdit);
 		colourBeforeEdit.reset();
@@ -5188,14 +5210,14 @@ void renderFacadePanel(shared_ptr<core::Building> const& building,
 		// A Facade is occupiable, so the plan names the Agents inside and every
 		// hosted object which goes with it, and the shared "Confirm sector edit"
 		// popup spells the cascade out before anything is applied.
-		auto plan = building->planRemoveFacade(sector->getIndex());
+		auto plan = world->planRemoveFacade(sector->getIndex());
 		if (!plan.valid)
 			core::addLogMessage("Facade editor", 0, core::LogLevel::Error, plan.diagnostic);
 		else
 		{
 			// The Sector this panel has been driving may not survive the confirmation.
 			editedSector = nullptr;
-			queueLocationEdit(building, plan);
+			queueLocationEdit(world, plan);
 		}
 	}
 	ImGui::SameLine();
@@ -5203,7 +5225,7 @@ void renderFacadePanel(shared_ptr<core::Building> const& building,
 }
 
 
-void renderBulkheadDoorPanel(shared_ptr<core::Building> const& building,
+void renderBulkheadDoorPanel(shared_ptr<core::World> const& world,
 	shared_ptr<const core::SectorObject> object)
 {
 	auto doorObject = static_pointer_cast<const core::BulkheadDoorSectorObject>(object);
@@ -5216,7 +5238,7 @@ void renderBulkheadDoorPanel(shared_ptr<core::Building> const& building,
 	ImGui::TextUnformatted("Bulkhead Door");
 	ImGui::Text("Threshold position: %.1f, %u", (float)object->getCellX() + 1.0f,
 		object->getCellY());
-	ImGui::Text("Layer: %s", layerLabel(building, owner->getLayerIndex()).c_str());
+	ImGui::Text("Layer: %s", layerLabel(world, owner->getLayerIndex()).c_str());
 	float pct = door->getOpenPercentage() * 100.0f;
 	char const* state = "Unknown";
 	switch (door->getState())
@@ -5231,18 +5253,18 @@ void renderBulkheadDoorPanel(shared_ptr<core::Building> const& building,
 	ImGui::Text("Left: %s", door->getSideSector(CORE_SIDE_LEFT)->getDescription().c_str());
 	ImGui::Text("Right: %s", door->getSideSector(CORE_SIDE_RIGHT)->getDescription().c_str());
 
-	static core::Building const* editedBuilding = nullptr;
+	static core::World const* editedWorld = nullptr;
 	static core::SectorObject const* editedObject = nullptr;
 	static int activationMode = (int)core::DoorActivationMode::RemoteControlled;
 	static bool leftControl = true, rightControl = true;
 	static float holdOpenSeconds = CORE_BULKHEAD_DOOR_STAY_OPEN_TIME;
 	static int crossingLanes = 1;
-	core::Building::CreateBulkheadDoorOptions current;
-	if ((editedBuilding != building.get() || editedObject != object.get())
+	core::World::CreateBulkheadDoorOptions current;
+	if ((editedWorld != world.get() || editedObject != object.get())
 		&& objectIndex != ~0u
-		&& building->getSectorBulkheadDoorOptions(owner->getIndex(), objectIndex, current))
+		&& world->getSectorBulkheadDoorOptions(owner->getIndex(), objectIndex, current))
 	{
-		editedBuilding = building.get(); editedObject = object.get();
+		editedWorld = world.get(); editedObject = object.get();
 		activationMode = (int)current.activationMode;
 		leftControl = current.controls[0]; rightControl = current.controls[1];
 		holdOpenSeconds = current.holdOpenSeconds;
@@ -5253,14 +5275,14 @@ void renderBulkheadDoorPanel(shared_ptr<core::Building> const& building,
 	{
 		try
 		{
-			core::Building::CreateBulkheadDoorOptions options;
-			if (!building->getSectorBulkheadDoorOptions(owner->getIndex(), objectIndex, options))
+			core::World::CreateBulkheadDoorOptions options;
+			if (!world->getSectorBulkheadDoorOptions(owner->getIndex(), objectIndex, options))
 				throw runtime_error("The selected Bulkhead Door has no authored definition");
 			options.activationMode = static_cast<core::DoorActivationMode>(activationMode);
 			options.controls[0] = leftControl;
 			options.controls[1] = rightControl;
-			auto undo = captureDocumentSnapshot(building);
-			gSelectedSectorObject = building->applySectorBulkheadDoorOptions(
+			auto undo = captureDocumentSnapshot(world);
+			gSelectedSectorObject = world->applySectorBulkheadDoorOptions(
 				owner->getIndex(), objectIndex, options);
 			gHoveredSectorObject.reset(); editedObject = nullptr;
 			commitDocumentEdit(std::move(undo));
@@ -5280,7 +5302,7 @@ void renderBulkheadDoorPanel(shared_ptr<core::Building> const& building,
 
 	ImGui::Separator();
 	bool activationOrControlsChanged = false;
-	ImGui::BeginDisabled(!building->isSimulationPaused() || objectIndex == ~0u);
+	ImGui::BeginDisabled(!world->isSimulationPaused() || objectIndex == ~0u);
 	if (ImGui::Combo("Activation", &activationMode,
 		"Automatic\0Manual\0Remote Controlled\0Unavailable\0"))
 	{
@@ -5303,17 +5325,17 @@ void renderBulkheadDoorPanel(shared_ptr<core::Building> const& building,
 	ImGui::InputInt("Crossing lanes", &crossingLanes);
 	bool valid = holdOpenSeconds >= 0.0f && crossingLanes == 1
 		&& (remote || (!leftControl && !rightControl));
-	ImGui::BeginDisabled(!building->isSimulationPaused() || !valid || objectIndex == ~0u);
+	ImGui::BeginDisabled(!world->isSimulationPaused() || !valid || objectIndex == ~0u);
 	if (ImGui::Button("Apply Bulkhead Door settings"))
 	{
 		try
 		{
-			auto undo = captureDocumentSnapshot(building);
-			core::Building::CreateBulkheadDoorOptions options{
+			auto undo = captureDocumentSnapshot(world);
+			core::World::CreateBulkheadDoorOptions options{
 				{ leftControl, rightControl },
 				static_cast<core::DoorActivationMode>(activationMode),
 				holdOpenSeconds, (uint32_t)crossingLanes };
-			gSelectedSectorObject = building->applySectorBulkheadDoorOptions(
+			gSelectedSectorObject = world->applySectorBulkheadDoorOptions(
 				owner->getIndex(), objectIndex, options);
 			gHoveredSectorObject.reset(); editedObject = nullptr;
 			commitDocumentEdit(std::move(undo));
@@ -5330,15 +5352,15 @@ void renderBulkheadDoorPanel(shared_ptr<core::Building> const& building,
 		}
 	}
 	ImGui::EndDisabled();
-	if (!building->isSimulationPaused())
+	if (!world->isSimulationPaused())
 		ImGui::TextDisabled("Pause simulation to edit settings.");
 	ImGui::Separator();
 	if (ImGui::Button("Delete Bulkhead Door"))
 	{
 		try
 		{
-			auto undo = captureDocumentSnapshot(building);
-			if (removeClipboardSelection(building)) commitDocumentEdit(std::move(undo));
+			auto undo = captureDocumentSnapshot(world);
+			if (removeClipboardSelection(world)) commitDocumentEdit(std::move(undo));
 		}
 		catch (core::Exception const& error)
 		{
@@ -5353,11 +5375,11 @@ void renderBulkheadDoorPanel(shared_ptr<core::Building> const& building,
 }
 
 
-void renderLiftOwnedControlPanel(shared_ptr<core::Building> const& building,
+void renderLiftOwnedControlPanel(shared_ptr<core::World> const& world,
 	shared_ptr<const core::SectorObject> object)
 {
 	uint32_t bridgeSector, bridgeObject;
-	if (building->isBulkheadDoorOwnedControl(object, &bridgeSector, &bridgeObject))
+	if (world->isBulkheadDoorOwnedControl(object, &bridgeSector, &bridgeObject))
 	{
 		ImGui::TextUnformatted("Bulkhead Door control");
 		ImGui::Text("Position: %u, %u", object->getCellX(), object->getCellY());
@@ -5366,13 +5388,13 @@ void renderLiftOwnedControlPanel(shared_ptr<core::Building> const& building,
 		ImGui::TextDisabled("This control is managed by its Bulkhead Door and is read-only.");
 		if (ImGui::Button("Select Bulkhead Door"))
 		{
-			auto sector = building->getSector(bridgeSector);
+			auto sector = world->getSector(bridgeSector);
 			if (sector && bridgeObject < sector->getNumObjects())
 				gSelectedSectorObject = sector->getObject(bridgeObject);
 		}
 		return;
 	}
-	if (building->isForceBridgeOwnedControl(object, &bridgeSector, &bridgeObject))
+	if (world->isForceBridgeOwnedControl(object, &bridgeSector, &bridgeObject))
 	{
 		ImGui::TextUnformatted("Force Bridge control");
 		ImGui::Text("Position: %u, %u", object->getCellX(), object->getCellY());
@@ -5381,15 +5403,15 @@ void renderLiftOwnedControlPanel(shared_ptr<core::Building> const& building,
 		ImGui::TextDisabled("This control is managed by its Force Bridge and is read-only.");
 		if (ImGui::Button("Select Force Bridge"))
 		{
-			auto sector = building->getSector(bridgeSector);
+			auto sector = world->getSector(bridgeSector);
 			if (sector && bridgeObject < sector->getNumObjects())
 				gSelectedSectorObject = sector->getObject(bridgeObject);
 		}
 		return;
 	}
 	uint32_t transportSector, stopIndex;
-	bool const liftOwned = building->isLiftOwnedControl(object, &transportSector, &stopIndex);
-	bool const shuttleOwned = building->isShuttleOwnedControl(object, &transportSector, &stopIndex);
+	bool const liftOwned = world->isLiftOwnedControl(object, &transportSector, &stopIndex);
+	bool const shuttleOwned = world->isShuttleOwnedControl(object, &transportSector, &stopIndex);
 	if (!liftOwned && !shuttleOwned) return;
 	ImGui::Text("%s call button", liftOwned ? "Lift" : "Shuttle");
 	ImGui::Text("Position: %u, %u", object->getCellX(), object->getCellY());
@@ -5401,7 +5423,7 @@ void renderLiftOwnedControlPanel(shared_ptr<core::Building> const& building,
 	ImGui::TextDisabled("This button is managed by its transport landing and is read-only.");
 }
 
-void renderForceBridgePanel(shared_ptr<core::Building> const& building,
+void renderForceBridgePanel(shared_ptr<core::World> const& world,
 	shared_ptr<const core::SectorObject> object)
 {
 	auto fbObject = static_pointer_cast<const core::ForceBridgeSectorObject>(object);
@@ -5414,7 +5436,7 @@ void renderForceBridgePanel(shared_ptr<core::Building> const& building,
 	ImGui::TextUnformatted("Force Bridge");
 	ImGui::Text("Room: %s", room->getName().c_str());
 	ImGui::Text("Room index: %u", room->getIndex());
-	ImGui::Text("Layer: %s", layerLabel(building, room->getLayerIndex()).c_str());
+	ImGui::Text("Layer: %s", layerLabel(world, room->getLayerIndex()).c_str());
 	ImGui::Text("Position: %u, %u", object->getCellX(), object->getCellY());
 	ImGui::Text("Deck offset: %u", object->getCellY() - room->getCellY());
 	float pct = forceBridge->getExtendedPercentage() * 100.0f;
@@ -5429,16 +5451,16 @@ void renderForceBridgePanel(shared_ptr<core::Building> const& building,
 	ImGui::Text("Runtime state: %s (%.2f%%)", state, pct);
 	ImGui::Text("Extend/retract time: %.2fs", forceBridge->getExtendRetractTime());
 
-	static core::Building const* editedBuilding = nullptr;
+	static core::World const* editedWorld = nullptr;
 	static core::SectorObject const* editedObject = nullptr;
 	static int width = 1, side = 0, controls = 1, previousControls = 1;
 	static bool extensible = true, initiallyExtended = true;
-	core::Building::CreateForceBridgeOptions current;
-	if ((editedBuilding != building.get() || editedObject != object.get())
+	core::World::CreateForceBridgeOptions current;
+	if ((editedWorld != world.get() || editedObject != object.get())
 		&& objectIndex != ~0u
-		&& building->getSectorForceBridgeOptions(room->getIndex(), objectIndex, current))
+		&& world->getSectorForceBridgeOptions(room->getIndex(), objectIndex, current))
 	{
-		editedBuilding = building.get(); editedObject = object.get();
+		editedWorld = world.get(); editedObject = object.get();
 		width = (int)current.width;
 		side = current.fromSide == CORE_SIDE_LEFT ? 0 : 1;
 		extensible = current.extensible;
@@ -5451,13 +5473,13 @@ void renderForceBridgePanel(shared_ptr<core::Building> const& building,
 	{
 		try
 		{
-			auto undo = captureDocumentSnapshot(building);
-			if (!building->isSimulationPaused()) building->pauseSimulation();
+			auto undo = captureDocumentSnapshot(world);
+			if (!world->isSimulationPaused()) world->pauseSimulation();
 			gUISettings.worldPaused = true;
-			core::Building::CreateForceBridgeOptions options{ (uint32_t)width,
+			core::World::CreateForceBridgeOptions options{ (uint32_t)width,
 				side == 0 ? CORE_SIDE_LEFT : CORE_SIDE_RIGHT, extensible,
 				extensible ? initiallyExtended : true, extensible ? (uint32_t)controls : 0u };
-			gSelectedSectorObject = building->applySectorForceBridgeOptions(
+			gSelectedSectorObject = world->applySectorForceBridgeOptions(
 				room->getIndex(), objectIndex, options);
 			gHoveredSectorObject.reset();
 			editedObject = nullptr;
@@ -5517,8 +5539,8 @@ void renderForceBridgePanel(shared_ptr<core::Building> const& building,
 	{
 		try
 		{
-			auto undo = captureDocumentSnapshot(building);
-			if (removeClipboardSelection(building)) commitDocumentEdit(std::move(undo));
+			auto undo = captureDocumentSnapshot(world);
+			if (removeClipboardSelection(world)) commitDocumentEdit(std::move(undo));
 		}
 		catch (core::Exception const& error)
 		{
@@ -5534,7 +5556,7 @@ void renderForceBridgePanel(shared_ptr<core::Building> const& building,
 }
 
 
-void renderLadderPanel(shared_ptr<core::Building> const& building,
+void renderLadderPanel(shared_ptr<core::World> const& world,
 	shared_ptr<const core::SectorObject> object)
 {
 	auto ladderObject = static_pointer_cast<const core::LadderSectorObject>(object);
@@ -5546,7 +5568,7 @@ void renderLadderPanel(shared_ptr<core::Building> const& building,
 
 	ImGui::TextUnformatted("Room Ladder");
 	ImGui::Text("Room: %s", room->getName().c_str());
-	ImGui::Text("Layer: %s", layerLabel(building, room->getLayerIndex()).c_str());
+	ImGui::Text("Layer: %s", layerLabel(world, room->getLayerIndex()).c_str());
 	ImGui::Text("Position: %u, %u", object->getCellX(), object->getCellY());
 	ImGui::Text("Calculated height: %u decks", ladder->getDecksHigh());
 	float pct = ladder->getExtendedPercentage() * 100.0f;
@@ -5561,15 +5583,15 @@ void renderLadderPanel(shared_ptr<core::Building> const& building,
 	ImGui::Text("State: %s (%3.2f%% extended)", state, pct);
 	ImGui::Text("Extend/retract time: %3.2fs", ladder->getExtendRetractTime());
 
-	static core::Building const* editedBuilding = nullptr;
+	static core::World const* editedWorld = nullptr;
 	static core::SectorObject const* editedObject = nullptr;
 	static bool extensible = false, initiallyExtended = true;
 	static int directionalBatchLimit = 4;
-	core::Building::CreateLadderOptions current{};
-	if ((editedBuilding != building.get() || editedObject != object.get())
-		&& objectIndex != ~0u && building->getRoomLadderOptions(room->getIndex(), objectIndex, current))
+	core::World::CreateLadderOptions current{};
+	if ((editedWorld != world.get() || editedObject != object.get())
+		&& objectIndex != ~0u && world->getRoomLadderOptions(room->getIndex(), objectIndex, current))
 	{
-		editedBuilding = building.get(); editedObject = object.get();
+		editedWorld = world.get(); editedObject = object.get();
 		extensible = current.extensible;
 		initiallyExtended = current.extensible ? current.startExtended : true;
 		directionalBatchLimit = (int)current.directionalBatchLimit;
@@ -5577,12 +5599,12 @@ void renderLadderPanel(shared_ptr<core::Building> const& building,
 	auto commitSettings = [&](bool desiredExtensible, bool desiredInitiallyExtended,
 		int desiredBatchLimit)
 	{
-		auto undo = captureDocumentSnapshot(building);
+		auto undo = captureDocumentSnapshot(world);
 		try
 		{
-			if (!building->isSimulationPaused()) building->pauseSimulation();
+			if (!world->isSimulationPaused()) world->pauseSimulation();
 			gUISettings.worldPaused = true;
-			gSelectedSectorObject = building->applyRoomLadderOptions(room->getIndex(), objectIndex,
+			gSelectedSectorObject = world->applyRoomLadderOptions(room->getIndex(), objectIndex,
 				{ ladder->getDecksHigh(), desiredExtensible,
 					desiredExtensible ? desiredInitiallyExtended : true,
 					(uint32_t)desiredBatchLimit });
@@ -5624,12 +5646,12 @@ void renderLadderPanel(shared_ptr<core::Building> const& building,
 	ImGui::Separator();
 	if (ImGui::Button("Delete Room Ladder"))
 	{
-		auto undo = captureDocumentSnapshot(building);
+		auto undo = captureDocumentSnapshot(world);
 		try
 		{
-			if (!building->isSimulationPaused()) building->pauseSimulation();
+			if (!world->isSimulationPaused()) world->pauseSimulation();
 			gUISettings.worldPaused = true;
-			if (building->removeRoomLadder(room->getIndex(), objectIndex))
+			if (world->removeRoomLadder(room->getIndex(), objectIndex))
 			{
 				gSelectedSectorObject.reset(); gHoveredSectorObject.reset();
 				commitDocumentEdit(std::move(undo));
@@ -5646,18 +5668,18 @@ void renderLadderPanel(shared_ptr<core::Building> const& building,
 }
 
 
-void renderLiftPanel(shared_ptr<const core::Building> const& building,
+void renderLiftPanel(shared_ptr<const core::World> const& world,
 	shared_ptr<const core::Lift> lift, bool includeAgentDebug = false);
 
-void renderPlatformLiftPanel(shared_ptr<core::Building> const& building,
+void renderPlatformLiftPanel(shared_ptr<core::World> const& world,
 	shared_ptr<const core::SectorObject> object)
 {
 	auto room = object->getSector();
 	uint32_t objectIndex = ~0u;
 	for (uint32_t i = 0; i < room->getNumObjects(); ++i)
 		if (room->getObject(i) == object) { objectIndex = i; break; }
-	core::Building::CreateLiftOptions current;
-	if (objectIndex == ~0u || !building->getPlatformLiftOptions(room->getIndex(), objectIndex, current))
+	core::World::CreateLiftOptions current;
+	if (objectIndex == ~0u || !world->getPlatformLiftOptions(room->getIndex(), objectIndex, current))
 	{
 		ImGui::TextDisabled("The selected PlatformLift has no authored definition.");
 		return;
@@ -5666,16 +5688,16 @@ void renderPlatformLiftPanel(shared_ptr<core::Building> const& building,
 	auto platformLift = static_pointer_cast<const core::LiftSectorObject>(object)->getLift();
 	ImGui::TextUnformatted("Platform Lift");
 	ImGui::Text("Room: %s", room->getName().c_str());
-	ImGui::Text("Layer: %s", layerLabel(building, room->getLayerIndex()).c_str());
+	ImGui::Text("Layer: %s", layerLabel(world, room->getLayerIndex()).c_str());
 	ImGui::Text("Position: %u, %u", object->getCellX(), object->getCellY());
 	ImGui::Text("Car y: %.2f", platformLift->getPosition().y);
 
-	static core::Building const* editedBuilding = nullptr;
+	static core::World const* editedWorld = nullptr;
 	static core::SectorObject const* editedObject = nullptr;
-	static core::Building::CreateLiftOptions draft;
-	if (editedBuilding != building.get() || editedObject != object.get())
+	static core::World::CreateLiftOptions draft;
+	if (editedWorld != world.get() || editedObject != object.get())
 	{
-		editedBuilding = building.get(); editedObject = object.get(); draft = current;
+		editedWorld = world.get(); editedObject = object.get(); draft = current;
 	}
 	ImGui::Separator();
 	ImGui::TextUnformatted("Connected levels");
@@ -5684,7 +5706,7 @@ void renderPlatformLiftPanel(shared_ptr<core::Building> const& building,
 	ImGui::Checkbox("Ground (mandatory)", &ground);
 	ImGui::EndDisabled();
 
-	auto candidates = building->getPlatformLiftStopCandidates(room->getIndex(),
+	auto candidates = world->getPlatformLiftStopCandidates(room->getIndex(),
 		object->getCellX() - room->getCellX());
 	for (auto const& candidate : candidates)
 	{
@@ -5695,8 +5717,8 @@ void renderPlatformLiftPanel(shared_ptr<core::Building> const& building,
 		else tentative.stopOffsets.erase(remove(tentative.stopOffsets.begin(), tentative.stopOffsets.end(),
 			candidate.deckOffset), tentative.stopOffsets.end());
 		bool lastWalkway = selected && draft.stopOffsets.size() <= 2;
-		auto validation = lastWalkway ? core::Building::PlatformLiftEditPlan{}
-			: building->planPlatformLiftEdit(room->getIndex(), objectIndex, tentative);
+		auto validation = lastWalkway ? core::World::PlatformLiftEditPlan{}
+			: world->planPlatformLiftEdit(room->getIndex(), objectIndex, tentative);
 		bool disabled = lastWalkway || (!selected && !validation.valid);
 		ImGui::PushID((int)candidate.deckOffset);
 		ImGui::BeginDisabled(disabled);
@@ -5720,27 +5742,27 @@ void renderPlatformLiftPanel(shared_ptr<core::Building> const& building,
 	ImGui::BeginDisabled(!changed || draft.platformStopDurationSeconds < 0.0f);
 	if (ImGui::Button("Apply PlatformLift settings"))
 	{
-		auto plan = building->planPlatformLiftEdit(room->getIndex(), objectIndex, draft);
+		auto plan = world->planPlatformLiftEdit(room->getIndex(), objectIndex, draft);
 		if (!plan.valid) reportEditorError("PlatformLift editor", plan.diagnostic);
-		else { editedObject = nullptr; queuePlatformLiftEdit(building, plan); }
+		else { editedObject = nullptr; queuePlatformLiftEdit(world, plan); }
 	}
 	ImGui::EndDisabled();
 
 	ImGui::Separator();
-	renderLiftPanel(building, platformLift, true);
+	renderLiftPanel(world, platformLift, true);
 
 	ImGui::Separator();
 	if (ImGui::Button("Delete Platform Lift"))
 	{
-		auto plan = building->planRemovePlatformLift(room->getIndex(), objectIndex);
+		auto plan = world->planRemovePlatformLift(room->getIndex(), objectIndex);
 		if (!plan.valid) reportEditorError("PlatformLift editor", plan.diagnostic);
-		else { editedObject = nullptr; queuePlatformLiftEdit(building, plan); }
+		else { editedObject = nullptr; queuePlatformLiftEdit(world, plan); }
 	}
 	ImGui::SameLine(); ImGui::TextDisabled("Delete key");
 }
 
 
-void renderLiftPanel(shared_ptr<const core::Building> const& building,
+void renderLiftPanel(shared_ptr<const core::World> const& world,
 	shared_ptr<const core::Lift> lift, bool includeAgentDebug)
 {
 	ImGuiTableFlags flags =
@@ -5775,9 +5797,9 @@ void renderLiftPanel(shared_ptr<const core::Building> const& building,
 		ImGui::EndTable();
 	}
 
-	if (!includeAgentDebug || !building) return;
-	auto resourceId = building->getTraversalResourceId(lift.get());
-	auto snapshot = building->getSimulationSnapshot();
+	if (!includeAgentDebug || !world) return;
+	auto resourceId = world->getTraversalResourceId(lift.get());
+	auto snapshot = world->getSimulationSnapshot();
 	auto resource = find_if(snapshot.traversalResources.begin(), snapshot.traversalResources.end(),
 		[resourceId](auto const& candidate) { return candidate.id == resourceId; });
 	if (!resourceId || resource == snapshot.traversalResources.end())
@@ -5844,7 +5866,7 @@ void renderLiftPanel(shared_ptr<const core::Building> const& building,
 }
 
 
-void renderShuttlePanel(shared_ptr<const core::Building> const& building,
+void renderShuttlePanel(shared_ptr<const core::World> const& world,
 	shared_ptr<const core::Shuttle> shuttle, bool includeAgentDebug = false)
 {
 	ImGuiTableFlags flags = ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_Resizable
@@ -5853,8 +5875,8 @@ void renderShuttlePanel(shared_ptr<const core::Building> const& building,
 	auto internals = shuttle->getInternalsStrings();
 	internals.push_back({ "Carriages", to_string(shuttle->getNumCars()) });
 	internals.push_back({ "Carriage width", to_string(shuttle->getCarWidth()) });
-	core::Building::CreateShuttleOptions options{};
-	if (building && building->getShuttleOptions(shuttle.get(), options))
+	core::World::CreateShuttleOptions options{};
+	if (world && world->getShuttleOptions(shuttle.get(), options))
 	{
 		string doorLayout;
 		for (uint32_t cell = 0; cell < options.carWidth; ++cell)
@@ -5876,9 +5898,9 @@ void renderShuttlePanel(shared_ptr<const core::Building> const& building,
 		}
 		ImGui::EndTable();
 	}
-	if (!includeAgentDebug || !building) return;
-	auto resourceId = building->getTraversalResourceId(shuttle.get());
-	auto snapshot = building->getSimulationSnapshot();
+	if (!includeAgentDebug || !world) return;
+	auto resourceId = world->getTraversalResourceId(shuttle.get());
+	auto snapshot = world->getSimulationSnapshot();
 	auto resource = find_if(snapshot.traversalResources.begin(), snapshot.traversalResources.end(),
 		[resourceId](auto const& value) { return value.id == resourceId; });
 	if (!resourceId || resource == snapshot.traversalResources.end())
@@ -5971,7 +5993,7 @@ void renderShuttlePanel(shared_ptr<const core::Building> const& building,
 }
 
 
-void renderAgentView(shared_ptr<core::Building> building)
+void renderAgentView(shared_ptr<core::World> world)
 {
 	ImGuiTableFlags flags =
 		ImGuiTableFlags_SizingStretchSame |
@@ -5993,9 +6015,9 @@ void renderAgentView(shared_ptr<core::Building> building)
 
 		core::Agent* newSelectedAgent{ gSelectedAgent };
 
-		for (uint32_t l = 0; l < building->getLayerCount(); ++l)
+		for (uint32_t l = 0; l < world->getLayerCount(); ++l)
 		{
-			auto sectors = building->getSectors(l);
+			auto sectors = world->getSectors(l);
 
 			for (auto sector : sectors)
 			{
@@ -6031,12 +6053,12 @@ void renderAgentView(shared_ptr<core::Building> building)
 					// so the control is disabled in step with the rest of the
 					// paused-only editing UI.
 					ImGui::TableSetColumnIndex(1);
-					ImGui::BeginDisabled(!building->isSimulationPaused());
+					ImGui::BeginDisabled(!world->isSimulationPaused());
 					if (ImGui::Button(agent->isActive() ? ICON_FA_EYE : ICON_FA_EYE_SLASH,
 						ImVec2(ImGui::GetFrameHeight(), 0.0f)))
 					{
 						string diagnostic;
-						if (!building->setAgentActive(building->getAgentId(agent),
+						if (!world->setAgentActive(world->getAgentId(agent),
 							!agent->isActive(), &diagnostic))
 						{
 							core::addLogMessage("Agents", 0, core::LogLevel::Warning, diagnostic);
@@ -6045,7 +6067,7 @@ void renderAgentView(shared_ptr<core::Building> building)
 					ImGui::EndDisabled();
 					if (ImGui::IsItemHovered())
 					{
-						if (!building->isSimulationPaused())
+						if (!world->isSimulationPaused())
 						{
 							ImGui::SetTooltip("Pause the simulation to activate or deactivate this Agent");
 						}
@@ -6063,11 +6085,11 @@ void renderAgentView(shared_ptr<core::Building> building)
 					// place. The cell shows the group's current name rather than a
 					// copy of it, so a rename is reflected here the next frame.
 					ImGui::TableSetColumnIndex(2);
-					renderAgentGroupAssignmentCell(building, building->getAgentId(agent));
+					renderAgentGroupAssignmentCell(world, world->getAgentId(agent));
 
 					// Behaviour: named picker, never a numeric registry ID.
 					ImGui::TableSetColumnIndex(3);
-					renderAgentBehaviourAssignmentCell(building, building->getAgentId(agent));
+					renderAgentBehaviourAssignmentCell(world, world->getAgentId(agent));
 
 					// Sector
 					ImGui::TableSetColumnIndex(4);
@@ -6116,15 +6138,15 @@ void renderAgentView(shared_ptr<core::Building> building)
 					{
 						ImGui::Text("%u/%zu vertices", agent->getPathTargetNodeIndex(), path->nodes.size());
 					}
-					else if (building->isSimulationPaused())
+					else if (world->isSimulationPaused())
 					{
 						// Pausing tears down live traversal, so the Agent's path pointer is
 						// cleared. Its retained destination still tells us where it resumes.
-						core::Building::TopologyPathIntent intent;
-						if (building->getPausedPathIntent(*agent, intent))
+						core::World::TopologyPathIntent intent;
+						if (world->getPausedPathIntent(*agent, intent))
 						{
 							auto destination = intent.destinationSector
-								? building->getSector((uint32_t)intent.destinationSector.value - 1)
+								? world->getSector((uint32_t)intent.destinationSector.value - 1)
 								: nullptr;
 							ImGui::TextDisabled("to %s (paused)",
 								destination ? destination->getDescription().c_str() : "<unknown>");
@@ -6156,7 +6178,7 @@ void renderAgentView(shared_ptr<core::Building> building)
 }
 
 
-void renderObjectView(shared_ptr<const core::Building> building)
+void renderObjectView(shared_ptr<const core::World> world)
 {
 	static void* selectedNode{ nullptr };
 
@@ -6165,14 +6187,14 @@ void renderObjectView(shared_ptr<const core::Building> building)
 		ImGuiTreeNodeFlags_OpenOnDoubleClick |
 		ImGuiTreeNodeFlags_SpanAvailWidth;
 
-	auto const layerCount = building->getLayerCount();
+	auto const layerCount = world->getLayerCount();
 
 	for (uint32_t layer = 0; layer < layerCount; ++layer)
 	{
-		auto sectors = building->getSectors(layer);
+		auto sectors = world->getSectors(layer);
 
 		ImGui::PushID(layer);
-		if (ImGui::TreeNode("layerObjects", "%s", layerLabel(building, layer).c_str()))
+		if (ImGui::TreeNode("layerObjects", "%s", layerLabel(world, layer).c_str()))
 		{
 			for (auto sector : sectors)
 			{
@@ -6253,7 +6275,7 @@ void renderObjectView(shared_ptr<const core::Building> building)
 }
 
 
-void renderLocationWallEditor(shared_ptr<core::Building> const& building,
+void renderLocationWallEditor(shared_ptr<core::World> const& world,
 	shared_ptr<const core::Sector> const& location)
 {
 	ImGui::Separator();
@@ -6281,8 +6303,8 @@ void renderLocationWallEditor(shared_ptr<core::Building> const& building,
 			string diagnostic;
 			bool const isOpen = end == core::SectorEndType::None;
 			bool const canChange = isOpen
-				? building->canAddLocationWall(location->getIndex(), deck, side, &diagnostic)
-				: building->canRemoveLocationWall(location->getIndex(), deck, side, &diagnostic);
+				? world->canAddLocationWall(location->getIndex(), deck, side, &diagnostic)
+				: world->canRemoveLocationWall(location->getIndex(), deck, side, &diagnostic);
 			string const label = string(isOpen ? "Add wall" : "Open wall") + "##wall-"
 				+ to_string(deck) + "-" + to_string(side);
 			ImGui::BeginDisabled(!canChange);
@@ -6292,14 +6314,14 @@ void renderLocationWallEditor(shared_ptr<core::Building> const& building,
 				ImGui::SetTooltip("%s", diagnostic.c_str());
 			if (!clicked) continue;
 
-			auto undo = captureDocumentSnapshot(building);
+			auto undo = captureDocumentSnapshot(world);
 			try
 			{
-				if (!building->isSimulationPaused()) building->pauseSimulation();
+				if (!world->isSimulationPaused()) world->pauseSimulation();
 				gUISettings.worldPaused = true;
-				if (isOpen) building->addLocationWall(location->getIndex(), deck, side);
-				else building->removeLocationWall(location->getIndex(), deck, side);
-				building->finishBuild();
+				if (isOpen) world->addLocationWall(location->getIndex(), deck, side);
+				else world->removeLocationWall(location->getIndex(), deck, side);
+				world->finishBuild();
 				commitDocumentEdit(std::move(undo));
 			}
 			catch (core::Exception const& error)
@@ -6316,7 +6338,7 @@ void renderLocationWallEditor(shared_ptr<core::Building> const& building,
 }
 
 
-void renderSelectedObjectPanel(shared_ptr<core::Building> const& building)
+void renderSelectedObjectPanel(shared_ptr<core::World> const& world)
 {
 	if ((!gSelectedSector && !gSelectedSectorObject)
 		|| !ImGui::CollapsingHeader("Selection", nullptr, 0)) return;
@@ -6327,7 +6349,7 @@ void renderSelectedObjectPanel(shared_ptr<core::Building> const& building)
 		// panel rather than the generic Sector readout with its "Agents:" line.
 		if (gSelectedSector->getType() == core::SectorType::Background)
 		{
-			renderBackgroundPanel(building, gSelectedSector);
+			renderBackgroundPanel(world, gSelectedSector);
 			return;
 		}
 
@@ -6335,7 +6357,7 @@ void renderSelectedObjectPanel(shared_ptr<core::Building> const& building)
 		// takes its own panel and never reaches the wall editor below.
 		if (gSelectedSector->getType() == core::SectorType::Facade)
 		{
-			renderFacadePanel(building, gSelectedSector);
+			renderFacadePanel(world, gSelectedSector);
 			return;
 		}
 
@@ -6355,7 +6377,7 @@ void renderSelectedObjectPanel(shared_ptr<core::Building> const& building)
 		}
 		ImGui::Text("%s: %s", type, gSelectedSector->getName().c_str());
 		ImGui::Text("Sector index: %u", gSelectedSector->getIndex());
-		ImGui::Text("Layer: %s", layerLabel(building, gSelectedSector->getLayerIndex()).c_str());
+		ImGui::Text("Layer: %s", layerLabel(world, gSelectedSector->getLayerIndex()).c_str());
 		ImGui::Text("Position: %u, %u", gSelectedSector->getCellX(), gSelectedSector->getCellY());
 		if (gSelectedSector->getType() == core::SectorType::Lift)
 		{
@@ -6369,24 +6391,24 @@ void renderSelectedObjectPanel(shared_ptr<core::Building> const& building)
 		switch (gSelectedSector->getType())
 		{
 		case core::SectorType::Location:
-			renderLocationWallEditor(building, gSelectedSector);
+			renderLocationWallEditor(world, gSelectedSector);
 			break;
 
 		case core::SectorType::Lift:
-			renderLiftPanel(building,
+			renderLiftPanel(world,
 				static_pointer_cast<const core::LiftTransit>(gSelectedSector)->getLift(), true);
 			break;
 
 		case core::SectorType::Shuttle:
-			renderShuttlePanel(building,
+			renderShuttlePanel(world,
 				static_pointer_cast<const core::ShuttleTransit>(gSelectedSector)->getShuttle(), true);
 			ImGui::Separator();
 			if (ImGui::Button("Delete Shuttle"))
 			{
-				auto plan = building->planRemoveShuttle(gSelectedSector->getIndex());
+				auto plan = world->planRemoveShuttle(gSelectedSector->getIndex());
 				if (!plan.valid)
 					core::addLogMessage("Shuttle editor", 0, core::LogLevel::Error, plan.diagnostic);
-				else queueShuttleEdit(building, plan);
+				else queueShuttleEdit(world, plan);
 			}
 			ImGui::SameLine();
 			ImGui::TextDisabled("Delete key");
@@ -6394,16 +6416,16 @@ void renderSelectedObjectPanel(shared_ptr<core::Building> const& building)
 
 		case core::SectorType::Ladder:
 		{
-			static core::Building const* editedBuilding = nullptr;
+			static core::World const* editedWorld = nullptr;
 			static uint32_t editedSector = ~0u;
 			static bool extensible = false;
 			static bool initiallyExtended = true;
 			static int directionalBatchLimit = 4;
-			core::Building::CreateLadderOptions current{ 0, false, true };
-			if ((editedBuilding != building.get() || editedSector != gSelectedSector->getIndex())
-				&& building->getLadderOptions(gSelectedSector->getIndex(), current))
+			core::World::CreateLadderOptions current{ 0, false, true };
+			if ((editedWorld != world.get() || editedSector != gSelectedSector->getIndex())
+				&& world->getLadderOptions(gSelectedSector->getIndex(), current))
 			{
-				editedBuilding = building.get();
+				editedWorld = world.get();
 				editedSector = gSelectedSector->getIndex();
 				extensible = current.extensible;
 				initiallyExtended = current.extensible ? current.startExtended : true;
@@ -6411,8 +6433,8 @@ void renderSelectedObjectPanel(shared_ptr<core::Building> const& building)
 			}
 			auto applyToggleImmediately = [&]()
 			{
-				core::Building::CreateLadderOptions options{};
-				if (!building->getLadderOptions(gSelectedSector->getIndex(), options))
+				core::World::CreateLadderOptions options{};
+				if (!world->getLadderOptions(gSelectedSector->getIndex(), options))
 				{
 					core::addLogMessage("Ladder editor", 0, core::LogLevel::Error,
 						"The selected Ladder no longer has an authored definition");
@@ -6420,7 +6442,7 @@ void renderSelectedObjectPanel(shared_ptr<core::Building> const& building)
 				}
 				options.extensible = extensible;
 				options.startExtended = extensible ? initiallyExtended : true;
-				auto plan = building->planResizeLadder(gSelectedSector->getIndex(),
+				auto plan = world->planResizeLadder(gSelectedSector->getIndex(),
 					gSelectedSector->getCellX(), gSelectedSector->getCellY(), options);
 				if (!plan.valid)
 				{
@@ -6428,7 +6450,7 @@ void renderSelectedObjectPanel(shared_ptr<core::Building> const& building)
 						plan.diagnostic);
 					return false;
 				}
-				queueLadderEdit(building, plan);
+				queueLadderEdit(world, plan);
 				return true;
 			};
 			bool previousExtensible = extensible;
@@ -6453,24 +6475,24 @@ void renderSelectedObjectPanel(shared_ptr<core::Building> const& building)
 			ImGui::BeginDisabled(!valuesValid);
 			if (ImGui::Button("Apply Ladder settings"))
 			{
-				core::Building::CreateLadderOptions options{
+				core::World::CreateLadderOptions options{
 					gSelectedSector->getDecksHigh(), extensible,
 					extensible ? initiallyExtended : true,
 					(uint32_t)directionalBatchLimit };
-				auto plan = building->planResizeLadder(gSelectedSector->getIndex(),
+				auto plan = world->planResizeLadder(gSelectedSector->getIndex(),
 					gSelectedSector->getCellX(), gSelectedSector->getCellY(), options);
 				if (!plan.valid)
 					core::addLogMessage("Ladder editor", 0, core::LogLevel::Error, plan.diagnostic);
-				else queueLadderEdit(building, plan);
+				else queueLadderEdit(world, plan);
 			}
 			ImGui::EndDisabled();
 			ImGui::Separator();
 			if (ImGui::Button("Delete Ladder"))
 			{
-				auto plan = building->planRemoveLadder(gSelectedSector->getIndex());
+				auto plan = world->planRemoveLadder(gSelectedSector->getIndex());
 				if (!plan.valid)
 					core::addLogMessage("Ladder editor", 0, core::LogLevel::Error, plan.diagnostic);
-				else queueLadderEdit(building, plan);
+				else queueLadderEdit(world, plan);
 			}
 			ImGui::SameLine();
 			ImGui::TextDisabled("Delete key");
@@ -6479,16 +6501,16 @@ void renderSelectedObjectPanel(shared_ptr<core::Building> const& building)
 
 		case core::SectorType::Stairwell:
 		{
-			static core::Building const* editedBuilding = nullptr;
+			static core::World const* editedWorld = nullptr;
 			static uint32_t editedSector = ~0u;
 			static int mountSide = CORE_SIDE_LEFT;
 			static int directionalCapacity = 0;
 			static int directionalBatchLimit = 4;
-			core::Building::CreateStairwellOptions current{ 0, CORE_SIDE_LEFT };
-			if ((editedBuilding != building.get() || editedSector != gSelectedSector->getIndex())
-				&& building->getStairwellOptions(gSelectedSector->getIndex(), current))
+			core::World::CreateStairwellOptions current{ 0, CORE_SIDE_LEFT };
+			if ((editedWorld != world.get() || editedSector != gSelectedSector->getIndex())
+				&& world->getStairwellOptions(gSelectedSector->getIndex(), current))
 			{
-				editedBuilding = building.get();
+				editedWorld = world.get();
 				editedSector = gSelectedSector->getIndex();
 				mountSide = current.mountSide;
 				directionalCapacity = (int)current.directionalCapacity;
@@ -6499,8 +6521,8 @@ void renderSelectedObjectPanel(shared_ptr<core::Building> const& building)
 			if (ImGui::Combo("Mount side", &sideIndex, sides))
 			{
 				auto requestedSide = sideIndex == 0 ? CORE_SIDE_LEFT : CORE_SIDE_RIGHT;
-				core::Building::CreateStairwellOptions options{};
-				if (!building->getStairwellOptions(gSelectedSector->getIndex(), options))
+				core::World::CreateStairwellOptions options{};
+				if (!world->getStairwellOptions(gSelectedSector->getIndex(), options))
 				{
 					core::addLogMessage("Stairwell editor", 0, core::LogLevel::Error,
 						"The selected Stairwell no longer has an authored definition");
@@ -6508,7 +6530,7 @@ void renderSelectedObjectPanel(shared_ptr<core::Building> const& building)
 				else
 				{
 					options.mountSide = requestedSide;
-					auto plan = building->planResizeStairwell(gSelectedSector->getIndex(),
+					auto plan = world->planResizeStairwell(gSelectedSector->getIndex(),
 						gSelectedSector->getCellX(), gSelectedSector->getCellY(), options);
 					if (!plan.valid)
 						core::addLogMessage("Stairwell editor", 0, core::LogLevel::Error,
@@ -6516,7 +6538,7 @@ void renderSelectedObjectPanel(shared_ptr<core::Building> const& building)
 					else
 					{
 						mountSide = requestedSide;
-						queueStairwellEdit(building, plan);
+						queueStairwellEdit(world, plan);
 					}
 				}
 				return;
@@ -6530,23 +6552,23 @@ void renderSelectedObjectPanel(shared_ptr<core::Building> const& building)
 			ImGui::BeginDisabled(!valuesValid);
 			if (ImGui::Button("Apply capacity settings"))
 			{
-				core::Building::CreateStairwellOptions options{
+				core::World::CreateStairwellOptions options{
 					gSelectedSector->getDecksHigh(), mountSide,
 					(uint32_t)directionalCapacity, (uint32_t)max(1, directionalBatchLimit) };
-				auto plan = building->planResizeStairwell(gSelectedSector->getIndex(),
+				auto plan = world->planResizeStairwell(gSelectedSector->getIndex(),
 					gSelectedSector->getCellX(), gSelectedSector->getCellY(), options);
 				if (!plan.valid)
 					core::addLogMessage("Stairwell editor", 0, core::LogLevel::Error, plan.diagnostic);
-				else queueStairwellEdit(building, plan);
+				else queueStairwellEdit(world, plan);
 			}
 			ImGui::EndDisabled();
 			ImGui::Separator();
 			if (ImGui::Button("Delete Stairwell"))
 			{
-				auto plan = building->planRemoveStairwell(gSelectedSector->getIndex());
+				auto plan = world->planRemoveStairwell(gSelectedSector->getIndex());
 				if (!plan.valid)
 					core::addLogMessage("Stairwell editor", 0, core::LogLevel::Error, plan.diagnostic);
-				else queueStairwellEdit(building, plan);
+				else queueStairwellEdit(world, plan);
 			}
 			ImGui::SameLine();
 			ImGui::TextDisabled("Delete key");
@@ -6555,18 +6577,18 @@ void renderSelectedObjectPanel(shared_ptr<core::Building> const& building)
 
 		case core::SectorType::Staircase:
 		{
-			static core::Building const* editedBuilding = nullptr;
+			static core::World const* editedWorld = nullptr;
 			static uint32_t editedSector = ~0u;
 			static int x = 0;
 			static int y = 0;
 			static int width = 2;
 			static int riseSide = CORE_SIDE_RIGHT;
 			static float speed = 0.0f;
-			core::Building::CreateStaircaseOptions current;
-			if ((editedBuilding != building.get() || editedSector != gSelectedSector->getIndex())
-				&& building->getStaircaseOptions(gSelectedSector->getIndex(), current))
+			core::World::CreateStaircaseOptions current;
+			if ((editedWorld != world.get() || editedSector != gSelectedSector->getIndex())
+				&& world->getStaircaseOptions(gSelectedSector->getIndex(), current))
 			{
-				editedBuilding = building.get(); editedSector = gSelectedSector->getIndex();
+				editedWorld = world.get(); editedSector = gSelectedSector->getIndex();
 				x = (int)gSelectedSector->getCellX(); y = (int)gSelectedSector->getCellY();
 				width = (int)current.cellsWide; riseSide = current.riseSide; speed = current.speed;
 			}
@@ -6580,18 +6602,18 @@ void renderSelectedObjectPanel(shared_ptr<core::Building> const& building)
 			ImGui::TextDisabled("0 = stairs, + = up, - = down");
 			auto apply = [&](bool remove)
 			{
-				auto plan = remove ? building->planRemoveStaircase(gSelectedSector->getIndex())
-					: building->planResizeStaircase(gSelectedSector->getIndex(),
+				auto plan = remove ? world->planRemoveStaircase(gSelectedSector->getIndex())
+					: world->planResizeStaircase(gSelectedSector->getIndex(),
 						(uint32_t)max(0, x), (uint32_t)max(0, y),
 						{ (uint32_t)max(0, width), riseSide, speed });
 				if (!plan.valid) { core::addLogMessage("Staircase editor", 0, core::LogLevel::Error, plan.diagnostic); return; }
 				try
 				{
-					auto undo = captureDocumentSnapshot(building);
-					if (!building->isSimulationPaused()) building->pauseSimulation();
-					auto index = building->applyStaircaseEdit(plan);
+					auto undo = captureDocumentSnapshot(world);
+					if (!world->isSimulationPaused()) world->pauseSimulation();
+					auto index = world->applyStaircaseEdit(plan);
 					commitDocumentEdit(std::move(undo));
-					if (remove) clearSelections(); else gSelectedSector = building->getSector(index);
+					if (remove) clearSelections(); else gSelectedSector = world->getSector(index);
 				}
 				catch (std::exception const& error) { core::addLogMessage("Staircase editor", 0, core::LogLevel::Error, error.what()); }
 			};
@@ -6612,39 +6634,39 @@ void renderSelectedObjectPanel(shared_ptr<core::Building> const& building)
 		switch (gSelectedSectorObject->getObjectType())
 		{
 		case core::SectorObjectType::BulkheadDoor:
-			renderBulkheadDoorPanel(building, gSelectedSectorObject);
+			renderBulkheadDoorPanel(world, gSelectedSectorObject);
 			break;
 
 		case core::SectorObjectType::Door:
-			renderDoorPanel(building, gSelectedSectorObject);
+			renderDoorPanel(world, gSelectedSectorObject);
 			break;
 
 		case core::SectorObjectType::InteractionPoint:
-			renderLiftOwnedControlPanel(building, gSelectedSectorObject);
+			renderLiftOwnedControlPanel(world, gSelectedSectorObject);
 			break;
 
 		case core::SectorObjectType::ForceBridge:
-			renderForceBridgePanel(building, gSelectedSectorObject);
+			renderForceBridgePanel(world, gSelectedSectorObject);
 			break;
 
 		case core::SectorObjectType::Ladder:
-			renderLadderPanel(building, gSelectedSectorObject);
+			renderLadderPanel(world, gSelectedSectorObject);
 			break;
 
 		case core::SectorObjectType::Lift:
-			renderPlatformLiftPanel(building, gSelectedSectorObject);
+			renderPlatformLiftPanel(world, gSelectedSectorObject);
 			break;
 
 		case core::SectorObjectType::Marker:
-			renderMarkerPanel(building, gSelectedSectorObject);
+			renderMarkerPanel(world, gSelectedSectorObject);
 			break;
 
 		case core::SectorObjectType::Window:
-			renderWindowPanel(building, gSelectedSectorObject);
+			renderWindowPanel(world, gSelectedSectorObject);
 			break;
 
 		case core::SectorObjectType::Walkway:
-			renderWalkwayPanel(building, gSelectedSectorObject);
+			renderWalkwayPanel(world, gSelectedSectorObject);
 			break;
 
 		default:
@@ -6654,11 +6676,11 @@ void renderSelectedObjectPanel(shared_ptr<core::Building> const& building)
 }
 
 
-void renderSelectedAgentPanel(shared_ptr<core::Building> building)
+void renderSelectedAgentPanel(shared_ptr<core::World> world)
 {
 	if (!gSelectedAgent || !ImGui::CollapsingHeader("Selection")) return;
 
-	auto id = building->getAgentId(gSelectedAgent);
+	auto id = world->getAgentId(gSelectedAgent);
 	auto sector = gSelectedAgent->getSector();
 	auto localPosition = gSelectedAgent->getLocalPosition();
 	auto globalPosition = gSelectedAgent->getGlobalPosition();
@@ -6674,24 +6696,24 @@ void renderSelectedAgentPanel(shared_ptr<core::Building> building)
 	// route but no tick acts on it. The change is refused while the simulation
 	// runs, so the button is disabled in step with the rest of the
 	// paused-only editing UI.
-	ImGui::BeginDisabled(!building->isSimulationPaused());
+	ImGui::BeginDisabled(!world->isSimulationPaused());
 	if (ImGui::Button(gSelectedAgent->isActive() ? "Deactivate" : "Activate"))
 	{
 		string diagnostic;
-		if (!building->setAgentActive(id, !gSelectedAgent->isActive(), &diagnostic))
+		if (!world->setAgentActive(id, !gSelectedAgent->isActive(), &diagnostic))
 		{
 			core::addLogMessage("Agents", 0, core::LogLevel::Warning, diagnostic);
 		}
 	}
 	ImGui::EndDisabled();
-	if (!building->isSimulationPaused() && ImGui::IsItemHovered())
+	if (!world->isSimulationPaused() && ImGui::IsItemHovered())
 	{
 		ImGui::SetTooltip("Pause the simulation to activate or deactivate an Agent");
 	}
 
-	renderAgentEffectiveProperties(building, id);
-	renderAgentTagAssignmentChecklist(building, id);
-	renderAgentBehaviourConfigurationPanel(building, id);
+	renderAgentEffectiveProperties(world, id);
+	renderAgentTagAssignmentChecklist(world, id);
+	renderAgentBehaviourConfigurationPanel(world, id);
 
 	if (gSelectingAgentPathDestination)
 	{
@@ -6701,10 +6723,10 @@ void renderSelectedAgentPanel(shared_ptr<core::Building> building)
 	}
 	else
 	{
-		auto const behaviourOwnsMovement = building->agentBehaviourOwnsMovement(id);
+		auto const behaviourOwnsMovement = world->agentBehaviourOwnsMovement(id);
 		ImGui::BeginDisabled(behaviourOwnsMovement);
 		if (ImGui::Button("Select path destination (Ctrl+P)"))
-			beginAgentPathSelection(building);
+			beginAgentPathSelection(world);
 		ImGui::EndDisabled();
 		if (behaviourOwnsMovement && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
 			ImGui::SetTooltip("The enabled Agent behaviour owns movement");
@@ -6743,16 +6765,16 @@ void renderSelectedAgentPanel(shared_ptr<core::Building> building)
 	if (gSelectedVertex)
 	{
 		ImGui::Text("Selected vertex: %s", gSelectedVertex->getDescription().c_str());
-		auto const behaviourOwnsMovement = building->agentBehaviourOwnsMovement(id);
+		auto const behaviourOwnsMovement = world->agentBehaviourOwnsMovement(id);
 		ImGui::BeginDisabled(behaviourOwnsMovement);
 		if (ImGui::Button("Path to selected vertex"))
 		{
-			auto newPath = building->getGraph()->calculatePath(gSelectedAgent, gSelectedVertex);
+			auto newPath = world->getGraph()->calculatePath(gSelectedAgent, gSelectedVertex);
 			if (newPath)
 			{
 				// Explicitly cancel the old route first. Agent::setPath may retain an
 				// active traversal permit, but this command promises replacement.
-				applyAgentPathEdit(building, gSelectedAgent, std::move(newPath), true, true);
+				applyAgentPathEdit(world, gSelectedAgent, std::move(newPath), true, true);
 			}
 		}
 		ImGui::EndDisabled();
@@ -6760,27 +6782,27 @@ void renderSelectedAgentPanel(shared_ptr<core::Building> building)
 }
 
 
-void addBackLayer(shared_ptr<core::Building> const& building)
+void addBackLayer(shared_ptr<core::World> const& world)
 {
-	if (!building) return;
+	if (!world) return;
 
-	if (building->getLayerCount() >= CORE_MAX_LAYERS)
+	if (world->getLayerCount() >= CORE_MAX_LAYERS)
 	{
 		core::addLogMessage("Layers", 0, core::LogLevel::Warning,
-			format("A Building can have at most %u layers", (uint32_t)CORE_MAX_LAYERS));
+			format("A World can have at most %u layers", (uint32_t)CORE_MAX_LAYERS));
 		return;
 	}
 
-	auto undo = captureDocumentSnapshot(building);
+	auto undo = captureDocumentSnapshot(world);
 	try
 	{
-		if (!building->isSimulationPaused()) building->pauseSimulation();
+		if (!world->isSimulationPaused()) world->pauseSimulation();
 
-		auto const layer = building->addLayer();
-		building->finishBuild();
+		auto const layer = world->addLayer();
+		world->finishBuild();
 		commitDocumentEdit(std::move(undo));
 		core::addLogMessage("Layers", 0, core::LogLevel::Info,
-			format("Added {} as the new back layer", building->getLayerName(layer)));
+			format("Added {} as the new back layer", world->getLayerName(layer)));
 	}
 	catch (core::Exception const& error)
 	{
@@ -6793,11 +6815,11 @@ void addBackLayer(shared_ptr<core::Building> const& building)
 }
 
 
-void renderLayersPanel(shared_ptr<core::Building> const& building)
+void renderLayersPanel(shared_ptr<core::World> const& world)
 {
-	if (!building) return;
+	if (!world) return;
 
-	auto const layerCount = building->getLayerCount();
+	auto const layerCount = world->getLayerCount();
 
 	// Loads, undos, and layer edits can all change the layer count from under us.
 	gUISettings.visibleLayer = std::clamp(gUISettings.visibleLayer, 0,
@@ -6858,33 +6880,33 @@ void renderLayersPanel(shared_ptr<core::Building> const& building)
 				else if (wireframeOverlay)
 				{
 					ImGui::SetTooltip("%s\nDrawn as a wireframe overlay behind the selected layer",
-						building->getLayerName(layer).c_str());
+						world->getLayerName(layer).c_str());
 				}
 				else
 				{
-					ImGui::SetTooltip("View %s", building->getLayerName(layer).c_str());
+					ImGui::SetTooltip("View %s", world->getLayerName(layer).c_str());
 				}
 			}
 
 			ImGui::TableSetColumnIndex(1);
-			renderLayerNameEditor(building, layer);
+			renderLayerNameEditor(world, layer);
 
-			// A Building keeps at least two Layers, so deletion is only offered while
+			// A World keeps at least two Layers, so deletion is only offered while
 			// it has more than two.
 			ImGui::TableSetColumnIndex(2);
 			bool const canDelete = layerCount > 2;
 			ImGui::BeginDisabled(!canDelete);
 			if (ImGui::Button(ICON_FA_TRASH, ImVec2(ImGui::GetFrameHeight(), 0.0f)))
 			{
-				requestLayerDelete(building, layer);
+				requestLayerDelete(world, layer);
 			}
 			ImGui::EndDisabled();
 			if (ImGui::IsItemHovered())
 			{
 				if (canDelete)
-					ImGui::SetTooltip("Delete %s and everything on it", building->getLayerName(layer).c_str());
+					ImGui::SetTooltip("Delete %s and everything on it", world->getLayerName(layer).c_str());
 				else
-					ImGui::SetTooltip("A Building must keep at least two layers");
+					ImGui::SetTooltip("A World must keep at least two layers");
 			}
 
 			ImGui::PopID();
@@ -6899,11 +6921,11 @@ void renderLayersPanel(shared_ptr<core::Building> const& building)
 
 	ImGui::BeginDisabled(atMaximum);
 	if (ImGui::Button(ICON_FA_PLUS " Add Layer"))
-		addBackLayer(building);
+		addBackLayer(world);
 	ImGui::EndDisabled();
 	if (atMaximum && ImGui::IsItemHovered())
 	{
-		ImGui::SetTooltip("A Building can have at most %u layers",
+		ImGui::SetTooltip("A World can have at most %u layers",
 			(uint32_t)CORE_MAX_LAYERS);
 	}
 
@@ -6912,44 +6934,44 @@ void renderLayersPanel(shared_ptr<core::Building> const& building)
 }
 
 
-void renderBuildingPanel(shared_ptr<core::Building> building)
+void renderWorldPanel(shared_ptr<core::World> world)
 {
 	if (ImGui::CollapsingHeader("Tags"))
 	{
 		// Persist a newly created or selected registry reference immediately, so
 		// close/reopen needs no second manual save after attachment.
-		if (renderTagsPanel(building, gBuildingFilepath,
+		if (renderTagsPanel(world, gWorldFilepath,
 			[] { return chooseAgentTagRegistryPath(); }))
-			saveBuilding(building, false);
+			saveWorld(world, false);
 	}
 
 	if (ImGui::CollapsingHeader("Behaviours"))
 	{
 		// Behaviour registry packages are inspected and reloaded here; their
-		// definitions are authored beside the Building and never executed or
+		// definitions are authored beside the World and never executed or
 		// edited by the panel.
 		ImGui::PushID("AgentBehaviourRegistry");
-		if (renderBehavioursPanel(building, gBuildingFilepath,
+		if (renderBehavioursPanel(world, gWorldFilepath,
 			[] { return chooseAgentBehaviourRegistryPath(); }))
-			saveBuilding(building, false);
+			saveWorld(world, false);
 		ImGui::PopID();
 	}
 
 	if (ImGui::CollapsingHeader("Objects"))
 	{
-		renderObjectView(building);
+		renderObjectView(world);
 	}
 
 	if (ImGui::CollapsingHeader("Agents"))
 	{
 		// Groups are defined here, above the Agents they will classify, so the
 		// definitions read before the rows that use them.
-		renderAgentGroupsPanel(building);
-		renderAgentView(building);
+		renderAgentGroupsPanel(world);
+		renderAgentView(world);
 	}
 
-	renderSelectedObjectPanel(building);
-	renderSelectedAgentPanel(building);
+	renderSelectedObjectPanel(world);
+	renderSelectedAgentPanel(world);
 }
 
 
@@ -6999,7 +7021,7 @@ void renderGraphPanel(shared_ptr<const core::Graph> graph)
 }
 
 
-void renderPathingPanel(shared_ptr<core::Building> const& building,
+void renderPathingPanel(shared_ptr<core::World> const& world,
 	shared_ptr<const core::Agent> /* agent */)
 {
 		string selectedVertexText = format("Selected vertex: {}", gSelectedVertex ? gSelectedVertex->getDescription() : "<none>");
@@ -7013,9 +7035,9 @@ void renderPathingPanel(shared_ptr<core::Building> const& building,
 		if (path)
 		{
 			auto agentIsIdle = gSelectedAgent->getState() == core::Agent::State::Idle;
-			auto const id = building ? building->getAgentId(gSelectedAgent) : core::AgentId{};
-			auto const behaviourOwnsMovement = building && id
-				&& building->agentBehaviourOwnsMovement(id);
+			auto const id = world ? world->getAgentId(gSelectedAgent) : core::AgentId{};
+			auto const behaviourOwnsMovement = world && id
+				&& world->agentBehaviourOwnsMovement(id);
 			ImGui::BeginDisabled(behaviourOwnsMovement);
 
 			if (!agentIsIdle)
@@ -7268,19 +7290,19 @@ void renderDockSpace()
 	ImGui::End();
 }
 
-void renderControlsWindow(shared_ptr<core::Building> building, shared_ptr<const core::Graph> graph,
+void renderControlsWindow(shared_ptr<core::World> world, shared_ptr<const core::Graph> graph,
 	shared_ptr<core::Agent> pathingAgent)
 {
 	ImGui::Begin("Controls");
 
 	if (ImGui::CollapsingHeader("Simulation", ImGuiTreeNodeFlags_DefaultOpen))
-		renderToolbar(building);
+		renderToolbar(world);
 	if (ImGui::CollapsingHeader("Layers", ImGuiTreeNodeFlags_DefaultOpen))
-		renderLayersPanel(building);
-	if (ImGui::CollapsingHeader("Building", ImGuiTreeNodeFlags_DefaultOpen))
-		renderBuildingPanel(building);
+		renderLayersPanel(world);
+	if (ImGui::CollapsingHeader("World", ImGuiTreeNodeFlags_DefaultOpen))
+		renderWorldPanel(world);
 	if (ImGui::CollapsingHeader("Path finding"))
-		renderPathingPanel(building, pathingAgent);
+		renderPathingPanel(world, pathingAgent);
 	if (ImGui::CollapsingHeader("Graph"))
 		renderGraphPanel(graph);
 	if (ImGui::CollapsingHeader("Log"))
@@ -7291,12 +7313,12 @@ void renderControlsWindow(shared_ptr<core::Building> building, shared_ptr<const 
 
 namespace
 {
-	bool resizeRectangleFree(shared_ptr<const core::Building> const& building,
+	bool resizeRectangleFree(shared_ptr<const core::World> const& world,
 		shared_ptr<const core::Sector> const& sector, int left, int bottom, int right, int top)
 	{
-		if (left < 0 || bottom < 0 || right > (int)building->getCellsWide()
-			|| top > (int)building->getDecksHigh() || left >= right || bottom >= top) return false;
-		auto layer = building->getLayer(sector->getLayerIndex());
+		if (left < 0 || bottom < 0 || right > (int)world->getCellsWide()
+			|| top > (int)world->getDecksHigh() || left >= right || bottom >= top) return false;
+		auto layer = world->getLayer(sector->getLayerIndex());
 		for (int y = bottom; y < top; ++y)
 			for (int x = left; x < right; ++x)
 			{
@@ -7350,7 +7372,7 @@ namespace
 			? ResizeEdge::Move : ResizeEdge::None;
 	}
 
-	void updateAgentMove(shared_ptr<core::Building> const& building)
+	void updateAgentMove(shared_ptr<core::World> const& world)
 	{
 		auto& io = ImGui::GetIO();
 		if (gUISettings.selectionMode != UISettings::SelectionMode::Object)
@@ -7367,7 +7389,7 @@ namespace
 			gAgentMove.dragging = true;
 			gAgentMove.pressPosition = io.MousePos;
 			gAgentMove.originalPosition = gSelectedAgent->getGlobalPosition();
-			gAgentMove.preview = getAgentMoveTarget(building, gSelectedAgent,
+			gAgentMove.preview = getAgentMoveTarget(world, gSelectedAgent,
 				gAgentMove.originalPosition);
 		}
 		if (!gAgentMove.dragging) return;
@@ -7386,7 +7408,7 @@ namespace
 		auto target = gAgentMove.originalPosition + core::Vector2{
 			(io.MousePos.x - gAgentMove.pressPosition.x) / CORE_CELL_WIDTH_PIXELS,
 			-(io.MousePos.y - gAgentMove.pressPosition.y) / CORE_DECK_HEIGHT_PIXELS };
-		gAgentMove.preview = getAgentMoveTarget(building, gSelectedAgent, target);
+		gAgentMove.preview = getAgentMoveTarget(world, gSelectedAgent, target);
 
 		if (!io.MouseReleased[0]) return;
 		if (!gWorldHovered)
@@ -7412,8 +7434,8 @@ namespace
 		}
 		try
 		{
-			auto undo = captureDocumentSnapshot(building);
-			if (!building->isSimulationPaused()) building->pauseSimulation();
+			auto undo = captureDocumentSnapshot(world);
+			if (!world->isSimulationPaused()) world->pauseSimulation();
 			gUISettings.worldPaused = true;
 			gSelectedAgent->clearPath();
 			auto source = const_cast<core::Sector*>(gSelectedAgent->getSector());
@@ -7553,7 +7575,7 @@ namespace
 		return true;
 	}
 
-	void updateObjectMove(shared_ptr<core::Building> const& building)
+	void updateObjectMove(shared_ptr<core::World> const& world)
 	{
 		auto& io = ImGui::GetIO();
 		if (!gObjectMove.dragging && gWorldHovered
@@ -7593,12 +7615,12 @@ namespace
 			return;
 		}
 
-		if (building->isLiftOwnedDoor(gSelectedSectorObject)
-			|| building->isBulkheadDoorOwnedControl(gSelectedSectorObject)
-			|| building->isLiftOwnedControl(gSelectedSectorObject)
-			|| building->isShuttleOwnedDoor(gSelectedSectorObject)
-			|| building->isShuttleOwnedControl(gSelectedSectorObject)
-			|| building->isForceBridgeOwnedControl(gSelectedSectorObject))
+		if (world->isLiftOwnedDoor(gSelectedSectorObject)
+			|| world->isBulkheadDoorOwnedControl(gSelectedSectorObject)
+			|| world->isLiftOwnedControl(gSelectedSectorObject)
+			|| world->isShuttleOwnedDoor(gSelectedSectorObject)
+			|| world->isShuttleOwnedControl(gSelectedSectorObject)
+			|| world->isForceBridgeOwnedControl(gSelectedSectorObject))
 		{
 			resetObjectMove();
 			return;
@@ -7623,7 +7645,7 @@ namespace
 		if (!gObjectMove.dragging && gWorldHovered && !gViewPan.dragging
 			&& (gHoveredSectorObject == gSelectedSectorObject || resizeEdge != ResizeEdge::None)
 			&& io.MouseClicked[0])
-			beginObjectMove(building, gSelectedSectorObject, objectIndex,
+			beginObjectMove(world, gSelectedSectorObject, objectIndex,
 				resizeEdge == ResizeEdge::None ? ResizeEdge::Move : resizeEdge);
 		if (!gObjectMove.dragging) return;
 
@@ -7646,8 +7668,8 @@ namespace
 			&& gSelectedSectorObject->getObjectType() == core::SectorObjectType::Door;
 		// A regular Door may span at most two cells and always has a one-deck
 		// footprint; physical regular/tall height is not changed by dragging.
-		int const maxResizeWidth = doorResize ? 2 : (int)building->getCellsWide();
-		int const maxResizeHeight = (int)building->getDecksHigh();
+		int const maxResizeWidth = doorResize ? 2 : (int)world->getCellsWide();
+		int const maxResizeHeight = (int)world->getDecksHigh();
 		if (gObjectMove.edge == ResizeEdge::Left)
 		{
 			auto right = (int)gObjectMove.originalX + (int)gObjectMove.originalWidth;
@@ -7660,7 +7682,7 @@ namespace
 		{
 			auto right = clamp((int)gObjectMove.originalX + (int)gObjectMove.originalWidth
 				+ deltaX, (int)gObjectMove.originalX + 1,
-				min(maxResizeWidth + (int)gObjectMove.originalX, (int)building->getCellsWide()));
+				min(maxResizeWidth + (int)gObjectMove.originalX, (int)world->getCellsWide()));
 			targetX = (int)gObjectMove.originalX;
 			targetY = (int)gObjectMove.originalY;
 			targetWidth = right - targetX;
@@ -7677,13 +7699,13 @@ namespace
 		{
 			auto top = clamp((int)gObjectMove.originalY + (int)gObjectMove.originalHeight
 				+ deltaY, (int)gObjectMove.originalY + 1,
-				min(maxResizeHeight + (int)gObjectMove.originalY, (int)building->getDecksHigh()));
+				min(maxResizeHeight + (int)gObjectMove.originalY, (int)world->getDecksHigh()));
 			targetX = (int)gObjectMove.originalX;
 			targetY = (int)gObjectMove.originalY;
 			targetHeight = top - targetY;
 		}
 		bool const targetInWorld = targetX >= 0 && targetY >= 0
-			&& targetX < (int)building->getCellsWide() && targetY < (int)building->getDecksHigh();
+			&& targetX < (int)world->getCellsWide() && targetY < (int)world->getDecksHigh();
 		if (!targetInWorld)
 		{
 			gObjectMove.preview.valid = false;
@@ -7696,14 +7718,14 @@ namespace
 			|| gObjectMove.preview.diagnostic == "Drop the object inside the world")
 		{
 			gObjectMove.preview = doorResize
-				? building->planResizeSectorDoor(owner->getIndex(), objectIndex,
+				? world->planResizeSectorDoor(owner->getIndex(), objectIndex,
 					(uint32_t)targetX, (uint32_t)targetY,
 					(uint32_t)targetWidth, (uint32_t)targetHeight)
 				: resizing
-					? building->planResizeSectorWindow(owner->getIndex(), objectIndex,
+					? world->planResizeSectorWindow(owner->getIndex(), objectIndex,
 						(uint32_t)targetX, (uint32_t)targetY,
 						(uint32_t)targetWidth, (uint32_t)targetHeight)
-					: building->planMoveSectorObject(owner->getIndex(), objectIndex,
+					: world->planMoveSectorObject(owner->getIndex(), objectIndex,
 						(uint32_t)targetX, (uint32_t)targetY);
 		}
 
@@ -7729,11 +7751,11 @@ namespace
 				resetObjectMove();
 				return;
 			}
-			queueObjectMove(building, gObjectMove.preview);
+			queueObjectMove(world, gObjectMove.preview);
 		}
 	}
 
-	void updateSectorResize(shared_ptr<core::Building> const& building)
+	void updateSectorResize(shared_ptr<core::World> const& world)
 	{
 		auto& io = ImGui::GetIO();
 		if (gUISettings.selectionMode != UISettings::SelectionMode::Sector || !gSelectedSector
@@ -7747,12 +7769,12 @@ namespace
 		// has to come from the Background editor so the Windows which lose it are
 		// named in the consequences rather than silently dropped by the replay.
 		auto const background = gSelectedSector->getType() == core::SectorType::Background;
-		auto previewRectangle = [&building, background](uint32_t sectorIndex,
+		auto previewRectangle = [&world, background](uint32_t sectorIndex,
 			uint32_t left, uint32_t bottom, uint32_t width, uint32_t height)
 		{
 			return background
-				? building->planResizeBackground(sectorIndex, left, bottom, width, height)
-				: building->planResizeLocation(sectorIndex, left, bottom, width, height);
+				? world->planResizeBackground(sectorIndex, left, bottom, width, height)
+				: world->planResizeLocation(sectorIndex, left, bottom, width, height);
 		};
 
 		auto hoverEdge = gSectorResize.dragging ? gSectorResize.edge
@@ -7774,7 +7796,7 @@ namespace
 			bool const selectedStairwell = gSelectedSector->getType() == core::SectorType::Stairwell;
 			if (hoverEdge != ResizeEdge::Move && !selectedLift && !selectedShuttle)
 			{
-				if (!building->isSimulationPaused()) building->pauseSimulation();
+				if (!world->isSimulationPaused()) world->pauseSimulation();
 				gUISettings.worldPaused = true;
 			}
 			gSectorResize.dragging = true;
@@ -7789,27 +7811,27 @@ namespace
 			gSectorResize.originalWidth = gSelectedSector->getCellsWide();
 			gSectorResize.originalHeight = gSelectedSector->getDecksHigh();
 			if (gSectorResize.lift)
-				gSectorResize.liftPreview = building->planResizeLift(gSelectedSector->getIndex(),
+				gSectorResize.liftPreview = world->planResizeLift(gSelectedSector->getIndex(),
 					gSectorResize.originalX, gSectorResize.originalY,
 					gSectorResize.originalWidth, gSectorResize.originalHeight);
 			else if (gSectorResize.shuttle)
-				gSectorResize.shuttlePreview = building->planResizeShuttle(gSelectedSector->getIndex(),
+				gSectorResize.shuttlePreview = world->planResizeShuttle(gSelectedSector->getIndex(),
 					gSectorResize.originalX, gSectorResize.originalY, gSectorResize.originalWidth);
 			else if (gSectorResize.ladder)
 			{
-				core::Building::CreateLadderOptions options{
+				core::World::CreateLadderOptions options{
 					gSectorResize.originalHeight, false, true };
-				building->getLadderOptions(gSelectedSector->getIndex(), options);
-				gSectorResize.ladderPreview = building->planResizeLadder(
+				world->getLadderOptions(gSelectedSector->getIndex(), options);
+				gSectorResize.ladderPreview = world->planResizeLadder(
 					gSelectedSector->getIndex(), gSectorResize.originalX,
 					gSectorResize.originalY, options);
 			}
 			else if (gSectorResize.stairwell)
 			{
-				core::Building::CreateStairwellOptions options{
+				core::World::CreateStairwellOptions options{
 					gSectorResize.originalHeight, CORE_SIDE_LEFT };
-				building->getStairwellOptions(gSelectedSector->getIndex(), options);
-				gSectorResize.stairwellPreview = building->planResizeStairwell(
+				world->getStairwellOptions(gSelectedSector->getIndex(), options);
+				gSectorResize.stairwellPreview = world->planResizeStairwell(
 					gSelectedSector->getIndex(), gSectorResize.originalX,
 					gSectorResize.originalY, options);
 			}
@@ -7842,25 +7864,25 @@ namespace
 				gSectorResize.lift ? max(0, right - 2) : 0, right - 1); break;
 		case ResizeEdge::Right:
 			moving = &right; desired = clamp(right + deltaX, left + 1,
-				gSectorResize.lift ? min(left + 2, (int)building->getCellsWide())
-					: (int)building->getCellsWide()); break;
+				gSectorResize.lift ? min(left + 2, (int)world->getCellsWide())
+					: (int)world->getCellsWide()); break;
 		case ResizeEdge::Bottom: moving = &bottom; desired = clamp(bottom + deltaY, 0,
 			 top - ((gSectorResize.ladder || gSectorResize.stairwell) ? 2 : 1)); break;
 		case ResizeEdge::Top: moving = &top; desired = clamp(top + deltaY,
 			bottom + ((gSectorResize.ladder || gSectorResize.stairwell) ? 2 : 1),
-			(int)building->getDecksHigh()); break;
+			(int)world->getDecksHigh()); break;
 		case ResizeEdge::Move:
 		{
 			int width = right - left;
 			int height = top - bottom;
-			left = clamp(left + deltaX, 0, (int)building->getCellsWide() - width);
-			bottom = clamp(bottom + deltaY, 0, (int)building->getDecksHigh() - height);
+			left = clamp(left + deltaX, 0, (int)world->getCellsWide() - width);
+			bottom = clamp(bottom + deltaY, 0, (int)world->getDecksHigh() - height);
 			right = left + width;
 			top = bottom + height;
 			if ((deltaX != 0 || deltaY != 0) && !gSectorResize.lift
-				&& !building->isSimulationPaused())
+				&& !world->isSimulationPaused())
 			{
-				building->pauseSimulation();
+				world->pauseSimulation();
 				gUISettings.worldPaused = true;
 			}
 			break;
@@ -7874,7 +7896,7 @@ namespace
 			{
 				int old = *moving;
 				*moving += step;
-				if (!resizeRectangleFree(building, gSelectedSector, left, bottom, right, top))
+				if (!resizeRectangleFree(world, gSelectedSector, left, bottom, right, top))
 				{
 					*moving = old;
 					break;
@@ -7887,7 +7909,7 @@ namespace
 				|| gSectorResize.liftPreview.y != (uint32_t)bottom
 				|| gSectorResize.liftPreview.cellsWide != (uint32_t)(right - left)
 				|| gSectorResize.liftPreview.decksHigh != (uint32_t)(top - bottom))
-				gSectorResize.liftPreview = building->planResizeLift(gSelectedSector->getIndex(),
+				gSectorResize.liftPreview = world->planResizeLift(gSelectedSector->getIndex(),
 					(uint32_t)left, (uint32_t)bottom, (uint32_t)(right - left), (uint32_t)(top - bottom));
 		}
 		else if (gSectorResize.shuttle)
@@ -7895,7 +7917,7 @@ namespace
 			if (gSectorResize.shuttlePreview.x != (uint32_t)left
 				|| gSectorResize.shuttlePreview.y != (uint32_t)bottom
 				|| gSectorResize.shuttlePreview.cellsWide != (uint32_t)(right - left))
-				gSectorResize.shuttlePreview = building->planResizeShuttle(gSelectedSector->getIndex(),
+				gSectorResize.shuttlePreview = world->planResizeShuttle(gSelectedSector->getIndex(),
 					(uint32_t)left, (uint32_t)bottom, (uint32_t)(right - left));
 		}
 		else if (gSectorResize.ladder)
@@ -7906,7 +7928,7 @@ namespace
 			{
 				auto options = gSectorResize.ladderPreview.options;
 				options.decksHigh = (uint32_t)(top - bottom);
-				gSectorResize.ladderPreview = building->planResizeLadder(
+				gSectorResize.ladderPreview = world->planResizeLadder(
 					gSelectedSector->getIndex(), (uint32_t)left, (uint32_t)bottom, options);
 			}
 		}
@@ -7918,7 +7940,7 @@ namespace
 			{
 				auto options = gSectorResize.stairwellPreview.options;
 				options.decksHigh = (uint32_t)(top - bottom);
-				gSectorResize.stairwellPreview = building->planResizeStairwell(
+				gSectorResize.stairwellPreview = world->planResizeStairwell(
 					gSelectedSector->getIndex(), (uint32_t)left, (uint32_t)bottom, options);
 			}
 		}
@@ -7970,11 +7992,11 @@ namespace
 					gSectorResize.preview.diagnostic);
 				resetSectorResize();
 			}
-			else if (gSectorResize.lift) queueLiftEdit(building, gSectorResize.liftPreview);
-			else if (gSectorResize.shuttle) queueShuttleEdit(building, gSectorResize.shuttlePreview);
-			else if (gSectorResize.ladder) queueLadderEdit(building, gSectorResize.ladderPreview);
-			else if (gSectorResize.stairwell) queueStairwellEdit(building, gSectorResize.stairwellPreview);
-			else queueLocationEdit(building, gSectorResize.preview);
+			else if (gSectorResize.lift) queueLiftEdit(world, gSectorResize.liftPreview);
+			else if (gSectorResize.shuttle) queueShuttleEdit(world, gSectorResize.shuttlePreview);
+			else if (gSectorResize.ladder) queueLadderEdit(world, gSectorResize.ladderPreview);
+			else if (gSectorResize.stairwell) queueStairwellEdit(world, gSectorResize.stairwellPreview);
+			else queueLocationEdit(world, gSectorResize.preview);
 		}
 	}
 
@@ -8016,9 +8038,9 @@ namespace
 			uint32_t cellX{ 0 }, cellY{ 0 }, cellsWide{ 0 }, decksHigh{ 0 };
 			if (selectedResizeFootprint(cellX, cellY, cellsWide, decksHigh))
 			{
-				auto const world = screenToWorld(ImGui::GetIO().MousePos);
-				auto const hoverX = (int)floor(world.x);
-				auto const hoverY = (int)floor(world.y);
+				auto const worldPosition = screenToWorld(ImGui::GetIO().MousePos);
+				auto const hoverX = (int)floor(worldPosition.x);
+				auto const hoverY = (int)floor(worldPosition.y);
 				if (hoverX >= (int)cellX && hoverX < (int)(cellX + cellsWide)
 					&& hoverY >= (int)cellY && hoverY < (int)(cellY + decksHigh))
 					drawList->AddRect(
@@ -8130,7 +8152,7 @@ namespace
 	}
 }
 
-void renderWorldWindow(shared_ptr<core::Building> building, shared_ptr<const core::Graph> graph)
+void renderWorldWindow(shared_ptr<core::World> world, shared_ptr<const core::Graph> graph)
 {
 	ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
 	ImGui::Begin("World", nullptr, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
@@ -8145,8 +8167,8 @@ void renderWorldWindow(shared_ptr<core::Building> building, shared_ptr<const cor
 	float const scrollbarThickness = ImGui::GetFrameHeight();
 	float const horizontalScrollbarSpace = scrollbarThickness + style.ItemSpacing.y;
 	float const verticalScrollbarSpace = scrollbarThickness + style.ItemSpacing.x;
-	float const worldWidth = (float)building->getCellsWide() * (float)CORE_CELL_WIDTH_PIXELS;
-	float const worldHeight = (float)building->getDecksHigh() * (float)CORE_DECK_HEIGHT_PIXELS;
+	float const worldWidth = (float)world->getCellsWide() * (float)CORE_CELL_WIDTH_PIXELS;
+	float const worldHeight = (float)world->getDecksHigh() * (float)CORE_DECK_HEIGHT_PIXELS;
 
 	bool showHorizontalScrollbar = worldWidth > canvasSize.x;
 	bool showVerticalScrollbar = worldHeight > canvasSize.y;
@@ -8254,25 +8276,25 @@ void renderWorldWindow(shared_ptr<core::Building> building, shared_ptr<const cor
 			gHoveredVertex = graph->getVertexAtPosition(gUISettings.visibleLayer, mousePos.x,
 				mousePos.y, vertexRadius);
 		if (!gSelectingAgentPathDestination && !gHoveredVertex)
-			gHoveredAgent = building->getAgentAtPosition(gUISettings.visibleLayer,
+			gHoveredAgent = world->getAgentAtPosition(gUISettings.visibleLayer,
 				mousePos.x, mousePos.y);
 		if (!gHoveredVertex && !gHoveredAgent)
 		{
-			gHoveredSectorObject = markerAtScreenPosition(building, ImGui::GetIO().MousePos);
+			gHoveredSectorObject = markerAtScreenPosition(world, ImGui::GetIO().MousePos);
 			if (!gHoveredSectorObject)
-				gHoveredSectorObject = bulkheadDoorAtScreenPosition(building, ImGui::GetIO().MousePos);
+				gHoveredSectorObject = bulkheadDoorAtScreenPosition(world, ImGui::GetIO().MousePos);
 			if (!gHoveredSectorObject)
-				gHoveredSectorObject = ladderAtScreenPosition(building, ImGui::GetIO().MousePos);
+				gHoveredSectorObject = ladderAtScreenPosition(world, ImGui::GetIO().MousePos);
 			if (!gHoveredSectorObject)
-				gHoveredSectorObject = platformLiftAtScreenPosition(building, ImGui::GetIO().MousePos);
+				gHoveredSectorObject = platformLiftAtScreenPosition(world, ImGui::GetIO().MousePos);
 			if (!gHoveredSectorObject)
-				gHoveredSectorObject = forceBridgeAtScreenPosition(building, ImGui::GetIO().MousePos);
+				gHoveredSectorObject = forceBridgeAtScreenPosition(world, ImGui::GetIO().MousePos);
 			if (!gHoveredSectorObject)
-				gHoveredSectorObject = walkwayAtScreenPosition(building, ImGui::GetIO().MousePos);
+				gHoveredSectorObject = walkwayAtScreenPosition(world, ImGui::GetIO().MousePos);
 			if (!gHoveredSectorObject)
 			{
 				shared_ptr<const core::SectorObject> sectorObject;
-				auto object = building->getObjectAtPosition(gUISettings.visibleLayer,
+				auto object = world->getObjectAtPosition(gUISettings.visibleLayer,
 					mousePos.x, mousePos.y, &sectorObject);
 				if (sectorObject && sectorObject->getObjectType() != core::SectorObjectType::Marker)
 					gHoveredSectorObject = sectorObject;
@@ -8283,7 +8305,7 @@ void renderWorldWindow(shared_ptr<core::Building> building, shared_ptr<const cor
 		if (!gSelectingAgentPathDestination && !gHoveredVertex && !gHoveredAgent
 			&& !gHoveredSectorObject)
 		{
-			auto sector = building->getSectorAtPosition(gUISettings.visibleLayer,
+			auto sector = world->getSectorAtPosition(gUISettings.visibleLayer,
 				mousePos.x, mousePos.y);
 			if (sector && isCanvasSelectableSectorType(sector->getType()))
 				gHoveredSector = sector;
@@ -8296,9 +8318,9 @@ void renderWorldWindow(shared_ptr<core::Building> building, shared_ptr<const cor
 	// Set after the hover tests so a pan outranks the Hand cursor.
 	if (gViewPan.dragging) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
 
-	updateAgentMove(building);
-	updateObjectMove(building);
-	updateSectorResize(building);
+	updateAgentMove(world);
+	updateObjectMove(world);
+	updateSectorResize(world);
 	if (gAgentMove.dragging || gObjectMove.dragging) gPegmanConsumesLeftMouse = true;
 
 	if (gSelectingAgentPathDestination) gUISettings.renderGraph = true;
@@ -8307,12 +8329,12 @@ void renderWorldWindow(shared_ptr<core::Building> building, shared_ptr<const cor
 	drawList->PushClipRect(canvasPos, canvasPos + canvasSize, true);
 
 	// Keep world geometry and editor overlays inside the dimensions declared by
-	// the building. The canvas can be larger than the world when docked or resized.
-	auto worldTopLeft = worldToScreen({ 0.0f, (float)building->getDecksHigh() });
-	auto worldBottomRight = worldToScreen({ (float)building->getCellsWide(), 0.0f });
+	// the world. The canvas can be larger than the world when docked or resized.
+	auto worldTopLeft = worldToScreen({ 0.0f, (float)world->getDecksHigh() });
+	auto worldBottomRight = worldToScreen({ (float)world->getCellsWide(), 0.0f });
 	drawList->PushClipRect(worldTopLeft, worldBottomRight, true);
-	renderBuilding(building);
-	renderGraph(graph, building);
+	renderWorld(world);
+	renderGraph(graph, world);
 	drawSectorEditOverlay(drawList);
 	if (gAgentMove.dragging)
 	{
@@ -8359,32 +8381,32 @@ void renderWorldWindow(shared_ptr<core::Building> building, shared_ptr<const cor
 	drawList->PopClipRect();
 
 	// The palette is editor chrome, so it remains available across the canvas.
-	renderObjectPalette(building, canvasPos, canvasSize, drawList);
+	renderObjectPalette(world, canvasPos, canvasSize, drawList);
 	drawList->PopClipRect();
 
 	ImGui::End();
 }
 
-void renderUI(shared_ptr<core::Building>& building, shared_ptr<core::Agent> pathingAgent)
+void renderUI(shared_ptr<core::World>& world, shared_ptr<core::Agent> pathingAgent)
 {
 	ImGui::SetMouseCursor(ImGuiMouseCursor_Arrow);
 
-	renderMenu(building);
-	renderDocumentToolbar(building);
-	renderFilePopups(building);
+	renderMenu(world);
+	renderDocumentToolbar(world);
+	renderFilePopups(world);
 	renderDockSpace();
 
-	if (!building)
+	if (!world)
 	{
-		ImGui::Begin("Building");
-		ImGui::TextDisabled("No Building is open.");
+		ImGui::Begin("World");
+		ImGui::TextDisabled("No World is open.");
 		ImGui::TextUnformatted("Choose File > New or File > Open to begin.");
 		ImGui::End();
 		return;
 	}
 
-	auto const graph = building->getGraph();
-	renderStatusBar(building);
-	renderControlsWindow(building, graph, pathingAgent);
-	renderWorldWindow(building, graph);
+	auto const graph = world->getGraph();
+	renderStatusBar(world);
+	renderControlsWindow(world, graph, pathingAgent);
+	renderWorldWindow(world, graph);
 }

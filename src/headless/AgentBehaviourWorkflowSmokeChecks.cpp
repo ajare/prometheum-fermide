@@ -16,7 +16,7 @@
 #include "MarkerPanel.h"
 #include "core/AgentBehaviourRegistry.h"
 #include "core/AgentBehaviourRegistryDocument.h"
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/Log.h"
 #include "core/MarkerSectorObject.h"
 #include "core/YamlSerializer.h"
@@ -58,28 +58,28 @@ namespace
 		if (!output) throw std::runtime_error("Could not write workflow fixture");
 	}
 
-	std::string serializeBuilding(core::Building const& building)
+	std::string serializeWorld(core::World const& world)
 	{
 		auto writer = core::YamlSerializer::toString();
 		core::SerializationWorkData work;
 		work.markSerializedUnmodified = false;
-		building.serialize(*writer, work);
+		world.serialize(*writer, work);
 		writer->serialize();
 		return writer->getSerializedString();
 	}
 
-	std::shared_ptr<core::Building> deserializeBuilding(std::string const& yaml,
+	std::shared_ptr<core::World> deserializeWorld(std::string const& yaml,
 		std::shared_ptr<core::AgentBehaviourRegistry> const& registry = {})
 	{
-		auto building = std::make_shared<core::Building>("Loading", 1, 1);
+		auto world = std::make_shared<core::World>("Loading", 1, 1);
 		auto reader = core::YamlSerializer::fromString(yaml);
 		reader->deserialize();
 		core::SerializationWorkData work;
-		require(building->deserialize(*reader, work),
-			"A workflow Building document did not deserialize");
-		if (registry && building->hasAgentBehaviourRegistryReference())
-			building->resolveAgentBehaviourRegistry(registry);
-		return building;
+		require(world->deserialize(*reader, work),
+			"A workflow World document did not deserialize");
+		if (registry && world->hasAgentBehaviourRegistryReference())
+			world->resolveAgentBehaviourRegistry(registry);
+		return world;
 	}
 
 	std::vector<core::AgentBehaviourSchemaField> scheduleSchema()
@@ -288,90 +288,90 @@ return {
 			"Shared schedule", "schedule.lua", scheduleSchema());
 		registry->saveTo((package / "behaviours.yaml").string());
 
-		auto building = std::make_shared<core::Building>("Complete workflow", 40, 2);
-		auto const mainRoom = building->addRoom("Main", 0, 0, 0, 40, 1);
-		auto const isolatedRoom = building->addRoom("Isolated", 1, 0, 0, 10, 1);
-		building->addSectorMarker(mainRoom, 0, 3.5f, "Fallback");
-		building->addSectorMarker(mainRoom, 0, 8.5f, "Work");
-		building->addSectorMarker(mainRoom, 0, 18.5f, "Lunch");
-		building->addSectorMarker(mainRoom, 0, 30.5f, "Home");
-		building->addSectorMarker(isolatedRoom, 0, 4.5f, "Isolated destination");
+		auto world = std::make_shared<core::World>("Complete workflow", 40, 2);
+		auto const mainRoom = world->addRoom("Main", 0, 0, 0, 40, 1);
+		auto const isolatedRoom = world->addRoom("Isolated", 1, 0, 0, 10, 1);
+		world->addSectorMarker(mainRoom, 0, 3.5f, "Fallback");
+		world->addSectorMarker(mainRoom, 0, 8.5f, "Work");
+		world->addSectorMarker(mainRoom, 0, 18.5f, "Lunch");
+		world->addSectorMarker(mainRoom, 0, 30.5f, "Home");
+		world->addSectorMarker(isolatedRoom, 0, 4.5f, "Isolated destination");
 		auto const sector = core::SectorId{ static_cast<uint64_t>(mainRoom) + 1 };
 		core::InteractionBinding binding{
 			{ core::DeviceCommandType::SetSectorLights, sector, true },
 			core::InteractionBindingRequirement::Required };
-		auto const working = building->createInteractionPoint("Working control", sector,
+		auto const working = world->createInteractionPoint("Working control", sector,
 			{ 0.5f, 0.0f }, 100.0f, 0.0f, { binding });
-		auto const broken = building->createInteractionPoint("Broken control", sector,
+		auto const broken = world->createInteractionPoint("Broken control", sector,
 			{ 0.5f, 0.0f }, 100.0f, 0.0f, { binding });
-		building->finishBuild();
-		auto const first = building->createAgent("First", mainRoom, 0, 0.5f);
-		auto const second = building->createAgent("Second", mainRoom, 0, 1.5f);
-		auto const third = building->createAgent("Third", mainRoom, 0, 2.5f);
-		building->pauseSimulation();
-		building->attachAgentBehaviourRegistry("shared.behaviours", registry);
-		auto const markers = building->getMarkerIds();
+		world->finishBuild();
+		auto const first = world->createAgent("First", mainRoom, 0, 0.5f);
+		auto const second = world->createAgent("Second", mainRoom, 0, 1.5f);
+		auto const third = world->createAgent("Third", mainRoom, 0, 2.5f);
+		world->pauseSimulation();
+		world->attachAgentBehaviourRegistry("shared.behaviours", registry);
+		auto const markers = world->getMarkerIds();
 		auto const revision = registry->lookupAgentBehaviour(behaviour)->getRevision();
 		std::string diagnostic;
-		require(building->setAgentBehaviourAssignment(first, behaviour, revision,
+		require(world->setAgentBehaviourAssignment(first, behaviour, revision,
 			scheduleConfiguration("A", 3, markers[0], false,
 				{ { markers[1], 1 }, { markers[3], 3 } }), &diagnostic)
-			&& building->setAgentBehaviourAssignment(second, behaviour, revision,
+			&& world->setAgentBehaviourAssignment(second, behaviour, revision,
 				scheduleConfiguration("B", 1, markers[0], false,
 					{ { markers[4], 1 }, { markers[2], 2 } }), &diagnostic)
-			&& building->setAgentBehaviourAssignment(third, behaviour, revision,
+			&& world->setAgentBehaviourAssignment(third, behaviour, revision,
 				scheduleConfiguration("C", 1, markers[0], true,
 					{ { markers[2], 1 }, { markers[3], 2 } }), &diagnostic),
 			"Could not assign the independently configured shared schedules: " + diagnostic);
-		require(building->resumeSimulation(), "Could not start the complete workflow");
-		building->consumeSimulationEvents();
+		require(world->resumeSimulation(), "Could not start the complete workflow");
+		world->consumeSimulationEvents();
 
 		WorkflowObservations observed;
 		std::ostringstream snapshots, events, diagnostics, callbacks, commands;
 		auto advance = [&]
 		{
-			auto const advanced = building->advanceTick();
-			appendSnapshot(snapshots, building->getSimulationSnapshot());
-			appendEvents(events, building->consumeSimulationEvents(), observed);
+			auto const advanced = world->advanceTick();
+			appendSnapshot(snapshots, world->getSimulationSnapshot());
+			appendEvents(events, world->consumeSimulationEvents(), observed);
 			appendDiagnostics(diagnostics,
-				building->consumeAgentBehaviourRuntimeDiagnostics());
+				world->consumeAgentBehaviourRuntimeDiagnostics());
 			appendLogs(callbacks, commands);
 			return advanced;
 		};
 
 		require(advance(), "The startup boundary failed");
-		building->pauseSimulation();
-		appendEvents(events, building->consumeSimulationEvents(), observed);
-		require(building->setAgentActive(first, false),
+		world->pauseSimulation();
+		appendEvents(events, world->consumeSimulationEvents(), observed);
+		require(world->setAgentActive(first, false),
 			"Could not deactivate the timer-driven Agent");
-		appendEvents(events, building->consumeSimulationEvents(), observed);
-		require(building->resumeSimulation(), "Could not resume with a suspended Agent");
-		building->consumeSimulationEvents();
+		appendEvents(events, world->consumeSimulationEvents(), observed);
+		require(world->resumeSimulation(), "Could not resume with a suspended Agent");
+		world->consumeSimulationEvents();
 		for (unsigned tick = 0; tick < 4; ++tick)
 			require(advance(), "A suspended timer stopped the workflow");
-		building->pauseSimulation();
-		building->consumeSimulationEvents();
-		require(building->setAgentActive(first, true),
+		world->pauseSimulation();
+		world->consumeSimulationEvents();
+		require(world->setAgentActive(first, true),
 			"Could not reactivate the timer-driven Agent");
-		appendEvents(events, building->consumeSimulationEvents(), observed);
-		require(building->resumeSimulation(), "Could not resume the reactivated Agent");
-		building->consumeSimulationEvents();
+		appendEvents(events, world->consumeSimulationEvents(), observed);
+		require(world->resumeSimulation(), "Could not resume the reactivated Agent");
+		world->consumeSimulationEvents();
 
 		for (unsigned tick = 0; tick < 2400
 			&& (!observed.routeLost || !observed.cancelled || !observed.reached); ++tick)
 		{
 			if (tick == 12)
 			{
-				building->pauseSimulation();
-				require(building->resumeSimulation(),
+				world->pauseSimulation();
+				require(world->resumeSimulation(),
 					"Ordinary pause/resume did not preserve the schedules");
-				building->consumeSimulationEvents();
+				world->consumeSimulationEvents();
 			}
 			auto const advanced = advance();
 			require(advanced, "A healthy schedule boundary stopped unexpectedly at loop "
 				+ std::to_string(tick) + ", simulation tick "
-				+ std::to_string(building->getSimulationTick()) + ", paused="
-				+ std::to_string(building->isSimulationPaused()) + ": diagnostics="
+				+ std::to_string(world->getSimulationTick()) + ", paused="
+				+ std::to_string(world->isSimulationPaused()) + ": diagnostics="
 				+ diagnostics.str());
 		}
 		require(observed.deactivated && observed.activated && observed.routeLost
@@ -383,14 +383,14 @@ return {
 		for (unsigned tick = 0; tick < 10'000 && idleBoundaries < 3; ++tick)
 		{
 			bool allIdle = true;
-			for (auto const& item : building->getSimulationSnapshot().agents)
+			for (auto const& item : world->getSimulationSnapshot().agents)
 				allIdle = allIdle && !item.hasPath
 					&& item.state == core::AgentPathState::Idle;
 			idleBoundaries = allIdle ? idleBoundaries + 1 : 0;
 			if (idleBoundaries < 3)
 				require(advance(), "The schedules did not settle before interactions");
 		}
-		for (auto const& item : building->getSimulationSnapshot().agents)
+		for (auto const& item : world->getSimulationSnapshot().agents)
 			require(!item.hasPath && item.state == core::AgentPathState::Idle,
 				"Scheduled Agent " + std::to_string(item.id.value)
 					+ " was still moving when interaction coverage began (state "
@@ -401,9 +401,9 @@ return {
 		auto completeInteraction = [&](core::InteractionPointId point,
 			core::AgentId agent, core::DeviceOperationState result)
 		{
-			auto const request = building->requestInteraction(point, agent);
-			auto lookup = building->lookupInteractionRequest(request);
-			auto actor = building->lookupAgent(agent);
+			auto const request = world->requestInteraction(point, agent);
+			auto lookup = world->lookupInteractionRequest(request);
+			auto actor = world->lookupAgent(agent);
 			require(lookup && !lookup.entity->getOperations().empty(),
 				"Could not create workflow interaction point "
 					+ std::to_string(point.value) + " for Agent "
@@ -413,41 +413,41 @@ return {
 					+ ", sector " + std::to_string(actor
 						? actor.entity->getSector()->getIndex() : 999u) + ")");
 			auto const operation = lookup.entity->getOperations().front().first;
-			building->lookupDeviceOperation(operation).entity->setState(result);
+			world->lookupDeviceOperation(operation).entity->setState(result);
 		};
 		completeInteraction(working, second, core::DeviceOperationState::Succeeded);
 		require(advance() && advance(), "The successful interaction stopped the workflow");
 		completeInteraction(broken, third, core::DeviceOperationState::Failed);
 		require(advance(), "Publishing the failed interaction stopped too early");
-		require(!advance() && building->isSimulationPaused(),
+		require(!advance() && world->isSimulationPaused(),
 			"The expected callback diagnostic did not stop before the next tick");
 		require(observed.interactionCompleted && observed.interactionFailed,
 			"Public interaction outcomes were consumed or omitted by Lua");
 		require(diagnostics.str().find("expected interaction failure for C")
 				!= std::string::npos
-			&& !building->agentBehaviourOwnsMovement(third)
-			&& building->agentBehaviourOwnsMovement(first)
-			&& building->agentBehaviourOwnsMovement(second),
+			&& !world->agentBehaviourOwnsMovement(third)
+			&& world->agentBehaviourOwnsMovement(first)
+			&& world->agentBehaviourOwnsMovement(second),
 			"The expected diagnostic lacked stable detail or failure isolation");
-		require(building->resumeSimulation() && advance(),
+		require(world->resumeSimulation() && advance(),
 			"The healthy instances could not resume after failure acknowledgement");
 
-		building->pauseSimulation();
-		building->resetSimulation();
-		require(building->getSimulationTick() == 0
-			&& building->getAgentBehaviourAssignmentCount() == 3,
+		world->pauseSimulation();
+		world->resetSimulation();
+		require(world->getSimulationTick() == 0
+			&& world->getAgentBehaviourAssignmentCount() == 3,
 			"Reset did not replace runtime state while retaining authored schedules");
-		require(building->resumeSimulation() && advance(),
+		require(world->resumeSimulation() && advance(),
 			"Reset schedules did not recreate their instances");
 		require(callbacks.str().find("CB:C:start:0") != std::string::npos,
 			"Reset did not recreate a previously failed instance");
 
-		building->pauseSimulation();
+		world->pauseSimulation();
 		std::vector<core::AgentBehaviourReloadDiagnostic> reloadDiagnostics;
 		require(core::reloadAgentBehaviourRegistryDocument(registry, package,
 			&diagnostic, &reloadDiagnostics) && reloadDiagnostics.empty(),
 			"An unchanged external source reload was not atomic: " + diagnostic);
-		require(building->resumeSimulation() && advance(),
+		require(world->resumeSimulation() && advance(),
 			"Reloaded schedules did not recreate and resume");
 
 		require(callbacks.str().find("CB:A:event-deactivated") != std::string::npos
@@ -486,50 +486,50 @@ return {
 			&& registryRoundTrip->getBehaviourCount() == 1,
 			"The version-1 registry did not round-trip");
 
-		auto building = std::make_shared<core::Building>("Documents", 12, 2);
-		auto const room = building->addRoom("Room", 0, 0, 0, 12, 1);
-		building->addSectorMarker(room, 0, 2.5f, "Alpha");
-		building->addSectorMarker(room, 0, 9.5f, "Beta");
-		building->finishBuild();
-		auto const agent = building->createAgent("Assigned", room, 0, 0.5f);
-		building->pauseSimulation();
-		building->attachAgentBehaviourRegistry("documents.behaviours", registry);
-		auto const markers = building->getMarkerIds();
+		auto world = std::make_shared<core::World>("Documents", 12, 2);
+		auto const room = world->addRoom("Room", 0, 0, 0, 12, 1);
+		world->addSectorMarker(room, 0, 2.5f, "Alpha");
+		world->addSectorMarker(room, 0, 9.5f, "Beta");
+		world->finishBuild();
+		auto const agent = world->createAgent("Assigned", room, 0, 0.5f);
+		world->pauseSimulation();
+		world->attachAgentBehaviourRegistry("documents.behaviours", registry);
+		auto const markers = world->getMarkerIds();
 		auto const revision = registry->lookupAgentBehaviour(behaviour)->getRevision();
 		auto configuration = scheduleConfiguration("D", 1, markers[0], false,
 			{ { markers[0], 1 }, { markers[1], 2 } });
 		std::string diagnostic;
-		require(building->setAgentBehaviourAssignment(agent, behaviour, revision,
+		require(world->setAgentBehaviourAssignment(agent, behaviour, revision,
 			configuration, &diagnostic), "Could not author the document fixture");
-		auto const currentYaml = serializeBuilding(*building);
+		auto const currentYaml = serializeWorld(*world);
 		require(currentYaml.find("version: 14") != std::string::npos,
-			"The current Building schema did not include the version-11 Marker data lineage");
-		auto currentRoundTrip = deserializeBuilding(currentYaml, registry);
+			"The current World schema did not include the version-11 Marker data lineage");
+		auto currentRoundTrip = deserializeWorld(currentYaml, registry);
 		currentRoundTrip->pauseSimulation();
 		require(currentRoundTrip->getAgentBehaviourAssignment(agent)
-			== building->getAgentBehaviourAssignment(agent)
+			== world->getAgentBehaviourAssignment(agent)
 			&& currentRoundTrip->lookupMarker(markers[0])->getName() == "Alpha",
-			"The complete Building assignment and Marker state did not round-trip");
+			"The complete World assignment and Marker state did not round-trip");
 
 		// Version 11 is the Marker identity boundary. A document without later
 		// behaviour fields still retains exact Marker identities and names.
-		core::Building markerOnly("Version 11", 8, 2);
+		core::World markerOnly("Version 11", 8, 2);
 		auto const markerRoom = markerOnly.addRoom("Room", 0, 0, 0, 8, 1);
 		markerOnly.addSectorMarker(markerRoom, 0, 3.5f, "Named Marker");
-		auto version11 = serializeBuilding(markerOnly);
+		auto version11 = serializeWorld(markerOnly);
 		auto versionOffset = version11.find("version: 14");
-		require(versionOffset != std::string::npos, "Missing Building version field");
+		require(versionOffset != std::string::npos, "Missing World version field");
 		version11.replace(versionOffset, std::string("version: 14").size(), "version: 11");
-		auto loaded11 = deserializeBuilding(version11);
+		auto loaded11 = deserializeWorld(version11);
 		require(loaded11->getMarkerIds().size() == 1
 			&& loaded11->lookupMarker(loaded11->getMarkerIds().front())->getName()
 				== "Named Marker",
-			"A version-11 Building did not retain named Marker identity");
+			"A version-11 World did not retain named Marker identity");
 
 		auto legacy = version11;
 		versionOffset = legacy.find("version: 11");
 		legacy.replace(versionOffset, std::string("version: 11").size(), "version: 10");
-		auto migrated = deserializeBuilding(legacy);
+		auto migrated = deserializeWorld(legacy);
 		require(migrated->getMarkerIds().front().value == 1
 			&& migrated->lookupMarker(core::MarkerId{ 1 })->getName() == "Marker 1",
 			"Legacy unnamed Marker migration was not deterministic");
@@ -538,14 +538,14 @@ return {
 		versionOffset = future.find("version: 14");
 		future.replace(versionOffset, std::string("version: 14").size(), "version: 15");
 		bool futureRefused = false;
-		try { (void)deserializeBuilding(future); }
+		try { (void)deserializeWorld(future); }
 		catch (std::exception const& error)
 		{
 			futureRefused = std::string(error.what()).find("Unsupported")
 				!= std::string::npos;
 		}
 		require(futureRefused,
-			"A reader outside its supported Building version boundary did not refuse");
+			"A reader outside its supported World version boundary did not refuse");
 
 		auto malformed = version11;
 		auto const nameOffset = malformed.find("name: Named Marker");
@@ -553,22 +553,22 @@ return {
 		malformed.replace(nameOffset, std::string("name: Named Marker").size(),
 			"name: ' '");
 		auto current = currentRoundTrip;
-		auto const beforeReplacement = serializeBuilding(*current);
+		auto const beforeReplacement = serializeWorld(*current);
 		auto replaceDocument = [&](std::string const& candidate)
 		{
 			try
 			{
-				auto parsed = deserializeBuilding(candidate, registry);
+				auto parsed = deserializeWorld(candidate, registry);
 				current = std::move(parsed);
 				return true;
 			}
 			catch (...) { return false; }
 		};
 		require(!replaceDocument(malformed)
-			&& serializeBuilding(*current) == beforeReplacement,
-			"A malformed whole-document replacement disturbed the open Building");
+			&& serializeWorld(*current) == beforeReplacement,
+			"A malformed whole-document replacement disturbed the open World");
 
-		gBuildingDocumentHistory.clear();
+		gWorldDocumentHistory.clear();
 		auto edited = current->getAgentBehaviourAssignment(agent)->configuration;
 		auto* code = core::agentBehaviourConfigurationGetIf<std::string>(
 			&edited.at("code"));
@@ -579,18 +579,18 @@ return {
 		{
 			return replaceDocument(snapshot.yaml);
 		};
-		require(gBuildingDocumentHistory.undo(
-			gBuildingDocumentHistory.capture(serializeBuilding(*current)), restore)
+		require(gWorldDocumentHistory.undo(
+			gWorldDocumentHistory.capture(serializeWorld(*current)), restore)
 			&& *core::agentBehaviourConfigurationGetIf<std::string>(
 				&current->getAgentBehaviourAssignment(agent)->configuration.at("code")) == "D",
-			"Undo did not replace the complete authored Building");
-		require(gBuildingDocumentHistory.redo(
-			gBuildingDocumentHistory.capture(serializeBuilding(*current)), restore)
+			"Undo did not replace the complete authored World");
+		require(gWorldDocumentHistory.redo(
+			gWorldDocumentHistory.capture(serializeWorld(*current)), restore)
 			&& *core::agentBehaviourConfigurationGetIf<std::string>(
 				&current->getAgentBehaviourAssignment(agent)->configuration.at("code"))
 					== "Edited",
-			"Redo did not replace the complete authored Building");
-		gBuildingDocumentHistory.clear();
+			"Redo did not replace the complete authored World");
+		gWorldDocumentHistory.clear();
 
 		writeText(package / "malformed.yaml", "version: 1\nuuid: not-a-uuid\n");
 		bool malformedRegistryRefused = false;
@@ -620,23 +620,23 @@ end }
 			"Panel schedule", "panel.lua", scheduleSchema());
 		registry->saveTo((package / "behaviours.yaml").string());
 
-		auto building = std::make_shared<core::Building>("Panels", 12, 2);
-		auto const room = building->addRoom("Room", 0, 0, 0, 12, 1);
-		auto const markerObject = building->addSectorMarker(room, 0, 9.5f, "Destination");
-		building->finishBuild();
-		auto const agent = building->createAgent("Panel Agent", room, 0, 0.5f);
-		building->pauseSimulation();
-		auto const buildingPath = temporary.path / "panels.yaml";
-		building->saveTo(buildingPath.string());
-		building->attachAgentBehaviourRegistry("panels.behaviours", registry);
-		auto const marker = building->getMarkerIds().front();
+		auto world = std::make_shared<core::World>("Panels", 12, 2);
+		auto const room = world->addRoom("Room", 0, 0, 0, 12, 1);
+		auto const markerObject = world->addSectorMarker(room, 0, 9.5f, "Destination");
+		world->finishBuild();
+		auto const agent = world->createAgent("Panel Agent", room, 0, 0.5f);
+		world->pauseSimulation();
+		auto const worldPath = temporary.path / "panels.world.yaml";
+		world->saveTo(worldPath.string());
+		world->attachAgentBehaviourRegistry("panels.behaviours", registry);
+		auto const marker = world->getMarkerIds().front();
 		std::string diagnostic;
-		require(building->setAgentBehaviourAssignment(agent, behaviour,
+		require(world->setAgentBehaviourAssignment(agent, behaviour,
 			registry->lookupAgentBehaviour(behaviour)->getRevision(),
 			scheduleConfiguration("Panel", 1, marker, false,
 				{ { marker, 1 }, { marker, 1 } }), &diagnostic),
 			"Could not assign the panel fixture: " + diagnostic);
-		auto markerSelection = building->getSector(room)->getObject(markerObject.index);
+		auto markerSelection = world->getSector(room)->getObject(markerObject.index);
 
 		ImGui::CreateContext();
 		auto& io = ImGui::GetIO();
@@ -650,25 +650,25 @@ end }
 		{
 			ImGui::NewFrame();
 			ImGui::Begin("Registry and behaviour");
-			(void)renderBehavioursPanel(building, buildingPath.string());
+			(void)renderBehavioursPanel(world, worldPath.string());
 			ImGui::End();
 			ImGui::Begin("Assignment, schedule, status, diagnostics");
-			renderAgentBehaviourAssignmentCell(building, agent);
-			renderAgentBehaviourConfigurationPanel(building, agent);
+			renderAgentBehaviourAssignmentCell(world, agent);
+			renderAgentBehaviourConfigurationPanel(world, agent);
 			ImGui::End();
 			ImGui::Begin("Marker");
-			renderMarkerEditorPanel(building, markerSelection);
+			renderMarkerEditorPanel(world, markerSelection);
 			ImGui::End();
 			ImGui::Render();
 		};
 
 		renderFrame(); // paused: editable nested schedule and named Marker controls
-		require(building->resumeSimulation(), "Could not render the running panel state");
+		require(world->resumeSimulation(), "Could not render the running panel state");
 		renderFrame(); // running: assignment and schedule controls are disabled
-		require(!building->advanceTick() && building->isSimulationPaused(),
+		require(!world->advanceTick() && world->isSimulationPaused(),
 			"The panel diagnostic fixture did not fail visibly");
 		renderFrame(); // paused after failure: status, diagnostic, traceback, clear control
-		require(building->getAgentBehaviourRuntimeDiagnostics().size() == 1,
+		require(world->getAgentBehaviourRuntimeDiagnostics().size() == 1,
 			"Rendering diagnostics acknowledged them without the explicit Clear control");
 		ImGui::DestroyContext();
 		resetBehavioursPanelState();

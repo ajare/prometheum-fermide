@@ -14,11 +14,11 @@
 namespace core
 {
 	class AgentBehaviourRegistry;
-	class Building;
+	class World;
 	struct SimulationEvent;
 
 	// Application-owned limits. Behaviour code cannot inspect or alter them.
-	// One live allocator budget belongs to one Building; the instruction budget
+	// One live allocator budget belongs to one World; the instruction budget
 	// is restarted for each protected module load, factory, and callback.
 	struct AgentBehaviourRuntimeLimits
 	{
@@ -48,13 +48,13 @@ namespace core
 	};
 
 	// Defined lifetime endpoints passed to the best-effort on_stop callback.
-	// They are runtime values only and are never part of Building persistence.
+	// They are runtime values only and are never part of World persistence.
 	enum class AgentBehaviourTeardownReason
 	{
 		Unassignment,
 		Reset,
 		Reload,
-		BuildingClose,
+		WorldClose,
 		InstanceFailure,
 		BehaviourDeletion
 	};
@@ -98,23 +98,23 @@ namespace core
 		std::string source;
 	};
 
-	// One live adapter is owned by each Building. Its implementation owns that
-	// Building's Lua state and private per-Agent module environments; Lua and sol2
+	// One live adapter is owned by each World. Its implementation owns that
+	// World's Lua state and private per-Agent module environments; Lua and sol2
 	// remain confined to the .cpp file. Startup callbacks queue commands and the
-	// adapter applies them through the Building facade only after every callback
+	// adapter applies them through the World facade only after every callback
 	// at the boundary has returned.
 	class AgentBehaviourRuntimeAdapter
 	{
 		friend class AgentBehaviourRegistry;
-		friend class Building;
+		friend class World;
 
 		struct Impl;
 		std::unique_ptr<Impl> mImpl;
 
-		// Builds every assigned instance in a fresh per-Building runtime without
-		// running callbacks or touching the live Building. A successful candidate
-		// can therefore be adopted only after all dependent Buildings preflight.
-		static bool prepareReload(Building& building,
+		// Builds every assigned instance in a fresh per-World runtime without
+		// running callbacks or touching the live World. A successful candidate
+		// can therefore be adopted only after all dependent Worlds preflight.
+		static bool prepareReload(World& world,
 			AgentBehaviourRegistry const& registry,
 			std::unique_ptr<AgentBehaviourRuntimeAdapter>& candidate,
 			std::vector<AgentBehaviourRuntimeDiagnostic>& diagnostics,
@@ -151,19 +151,19 @@ namespace core
 		// Called only with no active simulation phase. Missing instances are all
 		// constructed first; startup and queued semantic outcomes run in stable
 		// Agent/event order, then commands are applied before intent collection.
-		// Returns false when this boundary diagnosed a failure. The Building is
+		// Returns false when this boundary diagnosed a failure. The World is
 		// paused before the caller can enter the next simulation tick.
-		bool runBoundary(Building& building);
+		bool runBoundary(World& world);
 		void observeOutcome(SimulationEvent const& event);
 		// Activation edits are paused-only. The transition is retained even when
 		// the private instance will not be constructed until the next boundary.
 		void observeActivation(SimulationEvent const& event);
 		// Assignment edits are paused-only. Best-effort teardown cannot veto the
 		// edit, and removing the private instance prevents stale outcome delivery.
-		void removeInstance(Building& building, AgentId agent,
+		void removeInstance(World& world, AgentId agent,
 			AgentBehaviourTeardownReason reason =
 				AgentBehaviourTeardownReason::Unassignment);
-		void teardownAll(Building& building, AgentBehaviourTeardownReason reason);
+		void teardownAll(World& world, AgentBehaviourTeardownReason reason);
 		bool isInstanceDisabled(AgentId agent) const;
 		std::vector<AgentBehaviourRuntimeDiagnostic> getDiagnostics() const;
 		std::vector<AgentBehaviourRuntimeDiagnostic> consumeDiagnostics();

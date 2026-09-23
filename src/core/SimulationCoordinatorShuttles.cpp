@@ -4,7 +4,7 @@
 #include "core/SimulationCoordinator.h"
 
 #include "core/Agent.h"
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/Coordination.h"
 #include "core/Edge.h"
 #include "core/Shuttle.h"
@@ -16,12 +16,12 @@ namespace core
 
 	using namespace std;
 
-	// Shuttle door assignment moved out of Building (ADR 0004 stage 3). The
-	// behaviour is unchanged: the coordinator works on Building's traversal-
+	// Shuttle door assignment moved out of World (ADR 0004 stage 3). The
+	// behaviour is unchanged: the coordinator works on World's traversal-
 	// resource, traversal-request, agent and graph registries through friendship,
-	// calls its own shuttle helpers directly, and calls back through the Building
+	// calls its own shuttle helpers directly, and calls back through the World
 	// facade (design pattern, not the Facade sector type) for the machinery which
-	// has not moved out of Building yet - door queue ownership release and queue
+	// has not moved out of World yet - door queue ownership release and queue
 	// position refresh.
 	//
 	// A shuttle's passengers are assigned to a specific carriage door at each stop.
@@ -36,7 +36,7 @@ namespace core
 	//
 	// The static shuttleDoorOffsets() helper which expands a carriage's door mask
 	// into the cells its doors occupy travels with this family: it is the origin of
-	// the carriage/door indexing the assignment above works on. Building's shuttle
+	// the carriage/door indexing the assignment above works on. World's shuttle
 	// authoring path calls it through the coordinator class.
 
 	vector<uint32_t> SimulationCoordinator::shuttleDoorOffsets(uint32_t carriageWidth, uint32_t doorMask)
@@ -61,15 +61,15 @@ namespace core
 	bool SimulationCoordinator::retargetShuttleDoorTraversal(TraversalRequestId requestId,
 		TraversalResource& coordinator, ShuttleDoor const& door)
 	{
-		auto request = mBuilding.mTraversalRequests.find(requestId);
-		auto landing = mBuilding.mTraversalResources.find(door.landingResource);
+		auto request = mWorld.mTraversalRequests.find(requestId);
+		auto landing = mWorld.mTraversalResources.find(door.landingResource);
 		if (!request || !landing || landing->mLiftCoordinator != coordinator.mShuttle->getTraversalResourceId())
 			return false;
 
 		shared_ptr<const Edge> selectedEdge;
 		shared_ptr<const Vertex> selectedSource;
 		shared_ptr<const Vertex> selectedDestination;
-		for (auto const& edge : mBuilding.mGraph->getEdges())
+		for (auto const& edge : mWorld.mGraph->getEdges())
 		{
 			if (edge->getTraversalResourceId() != door.landingResource) continue;
 			auto first = edge->getVertex(0);
@@ -85,7 +85,7 @@ namespace core
 		if (!selectedEdge) return false;
 
 		if (request->mShuttleDoor && request->mShuttleDoor != door.landingResource)
-			if (auto previous = mBuilding.mTraversalResources.find(request->mShuttleDoor))
+			if (auto previous = mWorld.mTraversalResources.find(request->mShuttleDoor))
 				releaseDoorQueueOwnership(requestId, *previous);
 		request->mResource = door.landingResource;
 		request->mSourceEndpoint = selectedSource->getPosition();
@@ -93,7 +93,7 @@ namespace core
 		request->mShuttleDoor = door.landingResource;
 		request->mShuttleCarriage = door.carriageIndex;
 		request->mShuttleAccessZone = door.accessZoneIndex;
-		if (auto agent = mBuilding.mAgents.find(request->mOwner); agent && agent->mTraversalTask)
+		if (auto agent = mWorld.mAgents.find(request->mOwner); agent && agent->mTraversalTask)
 		{
 			agent->mTraversalTask->edge = selectedEdge;
 			agent->mTraversalTask->sourceVertex = selectedSource;
@@ -105,8 +105,8 @@ namespace core
 	bool SimulationCoordinator::assignShuttleBoardingDoor(TraversalRequestId requestId,
 		TraversalResource& coordinator, uint32_t stop)
 	{
-		auto request = mBuilding.mTraversalRequests.find(requestId);
-		auto agent = request ? mBuilding.mAgents.find(request->mOwner) : nullptr;
+		auto request = mWorld.mTraversalRequests.find(requestId);
+		auto agent = request ? mWorld.mAgents.find(request->mOwner) : nullptr;
 		if (!request || !agent) return false;
 		if (request->mShuttleCarriage != ~0u) return true;
 
@@ -159,7 +159,7 @@ namespace core
 
 			Vector2 threshold;
 			bool foundThreshold = false;
-			for (auto const& edge : mBuilding.mGraph->getEdges())
+			for (auto const& edge : mWorld.mGraph->getEdges())
 			{
 				if (edge->getTraversalResourceId() != door.landingResource) continue;
 				for (uint32_t vertex = 0; vertex < 2; ++vertex)
@@ -186,7 +186,7 @@ namespace core
 
 		// The queue ticket was created at the access-zone boundary and is retained
 		// while the physical door/position assignment changes.
-		auto landing = mBuilding.mTraversalResources.find(selected->landingResource);
+		auto landing = mWorld.mTraversalResources.find(selected->landingResource);
 		for (uint32_t lane = 0; landing && lane < landing->mQueueLanes.size(); ++lane)
 		{
 			if (landing->mQueueLanes[lane].sector != request->mSourceSector) continue;
@@ -195,8 +195,8 @@ namespace core
 			if (find(queue.begin(), queue.end(), requestId) == queue.end()) queue.push_back(requestId);
 			sort(queue.begin(), queue.end(), [&](auto left, auto right)
 			{
-				auto lhs = mBuilding.mTraversalRequests.find(left);
-				auto rhs = mBuilding.mTraversalRequests.find(right);
+				auto lhs = mWorld.mTraversalRequests.find(left);
+				auto rhs = mWorld.mTraversalRequests.find(right);
 				return lhs && rhs ? lhs->mQueueTicket < rhs->mQueueTicket : left < right;
 			});
 			refreshQueuePositions(*landing);
@@ -208,7 +208,7 @@ namespace core
 	bool SimulationCoordinator::assignShuttleDisembarkDoor(TraversalRequestId requestId,
 		TraversalResource& coordinator, uint32_t stop)
 	{
-		auto request = mBuilding.mTraversalRequests.find(requestId);
+		auto request = mWorld.mTraversalRequests.find(requestId);
 		if (!request) return false;
 		auto carriage = findShuttlePassengerCarriage(coordinator, request->mOwner);
 		if (carriage == ~0u) return false;
@@ -230,18 +230,18 @@ namespace core
 		ShuttleDoor const* selected = nullptr;
 		float selectedDistance = 0.0f;
 		uint32_t selectedLoad = 0;
-		auto passenger = mBuilding.mAgents.find(request->mOwner);
+		auto passenger = mWorld.mAgents.find(request->mOwner);
 		for (auto const& door : coordinator.mShuttleDoors)
 		{
 			if (door.stopIndex != stop || door.carriageIndex != carriage
 				|| door.locationSector != request->mDestinationSector) continue;
-			auto landing = mBuilding.mTraversalResources.find(door.landingResource);
+			auto landing = mWorld.mTraversalResources.find(door.landingResource);
 			if (!landing) continue;
 			auto load = (uint32_t)count_if(landing->mCrossingOwners.begin(),
 				landing->mCrossingOwners.end(), [](auto owner) { return (bool)owner; });
 			Vector2 interior;
 			bool foundInterior = false;
-			for (auto const& edge : mBuilding.mGraph->getEdges())
+			for (auto const& edge : mWorld.mGraph->getEdges())
 			{
 				if (edge->getTraversalResourceId() != door.landingResource) continue;
 				for (uint32_t vertex = 0; vertex < 2; ++vertex)

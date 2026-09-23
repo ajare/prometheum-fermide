@@ -12,48 +12,48 @@
 namespace core
 {
 	class AgentBehaviourRegistry;
-	class Building;
+	class World;
 }
 
 // The Behaviours panel inspects the external Agent behaviour registry package
-// a Building references. Definitions are authored in the package itself; this
+// a World references. Definitions are authored in the package itself; this
 // panel never edits Lua source or starts Agent callbacks. It creates, selects,
 // attaches, detaches, and reloads packages through the managed document seam
 // and displays registry identity, protected preflight status, and diagnostics.
 
-// The create action is available only for a Building with a saved file and no
+// The create action is available only for a World with a saved file and no
 // registry reference. Exposed separately for headless editor checks.
 bool canCreateAgentBehaviourRegistry(
-	std::shared_ptr<const core::Building> const& building,
-	std::string const& buildingFilepath, std::string* diagnostic = nullptr);
+	std::shared_ptr<const core::World> const& world,
+	std::string const& worldFilepath, std::string* diagnostic = nullptr);
 
-// Selection requires a saved Building location. It attaches an initial
+// Selection requires a saved World location. It attaches an initial
 // registry or switches the reference directly.
 bool canSelectAgentBehaviourRegistry(
-	std::shared_ptr<const core::Building> const& building,
-	std::string const& buildingFilepath, std::string* diagnostic = nullptr);
+	std::shared_ptr<const core::World> const& world,
+	std::string const& worldFilepath, std::string* diagnostic = nullptr);
 
-// Building-reference edits own Building undo entries. Direct detach/switch is
+// World-reference edits own World undo entries. Direct detach/switch is
 // non-destructive and refuses a used namespace. The clearing variants are the
 // explicit confirmed destructive transaction.
 bool commitAgentBehaviourRegistryDetach(
-	std::shared_ptr<core::Building> const& building, std::string& diagnostic);
+	std::shared_ptr<core::World> const& world, std::string& diagnostic);
 bool commitAgentBehaviourRegistryDetachClearingAssignments(
-	std::shared_ptr<core::Building> const& building, std::string& diagnostic);
+	std::shared_ptr<core::World> const& world, std::string& diagnostic);
 bool commitAgentBehaviourRegistrySwitch(
-	std::shared_ptr<core::Building> const& building,
-	std::string const& buildingFilepath, std::string const& packageDirectory,
+	std::shared_ptr<core::World> const& world,
+	std::string const& worldFilepath, std::string const& packageDirectory,
 	std::string& diagnostic);
 bool commitAgentBehaviourRegistrySwitchClearingAssignments(
-	std::shared_ptr<core::Building> const& building,
-	std::string const& buildingFilepath, std::string const& packageDirectory,
+	std::shared_ptr<core::World> const& world,
+	std::string const& worldFilepath, std::string const& packageDirectory,
 	std::string& diagnostic);
 
 void requestAgentBehaviourRegistryDetach(
-	std::shared_ptr<core::Building> const& building);
+	std::shared_ptr<core::World> const& world);
 void requestAgentBehaviourRegistrySwitch(
-	std::shared_ptr<core::Building> const& building,
-	std::string buildingFilepath, std::string packageDirectory);
+	std::shared_ptr<core::World> const& world,
+	std::string worldFilepath, std::string packageDirectory);
 bool agentBehaviourRegistryChangePending(std::string* consequence = nullptr);
 bool confirmPendingAgentBehaviourRegistryChange(std::string& diagnostic);
 void cancelPendingAgentBehaviourRegistryChange();
@@ -70,13 +70,13 @@ bool saveAgentBehaviourRegistry(
 	std::string const& packageDirectory, std::string* diagnostic = nullptr);
 
 bool attachedAgentBehaviourRegistryIsModified(
-	std::shared_ptr<const core::Building> const& building);
+	std::shared_ptr<const core::World> const& world);
 
-// Definition and dependent-Building documents keep separate history entries.
+// Definition and dependent-World documents keep separate history entries.
 DocumentHistory& agentBehaviourRegistryDocumentHistory(
 	std::shared_ptr<core::AgentBehaviourRegistry> const& registry);
-DocumentHistory& agentBehaviourBuildingDocumentHistory(
-	std::shared_ptr<core::Building> const& building);
+DocumentHistory& agentBehaviourWorldDocumentHistory(
+	std::shared_ptr<core::World> const& world);
 uint64_t loadedAgentBehaviourUsageCount(
 	core::AgentBehaviourRegistry const& registry, core::AgentBehaviourId id);
 std::string agentBehaviourDeleteConfirmationText(
@@ -107,8 +107,8 @@ using AgentBehaviourRegistryPathSelector
 
 // Renders attached-registry identity and behaviour definitions with
 // diagnostics, plus create/select/detach/switch/reload actions. Returns true
-// after the Building reference changed, allowing the caller to persist the
-// changed Building immediately.
-bool renderBehavioursPanel(std::shared_ptr<core::Building> const& building,
-	std::string const& buildingFilepath,
+// after the World reference changed, allowing the caller to persist the
+// changed World immediately.
+bool renderBehavioursPanel(std::shared_ptr<core::World> const& world,
+	std::string const& worldFilepath,
 	AgentBehaviourRegistryPathSelector const& selectPackageDirectory = {});

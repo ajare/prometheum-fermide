@@ -18,7 +18,7 @@
 
 namespace core
 {
-	class Building;
+	class World;
 	class Sector;
 
 	struct PathIterator
@@ -73,7 +73,7 @@ namespace core
 
 	class Agent : public Serializable
 	{
-		friend class Building;
+		friend class World;
 		friend class AgentBehaviourRegistry;
 		friend class SimulationCoordinator;
 		friend class Sector;
@@ -121,7 +121,7 @@ namespace core
 		// capacity or traversal decision.
 		AgentGroupId mAgentGroup{};
 
-		// Agent tag assignments are Building-authored references into the one
+		// Agent tag assignments are World-authored references into the one
 		// attached Agent tag registry. A set makes duplicate assignment
 		// structurally impossible in memory and gives persistence a stable numeric
 		// order. New Agents start with the empty set.
@@ -137,15 +137,15 @@ namespace core
 		// a deactivated one keeps its authored position and route but no tick
 		// acts on it. Every Agent starts activated, and so does every Agent
 		// loaded from a document that predates the field. The running-simulation
-		// gate lives on Building's setAgentActive seam, not here: direct Agent
+		// gate lives on World's setAgentActive seam, not here: direct Agent
 		// mutation is the unchecked editor seam setFlags already uses.
 		bool mActive{ true };
 
 		// Authored configuration only. Runtime Lua instance state never enters the
-		// Agent or a Building document.
+		// Agent or a World document.
 		std::optional<AgentBehaviourAssignment> mBehaviourAssignment;
 
-		Building* mBuilding{ nullptr };
+		World* mWorld{ nullptr };
 
 		SectorPosition mPosition;
 
@@ -191,11 +191,11 @@ namespace core
 
 		bool deserializeImpl(Serializer& serializer, SerializationWorkData& workData) override;
 
-		// Assignment belongs to Building::setAgentGroup, which has already
-		// judged both the Agent and the Agent group against this Building.
+		// Assignment belongs to World::setAgentGroup, which has already
+		// judged both the Agent and the Agent group against this World.
 		void setAgentGroupId(AgentGroupId id) { mAgentGroup = id; }
 
-		// Assignment mutation belongs to Building, which validates the Agent,
+		// Assignment mutation belongs to World, which validates the Agent,
 		// registry, tag, duplicate state, and paused simulation before calling.
 		void assignAgentTag(AgentTagId id) { mAgentTags.insert(id); }
 		void removeAgentTag(AgentTagId id) { mAgentTags.erase(id); }
@@ -223,7 +223,7 @@ namespace core
 
 		void setPosition(SectorPosition pos, bool authored = true);
 
-		void attachToBuilding(Building* building);
+		void attachToWorld(World* world);
 
 		void assignPath(std::shared_ptr<Path> path, bool startPathing, bool markModified);
 
@@ -281,12 +281,12 @@ namespace core
 		AgentGroupId getAgentGroupId() const { return mAgentGroup; }
 
 		// Stable IDs of the Agent tags assigned to this Agent, in ascending
-		// numeric order. The referenced definitions live in the Building's
+		// numeric order. The referenced definitions live in the World's
 		// attached Agent tag registry.
 		std::set<AgentTagId> const& getAgentTagIds() const { return mAgentTags; }
 		bool hasAgentTag(AgentTagId id) const { return mAgentTags.contains(id); }
 
-		// Resolves Colour through this Agent's assigned tags. Valid Building state
+		// Resolves Colour through this Agent's assigned tags. Valid World state
 		// has at most one source; an uncoloured Agent receives the editor default.
 		EffectiveAgentColour getEffectiveColour() const;
 

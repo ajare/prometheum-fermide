@@ -21,7 +21,7 @@ namespace core
 
 	struct CellDefinition
 	{
-		// Index of Sector within the owning Building.  -1 means no Sector.
+		// Index of Sector within the owning World.  -1 means no Sector.
 		uint32_t sectorIndex{ ~0u };
 
 		SectorObjectType sectorObjectType{ SectorObjectType::None };

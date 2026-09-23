@@ -1,6 +1,6 @@
 #include "core/Agent.h"
 
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/Edge.h"
 #include "core/Location.h"
 #include "core/Path.h"
@@ -200,7 +200,7 @@ namespace core
 		mName = serializer.readString("name");
 		mFlags = serializer.readUint32("flags");
 		// Absent means no Agent group. Whether an ID that is present actually
-		// names a group this Building owns is the Building's call, made before
+		// names a group this World owns is the World's call, made before
 		// the Agent is taken in.
 		mAgentGroup = AgentGroupId{ serializer.readUint64("group", true, 0) };
 		set<AgentTagId> agentTags;
@@ -262,7 +262,7 @@ namespace core
 					throw SerializationException(
 						"Sampled Agent property revision cannot be zero");
 				// Finiteness and range are judged against the referenced property's
-				// current revision when the Building resolves its registry. A stale
+				// current revision when the World resolves its registry. A stale
 				// value is repairable even when its old draw is no longer meaningful.
 				*destination = sample;
 			}
@@ -322,9 +322,9 @@ namespace core
 	EffectiveAgentColour Agent::getEffectiveColour() const
 	{
 		EffectiveAgentColour effective;
-		if (!mBuilding || !mBuilding->hasAttachedAgentTagRegistry()) return effective;
+		if (!mWorld || !mWorld->hasAttachedAgentTagRegistry()) return effective;
 
-		auto const& registry = mBuilding->getAgentTagRegistry();
+		auto const& registry = mWorld->getAgentTagRegistry();
 		for (auto const tag : mAgentTags)
 		{
 			auto const* definition = registry->lookupAgentTag(tag);
@@ -423,7 +423,7 @@ namespace core
 
 	float Agent::estimateTraversalDelay(TraversalResourceId resource, SectorId sourceSector) const
 	{
-		return mBuilding ? mBuilding->estimateTraversalDelay(resource, sourceSector) : 0.0f;
+		return mWorld ? mWorld->estimateTraversalDelay(resource, sourceSector) : 0.0f;
 	}
 
 	uint32_t Agent::getFlags() const
@@ -475,13 +475,13 @@ namespace core
 		}
 	}
 
-	void Agent::attachToBuilding(Building* building)
+	void Agent::attachToWorld(World* world)
 	{
-		if (mBuilding && mBuilding != building)
+		if (mWorld && mWorld != world)
 		{
-			throw Exception("Agent is already attached to another Building");
+			throw Exception("Agent is already attached to another World");
 		}
-		mBuilding = building;
+		mWorld = world;
 	}
 
 	shared_ptr<Path> const& Agent::getPath() const
@@ -530,8 +530,8 @@ namespace core
 
 	void Agent::setPath(shared_ptr<Path> path, bool startPathing)
 	{
-		if (mBuilding
-			&& mBuilding->agentBehaviourOwnsMovement(mBuilding->getAgentId(this))) return;
+		if (mWorld
+			&& mWorld->agentBehaviourOwnsMovement(mWorld->getAgentId(this))) return;
 		mResetPosition = mPosition;
 		mResetPath = path;
 		mResetPathActive = startPathing;
@@ -544,8 +544,8 @@ namespace core
 		// live ride request and stop-request ownership instead of cancelling into a
 		// needless exit/reboard cycle.
 		uint32_t replacementSource = 0;
-		if (startPathing && path && mTraversalTask && !mTraversalTask->permit && mBuilding
-			&& mBuilding->replaceOnboardLiftDestination(*this, path, replacementSource))
+		if (startPathing && path && mTraversalTask && !mTraversalTask->permit && mWorld
+			&& mWorld->replaceOnboardLiftDestination(*this, path, replacementSource))
 		{
 			mPath.path = std::move(path);
 			mPath.targetNode = replacementSource;
@@ -567,9 +567,9 @@ namespace core
 
 		// Replacing only the suffix after the same immediate resource is a compatible
 		// replan. Update the locomotion endpoints while retaining request/ticket age.
-		if (startPathing && path && mTraversalTask && mBuilding)
+		if (startPathing && path && mTraversalTask && mWorld)
 		{
-			auto request = mBuilding->lookupTraversalRequest(mTraversalTask->request);
+			auto request = mWorld->lookupTraversalRequest(mTraversalTask->request);
 			if (request && request.entity->getState() == TraversalRequestState::Pending)
 			{
 				for (uint32_t i = 0; i + 1 < path->nodes.size(); ++i)
@@ -623,8 +623,8 @@ namespace core
 
 	void Agent::clearPath()
 	{
-		if (mBuilding
-			&& mBuilding->agentBehaviourOwnsMovement(mBuilding->getAgentId(this))) return;
+		if (mWorld
+			&& mWorld->agentBehaviourOwnsMovement(mWorld->getAgentId(this))) return;
 		clearRuntimePath();
 		mResetPosition = mPosition;
 		mResetPath.reset();
@@ -649,15 +649,15 @@ namespace core
 
 	void Agent::startPathing()
 	{
-		if (mBuilding
-			&& mBuilding->agentBehaviourOwnsMovement(mBuilding->getAgentId(this))) return;
+		if (mWorld
+			&& mWorld->agentBehaviourOwnsMovement(mWorld->getAgentId(this))) return;
 		startPathingInternal();
 	}
 
 	void Agent::pausePathing()
 	{
-		if (mBuilding
-			&& mBuilding->agentBehaviourOwnsMovement(mBuilding->getAgentId(this))) return;
+		if (mWorld
+			&& mWorld->agentBehaviourOwnsMovement(mWorld->getAgentId(this))) return;
 		cancelTraversal();
 		mState = State::Idle;
 
@@ -733,9 +733,9 @@ namespace core
 		{
 			if (!edge) return true;
 			if (edge->getType() == EdgeType::Location) return false;
-			if (edge->getType() == EdgeType::LiftMount && mBuilding)
+			if (edge->getType() == EdgeType::LiftMount && mWorld)
 			{
-				auto resource = mBuilding->lookupTraversalResource(edge->getTraversalResourceId());
+				auto resource = mWorld->lookupTraversalResource(edge->getTraversalResourceId());
 				// An open platform's mount edge is a topology-only exit handoff. Calls and
 				// destination selection occur on its Lift edges instead.
 				return !resource || !resource.entity->isOpenPlatformLift();
@@ -781,8 +781,8 @@ namespace core
 
 		mPath.targetNode = getSkippablePathTarget(mPath.targetNode);
 		auto const& targetPos = mPath.path->nodes[mPath.targetNode].targetVertex->getPosition();
-		if (mBuilding && mPath.targetNode + 1 < mPath.path->nodes.size()
-			&& mBuilding->stopForAvailableQueuePosition(*this,
+		if (mWorld && mPath.targetNode + 1 < mPath.path->nodes.size()
+			&& mWorld->stopForAvailableQueuePosition(*this,
 				mPath.path->nodes[mPath.targetNode + 1].edge, targetPos,
 				getWalkSpeed() * frameTime))
 		{
@@ -796,8 +796,8 @@ namespace core
 		// keeps precedence for contended doors - it claims the queue spot on
 		// the way, so the two never double-start the flow; request creation
 		// itself still happens once, in the next intent-collection phase.
-		if (mBuilding && mPath.targetNode + 1 < mPath.path->nodes.size()
-			&& mBuilding->isAtDoorCrossingArrival(*this,
+		if (mWorld && mPath.targetNode + 1 < mPath.path->nodes.size()
+			&& mWorld->isAtDoorCrossingArrival(*this,
 				mPath.path->nodes[mPath.targetNode + 1].edge, targetPos))
 		{
 			mState = State::WaitingForTraversal;
@@ -821,7 +821,7 @@ namespace core
 
 	void Agent::collectTraversalIntent()
 	{
-		if (mState != State::WaitingForTraversal || mTraversalTask || !mBuilding
+		if (mState != State::WaitingForTraversal || mTraversalTask || !mWorld
 			|| !mPath.path || mPath.targetNode + 1 >= mPath.path->nodes.size())
 		{
 			return;
@@ -838,7 +838,7 @@ namespace core
 		task.edge = destinationNode.edge;
 		task.sourceVertex = sourceNode.targetVertex;
 		task.destinationVertex = destinationNode.targetVertex;
-		task.request = mBuilding->createTraversalRequest(*this, task.edge,
+		task.request = mWorld->createTraversalRequest(*this, task.edge,
 			task.sourceVertex, task.destinationVertex);
 		mEarlyQueueApproachDirectionX = 0;
 		mTraversalTask = std::move(task);
@@ -846,18 +846,18 @@ namespace core
 
 	void Agent::allocateTraversal()
 	{
-		if (mState != State::WaitingForTraversal || !mTraversalTask || !mBuilding)
+		if (mState != State::WaitingForTraversal || !mTraversalTask || !mWorld)
 		{
 			return;
 		}
 
-		auto requestLookup = mBuilding->lookupTraversalRequest(mTraversalTask->request);
+		auto requestLookup = mWorld->lookupTraversalRequest(mTraversalTask->request);
 		if (!requestLookup) return;
 		if (requestLookup.entity->getState() == TraversalRequestState::Pending)
 		{
-			mBuilding->allocateTraversalRequest(mTraversalTask->request,
+			mWorld->allocateTraversalRequest(mTraversalTask->request,
 				mTraversalTask->edge, mTraversalTask->destinationVertex);
-			requestLookup = mBuilding->lookupTraversalRequest(mTraversalTask->request);
+			requestLookup = mWorld->lookupTraversalRequest(mTraversalTask->request);
 		}
 		// A resource allocation initiated while processing another agent may have
 		// granted this request earlier in the phase. The owner adopts that permit
@@ -866,7 +866,7 @@ namespace core
 		{
 			mTraversalTask->permit = requestLookup.entity->getPermit();
 			auto vertexA = mPath.targetNode + 1;
-			auto resource = mBuilding->lookupTraversalResource(requestLookup.entity->getResource());
+			auto resource = mWorld->lookupTraversalResource(requestLookup.entity->getResource());
 			if (resource && resource.entity->isOpenPlatformLift()
 				&& requestLookup.entity->getEdgeType() == EdgeType::Lift)
 			{
@@ -899,12 +899,12 @@ namespace core
 
 	void Agent::commitTraversal()
 	{
-		if (mState != State::AwaitingTraversalCommit || !mTraversalTask || !mBuilding)
+		if (mState != State::AwaitingTraversalCommit || !mTraversalTask || !mWorld)
 		{
 			return;
 		}
 
-		if (!mBuilding->commitTraversal(*this, mTraversalTask->request,
+		if (!mWorld->commitTraversal(*this, mTraversalTask->request,
 			mTraversalTask->permit, mTraversalTask->destinationVertex))
 		{
 			return;
@@ -928,17 +928,17 @@ namespace core
 
 	void Agent::considerTraversalReplan()
 	{
-		if (!mTraversalTask || mTraversalTask->permit || !mBuilding || !mPath.path
+		if (!mTraversalTask || mTraversalTask->permit || !mWorld || !mPath.path
 			|| mPath.path->nodes.empty()) return;
-		auto request = mBuilding->lookupTraversalRequest(mTraversalTask->request);
+		auto request = mWorld->lookupTraversalRequest(mTraversalTask->request);
 		if (!request || !request.entity->getQueueTicket()) return;
-		auto const& policy = mBuilding->getTraversalWaitingPolicy();
-		auto waited = mBuilding->getSimulationTick() - request.entity->getQueuedAtTick();
+		auto const& policy = mWorld->getTraversalWaitingPolicy();
+		auto waited = mWorld->getSimulationTick() - request.entity->getQueuedAtTick();
 		if (waited < policy.minimumReplanWaitTicks
 			|| (waited - policy.minimumReplanWaitTicks) % policy.replanIntervalTicks != 0) return;
 
 		auto target = mPath.path->nodes.back().targetVertex;
-		auto alternative = mBuilding->getGraph()->calculatePath(this, mTraversalTask->sourceVertex, target);
+		auto alternative = mWorld->getGraph()->calculatePath(this, mTraversalTask->sourceVertex, target);
 		if (!alternative || alternative->nodes.size() < 2) return;
 		auto currentEta = estimateRemainingPathSeconds(mPath.path, mPath.targetNode);
 		auto alternativeEta = estimateRemainingPathSeconds(alternative, 0);
@@ -950,16 +950,16 @@ namespace core
 
 	void Agent::cleanupTraversal()
 	{
-		if (!mTraversalTask || !mBuilding)
+		if (!mTraversalTask || !mWorld)
 		{
 			return;
 		}
 
-		auto request = mBuilding->lookupTraversalRequest(mTraversalTask->request);
+		auto request = mWorld->lookupTraversalRequest(mTraversalTask->request);
 		if (request && (request.entity->getState() == TraversalRequestState::Committed
 			|| request.entity->getState() == TraversalRequestState::Cancelled))
 		{
-			mBuilding->releaseTraversal(mTraversalTask->request, mTraversalTask->permit);
+			mWorld->releaseTraversal(mTraversalTask->request, mTraversalTask->permit);
 			mTraversalTask.reset();
 			mTraversalLocalGoal.reset();
 			if (mQueuedTraversalTask)
@@ -977,17 +977,17 @@ namespace core
 	{
 		if (!mTraversalTask && !mQueuedTraversalTask) return;
 
-		if (mBuilding)
+		if (mWorld)
 		{
 			if (mTraversalTask)
 			{
-				mBuilding->cancelTraversal(mTraversalTask->request, mTraversalTask->permit);
-				mBuilding->releaseTraversal(mTraversalTask->request, mTraversalTask->permit);
+				mWorld->cancelTraversal(mTraversalTask->request, mTraversalTask->permit);
+				mWorld->releaseTraversal(mTraversalTask->request, mTraversalTask->permit);
 			}
 			if (mQueuedTraversalTask)
 			{
-				mBuilding->cancelTraversal(mQueuedTraversalTask->request, mQueuedTraversalTask->permit);
-				mBuilding->releaseTraversal(mQueuedTraversalTask->request, mQueuedTraversalTask->permit);
+				mWorld->cancelTraversal(mQueuedTraversalTask->request, mQueuedTraversalTask->permit);
+				mWorld->releaseTraversal(mQueuedTraversalTask->request, mQueuedTraversalTask->permit);
 			}
 		}
 		mTraversalTask.reset();
@@ -1041,11 +1041,11 @@ namespace core
 			// A same-sector Location edge may lead directly to a queued threshold.
 			// Stop and commit that unconstrained edge at the queue boundary so the
 			// following Door/Ladder request is created before reaching its centre.
-			if (mTraversalTask && mBuilding && mPath.path
+			if (mTraversalTask && mWorld && mPath.path
 				&& mTraversalTask->edge->getType() == EdgeType::Location
 				&& mTraversalTask->destinationVertex->getSector().get() == getSector()
 				&& mPath.targetNode + 2 < mPath.path->nodes.size()
-				&& mBuilding->stopForAvailableQueuePosition(*this,
+				&& mWorld->stopForAvailableQueuePosition(*this,
 					mPath.path->nodes[mPath.targetNode + 2].edge,
 					mTraversalTask->destinationVertex->getPosition(),
 					getWalkSpeed() * frameTime))
@@ -1056,7 +1056,7 @@ namespace core
 				queued.edge = destinationNode.edge;
 				queued.sourceVertex = sourceNode.targetVertex;
 				queued.destinationVertex = destinationNode.targetVertex;
-				queued.request = mBuilding->createTraversalRequest(*this, queued.edge,
+				queued.request = mWorld->createTraversalRequest(*this, queued.edge,
 					queued.sourceVertex, queued.destinationVertex);
 				mEarlyQueueApproachDirectionX = 0;
 				mQueuedTraversalTask = std::move(queued);

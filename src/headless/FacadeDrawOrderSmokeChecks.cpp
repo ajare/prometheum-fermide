@@ -30,7 +30,7 @@
 #include "imgui/imgui.h"
 
 #include "Render.h"
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/Defines.h"
 #include "core/Facade.h"
 #include "core/Sector.h"
@@ -118,39 +118,39 @@ namespace
 	// A two-Layer scene: a Room on Layer 1, a Facade directly in front of it
 	// on Layer 0 (Layers are numbered front-to-back), carrying one Window and
 	// one Door - the two threshold types the flat fill used to erase. Hands
-	// the caller the Building and the Facade's Sector index.
+	// the caller the World and the Facade's Sector index.
 	template <typename Fn>
 	void withFacadeHostingThresholds(Fn&& fn)
 	{
-		core::Building building("Facade draw order", 12, 3);
-		while (building.getLayerCount() < 2) building.addLayer();
-		building.addRoom("Behind", 1, 0, 0, 4, 1);
-		auto const facadeIndex = building.addFacade("Frontage", 0, 0, 0, 4, 2,
+		core::World world("Facade draw order", 12, 3);
+		while (world.getLayerCount() < 2) world.addLayer();
+		world.addRoom("Behind", 1, 0, 0, 4, 1);
+		auto const facadeIndex = world.addFacade("Frontage", 0, 0, 0, 4, 2,
 			CORE_ROOM_MAX_HEIGHT);
-		building.finishBuild();
-		building.pauseSimulation();
+		world.finishBuild();
+		world.pauseSimulation();
 
 		// Paint the Facade with the sentinel colour the checks read back.
 		std::string colourDiagnostic;
-		require(building.setFacadeColour(facadeIndex, kFacadeColour, &colourDiagnostic),
+		require(world.setFacadeColour(facadeIndex, kFacadeColour, &colourDiagnostic),
 			("The Facade recolour was refused: " + colourDiagnostic).c_str());
 
 		std::string diagnostic;
-		require(building.canAddSectorWindow(0, 0, 1, 2, 1, &diagnostic),
+		require(world.canAddSectorWindow(0, 0, 1, 2, 1, &diagnostic),
 			("A Window on a Facade was refused: " + diagnostic).c_str());
-		building.addSectorWindow(0, 0, 1, 2, 1,
+		world.addSectorWindow(0, 0, 1, 2, 1,
 			{ false, core::Window::State::Closed, core::Window::Style::Clear });
-		building.addSectorDoor(0, 0, 3);
-		building.finishBuild();
+		world.addSectorDoor(0, 0, 3);
+		world.finishBuild();
 
-		fn(building, facadeIndex);
+		fn(world, facadeIndex);
 	}
 
-	void renderFacadePass(core::Building& building, uint32_t facadeIndex,
+	void renderFacadePass(core::World& world, uint32_t facadeIndex,
 		LayerRenderStyle style, ImDrawList* drawList)
 	{
 		// The Layer colour the viewport would pass down as the generic fill.
-		renderSector(building.getSector(facadeIndex), 0, style, false,
+		renderSector(world.getSector(facadeIndex), 0, style, false,
 			ImColor(192, 192, 255), drawList);
 	}
 }
@@ -166,9 +166,9 @@ void facadeFillPrecedesThresholdApertures()
 	// which headless never has.
 	ImDrawList* drawList = ImGui::GetBackgroundDrawList(ImGui::GetMainViewport());
 
-	withFacadeHostingThresholds([&](core::Building& building, uint32_t facadeIndex)
+	withFacadeHostingThresholds([&](core::World& world, uint32_t facadeIndex)
 	{
-		renderFacadePass(building, facadeIndex, LayerRenderStyle::Solid, drawList);
+		renderFacadePass(world, facadeIndex, LayerRenderStyle::Solid, drawList);
 
 		auto const fill = paintedWith(drawList, facadeFillColour());
 		require(fill.painted(), "the Solid pass painted no Facade fill at all");
@@ -195,10 +195,10 @@ void facadeFillCoversTheWholeFacadeSurface()
 	ImGuiGuard imgui;
 	ImDrawList* drawList = ImGui::GetBackgroundDrawList(ImGui::GetMainViewport());
 
-	withFacadeHostingThresholds([&](core::Building& building, uint32_t facadeIndex)
+	withFacadeHostingThresholds([&](core::World& world, uint32_t facadeIndex)
 	{
-		auto sector = building.getSector(facadeIndex);
-		renderFacadePass(building, facadeIndex, LayerRenderStyle::Solid, drawList);
+		auto sector = world.getSector(facadeIndex);
+		renderFacadePass(world, facadeIndex, LayerRenderStyle::Solid, drawList);
 
 		core::Vector2 b0, b1;
 		sector->getBounds(b0, b1);
@@ -243,9 +243,9 @@ void wireframePassOutlinesFacadeBeforeThresholds()
 	ImGuiGuard imgui;
 	ImDrawList* drawList = ImGui::GetBackgroundDrawList(ImGui::GetMainViewport());
 
-	withFacadeHostingThresholds([&](core::Building& building, uint32_t facadeIndex)
+	withFacadeHostingThresholds([&](core::World& world, uint32_t facadeIndex)
 	{
-		renderFacadePass(building, facadeIndex, LayerRenderStyle::Wireframe, drawList);
+		renderFacadePass(world, facadeIndex, LayerRenderStyle::Wireframe, drawList);
 
 		auto const outline = paintedWith(drawList, facadeFillColour());
 		require(outline.painted(), "the wireframe overlay drew no Facade outline");

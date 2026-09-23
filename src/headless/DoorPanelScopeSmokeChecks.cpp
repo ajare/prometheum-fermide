@@ -29,7 +29,7 @@
 #include "imgui/imgui.h"
 #include "imgui/imgui_internal.h"
 
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/Door.h"
 #include "core/DoorSectorObject.h"
 #include "core/Sector.h"
@@ -58,49 +58,49 @@ namespace
 	};
 
 	std::shared_ptr<const core::SectorObject> doorObjectAt(
-		core::Building::CreateObjectResult const& created)
+		core::World::CreateObjectResult const& created)
 	{
 		require(created.index != ~0u && created.sector != nullptr,
-			"The test Building did not create its Door");
+			"The test World did not create its Door");
 		auto const object = created.sector->getObject(created.index);
 		require(object != nullptr && object->getObjectType() == core::SectorObjectType::Door,
 			"The created object is not a Door");
 		return object;
 	}
 
-	void requireOrdinary(core::Building const& building,
+	void requireOrdinary(core::World const& world,
 		std::shared_ptr<const core::SectorObject> const& object)
 	{
 		uint32_t liftSector{ ~0u }, stopIndex{ ~0u }, carriageIndex{ ~0u }, doorIndex{ ~0u };
-		require(!building.isLiftOwnedDoor(object, &liftSector, &stopIndex),
+		require(!world.isLiftOwnedDoor(object, &liftSector, &stopIndex),
 			"The ordinary test Door reads as Lift-owned");
-		require(!building.isShuttleOwnedDoor(object, &liftSector, &stopIndex,
+		require(!world.isShuttleOwnedDoor(object, &liftSector, &stopIndex,
 				&carriageIndex, &doorIndex),
 			"The ordinary test Door reads as Shuttle-owned");
 	}
 
-	void requireLiftOwned(core::Building const& building,
+	void requireLiftOwned(core::World const& world,
 		std::shared_ptr<const core::SectorObject> const& object, uint32_t liftSector)
 	{
 		uint32_t ownerSector{ ~0u }, stopIndex{ ~0u }, carriageIndex{ ~0u }, doorIndex{ ~0u };
-		require(building.isLiftOwnedDoor(object, &ownerSector, &stopIndex),
+		require(world.isLiftOwnedDoor(object, &ownerSector, &stopIndex),
 			"The Lift test Door does not read as Lift-owned");
 		require(ownerSector == liftSector, "The Lift test Door names the wrong Lift sector");
-		require(!building.isShuttleOwnedDoor(object, &ownerSector, &stopIndex,
+		require(!world.isShuttleOwnedDoor(object, &ownerSector, &stopIndex,
 				&carriageIndex, &doorIndex),
 			"The Lift test Door also reads as Shuttle-owned");
 	}
 
-	void requireShuttleOwned(core::Building const& building,
+	void requireShuttleOwned(core::World const& world,
 		std::shared_ptr<const core::SectorObject> const& object, uint32_t shuttleSector)
 	{
 		uint32_t ownerSector{ ~0u }, stopIndex{ ~0u }, carriageIndex{ ~0u }, doorIndex{ ~0u };
-		require(building.isShuttleOwnedDoor(object, &ownerSector, &stopIndex,
+		require(world.isShuttleOwnedDoor(object, &ownerSector, &stopIndex,
 				&carriageIndex, &doorIndex),
 			"The Shuttle test Door does not read as Shuttle-owned");
 		require(ownerSector == shuttleSector,
 			"The Shuttle test Door names the wrong Shuttle sector");
-		require(!building.isLiftOwnedDoor(object, &ownerSector, &stopIndex),
+		require(!world.isLiftOwnedDoor(object, &ownerSector, &stopIndex),
 			"The Shuttle test Door also reads as Lift-owned");
 	}
 
@@ -109,7 +109,7 @@ namespace
 	// to be exactly as the panel found them. In Debug builds ImGui::End()
 	// additionally asserts through its own end-window stack check, so an
 	// imbalance fails here twice over.
-	void requirePanelLeavesNoDisabledState(std::shared_ptr<core::Building> const& building,
+	void requirePanelLeavesNoDisabledState(std::shared_ptr<core::World> const& world,
 		std::shared_ptr<const core::SectorObject> object, char const* what)
 	{
 		ImGui::NewFrame();
@@ -119,7 +119,7 @@ namespace
 		auto const flagsOnEntry = GImGui->CurrentItemFlags;
 		auto const alphaOnEntry = GImGui->Style.Alpha;
 
-		renderDoorPanel(building, object);
+		renderDoorPanel(world, object);
 
 		require(GImGui->DisabledStackSize == depthOnEntry,
 			std::string(what) + ": the panel left ImGui's disabled stack unbalanced");
@@ -143,38 +143,38 @@ namespace
 
 	void checkOrdinaryDoor()
 	{
-		auto building = std::make_shared<core::Building>("Ordinary door panel", 12, 3);
-		building->addRoom("Fore", 0, 0, 0, 11, 2);
-		building->addRoom("Aft", 1, 0, 0, 11, 2);
-		auto const created = building->addSectorDoor(0, 0, 3, core::Building::CreateDoorOptions{});
-		building->finishBuild();
+		auto world = std::make_shared<core::World>("Ordinary door panel", 12, 3);
+		world->addRoom("Fore", 0, 0, 0, 11, 2);
+		world->addRoom("Aft", 1, 0, 0, 11, 2);
+		auto const created = world->addSectorDoor(0, 0, 3, core::World::CreateDoorOptions{});
+		world->finishBuild();
 		auto const object = doorObjectAt(created.door);
-		requireOrdinary(*building, object);
+		requireOrdinary(*world, object);
 
-		requirePanelLeavesNoDisabledState(building, object,
+		requirePanelLeavesNoDisabledState(world, object,
 			"An ordinary Door selection, simulation running");
-		building->pauseSimulation();
-		requirePanelLeavesNoDisabledState(building, object,
+		world->pauseSimulation();
+		requirePanelLeavesNoDisabledState(world, object,
 			"An ordinary Door selection, simulation paused");
 	}
 
 	void checkExistingButtonsCanBeRemoved()
 	{
-		auto building = std::make_shared<core::Building>("Door button checkbox", 12, 3);
-		building->addRoom("Fore", 0, 0, 0, 11, 2);
-		building->addRoom("Aft", 1, 0, 0, 11, 2);
-		core::Building::CreateDoorOptions options;
+		auto world = std::make_shared<core::World>("Door button checkbox", 12, 3);
+		world->addRoom("Fore", 0, 0, 0, 11, 2);
+		world->addRoom("Aft", 1, 0, 0, 11, 2);
+		core::World::CreateDoorOptions options;
 		options.controls[0] = true;
 		options.controls[1] = true;
 		options.activationMode = core::DoorActivationMode::RemoteControlled;
-		auto const created = building->addSectorDoor(0, 0, 7, options);
-		building->finishBuild();
-		building->pauseSimulation();
+		auto const created = world->addSectorDoor(0, 0, 7, options);
+		world->finishBuild();
+		world->pauseSimulation();
 		auto const object = doorObjectAt(created.door);
 
 		ImGui::NewFrame();
 		ImGui::Begin("Selection");
-		renderDoorPanel(building, object);
+		renderDoorPanel(world, object);
 		require(GImGui->LastItemData.ID == ImGui::GetID("Buttons"),
 			"The Door panel's final control is not the Buttons checkbox");
 		require(!(GImGui->LastItemData.InFlags & ImGuiItemFlags_Disabled),
@@ -185,51 +185,51 @@ namespace
 
 	void checkLiftOwnedDoor()
 	{
-		auto building = std::make_shared<core::Building>("Lift door panel", 16, 3);
-		auto const hall = building->addRoom("Lift Hall", 0, 0, 0, 16, 3);
+		auto world = std::make_shared<core::World>("Lift door panel", 16, 3);
+		auto const hall = world->addRoom("Lift Hall", 0, 0, 0, 16, 3);
 		for (uint32_t deck = 1; deck < 3; ++deck)
 			for (uint32_t x = 0; x < 16; ++x)
-				building->addSectorWalkway(hall, deck, x);
-		core::Building::CreateLiftOptions options;
+				world->addSectorWalkway(hall, deck, x);
+		core::World::CreateLiftOptions options;
 		options.cellsWide = 1;
 		options.decksHigh = 3;
 		options.stopOffsets = { 0, 1, 2 };
-		auto const lift = building->addLift(1, 0, 8, options);
+		auto const lift = world->addLift(1, 0, 8, options);
 		require(lift.doors.size() == 3, "The Lift did not generate one Door per stop");
-		building->finishBuild();
+		world->finishBuild();
 		auto const object = doorObjectAt(lift.doors[0].door);
-		requireLiftOwned(*building, object, lift.lift.sector->getIndex());
+		requireLiftOwned(*world, object, lift.lift.sector->getIndex());
 
-		requirePanelLeavesNoDisabledState(building, object,
+		requirePanelLeavesNoDisabledState(world, object,
 			"A Lift-owned Door selection, simulation running");
-		building->pauseSimulation();
-		requirePanelLeavesNoDisabledState(building, object,
+		world->pauseSimulation();
+		requirePanelLeavesNoDisabledState(world, object,
 			"A Lift-owned Door selection, simulation paused");
 	}
 
 	void checkShuttleOwnedDoor()
 	{
-		auto building = std::make_shared<core::Building>("Shuttle door panel", 32, 3);
-		building->addCorridor(0, 0, 31);
-		building->addCorridor(1, 0, 31);
-		core::Building::CreateShuttleOptions options{ 2, 3, { 0, 18 }, 0 };
+		auto world = std::make_shared<core::World>("Shuttle door panel", 32, 3);
+		world->addCorridor(0, 0, 31);
+		world->addCorridor(1, 0, 31);
+		core::World::CreateShuttleOptions options{ 2, 3, { 0, 18 }, 0 };
 		options.capacity = 2;
 		options.doorMask = 0b101;
-		auto const shuttle = building->addShuttle(1, 0, 0, 27, options);
-		building->finishBuild();
+		auto const shuttle = world->addShuttle(1, 0, 0, 27, options);
+		world->finishBuild();
 		// The grid is stop x carriage x doorMask cell, with empty cells where a
 		// partial landing is unsupported; take the first Door it actually made.
 		auto const made = std::find_if(shuttle.doors.begin(), shuttle.doors.end(),
-			[](core::Building::CreateDoorResult const& entry)
+			[](core::World::CreateDoorResult const& entry)
 			{ return entry.door.index != ~0u && entry.door.sector != nullptr; });
 		require(made != shuttle.doors.end(), "The Shuttle generated no Doors at all");
 		auto const object = doorObjectAt(made->door);
-		requireShuttleOwned(*building, object, shuttle.shuttle.sector->getIndex());
+		requireShuttleOwned(*world, object, shuttle.shuttle.sector->getIndex());
 
-		requirePanelLeavesNoDisabledState(building, object,
+		requirePanelLeavesNoDisabledState(world, object,
 			"A Shuttle-owned Door selection, simulation running");
-		building->pauseSimulation();
-		requirePanelLeavesNoDisabledState(building, object,
+		world->pauseSimulation();
+		requirePanelLeavesNoDisabledState(world, object,
 			"A Shuttle-owned Door selection, simulation paused");
 	}
 }

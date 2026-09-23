@@ -10,9 +10,9 @@
 
 namespace core
 {
-	class Building;
+	class World;
 	class SectorObject;
 }
 
-void renderDoorPanel(std::shared_ptr<core::Building> const& building,
+void renderDoorPanel(std::shared_ptr<core::World> const& world,
 	std::shared_ptr<const core::SectorObject> object);

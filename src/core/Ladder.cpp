@@ -22,7 +22,7 @@ namespace core
 	two floors within the same Location, the Location can be on either Layer, but must obviously be more than
 	one floor high.
 
-	Ladders can be extended or retracted through building-owned interaction points, typically represented by
+	Ladders can be extended or retracted through world-owned interaction points, typically represented by
 	a physical Button at the base and an interaction point at the top.
 
 	Ladders may span multiple decks, and pass behind Locations.  The requirement is that for the Locations that

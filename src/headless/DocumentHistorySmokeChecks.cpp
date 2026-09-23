@@ -14,67 +14,67 @@ namespace
 
 	void independentHistoriesDoNotLeakCommandsOrState()
 	{
-		DocumentHistory buildingHistory;
+		DocumentHistory worldHistory;
 		DocumentHistory registryHistory;
 
-		require(buildingHistory.isModified() && registryHistory.isModified(),
+		require(worldHistory.isModified() && registryHistory.isModified(),
 			"A new unsaved history was reported clean");
-		buildingHistory.markSaved();
+		worldHistory.markSaved();
 		registryHistory.markSaved();
-		require(!buildingHistory.isModified() && !registryHistory.isModified(),
+		require(!worldHistory.isModified() && !registryHistory.isModified(),
 			"Marking fresh histories saved did not make them clean");
 
-		buildingHistory.commit(buildingHistory.capture("building 0"));
-		require(buildingHistory.canUndo() && !buildingHistory.canRedo(),
-			"A Building edit did not produce exactly an undo command");
-		require(buildingHistory.isModified(), "A Building edit did not dirty its history");
+		worldHistory.commit(worldHistory.capture("world 0"));
+		require(worldHistory.canUndo() && !worldHistory.canRedo(),
+			"A World edit did not produce exactly an undo command");
+		require(worldHistory.isModified(), "A World edit did not dirty its history");
 		require(!registryHistory.canUndo() && !registryHistory.canRedo()
 			&& !registryHistory.isModified(),
-			"A Building edit leaked into the independent registry history");
+			"A World edit leaked into the independent registry history");
 
-		std::string restoredBuilding;
-		auto restoreBuilding = [&restoredBuilding](DocumentSnapshot const& target)
+		std::string restoredWorld;
+		auto restoreWorld = [&restoredWorld](DocumentSnapshot const& target)
 		{
-			restoredBuilding = target.yaml;
+			restoredWorld = target.yaml;
 			return true;
 		};
-		require(buildingHistory.undo(buildingHistory.capture("building 1"), restoreBuilding),
-			"Undoing the first Building edit failed");
-		require(restoredBuilding == "building 0", "Undo restored the wrong Building state");
-		require(!buildingHistory.isModified(),
-			"Undoing the first Building edit did not return to the saved state");
-		require(buildingHistory.redo(buildingHistory.capture("building 0"), restoreBuilding),
-			"Redoing the first Building edit failed");
-		require(restoredBuilding == "building 1", "Redo restored the wrong Building state");
-		require(buildingHistory.isModified(),
-			"Redoing the first Building edit did not return to a dirty state");
+		require(worldHistory.undo(worldHistory.capture("world 1"), restoreWorld),
+			"Undoing the first World edit failed");
+		require(restoredWorld == "world 0", "Undo restored the wrong World state");
+		require(!worldHistory.isModified(),
+			"Undoing the first World edit did not return to the saved state");
+		require(worldHistory.redo(worldHistory.capture("world 0"), restoreWorld),
+			"Redoing the first World edit failed");
+		require(restoredWorld == "world 1", "Redo restored the wrong World state");
+		require(worldHistory.isModified(),
+			"Redoing the first World edit did not return to a dirty state");
 
-		buildingHistory.markSaved();
-		require(!buildingHistory.isModified(), "Saving the edited Building left it dirty");
-		buildingHistory.commit(buildingHistory.capture("building 1"));
-		require(buildingHistory.isModified(), "A post-save Building edit stayed clean");
+		worldHistory.markSaved();
+		require(!worldHistory.isModified(), "Saving the edited World left it dirty");
+		worldHistory.commit(worldHistory.capture("world 1"));
+		require(worldHistory.isModified(), "A post-save World edit stayed clean");
 
-		require(buildingHistory.undo(buildingHistory.capture("building 2"), restoreBuilding),
-			"Undoing the post-save Building edit failed");
-		require(restoredBuilding == "building 1", "Post-save undo restored the wrong state");
-		require(!buildingHistory.isModified(),
-			"Undoing to the saved Building state did not make it clean");
-		require(buildingHistory.redo(buildingHistory.capture("building 1"), restoreBuilding),
-			"Redoing the post-save Building edit failed");
-		require(restoredBuilding == "building 2", "Post-save redo restored the wrong state");
-		require(buildingHistory.isModified(),
-			"Redoing away from the saved Building state did not make it dirty");
+		require(worldHistory.undo(worldHistory.capture("world 2"), restoreWorld),
+			"Undoing the post-save World edit failed");
+		require(restoredWorld == "world 1", "Post-save undo restored the wrong state");
+		require(!worldHistory.isModified(),
+			"Undoing to the saved World state did not make it clean");
+		require(worldHistory.redo(worldHistory.capture("world 1"), restoreWorld),
+			"Redoing the post-save World edit failed");
+		require(restoredWorld == "world 2", "Post-save redo restored the wrong state");
+		require(worldHistory.isModified(),
+			"Redoing away from the saved World state did not make it dirty");
 
-		auto const buildingUndoCount = buildingHistory.undoCount();
-		auto const buildingRedoCount = buildingHistory.redoCount();
-		auto const buildingState = buildingHistory.currentStateId();
+		auto const worldUndoCount = worldHistory.undoCount();
+		auto const worldRedoCount = worldHistory.redoCount();
+		auto const worldState = worldHistory.currentStateId();
 		registryHistory.commit(registryHistory.capture("registry 0"));
 		require(registryHistory.canUndo() && registryHistory.isModified(),
 			"A registry edit did not affect its own history");
-		require(buildingHistory.undoCount() == buildingUndoCount
-			&& buildingHistory.redoCount() == buildingRedoCount
-			&& buildingHistory.currentStateId() == buildingState,
-			"A registry edit changed the Building history");
+		require(worldHistory.undoCount() == worldUndoCount
+			&& worldHistory.redoCount() == worldRedoCount
+			&& worldHistory.currentStateId() == worldState,
+			"A registry edit changed the World history");
 
 		auto const registryUndoCount = registryHistory.undoCount();
 		auto const registryState = registryHistory.currentStateId();

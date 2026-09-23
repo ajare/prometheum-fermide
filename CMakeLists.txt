@@ -23,8 +23,8 @@ endif()
 
 option(PF_BUILD_GUI "Build the SDL/OpenGL graphical application" ON)
 
-# High analysis settings (tickets #56, #79). The refactor of Building into
-# Building plus SimulationCoordinator was driven by a translation unit that
+# High analysis settings (tickets #56, #79). The refactor of World into
+# World plus SimulationCoordinator was driven by a translation unit that
 # choked the compiler under elevated analysis; this option keeps that check
 # repeatable. It raises the diagnostic level for the project's own targets
 # only - vendored third-party sources keep their own warning configuration -

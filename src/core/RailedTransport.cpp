@@ -27,7 +27,7 @@ namespace core
 
 	std::vector<std::pair<std::string, std::string>> RailedTransport::getInternalsStrings() const
 	{
-		return { { "Coordination", "Building traversal resource" },
+		return { { "Coordination", "World traversal resource" },
 			{ "Stops", std::to_string(mStops.size()) } };
 	}
 }

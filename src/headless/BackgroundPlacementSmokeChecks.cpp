@@ -1,7 +1,7 @@
 // Background placement and persistence checks, for ticket #30.
 //
 // A Background is a non-occupiable Sector that exists to be seen through
-// apertures from the Layer in front. Ticket #30 gives Building a creation path:
+// apertures from the Layer in front. Ticket #30 gives World a creation path:
 // canAddBackground()/addBackground(), the ConstructionType::Background record,
 // and the version 5 writer. These checks cover the placement accept/reject
 // matrix, the version 5 round-trip of the packed colour, and record replay.
@@ -13,7 +13,7 @@
 #include <string>
 
 #include "core/Background.h"
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/CellDefinition.h"
 #include "core/Defines.h"
 #include "core/Sector.h"
@@ -40,18 +40,18 @@ namespace
 		return false;
 	}
 
-	// A Building with three Layers: front-most, middle, and back-most.
-	void addThirdLayer(core::Building& building)
+	// A World with three Layers: front-most, middle, and back-most.
+	void addThirdLayer(core::World& world)
 	{
-		building.addLayer();
-		require(building.getLayerCount() == 3, "Test Building did not get three Layers");
+		world.addLayer();
+		require(world.getLayerCount() == 3, "Test World did not get three Layers");
 	}
 
-	std::shared_ptr<const core::Background> backgroundIn(core::Building const& building,
+	std::shared_ptr<const core::Background> backgroundIn(core::World const& world,
 		uint32_t sectorIndex)
 	{
-		auto sector = building.getSector(sectorIndex);
-		require(sector != nullptr, "Building reported a null Sector");
+		auto sector = world.getSector(sectorIndex);
+		require(sector != nullptr, "World reported a null Sector");
 		require(sector->getType() == core::SectorType::Background,
 			("Sector " + std::to_string(sectorIndex) + " is not a Background").c_str());
 		auto background = std::dynamic_pointer_cast<const core::Background>(sector);
@@ -61,10 +61,10 @@ namespace
 
 	// The cell footprint a Background claims on its own Layer: occupied by that
 	// Sector, with no floor and no SectorObject on every cell.
-	void footprintIsStamped(core::Building const& building, uint32_t layerIndex,
+	void footprintIsStamped(core::World const& world, uint32_t layerIndex,
 		uint32_t sectorIndex, uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t decksHigh)
 	{
-		auto const layer = building.getLayer(layerIndex);
+		auto const layer = world.getLayer(layerIndex);
 		for (uint32_t iy = y; iy < y + decksHigh; ++iy)
 		{
 			for (uint32_t ix = x; ix < x + cellsWide; ++ix)
@@ -82,15 +82,15 @@ namespace
 		}
 	}
 
-	// A stable description of every Sector the Building holds, used to compare a
-	// Building against its own replay.
-	std::string sectorSignature(core::Building const& building)
+	// A stable description of every Sector the World holds, used to compare a
+	// World against its own replay.
+	std::string sectorSignature(core::World const& world)
 	{
 		std::string signature;
-		for (uint32_t index = 0; index < building.getNumSectors(); ++index)
+		for (uint32_t index = 0; index < world.getNumSectors(); ++index)
 		{
-			auto const sector = building.getSector(index);
-			require(sector != nullptr, "Building reported a null Sector while signing");
+			auto const sector = world.getSector(index);
+			require(sector != nullptr, "World reported a null Sector while signing");
 			signature += std::format("{}:{}@{},{},{}x{}", index,
 				core::getSectorTypeString(sector->getType()), sector->getLayerIndex(),
 				sector->getCellX(), sector->getCellY(), sector->getCellsWide(), sector->getDecksHigh());
@@ -105,36 +105,36 @@ namespace
 		return signature;
 	}
 
-	std::string serializeBuilding(core::Building const& building)
+	std::string serializeWorld(core::World const& world)
 	{
 		core::SerializationWorkData workData;
 		auto writer = core::YamlSerializer::toString();
-		building.serialize(*writer, workData);
+		world.serialize(*writer, workData);
 		writer->serialize();
 		return writer->getSerializedString();
 	}
 
-	void loadInto(core::Building& target, std::string const& yaml)
+	void loadInto(core::World& target, std::string const& yaml)
 	{
 		core::SerializationWorkData workData;
 		auto reader = core::YamlSerializer::fromString(yaml);
 		reader->deserialize();
-		require(target.deserialize(*reader, workData), "Building YAML did not load");
+		require(target.deserialize(*reader, workData), "World YAML did not load");
 	}
 
 	// The record type is named on the way out and recognised on the way in.
 	void theBackgroundRecordTypeRoundTripsByName()
 	{
-		core::Building building("Named record", 12, 3);
-		building.addRoom("Room", 0, 0, 0, 4, 1);
-		building.addBackground(1, 1, 6, 4, 2, { 200, 30, 99 });
-		building.finishBuild();
+		core::World world("Named record", 12, 3);
+		world.addRoom("Room", 0, 0, 0, 4, 1);
+		world.addBackground(1, 1, 6, 4, 2, { 200, 30, 99 });
+		world.finishBuild();
 
-		auto const yaml = serializeBuilding(building);
+		auto const yaml = serializeWorld(world);
 		require(yaml.find("type: background") != std::string::npos,
 			"A Background record was not written as 'background'");
 
-		core::Building loaded("placeholder", 1, 1);
+		core::World loaded("placeholder", 1, 1);
 		loadInto(loaded, yaml);
 		require(loaded.getNumSectors() == 2, "The Background record did not replay into a Sector");
 		require(backgroundIn(loaded, 1)->getColour() == core::BackgroundColour{ 200, 30, 99 },
@@ -145,25 +145,25 @@ namespace
 	// rule would re-introduce the Fore/Back special-casing ADR 0002 removed.
 	void everyLayerAcceptsABackground()
 	{
-		core::Building building("Every layer", 12, 3);
-		addThirdLayer(building);
+		core::World world("Every layer", 12, 3);
+		addThirdLayer(world);
 
-		for (uint32_t layer = 0; layer < building.getLayerCount(); ++layer)
+		for (uint32_t layer = 0; layer < world.getLayerCount(); ++layer)
 		{
 			std::string diagnostic;
-			require(building.canAddBackground(layer, 0, layer * 2, 2, 1, &diagnostic),
+			require(world.canAddBackground(layer, 0, layer * 2, 2, 1, &diagnostic),
 				std::format("Layer {} refused a Background: {}", layer, diagnostic).c_str());
 		}
 
-		building.addBackground(0, 0, 0, 2, 1);
-		building.addBackground(1, 0, 2, 2, 1);
-		building.addBackground(2, 0, 4, 2, 1);
-		building.finishBuild();
+		world.addBackground(0, 0, 0, 2, 1);
+		world.addBackground(1, 0, 2, 2, 1);
+		world.addBackground(2, 0, 4, 2, 1);
+		world.finishBuild();
 
-		require(building.getNumSectors() == 3, "Backgrounds did not each become a Sector");
+		require(world.getNumSectors() == 3, "Backgrounds did not each become a Sector");
 		for (uint32_t layer = 0; layer < 3; ++layer)
 		{
-			auto const sector = building.getSector(layer);
+			auto const sector = world.getSector(layer);
 			require(sector->getType() == core::SectorType::Background,
 				std::format("Sector for Layer {} is not a Background", layer).c_str());
 			require(sector->getLayerIndex() == layer,
@@ -175,23 +175,23 @@ namespace
 	// plays by: taken cells on that Layer refuse it, free cells anywhere else do not.
 	void onlyTheSameLayersOccupiedCellsRefuseABackground()
 	{
-		core::Building building("Per-layer occupancy", 12, 3);
-		addThirdLayer(building);
-		building.addRoom("Room 1", 1, 0, 0, 3, 1);
+		core::World world("Per-layer occupancy", 12, 3);
+		addThirdLayer(world);
+		world.addRoom("Room 1", 1, 0, 0, 3, 1);
 
 		std::string diagnostic;
-		require(!building.canAddBackground(1, 0, 2, 1, 1, &diagnostic),
+		require(!world.canAddBackground(1, 0, 2, 1, 1, &diagnostic),
 			"A Background was accepted over a cell another Sector owns on that Layer");
 		require(!diagnostic.empty(), "A rejected Background gave no diagnostic");
 
 		// The same footprint on a Layer with nothing on it is free.
-		require(building.canAddBackground(0, 0, 2, 1, 1, &diagnostic),
+		require(world.canAddBackground(0, 0, 2, 1, 1, &diagnostic),
 			std::format("A free Layer refused a Background: {}", diagnostic).c_str());
-		require(building.canAddBackground(2, 0, 0, 3, 1, &diagnostic),
+		require(world.canAddBackground(2, 0, 0, 3, 1, &diagnostic),
 			std::format("A free Layer refused a Background: {}", diagnostic).c_str());
 
 		// Just clear of the Room on the Room's own Layer.
-		require(building.canAddBackground(1, 0, 3, 2, 1, &diagnostic),
+		require(world.canAddBackground(1, 0, 3, 2, 1, &diagnostic),
 			std::format("A free run beside a Location refused a Background: {}", diagnostic).c_str());
 	}
 
@@ -199,64 +199,64 @@ namespace
 	// over it on that Layer.
 	void aBackgroundTakesUpTheSpaceItWasGiven()
 	{
-		core::Building building("Taken space", 12, 3);
-		addThirdLayer(building);
-		building.addRoom("Room 0", 0, 0, 0, 4, 1);
-		auto const taken = building.addBackground(1, 0, 0, 4, 1);
+		core::World world("Taken space", 12, 3);
+		addThirdLayer(world);
+		world.addRoom("Room 0", 0, 0, 0, 4, 1);
+		auto const taken = world.addBackground(1, 0, 0, 4, 1);
 
-		require(throws([&] { building.addRoom("Over the top", 1, 0, 1, 2, 1); }),
+		require(throws([&] { world.addRoom("Over the top", 1, 0, 1, 2, 1); }),
 			"A Location was accepted over a Background on the same Layer");
-		require(throws([&] { building.addCorridor(1, 0, 2, 2, 1); }),
+		require(throws([&] { world.addCorridor(1, 0, 2, 2, 1); }),
 			"A Corridor was accepted over a Background on the same Layer");
-		require(throws([&] { building.addBackground(1, 0, 3, 2, 1); }),
+		require(throws([&] { world.addBackground(1, 0, 3, 2, 1); }),
 			"A Background was accepted over a Background on the same Layer");
 
 		// The Layers above and below are untouched by the Background's footprint.
-		require(!throws([&] { building.addRoom("Room 1", 1, 1, 0, 4, 1); }),
+		require(!throws([&] { world.addRoom("Room 1", 1, 1, 0, 4, 1); }),
 			"A Location beside the Background was refused");
-		require(!throws([&] { building.addRoom("Room 2", 2, 0, 0, 4, 1); }),
+		require(!throws([&] { world.addRoom("Room 2", 2, 0, 0, 4, 1); }),
 			"A Location on another Layer over the same cells was refused");
 
-		footprintIsStamped(building, 1, taken, 0, 0, 4, 1);
+		footprintIsStamped(world, 1, taken, 0, 0, 4, 1);
 	}
 
 	// Minimum (1,1); a zero-sized block covers nothing and is refused.
 	void theMinimumFootprintIsOneByOne()
 	{
-		core::Building building("Minimum size", 12, 3);
-		addThirdLayer(building);
+		core::World world("Minimum size", 12, 3);
+		addThirdLayer(world);
 
 		std::string diagnostic;
-		require(building.canAddBackground(1, 0, 0, 1, 1, &diagnostic),
+		require(world.canAddBackground(1, 0, 0, 1, 1, &diagnostic),
 			"The minimum 1x1 Background was refused");
-		require(!building.canAddBackground(1, 0, 0, 0, 1, &diagnostic),
+		require(!world.canAddBackground(1, 0, 0, 0, 1, &diagnostic),
 			"A zero-width Background was accepted");
-		require(!building.canAddBackground(1, 0, 0, 1, 0, &diagnostic),
+		require(!world.canAddBackground(1, 0, 0, 1, 0, &diagnostic),
 			"A zero-height Background was accepted");
-		require(throws([&] { building.addBackground(1, 0, 0, 0, 1); }),
+		require(throws([&] { world.addBackground(1, 0, 0, 0, 1); }),
 			"addBackground() accepted a zero-width block");
-		require(throws([&] { building.addBackground(1, 0, 0, 1, 0); }),
+		require(throws([&] { world.addBackground(1, 0, 0, 1, 0); }),
 			"addBackground() accepted a zero-height block");
 	}
 
-	// The Layer bounds and the Building bounds both cap the footprint.
+	// The Layer bounds and the World bounds both cap the footprint.
 	void boundsAndLayerCountAreEnforced()
 	{
-		core::Building building("Bounds", 12, 3);
-		addThirdLayer(building);
+		core::World world("Bounds", 12, 3);
+		addThirdLayer(world);
 
 		std::string diagnostic;
-		require(building.canAddBackground(1, 2, 0, 12, 1, &diagnostic),
-			"A Background filling the Building bounds was refused");
-		require(!building.canAddBackground(1, 2, 1, 12, 1, &diagnostic),
-			"A Background running past the Building width was accepted");
-		require(!building.canAddBackground(1, 3, 0, 1, 1, &diagnostic),
-			"A Background starting past the Building height was accepted");
-		require(!building.canAddBackground(1, 2, 0, 1, 2, &diagnostic),
-			"A Background running past the Building height was accepted");
-		require(!building.canAddBackground(3, 0, 0, 1, 1, &diagnostic),
-			"A Background on a Layer the Building does not have was accepted");
-		require(!building.canAddBackground(~0u, 0, 0, 1, 1, &diagnostic),
+		require(world.canAddBackground(1, 2, 0, 12, 1, &diagnostic),
+			"A Background filling the World bounds was refused");
+		require(!world.canAddBackground(1, 2, 1, 12, 1, &diagnostic),
+			"A Background running past the World width was accepted");
+		require(!world.canAddBackground(1, 3, 0, 1, 1, &diagnostic),
+			"A Background starting past the World height was accepted");
+		require(!world.canAddBackground(1, 2, 0, 1, 2, &diagnostic),
+			"A Background running past the World height was accepted");
+		require(!world.canAddBackground(3, 0, 0, 1, 1, &diagnostic),
+			"A Background on a Layer the World does not have was accepted");
+		require(!world.canAddBackground(~0u, 0, 0, 1, 1, &diagnostic),
 			"A Background on an unset Layer index was accepted");
 	}
 
@@ -264,23 +264,23 @@ namespace
 	// and its own Sector.
 	void adjacentBackgroundsDoNotMerge()
 	{
-		core::Building building("No merging", 12, 3);
-		addThirdLayer(building);
-		auto const left = building.addBackground(1, 0, 0, 2, 2, { 250, 10, 10 });
-		auto const right = building.addBackground(1, 0, 2, 2, 2, { 10, 250, 10 });
+		core::World world("No merging", 12, 3);
+		addThirdLayer(world);
+		auto const left = world.addBackground(1, 0, 0, 2, 2, { 250, 10, 10 });
+		auto const right = world.addBackground(1, 0, 2, 2, 2, { 10, 250, 10 });
 
 		require(left != right, "Two adjacent Backgrounds became one Sector");
-		require(building.getNumSectors() == 2, "Adjacent Backgrounds merged into one Sector");
-		require(backgroundIn(building, left)->getColour() == core::BackgroundColour{ 250, 10, 10 },
+		require(world.getNumSectors() == 2, "Adjacent Backgrounds merged into one Sector");
+		require(backgroundIn(world, left)->getColour() == core::BackgroundColour{ 250, 10, 10 },
 			"The first Background lost its colour to its neighbour");
-		require(backgroundIn(building, right)->getColour() == core::BackgroundColour{ 10, 250, 10 },
+		require(backgroundIn(world, right)->getColour() == core::BackgroundColour{ 10, 250, 10 },
 			"The second Background lost its colour to its neighbour");
-		require(backgroundIn(building, left)->getCellsWide() == 2
-			&& backgroundIn(building, right)->getCellX() == 2,
+		require(backgroundIn(world, left)->getCellsWide() == 2
+			&& backgroundIn(world, right)->getCellX() == 2,
 			"Adjacent Backgrounds grew into each other");
 
-		footprintIsStamped(building, 1, left, 0, 0, 2, 2);
-		footprintIsStamped(building, 1, right, 0, 2, 2, 2);
+		footprintIsStamped(world, 1, left, 0, 0, 2, 2);
+		footprintIsStamped(world, 1, right, 0, 2, 2, 2);
 	}
 
 	// The colour travels as one packed 0xRRGGBB integer in the record.
@@ -304,23 +304,23 @@ namespace
 	// colour left out takes the default.
 	void versionFiveRoundTripsThePackedColour()
 	{
-		core::Building building("Colour keeper", 12, 3);
-		addThirdLayer(building);
-		building.addRoom("Room 0", 0, 0, 0, 4, 1);
-		building.addBackground(1, 1, 6, 4, 2, { 12, 240, 6 });
-		building.addBackground(2, 0, 0, 1, 1);
-		building.finishBuild();
+		core::World world("Colour keeper", 12, 3);
+		addThirdLayer(world);
+		world.addRoom("Room 0", 0, 0, 0, 4, 1);
+		world.addBackground(1, 1, 6, 4, 2, { 12, 240, 6 });
+		world.addBackground(2, 0, 0, 1, 1);
+		world.finishBuild();
 
-		auto const yaml = serializeBuilding(building);
+		auto const yaml = serializeWorld(world);
 		require(yaml.find("version: 14") != std::string::npos,
-			"The Building writer did not emit the current schema version");
+			"The World writer did not emit the current schema version");
 		require(yaml.find("type: background") != std::string::npos,
 			"The Background record was not written");
 		require(yaml.find(std::format("colour: {}",
 				core::packBackgroundColour(core::BackgroundColour{ 12, 240, 6 }))) != std::string::npos,
 			"The Background colour was not written as a packed integer");
 
-		core::Building loaded("placeholder", 1, 1);
+		core::World loaded("placeholder", 1, 1);
 		loadInto(loaded, yaml);
 		require(loaded.getNumSectors() == 3, "Replay did not restore every Sector");
 		require(backgroundIn(loaded, 1)->getColour() == core::BackgroundColour{ 12, 240, 6 },
@@ -366,7 +366,7 @@ construction:
 agents: []
 )yaml";
 
-		core::Building loaded("placeholder", 1, 1);
+		core::World loaded("placeholder", 1, 1);
 		loadInto(loaded, yaml);
 		require(loaded.getNumSectors() == 2, "A hand-authored Background did not replay");
 		require(backgroundIn(loaded, 0)->getColour() == core::unpackBackgroundColour(12345678),
@@ -382,34 +382,34 @@ agents: []
 			"A cell clear of the hand-authored Background was refused");
 	}
 
-	// Replaying the authored records reproduces the Building, Backgrounds included,
+	// Replaying the authored records reproduces the World, Backgrounds included,
 	// and does so the same way every time.
-	void recordReplayReproducesTheBuilding()
+	void recordReplayReproducesTheWorld()
 	{
-		core::Building building("Replayed", 12, 3);
-		addThirdLayer(building);
-		building.addCorridor(0, 0, 12);
-		building.addRoom("Room 1", 1, 0, 0, 4, 2);
-		building.addBackground(1, 0, 4, 3, 2, { 200, 100, 50 });
-		building.addBackground(1, 2, 8, 2, 1, { 5, 5, 250 });
-		building.addRoom("Room 2", 2, 0, 0, 6, 3);
-		building.finishBuild();
+		core::World world("Replayed", 12, 3);
+		addThirdLayer(world);
+		world.addCorridor(0, 0, 12);
+		world.addRoom("Room 1", 1, 0, 0, 4, 2);
+		world.addBackground(1, 0, 4, 3, 2, { 200, 100, 50 });
+		world.addBackground(1, 2, 8, 2, 1, { 5, 5, 250 });
+		world.addRoom("Room 2", 2, 0, 0, 6, 3);
+		world.finishBuild();
 
-		auto const original = serializeBuilding(building);
-		auto const originalSignature = sectorSignature(building);
+		auto const original = serializeWorld(world);
+		auto const originalSignature = sectorSignature(world);
 
-		core::Building replay("placeholder", 1, 1);
+		core::World replay("placeholder", 1, 1);
 		loadInto(replay, original);
 		require(sectorSignature(replay) == originalSignature,
-			("Record replay did not reproduce the Building\nexpected:\n" + originalSignature
+			("Record replay did not reproduce the World\nexpected:\n" + originalSignature
 				+ "actual:\n" + sectorSignature(replay)).c_str());
 
 		// Replaying the replay drifts nothing: the records are stable across saves.
-		auto const replayedYaml = serializeBuilding(replay);
+		auto const replayedYaml = serializeWorld(replay);
 		require(replayedYaml == original,
-			"Re-saving a replayed Building changed its authored records");
+			"Re-saving a replayed World changed its authored records");
 
-		core::Building twice("placeholder", 1, 1);
+		core::World twice("placeholder", 1, 1);
 		loadInto(twice, replayedYaml);
 		require(sectorSignature(twice) == originalSignature,
 			"A second replay of the same records drifted");
@@ -418,17 +418,17 @@ agents: []
 	// A Background owns no walkable floor, so no Agent may belong to one.
 	void anAgentCannotBelongToABackground()
 	{
-		core::Building building("No agents here", 12, 3);
-		addThirdLayer(building);
-		building.addRoom("Room 0", 0, 0, 0, 4, 1);
-		auto const backdrop = building.addBackground(1, 0, 0, 4, 1);
-		building.finishBuild();
+		core::World world("No agents here", 12, 3);
+		addThirdLayer(world);
+		world.addRoom("Room 0", 0, 0, 0, 4, 1);
+		auto const backdrop = world.addBackground(1, 0, 0, 4, 1);
+		world.finishBuild();
 
-		require(throws([&] { building.createAgent("Nowhere", backdrop); }),
+		require(throws([&] { world.createAgent("Nowhere", backdrop); }),
 			"An Agent was created inside a Background");
-		require(throws([&] { building.createAgent("Nowhere either", backdrop, 0, 1.0f); }),
+		require(throws([&] { world.createAgent("Nowhere either", backdrop, 0, 1.0f); }),
 			"An Agent was created inside a Background with a deck offset");
-		require(backgroundIn(building, backdrop)->getAgents().empty(),
+		require(backgroundIn(world, backdrop)->getAgents().empty(),
 			"A Background holds Agents after a refused placement");
 	}
 
@@ -436,14 +436,14 @@ agents: []
 	// Window on the Layer in front may still look into it.
 	void aBackgroundStaysOutOfTheGraphAndCanBeLookedInto()
 	{
-		core::Building building("Untraversed", 12, 3);
-		addThirdLayer(building);
-		building.addRoom("Room 0", 0, 0, 0, 4, 1);
-		auto const backdrop = building.addBackground(1, 0, 0, 4, 1);
-		building.finishBuild();
+		core::World world("Untraversed", 12, 3);
+		addThirdLayer(world);
+		world.addRoom("Room 0", 0, 0, 0, 4, 1);
+		auto const backdrop = world.addBackground(1, 0, 0, 4, 1);
+		world.finishBuild();
 
-		require(building.getGraph() != nullptr, "A Building with a Background has no Graph");
-		for (auto const& vertex : building.getGraph()->getVertices())
+		require(world.getGraph() != nullptr, "A World with a Background has no Graph");
+		for (auto const& vertex : world.getGraph()->getVertices())
 		{
 			require(vertex == nullptr || vertex->getSector() == nullptr
 				|| vertex->getSector()->getIndex() != backdrop,
@@ -451,7 +451,7 @@ agents: []
 		}
 
 		std::string diagnostic;
-		require(building.canAddSectorWindow(0, 0, 0, 2, 1, &diagnostic),
+		require(world.canAddSectorWindow(0, 0, 0, 2, 1, &diagnostic),
 			std::format("A Window may not look into a Background behind it: {}", diagnostic).c_str());
 	}
 
@@ -459,15 +459,15 @@ agents: []
 	// every surviving Layer index pointing where it should.
 	void deletingALayerRemovesTheBackgroundOnIt()
 	{
-		core::Building building("Compacting", 12, 3);
-		addThirdLayer(building);
-		building.addRoom("Room 0", 0, 0, 0, 4, 1);
-		building.addBackground(1, 0, 0, 4, 1, { 1, 2, 3 });
-		building.addRoom("Room 2", 2, 0, 0, 4, 1);
-		building.finishBuild();
-		building.pauseSimulation();
+		core::World world("Compacting", 12, 3);
+		addThirdLayer(world);
+		world.addRoom("Room 0", 0, 0, 0, 4, 1);
+		world.addBackground(1, 0, 0, 4, 1, { 1, 2, 3 });
+		world.addRoom("Room 2", 2, 0, 0, 4, 1);
+		world.finishBuild();
+		world.pauseSimulation();
 
-		auto const plan = building.planDeleteLayer(1);
+		auto const plan = world.planDeleteLayer(1);
 		require(plan.valid, ("Layer deletion was rejected: " + plan.diagnostic).c_str());
 		require(plan.backgroundsRemoved == 1,
 			"Layer deletion did not report the Background it removes");
@@ -475,14 +475,14 @@ agents: []
 			"Layer deletion counted the Background as a Location");
 		require(plan.requiresConfirmation(),
 			"A Background-removing Layer deletion did not require confirmation");
-		require(building.applyDeleteLayer(plan), "Layer deletion was not applied");
+		require(world.applyDeleteLayer(plan), "Layer deletion was not applied");
 
-		require(building.getLayerCount() == 2, "Layers were not compacted");
-		require(building.getNumSectors() == 2, "The Background survived its Layer");
-		for (uint32_t index = 0; index < building.getNumSectors(); ++index)
-			require(building.getSector(index)->getType() != core::SectorType::Background,
+		require(world.getLayerCount() == 2, "Layers were not compacted");
+		require(world.getNumSectors() == 2, "The Background survived its Layer");
+		for (uint32_t index = 0; index < world.getNumSectors(); ++index)
+			require(world.getSector(index)->getType() != core::SectorType::Background,
 				"A Background outlived the Layer it was on");
-		require(building.getSector(1)->getLayerIndex() == 1,
+		require(world.getSector(1)->getLayerIndex() == 1,
 			"The Layer behind the deletion did not compact forward by one");
 	}
 
@@ -490,14 +490,14 @@ agents: []
 	// save, which is the persistence half of "any Layer" holding true.
 	void aBackMostBackgroundRoundTrips()
 	{
-		core::Building building("Back-most", 12, 3);
-		addThirdLayer(building);
-		building.addRoom("Room 0", 0, 0, 0, 4, 1);
-		building.addBackground(2, 1, 1, 2, 2, { 7, 140, 250 });
-		building.finishBuild();
+		core::World world("Back-most", 12, 3);
+		addThirdLayer(world);
+		world.addRoom("Room 0", 0, 0, 0, 4, 1);
+		world.addBackground(2, 1, 1, 2, 2, { 7, 140, 250 });
+		world.finishBuild();
 
-		core::Building loaded("placeholder", 1, 1);
-		loadInto(loaded, serializeBuilding(building));
+		core::World loaded("placeholder", 1, 1);
+		loadInto(loaded, serializeWorld(world));
 		require(backgroundIn(loaded, 1)->getLayerIndex() == 2,
 			"A back-most Background moved off its Layer");
 		require(backgroundIn(loaded, 1)->getColour() == core::BackgroundColour{ 7, 140, 250 },
@@ -517,7 +517,7 @@ void runBackgroundPlacementSmokeChecks()
 	thePackedColourRoundTrips();
 	versionFiveRoundTripsThePackedColour();
 	aHandAuthoredVersionFiveFileLoads();
-	recordReplayReproducesTheBuilding();
+	recordReplayReproducesTheWorld();
 	anAgentCannotBelongToABackground();
 	aBackgroundStaysOutOfTheGraphAndCanBeLookedInto();
 	deletingALayerRemovesTheBackgroundOnIt();

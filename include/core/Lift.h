@@ -12,7 +12,7 @@ namespace core
 
 	class Lift : public RailedTransport
 	{
-		friend class Building;
+		friend class World;
 		TraversalResourceId mTraversalResource;
 
 	public:

@@ -3,8 +3,8 @@
 // Agent clipboard payloads and Agent placement (ticket #113).
 //
 // An Agent's clipboard payload carries its Agent group by *name*, never by
-// its Building-local AgentGroupId: an AgentGroupId means nothing outside the
-// Building that issued it, while the name is what a destination Building can
+// its World-local AgentGroupId: an AgentGroupId means nothing outside the
+// World that issued it, while the name is what a destination World can
 // either match against a group it already defines or create for itself
 // (ADR 0006).
 //
@@ -19,7 +19,7 @@
 // Agent tags obey a different boundary: their stable IDs are meaningful only
 // under one external registry UUID. Tagged payloads therefore carry that UUID,
 // the complete assignment set, and exact modifier samples with provenance.
-// Only a Building with the same attached registry UUID may accept them;
+// Only a World with the same attached registry UUID may accept them;
 // untagged payloads omit all registry state and remain portable.
 //
 // This lives in its own translation unit - as the Agent group panels did in
@@ -45,12 +45,12 @@
 
 namespace core
 {
-	class Building;
+	class World;
 	class Sector;
 }
 
 // Clipboard configuration is explicitly typed. Marker values carry names,
-// never Building-local Marker IDs, so a destination must resolve them.
+// never World-local Marker IDs, so a destination must resolve them.
 struct AgentClipboardMarker
 {
 	std::string name;
@@ -121,7 +121,7 @@ struct AgentClipboardPayload
 // The payload a copy of `agent` carries. `name` is the name the copy will
 // use - the caller owns name uniqueness, the payload owns the
 // classification. An Agent with no Agent group yields no group.
-AgentClipboardPayload makeAgentClipboardPayload(core::Building const& building,
+AgentClipboardPayload makeAgentClipboardPayload(core::World const& world,
 	core::AgentId agent, std::string name);
 
 // The complete clipboard text for an Agent payload: the same envelope every
@@ -137,10 +137,10 @@ std::string makeAgentClipboardText(AgentClipboardPayload const& payload, bool cu
 bool readAgentClipboardObject(YAML::Node const& object,
 	AgentClipboardPayload& payload, std::string& diagnostic);
 
-// The Building's Agent group whose name is `name`, compared the way the
-// Building compares group names - trimmed, and case-sensitive - or an empty
-// AgentGroupId when the Building defines no such group.
-core::AgentGroupId findAgentGroupByName(core::Building const& building,
+// The World's Agent group whose name is `name`, compared the way the
+// World compares group names - trimmed, and case-sensitive - or an empty
+// AgentGroupId when the World defines no such group.
+core::AgentGroupId findAgentGroupByName(core::World const& world,
 	std::string const& name);
 
 // A paste the editor has accepted but not yet placed: the Agent is still
@@ -164,21 +164,21 @@ struct PendingAgentPlacement
 // The Agent group and complete Agent tag state are judged here - before
 // anything is deferred - so an unusable payload or registry UUID mismatch is
 // reported at the keystroke rather than after a fall that was always going to
-// fail. Arming writes nothing to the Building or registry and commits no undo
+// fail. Arming writes nothing to the World or registry and commits no undo
 // entry.
 bool armAgentPlacement(PendingAgentPlacement& pending,
-	core::Building const& building, AgentClipboardPayload const& payload,
+	core::World const& world, AgentClipboardPayload const& payload,
 	std::shared_ptr<const core::Sector> sector,
 	std::uint32_t deckOffset, float localX, std::string& diagnostic);
 
-// Create `payload` in `building` as exactly one document edit: the Agent's
-// Agent group is reused when the Building already defines that exact name,
+// Create `payload` in `world` as exactly one document edit: the Agent's
+// Agent group is reused when the World already defines that exact name,
 // created when it does not, and the Agent is created and assigned in the
 // same edit. Any failure - an unusable group name, a refused Agent creation,
 // a refused assignment - leaves neither a new Agent nor a new Agent group
 // behind and commits no undo entry, reporting the reason through
 // `diagnostic`.
-bool commitAgentPlacement(std::shared_ptr<core::Building> const& building,
+bool commitAgentPlacement(std::shared_ptr<core::World> const& world,
 	AgentClipboardPayload const& payload,
 	std::shared_ptr<const core::Sector> sector,
 	std::uint32_t deckOffset, float localX,
@@ -188,14 +188,14 @@ bool commitAgentPlacement(std::shared_ptr<core::Building> const& building,
 // is dropped either way: a placement that landed has been made, and one that
 // was refused has nowhere left to go.
 bool commitPendingAgentPlacement(PendingAgentPlacement& pending,
-	std::shared_ptr<core::Building> const& building,
+	std::shared_ptr<core::World> const& world,
 	core::AgentId& placed, std::string& diagnostic);
 
-// The removal a cut performs: the Agent leaves the Building, and nothing
+// The removal a cut performs: the Agent leaves the World, and nothing
 // else leaves with it. Its Agent group and shared Agent tag definitions stay
 // defined - cutting one member is not a way to delete either classification,
 // and other Agents keep their assignments - and a refusal changes nothing
 // and reports why. Ticket #57: an Agent which still owns a capacity
 // resource is refused rather than deleted with the ownership left behind.
-bool cutAgent(std::shared_ptr<core::Building> const& building,
+bool cutAgent(std::shared_ptr<core::World> const& world,
 	core::AgentId agent, std::string& diagnostic);

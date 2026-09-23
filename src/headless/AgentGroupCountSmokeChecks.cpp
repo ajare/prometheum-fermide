@@ -1,14 +1,14 @@
 // Live Agent group membership counts, for ticket #111.
 //
-// A count is asked through the public Building API and answered from the
-// Building's own authoritative state: the Agents themselves, each carrying
+// A count is asked through the public World API and answered from the
+// World's own authoritative state: the Agents themselves, each carrying
 // the Agent group ID it was assigned. Nothing here reads a counter, because
 // there is none - not on the group, not in the panel, not in the file. That
 // is the whole design, and most of what these checks pin down.
 //
 // What gets pinned down:
 //
-//   a count covers every Building-owned Agent carrying the group's ID,
+//   a count covers every World-owned Agent carrying the group's ID,
 //   whichever Layer and Sector it sits in and whichever movement state it is
 //   in - idle, walking, or held waiting at a Door it cannot open
 //   ungrouped Agents and the members of other groups are never counted, and
@@ -17,9 +17,9 @@
 //   reassigning and clearing each move it by exactly one, with no refresh
 //   step for a caller to remember and nothing to make the number settle
 //   renaming a group leaves its count alone, because the count follows the
-//   ID and the name is only a label read back through the Building
+//   ID and the name is only a label read back through the World
 //   removing an Agent takes it out of its group's count, so a count cannot
-//   outlive a member the Building no longer has
+//   outlive a member the World no longer has
 //   the serialized document carries group definitions and per-Agent
 //   assignments only: no count-shaped field exists anywhere in them, so no
 //   written-down number can go stale, and a round trip rebuilds every count
@@ -43,7 +43,7 @@
 #include "imgui/imgui_internal.h"
 
 #include "core/Agent.h"
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/Edge.h"
 #include "core/EntityId.h"
 #include "core/Exceptions.h"
@@ -64,45 +64,45 @@ namespace
 		if (!condition) throw std::runtime_error(message);
 	}
 
-	std::string serializeBuilding(core::Building& building)
+	std::string serializeWorld(core::World& world)
 	{
 		core::SerializationWorkData workData;
 		auto writer = core::YamlSerializer::toString();
-		building.serialize(*writer, workData);
+		world.serialize(*writer, workData);
 		writer->serialize();
 		return writer->getSerializedString();
 	}
 
 	// A whole-document load, the way the editor opens a file.
-	std::shared_ptr<core::Building> loadBuilding(std::string const& yaml)
+	std::shared_ptr<core::World> loadWorld(std::string const& yaml)
 	{
-		auto loaded = std::make_shared<core::Building>("Loaded Building", 1, 1);
+		auto loaded = std::make_shared<core::World>("Loaded World", 1, 1);
 		core::SerializationWorkData workData;
 		auto reader = core::YamlSerializer::fromString(yaml);
 		reader->deserialize();
-		require(reader != nullptr, "The serialised Building could not be read back");
-		require(loaded->deserialize(*reader, workData), "The Building did not reload");
+		require(reader != nullptr, "The serialised World could not be read back");
+		require(loaded->deserialize(*reader, workData), "The World did not reload");
 		return loaded;
 	}
 
-	// Loads over a Building that already exists, which is how the editor's
+	// Loads over a World that already exists, which is how the editor's
 	// undo restores a snapshot: the snapshot's document replaces the live one.
-	void restoreInto(core::Building& target, std::string const& yaml)
+	void restoreInto(core::World& target, std::string const& yaml)
 	{
 		core::SerializationWorkData workData;
 		auto reader = core::YamlSerializer::fromString(yaml);
 		reader->deserialize();
-		require(target.deserialize(*reader, workData), "The Building did not reload");
+		require(target.deserialize(*reader, workData), "The World did not reload");
 	}
 
-	// Every Agent the Building owns, read off the spatial index, so a check
+	// Every Agent the World owns, read off the spatial index, so a check
 	// can cross-read a count against the Agents it claims to be counting.
-	std::vector<core::Agent const*> allAgents(core::Building const& building)
+	std::vector<core::Agent const*> allAgents(core::World const& world)
 	{
 		std::vector<core::Agent const*> agents;
-		for (uint32_t layer = 0; layer < building.getLayerCount(); ++layer)
+		for (uint32_t layer = 0; layer < world.getLayerCount(); ++layer)
 		{
-			for (auto const& sector : building.getSectors(layer))
+			for (auto const& sector : world.getSectors(layer))
 			{
 				if (!sector) continue;
 				for (auto* agent : sector->getAgents())
@@ -116,21 +116,21 @@ namespace
 
 	// The count every group reports, as one comparable line per group. The
 	// way to ask whether anything other than an assignment moved a number.
-	std::string allCounts(core::Building const& building)
+	std::string allCounts(core::World const& world)
 	{
 		std::string out;
-		for (auto const id : building.getAgentGroupIds())
+		for (auto const id : world.getAgentGroupIds())
 		{
-			out += building.getAgentGroupName(id) + "="
-				+ std::to_string(building.getAgentGroupMemberCount(id)) + ";";
+			out += world.getAgentGroupName(id) + "="
+				+ std::to_string(world.getAgentGroupMemberCount(id)) + ";";
 		}
 		return out;
 	}
 
-	uint32_t countByScanningAgents(core::Building const& building, core::AgentGroupId group)
+	uint32_t countByScanningAgents(core::World const& world, core::AgentGroupId group)
 	{
 		uint32_t count{ 0 };
-		for (auto const* agent : allAgents(building))
+		for (auto const* agent : allAgents(world))
 		{
 			if (agent->getAgentGroupId() == group) ++count;
 		}
@@ -231,12 +231,12 @@ namespace
 
 	void resetUndoHistory()
 	{
-		gBuildingDocumentHistory.clear();
+		gWorldDocumentHistory.clear();
 	}
 
 	// A two-Storey world with two Locations on each Layer, so a group's
 	// members are genuinely spread out and a count has to reach all of them.
-	struct CountingWorld
+	struct CountingWorldLayout
 	{
 		uint32_t frontCorridor{ 0 };
 		uint32_t frontRoom{ 0 };
@@ -244,23 +244,23 @@ namespace
 		uint32_t backCorridor{ 0 };
 	};
 
-	CountingWorld buildCountingWorld(core::Building& building)
+	CountingWorldLayout buildCountingWorldLayout(core::World& world)
 	{
-		CountingWorld world;
-		world.frontCorridor = building.addCorridor(0, 0, 12);
-		world.frontRoom = building.addRoom("Front room", 0, 2, 0, 6, 1);
-		world.backRoom = building.addRoom("Back room", 1, 0, 0, 6, 1);
-		world.backCorridor = building.addCorridor(1u, 2u, 0u, 12u, 1u);
-		building.finishBuild();
-		return world;
+		CountingWorldLayout layout;
+		layout.frontCorridor = world.addCorridor(0, 0, 12);
+		layout.frontRoom = world.addRoom("Front room", 0, 2, 0, 6, 1);
+		layout.backRoom = world.addRoom("Back room", 1, 0, 0, 6, 1);
+		layout.backCorridor = world.addCorridor(1u, 2u, 0u, 12u, 1u);
+		world.finishBuild();
+		return layout;
 	}
 
-	// Assignment goes through the Building and the count is read straight
+	// Assignment goes through the World and the count is read straight
 	// back: no refresh, no notification, no second call to make it correct.
-	void assign(core::Building& building, core::AgentId agent, core::AgentGroupId group)
+	void assign(core::World& world, core::AgentId agent, core::AgentGroupId group)
 	{
 		std::string diagnostic;
-		require(building.setAgentGroup(agent, group, &diagnostic),
+		require(world.setAgentGroup(agent, group, &diagnostic),
 			("Assigning an Agent for a count check failed: " + diagnostic).c_str());
 	}
 
@@ -279,55 +279,55 @@ namespace
 	// ---------------------------------------------------------------- checks
 
 	// A count is not a per-Layer or per-Sector figure. One call covers the
-	// whole Building, and members scattered over Layers and Locations all
+	// whole World, and members scattered over Layers and Locations all
 	// land in the same number.
 	void aCountCoversEveryLayerAndSector()
 	{
-		core::Building building("Count spread", 12, 3);
-		auto const world = buildCountingWorld(building);
+		core::World world("Count spread", 12, 3);
+		auto const layout = buildCountingWorldLayout(world);
 
-		auto const crew = building.addAgentGroup("Crew");
-		auto const nightShift = building.addAgentGroup("Night shift");
+		auto const crew = world.addAgentGroup("Crew");
+		auto const nightShift = world.addAgentGroup("Night shift");
 
 		// Three Crew members: two on the front Layer in two different
 		// Locations, one on the Layer behind.
-		auto const frontCorridorAgent = building.createAgent("Corridor hand",
-			world.frontCorridor, 0, 1.5f);
-		auto const frontRoomAgent = building.createAgent("Front desk",
-			world.frontRoom, 0, 1.0f);
-		auto const backRoomAgent = building.createAgent("Back office",
-			world.backRoom, 0, 2.0f);
+		auto const frontCorridorAgent = world.createAgent("Corridor hand",
+			layout.frontCorridor, 0, 1.5f);
+		auto const frontRoomAgent = world.createAgent("Front desk",
+			layout.frontRoom, 0, 1.0f);
+		auto const backRoomAgent = world.createAgent("Back office",
+			layout.backRoom, 0, 2.0f);
 		// And two Agents that belong to nobody's count but one each.
-		auto const otherGroupAgent = building.createAgent("Night porter",
-			world.backCorridor, 0, 3.0f);
-		auto const ungroupedAgent = building.createAgent("Passing through",
-			world.frontCorridor, 0, 5.0f);
+		auto const otherGroupAgent = world.createAgent("Night porter",
+			layout.backCorridor, 0, 3.0f);
+		auto const ungroupedAgent = world.createAgent("Passing through",
+			layout.frontCorridor, 0, 5.0f);
 
-		assign(building, frontCorridorAgent, crew);
-		assign(building, frontRoomAgent, crew);
-		assign(building, backRoomAgent, crew);
-		assign(building, otherGroupAgent, nightShift);
+		assign(world, frontCorridorAgent, crew);
+		assign(world, frontRoomAgent, crew);
+		assign(world, backRoomAgent, crew);
+		assign(world, otherGroupAgent, nightShift);
 
-		require(building.getAgentGroupMemberCount(crew) == 3,
+		require(world.getAgentGroupMemberCount(crew) == 3,
 			("A group's count did not reach its Agents across Layers and Sectors: "
-				+ allCounts(building)).c_str());
-		require(building.getAgentGroupMemberCount(nightShift) == 1,
+				+ allCounts(world)).c_str());
+		require(world.getAgentGroupMemberCount(nightShift) == 1,
 			("The second group's count did not stay on its own member: "
-				+ allCounts(building)).c_str());
+				+ allCounts(world)).c_str());
 
 		// Each count agrees with the Agents that actually carry the ID.
-		require(building.getAgentGroupMemberCount(crew)
-			== countByScanningAgents(building, crew),
+		require(world.getAgentGroupMemberCount(crew)
+			== countByScanningAgents(world, crew),
 			"A count disagrees with the Agents carrying the group's ID");
-		require(building.getAgentGroupMemberCount(nightShift)
-			== countByScanningAgents(building, nightShift),
+		require(world.getAgentGroupMemberCount(nightShift)
+			== countByScanningAgents(world, nightShift),
 			"A second count disagrees with the Agents carrying the group's ID");
 
 		// The ungrouped Agent is in neither count: it has no Agent group to
 		// be counted under, and no group counts it.
-		require(!building.getAgentGroup(ungroupedAgent),
+		require(!world.getAgentGroup(ungroupedAgent),
 			"The ungrouped test Agent picked up an Agent group");
-		require(allAgents(building).size() == 5,
+		require(allAgents(world).size() == 5,
 			"The test world did not place every Agent the count is meant to cover");
 	}
 
@@ -336,24 +336,24 @@ namespace
 	// read as zero, and the column shows it.
 	void anEmptyGroupCountsZero()
 	{
-		core::Building building("Empty group", 12, 3);
-		auto const world = buildCountingWorld(building);
+		core::World world("Empty group", 12, 3);
+		auto const layout = buildCountingWorldLayout(world);
 
-		auto const crew = building.addAgentGroup("Crew");
-		require(building.getAgentGroupMemberCount(crew) == 0,
+		auto const crew = world.addAgentGroup("Crew");
+		require(world.getAgentGroupMemberCount(crew) == 0,
 			"A newly defined Agent group did not count zero members");
-		require(agentGroupMemberCountLabel(building, crew) == "0",
+		require(agentGroupMemberCountLabel(world, crew) == "0",
 			"The Agents column did not show zero for an empty Agent group");
 
-		auto const agent = building.createAgent("Only member", world.frontCorridor, 0, 1.0f);
-		assign(building, agent, crew);
-		require(building.getAgentGroupMemberCount(crew) == 1,
+		auto const agent = world.createAgent("Only member", layout.frontCorridor, 0, 1.0f);
+		assign(world, agent, crew);
+		require(world.getAgentGroupMemberCount(crew) == 1,
 			"The first member of an empty group was not counted");
 
-		assign(building, agent, {});
-		require(building.getAgentGroupMemberCount(crew) == 0,
+		assign(world, agent, {});
+		require(world.getAgentGroupMemberCount(crew) == 0,
 			"Clearing the last member left the group counting something");
-		require(agentGroupMemberCountLabel(building, crew) == "0",
+		require(agentGroupMemberCountLabel(world, crew) == "0",
 			"The Agents column did not return to zero once the group was emptied");
 	}
 
@@ -361,100 +361,100 @@ namespace
 	// one, and do it before anything else is asked.
 	void countsTrackAssignReassignAndClearImmediately()
 	{
-		core::Building building("Count transitions", 12, 3);
-		auto const world = buildCountingWorld(building);
+		core::World world("Count transitions", 12, 3);
+		auto const layout = buildCountingWorldLayout(world);
 
-		auto const crew = building.addAgentGroup("Crew");
-		auto const nightShift = building.addAgentGroup("Night shift");
-		auto const alpha = building.createAgent("Alpha", world.frontCorridor, 0, 1.0f);
-		auto const beta = building.createAgent("Beta", world.backRoom, 0, 1.0f);
+		auto const crew = world.addAgentGroup("Crew");
+		auto const nightShift = world.addAgentGroup("Night shift");
+		auto const alpha = world.createAgent("Alpha", layout.frontCorridor, 0, 1.0f);
+		auto const beta = world.createAgent("Beta", layout.backRoom, 0, 1.0f);
 
-		assign(building, alpha, crew);
-		require(building.getAgentGroupMemberCount(crew) == 1
-			&& building.getAgentGroupMemberCount(nightShift) == 0,
-			"Assigning the first Agent did not move the counts at once: " + allCounts(building));
+		assign(world, alpha, crew);
+		require(world.getAgentGroupMemberCount(crew) == 1
+			&& world.getAgentGroupMemberCount(nightShift) == 0,
+			"Assigning the first Agent did not move the counts at once: " + allCounts(world));
 
 		// Reassigning is one Agent leaving one group and joining another: both
 		// counts move, in the same call, and neither keeps a straggler.
-		assign(building, alpha, nightShift);
-		require(building.getAgentGroupMemberCount(crew) == 0,
+		assign(world, alpha, nightShift);
+		require(world.getAgentGroupMemberCount(crew) == 0,
 			"Reassigning an Agent left its previous group counting it");
-		require(building.getAgentGroupMemberCount(nightShift) == 1,
+		require(world.getAgentGroupMemberCount(nightShift) == 1,
 			"Reassigning an Agent did not reach its new group's count");
 
-		assign(building, beta, nightShift);
-		require(building.getAgentGroupMemberCount(nightShift) == 2,
-			"A second member did not reach the group's count: " + allCounts(building));
+		assign(world, beta, nightShift);
+		require(world.getAgentGroupMemberCount(nightShift) == 2,
+			"A second member did not reach the group's count: " + allCounts(world));
 
-		assign(building, beta, {});
-		require(building.getAgentGroupMemberCount(nightShift) == 1,
+		assign(world, beta, {});
+		require(world.getAgentGroupMemberCount(nightShift) == 1,
 			"Clearing an Agent left its group counting it");
-		require(building.getAgentGroupMemberCount(crew) == 0,
-			"Clearing an Agent disturbed a group it was never in: " + allCounts(building));
+		require(world.getAgentGroupMemberCount(crew) == 0,
+			"Clearing an Agent disturbed a group it was never in: " + allCounts(world));
 
 		// Clearing an Agent that has nothing to clear is a no-op, not a
 		// second decrement: a count cannot fall below the zero it sits at.
-		assign(building, beta, {});
-		require(building.getAgentGroupMemberCount(crew) == 0
-			&& building.getAgentGroupMemberCount(nightShift) == 1,
-			"Clearing an unassigned Agent changed a count: " + allCounts(building));
+		assign(world, beta, {});
+		require(world.getAgentGroupMemberCount(crew) == 0
+			&& world.getAgentGroupMemberCount(nightShift) == 1,
+			"Clearing an unassigned Agent changed a count: " + allCounts(world));
 
 		// A refused assignment moves nothing, in either direction.
 		std::string diagnostic;
-		require(!building.setAgentGroup(alpha, core::AgentGroupId{ 4242 }, &diagnostic),
+		require(!world.setAgentGroup(alpha, core::AgentGroupId{ 4242 }, &diagnostic),
 			"Assigning to an unknown Agent group succeeded");
-		require(building.getAgentGroupMemberCount(nightShift) == 1,
+		require(world.getAgentGroupMemberCount(nightShift) == 1,
 			"A refused assignment changed a count");
-		require(!building.setAgentGroup(core::AgentId{ 777 }, crew, &diagnostic),
+		require(!world.setAgentGroup(core::AgentId{ 777 }, crew, &diagnostic),
 			"Assigning an unknown Agent succeeded");
-		require(allCounts(building) == "Crew=0;Night shift=1;",
-			"A refused assignment moved the counts: " + allCounts(building));
+		require(allCounts(world) == "Crew=0;Night shift=1;",
+			"A refused assignment moved the counts: " + allCounts(world));
 	}
 
 	// A rename moves a label and nothing else. The count rides on the ID, so
 	// the number a group shows is undisturbed by what it is called.
 	void aRenameLeavesTheCountAlone()
 	{
-		core::Building building("Count rename", 12, 3);
-		auto const world = buildCountingWorld(building);
+		core::World world("Count rename", 12, 3);
+		auto const layout = buildCountingWorldLayout(world);
 
-		auto const crew = building.addAgentGroup("Crew");
-		auto const nightShift = building.addAgentGroup("Night shift");
-		assign(building, building.createAgent("One", world.frontCorridor, 0, 1.0f), crew);
-		assign(building, building.createAgent("Two", world.frontRoom, 0, 1.0f), crew);
-		assign(building, building.createAgent("Three", world.backRoom, 0, 1.0f), crew);
-		assign(building, building.createAgent("Four", world.backCorridor, 0, 1.0f), nightShift);
+		auto const crew = world.addAgentGroup("Crew");
+		auto const nightShift = world.addAgentGroup("Night shift");
+		assign(world, world.createAgent("One", layout.frontCorridor, 0, 1.0f), crew);
+		assign(world, world.createAgent("Two", layout.frontRoom, 0, 1.0f), crew);
+		assign(world, world.createAgent("Three", layout.backRoom, 0, 1.0f), crew);
+		assign(world, world.createAgent("Four", layout.backCorridor, 0, 1.0f), nightShift);
 
-		auto const before = allCounts(building);
+		auto const before = allCounts(world);
 		require(before == "Crew=3;Night shift=1;",
 			"The rename fixture is not what the check expects: " + before);
 
 		std::string diagnostic;
-		require(building.renameAgentGroup(crew, "Facilities team", &diagnostic),
+		require(world.renameAgentGroup(crew, "Facilities team", &diagnostic),
 			("Renaming a populated Agent group was refused: " + diagnostic).c_str());
 
-		require(building.getAgentGroupMemberCount(crew) == 3,
+		require(world.getAgentGroupMemberCount(crew) == 3,
 			"Renaming an Agent group changed its count");
-		require(building.getAgentGroupMemberCount(nightShift) == 1,
+		require(world.getAgentGroupMemberCount(nightShift) == 1,
 			"Renaming one Agent group changed another's count");
-		require(agentGroupMemberCountLabel(building, crew) == "3",
+		require(agentGroupMemberCountLabel(world, crew) == "3",
 			"The Agents column's count did not survive a rename of its group");
 
 		// Renaming back, and renaming the other group too, still moves no
 		// number.
-		require(building.renameAgentGroup(crew, "Crew", &diagnostic)
-			&& building.renameAgentGroup(nightShift, "Graveyard", &diagnostic),
+		require(world.renameAgentGroup(crew, "Crew", &diagnostic)
+			&& world.renameAgentGroup(nightShift, "Graveyard", &diagnostic),
 			("A follow-up rename was refused: " + diagnostic).c_str());
-		require(building.getAgentGroupMemberCount(crew) == 3
-			&& building.getAgentGroupMemberCount(nightShift) == 1,
-			"A second rename changed a count: " + allCounts(building));
+		require(world.getAgentGroupMemberCount(crew) == 3
+			&& world.getAgentGroupMemberCount(nightShift) == 1,
+			"A second rename changed a count: " + allCounts(world));
 
 		// A refused rename changes nothing either - counts included.
-		require(!building.renameAgentGroup(crew, "Graveyard", &diagnostic),
+		require(!world.renameAgentGroup(crew, "Graveyard", &diagnostic),
 			"A rename onto a name another group holds was accepted");
-		require(building.getAgentGroupMemberCount(crew) == 3
-			&& building.getAgentGroupMemberCount(nightShift) == 1,
-			"A refused rename moved a count: " + allCounts(building));
+		require(world.getAgentGroupMemberCount(crew) == 3
+			&& world.getAgentGroupMemberCount(nightShift) == 1,
+			"A refused rename moved a count: " + allCounts(world));
 	}
 
 	// Movement is not membership. Agents sent walking, held waiting at a Door
@@ -463,52 +463,52 @@ namespace
 	// in while getting there.
 	void movementNeverChangesACount()
 	{
-		core::Building building("Count movement", 12, 3);
-		auto const frontCorridor = building.addCorridor(0, 0, 8);
-		auto const backRoom = building.addRoom("Back room", 1, 0, 0, 8, 1);
+		core::World world("Count movement", 12, 3);
+		auto const frontCorridor = world.addCorridor(0, 0, 8);
+		auto const backRoom = world.addRoom("Back room", 1, 0, 0, 8, 1);
 		// A marker to walk to, and a Door that will not open: the two ways an
 		// Agent stops being idle in a way that has nothing to do with groups.
 		uint32_t destinationIdentifier{ 0x434e5431u };
-		building.addSectorMarker(frontCorridor, 0, 7.5f, &destinationIdentifier);
-		core::Building::CreateDoorOptions unavailable;
+		world.addSectorMarker(frontCorridor, 0, 7.5f, &destinationIdentifier);
+		core::World::CreateDoorOptions unavailable;
 		unavailable.activationMode = core::DoorActivationMode::Unavailable;
-		building.addSectorDoor(0, 0, 4, unavailable);
-		building.finishBuild();
+		world.addSectorDoor(0, 0, 4, unavailable);
+		world.finishBuild();
 
-		auto const crew = building.addAgentGroup("Crew");
-		auto const nightShift = building.addAgentGroup("Night shift");
+		auto const crew = world.addAgentGroup("Crew");
+		auto const nightShift = world.addAgentGroup("Night shift");
 
-		auto const walker = building.createAgent("Walker", frontCorridor, 0, 0.5f);
+		auto const walker = world.createAgent("Walker", frontCorridor, 0, 0.5f);
 		// Started close to the Door so the wait for it to be refused is short
 		// rather than a walk across the whole Corridor.
-		auto const waiter = building.createAgent("Waiter", frontCorridor, 0, 3.6f);
-		auto const idler = building.createAgent("Idler", frontCorridor, 0, 6.5f);
-		auto const backAgent = building.createAgent("Back hand", backRoom, 0, 1.0f);
+		auto const waiter = world.createAgent("Waiter", frontCorridor, 0, 3.6f);
+		auto const idler = world.createAgent("Idler", frontCorridor, 0, 6.5f);
+		auto const backAgent = world.createAgent("Back hand", backRoom, 0, 1.0f);
 
-		assign(building, walker, crew);
-		assign(building, waiter, crew);
-		assign(building, idler, crew);
-		assign(building, backAgent, nightShift);
+		assign(world, walker, crew);
+		assign(world, waiter, crew);
+		assign(world, idler, crew);
+		assign(world, backAgent, nightShift);
 
-		auto const before = allCounts(building);
+		auto const before = allCounts(world);
 		require(before == "Crew=3;Night shift=1;",
 			"The movement fixture is not what the check expects: " + before);
 
-		auto* walkerAgent = building.lookupAgent(walker).entity;
-		auto* waiterAgent = building.lookupAgent(waiter).entity;
+		auto* walkerAgent = world.lookupAgent(walker).entity;
+		auto* waiterAgent = world.lookupAgent(waiter).entity;
 		require(walkerAgent != nullptr && waiterAgent != nullptr,
 			"The movement fixture could not find its Agents");
 
-		auto const destination = building.getGraph()->getVertexByIdentifier(destinationIdentifier);
+		auto const destination = world.getGraph()->getVertexByIdentifier(destinationIdentifier);
 		require(destination != nullptr, "The walking Agent's destination vertex is missing");
-		auto route = building.getGraph()->calculatePath(walkerAgent, destination);
+		auto route = world.getGraph()->calculatePath(walkerAgent, destination);
 		require(route && !route->nodes.empty(), "The walking Agent's route could not be calculated");
 		walkerAgent->setPath(std::move(route), true);
 
 		// Send the second Agent at the Door it may not open, which is what
 		// holds it in the waiting state rather than merely walking.
 		std::shared_ptr<const core::Edge> doorEdge;
-		for (auto const& candidate : building.getGraph()->getEdges())
+		for (auto const& candidate : world.getGraph()->getEdges())
 		{
 			if (candidate && candidate->getType() == core::EdgeType::Door)
 			{
@@ -523,99 +523,99 @@ namespace
 			? first : doorEdge->getVertex(1);
 		auto const blocked = doorEdge->getOtherVertex(source);
 		waiterAgent->setPath(twoNodePath(source, blocked, doorEdge), false);
-		building.advanceTick();
+		world.advanceTick();
 		waiterAgent->startPathing();
 
 		// Run until the blocked Agent is actually held at the Door.
 		for (uint32_t tick = 0; tick < 240
-			&& building.getSimulationSnapshot().traversalRequests.empty(); ++tick)
+			&& world.getSimulationSnapshot().traversalRequests.empty(); ++tick)
 		{
-			building.advanceTick();
+			world.advanceTick();
 		}
 		require(waiterAgent->getState() == core::Agent::State::WaitingForTraversal,
 			"The blocked Agent never reached the waiting state, so the check was weak");
 		require(walkerAgent->getState() != core::Agent::State::Idle,
 			"The walking Agent never started moving, so the check was weak");
-		auto* idlerAgent = building.lookupAgent(idler).entity;
+		auto* idlerAgent = world.lookupAgent(idler).entity;
 		require(idlerAgent != nullptr && idlerAgent->getState() == core::Agent::State::Idle,
 			"The idle test Agent was moved by something other than an assignment");
 
 		// Three different movement states, two Layers, four Locations - and
 		// the counts are exactly what the assignments made them.
-		require(allCounts(building) == before,
+		require(allCounts(world) == before,
 			"Agent movement changed a group's count: " + before + " -> "
-			+ allCounts(building));
+			+ allCounts(world));
 
 		// Keep running: the counts do not drift as ticks pass and Agents go
 		// on changing Sector, state, or both.
-		auto const settled = allCounts(building);
-		for (uint32_t tick = 0; tick < 90; ++tick) building.advanceTick();
-		require(allCounts(building) == settled,
+		auto const settled = allCounts(world);
+		for (uint32_t tick = 0; tick < 90; ++tick) world.advanceTick();
+		require(allCounts(world) == settled,
 			"Counts drifted while the simulation kept running: " + settled + " -> "
-			+ allCounts(building));
+			+ allCounts(world));
 
 		// And each count still matches the Agents carrying the ID, wherever
 		// those Agents have got to.
-		require(building.getAgentGroupMemberCount(crew)
-			== countByScanningAgents(building, crew),
+		require(world.getAgentGroupMemberCount(crew)
+			== countByScanningAgents(world, crew),
 			"After movement, a count disagrees with the Agents carrying its ID");
-		require(building.getAgentGroupMemberCount(nightShift)
-			== countByScanningAgents(building, nightShift),
+		require(world.getAgentGroupMemberCount(nightShift)
+			== countByScanningAgents(world, nightShift),
 			"After movement, a second count disagrees with the Agents carrying its ID");
 	}
 
-	// An Agent the Building no longer owns cannot still be counted. Removing
+	// An Agent the World no longer owns cannot still be counted. Removing
 	// one takes it out of its group's number with no further bookkeeping,
 	// which is the flip side of there being no counter to update.
 	void aRemovedAgentLeavesTheCount()
 	{
-		core::Building building("Count removal", 12, 3);
-		auto const world = buildCountingWorld(building);
+		core::World world("Count removal", 12, 3);
+		auto const layout = buildCountingWorldLayout(world);
 
-		auto const crew = building.addAgentGroup("Crew");
-		auto const first = building.createAgent("First", world.frontCorridor, 0, 1.0f);
-		auto const second = building.createAgent("Second", world.backRoom, 0, 1.0f);
-		assign(building, first, crew);
-		assign(building, second, crew);
-		require(building.getAgentGroupMemberCount(crew) == 2,
-			"The removal fixture did not start with two members: " + allCounts(building));
+		auto const crew = world.addAgentGroup("Crew");
+		auto const first = world.createAgent("First", layout.frontCorridor, 0, 1.0f);
+		auto const second = world.createAgent("Second", layout.backRoom, 0, 1.0f);
+		assign(world, first, crew);
+		assign(world, second, crew);
+		require(world.getAgentGroupMemberCount(crew) == 2,
+			"The removal fixture did not start with two members: " + allCounts(world));
 
-		require(building.removeAgent(first).removed, "Removing a grouped Agent failed");
-		require(building.getAgentGroupMemberCount(crew) == 1,
+		require(world.removeAgent(first).removed, "Removing a grouped Agent failed");
+		require(world.getAgentGroupMemberCount(crew) == 1,
 			"A removed Agent is still counted in its group");
 
-		require(building.removeAgent(second).removed, "Removing the second grouped Agent failed");
-		require(building.getAgentGroupMemberCount(crew) == 0,
+		require(world.removeAgent(second).removed, "Removing the second grouped Agent failed");
+		require(world.getAgentGroupMemberCount(crew) == 0,
 			"A group still counted members after all of them were removed");
-		require(countByScanningAgents(building, crew) == 0,
-			"An Agent the Building removed still carries the group's ID");
+		require(countByScanningAgents(world, crew) == 0,
+			"An Agent the World removed still carries the group's ID");
 	}
 
-	// Counting a group this Building never issued is refused rather than
+	// Counting a group this World never issued is refused rather than
 	// answered as zero, which would be indistinguishable from a group that
 	// happens to be empty and would hide a borrowed or stale ID.
 	void countingAnUnknownGroupIsRefused()
 	{
-		core::Building building("Count unknown group", 12, 3);
-		buildCountingWorld(building);
-		auto const crew = building.addAgentGroup("Crew");
+		core::World world("Count unknown group", 12, 3);
+		buildCountingWorldLayout(world);
+		auto const crew = world.addAgentGroup("Crew");
 
 		bool threw = false;
 		try
 		{
-			(void)building.getAgentGroupMemberCount(core::AgentGroupId{ 90210 });
+			(void)world.getAgentGroupMemberCount(core::AgentGroupId{ 90210 });
 		}
-		catch (core::BuildingException const& error)
+		catch (core::WorldException const& error)
 		{
 			threw = true;
 			require(std::string(error.what()).find("90210") != std::string::npos,
 				("The unknown-group count refusal did not name the group: "
 					+ std::string(error.what())).c_str());
 		}
-		require(threw, "Counting an Agent group the Building never issued was accepted");
+		require(threw, "Counting an Agent group the World never issued was accepted");
 
 		// The defined group is untouched by the refused question.
-		require(building.getAgentGroupMemberCount(crew) == 0,
+		require(world.getAgentGroupMemberCount(crew) == 0,
 			"A refused count question changed a real group's count");
 	}
 
@@ -624,24 +624,24 @@ namespace
 	// load rebuilds every count from what the Agents came back carrying.
 	void countsReturnFromASaveLoadWithoutStoredCountData()
 	{
-		core::Building building("Count round trip", 12, 3);
-		auto const world = buildCountingWorld(building);
+		core::World world("Count round trip", 12, 3);
+		auto const layout = buildCountingWorldLayout(world);
 
-		auto const crew = building.addAgentGroup("Crew");
-		auto const nightShift = building.addAgentGroup("Night shift");
-		building.addAgentGroup("Unstaffed");
-		assign(building, building.createAgent("One", world.frontCorridor, 0, 1.0f), crew);
-		assign(building, building.createAgent("Two", world.frontRoom, 0, 1.0f), crew);
-		assign(building, building.createAgent("Three", world.backRoom, 0, 1.0f), nightShift);
-		building.createAgent("Ungrouped", world.backCorridor, 0, 4.0f);
+		auto const crew = world.addAgentGroup("Crew");
+		auto const nightShift = world.addAgentGroup("Night shift");
+		world.addAgentGroup("Unstaffed");
+		assign(world, world.createAgent("One", layout.frontCorridor, 0, 1.0f), crew);
+		assign(world, world.createAgent("Two", layout.frontRoom, 0, 1.0f), crew);
+		assign(world, world.createAgent("Three", layout.backRoom, 0, 1.0f), nightShift);
+		world.createAgent("Ungrouped", layout.backCorridor, 0, 4.0f);
 
-		auto const before = allCounts(building);
+		auto const before = allCounts(world);
 		require(before == "Crew=2;Night shift=1;Unstaffed=0;",
 			"The round-trip fixture is not what the check expects: " + before);
 
-		auto const yaml = serializeBuilding(building);
+		auto const yaml = serializeWorld(world);
 		require(yaml.find("version: 14") != std::string::npos,
-			"The count document was not written under the current Building schema");
+			"The count document was not written under the current World schema");
 
 		// Neither half of the document writes the number down. The groups say
 		// what they are called, the Agents say which one they belong to, and
@@ -649,21 +649,21 @@ namespace
 		requireNoCountShapedKeys(yaml, "agentGroups");
 		requireNoCountShapedKeys(yaml, "agents");
 
-		auto const loaded = loadBuilding(yaml);
+		auto const loaded = loadWorld(yaml);
 		require(loaded->getAgentGroupCount() == 3,
-			"The reloaded Building does not hold the groups that were saved");
+			"The reloaded World does not hold the groups that were saved");
 		require(allCounts(*loaded) == before,
 			"Counts did not come back from the round trip: " + before + " -> "
 			+ allCounts(*loaded));
 
-		// Re-saving produces the same document, so the loaded Building is
+		// Re-saving produces the same document, so the loaded World is
 		// neither drifting its memberships nor inventing anything to store.
-		require(serializeBuilding(*loaded) == yaml,
-			"Re-saving a reloaded Building produced a different document");
+		require(serializeWorld(*loaded) == yaml,
+			"Re-saving a reloaded World produced a different document");
 
-		// And the reloaded Building keeps counting live: an assignment made
+		// And the reloaded World keeps counting live: an assignment made
 		// after the load moves the count exactly as it did before.
-		assign(*loaded, loaded->createAgent("Four", world.frontCorridor, 0, 2.0f), crew);
+		assign(*loaded, loaded->createAgent("Four", layout.frontCorridor, 0, 2.0f), crew);
 		require(loaded->getAgentGroupMemberCount(crew) == 3,
 			"A count stopped tracking after a load: " + allCounts(*loaded));
 	}
@@ -675,27 +675,27 @@ namespace
 	{
 		resetUndoHistory();
 
-		auto const building = std::make_shared<core::Building>("Count undo", 12, 3);
-		auto const world = buildCountingWorld(*building);
+		auto const world = std::make_shared<core::World>("Count undo", 12, 3);
+		auto const layout = buildCountingWorldLayout(*world);
 
-		auto const crew = building->addAgentGroup("Crew");
-		auto const nightShift = building->addAgentGroup("Night shift");
-		auto const alpha = building->createAgent("Alpha", world.frontCorridor, 0, 1.0f);
-		auto const beta = building->createAgent("Beta", world.backRoom, 0, 1.0f);
-		assign(*building, alpha, crew);
+		auto const crew = world->addAgentGroup("Crew");
+		auto const nightShift = world->addAgentGroup("Night shift");
+		auto const alpha = world->createAgent("Alpha", layout.frontCorridor, 0, 1.0f);
+		auto const beta = world->createAgent("Beta", layout.backRoom, 0, 1.0f);
+		assign(*world, alpha, crew);
 
-		require(allCounts(*building) == "Crew=1;Night shift=0;",
-			"The undo fixture is not what the check expects: " + allCounts(*building));
+		require(allCounts(*world) == "Crew=1;Night shift=0;",
+			"The undo fixture is not what the check expects: " + allCounts(*world));
 
 		// Snapshot this state, then move both Agents about.
-		auto const snapshot = captureDocumentSnapshot(building);
+		auto const snapshot = captureDocumentSnapshot(world);
 		require(snapshot.has_value(), "The undo snapshot could not be captured");
 
-		assign(*building, beta, crew);
-		assign(*building, alpha, nightShift);
-		require(building->getAgentGroupMemberCount(crew) == 1
-			&& building->getAgentGroupMemberCount(nightShift) == 1,
-			"The live counts before the restore are wrong: " + allCounts(*building));
+		assign(*world, beta, crew);
+		assign(*world, alpha, nightShift);
+		require(world->getAgentGroupMemberCount(crew) == 1
+			&& world->getAgentGroupMemberCount(nightShift) == 1,
+			"The live counts before the restore are wrong: " + allCounts(*world));
 
 		// The snapshot carries no count data either - only the definitions
 		// and the assignments, which is exactly what restoring needs.
@@ -703,23 +703,23 @@ namespace
 		requireNoCountShapedKeys(snapshot->yaml, "agents");
 
 		// Restoring is a load of the snapshot's document over the live
-		// Building, which is how the editor's undo works.
-		restoreInto(*building, snapshot->yaml);
-		require(building->getAgentGroupMemberCount(crew) == 1,
+		// World, which is how the editor's undo works.
+		restoreInto(*world, snapshot->yaml);
+		require(world->getAgentGroupMemberCount(crew) == 1,
 			"Restoring the snapshot did not rebuild the group's count: "
-			+ allCounts(*building));
-		require(building->getAgentGroupMemberCount(nightShift) == 0,
+			+ allCounts(*world));
+		require(world->getAgentGroupMemberCount(nightShift) == 0,
 			"Restoring the snapshot left the other group counting a member: "
-			+ allCounts(*building));
-		require(building->getAgentGroup(alpha) == crew,
+			+ allCounts(*world));
+		require(world->getAgentGroup(alpha) == crew,
 			"Restoring the snapshot did not restore the assignment the count reads");
-		require(!building->getAgentGroup(beta),
+		require(!world->getAgentGroup(beta),
 			"Restoring the snapshot left an Agent assigned that was unassigned before");
 
-		// And the restored Building counts live from here on.
-		assign(*building, beta, nightShift);
-		require(building->getAgentGroupMemberCount(nightShift) == 1,
-			"A restored Building stopped counting: " + allCounts(*building));
+		// And the restored World counts live from here on.
+		assign(*world, beta, nightShift);
+		require(world->getAgentGroupMemberCount(nightShift) == 1,
+			"A restored World stopped counting: " + allCounts(*world));
 	}
 
 	// The panel's own column list is what the table is built from. Active is
@@ -748,14 +748,14 @@ namespace
 	{
 		ImGuiGuard guard;
 
-		auto const shared = std::make_shared<core::Building>("Count panel", 12, 3);
-		auto const world = buildCountingWorld(*shared);
+		auto const shared = std::make_shared<core::World>("Count panel", 12, 3);
+		auto const layout = buildCountingWorldLayout(*shared);
 		auto const crew = shared->addAgentGroup("Crew");
 		auto const nightShift = shared->addAgentGroup("Night shift");
 		shared->addAgentGroup("Unstaffed");
-		assign(*shared, shared->createAgent("One", world.frontCorridor, 0, 1.0f), crew);
-		assign(*shared, shared->createAgent("Two", world.backRoom, 0, 1.0f), crew);
-		assign(*shared, shared->createAgent("Three", world.backCorridor, 0, 1.0f), nightShift);
+		assign(*shared, shared->createAgent("One", layout.frontCorridor, 0, 1.0f), crew);
+		assign(*shared, shared->createAgent("Two", layout.backRoom, 0, 1.0f), crew);
+		assign(*shared, shared->createAgent("Three", layout.backCorridor, 0, 1.0f), nightShift);
 
 		for (bool const paused : { true, false })
 		{
@@ -763,7 +763,7 @@ namespace
 			else if (shared->isSimulationPaused()) shared->resumeSimulation();
 
 			ImGui::NewFrame();
-			ImGui::Begin("Building");
+			ImGui::Begin("World");
 
 			auto const depthOnEntry = GImGui->DisabledStackSize;
 			auto const flagsOnEntry = GImGui->CurrentItemFlags;
@@ -800,26 +800,26 @@ namespace
 	{
 		ImGuiGuard guard;
 
-		core::Building building("Count cell", 12, 3);
-		auto const world = buildCountingWorld(building);
-		auto const crew = building.addAgentGroup("Crew");
-		auto const empty = building.addAgentGroup("Unstaffed");
+		core::World world("Count cell", 12, 3);
+		auto const layout = buildCountingWorldLayout(world);
+		auto const crew = world.addAgentGroup("Crew");
+		auto const empty = world.addAgentGroup("Unstaffed");
 
-		require(agentGroupMemberCountLabel(building, crew) == "0",
+		require(agentGroupMemberCountLabel(world, crew) == "0",
 			"A new group's cell does not read zero before its first member");
-		require(agentGroupMemberCountLabel(building, empty) == "0",
+		require(agentGroupMemberCountLabel(world, empty) == "0",
 			"An empty group's cell does not read zero");
 
-		assign(building, building.createAgent("One", world.frontCorridor, 0, 1.0f), crew);
-		require(agentGroupMemberCountLabel(building, crew) == "1",
+		assign(world, world.createAgent("One", layout.frontCorridor, 0, 1.0f), crew);
+		require(agentGroupMemberCountLabel(world, crew) == "1",
 			"A cell does not show one member after one assignment");
 
-		assign(building, building.createAgent("Two", world.backRoom, 0, 1.0f), crew);
-		require(agentGroupMemberCountLabel(building, crew) == "2",
+		assign(world, world.createAgent("Two", layout.backRoom, 0, 1.0f), crew);
+		require(agentGroupMemberCountLabel(world, crew) == "2",
 			"A cell does not show two members after a second assignment");
 
 		ImGui::NewFrame();
-		ImGui::Begin("Building");
+		ImGui::Begin("World");
 
 		ImGuiTableFlags const flags =
 			ImGuiTableFlags_SizingStretchSame |
@@ -838,13 +838,13 @@ namespace
 		auto const depthOnEntry = GImGui->DisabledStackSize;
 		auto const flagsOnEntry = GImGui->CurrentItemFlags;
 
-		renderAgentGroupMemberCountCell(building, crew);
+		renderAgentGroupMemberCountCell(world, crew);
 
 		require(GImGui->DisabledStackSize == depthOnEntry,
 			"The Agents count cell left a disabled scope open");
 		require(GImGui->CurrentItemFlags == flagsOnEntry,
 			"The Agents count cell changed the current item flags");
-		require(agentGroupMemberCountLabel(building, crew) == "2",
+		require(agentGroupMemberCountLabel(world, crew) == "2",
 			"Merely rendering the count cell changed the count");
 
 		ImGui::PopID();

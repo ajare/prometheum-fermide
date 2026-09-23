@@ -11,7 +11,7 @@
 #include "DocumentEdit.h"
 #include "core/AgentBehaviourRegistry.h"
 #include "core/AgentBehaviourRegistryDocument.h"
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/Log.h"
 #include "core/SerializationWorkData.h"
 #include "core/YamlSerializer.h"
@@ -25,7 +25,7 @@ namespace
 	vector<core::AgentBehaviourReloadDiagnostic> gReloadDiagnostics;
 	map<string, DocumentHistory> gBehaviourRegistryHistories;
 	map<weak_ptr<void const>, DocumentHistory,
-		owner_less<weak_ptr<void const>>> gBehaviourBuildingHistories;
+		owner_less<weak_ptr<void const>>> gBehaviourWorldHistories;
 
 	struct PendingAgentBehaviourDelete
 	{
@@ -38,9 +38,9 @@ namespace
 	};
 	PendingAgentBehaviourDelete gPendingBehaviourDelete;
 
-	struct BehaviourBuildingSnapshot
+	struct BehaviourWorldSnapshot
 	{
-		core::Building* building{ nullptr };
+		core::World* world{ nullptr };
 		weak_ptr<void const> lifetime;
 		string yaml;
 		bool modified{ false };
@@ -51,32 +51,32 @@ namespace
 	{
 		weak_ptr<core::AgentBehaviourRegistry> registry;
 		core::AgentBehaviourId affectedBehaviour{};
-		vector<BehaviourBuildingSnapshot> buildings;
+		vector<BehaviourWorldSnapshot> worlds;
 
 		bool isRestorable() const override
 		{
 			auto loaded = registry.lock();
 			if (!loaded) return false;
-			for (auto const& item : buildings)
+			for (auto const& item : worlds)
 				if (item.lifetime.expired()
-					|| !loaded->hasLoadedBuilding(item.building)) return false;
+					|| !loaded->hasLoadedWorld(item.world)) return false;
 			return true;
 		}
 	};
 
-	string serializeBuilding(core::Building const& building)
+	string serializeWorld(core::World const& world)
 	{
 		auto writer = core::YamlSerializer::toString();
 		core::SerializationWorkData work;
 		work.markSerializedUnmodified = false;
-		building.serialize(*writer, work);
+		world.serialize(*writer, work);
 		writer->serialize();
 		return writer->getSerializedString();
 	}
 
 	optional<DocumentSnapshot> captureBehaviourRegistrySnapshot(
 		shared_ptr<core::AgentBehaviourRegistry> const& registry,
-		vector<shared_ptr<core::Building>> const& participants = {},
+		vector<shared_ptr<core::World>> const& participants = {},
 		core::AgentBehaviourId affectedBehaviour = {})
 	{
 		if (!registry) return nullopt;
@@ -94,10 +94,10 @@ namespace
 				auto context = make_shared<BehaviourRegistrySnapshotContext>();
 				context->registry = registry;
 				context->affectedBehaviour = affectedBehaviour;
-				for (auto const& building : participants)
-					context->buildings.push_back({ building.get(),
-						building->getLifetimeToken(), serializeBuilding(*building),
-						building->isModified(), building->isSimulationPaused() });
+				for (auto const& world : participants)
+					context->worlds.push_back({ world.get(),
+						world->getLifetimeToken(), serializeWorld(*world),
+						world->isModified(), world->isSimulationPaused() });
 				snapshot.context = std::move(context);
 			}
 			return snapshot;
@@ -107,8 +107,8 @@ namespace
 
 	struct PendingAgentBehaviourRegistryChange
 	{
-		weak_ptr<core::Building> building;
-		string buildingFilepath;
+		weak_ptr<core::World> world;
+		string worldFilepath;
 		string packageDirectory;
 		string consequence;
 		bool detach{ false };
@@ -117,27 +117,27 @@ namespace
 	};
 	PendingAgentBehaviourRegistryChange gPendingRegistryChange;
 
-	string registryChangeConsequence(core::Building const& building, bool detach,
+	string registryChangeConsequence(core::World const& world, bool detach,
 		string const& packageDirectory)
 	{
-		auto const assignments = building.getAgentBehaviourAssignmentCount();
+		auto const assignments = world.getAgentBehaviourAssignmentCount();
 		string result = "This destructive action will clear all "
 			+ to_string(assignments) + " Agent behaviour assignment"
 			+ (assignments == 1 ? "" : "s")
 			+ " and configuration" + (assignments == 1 ? "" : "s") + ".\n";
 		if (detach)
-			result += "It will detach " + building.getAgentBehaviourRegistryPackageName() + ". ";
+			result += "It will detach " + world.getAgentBehaviourRegistryPackageName() + ". ";
 		else result += "It will replace the current reference with "
 			+ filesystem::path(packageDirectory).filename().string() + ". ";
 		result += "Registry package files will not be deleted, renamed, or rewritten.";
 		return result;
 	}
 
-	filesystem::path attachedPackagePath(core::Building const& building,
-		string const& buildingFilepath)
+	filesystem::path attachedPackagePath(core::World const& world,
+		string const& worldFilepath)
 	{
-		return filesystem::path(buildingFilepath).parent_path()
-			/ building.getAgentBehaviourRegistryPackageName();
+		return filesystem::path(worldFilepath).parent_path()
+			/ world.getAgentBehaviourRegistryPackageName();
 	}
 
 	void releaseRegistryIfUnused(
@@ -171,21 +171,21 @@ namespace
 		}
 	}
 
-	bool renderAttachedRegistry(shared_ptr<core::Building> const& building,
-		string const& buildingFilepath,
+	bool renderAttachedRegistry(shared_ptr<core::World> const& world,
+		string const& worldFilepath,
 		AgentBehaviourRegistryPathSelector const& selectPackageDirectory)
 	{
-		auto const& registry = building->getAgentBehaviourRegistry();
+		auto const& registry = world->getAgentBehaviourRegistry();
 		if (!registry)
 		{
 			ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.3f, 1.0f),
 				"Agent behaviour dependency unavailable");
 			ImGui::TextWrapped("%s",
-				building->getAgentBehaviourDependencyDiagnostic().c_str());
+				world->getAgentBehaviourDependencyDiagnostic().c_str());
 
 			string selectDiagnostic;
 			auto canSelect = canSelectAgentBehaviourRegistry(
-				building, buildingFilepath, &selectDiagnostic);
+				world, worldFilepath, &selectDiagnostic);
 			if (!selectPackageDirectory)
 			{
 				canSelect = false;
@@ -197,7 +197,7 @@ namespace
 			if (!canSelect && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
 				ImGui::SetTooltip("%s", selectDiagnostic.c_str());
 			ImGui::SameLine();
-			ImGui::BeginDisabled(!building->isSimulationPaused());
+			ImGui::BeginDisabled(!world->isSimulationPaused());
 			auto const detachClicked = ImGui::Button("Detach registry");
 			ImGui::EndDisabled();
 
@@ -209,12 +209,12 @@ namespace
 					if (selectedPath)
 					{
 						string diagnostic;
-						if (commitAgentBehaviourRegistrySwitch(building,
-							buildingFilepath, *selectedPath, diagnostic)) return true;
-						if (building->getAgentBehaviourAssignmentCount() != 0
+						if (commitAgentBehaviourRegistrySwitch(world,
+							worldFilepath, *selectedPath, diagnostic)) return true;
+						if (world->getAgentBehaviourAssignmentCount() != 0
 							&& diagnostic.find("confirmed destructive action") != string::npos)
-							requestAgentBehaviourRegistrySwitch(building,
-								buildingFilepath, *selectedPath);
+							requestAgentBehaviourRegistrySwitch(world,
+								worldFilepath, *selectedPath);
 						else if (!diagnostic.empty())
 							core::addLogMessage("Behaviours", 0,
 								core::LogLevel::Warning, diagnostic);
@@ -228,12 +228,12 @@ namespace
 			}
 			if (detachClicked)
 			{
-				if (building->getAgentBehaviourAssignmentCount() != 0)
-					requestAgentBehaviourRegistryDetach(building);
+				if (world->getAgentBehaviourAssignmentCount() != 0)
+					requestAgentBehaviourRegistryDetach(world);
 				else
 				{
 					string diagnostic;
-					if (commitAgentBehaviourRegistryDetach(building, diagnostic)) return true;
+					if (commitAgentBehaviourRegistryDetach(world, diagnostic)) return true;
 					if (!diagnostic.empty()) core::addLogMessage("Behaviours", 0,
 						core::LogLevel::Warning, diagnostic);
 				}
@@ -243,21 +243,21 @@ namespace
 
 		ImGui::TextUnformatted("Agent behaviour registry package");
 		ImGui::SameLine();
-		ImGui::Text("%s", building->getAgentBehaviourRegistryPackageName().c_str());
+		ImGui::Text("%s", world->getAgentBehaviourRegistryPackageName().c_str());
 		ImGui::TextDisabled("UUID %s", registry->getUuid().c_str());
 		ImGui::TextDisabled("Package revision %llu",
 			static_cast<unsigned long long>(registry->getPackageRevision()));
-		if (!building->agentBehaviourConfigurationsAreValid())
+		if (!world->agentBehaviourConfigurationsAreValid())
 		{
 			ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.3f, 1.0f),
 				"Schema reconciliation required");
 			ImGui::TextWrapped("%s",
-				building->getAgentBehaviourDependencyDiagnostic().c_str());
+				world->getAgentBehaviourDependencyDiagnostic().c_str());
 		}
 
 		string switchDiagnostic;
 		auto canSwitch = canSelectAgentBehaviourRegistry(
-			building, buildingFilepath, &switchDiagnostic);
+			world, worldFilepath, &switchDiagnostic);
 		if (!selectPackageDirectory)
 		{
 			canSwitch = false;
@@ -269,7 +269,7 @@ namespace
 		if (!canSwitch && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
 			ImGui::SetTooltip("%s", switchDiagnostic.c_str());
 		ImGui::SameLine();
-		ImGui::BeginDisabled(!building->isSimulationPaused());
+		ImGui::BeginDisabled(!world->isSimulationPaused());
 		auto const detachClicked = ImGui::Button("Detach registry");
 		ImGui::EndDisabled();
 
@@ -284,24 +284,24 @@ namespace
 			if (selectedPath)
 			{
 				string diagnostic;
-				if (commitAgentBehaviourRegistrySwitch(building, buildingFilepath,
+				if (commitAgentBehaviourRegistrySwitch(world, worldFilepath,
 					*selectedPath, diagnostic)) return true;
-				if (building->getAgentBehaviourAssignmentCount() != 0
+				if (world->getAgentBehaviourAssignmentCount() != 0
 					&& diagnostic.find("confirmed destructive action") != string::npos)
-					requestAgentBehaviourRegistrySwitch(building,
-						buildingFilepath, *selectedPath);
+					requestAgentBehaviourRegistrySwitch(world,
+						worldFilepath, *selectedPath);
 				else if (!diagnostic.empty())
 					core::addLogMessage("Behaviours", 0, core::LogLevel::Warning, diagnostic);
 			}
 		}
 		if (detachClicked)
 		{
-			if (building->getAgentBehaviourAssignmentCount() != 0)
-				requestAgentBehaviourRegistryDetach(building);
+			if (world->getAgentBehaviourAssignmentCount() != 0)
+				requestAgentBehaviourRegistryDetach(world);
 			else
 			{
 				string diagnostic;
-				if (commitAgentBehaviourRegistryDetach(building, diagnostic)) return true;
+				if (commitAgentBehaviourRegistryDetach(world, diagnostic)) return true;
 				if (!diagnostic.empty())
 					core::addLogMessage("Behaviours", 0, core::LogLevel::Warning, diagnostic);
 			}
@@ -342,7 +342,7 @@ namespace
 		{
 			string diagnostic;
 			if (!saveAgentBehaviourRegistry(registry,
-				attachedPackagePath(*building, buildingFilepath).string(), &diagnostic))
+				attachedPackagePath(*world, worldFilepath).string(), &diagnostic))
 				core::addLogMessage("Behaviours", 0, core::LogLevel::Error, diagnostic);
 		}
 		ImGui::EndDisabled();
@@ -354,7 +354,7 @@ namespace
 		{
 			string diagnostic;
 			if (!reloadAgentBehaviourRegistry(registry,
-				attachedPackagePath(*building, buildingFilepath).string(), &diagnostic))
+				attachedPackagePath(*world, worldFilepath).string(), &diagnostic))
 				core::addLogMessage("Behaviours", 0, core::LogLevel::Error, diagnostic);
 		}
 		ImGui::EndDisabled();
@@ -378,11 +378,11 @@ namespace
 				if (item.scope == core::AgentBehaviourReloadDiagnosticScope::Agent)
 				{
 					if (!item.agentName.empty())
-						ImGui::BulletText("Building %s / Agent %s (%llu) / %s",
-							item.buildingName.c_str(), item.agentName.c_str(),
+						ImGui::BulletText("World %s / Agent %s (%llu) / %s",
+							item.worldName.c_str(), item.agentName.c_str(),
 							static_cast<unsigned long long>(item.agent.value),
 							item.moduleName.c_str());
-					else ImGui::BulletText("Building %s", item.buildingName.c_str());
+					else ImGui::BulletText("World %s", item.worldName.c_str());
 				}
 				else if (item.scope == core::AgentBehaviourReloadDiagnosticScope::Module)
 					ImGui::BulletText("Module %s", item.moduleName.c_str());
@@ -558,25 +558,25 @@ namespace
 }
 
 bool commitAgentBehaviourRegistryDetach(
-	shared_ptr<core::Building> const& building, string& diagnostic)
+	shared_ptr<core::World> const& world, string& diagnostic)
 {
 	diagnostic.clear();
-	if (!building || !building->hasAgentBehaviourRegistryReference())
+	if (!world || !world->hasAgentBehaviourRegistryReference())
 	{
 		diagnostic = "There is no Agent behaviour registry to detach";
 		return false;
 	}
-	auto undo = captureDocumentSnapshot(building);
+	auto undo = captureDocumentSnapshot(world);
 	if (!undo)
 	{
-		diagnostic = "Could not capture the Building before detaching its Agent behaviour registry";
+		diagnostic = "Could not capture the World before detaching its Agent behaviour registry";
 		return false;
 	}
 	try
 	{
-		auto const packageName = building->getAgentBehaviourRegistryPackageName();
-		auto registry = building->getAgentBehaviourRegistry();
-		building->detachAgentBehaviourRegistry();
+		auto const packageName = world->getAgentBehaviourRegistryPackageName();
+		auto registry = world->getAgentBehaviourRegistry();
+		world->detachAgentBehaviourRegistry();
 		commitDocumentEdit(std::move(undo));
 		releaseRegistryIfUnused(registry);
 		resetBehavioursPanelState();
@@ -593,25 +593,25 @@ bool commitAgentBehaviourRegistryDetach(
 }
 
 bool commitAgentBehaviourRegistryDetachClearingAssignments(
-	shared_ptr<core::Building> const& building, string& diagnostic)
+	shared_ptr<core::World> const& world, string& diagnostic)
 {
 	diagnostic.clear();
-	if (!building || !building->hasAgentBehaviourRegistryReference())
+	if (!world || !world->hasAgentBehaviourRegistryReference())
 	{
 		diagnostic = "There is no Agent behaviour registry to detach";
 		return false;
 	}
-	auto undo = captureDocumentSnapshot(building);
+	auto undo = captureDocumentSnapshot(world);
 	if (!undo)
 	{
-		diagnostic = "Could not capture the Building before clearing Agent behaviour assignments and detaching its registry";
+		diagnostic = "Could not capture the World before clearing Agent behaviour assignments and detaching its registry";
 		return false;
 	}
 	try
 	{
-		auto const packageName = building->getAgentBehaviourRegistryPackageName();
-		auto registry = building->getAgentBehaviourRegistry();
-		building->detachAgentBehaviourRegistryAndClearAssignments();
+		auto const packageName = world->getAgentBehaviourRegistryPackageName();
+		auto registry = world->getAgentBehaviourRegistry();
+		world->detachAgentBehaviourRegistryAndClearAssignments();
 		commitDocumentEdit(std::move(undo));
 		releaseRegistryIfUnused(registry);
 		resetBehavioursPanelState();
@@ -628,35 +628,35 @@ bool commitAgentBehaviourRegistryDetachClearingAssignments(
 }
 
 bool commitAgentBehaviourRegistrySwitch(
-	shared_ptr<core::Building> const& building, string const& buildingFilepath,
+	shared_ptr<core::World> const& world, string const& worldFilepath,
 	string const& packageDirectory, string& diagnostic)
 {
 	diagnostic.clear();
-	if (!building)
+	if (!world)
 	{
-		diagnostic = "No Building is open";
+		diagnostic = "No World is open";
 		return false;
 	}
-	auto undo = captureDocumentSnapshot(building);
+	auto undo = captureDocumentSnapshot(world);
 	if (!undo)
 	{
-		diagnostic = "Could not capture the Building before switching Agent behaviour registries";
+		diagnostic = "Could not capture the World before switching Agent behaviour registries";
 		return false;
 	}
 	try
 	{
-		auto const previouslyAttached = building->hasAttachedAgentBehaviourRegistry();
+		auto const previouslyAttached = world->hasAttachedAgentBehaviourRegistry();
 		auto previousRegistry = previouslyAttached
-			? building->getAgentBehaviourRegistry() : nullptr;
-		auto const previousPackage = building->hasAgentBehaviourRegistryReference()
-			? building->getAgentBehaviourRegistryPackageName() : string{};
-		auto const previousUuid = building->hasAgentBehaviourRegistryReference()
-			? building->getExpectedAgentBehaviourRegistryUuid() : string{};
+			? world->getAgentBehaviourRegistry() : nullptr;
+		auto const previousPackage = world->hasAgentBehaviourRegistryReference()
+			? world->getAgentBehaviourRegistryPackageName() : string{};
+		auto const previousUuid = world->hasAgentBehaviourRegistryReference()
+			? world->getExpectedAgentBehaviourRegistryUuid() : string{};
 		auto registry = core::selectAndAttachAgentBehaviourRegistry(
-			*building, buildingFilepath, packageDirectory);
+			*world, worldFilepath, packageDirectory);
 		auto const referenceChanged
-			= building->getAgentBehaviourRegistryPackageName() != previousPackage
-				|| building->getExpectedAgentBehaviourRegistryUuid() != previousUuid;
+			= world->getAgentBehaviourRegistryPackageName() != previousPackage
+				|| world->getExpectedAgentBehaviourRegistryUuid() != previousUuid;
 		if (!referenceChanged && previouslyAttached)
 		{
 			diagnostic = "The selected Agent behaviour registry is already attached";
@@ -670,7 +670,7 @@ bool commitAgentBehaviourRegistrySwitch(
 		core::addLogMessage("Behaviours", 0, core::LogLevel::Info,
 			string(referenceChanged ? "Switched to" : "Recovered")
 				+ " Agent behaviour registry package "
-				+ building->getAgentBehaviourRegistryPackageName()
+				+ world->getAgentBehaviourRegistryPackageName()
 				+ " (" + registry->getUuid() + ")");
 		return true;
 	}
@@ -682,33 +682,33 @@ bool commitAgentBehaviourRegistrySwitch(
 }
 
 bool commitAgentBehaviourRegistrySwitchClearingAssignments(
-	shared_ptr<core::Building> const& building, string const& buildingFilepath,
+	shared_ptr<core::World> const& world, string const& worldFilepath,
 	string const& packageDirectory, string& diagnostic)
 {
 	diagnostic.clear();
-	if (!building)
+	if (!world)
 	{
-		diagnostic = "No Building is open";
+		diagnostic = "No World is open";
 		return false;
 	}
-	auto undo = captureDocumentSnapshot(building);
+	auto undo = captureDocumentSnapshot(world);
 	if (!undo)
 	{
-		diagnostic = "Could not capture the Building before clearing Agent behaviour assignments and switching registries";
+		diagnostic = "Could not capture the World before clearing Agent behaviour assignments and switching registries";
 		return false;
 	}
 	try
 	{
-		auto previousRegistry = building->hasAttachedAgentBehaviourRegistry()
-			? building->getAgentBehaviourRegistry() : nullptr;
+		auto previousRegistry = world->hasAttachedAgentBehaviourRegistry()
+			? world->getAgentBehaviourRegistry() : nullptr;
 		auto registry = core::selectAndAttachAgentBehaviourRegistryClearingAssignments(
-			*building, buildingFilepath, packageDirectory);
+			*world, worldFilepath, packageDirectory);
 		commitDocumentEdit(std::move(undo));
 		if (previousRegistry != registry) releaseRegistryIfUnused(previousRegistry);
 		resetBehavioursPanelState();
 		core::addLogMessage("Behaviours", 0, core::LogLevel::Info,
 			"Cleared all Agent behaviour assignments and configurations, then switched to "
-				+ building->getAgentBehaviourRegistryPackageName()
+				+ world->getAgentBehaviourRegistryPackageName()
 				+ " (" + registry->getUuid() + ")");
 		return true;
 	}
@@ -720,28 +720,28 @@ bool commitAgentBehaviourRegistrySwitchClearingAssignments(
 }
 
 void requestAgentBehaviourRegistryDetach(
-	shared_ptr<core::Building> const& building)
+	shared_ptr<core::World> const& world)
 {
-	if (!building || !building->hasAgentBehaviourRegistryReference()
-		|| building->getAgentBehaviourAssignmentCount() == 0) return;
-	gPendingRegistryChange.building = building;
+	if (!world || !world->hasAgentBehaviourRegistryReference()
+		|| world->getAgentBehaviourAssignmentCount() == 0) return;
+	gPendingRegistryChange.world = world;
 	gPendingRegistryChange.consequence = registryChangeConsequence(
-		*building, true, {});
+		*world, true, {});
 	gPendingRegistryChange.detach = true;
 	gPendingRegistryChange.active = true;
 	gPendingRegistryChange.openRequested = true;
 }
 
 void requestAgentBehaviourRegistrySwitch(
-	shared_ptr<core::Building> const& building, string buildingFilepath,
+	shared_ptr<core::World> const& world, string worldFilepath,
 	string packageDirectory)
 {
-	if (!building || !building->hasAgentBehaviourRegistryReference()
-		|| building->getAgentBehaviourAssignmentCount() == 0) return;
-	gPendingRegistryChange.building = building;
-	gPendingRegistryChange.buildingFilepath = std::move(buildingFilepath);
+	if (!world || !world->hasAgentBehaviourRegistryReference()
+		|| world->getAgentBehaviourAssignmentCount() == 0) return;
+	gPendingRegistryChange.world = world;
+	gPendingRegistryChange.worldFilepath = std::move(worldFilepath);
 	gPendingRegistryChange.packageDirectory = std::move(packageDirectory);
-	gPendingRegistryChange.consequence = registryChangeConsequence(*building,
+	gPendingRegistryChange.consequence = registryChangeConsequence(*world,
 		false, gPendingRegistryChange.packageDirectory);
 	gPendingRegistryChange.detach = false;
 	gPendingRegistryChange.active = true;
@@ -764,17 +764,17 @@ bool confirmPendingAgentBehaviourRegistryChange(string& diagnostic)
 	}
 	auto pending = gPendingRegistryChange;
 	cancelPendingAgentBehaviourRegistryChange();
-	auto building = pending.building.lock();
-	if (!building)
+	auto world = pending.world.lock();
+	if (!world)
 	{
-		diagnostic = "The Building awaiting an Agent behaviour registry change is no longer open";
+		diagnostic = "The World awaiting an Agent behaviour registry change is no longer open";
 		return false;
 	}
 	if (pending.detach)
 		return commitAgentBehaviourRegistryDetachClearingAssignments(
-			building, diagnostic);
-	return commitAgentBehaviourRegistrySwitchClearingAssignments(building,
-		pending.buildingFilepath, pending.packageDirectory, diagnostic);
+			world, diagnostic);
+	return commitAgentBehaviourRegistrySwitchClearingAssignments(world,
+		pending.worldFilepath, pending.packageDirectory, diagnostic);
 }
 
 void cancelPendingAgentBehaviourRegistryChange()
@@ -826,10 +826,10 @@ bool saveAgentBehaviourRegistry(
 }
 
 bool attachedAgentBehaviourRegistryIsModified(
-	shared_ptr<const core::Building> const& building)
+	shared_ptr<const core::World> const& world)
 {
-	return building && building->hasAttachedAgentBehaviourRegistry()
-		&& building->getAgentBehaviourRegistry()->isModified();
+	return world && world->hasAttachedAgentBehaviourRegistry()
+		&& world->getAgentBehaviourRegistry()->isModified();
 }
 
 DocumentHistory& agentBehaviourRegistryDocumentHistory(
@@ -843,19 +843,19 @@ DocumentHistory& agentBehaviourRegistryDocumentHistory(
 	return entry->second;
 }
 
-DocumentHistory& agentBehaviourBuildingDocumentHistory(
-	shared_ptr<core::Building> const& building)
+DocumentHistory& agentBehaviourWorldDocumentHistory(
+	shared_ptr<core::World> const& world)
 {
-	if (!building) throw invalid_argument("There is no Building document");
-	for (auto item = gBehaviourBuildingHistories.begin();
-		item != gBehaviourBuildingHistories.end();)
+	if (!world) throw invalid_argument("There is no World document");
+	for (auto item = gBehaviourWorldHistories.begin();
+		item != gBehaviourWorldHistories.end();)
 	{
-		if (item->first.expired()) item = gBehaviourBuildingHistories.erase(item);
+		if (item->first.expired()) item = gBehaviourWorldHistories.erase(item);
 		else ++item;
 	}
 	auto const [entry, inserted]
-		= gBehaviourBuildingHistories.try_emplace(building->getLifetimeToken());
-	if (inserted && !building->isModified()) entry->second.markSaved();
+		= gBehaviourWorldHistories.try_emplace(world->getLifetimeToken());
+	if (inserted && !world->isModified()) entry->second.markSaved();
 	return entry->second;
 }
 
@@ -877,7 +877,7 @@ string agentBehaviourDeleteConfirmationText(
 		<< " this behaviour.";
 	for (auto const& item : usage)
 	{
-		text << "\n- " << item.building->getName();
+		text << "\n- " << item.world->getName();
 		for (auto const& agent : item.agents)
 			text << "\n  - " << agent.name << " (" << agent.id.value << ")";
 	}
@@ -895,26 +895,26 @@ bool commitAgentBehaviourDelete(
 		diagnostic = "There is no Agent behaviour registry from which to delete a behaviour";
 		return false;
 	}
-	vector<shared_ptr<core::Building>> participants;
-	vector<optional<DocumentSnapshot>> buildingSnapshots;
+	vector<shared_ptr<core::World>> participants;
+	vector<optional<DocumentSnapshot>> worldSnapshots;
 	try
 	{
 		for (auto const& usage : registry->getLoadedAgentBehaviourUsage(id))
 		{
-			if (!usage.building) continue;
-			// Loaded Buildings are owned by the editor/caller. The no-op deleter
+			if (!usage.world) continue;
+			// Loaded Worlds are owned by the editor/caller. The no-op deleter
 			// provides the existing snapshot API with shared lifetime for this call.
-			auto building = shared_ptr<core::Building>(
-				const_cast<core::Building*>(usage.building), [](core::Building*) {});
-			auto& history = agentBehaviourBuildingDocumentHistory(building);
-			auto snapshot = captureDocumentSnapshot(building, history);
+			auto world = shared_ptr<core::World>(
+				const_cast<core::World*>(usage.world), [](core::World*) {});
+			auto& history = agentBehaviourWorldDocumentHistory(world);
+			auto snapshot = captureDocumentSnapshot(world, history);
 			if (!snapshot)
 			{
-				diagnostic = "Could not capture every affected Building before deleting the Agent behaviour";
+				diagnostic = "Could not capture every affected World before deleting the Agent behaviour";
 				return false;
 			}
-			participants.push_back(std::move(building));
-			buildingSnapshots.push_back(std::move(snapshot));
+			participants.push_back(std::move(world));
+			worldSnapshots.push_back(std::move(snapshot));
 		}
 	}
 	catch (exception const& error)
@@ -940,8 +940,8 @@ bool commitAgentBehaviourDelete(
 	agentBehaviourRegistryDocumentHistory(registry).commit(
 		std::move(registrySnapshot));
 	for (size_t index = 0; index < participants.size(); ++index)
-		agentBehaviourBuildingDocumentHistory(participants[index]).commit(
-			std::move(buildingSnapshots[index]));
+		agentBehaviourWorldDocumentHistory(participants[index]).commit(
+			std::move(worldSnapshots[index]));
 	core::addLogMessage("Behaviours", 0, core::LogLevel::Info,
 		"Deleted Agent behaviour and cleared " + to_string(clearedCount)
 			+ " dependent assignment" + (clearedCount == 1 ? "" : "s"));
@@ -1034,29 +1034,29 @@ bool restoreAgentBehaviourRegistrySnapshot(
 	if (entries.empty()) return false;
 	auto targetContext = dynamic_pointer_cast<BehaviourRegistrySnapshotContext>(
 		entries.back().context);
-	vector<shared_ptr<core::Building>> participants;
+	vector<shared_ptr<core::World>> participants;
 	if (targetContext)
 	{
-		for (auto const& item : targetContext->buildings)
+		for (auto const& item : targetContext->worlds)
 		{
-			if (item.lifetime.expired() || !registry->hasLoadedBuilding(item.building))
+			if (item.lifetime.expired() || !registry->hasLoadedWorld(item.world))
 			{
 				if (diagnostic) *diagnostic
-					= "An affected Building is no longer available for coordinated undo";
+					= "An affected World is no longer available for coordinated undo";
 				return false;
 			}
-			participants.emplace_back(item.building, [](core::Building*) {});
+			participants.emplace_back(item.world, [](core::World*) {});
 		}
 	}
 	auto current = captureBehaviourRegistrySnapshot(registry, participants,
 		targetContext ? targetContext->affectedBehaviour
 			: core::AgentBehaviourId{});
 	if (!current) return false;
-	vector<optional<DocumentSnapshot>> buildingCurrents;
-	for (auto const& building : participants)
-		buildingCurrents.push_back(captureDocumentSnapshot(building,
-			agentBehaviourBuildingDocumentHistory(building)));
-	if (any_of(buildingCurrents.begin(), buildingCurrents.end(),
+	vector<optional<DocumentSnapshot>> worldCurrents;
+	for (auto const& world : participants)
+		worldCurrents.push_back(captureDocumentSnapshot(world,
+			agentBehaviourWorldDocumentHistory(world)));
+	if (any_of(worldCurrents.begin(), worldCurrents.end(),
 		[](auto const& snapshot) { return !snapshot; })) return false;
 
 	try
@@ -1072,12 +1072,12 @@ bool restoreAgentBehaviourRegistrySnapshot(
 			if (!replacement->deserialize(*registryReader, registryWork)) return false;
 			auto context = dynamic_pointer_cast<BehaviourRegistrySnapshotContext>(
 				target.context);
-			vector<shared_ptr<core::Building>> candidates;
+			vector<shared_ptr<core::World>> candidates;
 			if (context)
 			{
-				for (auto const& item : context->buildings)
+				for (auto const& item : context->worlds)
 				{
-					auto candidate = make_shared<core::Building>("Loading", 1, 1);
+					auto candidate = make_shared<core::World>("Loading", 1, 1);
 					auto reader = core::YamlSerializer::fromString(item.yaml);
 					reader->deserialize();
 					core::SerializationWorkData work;
@@ -1093,15 +1093,15 @@ bool restoreAgentBehaviourRegistrySnapshot(
 			if (!registry->deserialize(*liveReader, liveRegistryWork)) return false;
 			if (context)
 			{
-				for (auto const& item : context->buildings)
+				for (auto const& item : context->worlds)
 				{
 					auto reader = core::YamlSerializer::fromString(item.yaml);
 					reader->deserialize();
 					core::SerializationWorkData work;
-					if (!item.building->deserialize(*reader, work)) return false;
-					item.building->resolveAgentBehaviourRegistry(registry);
-					if (item.modified) item.building->markModified();
-					if (item.paused) item.building->pauseSimulation();
+					if (!item.world->deserialize(*reader, work)) return false;
+					item.world->resolveAgentBehaviourRegistry(registry);
+					if (item.modified) item.world->markModified();
+					if (item.paused) item.world->pauseSimulation();
 				}
 			}
 			return true;
@@ -1112,14 +1112,14 @@ bool restoreAgentBehaviourRegistrySnapshot(
 		if (!restored) return false;
 		for (size_t index = 0; index < participants.size(); ++index)
 		{
-			auto& buildingHistory
-				= agentBehaviourBuildingDocumentHistory(participants[index]);
+			auto& worldHistory
+				= agentBehaviourWorldDocumentHistory(participants[index]);
 			auto shiftOnly = [](DocumentSnapshot const&) { return true; };
 			auto shifted = redo
-				? buildingHistory.redo(std::move(buildingCurrents[index]), shiftOnly)
-				: buildingHistory.undo(std::move(buildingCurrents[index]), shiftOnly);
+				? worldHistory.redo(std::move(worldCurrents[index]), shiftOnly)
+				: worldHistory.undo(std::move(worldCurrents[index]), shiftOnly);
 			if (!shifted) throw runtime_error(
-				"Could not synchronize an affected Building history");
+				"Could not synchronize an affected World history");
 		}
 		if (history.isModified()) registry->markModified();
 		else registry->markUnmodified();
@@ -1144,7 +1144,7 @@ void forgetAgentBehaviourRegistryDocument(
 	shared_ptr<core::AgentBehaviourRegistry> const& registry)
 {
 	// Callers use this only after an explicit close/discard decision. Attached
-	// registries remain manager-owned through their Building; an unreferenced
+	// registries remain manager-owned through their World; an unreferenced
 	// dirty registry may therefore be released here without pretending it saved.
 	if (registry)
 	{
@@ -1155,26 +1155,26 @@ void forgetAgentBehaviourRegistryDocument(
 }
 
 bool canCreateAgentBehaviourRegistry(
-	shared_ptr<const core::Building> const& building,
-	string const& buildingFilepath, string* diagnostic)
+	shared_ptr<const core::World> const& world,
+	string const& worldFilepath, string* diagnostic)
 {
 	auto refuse = [diagnostic](string message)
 	{
 		if (diagnostic) *diagnostic = std::move(message);
 		return false;
 	};
-	if (!building) return refuse("No Building is open");
-	if (!building->isSimulationPaused()) return refuse("Pause the Building before creating a registry");
-	if (building->hasAgentBehaviourRegistryReference())
-		return refuse("This Building already has an Agent behaviour registry");
-	if (buildingFilepath.empty())
-		return refuse("Save the Building before creating an Agent behaviour registry");
+	if (!world) return refuse("No World is open");
+	if (!world->isSimulationPaused()) return refuse("Pause the World before creating a registry");
+	if (world->hasAgentBehaviourRegistryReference())
+		return refuse("This World already has an Agent behaviour registry");
+	if (worldFilepath.empty())
+		return refuse("Save the World before creating an Agent behaviour registry");
 
 	error_code error;
-	if (!filesystem::is_regular_file(buildingFilepath, error) || error)
-		return refuse("Save the Building before creating an Agent behaviour registry");
+	if (!filesystem::is_regular_file(worldFilepath, error) || error)
+		return refuse("Save the World before creating an Agent behaviour registry");
 	auto const packagePath = core::defaultAgentBehaviourRegistryPackagePath(
-		buildingFilepath);
+		worldFilepath);
 	auto const status = filesystem::symlink_status(packagePath, error);
 	if ((!error && status.type() != filesystem::file_type::not_found)
 		|| (error && error != errc::no_such_file_or_directory))
@@ -1184,43 +1184,43 @@ bool canCreateAgentBehaviourRegistry(
 }
 
 bool canSelectAgentBehaviourRegistry(
-	shared_ptr<const core::Building> const& building,
-	string const& buildingFilepath, string* diagnostic)
+	shared_ptr<const core::World> const& world,
+	string const& worldFilepath, string* diagnostic)
 {
 	auto refuse = [diagnostic](string message)
 	{
 		if (diagnostic) *diagnostic = std::move(message);
 		return false;
 	};
-	if (!building) return refuse("No Building is open");
-	if (!building->isSimulationPaused()) return refuse("Pause the Building before selecting a registry");
-	if (buildingFilepath.empty())
-		return refuse("Save the Building before selecting an Agent behaviour registry");
+	if (!world) return refuse("No World is open");
+	if (!world->isSimulationPaused()) return refuse("Pause the World before selecting a registry");
+	if (worldFilepath.empty())
+		return refuse("Save the World before selecting an Agent behaviour registry");
 
 	error_code error;
-	if (!filesystem::is_regular_file(buildingFilepath, error) || error)
-		return refuse("Save the Building before selecting an Agent behaviour registry");
+	if (!filesystem::is_regular_file(worldFilepath, error) || error)
+		return refuse("Save the World before selecting an Agent behaviour registry");
 	if (diagnostic) diagnostic->clear();
 	return true;
 }
 
-bool renderBehavioursPanel(shared_ptr<core::Building> const& building,
-	string const& buildingFilepath,
+bool renderBehavioursPanel(shared_ptr<core::World> const& world,
+	string const& worldFilepath,
 	AgentBehaviourRegistryPathSelector const& selectPackageDirectory)
 {
-	if (building->hasAgentBehaviourRegistryReference())
+	if (world->hasAgentBehaviourRegistryReference())
 	{
 		auto const changed = renderAttachedRegistry(
-			building, buildingFilepath, selectPackageDirectory);
+			world, worldFilepath, selectPackageDirectory);
 		return renderBehaviourDeleteConfirmation(
-			building->getAgentBehaviourRegistry())
+			world->getAgentBehaviourRegistry())
 			|| renderRegistryChangeConfirmation() || changed;
 	}
 
 	ImGui::TextDisabled("No Agent behaviour registry attached.");
 	string createDiagnostic;
 	auto const canCreate = canCreateAgentBehaviourRegistry(
-		building, buildingFilepath, &createDiagnostic);
+		world, worldFilepath, &createDiagnostic);
 	ImGui::BeginDisabled(!canCreate);
 	auto const createClicked = ImGui::Button("Create empty registry");
 	ImGui::EndDisabled();
@@ -1230,7 +1230,7 @@ bool renderBehavioursPanel(shared_ptr<core::Building> const& building,
 	ImGui::SameLine();
 	string selectDiagnostic;
 	auto canSelect = canSelectAgentBehaviourRegistry(
-		building, buildingFilepath, &selectDiagnostic);
+		world, worldFilepath, &selectDiagnostic);
 	if (!selectPackageDirectory)
 	{
 		canSelect = false;
@@ -1247,14 +1247,14 @@ bool renderBehavioursPanel(shared_ptr<core::Building> const& building,
 	{
 		if (createClicked)
 		{
-			auto undo = captureDocumentSnapshot(building);
-			if (!undo) throw runtime_error("Could not capture the Building before registry creation");
+			auto undo = captureDocumentSnapshot(world);
+			if (!undo) throw runtime_error("Could not capture the World before registry creation");
 			auto registry = core::createAndAttachAgentBehaviourRegistry(
-				*building, buildingFilepath);
+				*world, worldFilepath);
 			commitDocumentEdit(std::move(undo));
 			core::addLogMessage("Behaviours", 0, core::LogLevel::Info,
 				"Created Agent behaviour registry package "
-					+ building->getAgentBehaviourRegistryPackageName()
+					+ world->getAgentBehaviourRegistryPackageName()
 					+ " (" + registry->getUuid() + ")");
 			return true;
 		}
@@ -1262,7 +1262,7 @@ bool renderBehavioursPanel(shared_ptr<core::Building> const& building,
 		auto selectedPath = selectPackageDirectory();
 		if (!selectedPath) return false;
 		string diagnostic;
-		auto const changed = commitAgentBehaviourRegistrySwitch(building, buildingFilepath,
+		auto const changed = commitAgentBehaviourRegistrySwitch(world, worldFilepath,
 			*selectedPath, diagnostic);
 		if (!changed && !diagnostic.empty())
 			core::addLogMessage("Behaviours", 0, core::LogLevel::Error, diagnostic);

@@ -14,7 +14,7 @@
 #include <stdexcept>
 #include <string>
 
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/Defines.h"
 #include "core/Exceptions.h"
 #include "core/YamlSerializer.h"
@@ -57,7 +57,7 @@ namespace
 
 	std::string loadFailure(std::string const& yaml)
 	{
-		core::Building target("placeholder", 1, 1);
+		core::World target("placeholder", 1, 1);
 		core::SerializationWorkData workData;
 		auto reader = core::YamlSerializer::fromString(yaml);
 		reader->deserialize();
@@ -86,23 +86,23 @@ namespace
 	// and creates no Sector, so later Sector indices stay put.
 	void theRoomApiRejectsZeroSizes()
 	{
-		core::Building building("Zero rooms", 6, 6);
-		building.addRoom("Solid", 0, 0, 0, 2, 1);
-		auto const baseline = building.getNumSectors();
+		core::World world("Zero rooms", 6, 6);
+		world.addRoom("Solid", 0, 0, 0, 2, 1);
+		auto const baseline = world.getNumSectors();
 
 		requireMinimumRefusal(refusalMessage([&] {
-			building.addRoom("ghost width", 0, 1, 1, 0, 2);
+			world.addRoom("ghost width", 0, 1, 1, 0, 2);
 		}), "Room");
 		requireMinimumRefusal(refusalMessage([&] {
-			building.addRoom("ghost height", 0, 1, 1, 2, 0);
+			world.addRoom("ghost height", 0, 1, 1, 2, 0);
 		}), "Room");
 
-		require(building.getNumSectors() == baseline,
+		require(world.getNumSectors() == baseline,
 			"A rejected addRoom() still created a Sector");
 
 		// The ticket's exact reproduction shape.
 		requireMinimumRefusal(refusalMessage([&] {
-			core::Building repro("zero locations", 6, 6);
+			core::World repro("zero locations", 6, 6);
 			repro.addRoom("ghost", 0, 1, 1, 0, 2);
 		}), "Room");
 	}
@@ -110,33 +110,33 @@ namespace
 	// Both addCorridor() overloads refuse zero dimensions the same way.
 	void theCorridorApiRejectsZeroSizes()
 	{
-		core::Building building("Zero corridors", 6, 6);
-		building.addCorridor(0, 0, 2);
-		auto const baseline = building.getNumSectors();
+		core::World world("Zero corridors", 6, 6);
+		world.addCorridor(0, 0, 2);
+		auto const baseline = world.getNumSectors();
 
 		requireMinimumRefusal(refusalMessage([&] {
-			building.addCorridor(0, 1, 1, 0, 2);
+			world.addCorridor(0, 1, 1, 0, 2);
 		}), "Corridor");
 		requireMinimumRefusal(refusalMessage([&] {
-			building.addCorridor(0, 1, 1, 2, 0);
+			world.addCorridor(0, 1, 1, 2, 0);
 		}), "Corridor");
 		requireMinimumRefusal(refusalMessage([&] {
-			building.addCorridor(1u, 1u, 0u);
+			world.addCorridor(1u, 1u, 0u);
 		}), "Corridor");
 		// The Layer-less overload with an explicit zero decksHigh; the cast picks
 		// that overload because the 4-argument forms are otherwise ambiguous.
-		auto const layerless = static_cast<uint32_t(core::Building::*)(
-			uint32_t, uint32_t, uint32_t, uint32_t)>(&core::Building::addCorridor);
+		auto const layerless = static_cast<uint32_t(core::World::*)(
+			uint32_t, uint32_t, uint32_t, uint32_t)>(&core::World::addCorridor);
 		requireMinimumRefusal(refusalMessage([&] {
-			(building.*layerless)(1u, 1u, 2u, 0u);
+			(world.*layerless)(1u, 1u, 2u, 0u);
 		}), "Corridor");
 
-		require(building.getNumSectors() == baseline,
+		require(world.getNumSectors() == baseline,
 			"A rejected addCorridor() still created a Sector");
 
 		// The ticket's exact reproduction shape.
 		requireMinimumRefusal(refusalMessage([&] {
-			core::Building repro("zero locations", 6, 6);
+			core::World repro("zero locations", 6, 6);
 			repro.addCorridor(0, 3, 1, 2, 0);
 		}), "Corridor");
 	}
@@ -144,14 +144,14 @@ namespace
 	// The one-cell minimum is a floor, not a ceiling: 1x1 stays legal.
 	void theMinimumOneByOneLocationsAreAccepted()
 	{
-		core::Building building("Minimum locations", 6, 6);
+		core::World world("Minimum locations", 6, 6);
 		require(refusalMessage([&] {
-			building.addRoom("Tiny", 0, 0, 0, 1, 1);
+			world.addRoom("Tiny", 0, 0, 0, 1, 1);
 		}).empty(), "A 1x1 Room was refused");
 		require(refusalMessage([&] {
-			building.addCorridor(0, 1, 0, 1, 1);
+			world.addCorridor(0, 1, 0, 1, 1);
 		}).empty(), "A 1x1 Corridor was refused");
-		require(building.getNumSectors() == 2,
+		require(world.getNumSectors() == 2,
 			"The minimum 1x1 Locations did not both get created");
 	}
 
@@ -204,48 +204,48 @@ namespace
 
 	// Ticket #93: a refused zero-size edit must be a true no-op. The rejection
 	// has to happen before beginStructuralEdit() mutates anything, so the
-	// Building keeps its Sector count, stays unmodified, and keeps its valid
+	// World keeps its Sector count, stays unmodified, and keeps its valid
 	// traversal topology.
-	void rejectedZeroSizeEditsLeaveTheBuildingUntouched()
+	void rejectedZeroSizeEditsLeaveTheWorldUntouched()
 	{
-		// The ticket's reproduction shape: a saved, finished, paused Building.
-		auto expectNoOp = [](std::function<void(core::Building&)> edit, std::string const& what)
+		// The ticket's reproduction shape: a saved, finished, paused World.
+		auto expectNoOp = [](std::function<void(core::World&)> edit, std::string const& what)
 		{
-			core::Building building("repro", 4, 2);
-			building.addRoom("ok", 0, 0, 0, 1, 1);
-			building.finishBuild();
-			building.markSaved();
-			building.pauseSimulation();
-			require(building.getNumSectors() == 1 && !building.isModified()
-				&& building.isTraversalTopologyValid(),
-				(what + ": the saved-Building setup did not start clean").c_str());
+			core::World world("repro", 4, 2);
+			world.addRoom("ok", 0, 0, 0, 1, 1);
+			world.finishBuild();
+			world.markSaved();
+			world.pauseSimulation();
+			require(world.getNumSectors() == 1 && !world.isModified()
+				&& world.isTraversalTopologyValid(),
+				(what + ": the saved-World setup did not start clean").c_str());
 
-			requireMinimumRefusal(refusalMessage([&] { edit(building); }), what);
-			require(building.getNumSectors() == 1,
+			requireMinimumRefusal(refusalMessage([&] { edit(world); }), what);
+			require(world.getNumSectors() == 1,
 				(what + ": the refused edit changed the Sector count").c_str());
-			require(!building.isModified(),
-				(what + ": the refused edit marked the Building modified").c_str());
-			require(building.isTraversalTopologyValid(),
+			require(!world.isModified(),
+				(what + ": the refused edit marked the World modified").c_str());
+			require(world.isTraversalTopologyValid(),
 				(what + ": the refused edit invalidated the traversal topology").c_str());
 		};
 
-		expectNoOp([](core::Building& b) { b.addRoom("bad", 0, 0, 1, 0, 1); }, "zero-width Room");
-		expectNoOp([](core::Building& b) { b.addRoom("bad", 0, 0, 1, 1, 0); }, "zero-height Room");
-		expectNoOp([](core::Building& b) { b.addCorridor(0, 0, 1, 0, 1); }, "zero-width Corridor");
-		expectNoOp([](core::Building& b) { b.addCorridor(0, 0, 1, 1, 0); }, "zero-height Corridor");
+		expectNoOp([](core::World& b) { b.addRoom("bad", 0, 0, 1, 0, 1); }, "zero-width Room");
+		expectNoOp([](core::World& b) { b.addRoom("bad", 0, 0, 1, 1, 0); }, "zero-height Room");
+		expectNoOp([](core::World& b) { b.addCorridor(0, 0, 1, 0, 1); }, "zero-width Corridor");
+		expectNoOp([](core::World& b) { b.addCorridor(0, 0, 1, 1, 0); }, "zero-height Corridor");
 		// The Layer-less overload, both dimensions; the cast picks the 4-argument
 		// form because the two overloads are otherwise ambiguous there.
-		expectNoOp([](core::Building& b) { b.addCorridor(0, 1, 0); }, "zero-width layerless Corridor");
-		auto const layerless = static_cast<uint32_t(core::Building::*)(
-			uint32_t, uint32_t, uint32_t, uint32_t)>(&core::Building::addCorridor);
-		expectNoOp([&](core::Building& b) { (b.*layerless)(0u, 1u, 1u, 0u); },
+		expectNoOp([](core::World& b) { b.addCorridor(0, 1, 0); }, "zero-width layerless Corridor");
+		auto const layerless = static_cast<uint32_t(core::World::*)(
+			uint32_t, uint32_t, uint32_t, uint32_t)>(&core::World::addCorridor);
+		expectNoOp([&](core::World& b) { (b.*layerless)(0u, 1u, 1u, 0u); },
 			"zero-height layerless Corridor");
 	}
 
 	// Positive control: the same documents with honest sizes still load.
 	void honestRecordsStillLoad()
 	{
-		core::Building loaded("placeholder", 1, 1);
+		core::World loaded("placeholder", 1, 1);
 		core::SerializationWorkData workData;
 		auto reader = core::YamlSerializer::fromString(mapWith("type: room\n"
 			"    name: Honest room\n"
@@ -276,6 +276,6 @@ void runZeroSizeLocationSmokeChecks()
 	theMinimumOneByOneLocationsAreAccepted();
 	replayRejectsAZeroSizedRoomRecord();
 	replayRejectsAZeroSizedCorridorRecord();
-	rejectedZeroSizeEditsLeaveTheBuildingUntouched();
+	rejectedZeroSizeEditsLeaveTheWorldUntouched();
 	honestRecordsStillLoad();
 }

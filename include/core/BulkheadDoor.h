@@ -13,7 +13,7 @@ namespace core
 
 	class BulkheadDoor : public Door
 	{
-		friend class Building;
+		friend class World;
 
 	public:
 

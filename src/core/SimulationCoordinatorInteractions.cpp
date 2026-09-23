@@ -8,7 +8,7 @@
 #include "core/SimulationCoordinator.h"
 
 #include "core/Agent.h"
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/Button.h"
 #include "core/Coordination.h"
 #include "core/ExtensibleObject.h"
@@ -21,31 +21,31 @@ namespace core
 
 	using namespace std;
 
-	// Interaction and device-operation orchestration moved out of Building
+	// Interaction and device-operation orchestration moved out of World
 	// (ADR 0004 stage 2). The behaviour is unchanged: the coordinator works on
-	// Building's interaction and device-operation registries through friendship,
-	// and calls back through the Building facade for the machinery which has not
-	// moved out of Building yet - the structural-edit guard. The snapshots it
+	// World's interaction and device-operation registries through friendship,
+	// and calls back through the World facade for the machinery which has not
+	// moved out of World yet - the structural-edit guard. The snapshots it
 	// publishes are built by the coordinator's own snapshot seam, which joined
 	// it in stage 5. The lift stop request it makes for an accepted lift call
 	// goes to the coordinator's own lift scheduling helper.
 
 	InteractionPointId SimulationCoordinator::createInteractionPoint(string const& name)
 	{
-		auto id = mBuilding.mInteractionPoints.add(unique_ptr<InteractionPoint>(new InteractionPoint(name)));
+		auto id = mWorld.mInteractionPoints.add(unique_ptr<InteractionPoint>(new InteractionPoint(name)));
 		SimulationEvent event;
-		event.sequence = mBuilding.mNextEventSequence++;
-		event.tick = mBuilding.mSimulationTick;
+		event.sequence = mWorld.mNextEventSequence++;
+		event.tick = mWorld.mSimulationTick;
 		event.type = SimulationEventType::InteractionPointAdded;
-		event.interactionPoint = makeInteractionPointSnapshot(id, *mBuilding.mInteractionPoints.find(id));
-		mBuilding.mEvents.push_back(std::move(event));
+		event.interactionPoint = makeInteractionPointSnapshot(id, *mWorld.mInteractionPoints.find(id));
+		mWorld.mEvents.push_back(std::move(event));
 		return id;
 	}
 
 	InteractionPointId SimulationCoordinator::createInteractionPoint(string const& name, SectorId sector,
 		Vector2 position, float reach, float durationSeconds, vector<InteractionBinding> bindings)
 	{
-		if (!sector || sector.value > mBuilding.mSectors.size())
+		if (!sector || sector.value > mWorld.mSectors.size())
 		{
 			throw invalid_argument("An interaction point requires a valid sector");
 		}
@@ -57,8 +57,8 @@ namespace core
 		{
 			bool validTarget = false;
 			if (binding.command.type == DeviceCommandType::SetSectorLights)
-				validTarget = binding.command.target && binding.command.target.value <= mBuilding.mSectors.size();
-			else if (auto resource = mBuilding.mTraversalResources.find(binding.command.traversalResource))
+				validTarget = binding.command.target && binding.command.target.value <= mWorld.mSectors.size();
+			else if (auto resource = mWorld.mTraversalResources.find(binding.command.traversalResource))
 				validTarget = binding.command.type == DeviceCommandType::OpenDoor ? resource->mDoor != nullptr
 					: binding.command.type == DeviceCommandType::SetExtendedState ? resource->mExtensible != nullptr
 					: (binding.command.type == DeviceCommandType::CallLift
@@ -72,28 +72,28 @@ namespace core
 				throw invalid_argument("An interaction binding requires a valid command target");
 			}
 		}
-		auto durationTicks = max<uint64_t>(1, (uint64_t)ceil(durationSeconds / Building::getFixedTimestep()));
-		auto id = mBuilding.mInteractionPoints.add(unique_ptr<InteractionPoint>(new InteractionPoint(
+		auto durationTicks = max<uint64_t>(1, (uint64_t)ceil(durationSeconds / World::getFixedTimestep()));
+		auto id = mWorld.mInteractionPoints.add(unique_ptr<InteractionPoint>(new InteractionPoint(
 			name, sector, position, reach, durationTicks, std::move(bindings))));
 		SimulationEvent event;
-		event.sequence = mBuilding.mNextEventSequence++;
-		event.tick = mBuilding.mSimulationTick;
+		event.sequence = mWorld.mNextEventSequence++;
+		event.tick = mWorld.mSimulationTick;
 		event.type = SimulationEventType::InteractionPointAdded;
-		event.interactionPoint = makeInteractionPointSnapshot(id, *mBuilding.mInteractionPoints.find(id));
-		mBuilding.mEvents.push_back(std::move(event));
+		event.interactionPoint = makeInteractionPointSnapshot(id, *mWorld.mInteractionPoints.find(id));
+		mWorld.mEvents.push_back(std::move(event));
 		return id;
 	}
 
 	EntityLookup<InteractionPoint> SimulationCoordinator::lookupInteractionPoint(InteractionPointId id)
 	{
-		auto entity = mBuilding.mInteractionPoints.find(id);
+		auto entity = mWorld.mInteractionPoints.find(id);
 		return entity ? EntityLookup<InteractionPoint>{ entity, {} }
 			: EntityLookup<InteractionPoint>{ nullptr, format("InteractionPoint handle {} is invalid or has been removed", id.value) };
 	}
 
 	EntityLookup<InteractionPoint const> SimulationCoordinator::lookupInteractionPoint(InteractionPointId id) const
 	{
-		auto entity = mBuilding.mInteractionPoints.find(id);
+		auto entity = mWorld.mInteractionPoints.find(id);
 		return entity ? EntityLookup<InteractionPoint const>{ entity, {} }
 			: EntityLookup<InteractionPoint const>{ nullptr, format("InteractionPoint handle {} is invalid or has been removed", id.value) };
 	}
@@ -105,7 +105,7 @@ namespace core
 		{
 			return { false, found.diagnostic };
 		}
-		bool structural = any_of(mBuilding.mTraversalResources.entries().begin(), mBuilding.mTraversalResources.entries().end(),
+		bool structural = any_of(mWorld.mTraversalResources.entries().begin(), mWorld.mTraversalResources.entries().end(),
 			[id](auto const& entry)
 			{
 				auto const& resource = *entry.second;
@@ -114,9 +114,9 @@ namespace core
 				return any_of(resource.mLiftStops.begin(), resource.mLiftStops.end(),
 					[id](auto const& stop) { return stop.callControl == id; });
 			});
-		if (structural) mBuilding.beginStructuralEdit("removeInteractionPoint");
+		if (structural) mWorld.beginStructuralEdit("removeInteractionPoint");
 		vector<InteractionRequestId> requests;
-		for (auto const& [requestId, request] : mBuilding.mInteractionRequests.entries())
+		for (auto const& [requestId, request] : mWorld.mInteractionRequests.entries())
 		{
 			if (request->getPoint() == id && request->getResult() == InteractionResult::Pending)
 			{
@@ -128,20 +128,20 @@ namespace core
 			cancelInteraction(requestId);
 		}
 		auto snapshot = makeInteractionPointSnapshot(id, *found.entity);
-		mBuilding.mInteractionPoints.remove(id);
+		mWorld.mInteractionPoints.remove(id);
 
 		SimulationEvent event;
-		event.sequence = mBuilding.mNextEventSequence++;
-		event.tick = mBuilding.mSimulationTick;
+		event.sequence = mWorld.mNextEventSequence++;
+		event.tick = mWorld.mSimulationTick;
 		event.type = SimulationEventType::InteractionPointRemoved;
 		event.interactionPoint = std::move(snapshot);
-		mBuilding.mEvents.push_back(std::move(event));
+		mWorld.mEvents.push_back(std::move(event));
 		return { true, {} };
 	}
 
 	DeviceOperationId SimulationCoordinator::findOrCreateDeviceOperation(DeviceCommand const& command, AgentId requester)
 	{
-		for (auto const& [id, operation] : mBuilding.mDeviceOperations.entries())
+		for (auto const& [id, operation] : mWorld.mDeviceOperations.entries())
 		{
 			if (operation->mHasCommand && operation->mCommand == command
 				&& (operation->mState == DeviceOperationState::Pending || operation->mState == DeviceOperationState::Running))
@@ -160,37 +160,37 @@ namespace core
 			: command.type == DeviceCommandType::CallShuttle ? "Call shuttle"
 			: command.type == DeviceCommandType::SelectShuttleDestination ? "Select shuttle destination"
 				: "Device command";
-		auto id = mBuilding.mDeviceOperations.add(unique_ptr<DeviceOperation>(new DeviceOperation(name, requester, command)));
+		auto id = mWorld.mDeviceOperations.add(unique_ptr<DeviceOperation>(new DeviceOperation(name, requester, command)));
 		SimulationEvent event;
-		event.sequence = mBuilding.mNextEventSequence++;
-		event.tick = mBuilding.mSimulationTick;
+		event.sequence = mWorld.mNextEventSequence++;
+		event.tick = mWorld.mSimulationTick;
 		event.type = SimulationEventType::DeviceOperationAdded;
-		event.phase = mBuilding.mCurrentPhase;
-		event.deviceOperation = makeDeviceOperationSnapshot(id, *mBuilding.mDeviceOperations.find(id));
-		mBuilding.mEvents.push_back(std::move(event));
+		event.phase = mWorld.mCurrentPhase;
+		event.deviceOperation = makeDeviceOperationSnapshot(id, *mWorld.mDeviceOperations.find(id));
+		mWorld.mEvents.push_back(std::move(event));
 		return id;
 	}
 
 	InteractionRequestId SimulationCoordinator::requestInteraction(InteractionPointId pointId, AgentId actorId)
 	{
-		auto point = mBuilding.mInteractionPoints.find(pointId);
-		auto actor = mBuilding.mAgents.find(actorId);
+		auto point = mWorld.mInteractionPoints.find(pointId);
+		auto actor = mWorld.mAgents.find(actorId);
 		if (!point || !actor || !point->mSector
 			|| (actor->getState() != Agent::State::Idle
 				&& actor->getState() != Agent::State::WaitingForTraversal)
-			|| actor->getSector() != mBuilding.mSectors[(size_t)point->mSector.value - 1].get())
+			|| actor->getSector() != mWorld.mSectors[(size_t)point->mSector.value - 1].get())
 		{
 			return {};
 		}
-		for (auto const& [id, request] : mBuilding.mInteractionRequests.entries())
+		for (auto const& [id, request] : mWorld.mInteractionRequests.entries())
 		{
 			if (request->mActor == actorId && request->mResult == InteractionResult::Pending)
 			{
 				return request->mPoint == pointId ? id : InteractionRequestId{};
 			}
 		}
-		auto id = mBuilding.mInteractionRequests.add(unique_ptr<InteractionRequest>(new InteractionRequest(pointId, actorId)));
-		auto request = mBuilding.mInteractionRequests.find(id);
+		auto id = mWorld.mInteractionRequests.add(unique_ptr<InteractionRequest>(new InteractionRequest(pointId, actorId)));
+		auto request = mWorld.mInteractionRequests.find(id);
 		for (auto const& binding : point->mBindings)
 		{
 			request->mOperations.emplace_back(findOrCreateDeviceOperation(binding.command, actorId), binding.requirement);
@@ -198,12 +198,12 @@ namespace core
 		point->mQueue.push_back(id);
 
 		SimulationEvent event;
-		event.sequence = mBuilding.mNextEventSequence++;
-		event.tick = mBuilding.mSimulationTick;
+		event.sequence = mWorld.mNextEventSequence++;
+		event.tick = mWorld.mSimulationTick;
 		event.type = SimulationEventType::InteractionRequestAdded;
-		event.phase = mBuilding.mCurrentPhase;
+		event.phase = mWorld.mCurrentPhase;
 		event.interactionRequest = makeInteractionRequestSnapshot(id, *request);
-		mBuilding.mEvents.push_back(std::move(event));
+		mWorld.mEvents.push_back(std::move(event));
 		return id;
 	}
 
@@ -215,44 +215,44 @@ namespace core
 	InteractionRequestId SimulationCoordinator::requestInteractionWhilePassing(
 		InteractionPointId pointId, AgentId actorId)
 	{
-		auto point = mBuilding.mInteractionPoints.find(pointId);
-		auto actor = mBuilding.mAgents.find(actorId);
+		auto point = mWorld.mInteractionPoints.find(pointId);
+		auto actor = mWorld.mAgents.find(actorId);
 		if (!point || !actor
-			|| actor->getSector() != mBuilding.mSectors[(size_t)point->mSector.value - 1].get())
+			|| actor->getSector() != mWorld.mSectors[(size_t)point->mSector.value - 1].get())
 		{
 			return {};
 		}
-		for (auto const& [id, request] : mBuilding.mInteractionRequests.entries())
+		for (auto const& [id, request] : mWorld.mInteractionRequests.entries())
 		{
 			(void)id;
 			if (request->mActor == actorId && request->mResult == InteractionResult::Pending)
 				return {};
 		}
 
-		auto id = mBuilding.mInteractionRequests.add(unique_ptr<InteractionRequest>(
+		auto id = mWorld.mInteractionRequests.add(unique_ptr<InteractionRequest>(
 			new InteractionRequest(pointId, actorId)));
-		auto request = mBuilding.mInteractionRequests.find(id);
+		auto request = mWorld.mInteractionRequests.find(id);
 		for (auto const& binding : point->mBindings)
 		{
 			auto operationId = findOrCreateDeviceOperation(binding.command, actorId);
 			request->mOperations.emplace_back(operationId, binding.requirement);
-			if (auto operation = mBuilding.mDeviceOperations.find(operationId)) operation->mActivated = true;
+			if (auto operation = mWorld.mDeviceOperations.find(operationId)) operation->mActivated = true;
 		}
 		pressPhysicalControl(pointId);
 
 		SimulationEvent event;
-		event.sequence = mBuilding.mNextEventSequence++;
-		event.tick = mBuilding.mSimulationTick;
+		event.sequence = mWorld.mNextEventSequence++;
+		event.tick = mWorld.mSimulationTick;
 		event.type = SimulationEventType::InteractionRequestAdded;
-		event.phase = mBuilding.mCurrentPhase;
+		event.phase = mWorld.mCurrentPhase;
 		event.interactionRequest = makeInteractionRequestSnapshot(id, *request);
-		mBuilding.mEvents.push_back(std::move(event));
+		mWorld.mEvents.push_back(std::move(event));
 		return id;
 	}
 
 	EntityLookup<InteractionRequest const> SimulationCoordinator::lookupInteractionRequest(InteractionRequestId id) const
 	{
-		auto entity = mBuilding.mInteractionRequests.find(id);
+		auto entity = mWorld.mInteractionRequests.find(id);
 		return entity ? EntityLookup<InteractionRequest const>{ entity, {} }
 			: EntityLookup<InteractionRequest const>{ nullptr, format("InteractionRequest handle {} is invalid", id.value) };
 	}
@@ -262,7 +262,7 @@ namespace core
 		for (auto const& [operationId, requirement] : request.mOperations)
 		{
 			(void)requirement;
-			if (auto operation = mBuilding.mDeviceOperations.find(operationId))
+			if (auto operation = mWorld.mDeviceOperations.find(operationId))
 			{
 				operation->mRequesters.erase(request.mActor);
 				if (operation->mRequesters.empty() && (operation->mState == DeviceOperationState::Pending
@@ -276,14 +276,14 @@ namespace core
 
 	bool SimulationCoordinator::cancelInteraction(InteractionRequestId id)
 	{
-		auto request = mBuilding.mInteractionRequests.find(id);
+		auto request = mWorld.mInteractionRequests.find(id);
 		if (!request || request->mResult != InteractionResult::Pending)
 		{
 			return false;
 		}
 		request->mResult = InteractionResult::Cancelled;
 		detachInteractionRequester(*request);
-		if (auto point = mBuilding.mInteractionPoints.find(request->mPoint))
+		if (auto point = mWorld.mInteractionPoints.find(request->mPoint))
 		{
 			if (point->mActiveRequest == id)
 			{
@@ -293,15 +293,15 @@ namespace core
 			point->mQueue.erase(remove(point->mQueue.begin(), point->mQueue.end(), id), point->mQueue.end());
 		}
 		SimulationEvent event;
-		event.sequence = mBuilding.mNextEventSequence++;
-		event.tick = mBuilding.mSimulationTick;
+		event.sequence = mWorld.mNextEventSequence++;
+		event.tick = mWorld.mSimulationTick;
 		event.type = SimulationEventType::InteractionRequestChanged;
-		event.phase = mBuilding.mCurrentPhase;
+		event.phase = mWorld.mCurrentPhase;
 		event.interactionRequest = makeInteractionRequestSnapshot(id, *request);
-		if (auto point = mBuilding.mInteractionPoints.find(request->mPoint))
+		if (auto point = mWorld.mInteractionPoints.find(request->mPoint))
 			event.interactionName = point->getName();
-		mBuilding.mAgentBehaviourRuntime->observeOutcome(event);
-		mBuilding.mEvents.push_back(std::move(event));
+		mWorld.mAgentBehaviourRuntime->observeOutcome(event);
+		mWorld.mEvents.push_back(std::move(event));
 		return true;
 	}
 
@@ -313,39 +313,39 @@ namespace core
 			throw invalid_argument(format("Cannot create DeviceOperation: {}", agent.diagnostic));
 		}
 
-		auto id = mBuilding.mDeviceOperations.add(unique_ptr<DeviceOperation>(new DeviceOperation(name, requester)));
+		auto id = mWorld.mDeviceOperations.add(unique_ptr<DeviceOperation>(new DeviceOperation(name, requester)));
 		SimulationEvent event;
-		event.sequence = mBuilding.mNextEventSequence++;
-		event.tick = mBuilding.mSimulationTick;
+		event.sequence = mWorld.mNextEventSequence++;
+		event.tick = mWorld.mSimulationTick;
 		event.type = SimulationEventType::DeviceOperationAdded;
-		event.deviceOperation = makeDeviceOperationSnapshot(id, *mBuilding.mDeviceOperations.find(id));
-		mBuilding.mEvents.push_back(std::move(event));
+		event.deviceOperation = makeDeviceOperationSnapshot(id, *mWorld.mDeviceOperations.find(id));
+		mWorld.mEvents.push_back(std::move(event));
 		return id;
 	}
 
 	EntityLookup<DeviceOperation> SimulationCoordinator::lookupDeviceOperation(DeviceOperationId id)
 	{
-		auto entity = mBuilding.mDeviceOperations.find(id);
+		auto entity = mWorld.mDeviceOperations.find(id);
 		return entity ? EntityLookup<DeviceOperation>{ entity, {} }
 			: EntityLookup<DeviceOperation>{ nullptr, format("DeviceOperation handle {} is invalid or has been removed", id.value) };
 	}
 
 	EntityLookup<DeviceOperation const> SimulationCoordinator::lookupDeviceOperation(DeviceOperationId id) const
 	{
-		auto entity = mBuilding.mDeviceOperations.find(id);
+		auto entity = mWorld.mDeviceOperations.find(id);
 		return entity ? EntityLookup<DeviceOperation const>{ entity, {} }
 			: EntityLookup<DeviceOperation const>{ nullptr, format("DeviceOperation handle {} is invalid or has been removed", id.value) };
 	}
 
 	bool SimulationCoordinator::cancelDeviceOperation(DeviceOperationId id, AgentId requester)
 	{
-		auto operation = mBuilding.mDeviceOperations.find(id);
+		auto operation = mWorld.mDeviceOperations.find(id);
 		if (!operation || !operation->mRequesters.erase(requester))
 		{
 			return false;
 		}
 		vector<InteractionRequestId> affectedRequests;
-		for (auto const& [requestId, request] : mBuilding.mInteractionRequests.entries())
+		for (auto const& [requestId, request] : mWorld.mInteractionRequests.entries())
 		{
 			if (request->mActor != requester || request->mResult != InteractionResult::Pending)
 			{
@@ -377,20 +377,20 @@ namespace core
 			return { false, found.diagnostic };
 		}
 		auto snapshot = makeDeviceOperationSnapshot(id, *found.entity);
-		mBuilding.mDeviceOperations.remove(id);
+		mWorld.mDeviceOperations.remove(id);
 
 		SimulationEvent event;
-		event.sequence = mBuilding.mNextEventSequence++;
-		event.tick = mBuilding.mSimulationTick;
+		event.sequence = mWorld.mNextEventSequence++;
+		event.tick = mWorld.mSimulationTick;
 		event.type = SimulationEventType::DeviceOperationRemoved;
 		event.deviceOperation = std::move(snapshot);
-		mBuilding.mEvents.push_back(std::move(event));
+		mWorld.mEvents.push_back(std::move(event));
 		return { true, {} };
 	}
 
 	void SimulationCoordinator::advanceDeviceOperations()
 	{
-		for (auto const& [id, operation] : mBuilding.mDeviceOperations.entries())
+		for (auto const& [id, operation] : mWorld.mDeviceOperations.entries())
 		{
 			(void)id;
 			if (!operation->mHasCommand || !operation->mActivated)
@@ -402,7 +402,7 @@ namespace core
 				operation->mState = DeviceOperationState::Running;
 				if (operation->mCommand.type == DeviceCommandType::OpenDoor)
 				{
-					auto resource = mBuilding.mTraversalResources.find(operation->mCommand.traversalResource);
+					auto resource = mWorld.mTraversalResources.find(operation->mCommand.traversalResource);
 					if (!resource || !resource->mDoor || !resource->mEnabled
 						|| !(operation->mCommand.desiredState
 							? resource->mDoor->requestOpen() : resource->mDoor->requestClose()))
@@ -412,7 +412,7 @@ namespace core
 				}
 				else if (operation->mCommand.type == DeviceCommandType::SetExtendedState)
 				{
-					auto resource = mBuilding.mTraversalResources.find(operation->mCommand.traversalResource);
+					auto resource = mWorld.mTraversalResources.find(operation->mCommand.traversalResource);
 					if (!resource || !resource->mExtensible || !resource->mExtensible->isExtensible())
 					{
 						operation->mState = DeviceOperationState::Rejected;
@@ -440,15 +440,15 @@ namespace core
 			}
 			if (operation->mCommand.type == DeviceCommandType::SetSectorLights
 				&& operation->mCommand.target
-				&& operation->mCommand.target.value <= mBuilding.mSectors.size())
+				&& operation->mCommand.target.value <= mWorld.mSectors.size())
 			{
-				auto sector = mBuilding.mSectors[(size_t)operation->mCommand.target.value - 1];
+				auto sector = mWorld.mSectors[(size_t)operation->mCommand.target.value - 1];
 				bool succeeded = operation->mCommand.desiredState ? sector->lightsOn() : sector->lightsOff();
 				operation->mState = succeeded ? DeviceOperationState::Succeeded : DeviceOperationState::Failed;
 			}
 			else if (operation->mCommand.type == DeviceCommandType::SetExtendedState)
 			{
-				auto resource = mBuilding.mTraversalResources.find(operation->mCommand.traversalResource);
+				auto resource = mWorld.mTraversalResources.find(operation->mCommand.traversalResource);
 				if (!resource || !resource->mExtensible)
 				{
 					operation->mState = DeviceOperationState::Failed;
@@ -477,7 +477,7 @@ namespace core
 				|| operation->mCommand.type == DeviceCommandType::CallShuttle
 				|| operation->mCommand.type == DeviceCommandType::SelectShuttleDestination)
 			{
-				auto resource = mBuilding.mTraversalResources.find(operation->mCommand.traversalResource);
+				auto resource = mWorld.mTraversalResources.find(operation->mCommand.traversalResource);
 				if (!resource || (!resource->mLift && !resource->mShuttle) || !resource->mEnabled
 					|| operation->mCommand.stopIndex >= resource->mLiftStops.size())
 				{
@@ -501,7 +501,7 @@ namespace core
 			}
 			else if (operation->mCommand.type == DeviceCommandType::OpenDoor)
 			{
-				auto resource = mBuilding.mTraversalResources.find(operation->mCommand.traversalResource);
+				auto resource = mWorld.mTraversalResources.find(operation->mCommand.traversalResource);
 				if (!resource || !resource->mDoor)
 				{
 					operation->mState = DeviceOperationState::Failed;
@@ -525,7 +525,7 @@ namespace core
 
 	void SimulationCoordinator::pressPhysicalControl(InteractionPointId pointId)
 	{
-		for (auto const& sector : mBuilding.mSectors)
+		for (auto const& sector : mWorld.mSectors)
 		{
 			for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
 			{
@@ -571,7 +571,7 @@ namespace core
 			}
 			if (node.targetVertex->getSector().get() != currentSector) break;
 		}
-		auto resource = mBuilding.mTraversalResources.find(resourceId);
+		auto resource = mWorld.mTraversalResources.find(resourceId);
 		if (!resource || !resource->mDoor
 			|| resource->mDoorActivationMode != DoorActivationMode::RemoteControlled)
 		{
@@ -591,7 +591,7 @@ namespace core
 		}
 
 		auto actorId = getAgentId(&agent);
-		for (auto const& [id, interaction] : mBuilding.mInteractionRequests.entries())
+		for (auto const& [id, interaction] : mWorld.mInteractionRequests.entries())
 		{
 			(void)id;
 			if (interaction->mActor == actorId
@@ -617,7 +617,7 @@ namespace core
 		auto sourceSector = SectorId{ (uint64_t)agent.getSector()->getIndex() + 1 };
 		for (auto pointId : resource->mControls)
 		{
-			auto point = mBuilding.mInteractionPoints.find(pointId);
+			auto point = mWorld.mInteractionPoints.find(pointId);
 			if (!point || point->mSector != sourceSector) continue;
 			bool opensDoor = any_of(point->mBindings.begin(), point->mBindings.end(),
 				[&](InteractionBinding const& binding)
@@ -644,12 +644,12 @@ namespace core
 
 	void SimulationCoordinator::allocateInteractions()
 	{
-		for (auto const& [pointId, point] : mBuilding.mInteractionPoints.entries())
+		for (auto const& [pointId, point] : mWorld.mInteractionPoints.entries())
 		{
 			(void)pointId;
 			if (point->mActiveRequest)
 			{
-				auto active = mBuilding.mInteractionRequests.find(point->mActiveRequest);
+				auto active = mWorld.mInteractionRequests.find(point->mActiveRequest);
 				if (active && active->mResult == InteractionResult::Pending)
 				{
 					continue;
@@ -660,7 +660,7 @@ namespace core
 			while (!point->mQueue.empty())
 			{
 				auto requestId = point->mQueue.front();
-				auto request = mBuilding.mInteractionRequests.find(requestId);
+				auto request = mWorld.mInteractionRequests.find(requestId);
 				if (!request || request->mResult != InteractionResult::Pending)
 				{
 					point->mQueue.erase(point->mQueue.begin());
@@ -670,7 +670,7 @@ namespace core
 				for (auto const& [operationId, requirement] : request->mOperations)
 				{
 					(void)requirement;
-					if (auto operation = mBuilding.mDeviceOperations.find(operationId); operation && operation->mActivated)
+					if (auto operation = mWorld.mDeviceOperations.find(operationId); operation && operation->mActivated)
 					{
 						reusedActiveWork = true;
 						break;
@@ -690,16 +690,16 @@ namespace core
 
 	void SimulationCoordinator::moveInteractions(float frameTime)
 	{
-		for (auto const& [pointId, point] : mBuilding.mInteractionPoints.entries())
+		for (auto const& [pointId, point] : mWorld.mInteractionPoints.entries())
 		{
 			(void)pointId;
-			auto request = mBuilding.mInteractionRequests.find(point->mActiveRequest);
+			auto request = mWorld.mInteractionRequests.find(point->mActiveRequest);
 			if (!request || request->mResult != InteractionResult::Pending)
 			{
 				continue;
 			}
-			auto actor = mBuilding.mAgents.find(request->mActor);
-			if (!actor || actor->getSector() != mBuilding.mSectors[(size_t)point->mSector.value - 1].get())
+			auto actor = mWorld.mAgents.find(request->mActor);
+			if (!actor || actor->getSector() != mWorld.mSectors[(size_t)point->mSector.value - 1].get())
 			{
 				cancelInteraction(point->mActiveRequest);
 				continue;
@@ -721,7 +721,7 @@ namespace core
 				for (auto const& [operationId, requirement] : request->mOperations)
 				{
 					(void)requirement;
-					if (auto operation = mBuilding.mDeviceOperations.find(operationId);
+					if (auto operation = mWorld.mDeviceOperations.find(operationId);
 						operation && operation->mState == DeviceOperationState::Pending)
 					{
 						operation->mActivated = true;
@@ -735,7 +735,7 @@ namespace core
 
 	void SimulationCoordinator::updateInteractionResults()
 	{
-		for (auto const& [id, request] : mBuilding.mInteractionRequests.entries())
+		for (auto const& [id, request] : mWorld.mInteractionRequests.entries())
 		{
 			if (request->mResult != InteractionResult::Pending)
 			{
@@ -747,7 +747,7 @@ namespace core
 			bool bestEffortFailure = false;
 			for (auto const& [operationId, requirement] : request->mOperations)
 			{
-				auto operation = mBuilding.mDeviceOperations.find(operationId);
+				auto operation = mWorld.mDeviceOperations.find(operationId);
 				if (operation && operation->mState == DeviceOperationState::Rejected)
 				{
 					if (requirement == InteractionBindingRequirement::Required)
@@ -784,15 +784,15 @@ namespace core
 			if (request->mResult != InteractionResult::Pending)
 			{
 				SimulationEvent event;
-				event.sequence = mBuilding.mNextEventSequence++;
-				event.tick = mBuilding.mSimulationTick;
+				event.sequence = mWorld.mNextEventSequence++;
+				event.tick = mWorld.mSimulationTick;
 				event.type = SimulationEventType::InteractionRequestChanged;
-				event.phase = mBuilding.mCurrentPhase;
+				event.phase = mWorld.mCurrentPhase;
 				event.interactionRequest = makeInteractionRequestSnapshot(id, *request);
-				if (auto point = mBuilding.mInteractionPoints.find(request->mPoint))
+				if (auto point = mWorld.mInteractionPoints.find(request->mPoint))
 					event.interactionName = point->getName();
-				mBuilding.mAgentBehaviourRuntime->observeOutcome(event);
-				mBuilding.mEvents.push_back(std::move(event));
+				mWorld.mAgentBehaviourRuntime->observeOutcome(event);
+				mWorld.mEvents.push_back(std::move(event));
 			}
 		}
 	}

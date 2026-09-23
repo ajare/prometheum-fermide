@@ -1,4 +1,5 @@
-#include "core/Building.h"
+#include "core/World.h"
+#include "core/WorldDocument.h"
 #include "core/AgentBehaviourRegistry.h"
 #include "core/AgentBehaviourRuntime.h"
 #include "core/AgentGroup.h"
@@ -57,7 +58,7 @@ namespace core
 	// on.  Restoration used to write the saved coordinates straight into the
 	// Sector, so a hand-edited NaN or a point in the air became a permanent
 	// Agent the renderer and the hit-tests could not handle (#60).
-	static bool restoredAgentPositionIsValid(Building const& building, Sector const& sector,
+	static bool restoredAgentPositionIsValid(World const& world, Sector const& sector,
 		float localX, float localY, string& diagnostic)
 	{
 		if (!isfinite(localX) || !isfinite(localY))
@@ -82,9 +83,9 @@ namespace core
 
 		auto const cellX = (uint32_t)floor(global.x);
 		auto const cellY = (uint32_t)floor(global.y);
-		if (cellX >= building.getCellsWide() || cellY >= building.getDecksHigh())
+		if (cellX >= world.getCellsWide() || cellY >= world.getDecksHigh())
 		{
-			diagnostic = format("cell {},{} is outside the Building", cellX, cellY);
+			diagnostic = format("cell {},{} is outside the World", cellX, cellY);
 			return false;
 		}
 
@@ -99,7 +100,7 @@ namespace core
 		// apply: a Location must have walkable floor where the Agent stands.
 		// Transits carry their own occupancy, so they are not floor-checked.
 		if (isLocationLike(sector.getType())
-			&& !building.getLayer(sector.getLayerIndex())
+			&& !world.getLayer(sector.getLayerIndex())
 				->getCellDefinition(cellX, cellY).isTraversableOnFoot())
 		{
 			diagnostic = format("cell {},{} is not traversable floor in Sector '{}'",
@@ -110,13 +111,13 @@ namespace core
 		return true;
 	}
 
-	bool Building::childrenModified() const
+	bool World::childrenModified() const
 	{
 		return std::any_of(mAgents.entries().begin(), mAgents.entries().end(),
 			[](auto const& entry) { return entry.second->isModified(); });
 	}
 
-	void Building::recordConstruction(ConstructionRecord record)
+	void World::recordConstruction(ConstructionRecord record)
 	{
 		if (!mDeserializingConstruction)
 		{
@@ -124,7 +125,7 @@ namespace core
 		}
 	}
 
-	string Building::constructionTypeName(ConstructionType type)
+	string World::constructionTypeName(ConstructionType type)
 	{
 		switch (type)
 		{
@@ -150,20 +151,20 @@ namespace core
 		case ConstructionType::Background: return "background";
 		case ConstructionType::Facade: return "facade";
 		}
-		throw SerializationException("Unknown Building construction record type");
+		throw SerializationException("Unknown World construction record type");
 	}
 
-	Building::ConstructionType Building::constructionTypeFromName(string const& name)
+	World::ConstructionType World::constructionTypeFromName(string const& name)
 	{
 		for (uint32_t value = 0; value <= static_cast<uint32_t>(ConstructionType::Facade); ++value)
 		{
 			auto const type = static_cast<ConstructionType>(value);
 			if (constructionTypeName(type) == name) return type;
 		}
-		throw SerializationException(format("Unknown Building construction record type: {}", name));
+		throw SerializationException(format("Unknown World construction record type: {}", name));
 	}
 
-	bool Building::constructionTypeCreatesSector(ConstructionType type)
+	bool World::constructionTypeCreatesSector(ConstructionType type)
 	{
 		switch (type)
 		{
@@ -182,7 +183,7 @@ namespace core
 		}
 	}
 
-	void Building::serializeConstructionRecord(Serializer& serializer, ConstructionRecord const& record) const
+	void World::serializeConstructionRecord(Serializer& serializer, ConstructionRecord const& record) const
 	{
 		auto writeStops = [&]
 		{
@@ -370,15 +371,15 @@ namespace core
 		}
 	}
 
-	void Building::serializeImpl(Serializer& serializer, SerializationWorkData& workData) const
+	void World::serializeImpl(Serializer& serializer, SerializationWorkData& workData) const
 	{
-		serializer.beginMap("building");
+		serializer.beginMap("world");
 		// Version 14 adds the authored deterministic random seed and recursive
 		// List/Record behaviour configuration values. Version 13 adds typed
 		// per-Agent behaviour assignments. Version 12 adds
 		// the optional external Agent behaviour registry package reference.
 		// Version 11 gives every Marker stable identity and a
-		// Building-unique name.
+		// World-unique name.
 		// Version 10 adds the optional external Agent tag registry reference.
 		// Version 9 is the first schema that persists Agent groups, and with
 		// them each Agent's optional Agent group assignment (ticket #110). The
@@ -450,7 +451,7 @@ namespace core
 		// the highest group erases the evidence, and a reader that inferred the
 		// next ID from the survivors alone would hand that deleted identity to
 		// the next group created (#123). Zero here is not an ID - it is the
-		// marker that the range is spent and this Building can issue no more.
+		// marker that the range is spent and this World can issue no more.
 		serializer.writeUint64("nextAgentGroupId", mAgentGroups.nextId());
 
 		serializer.beginArray("agents");
@@ -461,7 +462,7 @@ namespace core
 			auto const* sector = resetPosition.sector();
 			if (!sector)
 			{
-				throw SerializationException("Cannot serialize a Building-owned Agent without a Sector");
+				throw SerializationException("Cannot serialize a World-owned Agent without a Sector");
 			}
 			serializer.beginMap("");
 			serializer.writeUint64("id", id.value);
@@ -489,7 +490,7 @@ namespace core
 		serializer.endMap();
 	}
 
-	Building::ConstructionRecord Building::deserializeConstructionRecord(
+	World::ConstructionRecord World::deserializeConstructionRecord(
 		Serializer& serializer, uint32_t version) const
 	{
 		ConstructionRecord record;
@@ -497,7 +498,7 @@ namespace core
 		{
 			auto const kind = serializer.readUint32("kind");
 			if (kind > static_cast<uint32_t>(ConstructionType::ObjectTombstone))
-				throw SerializationException("Unknown Building construction record kind");
+				throw SerializationException("Unknown World construction record kind");
 			record.type = static_cast<ConstructionType>(kind);
 			record.name = serializer.readString("name");
 			record.a = serializer.readUint32("a"); record.b = serializer.readUint32("b");
@@ -524,7 +525,7 @@ namespace core
 			auto const layer = serializer.readUint32(field);
 			if (layer >= static_cast<uint32_t>(mLayers.size()))
 			{
-				throw SerializationException(format("Layer {} is outside the Building's {} layers",
+				throw SerializationException(format("Layer {} is outside the World's {} layers",
 						layer, mLayers.size()));
 			}
 			return layer;
@@ -751,9 +752,9 @@ namespace core
 		return record;
 	}
 
-	bool Building::deserializeImpl(Serializer& serializer, SerializationWorkData& workData)
+	bool World::deserializeImpl(Serializer& serializer, SerializationWorkData& workData)
 	{
-		serializer.beginMap("building");
+		serializer.beginMap("world");
 		auto const version = serializer.readUint32("version");
 		// Versions 1 through 6 predate Door opening styles; their records replay
 		// through the owner-sensitive defaults (OpenUp for ordinary and
@@ -767,7 +768,7 @@ namespace core
 		// versions load with no assignment.
 		if (version < 1 || version > 14)
 		{
-			throw SerializationException("Unsupported Building serialization version");
+			throw SerializationException("Unsupported World serialization version");
 		}
 		auto name = serializer.readString("name");
 		auto const randomSeed = version >= 14
@@ -776,7 +777,7 @@ namespace core
 		auto const decksHigh = serializer.readUint32("decksHigh");
 		if (cellsWide == 0 || decksHigh == 0)
 		{
-			throw SerializationException("Building dimensions must be positive");
+			throw SerializationException("World dimensions must be positive");
 		}
 
 		optional<AgentTagRegistryReference> agentTagRegistryReference;
@@ -832,7 +833,7 @@ namespace core
 		auto const layerCount = serializer.readUint32("layers", true, 2);
 		if (layerCount < 2 || layerCount > CORE_MAX_LAYERS)
 		{
-			throw SerializationException(format("Building layer count {} is out of range", layerCount));
+			throw SerializationException(format("World layer count {} is out of range", layerCount));
 		}
 		mLayers.resize(layerCount);
 		mLayerNames.resize(layerCount);
@@ -934,9 +935,9 @@ namespace core
 		}
 
 		// Agent groups are version-9 authored data. Every entry is read and
-		// judged here, before the Building is reset, so a malformed group list
+		// judged here, before the World is reset, so a malformed group list
 		// refuses the whole file without leaving partial groups behind: nothing
-		// above has touched the live Building, and nothing below runs.
+		// above has touched the live World, and nothing below runs.
 		std::vector<std::pair<AgentGroupId, std::string>> agentGroups;
 		uint64_t highestAgentGroupId{ 0 };
 		if (version >= 9 && serializer.hasField("agentGroups"))
@@ -958,7 +959,7 @@ namespace core
 						"Serialized Agent group IDs must be unique ({} appears twice)", id.value));
 
 				// The same trim-and-check rule the editor applies on creation, so
-				// a file cannot smuggle in a name the Building would refuse.
+				// a file cannot smuggle in a name the World would refuse.
 				auto const trimmed = AgentGroup::trimName(rawName);
 				string nameDiagnostic;
 				if (!AgentGroup::nameIsValid(trimmed, &nameDiagnostic))
@@ -975,8 +976,8 @@ namespace core
 			serializer.endArray();
 		}
 
-		// The allocator's high-water mark: the next ID the writing Building
-		// would have issued, or 0 for a Building whose range is spent. A file
+		// The allocator's high-water mark: the next ID the writing World
+		// would have issued, or 0 for a World whose range is spent. A file
 		// written before the mark was persisted says nothing, so the safest
 		// value derivable from its survivors - one past the highest ID still
 		// named in the file - stands in. What is never derived, guessed or let
@@ -1003,13 +1004,13 @@ namespace core
 				: highestAgentGroupId + 1;
 		}
 
-		// Replay once into a disposable Building before touching this one. Besides
+		// Replay once into a disposable World before touching this one. Besides
 		// ordinary topology validation, this proves that every removal's identity
 		// names the Marker in the referenced object slot. Legacy removals acquire
 		// that identity from the deterministic replay and will write it on save.
 		try
 		{
-			Building candidate(name, cellsWide, decksHigh);
+			World candidate(name, cellsWide, decksHigh);
 			while (candidate.getLayerCount() < layerCount) candidate.addLayer();
 			candidate.mDeserializingConstruction = true;
 			for (auto& record : records)
@@ -1031,17 +1032,17 @@ namespace core
 		catch (SerializationException const&) { throw; }
 		catch (exception const& error)
 		{
-			throw SerializationException(string("Invalid Building construction: ") + error.what());
+			throw SerializationException(string("Invalid World construction: ") + error.what());
 		}
 
 		resetForDeserialization(std::move(name), cellsWide, decksHigh);
 		mRandomSeed = randomSeed;
 		mNextMarkerId = nextMarkerId;
 		mAgentTagRegistryReference = std::move(agentTagRegistryReference);
-		if (mAgentTagRegistry) mAgentTagRegistry->unregisterBuilding(*this);
+		if (mAgentTagRegistry) mAgentTagRegistry->unregisterWorld(*this);
 		mAgentTagRegistry.reset();
 		mAgentBehaviourRegistryReference = std::move(agentBehaviourRegistryReference);
-		if (mAgentBehaviourRegistry) mAgentBehaviourRegistry->unregisterBuilding(*this);
+		if (mAgentBehaviourRegistry) mAgentBehaviourRegistry->unregisterWorld(*this);
 		mAgentBehaviourRegistry.reset();
 		mAgentBehaviourDependencyDiagnostic.clear();
 		// resetForDeserialization deliberately leaves Agent groups alone: the
@@ -1058,14 +1059,14 @@ namespace core
 			}
 		}
 		// The mark is adopted last, over the restored identities, so a document
-		// cannot leave the Building holding a group the allocator would hand out
+		// cannot leave the World holding a group the allocator would hand out
 		// again. A refusal here means the file contradicted itself; nothing has
 		// been left half-loaded, because the whole group list was read and judged
 		// before the reset above ran.
 		if (!mAgentGroups.restoreNextId(nextAgentGroupId))
 		{
 			throw SerializationException(format(
-				"Serialized next Agent group ID {} cannot be adopted by this Building", nextAgentGroupId));
+				"Serialized next Agent group ID {} cannot be adopted by this World", nextAgentGroupId));
 		}
 		mDeserializingConstruction = true;
 		try
@@ -1087,7 +1088,7 @@ namespace core
 		// Every Agent is read and judged before any of them is taken in, so a
 		// refusal in the read - an Agent assigned to an Agent group this file
 		// never defines, a duplicate ID, an impossible position - rejects the
-		// whole document instead of leaving the Building holding some of its
+		// whole document instead of leaving the World holding some of its
 		// Agents and not others. The Agent group definitions were read ahead of
 		// the Agents that use them, so every group a valid file assigns to is
 		// already registered here.
@@ -1142,30 +1143,30 @@ namespace core
 			}
 
 			// An assignment is restored by ID, so the ID has to name a group this
-			// Building owns. Silently dropping an assignment the file says is
+			// World owns. Silently dropping an assignment the file says is
 			// present would be the quiet data loss this check exists to prevent.
 			// An Agent that carries no assignment field simply loads with none.
 			auto const groupId = agent->getAgentGroupId();
 			if (groupId && !lookupAgentGroup(groupId))
 			{
 				throw SerializationException(format(
-					"Serialized Agent '{}' is assigned to Agent group {}, which this Building does not define",
+					"Serialized Agent '{}' is assigned to Agent group {}, which this World does not define",
 					agent->getName(), groupId.value));
 			}
 			if (!agent->getAgentTagIds().empty() && !mAgentTagRegistryReference)
 			{
 				throw SerializationException(format(
-					"Serialized Agent '{}' has Agent tag assignments but the Building has no Agent tag registry",
+					"Serialized Agent '{}' has Agent tag assignments but the World has no Agent tag registry",
 					agent->getName()));
 			}
 			if (agent->getBehaviourAssignment())
 			{
 				if (version < 13)
 					throw SerializationException(
-						"Agent behaviour assignments require Building serialization version 13");
+						"Agent behaviour assignments require World serialization version 13");
 				if (!mAgentBehaviourRegistryReference)
 					throw SerializationException(format(
-						"Serialized Agent '{}' has a behaviour assignment but the Building has no Agent behaviour registry",
+						"Serialized Agent '{}' has a behaviour assignment but the World has no Agent behaviour registry",
 						agent->getName()));
 			}
 
@@ -1202,7 +1203,7 @@ namespace core
 		{
 			auto const agentName = entry.agent->getName();
 			auto* rawAgent = entry.agent.get();
-			rawAgent->attachToBuilding(this);
+			rawAgent->attachToWorld(this);
 			rawAgent->mPosition = SectorPosition(entry.sector.get(), entry.localX, entry.localY);
 			rawAgent->mResetPosition = rawAgent->mPosition;
 			entry.sector->mAgents.insert(rawAgent);
@@ -1232,7 +1233,7 @@ namespace core
 			catch (Exception const& error)
 			{
 				// The route could not be rebuilt after the Agent was taken in.  Put
-				// the Building back the way it was found, so a rejected open never
+				// the World back the way it was found, so a rejected open never
 				// leaves a half-restored Agent behind for the next attempt to trip
 				// over (#60).
 				entry.sector->mAgents.erase(rawAgent);
@@ -1253,7 +1254,7 @@ namespace core
 		return true;
 	}
 
-	void Building::resetSimulation()
+	void World::resetSimulation()
 	{
 		auto const wasModified = isModified();
 		auto const wasPaused = mSimulationPaused;
@@ -1278,7 +1279,7 @@ namespace core
 		if (wasPaused) pauseSimulation();
 	}
 
-	void Building::markSaved()
+	void World::markSaved()
 	{
 		markUnmodified();
 		for (auto const& [id, agent] : mAgents.entries())
@@ -1288,8 +1289,9 @@ namespace core
 		}
 	}
 
-	void Building::saveTo(string const& filepath)
+	void World::saveTo(string const& filepath)
 	{
+		requireWorldDocumentPath(filepath);
 		auto serializer = YamlSerializer::toFile(filepath);
 		SerializationWorkData workData;
 		workData.markSerializedUnmodified = false;
@@ -1301,7 +1303,7 @@ namespace core
 		markSaved();
 	}
 
-	void Building::resetForDeserialization(std::string name, uint32_t cellsWide, uint32_t decksHigh,
+	void World::resetForDeserialization(std::string name, uint32_t cellsWide, uint32_t decksHigh,
 		bool preserveBehaviourRuntime)
 	{
 		if (!preserveBehaviourRuntime)
@@ -1367,9 +1369,9 @@ namespace core
 		mBuildLog.clear();
 	}
 
-	std::unique_ptr<Building> Building::makeCandidateBuilding() const
+	std::unique_ptr<World> World::makeCandidateWorld() const
 	{
-		auto candidate = std::make_unique<Building>(mName, mCellsWide, mDecksHigh);
+		auto candidate = std::make_unique<World>(mName, mCellsWide, mDecksHigh);
 		while (candidate->getLayerCount() < getLayerCount())
 			candidate->addLayer();
 		for (uint32_t layer = 2; layer < getLayerCount(); ++layer)
@@ -1377,10 +1379,10 @@ namespace core
 		return candidate;
 	}
 
-	void Building::applyConstructionRecord(ConstructionRecord const& record)
+	void World::applyConstructionRecord(ConstructionRecord const& record)
 	{
 		// A record written before Transits and Doors carried a Layer replayed against
-		// the front pair, which is the only pair a two-Layer Building could express.
+		// the front pair, which is the only pair a two-Layer World could express.
 		auto const transitLayer = [](ConstructionRecord const& r) -> uint32_t
 		{
 			return r.layer == ~0u ? layerBehind(0) : r.layer;
@@ -1488,7 +1490,7 @@ namespace core
 		}
 	}
 
-	vector<Building::ConstructionRecord> Building::canonicalConstructionRecords(
+	vector<World::ConstructionRecord> World::canonicalConstructionRecords(
 		vector<ConstructionRecord> records) const
 	{
 		auto createsSector = [](ConstructionType type)
@@ -1554,7 +1556,7 @@ namespace core
 		return result;
 	}
 
-	bool Building::prepareLiftEdit(LiftEditPlan const& plan,
+	bool World::prepareLiftEdit(LiftEditPlan const& plan,
 		vector<ConstructionRecord>& records, string& diagnostic) const
 	{
 		records = mConstructionRecords;
@@ -1620,7 +1622,7 @@ namespace core
 		records = canonicalConstructionRecords(std::move(records));
 		try
 		{
-			auto candidate = makeCandidateBuilding();
+			auto candidate = makeCandidateWorld();
 			candidate->mDeserializingConstruction = true;
 			for (auto const& record : records) candidate->applyConstructionRecord(record);
 			candidate->finishBuild();
@@ -1630,7 +1632,7 @@ namespace core
 		return true;
 	}
 
-	std::vector<Building::CarriedAgent> Building::captureAgentsForReplay() const
+	std::vector<World::CarriedAgent> World::captureAgentsForReplay() const
 	{
 		vector<CarriedAgent> carried;
 		for (auto const& [id, agent] : mAgents.entries())
@@ -1646,7 +1648,7 @@ namespace core
 		return carried;
 	}
 
-	void Building::restoreCarriedAgents(std::vector<CarriedAgent> const& carried, bool landingChecked)
+	void World::restoreCarriedAgents(std::vector<CarriedAgent> const& carried, bool landingChecked)
 	{
 		for (auto const& saved : carried)
 		{
@@ -1664,14 +1666,14 @@ namespace core
 			agent->setFlags(saved.flags);
 			agent->setActive(saved.active);
 			auto* raw = agent.get();
-			raw->attachToBuilding(this);
+			raw->attachToWorld(this);
 			raw->mPosition = SectorPosition(sector.get(), saved.position - sector->getPosition());
 			// The assignment comes back with the Agent (#122), and only while this
-			// Building still owns the group: an Agent pointing at a group that is
+			// World still owns the group: an Agent pointing at a group that is
 			// gone would be a dangling reference the save/load check refuses.
 			raw->setAgentGroupId(lookupAgentGroup(saved.agentGroup) ? saved.agentGroup : AgentGroupId{});
 			// A replay is internal preservation, not a new assignment. Keep exactly
-			// the stable IDs captured from this Building; attachment validation
+			// the stable IDs captured from this World; attachment validation
 			// guarantees they still belong to its registry.
 			raw->setAgentTags(saved.agentTags);
 			if (saved.walkSpeedModifierSample)
@@ -1686,7 +1688,7 @@ namespace core
 		}
 	}
 
-	void Building::rebuildFromConstructionRecords(vector<ConstructionRecord> records,
+	void World::rebuildFromConstructionRecords(vector<ConstructionRecord> records,
 		uint32_t movedSectorIndex, int deltaX, int deltaY)
 	{
 		struct ActiveLadder { uint32_t sector, deck, x, height; };
@@ -1706,7 +1708,7 @@ namespace core
 		}
 		string ladderDiagnostic;
 		if (!normalizeRoomLadderRecords(records, ladderDiagnostic))
-			throw BuildingException(this, ladderDiagnostic);
+			throw WorldException(this, ladderDiagnostic);
 		for (auto const& active : activeLadders)
 		{
 			auto unchanged = find_if(records.begin(), records.end(), [&](ConstructionRecord const& record)
@@ -1715,19 +1717,19 @@ namespace core
 					&& record.b == active.deck && record.c == active.x && record.d == active.height;
 			});
 			if (unchanged == records.end())
-				throw BuildingException(this, "A Room Ladder cannot be changed while it is in use");
+				throw WorldException(this, "A Room Ladder cannot be changed while it is in use");
 		}
-		// Validate the complete replay before touching the live Building. This also
+		// Validate the complete replay before touching the live World. This also
 		// makes dependent Walkway/Ladder edits transactional.
 		try
 		{
-			auto candidate = makeCandidateBuilding();
+			auto candidate = makeCandidateWorld();
 			candidate->mDeserializingConstruction = true;
 			for (auto const& record : records) candidate->applyConstructionRecord(record);
 			candidate->finishBuild();
 		}
 		catch (Exception const&) { throw; }
-		catch (exception const& error) { throw BuildingException(this, error.what()); }
+		catch (exception const& error) { throw WorldException(this, error.what()); }
 
 		auto agents = captureAgentsForReplay();
 		for (auto& carried : agents)
@@ -1750,7 +1752,7 @@ namespace core
 		restoreCarriedAgents(agents, false);
 	}
 
-	set<uint32_t> Building::thresholdLayers(SectorObjectType type, uint32_t x, uint32_t y) const
+	set<uint32_t> World::thresholdLayers(SectorObjectType type, uint32_t x, uint32_t y) const
 	{
 		set<uint32_t> layers;
 		for (auto const& sector : mSectors)
@@ -1767,7 +1769,7 @@ namespace core
 		return layers;
 	}
 
-	vector<shared_ptr<const WindowSectorObject>> Building::allWindowObjects() const
+	vector<shared_ptr<const WindowSectorObject>> World::allWindowObjects() const
 	{
 		vector<shared_ptr<const WindowSectorObject>> found;
 		set<WindowSectorObject const*> seen;
@@ -1784,7 +1786,7 @@ namespace core
 		return found;
 	}
 
-	vector<shared_ptr<const WindowSectorObject>> Building::windowsUncoveredByBackground(
+	vector<shared_ptr<const WindowSectorObject>> World::windowsUncoveredByBackground(
 		shared_ptr<const Sector> const& background, bool covered,
 		uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh) const
 	{
@@ -1807,7 +1809,7 @@ namespace core
 		return uncovered;
 	}
 
-	vector<Building::ConstructionRecord> Building::recordsWithoutLayer(uint32_t layerIndex,
+	vector<World::ConstructionRecord> World::recordsWithoutLayer(uint32_t layerIndex,
 		LayerDeleteImpact& impact) const
 	{
 		impact = {};
@@ -1842,7 +1844,7 @@ namespace core
 		// Sectors are created one per record, in record order, so a producing
 		// record's position among the producers is its live Sector index.  Decide
 		// which Sectors survive first, and which index each one takes in the
-		// compacted Building, so that records pointing at a Sector can be re-pointed
+		// compacted World, so that records pointing at a Sector can be re-pointed
 		// against the *original* numbering rather than a renumbered copy of it.
 		vector<bool> keepRecord(mConstructionRecords.size(), true);
 		vector<uint32_t> sectorMap(mSectors.size(), ~0u);
@@ -1913,7 +1915,7 @@ namespace core
 			keepRecord[i] = keep;
 		}
 
-		// The authored record order is preserved.  It is the order the Building was
+		// The authored record order is preserved.  It is the order the World was
 		// built and replayed in, and that order carries dependencies: a wall removal
 		// has to precede the Staircase which needs the wall to be open.
 		vector<ConstructionRecord> records;
@@ -1955,7 +1957,7 @@ namespace core
 		return records;
 	}
 
-	Building::LayerDeletePlan Building::planDeleteLayer(uint32_t layerIndex) const
+	World::LayerDeletePlan World::planDeleteLayer(uint32_t layerIndex) const
 	{
 		LayerDeletePlan plan;
 		plan.layerIndex = layerIndex;
@@ -1969,7 +1971,7 @@ namespace core
 		}
 		if (plan.layerCountAfter < 2)
 		{
-			plan.diagnostic = "A Building must keep at least two Layers";
+			plan.diagnostic = "A World must keep at least two Layers";
 			return plan;
 		}
 
@@ -1994,11 +1996,11 @@ namespace core
 				++plan.agentsRemoved;
 		}
 
-		// The rewritten records must rebuild a valid Building before their
+		// The rewritten records must rebuild a valid World before their
 		// consequences can be offered to the user as a confirmed edit.
 		try
 		{
-			auto candidate = makeCandidateBuilding();
+			auto candidate = makeCandidateWorld();
 			candidate->mDeserializingConstruction = true;
 			for (auto const& record : records) candidate->applyConstructionRecord(record);
 			candidate->finishBuild();
@@ -2065,10 +2067,10 @@ namespace core
 		return plan;
 	}
 
-	bool Building::applyDeleteLayer(LayerDeletePlan const& requested)
+	bool World::applyDeleteLayer(LayerDeletePlan const& requested)
 	{
 		auto const plan = planDeleteLayer(requested.layerIndex);
-		if (!plan.valid) throw BuildingException(this, plan.diagnostic);
+		if (!plan.valid) throw WorldException(this, plan.diagnostic);
 
 		LayerDeleteImpact impact;
 		auto records = recordsWithoutLayer(plan.layerIndex, impact);
@@ -2107,7 +2109,7 @@ namespace core
 		return true;
 	}
 
-	Building::LiftEditPlan Building::planResizeLift(uint32_t sectorIndex,
+	World::LiftEditPlan World::planResizeLift(uint32_t sectorIndex,
 		uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh) const
 	{
 		LiftEditPlan plan;
@@ -2124,7 +2126,7 @@ namespace core
 		if (cellsWide < 1 || cellsWide > 2)
 		{ plan.diagnostic = "A Lift must be one or two cells wide"; return plan; }
 		if (decksHigh == 0 || x + cellsWide > mCellsWide || y + decksHigh > mDecksHigh)
-		{ plan.diagnostic = "The Lift shaft is outside the Building bounds"; return plan; }
+		{ plan.diagnostic = "The Lift shaft is outside the World bounds"; return plan; }
 		if (!lift->getAgents().empty())
 		{ plan.diagnostic = "The Lift cannot be edited while agents occupy it"; return plan; }
 		for (auto const& [id, resource] : mTraversalResources.entries())
@@ -2207,7 +2209,7 @@ namespace core
 		return plan;
 	}
 
-	Building::LiftEditPlan Building::planRemoveLift(uint32_t sectorIndex) const
+	World::LiftEditPlan World::planRemoveLift(uint32_t sectorIndex) const
 	{
 		if (sectorIndex >= mSectors.size() || !dynamic_pointer_cast<const LiftTransit>(mSectors[sectorIndex]))
 		{ LiftEditPlan plan; plan.diagnostic = "Only an enclosed Lift can be deleted"; return plan; }
@@ -2224,7 +2226,7 @@ namespace core
 		return plan;
 	}
 
-	Building::LiftEditPlan Building::planRemoveLiftStop(uint32_t sectorIndex, uint32_t stopIndex) const
+	World::LiftEditPlan World::planRemoveLiftStop(uint32_t sectorIndex, uint32_t stopIndex) const
 	{
 		LiftEditPlan invalid;
 		if (sectorIndex >= mSectors.size())
@@ -2252,13 +2254,13 @@ namespace core
 		return plan;
 	}
 
-	uint32_t Building::applyLiftEdit(LiftEditPlan const& requested)
+	uint32_t World::applyLiftEdit(LiftEditPlan const& requested)
 	{
-		if (!mSimulationPaused) throw BuildingException(this, "Editing a Lift requires the simulation to be paused");
+		if (!mSimulationPaused) throw WorldException(this, "Editing a Lift requires the simulation to be paused");
 		auto plan = requested.remove ? planRemoveLift(requested.sectorIndex)
 			: planResizeLift(requested.sectorIndex, requested.x, requested.y,
 				requested.cellsWide, requested.decksHigh);
-		if (!plan.valid) throw BuildingException(this, plan.diagnostic);
+		if (!plan.valid) throw WorldException(this, plan.diagnostic);
 		if (!requested.remove && requested.stopOffsets.size() >= 2
 			&& requested.stopOffsets != plan.stopOffsets)
 		{
@@ -2266,21 +2268,21 @@ namespace core
 			plan.consequences = requested.consequences;
 			vector<ConstructionRecord> validationRecords;
 			if (!prepareLiftEdit(plan, validationRecords, plan.diagnostic))
-				throw BuildingException(this, plan.diagnostic);
+				throw WorldException(this, plan.diagnostic);
 		}
-		if (!plan.valid) throw BuildingException(this, plan.diagnostic);
+		if (!plan.valid) throw WorldException(this, plan.diagnostic);
 		// The rebuilt Lift keeps the Layer it was authored on; read the answer back
 		// from there rather than from a fixed Back Layer.
 		auto const transitLayer = mSectors[plan.sectorIndex]->getLayerIndex();
 		vector<ConstructionRecord> records; string diagnostic;
-		if (!prepareLiftEdit(plan, records, diagnostic)) throw BuildingException(this, diagnostic);
+		if (!prepareLiftEdit(plan, records, diagnostic)) throw WorldException(this, diagnostic);
 		rebuildFromConstructionRecords(std::move(records));
 		if (plan.remove) return ~0u;
 		auto const& cell = mLayers[transitLayer]->getCellDefinition(plan.x, plan.y);
 		return cell.sectorIndex;
 	}
 
-	bool Building::prepareShuttleEdit(ShuttleEditPlan const& plan,
+	bool World::prepareShuttleEdit(ShuttleEditPlan const& plan,
 		vector<ConstructionRecord>& records, string& diagnostic) const
 	{
 		records = mConstructionRecords;
@@ -2429,7 +2431,7 @@ namespace core
 		records = canonicalConstructionRecords(std::move(records));
 		try
 		{
-			auto candidate = makeCandidateBuilding();
+			auto candidate = makeCandidateWorld();
 			candidate->mDeserializingConstruction = true;
 			for (auto const& record : records) candidate->applyConstructionRecord(record);
 			candidate->finishBuild();
@@ -2439,13 +2441,13 @@ namespace core
 		return true;
 	}
 
-	Building::ShuttleEditPlan Building::planResizeShuttle(uint32_t sectorIndex,
+	World::ShuttleEditPlan World::planResizeShuttle(uint32_t sectorIndex,
 		uint32_t x, uint32_t y, uint32_t cellsWide) const
 	{
 		return planResizeShuttleWithVehicle(sectorIndex, x, y, cellsWide, 0, 0, 0);
 	}
 
-	Building::ShuttleEditPlan Building::planEditShuttleVehicle(uint32_t sectorIndex,
+	World::ShuttleEditPlan World::planEditShuttleVehicle(uint32_t sectorIndex,
 		uint32_t numCars, uint32_t carWidth, uint32_t doorMask) const
 	{
 		ShuttleEditPlan plan;
@@ -2470,7 +2472,7 @@ namespace core
 			transit->getCellY(), transit->getCellsWide(), numCars, carWidth, doorMask);
 	}
 
-	Building::ShuttleEditPlan Building::planResizeShuttleWithVehicle(uint32_t sectorIndex,
+	World::ShuttleEditPlan World::planResizeShuttleWithVehicle(uint32_t sectorIndex,
 		uint32_t x, uint32_t y, uint32_t cellsWide,
 		uint32_t numCars, uint32_t carWidth, uint32_t doorMask) const
 	{
@@ -2487,7 +2489,7 @@ namespace core
 		plan.move = cellsWide == shuttleTransit->getCellsWide()
 			&& (x != shuttleTransit->getCellX() || y != shuttleTransit->getCellY());
 		if (cellsWide == 0 || x + cellsWide > mCellsWide || y >= mDecksHigh)
-		{ plan.diagnostic = "The Shuttle track is outside the Building bounds"; return plan; }
+		{ plan.diagnostic = "The Shuttle track is outside the World bounds"; return plan; }
 		if (!shuttleTransit->getAgents().empty())
 		{ plan.diagnostic = "The Shuttle cannot be edited while agents occupy it"; return plan; }
 
@@ -2628,7 +2630,7 @@ namespace core
 		return plan;
 	}
 
-	Building::ShuttleEditPlan Building::planRemoveShuttle(uint32_t sectorIndex) const
+	World::ShuttleEditPlan World::planRemoveShuttle(uint32_t sectorIndex) const
 	{
 		if (sectorIndex >= mSectors.size() || !dynamic_pointer_cast<const ShuttleTransit>(mSectors[sectorIndex]))
 		{ ShuttleEditPlan plan; plan.diagnostic = "Only a Shuttle can be deleted"; return plan; }
@@ -2657,7 +2659,7 @@ namespace core
 		return plan;
 	}
 
-	Building::ShuttleEditPlan Building::planRemoveShuttleStop(uint32_t sectorIndex, uint32_t stopIndex) const
+	World::ShuttleEditPlan World::planRemoveShuttleStop(uint32_t sectorIndex, uint32_t stopIndex) const
 	{
 		ShuttleEditPlan invalid;
 		if (sectorIndex >= mSectors.size()) { invalid.diagnostic = "The selected Shuttle no longer exists"; return invalid; }
@@ -2682,7 +2684,7 @@ namespace core
 		return plan;
 	}
 
-	Building::ShuttleEditPlan Building::planAddShuttleStop(uint32_t sectorIndex, uint32_t stopOffset) const
+	World::ShuttleEditPlan World::planAddShuttleStop(uint32_t sectorIndex, uint32_t stopOffset) const
 	{
 		ShuttleEditPlan invalid;
 		if (sectorIndex >= mSectors.size()) { invalid.diagnostic = "The selected Shuttle no longer exists"; return invalid; }
@@ -2701,13 +2703,13 @@ namespace core
 		return plan;
 	}
 
-	uint32_t Building::applyShuttleEdit(ShuttleEditPlan const& requested)
+	uint32_t World::applyShuttleEdit(ShuttleEditPlan const& requested)
 	{
-		if (!mSimulationPaused) throw BuildingException(this, "Editing a Shuttle requires the simulation to be paused");
+		if (!mSimulationPaused) throw WorldException(this, "Editing a Shuttle requires the simulation to be paused");
 		auto plan = requested.remove ? planRemoveShuttle(requested.sectorIndex)
 			: planResizeShuttleWithVehicle(requested.sectorIndex, requested.x, requested.y,
 				requested.cellsWide, requested.numCars, requested.carWidth, requested.doorMask);
-		if (!plan.valid) throw BuildingException(this, plan.diagnostic);
+		if (!plan.valid) throw WorldException(this, plan.diagnostic);
 		// The rebuilt Shuttle keeps the Layer it was authored on; read the answer back
 		// from there rather than from a fixed Back Layer.
 		auto const transitLayer = mSectors[plan.sectorIndex]->getLayerIndex();
@@ -2718,16 +2720,16 @@ namespace core
 			plan.consequences = requested.consequences;
 			vector<ConstructionRecord> validationRecords;
 			if (!prepareShuttleEdit(plan, validationRecords, plan.diagnostic))
-				throw BuildingException(this, plan.diagnostic);
+				throw WorldException(this, plan.diagnostic);
 		}
 		vector<ConstructionRecord> records; string diagnostic;
-		if (!prepareShuttleEdit(plan, records, diagnostic)) throw BuildingException(this, diagnostic);
+		if (!prepareShuttleEdit(plan, records, diagnostic)) throw WorldException(this, diagnostic);
 		rebuildFromConstructionRecords(std::move(records));
 		if (plan.remove) return ~0u;
 		return mLayers[transitLayer]->getCellDefinition(plan.x, plan.y).sectorIndex;
 	}
 
-	bool Building::getLadderOptions(uint32_t sectorIndex, CreateLadderOptions& options) const
+	bool World::getLadderOptions(uint32_t sectorIndex, CreateLadderOptions& options) const
 	{
 		uint32_t producerIndex = 0;
 		for (auto const& record : mConstructionRecords)
@@ -2742,7 +2744,7 @@ namespace core
 		return false;
 	}
 
-	bool Building::prepareLadderEdit(LadderEditPlan const& plan,
+	bool World::prepareLadderEdit(LadderEditPlan const& plan,
 		vector<ConstructionRecord>& records, string& diagnostic) const
 	{
 		auto createsSector = [](ConstructionType type)
@@ -2796,7 +2798,7 @@ namespace core
 
 		try
 		{
-			auto candidate = makeCandidateBuilding();
+			auto candidate = makeCandidateWorld();
 			candidate->mDeserializingConstruction = true;
 			vector<ConstructionRecord> viable;
 			viable.reserve(records.size());
@@ -2824,7 +2826,7 @@ namespace core
 		return true;
 	}
 
-	Building::LadderEditPlan Building::planResizeLadder(uint32_t sectorIndex,
+	World::LadderEditPlan World::planResizeLadder(uint32_t sectorIndex,
 		uint32_t x, uint32_t y, CreateLadderOptions const& options) const
 	{
 		LadderEditPlan plan;
@@ -2844,7 +2846,7 @@ namespace core
 		if (options.directionalBatchLimit == 0)
 		{ plan.diagnostic = "Ladder directional batch limit must be positive"; return plan; }
 		if (x >= mCellsWide || y >= mDecksHigh || y + options.decksHigh > mDecksHigh)
-		{ plan.diagnostic = "The Ladder is outside the Building bounds"; return plan; }
+		{ plan.diagnostic = "The Ladder is outside the World bounds"; return plan; }
 		for (uint32_t iy = y; iy < y + options.decksHigh; ++iy)
 		{
 			auto occupant = mLayers[transitLayer]->getCellDefinition(x, iy).sectorIndex;
@@ -2888,7 +2890,7 @@ namespace core
 		return plan;
 	}
 
-	Building::LadderEditPlan Building::planRemoveLadder(uint32_t sectorIndex) const
+	World::LadderEditPlan World::planRemoveLadder(uint32_t sectorIndex) const
 	{
 		LadderEditPlan plan;
 		plan.remove = true; plan.sectorIndex = sectorIndex;
@@ -2914,16 +2916,16 @@ namespace core
 		return plan;
 	}
 
-	uint32_t Building::applyLadderEdit(LadderEditPlan const& requested)
+	uint32_t World::applyLadderEdit(LadderEditPlan const& requested)
 	{
 		if (!mSimulationPaused)
-			throw BuildingException(this, "Editing a Ladder requires the simulation to be paused");
+			throw WorldException(this, "Editing a Ladder requires the simulation to be paused");
 		auto plan = requested.remove ? planRemoveLadder(requested.sectorIndex)
 			: planResizeLadder(requested.sectorIndex, requested.x, requested.y, requested.options);
-		if (!plan.valid) throw BuildingException(this, plan.diagnostic);
+		if (!plan.valid) throw WorldException(this, plan.diagnostic);
 		vector<ConstructionRecord> records;
 		string diagnostic;
-		if (!prepareLadderEdit(plan, records, diagnostic)) throw BuildingException(this, diagnostic);
+		if (!prepareLadderEdit(plan, records, diagnostic)) throw WorldException(this, diagnostic);
 		auto old = mSectors[plan.sectorIndex];
 		// The rebuilt Ladder keeps the Layer it was authored on; read the answer back
 		// from there rather than from a fixed Back Layer.
@@ -2936,7 +2938,7 @@ namespace core
 		return mLayers[transitLayer]->getCellDefinition(plan.x, plan.y).sectorIndex;
 	}
 
-	bool Building::getStairwellOptions(uint32_t sectorIndex, CreateStairwellOptions& options) const
+	bool World::getStairwellOptions(uint32_t sectorIndex, CreateStairwellOptions& options) const
 	{
 		uint32_t producerIndex = 0;
 		for (auto const& record : mConstructionRecords)
@@ -2951,7 +2953,7 @@ namespace core
 		return false;
 	}
 
-	bool Building::getStaircaseOptions(uint32_t sectorIndex, CreateStaircaseOptions& options) const
+	bool World::getStaircaseOptions(uint32_t sectorIndex, CreateStaircaseOptions& options) const
 	{
 		uint32_t producerIndex = 0;
 		for (auto const& record : mConstructionRecords)
@@ -2966,7 +2968,7 @@ namespace core
 		return false;
 	}
 
-	Building::StaircaseEditPlan Building::planResizeStaircase(uint32_t sectorIndex,
+	World::StaircaseEditPlan World::planResizeStaircase(uint32_t sectorIndex,
 		uint32_t x, uint32_t y, CreateStaircaseOptions const& options) const
 	{
 		StaircaseEditPlan plan;
@@ -2980,7 +2982,7 @@ namespace core
 		if (options.cellsWide < 2)
 			{ plan.diagnostic = "A Staircase must be at least two cells wide"; return plan; }
 		if (x >= mCellsWide || y >= mDecksHigh || options.cellsWide > mCellsWide - x || y + 1 >= mDecksHigh)
-			{ plan.diagnostic = "The Staircase is outside the Building bounds"; return plan; }
+			{ plan.diagnostic = "The Staircase is outside the World bounds"; return plan; }
 		// The edited Staircase keeps the Layer it already sits on.
 		auto const transitLayer = mSectors[sectorIndex]->getLayerIndex();
 		auto const landingLayer = layerInFront(transitLayer);
@@ -3002,7 +3004,7 @@ namespace core
 		return plan;
 	}
 
-	Building::StaircaseEditPlan Building::planRemoveStaircase(uint32_t sectorIndex) const
+	World::StaircaseEditPlan World::planRemoveStaircase(uint32_t sectorIndex) const
 	{
 		StaircaseEditPlan plan;
 		plan.sectorIndex = sectorIndex; plan.remove = true;
@@ -3014,12 +3016,12 @@ namespace core
 		return plan;
 	}
 
-	uint32_t Building::applyStaircaseEdit(StaircaseEditPlan const& requested)
+	uint32_t World::applyStaircaseEdit(StaircaseEditPlan const& requested)
 	{
-		if (!mSimulationPaused) throw BuildingException(this, "Editing a Staircase requires the simulation to be paused");
+		if (!mSimulationPaused) throw WorldException(this, "Editing a Staircase requires the simulation to be paused");
 		auto plan = requested.remove ? planRemoveStaircase(requested.sectorIndex)
 			: planResizeStaircase(requested.sectorIndex, requested.x, requested.y, requested.options);
-		if (!plan.valid) throw BuildingException(this, plan.diagnostic);
+		if (!plan.valid) throw WorldException(this, plan.diagnostic);
 		auto createsSector = [](ConstructionType type)
 		{
 			return constructionTypeCreatesSector(type);
@@ -3038,7 +3040,7 @@ namespace core
 		for (auto it = records.begin(); it != records.end(); ++it)
 			if (createsSector(it->type) && producerIndex++ == plan.sectorIndex) { found = it; break; }
 		if (found == records.end() || found->type != ConstructionType::Staircase)
-			throw BuildingException(this, "The selected Staircase no longer has an authored definition");
+			throw WorldException(this, "The selected Staircase no longer has an authored definition");
 		if (plan.remove)
 		{
 			records.erase(found);
@@ -3070,7 +3072,7 @@ namespace core
 		return mLayers[transitLayer]->getCellDefinition(plan.x, plan.y).sectorIndex;
 	}
 
-	bool Building::prepareStairwellEdit(StairwellEditPlan const& plan,
+	bool World::prepareStairwellEdit(StairwellEditPlan const& plan,
 		vector<ConstructionRecord>& records, string& diagnostic) const
 	{
 		auto createsSector = [](ConstructionType type)
@@ -3124,7 +3126,7 @@ namespace core
 
 		try
 		{
-			auto candidate = makeCandidateBuilding();
+			auto candidate = makeCandidateWorld();
 			candidate->mDeserializingConstruction = true;
 			vector<ConstructionRecord> viable;
 			viable.reserve(records.size());
@@ -3154,7 +3156,7 @@ namespace core
 		return true;
 	}
 
-	Building::StairwellEditPlan Building::planResizeStairwell(uint32_t sectorIndex,
+	World::StairwellEditPlan World::planResizeStairwell(uint32_t sectorIndex,
 		uint32_t x, uint32_t y, CreateStairwellOptions const& options) const
 	{
 		StairwellEditPlan plan;
@@ -3179,7 +3181,7 @@ namespace core
 		{ plan.diagnostic = "Directional capacity is below the current Stairwell occupancy"; return plan; }
 		if (x >= mCellsWide || y >= mDecksHigh || x + 2 > mCellsWide
 			|| y + options.decksHigh > mDecksHigh)
-		{ plan.diagnostic = "The Stairwell is outside the Building bounds"; return plan; }
+		{ plan.diagnostic = "The Stairwell is outside the World bounds"; return plan; }
 		for (uint32_t iy = y; iy < y + options.decksHigh; ++iy)
 		{
 			auto const& first = mLayers[landingLayer]->getCellDefinition(x, iy);
@@ -3217,7 +3219,7 @@ namespace core
 		return plan;
 	}
 
-	Building::StairwellEditPlan Building::planRemoveStairwell(uint32_t sectorIndex) const
+	World::StairwellEditPlan World::planRemoveStairwell(uint32_t sectorIndex) const
 	{
 		StairwellEditPlan plan;
 		plan.remove = true; plan.sectorIndex = sectorIndex;
@@ -3243,16 +3245,16 @@ namespace core
 		return plan;
 	}
 
-	uint32_t Building::applyStairwellEdit(StairwellEditPlan const& requested)
+	uint32_t World::applyStairwellEdit(StairwellEditPlan const& requested)
 	{
 		if (!mSimulationPaused)
-			throw BuildingException(this, "Editing a Stairwell requires the simulation to be paused");
+			throw WorldException(this, "Editing a Stairwell requires the simulation to be paused");
 		auto plan = requested.remove ? planRemoveStairwell(requested.sectorIndex)
 			: planResizeStairwell(requested.sectorIndex, requested.x, requested.y, requested.options);
-		if (!plan.valid) throw BuildingException(this, plan.diagnostic);
+		if (!plan.valid) throw WorldException(this, plan.diagnostic);
 		vector<ConstructionRecord> records;
 		string diagnostic;
-		if (!prepareStairwellEdit(plan, records, diagnostic)) throw BuildingException(this, diagnostic);
+		if (!prepareStairwellEdit(plan, records, diagnostic)) throw WorldException(this, diagnostic);
 		auto old = mSectors[plan.sectorIndex];
 		// The rebuilt Stairwell keeps the Layer it was authored on; read the answer
 		// back from there rather than from a fixed Back Layer.
@@ -3265,7 +3267,7 @@ namespace core
 		return mLayers[transitLayer]->getCellDefinition(plan.x, plan.y).sectorIndex;
 	}
 
-	bool Building::prepareLocationEdit(LocationEditPlan const& plan,
+	bool World::prepareLocationEdit(LocationEditPlan const& plan,
 		vector<ConstructionRecord>& records, uint32_t& newSectorIndex,
 		string& diagnostic) const
 	{
@@ -3284,7 +3286,7 @@ namespace core
 
 		records.clear();
 		newSectorIndex = ~0u;
-		auto candidate = makeCandidateBuilding();
+		auto candidate = makeCandidateWorld();
 		candidate->mDeserializingConstruction = true;
 		vector<uint32_t> sectorMap(mSectors.size(), ~0u);
 		uint32_t oldSectorIndex = 0;
@@ -3526,7 +3528,7 @@ namespace core
 		return true;
 	}
 
-	bool Building::normalizeRoomLadderRecords(vector<ConstructionRecord>& records,
+	bool World::normalizeRoomLadderRecords(vector<ConstructionRecord>& records,
 		string& diagnostic) const
 	{
 		struct LocationRecord { bool room{ false }; uint32_t width{ 0 }, height{ 0 }; };
@@ -3601,7 +3603,7 @@ namespace core
 		return true;
 	}
 
-	bool Building::roomLadderIsActive(shared_ptr<const Ladder> const& ladder) const
+	bool World::roomLadderIsActive(shared_ptr<const Ladder> const& ladder) const
 	{
 		if (!ladder) return false;
 		for (auto const& [id, resource] : mTraversalResources.entries())
@@ -3617,7 +3619,7 @@ namespace core
 		return false;
 	}
 
-	bool Building::platformLiftIsActive(shared_ptr<const Lift> const& lift) const
+	bool World::platformLiftIsActive(shared_ptr<const Lift> const& lift) const
 	{
 		if (!lift) return false;
 		for (auto const& [id, resource] : mTraversalResources.entries())
@@ -3635,7 +3637,7 @@ namespace core
 		return false;
 	}
 
-	bool Building::forceBridgeIsActive(shared_ptr<const ForceBridge> const& bridge) const
+	bool World::forceBridgeIsActive(shared_ptr<const ForceBridge> const& bridge) const
 	{
 		if (!bridge) return false;
 		for (auto const& sector : mSectors)
@@ -3664,7 +3666,7 @@ namespace core
 		return false;
 	}
 
-	bool Building::prepareObjectMove(ObjectMovePlan const& plan,
+	bool World::prepareObjectMove(ObjectMovePlan const& plan,
 		vector<ConstructionRecord>& records, uint32_t& newSectorIndex,
 		uint32_t& newObjectIndex, string& diagnostic) const
 	{
@@ -3824,10 +3826,10 @@ namespace core
 			? (uint64_t)plan.y + 1 : (uint64_t)plan.y + targetHeight;
 		if (type == SectorObjectType::Door && resizing)
 		{
-			// Door authoring reserves the final column as the building boundary.
+			// Door authoring reserves the final column as the world boundary.
 			if (targetRight >= mCellsWide)
 			{
-				diagnostic = "Door position is outside the building";
+				diagnostic = "Door position is outside the world";
 				return false;
 			}
 			// The resized threshold must stay within one Sector on each Layer of
@@ -3943,7 +3945,7 @@ namespace core
 		}
 		if (targetRight > mCellsWide || targetTop > mDecksHigh)
 		{
-			diagnostic = "The destination is outside the building";
+			diagnostic = "The destination is outside the world";
 			return false;
 		}
 		if (type == SectorObjectType::Ladder)
@@ -4128,7 +4130,7 @@ namespace core
 
 		if (!normalizeRoomLadderRecords(records, diagnostic)) return false;
 
-		auto candidate = makeCandidateBuilding();
+		auto candidate = makeCandidateWorld();
 		candidate->mDeserializingConstruction = true;
 		try
 		{
@@ -4154,10 +4156,10 @@ namespace core
 		return true;
 	}
 
-	bool Building::removeSectorDoor(uint32_t sectorIndex, uint32_t objectIndex)
+	bool World::removeSectorDoor(uint32_t sectorIndex, uint32_t objectIndex)
 	{
 		if (!mSimulationPaused)
-			throw BuildingException(this, "Deleting a Door requires the simulation to be paused");
+			throw WorldException(this, "Deleting a Door requires the simulation to be paused");
 		if (sectorIndex >= mSectors.size() || !mSectors[sectorIndex]
 			|| objectIndex >= mSectors[sectorIndex]->getNumObjects()) return false;
 		auto object = dynamic_pointer_cast<DoorSectorObject>(
@@ -4169,10 +4171,10 @@ namespace core
 		{
 			auto lift = dynamic_pointer_cast<const LiftTransit>(mSectors[liftIndex]);
 			if (!lift || lift->getNumStops() <= 2)
-				throw BuildingException(this, "Deleting this landing would leave the Lift with fewer than two stops");
+				throw WorldException(this, "Deleting this landing would leave the Lift with fewer than two stops");
 			auto plan = planResizeLift(liftIndex, lift->getCellX(), lift->getCellY(),
 				lift->getCellsWide(), lift->getDecksHigh());
-			if (!plan.valid) throw BuildingException(this, plan.diagnostic);
+			if (!plan.valid) throw WorldException(this, plan.diagnostic);
 			plan.stopOffsets.clear();
 			for (uint32_t stop = 0; stop < lift->getNumStops(); ++stop)
 			{
@@ -4182,7 +4184,7 @@ namespace core
 					+ value.sectorOffsetY - (int)lift->getCellY()));
 			}
 			vector<ConstructionRecord> records; string diagnostic;
-			if (!prepareLiftEdit(plan, records, diagnostic)) throw BuildingException(this, diagnostic);
+			if (!prepareLiftEdit(plan, records, diagnostic)) throw WorldException(this, diagnostic);
 			rebuildFromConstructionRecords(std::move(records));
 			return true;
 		}
@@ -4190,9 +4192,9 @@ namespace core
 		if (isShuttleOwnedDoor(object, &shuttleIndex, &stopIndex))
 		{
 			auto plan = planRemoveShuttleStop(shuttleIndex, stopIndex);
-			if (!plan.valid) throw BuildingException(this, plan.diagnostic);
+			if (!plan.valid) throw WorldException(this, plan.diagnostic);
 			vector<ConstructionRecord> records; string diagnostic;
-			if (!prepareShuttleEdit(plan, records, diagnostic)) throw BuildingException(this, diagnostic);
+			if (!prepareShuttleEdit(plan, records, diagnostic)) throw WorldException(this, diagnostic);
 			rebuildFromConstructionRecords(std::move(records));
 			return true;
 		}
@@ -4258,7 +4260,7 @@ namespace core
 		return true;
 	}
 
-	bool Building::getSectorBulkheadDoorOptions(uint32_t sectorIndex, uint32_t objectIndex,
+	bool World::getSectorBulkheadDoorOptions(uint32_t sectorIndex, uint32_t objectIndex,
 		CreateBulkheadDoorOptions& options) const
 	{
 		if (sectorIndex >= mSectors.size() || !mSectors[sectorIndex]
@@ -4280,24 +4282,24 @@ namespace core
 		return true;
 	}
 
-	shared_ptr<const SectorObject> Building::applySectorBulkheadDoorOptions(uint32_t sectorIndex,
+	shared_ptr<const SectorObject> World::applySectorBulkheadDoorOptions(uint32_t sectorIndex,
 		uint32_t objectIndex, CreateBulkheadDoorOptions const& options)
 	{
 		if (!mSimulationPaused)
-			throw BuildingException(this, "Editing a Bulkhead Door requires the simulation to be paused");
+			throw WorldException(this, "Editing a Bulkhead Door requires the simulation to be paused");
 		if (sectorIndex >= mSectors.size() || !mSectors[sectorIndex]
 			|| objectIndex >= mSectors[sectorIndex]->getNumObjects())
-			throw BuildingException(this, "The selected Bulkhead Door no longer exists");
+			throw WorldException(this, "The selected Bulkhead Door no longer exists");
 		auto object = dynamic_pointer_cast<BulkheadDoorSectorObject>(
 			mSectors[sectorIndex]->getObject(objectIndex));
-		if (!object) throw BuildingException(this, "The selected object is not a Bulkhead Door");
+		if (!object) throw WorldException(this, "The selected object is not a Bulkhead Door");
 		if (options.holdOpenSeconds < 0.0f)
-			throw BuildingException(this, "Bulkhead Door hold-open time cannot be negative");
+			throw WorldException(this, "Bulkhead Door hold-open time cannot be negative");
 		if (options.crossingLanes != 1)
-			throw BuildingException(this, "Bulkhead Doors support exactly one crossing lane");
+			throw WorldException(this, "Bulkhead Doors support exactly one crossing lane");
 		if (options.activationMode != DoorActivationMode::RemoteControlled
 			&& (options.controls[0] || options.controls[1]))
-			throw BuildingException(this, "Physical controls require a remote-controlled Bulkhead Door");
+			throw WorldException(this, "Physical controls require a remote-controlled Bulkhead Door");
 
 		auto records = mConstructionRecords;
 		auto thresholdX = object->getCellX() + 1;
@@ -4308,7 +4310,7 @@ namespace core
 				&& record.c + (record.i == CORE_SIDE_RIGHT ? 1u : 0u) == thresholdX;
 		});
 		if (found == records.end())
-			throw BuildingException(this, "The Bulkhead Door has no authored definition");
+			throw WorldException(this, "The Bulkhead Door has no authored definition");
 		found->p = options.controls[0]; found->q = options.controls[1];
 		found->j = static_cast<int32_t>(options.activationMode);
 		found->x = options.holdOpenSeconds; found->d = options.crossingLanes;
@@ -4324,13 +4326,13 @@ namespace core
 					&& candidate->getCellX() + 1 == thresholdX && candidate->getCellY() == y)
 					return candidate;
 			}
-		throw BuildingException(this, "Could not locate the edited Bulkhead Door");
+		throw WorldException(this, "Could not locate the edited Bulkhead Door");
 	}
 
-	bool Building::removeSectorBulkheadDoor(uint32_t sectorIndex, uint32_t objectIndex)
+	bool World::removeSectorBulkheadDoor(uint32_t sectorIndex, uint32_t objectIndex)
 	{
 		if (!mSimulationPaused)
-			throw BuildingException(this, "Deleting a Bulkhead Door requires the simulation to be paused");
+			throw WorldException(this, "Deleting a Bulkhead Door requires the simulation to be paused");
 		if (sectorIndex >= mSectors.size() || !mSectors[sectorIndex]
 			|| objectIndex >= mSectors[sectorIndex]->getNumObjects()) return false;
 		auto object = dynamic_pointer_cast<BulkheadDoorSectorObject>(
@@ -4365,7 +4367,7 @@ namespace core
 		return true;
 	}
 
-	bool Building::isBulkheadDoorOwnedControl(shared_ptr<const SectorObject> const& object,
+	bool World::isBulkheadDoorOwnedControl(shared_ptr<const SectorObject> const& object,
 		uint32_t* doorSectorIndex, uint32_t* doorObjectIndex) const
 	{
 		if (!object || object->getObjectType() != SectorObjectType::InteractionPoint) return false;
@@ -4390,7 +4392,7 @@ namespace core
 		return false;
 	}
 
-	bool Building::getRoomLadderOptions(uint32_t sectorIndex, uint32_t objectIndex,
+	bool World::getRoomLadderOptions(uint32_t sectorIndex, uint32_t objectIndex,
 		CreateLadderOptions& options) const
 	{
 		if (sectorIndex >= mSectors.size() || !mSectors[sectorIndex]
@@ -4410,19 +4412,19 @@ namespace core
 		return true;
 	}
 
-	shared_ptr<const SectorObject> Building::applyRoomLadderOptions(uint32_t sectorIndex,
+	shared_ptr<const SectorObject> World::applyRoomLadderOptions(uint32_t sectorIndex,
 		uint32_t objectIndex, CreateLadderOptions const& options)
 	{
 		if (!mSimulationPaused)
-			throw BuildingException(this, "Editing a Room Ladder requires the simulation to be paused");
+			throw WorldException(this, "Editing a Room Ladder requires the simulation to be paused");
 		if (sectorIndex >= mSectors.size() || !mSectors[sectorIndex]
 			|| objectIndex >= mSectors[sectorIndex]->getNumObjects())
-			throw BuildingException(this, "The selected Room Ladder no longer exists");
+			throw WorldException(this, "The selected Room Ladder no longer exists");
 		auto object = dynamic_pointer_cast<LadderSectorObject>(mSectors[sectorIndex]->getObject(objectIndex));
-		if (!object) throw BuildingException(this, "The selected object is not a Room Ladder");
+		if (!object) throw WorldException(this, "The selected object is not a Room Ladder");
 		if (roomLadderIsActive(object->getLadder()))
-			throw BuildingException(this, "The Room Ladder cannot be edited while it is in use");
-		validateSectorLadderOptions("Building::applyRoomLadderOptions", options);
+			throw WorldException(this, "The Room Ladder cannot be edited while it is in use");
+		validateSectorLadderOptions("World::applyRoomLadderOptions", options);
 
 		auto records = mConstructionRecords;
 		auto found = find_if(records.begin(), records.end(), [&](ConstructionRecord const& record)
@@ -4431,12 +4433,12 @@ namespace core
 				&& mSectors[sectorIndex]->getCellX() + record.c == object->getCellX()
 				&& mSectors[sectorIndex]->getCellY() + record.b == object->getCellY();
 		});
-		if (found == records.end()) throw BuildingException(this, "The Room Ladder has no authored definition");
+		if (found == records.end()) throw WorldException(this, "The Room Ladder has no authored definition");
 		found->p = options.extensible;
 		found->q = options.extensible ? options.startExtended : true;
 		found->e = options.directionalBatchLimit;
 		string diagnostic;
-		if (!normalizeRoomLadderRecords(records, diagnostic)) throw BuildingException(this, diagnostic);
+		if (!normalizeRoomLadderRecords(records, diagnostic)) throw WorldException(this, diagnostic);
 		auto x = object->getCellX(), y = object->getCellY();
 		rebuildFromConstructionRecords(std::move(records));
 		auto sector = _getSector(sectorIndex);
@@ -4446,19 +4448,19 @@ namespace core
 			if (candidate && candidate->getObjectType() == SectorObjectType::Ladder
 				&& candidate->getCellX() == x && candidate->getCellY() == y) return candidate;
 		}
-		throw BuildingException(this, "Could not locate the edited Room Ladder");
+		throw WorldException(this, "Could not locate the edited Room Ladder");
 	}
 
-	bool Building::removeRoomLadder(uint32_t sectorIndex, uint32_t objectIndex)
+	bool World::removeRoomLadder(uint32_t sectorIndex, uint32_t objectIndex)
 	{
 		if (!mSimulationPaused)
-			throw BuildingException(this, "Deleting a Room Ladder requires the simulation to be paused");
+			throw WorldException(this, "Deleting a Room Ladder requires the simulation to be paused");
 		if (sectorIndex >= mSectors.size() || !mSectors[sectorIndex]
 			|| objectIndex >= mSectors[sectorIndex]->getNumObjects()) return false;
 		auto object = dynamic_pointer_cast<LadderSectorObject>(mSectors[sectorIndex]->getObject(objectIndex));
 		if (!object) return false;
 		if (roomLadderIsActive(object->getLadder()))
-			throw BuildingException(this, "The Room Ladder cannot be deleted while it is in use");
+			throw WorldException(this, "The Room Ladder cannot be deleted while it is in use");
 		CreateLadderOptions authored{};
 		if (!getRoomLadderOptions(sectorIndex, objectIndex, authored)) return false;
 
@@ -4482,12 +4484,12 @@ namespace core
 		}
 		if (!removed) return false;
 		string diagnostic;
-		if (!normalizeRoomLadderRecords(records, diagnostic)) throw BuildingException(this, diagnostic);
+		if (!normalizeRoomLadderRecords(records, diagnostic)) throw WorldException(this, diagnostic);
 		rebuildFromConstructionRecords(std::move(records));
 		return true;
 	}
 
-	bool Building::getSectorForceBridgeOptions(uint32_t sectorIndex, uint32_t objectIndex,
+	bool World::getSectorForceBridgeOptions(uint32_t sectorIndex, uint32_t objectIndex,
 		CreateForceBridgeOptions& options) const
 	{
 		if (sectorIndex >= mSectors.size() || !mSectors[sectorIndex]
@@ -4508,19 +4510,19 @@ namespace core
 		return true;
 	}
 
-	shared_ptr<const SectorObject> Building::applySectorForceBridgeOptions(uint32_t sectorIndex,
+	shared_ptr<const SectorObject> World::applySectorForceBridgeOptions(uint32_t sectorIndex,
 		uint32_t objectIndex, CreateForceBridgeOptions const& options)
 	{
 		if (!mSimulationPaused)
-			throw BuildingException(this, "Editing a Force Bridge requires the simulation to be paused");
+			throw WorldException(this, "Editing a Force Bridge requires the simulation to be paused");
 		if (sectorIndex >= mSectors.size() || !mSectors[sectorIndex]
 			|| objectIndex >= mSectors[sectorIndex]->getNumObjects())
-			throw BuildingException(this, "The selected Force Bridge no longer exists");
+			throw WorldException(this, "The selected Force Bridge no longer exists");
 		auto object = dynamic_pointer_cast<ForceBridgeSectorObject>(mSectors[sectorIndex]->getObject(objectIndex));
-		if (!object) throw BuildingException(this, "The selected object is not a Force Bridge");
+		if (!object) throw WorldException(this, "The selected object is not a Force Bridge");
 		if (forceBridgeIsActive(object->getForceBridge()))
-			throw BuildingException(this, "The Force Bridge cannot be edited while it is in use");
-		validateSectorForceBridgeOptions("Building::applySectorForceBridgeOptions", options);
+			throw WorldException(this, "The Force Bridge cannot be edited while it is in use");
+		validateSectorForceBridgeOptions("World::applySectorForceBridgeOptions", options);
 
 		auto records = mConstructionRecords;
 		auto sector = mSectors[sectorIndex];
@@ -4530,7 +4532,7 @@ namespace core
 				&& sector->getCellX() + record.c == object->getCellX()
 				&& sector->getCellY() + record.b == object->getCellY();
 		});
-		if (found == records.end()) throw BuildingException(this, "The Force Bridge has no authored definition");
+		if (found == records.end()) throw WorldException(this, "The Force Bridge has no authored definition");
 		found->d = options.width; found->i = options.fromSide; found->p = options.extensible;
 		found->q = options.startExtended; found->e = options.controlCount;
 		auto x = object->getCellX(), y = object->getCellY();
@@ -4542,19 +4544,19 @@ namespace core
 			if (candidate && candidate->getObjectType() == SectorObjectType::ForceBridge
 				&& candidate->getCellX() == x && candidate->getCellY() == y) return candidate;
 		}
-		throw BuildingException(this, "Could not locate the edited Force Bridge");
+		throw WorldException(this, "Could not locate the edited Force Bridge");
 	}
 
-	bool Building::removeSectorForceBridge(uint32_t sectorIndex, uint32_t objectIndex)
+	bool World::removeSectorForceBridge(uint32_t sectorIndex, uint32_t objectIndex)
 	{
 		if (!mSimulationPaused)
-			throw BuildingException(this, "Deleting a Force Bridge requires the simulation to be paused");
+			throw WorldException(this, "Deleting a Force Bridge requires the simulation to be paused");
 		if (sectorIndex >= mSectors.size() || !mSectors[sectorIndex]
 			|| objectIndex >= mSectors[sectorIndex]->getNumObjects()) return false;
 		auto object = dynamic_pointer_cast<ForceBridgeSectorObject>(mSectors[sectorIndex]->getObject(objectIndex));
 		if (!object) return false;
 		if (forceBridgeIsActive(object->getForceBridge()))
-			throw BuildingException(this, "The Force Bridge cannot be deleted while it is in use");
+			throw WorldException(this, "The Force Bridge cannot be deleted while it is in use");
 		CreateForceBridgeOptions options;
 		if (!getSectorForceBridgeOptions(sectorIndex, objectIndex, options)) return false;
 
@@ -4581,7 +4583,7 @@ namespace core
 		return true;
 	}
 
-	bool Building::isForceBridgeOwnedControl(shared_ptr<const SectorObject> const& object,
+	bool World::isForceBridgeOwnedControl(shared_ptr<const SectorObject> const& object,
 		uint32_t* forceBridgeSectorIndex, uint32_t* forceBridgeObjectIndex) const
 	{
 		if (!object || object->getObjectType() != SectorObjectType::InteractionPoint) return false;
@@ -4605,7 +4607,7 @@ namespace core
 		return false;
 	}
 
-	bool Building::getPlatformLiftOptions(uint32_t sectorIndex, uint32_t objectIndex,
+	bool World::getPlatformLiftOptions(uint32_t sectorIndex, uint32_t objectIndex,
 		CreateLiftOptions& options) const
 	{
 		if (sectorIndex >= mSectors.size() || objectIndex >= mSectors[sectorIndex]->getNumObjects()) return false;
@@ -4627,7 +4629,7 @@ namespace core
 		return true;
 	}
 
-	bool Building::preparePlatformLiftEdit(PlatformLiftEditPlan const& plan,
+	bool World::preparePlatformLiftEdit(PlatformLiftEditPlan const& plan,
 		vector<ConstructionRecord>& records, string& diagnostic) const
 	{
 		records = mConstructionRecords;
@@ -4667,7 +4669,7 @@ namespace core
 		}
 		try
 		{
-			auto candidate = makeCandidateBuilding();
+			auto candidate = makeCandidateWorld();
 			candidate->mDeserializingConstruction = true;
 			for (auto const& record : records) candidate->applyConstructionRecord(record);
 			candidate->finishBuild();
@@ -4678,7 +4680,7 @@ namespace core
 		return true;
 	}
 
-	Building::PlatformLiftEditPlan Building::planPlatformLiftEdit(uint32_t sectorIndex,
+	World::PlatformLiftEditPlan World::planPlatformLiftEdit(uint32_t sectorIndex,
 		uint32_t objectIndex, CreateLiftOptions const& options) const
 	{
 		PlatformLiftEditPlan plan;
@@ -4729,7 +4731,7 @@ namespace core
 		return plan;
 	}
 
-	Building::PlatformLiftEditPlan Building::planRemovePlatformLift(uint32_t sectorIndex,
+	World::PlatformLiftEditPlan World::planRemovePlatformLift(uint32_t sectorIndex,
 		uint32_t objectIndex) const
 	{
 		CreateLiftOptions options;
@@ -4743,14 +4745,14 @@ namespace core
 		return plan;
 	}
 
-	shared_ptr<const SectorObject> Building::applyPlatformLiftEdit(PlatformLiftEditPlan const& requested)
+	shared_ptr<const SectorObject> World::applyPlatformLiftEdit(PlatformLiftEditPlan const& requested)
 	{
-		if (!mSimulationPaused) throw BuildingException(this, "Editing a PlatformLift requires the simulation to be paused");
+		if (!mSimulationPaused) throw WorldException(this, "Editing a PlatformLift requires the simulation to be paused");
 		auto plan = requested.remove ? planRemovePlatformLift(requested.sectorIndex, requested.objectIndex)
 			: planPlatformLiftEdit(requested.sectorIndex, requested.objectIndex, requested.options);
-		if (!plan.valid) throw BuildingException(this, plan.diagnostic);
+		if (!plan.valid) throw WorldException(this, plan.diagnostic);
 		vector<ConstructionRecord> records; string diagnostic;
-		if (!preparePlatformLiftEdit(plan, records, diagnostic)) throw BuildingException(this, diagnostic);
+		if (!preparePlatformLiftEdit(plan, records, diagnostic)) throw WorldException(this, diagnostic);
 		auto room = mSectors[plan.sectorIndex];
 		auto x = room->getCellX();
 		if (plan.objectIndex < room->getNumObjects() && room->getObject(plan.objectIndex))
@@ -4764,10 +4766,10 @@ namespace core
 			if (object && object->getObjectType() == SectorObjectType::Lift && object->getCellX() == x)
 				return object;
 		}
-		throw BuildingException(this, "Could not locate the edited PlatformLift");
+		throw WorldException(this, "Could not locate the edited PlatformLift");
 	}
 
-	Building::WalkwayEditPlan Building::planRemoveSectorWalkway(uint32_t sectorIndex,
+	World::WalkwayEditPlan World::planRemoveSectorWalkway(uint32_t sectorIndex,
 		uint32_t objectIndex) const
 	{
 		WalkwayEditPlan plan;
@@ -4793,23 +4795,23 @@ namespace core
 		return plan;
 	}
 
-	bool Building::applyWalkwayEdit(WalkwayEditPlan const& plan)
+	bool World::applyWalkwayEdit(WalkwayEditPlan const& plan)
 	{
-		if (!plan.valid) throw BuildingException(this, plan.diagnostic);
+		if (!plan.valid) throw WorldException(this, plan.diagnostic);
 		return removeSectorWalkway(plan.sectorIndex, plan.objectIndex);
 	}
 
-	bool Building::removeSectorWalkway(uint32_t sectorIndex, uint32_t objectIndex)
+	bool World::removeSectorWalkway(uint32_t sectorIndex, uint32_t objectIndex)
 	{
 		if (!mSimulationPaused)
-			throw BuildingException(this, "Deleting a Walkway requires the simulation to be paused");
+			throw WorldException(this, "Deleting a Walkway requires the simulation to be paused");
 		if (sectorIndex >= mSectors.size() || !mSectors[sectorIndex]
 			|| objectIndex >= mSectors[sectorIndex]->getNumObjects()) return false;
 		auto object = dynamic_pointer_cast<WalkwaySectorObject>(
 			mSectors[sectorIndex]->getObject(objectIndex));
 		if (!object) return false;
 		if (walkwayHasOccupant(object->getSector(), object->getCellX(), object->getCellY()))
-			throw BuildingException(this, "Move the Agent standing on this Walkway before deleting it");
+			throw WorldException(this, "Move the Agent standing on this Walkway before deleting it");
 		for (uint32_t i = 0; i < object->getSector()->getNumObjects(); ++i)
 		{
 			auto ladderObject = dynamic_pointer_cast<LadderSectorObject>(object->getSector()->getObject(i));
@@ -4818,7 +4820,7 @@ namespace core
 			uint32_t top = ladderObject->getCellY() + ladder->getDecksHigh() - 1;
 			if ((ladderObject->getCellY() == object->getCellY() || top == object->getCellY())
 				&& roomLadderIsActive(ladder))
-				throw BuildingException(this, "A Room Ladder cannot be changed while it is in use");
+				throw WorldException(this, "A Room Ladder cannot be changed while it is in use");
 		}
 
 		auto source = find_if(mConstructionRecords.begin(), mConstructionRecords.end(),
@@ -4849,7 +4851,7 @@ namespace core
 				if (candidate && candidate->getCellX() == supportX) { liftObject = candidate; break; }
 			}
 			if (liftObject && platformLiftIsActive(liftObject->getLift()))
-				throw BuildingException(this, "The connected PlatformLift is in use");
+				throw WorldException(this, "The connected PlatformLift is in use");
 			if (record.values.size() <= 2) platformDeletions.insert(recordIndex);
 			else
 			{
@@ -4869,7 +4871,7 @@ namespace core
 			uint32_t originSupport = record.i == CORE_SIDE_LEFT ? bridgeX - 1 : bridgeRightSupport;
 			uint32_t destinationSupport = record.i == CORE_SIDE_LEFT ? bridgeRightSupport : bridgeX - 1;
 			if (supportX == originSupport)
-				throw BuildingException(this,
+				throw WorldException(this,
 					"Cannot delete the Walkway on the side from which a Force Bridge extends");
 			if (supportX != destinationSupport) continue;
 
@@ -4881,7 +4883,7 @@ namespace core
 					&& candidate->getCellY() == supportY) { bridgeObject = candidate; break; }
 			}
 			if (bridgeObject && forceBridgeIsActive(bridgeObject->getForceBridge()))
-				throw BuildingException(this, "The Force Bridge cannot be resized while it is in use");
+				throw WorldException(this, "The Force Bridge cannot be resized while it is in use");
 
 			auto updated = record;
 			bool foundWalkway = false;
@@ -4898,7 +4900,7 @@ namespace core
 						break;
 					}
 					if (floor != CellFloorType::None)
-						throw BuildingException(this,
+						throw WorldException(this,
 							"Another floor object blocks the Force Bridge before the next Walkway");
 				}
 			}
@@ -4916,15 +4918,15 @@ namespace core
 						break;
 					}
 					if (floor != CellFloorType::None)
-						throw BuildingException(this,
+						throw WorldException(this,
 							"Another floor object blocks the Force Bridge before the next Walkway");
 				}
 			}
 			if (!foundWalkway)
-				throw BuildingException(this,
+				throw WorldException(this,
 					"Cannot delete this Walkway because no replacement Walkway supports the Force Bridge");
 			if (updated.d == 0 || updated.d > CORE_FORCEBRIDGE_MAX_SIZE)
-				throw BuildingException(this, format(
+				throw WorldException(this, format(
 					"The next Walkway is farther than the maximum Force Bridge width of {}",
 					CORE_FORCEBRIDGE_MAX_SIZE));
 			bridgeUpdates.emplace(recordIndex, std::move(updated));
@@ -4974,10 +4976,10 @@ namespace core
 		return true;
 	}
 
-	bool Building::removeSectorWindow(uint32_t sectorIndex, uint32_t objectIndex)
+	bool World::removeSectorWindow(uint32_t sectorIndex, uint32_t objectIndex)
 	{
 		if (!mSimulationPaused)
-			throw BuildingException(this, "Deleting a Window requires the simulation to be paused");
+			throw WorldException(this, "Deleting a Window requires the simulation to be paused");
 		if (sectorIndex >= mSectors.size() || !mSectors[sectorIndex]
 			|| objectIndex >= mSectors[sectorIndex]->getNumObjects()) return false;
 		auto object = dynamic_pointer_cast<WindowSectorObject>(
@@ -5041,7 +5043,7 @@ namespace core
 		return true;
 	}
 
-	Building::ObjectMovePlan Building::planMoveSectorObject(uint32_t sectorIndex,
+	World::ObjectMovePlan World::planMoveSectorObject(uint32_t sectorIndex,
 		uint32_t objectIndex, uint32_t x, uint32_t y) const
 	{
 		ObjectMovePlan plan;
@@ -5095,7 +5097,7 @@ namespace core
 		return plan;
 	}
 
-	Building::ObjectMovePlan Building::planResizeSectorWindow(uint32_t sectorIndex,
+	World::ObjectMovePlan World::planResizeSectorWindow(uint32_t sectorIndex,
 		uint32_t objectIndex, uint32_t x, uint32_t y, uint32_t cellsWide,
 		uint32_t decksHigh) const
 	{
@@ -5125,7 +5127,7 @@ namespace core
 		return plan;
 	}
 
-	Building::ObjectMovePlan Building::planResizeSectorDoor(uint32_t sectorIndex,
+	World::ObjectMovePlan World::planResizeSectorDoor(uint32_t sectorIndex,
 		uint32_t objectIndex, uint32_t x, uint32_t y, uint32_t cellsWide,
 		uint32_t decksHigh) const
 	{
@@ -5160,16 +5162,16 @@ namespace core
 		return plan;
 	}
 
-	shared_ptr<const SectorObject> Building::applyObjectMove(ObjectMovePlan const& requested)
+	shared_ptr<const SectorObject> World::applyObjectMove(ObjectMovePlan const& requested)
 	{
 		if (!mSimulationPaused)
-			throw BuildingException(this, "Moving an object requires the simulation to be paused");
+			throw WorldException(this, "Moving an object requires the simulation to be paused");
 		auto plan = requested;
 		vector<ConstructionRecord> records;
 		uint32_t newSectorIndex, newObjectIndex;
 		string diagnostic;
 		if (!prepareObjectMove(plan, records, newSectorIndex, newObjectIndex, diagnostic))
-			throw BuildingException(this, diagnostic);
+			throw WorldException(this, diagnostic);
 
 		auto const agents = captureAgentsForReplay();
 
@@ -5193,7 +5195,7 @@ namespace core
 		return getSector(newSectorIndex)->getObject(newObjectIndex);
 	}
 
-	Building::LocationEditPlan Building::planResizeLocation(uint32_t sectorIndex,
+	World::LocationEditPlan World::planResizeLocation(uint32_t sectorIndex,
 		uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh) const
 	{
 		LocationEditPlan plan;
@@ -5244,7 +5246,7 @@ namespace core
 			&& cellsWide == sector->getCellsWide() && decksHigh == sector->getDecksHigh();
 		if (cellsWide == 0 || decksHigh == 0 || x + cellsWide > mCellsWide || y + decksHigh > mDecksHigh)
 		{
-			plan.diagnostic = "The resized sector is outside the Building bounds";
+			plan.diagnostic = "The resized sector is outside the World bounds";
 			return plan;
 		}
 		bool corridor = sector->getTopDeckHeight() == CORE_CORRIDOR_HEIGHT;
@@ -5375,19 +5377,19 @@ namespace core
 		return plan;
 	}
 
-	Building::LocationEditPlan Building::planRemoveLocation(uint32_t sectorIndex) const
+	World::LocationEditPlan World::planRemoveLocation(uint32_t sectorIndex) const
 	{
 		return planRemoveOccupiable(sectorIndex, SectorType::Location,
 			"Only rooms and corridors can be deleted");
 	}
 
-	Building::LocationEditPlan Building::planRemoveFacade(uint32_t sectorIndex) const
+	World::LocationEditPlan World::planRemoveFacade(uint32_t sectorIndex) const
 	{
 		return planRemoveOccupiable(sectorIndex, SectorType::Facade,
 			"Only Facades can be deleted here");
 	}
 
-	Building::LocationEditPlan Building::planRemoveOccupiable(uint32_t sectorIndex,
+	World::LocationEditPlan World::planRemoveOccupiable(uint32_t sectorIndex,
 		SectorType requiredType, std::string const& refusal) const
 	{
 		LocationEditPlan plan;
@@ -5482,7 +5484,7 @@ namespace core
 		return plan;
 	}
 
-	uint32_t Building::applyLocationEdit(LocationEditPlan const& requested)
+	uint32_t World::applyLocationEdit(LocationEditPlan const& requested)
 	{
 		// A Background edit is carried in the same plan shape but reconstructs itself
 		// through the Background path, which knows what taking a Background away costs
@@ -5499,13 +5501,13 @@ namespace core
 			? (facade ? planRemoveFacade(requested.sectorIndex) : planRemoveLocation(requested.sectorIndex))
 			: planResizeLocation(requested.sectorIndex, requested.x, requested.y,
 				requested.cellsWide, requested.decksHigh);
-		if (!plan.valid) throw BuildingException(this, plan.diagnostic);
+		if (!plan.valid) throw WorldException(this, plan.diagnostic);
 
 		vector<ConstructionRecord> records;
 		uint32_t newSectorIndex;
 		string diagnostic;
 		if (!prepareLocationEdit(plan, records, newSectorIndex, diagnostic))
-			throw BuildingException(this, diagnostic);
+			throw WorldException(this, diagnostic);
 
 		// Agents standing in the Room being moved follow it. Every Agent carries
 		// its Agent group across the replay (#122).
@@ -5543,7 +5545,7 @@ namespace core
 		return newSectorIndex;
 	}
 
-	void Building::addUncoveredWindowConsequences(LocationEditPlan& plan) const
+	void World::addUncoveredWindowConsequences(LocationEditPlan& plan) const
 	{
 		if (plan.sectorIndex >= mSectors.size() || !mSectors[plan.sectorIndex]) return;
 		auto const background = mSectors[plan.sectorIndex];
@@ -5559,7 +5561,7 @@ namespace core
 		}
 	}
 
-	bool Building::prepareBackgroundEdit(LocationEditPlan const& plan,
+	bool World::prepareBackgroundEdit(LocationEditPlan const& plan,
 		vector<ConstructionRecord>& records, uint32_t& newSectorIndex,
 		string& diagnostic) const
 	{
@@ -5598,7 +5600,7 @@ namespace core
 			return false;
 		};
 
-		auto candidate = makeCandidateBuilding();
+		auto candidate = makeCandidateWorld();
 		candidate->mDeserializingConstruction = true;
 		vector<uint32_t> sectorMap(mSectors.size(), ~0u);
 		uint32_t oldSectorIndex = 0;
@@ -5648,7 +5650,7 @@ namespace core
 		return true;
 	}
 
-	Building::LocationEditPlan Building::planRemoveBackground(uint32_t sectorIndex) const
+	World::LocationEditPlan World::planRemoveBackground(uint32_t sectorIndex) const
 	{
 		LocationEditPlan plan;
 		plan.remove = true;
@@ -5669,7 +5671,7 @@ namespace core
 		return plan;
 	}
 
-	Building::LocationEditPlan Building::planResizeBackground(uint32_t sectorIndex,
+	World::LocationEditPlan World::planResizeBackground(uint32_t sectorIndex,
 		uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh) const
 	{
 		LocationEditPlan plan;
@@ -5686,7 +5688,7 @@ namespace core
 			&& cellsWide == sector->getCellsWide() && decksHigh == sector->getDecksHigh();
 		if (cellsWide == 0 || decksHigh == 0 || x + cellsWide > mCellsWide || y + decksHigh > mDecksHigh)
 		{
-			plan.diagnostic = "The resized Background is outside the Building bounds";
+			plan.diagnostic = "The resized Background is outside the World bounds";
 			return plan;
 		}
 		auto const layer = mLayers[sector->getLayerIndex()];
@@ -5707,21 +5709,21 @@ namespace core
 		return plan;
 	}
 
-	uint32_t Building::applyBackgroundEdit(LocationEditPlan const& requested)
+	uint32_t World::applyBackgroundEdit(LocationEditPlan const& requested)
 	{
 		LocationEditPlan plan = requested.remove
 			? planRemoveBackground(requested.sectorIndex)
 			: planResizeBackground(requested.sectorIndex, requested.x, requested.y,
 				requested.cellsWide, requested.decksHigh);
-		if (!plan.valid) throw BuildingException(this, plan.diagnostic);
+		if (!plan.valid) throw WorldException(this, plan.diagnostic);
 
 		vector<ConstructionRecord> records;
 		uint32_t newSectorIndex;
 		string diagnostic;
 		if (!prepareBackgroundEdit(plan, records, newSectorIndex, diagnostic))
-			throw BuildingException(this, diagnostic);
+			throw WorldException(this, diagnostic);
 
-		// Nothing walks a Background, but every other Agent in the Building is
+		// Nothing walks a Background, but every other Agent in the World is
 		// rebuilt with it and has to come back to the same place, and in the same
 		// Agent group (#122).
 		auto const agents = captureAgentsForReplay();
@@ -5743,7 +5745,7 @@ namespace core
 		return newSectorIndex;
 	}
 
-	bool Building::setBackgroundColour(uint32_t sectorIndex, BackgroundColour const& colour,
+	bool World::setBackgroundColour(uint32_t sectorIndex, BackgroundColour const& colour,
 		std::string* diagnostic)
 	{
 		if (sectorIndex >= mSectors.size() || !mSectors[sectorIndex]
@@ -5777,7 +5779,7 @@ namespace core
 		return true;
 	}
 
-	bool Building::setFacadeColour(uint32_t sectorIndex, BackgroundColour const& colour,
+	bool World::setFacadeColour(uint32_t sectorIndex, BackgroundColour const& colour,
 		std::string* diagnostic)
 	{
 		if (sectorIndex >= mSectors.size() || !mSectors[sectorIndex]

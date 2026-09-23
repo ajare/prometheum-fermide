@@ -16,7 +16,7 @@
 
 namespace core
 {
-	class Building;
+	class World;
 	class Door;
 	class ExtensibleObject;
 	class ForceBridge;
@@ -115,7 +115,7 @@ namespace core
 
 	class InteractionPoint
 	{
-		friend class Building;
+		friend class World;
 		friend class SimulationCoordinator;
 
 		std::string mName;
@@ -168,7 +168,7 @@ namespace core
 
 	class DeviceOperation
 	{
-		friend class Building;
+		friend class World;
 		friend class SimulationCoordinator;
 
 		std::string mName;
@@ -205,7 +205,7 @@ namespace core
 
 	class InteractionRequest
 	{
-		friend class Building;
+		friend class World;
 		friend class SimulationCoordinator;
 
 		InteractionPointId mPoint;
@@ -286,7 +286,7 @@ namespace core
 
 	class TraversalResource
 	{
-		friend class Building;
+		friend class World;
 		friend class SimulationCoordinator;
 		std::string mName;
 		std::shared_ptr<Door> mDoor;
@@ -476,7 +476,7 @@ namespace core
 
 	class TraversalRequest
 	{
-		friend class Building;
+		friend class World;
 		friend class SimulationCoordinator;
 		AgentId mOwner;
 		EdgeType mEdgeType;
@@ -553,7 +553,7 @@ namespace core
 
 	class TraversalPermit
 	{
-		friend class Building;
+		friend class World;
 		friend class SimulationCoordinator;
 		TraversalRequestId mRequest;
 		AgentId mOwner;

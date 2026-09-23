@@ -10,7 +10,7 @@
 
 #include "core/AgentTagRegistry.h"
 #include "core/AgentTagRegistryDocument.h"
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/YamlSerializer.h"
 
 namespace
@@ -53,12 +53,12 @@ namespace
 		if (!output) throw std::runtime_error("Could not write registry test fixture");
 	}
 
-	std::string serializeBuilding(core::Building const& building)
+	std::string serializeWorld(core::World const& world)
 	{
 		auto writer = core::YamlSerializer::toString();
 		core::SerializationWorkData workData;
 		workData.markSerializedUnmodified = false;
-		building.serialize(*writer, workData);
+		world.serialize(*writer, workData);
 		writer->serialize();
 		return writer->getSerializedString();
 	}
@@ -73,43 +73,43 @@ namespace
 		return writer->getSerializedString();
 	}
 
-	std::shared_ptr<core::Building> loadBuilding(std::filesystem::path const& path)
+	std::shared_ptr<core::World> loadWorld(std::filesystem::path const& path)
 	{
-		auto loaded = std::make_shared<core::Building>("Loading", 1, 1);
+		auto loaded = std::make_shared<core::World>("Loading", 1, 1);
 		auto reader = core::YamlSerializer::fromFile(path.string());
 		reader->deserialize();
 		core::SerializationWorkData workData;
-		require(loaded->deserialize(*reader, workData), "The Building did not reload");
+		require(loaded->deserialize(*reader, workData), "The World did not reload");
 		return loaded;
 	}
 
-	void savedBuildingCreatesAndReopensAdjacentRegistry()
+	void savedWorldCreatesAndReopensAdjacentRegistry()
 	{
 		TemporaryDirectory temporary;
-		auto building = std::make_shared<core::Building>("Station", 4, 2);
-		auto const buildingPath = temporary.path / "station.yaml";
+		auto world = std::make_shared<core::World>("Station", 4, 2);
+		auto const worldPath = temporary.path / "station.world.yaml";
 
 		std::string diagnostic;
-		require(!canCreateAgentTagRegistry(building, "", &diagnostic),
-			"The Tags panel enabled registry creation before the Building was saved");
+		require(!canCreateAgentTagRegistry(world, "", &diagnostic),
+			"The Tags panel enabled registry creation before the World was saved");
 		require(diagnostic.find("Save") != std::string::npos,
 			"The unsaved-registry diagnostic did not explain the saved-location requirement");
 
-		building->saveTo(buildingPath.string());
-		require(canCreateAgentTagRegistry(building, buildingPath.string(), &diagnostic),
-			"The Tags panel did not enable registry creation for a saved Building");
-		auto registry = core::createAndAttachAgentTagRegistry(*building, buildingPath);
+		world->saveTo(worldPath.string());
+		require(canCreateAgentTagRegistry(world, worldPath.string(), &diagnostic),
+			"The Tags panel did not enable registry creation for a saved World");
+		auto registry = core::createAndAttachAgentTagRegistry(*world, worldPath);
 		auto const registryPath = temporary.path / "station.tags.yaml";
 		require(std::filesystem::is_regular_file(registryPath),
 			"The adjacent .tags.yaml registry was not created");
-		require(building->hasAgentTagRegistryReference()
-			&& building->hasAttachedAgentTagRegistry(),
-			"The new registry was not attached to the Building");
-		require(building->getAgentTagRegistryFilename() == "station.tags.yaml",
-			"The Building did not retain a basename-only registry reference");
-		require(building->getExpectedAgentTagRegistryUuid() == registry->getUuid()
+		require(world->hasAgentTagRegistryReference()
+			&& world->hasAttachedAgentTagRegistry(),
+			"The new registry was not attached to the World");
+		require(world->getAgentTagRegistryFilename() == "station.tags.yaml",
+			"The World did not retain a basename-only registry reference");
+		require(world->getExpectedAgentTagRegistryUuid() == registry->getUuid()
 			&& core::AgentTagRegistry::uuidIsValid(registry->getUuid()),
-			"The Building did not retain the registry's stable UUID");
+			"The World did not retain the registry's stable UUID");
 		require(registry->getNextAgentTagId() == 1
 			&& registry->getNextPropertyRevision() == 1,
 			"A new registry did not start both non-reused allocators at one");
@@ -124,18 +124,18 @@ namespace
 
 		// Persist the attachment, then model closing both documents and reopening
 		// through the same core workflow used by the GUI.
-		building->saveTo(buildingPath.string());
-		auto const buildingYaml = readText(buildingPath);
-		require(buildingYaml.find("version: 14") != std::string::npos
-			&& buildingYaml.find("filename: station.tags.yaml") != std::string::npos
-			&& buildingYaml.find("expectedUuid: " + registry->getUuid()) != std::string::npos,
-			"The Building did not persist its version-10 registry reference");
+		world->saveTo(worldPath.string());
+		auto const worldYaml = readText(worldPath);
+		require(worldYaml.find("version: 14") != std::string::npos
+			&& worldYaml.find("filename: station.tags.yaml") != std::string::npos
+			&& worldYaml.find("expectedUuid: " + registry->getUuid()) != std::string::npos,
+			"The World did not persist its version-10 registry reference");
 
-		auto reopened = loadBuilding(buildingPath);
+		auto reopened = loadWorld(worldPath);
 		require(reopened->hasAgentTagRegistryReference()
 			&& !reopened->hasAttachedAgentTagRegistry(),
-			"Building deserialization did not retain an unresolved registry reference");
-		auto reopenedRegistry = core::loadAndAttachAgentTagRegistry(*reopened, buildingPath);
+			"World deserialization did not retain an unresolved registry reference");
+		auto reopenedRegistry = core::loadAndAttachAgentTagRegistry(*reopened, worldPath);
 		require(reopened->hasAttachedAgentTagRegistry()
 			&& reopenedRegistry->getUuid() == registry->getUuid(),
 			"The referenced empty registry did not survive close and reopen");
@@ -143,11 +143,11 @@ namespace
 		// Replacing the adjacent file must not silently reinterpret the reference.
 		auto replacement = core::AgentTagRegistry::create();
 		replacement->saveTo(registryPath.string());
-		auto substituted = loadBuilding(buildingPath);
+		auto substituted = loadWorld(worldPath);
 		bool mismatchRefused{ false };
 		try
 		{
-			(void)core::loadAndAttachAgentTagRegistry(*substituted, buildingPath);
+			(void)core::loadAndAttachAgentTagRegistry(*substituted, worldPath);
 		}
 		catch (std::exception const& error)
 		{
@@ -158,22 +158,22 @@ namespace
 			"A substituted registry with a different UUID was attached");
 	}
 
-	void olderBuildingWithoutReferenceStillLoads()
+	void olderWorldWithoutReferenceStillLoads()
 	{
-		core::Building source("Legacy", 4, 2);
-		auto yaml = serializeBuilding(source);
+		core::World source("Legacy", 4, 2);
+		auto yaml = serializeWorld(source);
 		auto const version = yaml.find("version: 14");
-		require(version != std::string::npos, "The current Building schema was not version 14");
+		require(version != std::string::npos, "The current World schema was not version 14");
 		yaml.replace(version, std::string("version: 14").size(), "version: 9");
 
-		auto loaded = std::make_shared<core::Building>("Loading", 1, 1);
+		auto loaded = std::make_shared<core::World>("Loading", 1, 1);
 		auto reader = core::YamlSerializer::fromString(yaml);
 		reader->deserialize();
 		core::SerializationWorkData workData;
-		require(loaded->deserialize(*reader, workData), "A version-9 Building did not load");
+		require(loaded->deserialize(*reader, workData), "A version-9 World did not load");
 		require(!loaded->hasAgentTagRegistryReference()
 			&& !loaded->hasAttachedAgentTagRegistry(),
-			"An older Building invented an Agent tag registry");
+			"An older World invented an Agent tag registry");
 	}
 
 	void selectionEnforcesBasenameExtensionAndDirectory()
@@ -188,21 +188,21 @@ namespace
 		auto const registryPath = project / "shared.tags.yaml";
 		registry->saveTo(registryPath.string());
 
-		auto building = std::make_shared<core::Building>("Selection", 4, 2);
-		auto const buildingPath = project / "selection.yaml";
-		building->saveTo(buildingPath.string());
+		auto world = std::make_shared<core::World>("Selection", 4, 2);
+		auto const worldPath = project / "selection.world.yaml";
+		world->saveTo(worldPath.string());
 		std::string diagnostic;
-		require(canSelectAgentTagRegistry(building, buildingPath.string(), &diagnostic),
-			"The Tags panel did not enable selection for a saved Building");
+		require(canSelectAgentTagRegistry(world, worldPath.string(), &diagnostic),
+			"The Tags panel did not enable selection for a saved World");
 		auto selected = core::selectAndAttachAgentTagRegistry(
-			*building, buildingPath, registryPath);
-		require(building->getAgentTagRegistryFilename() == "shared.tags.yaml",
+			*world, worldPath, registryPath);
+		require(world->getAgentTagRegistryFilename() == "shared.tags.yaml",
 			"Selection did not store only the registry basename");
 		require(selected->getUuid() == registry->getUuid(),
 			"Selection attached a registry with the wrong UUID");
 
-		auto refused = std::make_shared<core::Building>("Refused selection", 4, 2);
-		auto const refusedPath = project / "refused.yaml";
+		auto refused = std::make_shared<core::World>("Refused selection", 4, 2);
+		auto const refusedPath = project / "refused.world.yaml";
 		refused->saveTo(refusedPath.string());
 		auto wrongExtension = core::AgentTagRegistry::create();
 		auto const wrongExtensionPath = project / "registry.yaml";
@@ -220,7 +220,7 @@ namespace
 		}
 		require(extensionRefused && !refused->hasAgentTagRegistryReference()
 			&& !refused->isModified(),
-			"A registry with the wrong extension disturbed the Building");
+			"A registry with the wrong extension disturbed the World");
 
 		auto outside = core::AgentTagRegistry::create();
 		auto const outsidePath = otherProject / "outside.tags.yaml";
@@ -238,7 +238,7 @@ namespace
 		}
 		require(directoryRefused && !refused->hasAgentTagRegistryReference()
 			&& !refused->isModified(),
-			"A registry outside the Building directory disturbed the Building");
+			"A registry outside the World directory disturbed the World");
 	}
 
 	void canonicalFilesShareOneInstanceAndDirectoriesRemainDistinct()
@@ -256,12 +256,12 @@ namespace
 		firstDiskRegistry->saveTo(firstRegistryPath.string());
 		secondDiskRegistry->saveTo(secondRegistryPath.string());
 
-		auto first = std::make_shared<core::Building>("First", 4, 2);
-		auto second = std::make_shared<core::Building>("Second", 4, 2);
-		auto third = std::make_shared<core::Building>("Third", 4, 2);
-		auto const firstPath = firstDirectory / "first.yaml";
-		auto const secondPath = firstDirectory / "second.yaml";
-		auto const thirdPath = secondDirectory / "third.yaml";
+		auto first = std::make_shared<core::World>("First", 4, 2);
+		auto second = std::make_shared<core::World>("Second", 4, 2);
+		auto third = std::make_shared<core::World>("Third", 4, 2);
+		auto const firstPath = firstDirectory / "first.world.yaml";
+		auto const secondPath = firstDirectory / "second.world.yaml";
+		auto const thirdPath = secondDirectory / "third.world.yaml";
 		first->saveTo(firstPath.string());
 		second->saveTo(secondPath.string());
 		third->saveTo(thirdPath.string());
@@ -284,11 +284,11 @@ namespace
 		sharedFirst.reset();
 		sharedSecond.reset();
 
-		auto reopenedFirst = core::loadBuildingDocument(firstPath);
-		auto reopenedSecond = core::loadBuildingDocument(secondPath);
+		auto reopenedFirst = core::loadWorldDocument(firstPath);
+		auto reopenedSecond = core::loadWorldDocument(secondPath);
 		require(reopenedFirst->getAgentTagRegistry()
 			== reopenedSecond->getAgentTagRegistry(),
-			"Two reopened Buildings did not share their canonical registry instance");
+			"Two reopened Worlds did not share their canonical registry instance");
 	}
 
 	void duplicateUuidAndInvalidDocumentsAreTransactional()
@@ -305,10 +305,10 @@ namespace
 		sourceRegistry->saveTo(sourcePath.string());
 		std::filesystem::copy_file(sourcePath, duplicatePath);
 
-		auto first = std::make_shared<core::Building>("First", 4, 2);
-		auto second = std::make_shared<core::Building>("Second", 4, 2);
-		auto const firstPath = firstDirectory / "first.yaml";
-		auto const secondPath = secondDirectory / "second.yaml";
+		auto first = std::make_shared<core::World>("First", 4, 2);
+		auto second = std::make_shared<core::World>("Second", 4, 2);
+		auto const firstPath = firstDirectory / "first.world.yaml";
+		auto const secondPath = secondDirectory / "second.world.yaml";
 		first->saveTo(firstPath.string());
 		second->saveTo(secondPath.string());
 		auto loadedFirst = core::selectAndAttachAgentTagRegistry(
@@ -339,16 +339,16 @@ namespace
 		require(loadedSecond != loadedFirst,
 			"A duplicate-UUID refusal left a stale registry loaded at its path");
 
-		auto malformed = std::make_shared<core::Building>("Malformed", 4, 2);
-		auto const malformedBuildingPath = firstDirectory / "malformed.yaml";
+		auto malformed = std::make_shared<core::World>("Malformed", 4, 2);
+		auto const malformedWorldPath = firstDirectory / "malformed.world.yaml";
 		auto const malformedRegistryPath = firstDirectory / "malformed.tags.yaml";
-		malformed->saveTo(malformedBuildingPath.string());
+		malformed->saveTo(malformedWorldPath.string());
 		writeText(malformedRegistryPath, "agentTagRegistry: [not valid");
 		bool malformedRefused{ false };
 		try
 		{
 			(void)core::selectAndAttachAgentTagRegistry(
-				*malformed, malformedBuildingPath, malformedRegistryPath);
+				*malformed, malformedWorldPath, malformedRegistryPath);
 		}
 		catch (std::exception const& error)
 		{
@@ -357,7 +357,7 @@ namespace
 		}
 		require(malformedRefused && !malformed->hasAgentTagRegistryReference()
 			&& !malformed->isModified(),
-			"A malformed registry disturbed the Building");
+			"A malformed registry disturbed the World");
 
 		auto unsupportedRegistry = core::AgentTagRegistry::create();
 		unsupportedRegistry->saveTo(malformedRegistryPath.string());
@@ -371,7 +371,7 @@ namespace
 		try
 		{
 			(void)core::selectAndAttachAgentTagRegistry(
-				*malformed, malformedBuildingPath, malformedRegistryPath);
+				*malformed, malformedWorldPath, malformedRegistryPath);
 		}
 		catch (std::exception const& error)
 		{
@@ -380,14 +380,14 @@ namespace
 		}
 		require(unsupportedRefused && !malformed->hasAgentTagRegistryReference()
 			&& !malformed->isModified(),
-			"An unsupported registry schema disturbed the Building");
+			"An unsupported registry schema disturbed the World");
 
 		std::filesystem::remove(malformedRegistryPath);
 		bool missingRefused{ false };
 		try
 		{
 			(void)core::selectAndAttachAgentTagRegistry(
-				*malformed, malformedBuildingPath, malformedRegistryPath);
+				*malformed, malformedWorldPath, malformedRegistryPath);
 		}
 		catch (std::exception const& error)
 		{
@@ -396,24 +396,24 @@ namespace
 		}
 		require(missingRefused && !malformed->hasAgentTagRegistryReference()
 			&& !malformed->isModified(),
-			"A missing registry disturbed the Building");
+			"A missing registry disturbed the World");
 	}
 
-	void refusedBuildingLoadKeepsCurrentStateAndUnloadsCandidateRegistry()
+	void refusedWorldLoadKeepsCurrentStateAndUnloadsCandidateRegistry()
 	{
 		TemporaryDirectory temporary;
 		auto const sourceDirectory = temporary.path / "source";
 		auto const destinationDirectory = temporary.path / "destination";
 		std::filesystem::create_directories(sourceDirectory);
 		std::filesystem::create_directories(destinationDirectory);
-		auto const buildingPath = sourceDirectory / "referencing.yaml";
+		auto const worldPath = sourceDirectory / "referencing.world.yaml";
 		auto const registryPath = sourceDirectory / "referencing.tags.yaml";
 
 		{
-			auto persisted = std::make_shared<core::Building>("Persisted", 4, 2);
-			persisted->saveTo(buildingPath.string());
-			(void)core::createAndAttachAgentTagRegistry(*persisted, buildingPath);
-			persisted->saveTo(buildingPath.string());
+			auto persisted = std::make_shared<core::World>("Persisted", 4, 2);
+			persisted->saveTo(worldPath.string());
+			(void)core::createAndAttachAgentTagRegistry(*persisted, worldPath);
+			persisted->saveTo(worldPath.string());
 		}
 
 		auto replacement = core::AgentTagRegistry::create();
@@ -423,12 +423,12 @@ namespace
 		std::filesystem::copy_file(registryPath, copiedReplacement);
 		replacement.reset();
 
-		auto current = std::make_shared<core::Building>("Current", 7, 3);
+		auto current = std::make_shared<core::World>("Current", 7, 3);
 		auto const* currentIdentity = current.get();
 		bool mismatchRefused{ false };
 		try
 		{
-			current = core::loadBuildingDocument(buildingPath);
+			current = core::loadWorldDocument(worldPath);
 		}
 		catch (std::exception const& error)
 		{
@@ -437,32 +437,32 @@ namespace
 		}
 		require(mismatchRefused && current.get() == currentIdentity
 			&& current->getName() == "Current" && current->getCellsWide() == 7,
-			"A refused Building load replaced or changed the current Building");
+			"A refused World load replaced or changed the current World");
 
 		// The replacement was parsed solely for the failed load above. It must no
 		// longer count as loaded, so the same UUID at this independent path is valid.
-		auto destination = std::make_shared<core::Building>("Destination", 4, 2);
-		auto const destinationPath = destinationDirectory / "destination.yaml";
+		auto destination = std::make_shared<core::World>("Destination", 4, 2);
+		auto const destinationPath = destinationDirectory / "destination.world.yaml";
 		destination->saveTo(destinationPath.string());
 		auto selected = core::selectAndAttachAgentTagRegistry(
 			*destination, destinationPath, copiedReplacement);
 		require(selected->getUuid() == replacementUuid,
-			"A registry loaded only for a failed Building load remained referenced");
+			"A registry loaded only for a failed World load remained referenced");
 	}
 
 	void failedAtomicCreationLeavesNoReferenceOrFile()
 	{
 		TemporaryDirectory temporary;
-		core::Building building("Atomic", 4, 2);
-		auto const buildingPath = temporary.path / "atomic.yaml";
-		building.saveTo(buildingPath.string());
-		auto const registryPath = core::defaultAgentTagRegistryPath(buildingPath);
+		core::World world("Atomic", 4, 2);
+		auto const worldPath = temporary.path / "atomic.world.yaml";
+		world.saveTo(worldPath.string());
+		auto const registryPath = core::defaultAgentTagRegistryPath(worldPath);
 
 		core::YamlSerializer::setWriteFailureAfterBytesForTesting(1);
 		bool refused{ false };
 		try
 		{
-			(void)core::createAndAttachAgentTagRegistry(building, buildingPath);
+			(void)core::createAndAttachAgentTagRegistry(world, worldPath);
 		}
 		catch (std::exception const&)
 		{
@@ -472,7 +472,7 @@ namespace
 		require(refused, "The injected registry write failure was not reported");
 		require(!std::filesystem::exists(registryPath),
 			"A failed registry creation left a partial destination file");
-		require(!building.hasAgentTagRegistryReference(),
+		require(!world.hasAgentTagRegistryReference(),
 			"A failed registry creation attached a nonexistent registry");
 	}
 
@@ -598,47 +598,47 @@ namespace
 	void registryDirtyStateAndCloseWarningStayIndependent()
 	{
 		TemporaryDirectory temporary;
-		auto building = std::make_shared<core::Building>("Independent", 4, 2);
-		auto const buildingPath = temporary.path / "independent.yaml";
-		building->saveTo(buildingPath.string());
-		auto registry = core::createAndAttachAgentTagRegistry(*building, buildingPath);
-		building->saveTo(buildingPath.string());
-		building->pauseSimulation();
+		auto world = std::make_shared<core::World>("Independent", 4, 2);
+		auto const worldPath = temporary.path / "independent.world.yaml";
+		world->saveTo(worldPath.string());
+		auto registry = core::createAndAttachAgentTagRegistry(*world, worldPath);
+		world->saveTo(worldPath.string());
+		world->pauseSimulation();
 		auto& history = agentTagRegistryDocumentHistory(registry);
-		require(!history.isModified() && !building->isModified(),
-			"Saved Building and registry documents did not start independently clean");
+		require(!history.isModified() && !world->isModified(),
+			"Saved World and registry documents did not start independently clean");
 
 		std::string diagnostic;
 		auto const tag = commitAgentTagAdd(registry, "crew", diagnostic);
-		require(tag && attachedAgentTagRegistryIsModified(building)
-			&& !building->isModified(),
-			"A registry edit dirtied the Building or failed to arm its close warning");
+		require(tag && attachedAgentTagRegistryIsModified(world)
+			&& !world->isModified(),
+			"A registry edit dirtied the World or failed to arm its close warning");
 		require(restoreAgentTagRegistrySnapshot(registry, false, &diagnostic)
-			&& !attachedAgentTagRegistryIsModified(building)
-			&& !building->isModified(),
+			&& !attachedAgentTagRegistryIsModified(world)
+			&& !world->isModified(),
 			"Registry undo did not return independently to its saved state");
 		require(restoreAgentTagRegistrySnapshot(registry, true, &diagnostic)
-			&& attachedAgentTagRegistryIsModified(building)
-			&& !building->isModified(),
-			"Registry redo leaked dirty state into the Building");
+			&& attachedAgentTagRegistryIsModified(world)
+			&& !world->isModified(),
+			"Registry redo leaked dirty state into the World");
 
 		auto const registryPath = temporary.path / "independent.tags.yaml";
 		require(saveAgentTagRegistry(registry, registryPath.string(), &diagnostic)
-			&& !attachedAgentTagRegistryIsModified(building)
-			&& !building->isModified(),
-			"Registry Save did not operate independently from the Building");
+			&& !attachedAgentTagRegistryIsModified(world)
+			&& !world->isModified(),
+			"Registry Save did not operate independently from the World");
 		forgetAgentTagRegistryDocument(registry);
 	}
 }
 
 void runAgentTagRegistrySmokeChecks()
 {
-	savedBuildingCreatesAndReopensAdjacentRegistry();
-	olderBuildingWithoutReferenceStillLoads();
+	savedWorldCreatesAndReopensAdjacentRegistry();
+	olderWorldWithoutReferenceStillLoads();
 	selectionEnforcesBasenameExtensionAndDirectory();
 	canonicalFilesShareOneInstanceAndDirectoriesRemainDistinct();
 	duplicateUuidAndInvalidDocumentsAreTransactional();
-	refusedBuildingLoadKeepsCurrentStateAndUnloadsCandidateRegistry();
+	refusedWorldLoadKeepsCurrentStateAndUnloadsCandidateRegistry();
 	failedAtomicCreationLeavesNoReferenceOrFile();
 	tagNamesIdentityOrderingAndNoOpEdits();
 	tagsPersistAndDeletedIdsAreNeverReused();

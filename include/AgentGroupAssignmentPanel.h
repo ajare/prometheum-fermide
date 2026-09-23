@@ -21,23 +21,23 @@
 
 namespace core
 {
-	class Building;
+	class World;
 }
 
 // Assigns `agent` to `group`, or clears the assignment when `group` is the
 // empty AgentGroupId, and commits exactly one undoable document edit. A
-// refused operation - an Agent or an Agent group this Building never issued -
+// refused operation - an Agent or an Agent group this World never issued -
 // changes nothing, leaves the undo stack untouched, and reports the reason
 // through `diagnostic`.
 bool commitAgentGroupAssignment(
-	std::shared_ptr<core::Building> const& building,
+	std::shared_ptr<core::World> const& world,
 	core::AgentId agent, core::AgentGroupId group, std::string& diagnostic);
 
 // The label a Group cell shows for an Agent's current assignment: the
-// assigned Agent group's current name read through the Building, or `<none>`
+// assigned Agent group's current name read through the World, or `<none>`
 // when the Agent holds no Agent group. Because the name is looked up rather
 // than copied, a rename is what the cell shows the next time it is drawn.
-std::string agentGroupAssignmentLabel(core::Building const& building, core::AgentId agent);
+std::string agentGroupAssignmentLabel(core::World const& world, core::AgentId agent);
 
 // Renders one Group cell: `<none>` first, then every defined Agent group in
 // creation order. Re-choosing the group an Agent already holds is not an
@@ -45,4 +45,4 @@ std::string agentGroupAssignmentLabel(core::Building const& building, core::Agen
 // widget labels, so a name carrying "##" - which ImGui would otherwise read
 // as the start of an invisible ID suffix - still shows whole (#124).
 void renderAgentGroupAssignmentCell(
-	std::shared_ptr<core::Building> const& building, core::AgentId agent);
+	std::shared_ptr<core::World> const& world, core::AgentId agent);

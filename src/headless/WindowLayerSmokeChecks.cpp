@@ -15,7 +15,7 @@
 #include <stdexcept>
 #include <string>
 
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/Graph.h"
 #include "core/Sector.h"
 #include "core/SectorObject.h"
@@ -44,23 +44,23 @@ namespace
 		return false;
 	}
 
-	// A Building with a Room on every Layer over the same cells, so a Window could
+	// A World with a Room on every Layer over the same cells, so a Window could
 	// be dropped on any of them if the rules let it.
-	void authorRoomsOnEveryLayer(core::Building& building, uint32_t layers)
+	void authorRoomsOnEveryLayer(core::World& world, uint32_t layers)
 	{
-		while (building.getLayerCount() < layers) building.addLayer();
+		while (world.getLayerCount() < layers) world.addLayer();
 		for (uint32_t layer = 0; layer < layers; ++layer)
-			building.addRoom("Room " + std::to_string(layer), layer, 0, 0, 8, 1);
+			world.addRoom("Room " + std::to_string(layer), layer, 0, 0, 8, 1);
 	}
 
 	// A Window is one object shared by the Sectors on both sides of it, so count
 	// distinct objects rather than the references to them.
-	uint32_t countWindows(core::Building const& building)
+	uint32_t countWindows(core::World const& world)
 	{
 		std::set<std::shared_ptr<const core::SectorObject>> windows;
-		for (uint32_t layer = 0; layer < building.getLayerCount(); ++layer)
+		for (uint32_t layer = 0; layer < world.getLayerCount(); ++layer)
 		{
-			for (auto const& sector : building.getSectors(layer))
+			for (auto const& sector : world.getSectors(layer))
 			{
 				for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
 				{
@@ -124,7 +124,7 @@ agents: []
 		return yaml.c_str();
 	}
 
-	void loadLegacyMap(core::Building& loaded)
+	void loadLegacyMap(core::World& loaded)
 	{
 		auto reader = core::YamlSerializer::fromString(legacyBackMostWindowMap());
 		reader->deserialize();
@@ -137,27 +137,27 @@ agents: []
 	// other Layer does, and gains one as soon as a Layer is added behind it.
 	void theBackMostLayerRefusesAWindow()
 	{
-		core::Building building("Back-most Window", 8, 2);
-		building.pauseSimulation();
-		authorRoomsOnEveryLayer(building, 3);
+		core::World world("Back-most Window", 8, 2);
+		world.pauseSimulation();
+		authorRoomsOnEveryLayer(world, 3);
 
 		std::string diagnostic;
-		require(!building.canAddSectorWindow(2, 0, 1, 1, 1, &diagnostic),
+		require(!world.canAddSectorWindow(2, 0, 1, 1, 1, &diagnostic),
 			"canAddSectorWindow() allowed a Window on the back-most Layer");
 		require(diagnostic.find("back-most") != std::string::npos,
 			("The back-most Layer refusal did not say why: " + diagnostic).c_str());
 
-		require(throws([&] { building.addSectorWindow(2, 0, 1, 1, 1, { true }); }),
+		require(throws([&] { world.addSectorWindow(2, 0, 1, 1, 1, { true }); }),
 			"addSectorWindow() accepted a Window on the back-most Layer");
-		require(countWindows(building) == 0,
-			"A refused Window still changed the Building");
+		require(countWindows(world) == 0,
+			"A refused Window still changed the World");
 
 		// The very same Window is fine once Layer 2 has a Layer behind it.
-		building.addLayer();
-		building.addRoom("Deeper", 3, 0, 0, 8, 1);
-		require(building.canAddSectorWindow(2, 0, 1, 1, 1, &diagnostic),
+		world.addLayer();
+		world.addRoom("Deeper", 3, 0, 0, 8, 1);
+		require(world.canAddSectorWindow(2, 0, 1, 1, 1, &diagnostic),
 			("A Window was refused after its Layer gained one behind it: " + diagnostic).c_str());
-		require(building.addSectorWindow(2, 0, 1, 1, 1, { true }).object != nullptr,
+		require(world.addSectorWindow(2, 0, 1, 1, 1, { true }).object != nullptr,
 			"A Window was not created once its Layer had one behind it");
 	}
 
@@ -166,18 +166,18 @@ agents: []
 	// ticket was filed against, so pin the Vertex count rather than trust the cell.
 	void everyWindowJoinsTheLayerBehindItAndReachesTheGraph()
 	{
-		core::Building building("Window pairs", 8, 2);
-		building.pauseSimulation();
-		authorRoomsOnEveryLayer(building, 4);
-		building.finishBuild();
+		core::World world("Window pairs", 8, 2);
+		world.pauseSimulation();
+		authorRoomsOnEveryLayer(world, 4);
+		world.finishBuild();
 
 		uint32_t authored = 0;
-		for (uint32_t layer = 0; layer + 1 < building.getLayerCount(); ++layer)
+		for (uint32_t layer = 0; layer + 1 < world.getLayerCount(); ++layer)
 		{
-			auto const before = building.getGraph()->getVertices().size();
-			auto const created = building.addSectorWindow(layer, 0, 1 + layer, 1, 1, { true });
-			building.finishBuild();
-			auto const after = building.getGraph()->getVertices().size();
+			auto const before = world.getGraph()->getVertices().size();
+			auto const created = world.addSectorWindow(layer, 0, 1 + layer, 1, 1, { true });
+			world.finishBuild();
+			auto const after = world.getGraph()->getVertices().size();
 
 			require(created.object != nullptr, "addSectorWindow() returned no Window");
 			require(created.window.sector->getLayerIndex() == layer,
@@ -194,25 +194,25 @@ agents: []
 			++authored;
 		}
 
-		require(countWindows(building) == authored,
-			"Not every authored Window is in the Building");
+		require(countWindows(world) == authored,
+			"Not every authored Window is in the World");
 	}
 
 	// Loading a map is not where a Window is removed: the authored content
 	// survives, even though nothing new may be authored that way.
 	void aLegacyBackMostWindowLoadsUnchanged()
 	{
-		core::Building building("placeholder", 1, 1);
-		loadLegacyMap(building);
-		require(building.getLayerCount() == 3, "The legacy map did not keep its Layers");
-		require(countWindows(building) == 1,
+		core::World world("placeholder", 1, 1);
+		loadLegacyMap(world);
+		require(world.getLayerCount() == 3, "The legacy map did not keep its Layers");
+		require(countWindows(world) == 1,
 			"The legacy back-most Window was not loaded as authored");
 
 		core::SerializationWorkData workData;
 		auto writer = core::YamlSerializer::toString();
-		building.serialize(*writer, workData);
+		world.serialize(*writer, workData);
 		writer->serialize();
-		core::Building reloaded("placeholder", 1, 1);
+		core::World reloaded("placeholder", 1, 1);
 		auto reader = core::YamlSerializer::fromString(writer->getSerializedString());
 		reader->deserialize();
 		require(reloaded.deserialize(*reader, workData),
@@ -226,11 +226,11 @@ agents: []
 	// with the deletion, and says so in the plan.
 	void aLayerDeletionDeletesTheWindowItStrands()
 	{
-		core::Building building("placeholder", 1, 1);
-		loadLegacyMap(building);
-		building.pauseSimulation();
+		core::World world("placeholder", 1, 1);
+		loadLegacyMap(world);
+		world.pauseSimulation();
 
-		auto const plan = building.planDeleteLayer(1);
+		auto const plan = world.planDeleteLayer(1);
 		require(plan.valid, ("Deleting in front of a back-most Window was rejected: " + plan.diagnostic).c_str());
 		require(plan.windowsStranded == 1,
 			"The stranded Window was not reported as a casualty");
@@ -243,29 +243,29 @@ agents: []
 		}
 		require(announced, "The stranded Window was not in the plan's consequences");
 
-		require(building.applyDeleteLayer(plan), "The stranded Window deletion was not applied");
-		require(building.getLayerCount() == 2, "The Layers were not compacted");
-		require(countWindows(building) == 0,
+		require(world.applyDeleteLayer(plan), "The stranded Window deletion was not applied");
+		require(world.getLayerCount() == 2, "The Layers were not compacted");
+		require(countWindows(world) == 0,
 			"The stranded Window survived the Layer deletion");
-		require(building.isTraversalTopologyValid(),
+		require(world.isTraversalTopologyValid(),
 			("Deleting a stranded Window left an invalid topology: "
-				+ building.getTopologyDiagnostic()).c_str());
+				+ world.getTopologyDiagnostic()).c_str());
 	}
 
 	// Deleting the front Layer pulls the Window's own Layer forward onto the new
 	// back-most Layer, which strands it just the same.
 	void aFrontLayerDeletionAlsoStrandsTheWindow()
 	{
-		core::Building building("placeholder", 1, 1);
-		loadLegacyMap(building);
-		building.pauseSimulation();
+		core::World world("placeholder", 1, 1);
+		loadLegacyMap(world);
+		world.pauseSimulation();
 
-		auto const plan = building.planDeleteLayer(0);
+		auto const plan = world.planDeleteLayer(0);
 		require(plan.valid, ("Front Layer deletion was rejected: " + plan.diagnostic).c_str());
 		require(plan.windowsStranded == 1,
 			"The Window stranded by the front Layer deletion was not reported");
-		require(building.applyDeleteLayer(plan), "The front Layer deletion was not applied");
-		require(countWindows(building) == 0,
+		require(world.applyDeleteLayer(plan), "The front Layer deletion was not applied");
+		require(countWindows(world) == 0,
 			"The Window stranded by the front Layer deletion survived");
 	}
 
@@ -273,18 +273,18 @@ agents: []
 	// crossing it, not as stranded.
 	void aWindowCrossingTheDeletedLayerIsStillCrossing()
 	{
-		core::Building building("Crossing Window", 8, 2);
-		building.pauseSimulation();
-		authorRoomsOnEveryLayer(building, 3);
-		building.addSectorWindow(1, 0, 3, 1, 1, { true });
-		building.finishBuild();
+		core::World world("Crossing Window", 8, 2);
+		world.pauseSimulation();
+		authorRoomsOnEveryLayer(world, 3);
+		world.addSectorWindow(1, 0, 3, 1, 1, { true });
+		world.finishBuild();
 
-		auto const plan = building.planDeleteLayer(1);
+		auto const plan = world.planDeleteLayer(1);
 		require(plan.valid, ("Deleting a crossed Layer was rejected: " + plan.diagnostic).c_str());
 		require(plan.windowsRemoved == 1, "The crossed Window was not reported as crossing");
 		require(plan.windowsStranded == 0, "A crossed Window was reported as stranded");
-		require(building.applyDeleteLayer(plan), "The Layer deletion was not applied");
-		require(countWindows(building) == 0, "The crossed Window survived its own Layer");
+		require(world.applyDeleteLayer(plan), "The Layer deletion was not applied");
+		require(countWindows(world) == 0, "The crossed Window survived its own Layer");
 	}
 }
 

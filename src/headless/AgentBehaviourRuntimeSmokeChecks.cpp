@@ -12,7 +12,7 @@
 #include <vector>
 
 #include "core/AgentBehaviourRegistry.h"
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/AgentBehaviourRuntime.h"
 #include "core/Log.h"
 #include "core/YamlSerializer.h"
@@ -334,28 +334,28 @@ end }
 		auto runInstructionStage = [&](core::AgentBehaviourId behaviour,
 			core::AgentBehaviourRuntimeStage expectedStage)
 		{
-			core::Building building("Instruction containment", 6, 2,
+			core::World world("Instruction containment", 6, 2,
 				{ 64u * 1024u * 1024u, 1'000u });
-			auto const room = building.addRoom("Room", 0, 0, 0, 6, 1);
-			building.finishBuild();
-			auto const agent = building.createAgent("Abusive", room, 0, 0.5f);
-			building.pauseSimulation();
-			building.attachAgentBehaviourRegistry("abuse.behaviours", registry);
-			require(building.setAgentBehaviourAssignment(agent, behaviour,
+			auto const room = world.addRoom("Room", 0, 0, 0, 6, 1);
+			world.finishBuild();
+			auto const agent = world.createAgent("Abusive", room, 0, 0.5f);
+			world.pauseSimulation();
+			world.attachAgentBehaviourRegistry("abuse.behaviours", registry);
+			require(world.setAgentBehaviourAssignment(agent, behaviour,
 				registry->lookupAgentBehaviour(behaviour)->getRevision(), {}),
 				"Could not assign an instruction abuse fixture");
-			require(building.getAgentBehaviourRuntimeLimits().instructionsPerCall == 1'000u,
-				"The per-Building instruction limit was not retained");
-			require(building.resumeSimulation(),
+			require(world.getAgentBehaviourRuntimeLimits().instructionsPerCall == 1'000u,
+				"The per-World instruction limit was not retained");
+			require(world.resumeSimulation(),
 				"Could not resume an instruction abuse fixture");
-			building.advanceTick();
-			auto diagnostics = building.consumeAgentBehaviourRuntimeDiagnostics();
+			world.advanceTick();
+			auto diagnostics = world.consumeAgentBehaviourRuntimeDiagnostics();
 			require(diagnostics.size() == 1
 				&& diagnostics[0].failure
 					== core::AgentBehaviourRuntimeFailure::InstructionBudgetExceeded
 				&& diagnostics[0].stage == expectedStage
 				&& diagnostics[0].agent == agent
-				&& !building.agentBehaviourOwnsMovement(agent),
+				&& !world.agentBehaviourOwnsMovement(agent),
 				"Instruction exhaustion escaped, lacked structure, or retained ownership");
 		};
 		runInstructionStage(loadBudget,
@@ -366,66 +366,66 @@ end }
 			core::AgentBehaviourRuntimeStage::Callback);
 
 		{
-			core::Building building("Memory recovery", 8, 2,
+			core::World world("Memory recovery", 8, 2,
 				{ 2u * 1024u * 1024u, 100'000u });
-			auto const room = building.addRoom("Room", 0, 0, 0, 8, 1);
-			building.finishBuild();
-			auto const abusive = building.createAgent("Abusive", room, 0, 0.5f);
-			auto const healthy = building.createAgent("Healthy", room, 0, 1.5f);
-			building.pauseSimulation();
-			building.attachAgentBehaviourRegistry("abuse.behaviours", registry);
-			require(building.getAgentBehaviourRuntimeLimits().memoryBytes
+			auto const room = world.addRoom("Room", 0, 0, 0, 8, 1);
+			world.finishBuild();
+			auto const abusive = world.createAgent("Abusive", room, 0, 0.5f);
+			auto const healthy = world.createAgent("Healthy", room, 0, 1.5f);
+			world.pauseSimulation();
+			world.attachAgentBehaviourRegistry("abuse.behaviours", registry);
+			require(world.getAgentBehaviourRuntimeLimits().memoryBytes
 					== 2u * 1024u * 1024u,
-				"The per-Building heap limit was not retained");
-			require(building.setAgentBehaviourAssignment(abusive, memoryBudget,
+				"The per-World heap limit was not retained");
+			require(world.setAgentBehaviourAssignment(abusive, memoryBudget,
 				registry->lookupAgentBehaviour(memoryBudget)->getRevision(), {})
-				&& building.setAgentBehaviourAssignment(healthy, safe,
+				&& world.setAgentBehaviourAssignment(healthy, safe,
 					registry->lookupAgentBehaviour(safe)->getRevision(), {}),
 				"Could not assign the live allocator recovery fixtures");
 			// The healthy callback exercises a host capability after the refused
 			// allocation while the failed instance releases its Lua heap graph.
-			require(building.resumeSimulation(),
+			require(world.resumeSimulation(),
 				"Could not resume the live allocator fixture");
-			building.advanceTick();
-			auto diagnostics = building.consumeAgentBehaviourRuntimeDiagnostics();
+			world.advanceTick();
+			auto diagnostics = world.consumeAgentBehaviourRuntimeDiagnostics();
 			require(diagnostics.size() == 1
 				&& diagnostics[0].failure
 					== core::AgentBehaviourRuntimeFailure::MemoryBudgetExceeded
 				&& diagnostics[0].stage == core::AgentBehaviourRuntimeStage::Callback
 				&& diagnostics[0].callback == "on_start"
 				&& diagnostics[0].agent == abusive
-				&& !building.agentBehaviourOwnsMovement(abusive)
-				&& building.agentBehaviourOwnsMovement(healthy),
+				&& !world.agentBehaviourOwnsMovement(abusive)
+				&& world.agentBehaviourOwnsMovement(healthy),
 				"Live heap exhaustion corrupted the state or disabled a healthy instance");
 
-			building.pauseSimulation();
-			require(building.clearAgentBehaviourAssignment(abusive),
+			world.pauseSimulation();
+			require(world.clearAgentBehaviourAssignment(abusive),
 				"Could not remove the exhausted instance during recovery");
-			require(building.setAgentBehaviourAssignment(abusive, safe,
+			require(world.setAgentBehaviourAssignment(abusive, safe,
 				registry->lookupAgentBehaviour(safe)->getRevision(), {}),
 				"Could not create a replacement after refused allocation");
-			require(building.resumeSimulation(),
+			require(world.resumeSimulation(),
 				"Could not resume after refused allocation");
-			building.advanceTick();
-			require(building.consumeAgentBehaviourRuntimeDiagnostics().empty()
-				&& building.agentBehaviourOwnsMovement(abusive),
-				"The Building Lua state did not recover after a refused allocation");
+			world.advanceTick();
+			require(world.consumeAgentBehaviourRuntimeDiagnostics().empty()
+				&& world.agentBehaviourOwnsMovement(abusive),
+				"The World Lua state did not recover after a refused allocation");
 		}
 
 		{
-			core::Building building("Lua error containment", 6, 2);
-			auto const room = building.addRoom("Room", 0, 0, 0, 6, 1);
-			building.finishBuild();
-			auto const agent = building.createAgent("Abusive", room, 0, 0.5f);
-			building.pauseSimulation();
-			building.attachAgentBehaviourRegistry("abuse.behaviours", registry);
-			require(building.setAgentBehaviourAssignment(agent, luaError,
+			core::World world("Lua error containment", 6, 2);
+			auto const room = world.addRoom("Room", 0, 0, 0, 6, 1);
+			world.finishBuild();
+			auto const agent = world.createAgent("Abusive", room, 0, 0.5f);
+			world.pauseSimulation();
+			world.attachAgentBehaviourRegistry("abuse.behaviours", registry);
+			require(world.setAgentBehaviourAssignment(agent, luaError,
 				registry->lookupAgentBehaviour(luaError)->getRevision(), {}),
 				"Could not assign the protected Lua error fixture");
-			require(building.resumeSimulation(),
+			require(world.resumeSimulation(),
 				"Could not resume the protected Lua error fixture");
-			building.advanceTick();
-			auto diagnostics = building.consumeAgentBehaviourRuntimeDiagnostics();
+			world.advanceTick();
+			auto diagnostics = world.consumeAgentBehaviourRuntimeDiagnostics();
 			require(diagnostics.size() == 1
 				&& diagnostics[0].failure == core::AgentBehaviourRuntimeFailure::LuaError
 				&& diagnostics[0].traceback.find("contained callback error")
@@ -438,44 +438,44 @@ end }
 		std::shared_ptr<core::AgentBehaviourRegistry> const& registry,
 		core::AgentBehaviourId behaviour)
 	{
-		core::Building building("Lua startup", 14, 2);
-		auto const room = building.addRoom("Room", 0, 0, 0, 14, 1);
-		building.addSectorMarker(room, 0, 4.5f, "Near");
-		building.addSectorMarker(room, 0, 11.5f, "Far");
-		building.finishBuild();
-		auto const first = building.createAgent("First", room, 0, 0.5f);
-		auto const second = building.createAgent("Second", room, 0, 1.5f);
-		auto const markers = building.getMarkerIds();
+		core::World world("Lua startup", 14, 2);
+		auto const room = world.addRoom("Room", 0, 0, 0, 14, 1);
+		world.addSectorMarker(room, 0, 4.5f, "Near");
+		world.addSectorMarker(room, 0, 11.5f, "Far");
+		world.finishBuild();
+		auto const first = world.createAgent("First", room, 0, 0.5f);
+		auto const second = world.createAgent("Second", room, 0, 1.5f);
+		auto const markers = world.getMarkerIds();
 
-		building.pauseSimulation();
-		building.consumeSimulationEvents();
-		building.attachAgentBehaviourRegistry("startup.behaviours", registry);
+		world.pauseSimulation();
+		world.consumeSimulationEvents();
+		world.attachAgentBehaviourRegistry("startup.behaviours", registry);
 		auto const revision = registry->lookupAgentBehaviour(behaviour)->getRevision();
-		require(building.setAgentBehaviourAssignment(first, behaviour, revision,
+		require(world.setAgentBehaviourAssignment(first, behaviour, revision,
 			{ { "destination", markers[0] } }),
 			"Could not assign the first startup behaviour");
-		require(building.setAgentBehaviourAssignment(second, behaviour, revision,
+		require(world.setAgentBehaviourAssignment(second, behaviour, revision,
 			{ { "destination", markers[1] } }),
 			"Could not assign the second startup behaviour");
-		require(building.agentBehaviourOwnsMovement(first)
-			&& building.agentBehaviourOwnsMovement(second),
+		require(world.agentBehaviourOwnsMovement(first)
+			&& world.agentBehaviourOwnsMovement(second),
 			"Assigned enabled behaviours did not acquire movement ownership");
-		require(building.moveAgentToMarker(first, markers[0]).status
+		require(world.moveAgentToMarker(first, markers[0]).status
 				== core::MovementCommandStatus::BehaviourOwned
-			&& building.cancelAgentMovement(first).status
+			&& world.cancelAgentMovement(first).status
 				== core::MovementCommandStatus::BehaviourOwned,
 			"Manual movement commands bypassed behaviour ownership");
-		auto firstAgent = building.lookupAgent(first).entity;
-		auto manualTarget = building.getGraph()->getClosestVertexInSector(
+		auto firstAgent = world.lookupAgent(first).entity;
+		auto manualTarget = world.getGraph()->getClosestVertexInSector(
 			firstAgent->getSector(), { 3.5f, 0.0f });
-		firstAgent->setPath(building.getGraph()->calculatePath(firstAgent, manualTarget), true);
+		firstAgent->setPath(world.getGraph()->calculatePath(firstAgent, manualTarget), true);
 		require(!firstAgent->getPath(),
 			"Direct manual Path assignment bypassed behaviour ownership");
-		require(building.resumeSimulation(), "Could not resume the Lua startup fixture");
-		building.consumeSimulationEvents();
+		require(world.resumeSimulation(), "Could not resume the Lua startup fixture");
+		world.consumeSimulationEvents();
 
-		building.advanceTick();
-		auto firstTick = building.getSimulationSnapshot();
+		world.advanceTick();
+		auto firstTick = world.getSimulationSnapshot();
 		require(firstTick.tick == 1 && firstTick.agents.size() == 2
 			&& firstTick.agents[0].hasPath && firstTick.agents[1].hasPath
 			&& firstTick.agents[0].globalPosition.x > 0.5f
@@ -486,7 +486,7 @@ end }
 		unsigned reached = 0;
 		auto observePublicEvents = [&]
 		{
-			for (auto const& event : building.consumeSimulationEvents())
+			for (auto const& event : world.consumeSimulationEvents())
 			{
 				if (event.type != core::SimulationEventType::DestinationReached) continue;
 				++reached;
@@ -497,21 +497,21 @@ end }
 		observePublicEvents();
 		for (unsigned tick = 0; tick < 1500 && reached < 2; ++tick)
 		{
-			building.advanceTick();
+			world.advanceTick();
 			observePublicEvents();
 		}
 		require(reached == 2,
 			"Independently configured Lua Agents did not reach both Markers");
 
-		auto const completed = building.getSimulationSnapshot();
+		auto const completed = world.getSimulationSnapshot();
 		require(std::fabs(completed.agents[0].globalPosition.x - 4.5f) < 0.001f
 			&& std::fabs(completed.agents[1].globalPosition.x - 11.5f) < 0.001f,
 			"Shared behaviour instances did not retain distinct Marker configuration");
-		building.advanceTicks(5);
+		world.advanceTicks(5);
 		observePublicEvents();
 		require(reached == 2, "on_start or destination_reached delivery ran more than once");
-		require(building.agentBehaviourOwnsMovement(first)
-			&& building.agentBehaviourOwnsMovement(second),
+		require(world.agentBehaviourOwnsMovement(first)
+			&& world.agentBehaviourOwnsMovement(second),
 			"A valid immutable destination_reached callback disabled its instance");
 		digest << completed.tick << ':'
 			<< std::bit_cast<uint32_t>(completed.agents[0].globalPosition.x) << ':'
@@ -592,7 +592,7 @@ return {
 		auto const first = runStartupMovement(registry, behaviour);
 		auto const second = runStartupMovement(registry, behaviour);
 		require(first == second,
-			"Per-Building Lua startup and movement were not deterministic");
+			"Per-World Lua startup and movement were not deterministic");
 	}
 
 	void manifestHelpersHavePrivatePerAgentGraphs()
@@ -672,7 +672,7 @@ return {
 		auto const first = runStartupMovement(registry, behaviour);
 		auto const second = runStartupMovement(registry, behaviour);
 		require(first == second,
-			"Private helper graphs were not deterministic across Building runtimes");
+			"Private helper graphs were not deterministic across World runtimes");
 
 		// Changing the declared dependency set is a registry revision change, not
 		// an invisible path substitution.
@@ -734,40 +734,40 @@ return {
 
 		auto runTopology = [&](bool disconnect)
 		{
-			core::Building building(disconnect ? "Lost route" : "Replacement route", 8, 2);
-			auto const front = building.addRoom("Front", 0, 0, 0, 8, 1);
-			auto const back = building.addRoom("Back", 1, 0, 0, 8, 1);
-			auto const door = building.addSectorDoor(front, 0, 2, {});
-			building.addSectorMarker(back, 0, 6.5f, "Destination");
-			building.addSectorMarker(front, 0, 0.5f, "Fallback");
-			building.finishBuild();
-			auto const markers = building.getMarkerIds();
-			auto const id = building.createAgent("Walker", front, 0, 0.5f);
-			building.pauseSimulation();
-			building.attachAgentBehaviourRegistry("lifecycle.behaviours", registry);
+			core::World world(disconnect ? "Lost route" : "Replacement route", 8, 2);
+			auto const front = world.addRoom("Front", 0, 0, 0, 8, 1);
+			auto const back = world.addRoom("Back", 1, 0, 0, 8, 1);
+			auto const door = world.addSectorDoor(front, 0, 2, {});
+			world.addSectorMarker(back, 0, 6.5f, "Destination");
+			world.addSectorMarker(front, 0, 0.5f, "Fallback");
+			world.finishBuild();
+			auto const markers = world.getMarkerIds();
+			auto const id = world.createAgent("Walker", front, 0, 0.5f);
+			world.pauseSimulation();
+			world.attachAgentBehaviourRegistry("lifecycle.behaviours", registry);
 			auto const revision = registry->lookupAgentBehaviour(behaviour)->getRevision();
-			require(building.setAgentBehaviourAssignment(id, behaviour, revision, {
+			require(world.setAgentBehaviourAssignment(id, behaviour, revision, {
 				{ "destination", markers[0] }, { "fallback", markers[1] },
 				{ "expected_reason", std::string("topology_changed") }
 			}), "Could not assign topology lifecycle behaviour");
-			require(building.resumeSimulation(), "Could not start topology lifecycle fixture");
-			building.consumeSimulationEvents();
-			building.advanceTicks(5);
-			building.consumeSimulationEvents();
-			building.pauseSimulation();
+			require(world.resumeSimulation(), "Could not start topology lifecycle fixture");
+			world.consumeSimulationEvents();
+			world.advanceTicks(5);
+			world.consumeSimulationEvents();
+			world.pauseSimulation();
 			if (disconnect)
-				require(building.removeSectorDoor(front, door.door.index),
+				require(world.removeSectorDoor(front, door.door.index),
 					"Could not remove the topology fixture Door");
-			building.finishBuild();
-			require(building.resumeSimulation(), "Could not resume rebuilt topology fixture");
-			building.consumeSimulationEvents();
+			world.finishBuild();
+			require(world.resumeSimulation(), "Could not resume rebuilt topology fixture");
+			world.consumeSimulationEvents();
 
 			unsigned losses = 0, reached = 0;
 			core::MarkerId reachedMarker;
 			for (unsigned tick = 0; tick < 3000 && reached == 0; ++tick)
 			{
-				building.advanceTick();
-				for (auto const& event : building.consumeSimulationEvents())
+				world.advanceTick();
+				for (auto const& event : world.consumeSimulationEvents())
 				{
 					if (event.type == core::SimulationEventType::RouteLost)
 					{
@@ -795,7 +795,7 @@ return {
 		runTopology(false);
 		runTopology(true);
 
-		core::Building unreachable("Initial route loss", 12, 2);
+		core::World unreachable("Initial route loss", 12, 2);
 		auto const origin = unreachable.addRoom("Origin", 0, 0, 0, 6, 1);
 		auto const isolated = unreachable.addRoom("Isolated", 1, 0, 6, 6, 1);
 		unreachable.addSectorMarker(isolated, 0, 3.5f, "Destination");
@@ -867,60 +867,60 @@ return {
 )lua");
 		auto const movingBehaviour = registry->addAgentBehaviour("Moving", "moving.lua",
 			{ { "destination", core::AgentBehaviourSchemaType::Marker } });
-		core::Building building("Programming error", 8, 2);
-		auto const room = building.addRoom("Room", 0, 0, 0, 8, 1);
-		building.addSectorMarker(room, 0, 6.5f, "Destination");
-		building.addSectorMarker(room, 0, 0.5f, "Return");
-		building.finishBuild();
-		auto const markers = building.getMarkerIds();
+		core::World world("Programming error", 8, 2);
+		auto const room = world.addRoom("Room", 0, 0, 0, 8, 1);
+		world.addSectorMarker(room, 0, 6.5f, "Destination");
+		world.addSectorMarker(room, 0, 0.5f, "Return");
+		world.finishBuild();
+		auto const markers = world.getMarkerIds();
 		auto const marker = markers[0];
-		auto const id = building.createAgent("Walker", room, 0, 0.5f);
-		building.pauseSimulation();
-		building.attachAgentBehaviourRegistry("programming-error.behaviours", registry);
-		require(building.setAgentBehaviourAssignment(id, behaviour,
+		auto const id = world.createAgent("Walker", room, 0, 0.5f);
+		world.pauseSimulation();
+		world.attachAgentBehaviourRegistry("programming-error.behaviours", registry);
+		require(world.setAgentBehaviourAssignment(id, behaviour,
 			registry->lookupAgentBehaviour(behaviour)->getRevision(),
 			{ { "destination", marker } }), "Could not assign duplicate-command fixture");
-		require(building.resumeSimulation(), "Could not start duplicate-command fixture");
-		building.consumeSimulationEvents();
-		building.advanceTick();
-		require(!building.agentBehaviourOwnsMovement(id)
-			&& !building.lookupAgent(id).entity->getPath(),
+		require(world.resumeSimulation(), "Could not start duplicate-command fixture");
+		world.consumeSimulationEvents();
+		world.advanceTick();
+		require(!world.agentBehaviourOwnsMovement(id)
+			&& !world.lookupAgent(id).entity->getPath(),
 			"A multiple-movement-command callback partially applied or retained ownership");
-		require(building.isSimulationPaused(),
+		require(world.isSimulationPaused(),
 			"A callback failure did not pause before the next tick");
-		require(building.moveAgentToMarker(id, marker).accepted(),
+		require(world.moveAgentToMarker(id, marker).accepted(),
 			"Disabling the failed instance did not restore manual movement controls");
-		require(building.resumeSimulation(),
+		require(world.resumeSimulation(),
 			"Could not resume after acknowledging the callback failure");
-		building.advanceTicks(1000);
+		world.advanceTicks(1000);
 		unsigned reached = 0;
-		for (auto const& event : building.consumeSimulationEvents())
+		for (auto const& event : world.consumeSimulationEvents())
 			if (event.type == core::SimulationEventType::DestinationReached) ++reached;
 		require(reached == 1, "Manual movement did not work after instance disablement");
 
-		building.pauseSimulation();
-		require(building.clearAgentBehaviourAssignment(id),
+		world.pauseSimulation();
+		require(world.clearAgentBehaviourAssignment(id),
 			"Could not unassign the disabled behaviour");
-		require(!building.agentBehaviourOwnsMovement(id),
+		require(!world.agentBehaviourOwnsMovement(id),
 			"Unassignment left runtime movement ownership behind");
 
-		require(building.setAgentBehaviourAssignment(id, movingBehaviour,
+		require(world.setAgentBehaviourAssignment(id, movingBehaviour,
 			registry->lookupAgentBehaviour(movingBehaviour)->getRevision(),
 			{ { "destination", markers[1] } }),
 			"Could not assign the active-unassignment fixture");
-		require(building.resumeSimulation(), "Could not start active-unassignment fixture");
-		building.advanceTick();
-		require(building.lookupAgent(id).entity->getPath()
-			&& building.agentBehaviourOwnsMovement(id),
+		require(world.resumeSimulation(), "Could not start active-unassignment fixture");
+		world.advanceTick();
+		require(world.lookupAgent(id).entity->getPath()
+			&& world.agentBehaviourOwnsMovement(id),
 			"The active-unassignment fixture did not acquire a route");
-		building.pauseSimulation();
-		require(building.clearAgentBehaviourAssignment(id),
+		world.pauseSimulation();
+		require(world.clearAgentBehaviourAssignment(id),
 			"Could not unassign an actively moving behaviour");
-		require(!building.agentBehaviourOwnsMovement(id)
-			&& !building.lookupAgent(id).entity->getPath(),
+		require(!world.agentBehaviourOwnsMovement(id)
+			&& !world.lookupAgent(id).entity->getPath(),
 			"Active unassignment retained runtime movement ownership");
-		require(building.resumeSimulation(), "Could not resume after active unassignment");
-		require(building.moveAgentToMarker(id, markers[1]).accepted(),
+		require(world.resumeSimulation(), "Could not resume after active unassignment");
+		require(world.moveAgentToMarker(id, markers[1]).accepted(),
 			"Active unassignment did not restore manual movement commands");
 	}
 
@@ -1050,24 +1050,24 @@ return {
 				== core::AgentBehaviourModuleStatus::Loaded,
 			"The deterministic timer fixtures did not preflight");
 
-		core::Building building("Timers", 16, 2,
+		core::World world("Timers", 16, 2,
 			{ 64u * 1024u * 1024u, 100'000u, 2u });
-		auto const room = building.addRoom("Room", 0, 0, 0, 16, 1);
-		building.addSectorMarker(room, 0, 13.5f, "Destination");
-		building.finishBuild();
-		auto const overflow = building.createAgent("Overflow", room, 0, 0.5f);
-		auto const first = building.createAgent("First", room, 0, 1.5f);
-		auto const second = building.createAgent("Second", room, 0, 2.5f);
-		auto const orderFirst = building.createAgent("Order first", room, 0, 3.5f);
-		auto const orderSecond = building.createAgent("Order second", room, 0, 4.5f);
-		auto const destination = building.getMarkerIds().front();
-		building.pauseSimulation();
-		building.consumeSimulationEvents();
-		building.attachAgentBehaviourRegistry("timers.behaviours", registry);
+		auto const room = world.addRoom("Room", 0, 0, 0, 16, 1);
+		world.addSectorMarker(room, 0, 13.5f, "Destination");
+		world.finishBuild();
+		auto const overflow = world.createAgent("Overflow", room, 0, 0.5f);
+		auto const first = world.createAgent("First", room, 0, 1.5f);
+		auto const second = world.createAgent("Second", room, 0, 2.5f);
+		auto const orderFirst = world.createAgent("Order first", room, 0, 3.5f);
+		auto const orderSecond = world.createAgent("Order second", room, 0, 4.5f);
+		auto const destination = world.getMarkerIds().front();
+		world.pauseSimulation();
+		world.consumeSimulationEvents();
+		world.attachAgentBehaviourRegistry("timers.behaviours", registry);
 		auto const revision = registry->lookupAgentBehaviour(behaviour)->getRevision();
 		auto assign = [&](core::AgentId id, std::string name, bool exceedsLimit)
 		{
-			require(building.setAgentBehaviourAssignment(id, behaviour, revision, {
+			require(world.setAgentBehaviourAssignment(id, behaviour, revision, {
 				{ "expected_name", std::move(name) }, { "destination", destination },
 				{ "overflow", exceedsLimit }
 			}), "Could not assign deterministic timer fixture");
@@ -1077,21 +1077,21 @@ return {
 		assign(second, "Second", false);
 		auto const orderingRevision = registry->lookupAgentBehaviour(
 			orderingBehaviour)->getRevision();
-		require(building.setAgentBehaviourAssignment(orderFirst, orderingBehaviour,
+		require(world.setAgentBehaviourAssignment(orderFirst, orderingBehaviour,
 				orderingRevision, {})
-			&& building.setAgentBehaviourAssignment(orderSecond, orderingBehaviour,
+			&& world.setAgentBehaviourAssignment(orderSecond, orderingBehaviour,
 				orderingRevision, {}),
 			"Could not assign callback-order timer fixtures");
-		require(building.getAgentBehaviourRuntimeLimits().timersPerInstance == 2,
+		require(world.getAgentBehaviourRuntimeLimits().timersPerInstance == 2,
 			"The configured per-instance timer limit was not retained");
-		require(building.resumeSimulation(), "Could not resume timer fixture");
-		building.consumeSimulationEvents();
+		require(world.resumeSimulation(), "Could not resume timer fixture");
+		world.consumeSimulationEvents();
 
 		std::ostringstream digest;
 		unsigned phaseEvents = 0;
 		auto consume = [&]
 		{
-			for (auto const& event : building.consumeSimulationEvents())
+			for (auto const& event : world.consumeSimulationEvents())
 			{
 				if (event.type == core::SimulationEventType::PhaseCompleted) ++phaseEvents;
 				if (event.type == core::SimulationEventType::AgentChanged
@@ -1103,29 +1103,29 @@ return {
 		};
 		// The overflowing startup batch is reported headlessly and pauses before
 		// tick 1. Healthy instances retain their complete startup batches.
-		require(!building.advanceTick() && building.isSimulationPaused(),
+		require(!world.advanceTick() && world.isSimulationPaused(),
 			"A timer storm did not stop the headless boundary visibly");
-		require(building.resumeSimulation(),
+		require(world.resumeSimulation(),
 			"Could not resume after acknowledging the timer storm");
 		consume();
 		// Tick 1 first completes; its due timers run at the following boundary.
-		require(building.advanceTick(),
+		require(world.advanceTick(),
 			"Healthy startup batches did not permit tick 1 to complete");
 		consume();
 		// Both ordered timer failures occur at that boundary in Agent-ID order,
 		// after healthy timer callbacks have completed atomically.
-		require(!building.advanceTick() && building.isSimulationPaused(),
+		require(!world.advanceTick() && world.isSimulationPaused(),
 			"Ordered callback failures did not stop the headless boundary");
-		require(building.resumeSimulation(),
+		require(world.resumeSimulation(),
 			"Could not resume after acknowledging ordered callback failures");
 		consume();
 		for (unsigned tick = 0; tick < 4; ++tick)
 		{
-			require(building.advanceTick(),
+			require(world.advanceTick(),
 				"A healthy timer callback unexpectedly stopped the run");
 			consume();
 		}
-		auto diagnostics = building.consumeAgentBehaviourRuntimeDiagnostics();
+		auto diagnostics = world.consumeAgentBehaviourRuntimeDiagnostics();
 		require(diagnostics.size() == 3 && diagnostics[0].agent == overflow
 			&& diagnostics[0].callback == "on_start"
 			&& diagnostics[0].diagnostic.find("timer limit of 2") != std::string::npos
@@ -1136,19 +1136,19 @@ return {
 			&& diagnostics[2].callback == "on_timer"
 			&& diagnostics[2].diagnostic.find("ordered:ab") != std::string::npos,
 			"Timer names were not lexical, callbacks were not in Agent-ID order, or the timer limit had the wrong scope");
-		require(!building.agentBehaviourOwnsMovement(overflow)
-			&& building.agentBehaviourOwnsMovement(first)
-			&& building.agentBehaviourOwnsMovement(second),
+		require(!world.agentBehaviourOwnsMovement(overflow)
+			&& world.agentBehaviourOwnsMovement(first)
+			&& world.agentBehaviourOwnsMovement(second),
 			"One instance's timer limit affected another instance");
-		require(building.lookupAgent(first).entity->getPath()
-			&& building.lookupAgent(second).entity->getPath(),
+		require(world.lookupAgent(first).entity->getPath()
+			&& world.lookupAgent(second).entity->getPath(),
 			"Lexically ordered one-shot timers did not apply their movement commands");
 
 		unsigned reached = 0;
 		for (unsigned tick = 0; tick < 2000 && reached < 2; ++tick)
 		{
-			building.advanceTick();
-			for (auto const& event : building.consumeSimulationEvents())
+			world.advanceTick();
+			for (auto const& event : world.consumeSimulationEvents())
 			{
 				if (event.type == core::SimulationEventType::PhaseCompleted) ++phaseEvents;
 				if (event.type != core::SimulationEventType::DestinationReached) continue;
@@ -1159,9 +1159,9 @@ return {
 		}
 		require(reached == 2 && phaseEvents != 0,
 			"Timer-driven Agents did not finish, or Lua consumed the public event queue");
-		building.advanceTicks(5);
+		world.advanceTicks(5);
 		consume();
-		require(building.consumeAgentBehaviourRuntimeDiagnostics().empty(),
+		require(world.consumeAgentBehaviourRuntimeDiagnostics().empty(),
 			"A one-shot timer repeated or semantic state changed unexpectedly");
 		return digest.str();
 	}
@@ -1239,28 +1239,28 @@ return {
 				{ "destination", core::AgentBehaviourSchemaType::Marker }
 			});
 
-		core::Building building("Activation lifetime", 12, 2);
-		auto const room = building.addRoom("Room", 0, 0, 0, 12, 1);
-		building.addSectorMarker(room, 0, 10.5f, "Destination");
-		building.finishBuild();
-		auto const agent = building.createAgent("Sleeper", room, 0, 0.5f);
-		auto const destination = building.getMarkerIds().front();
-		building.pauseSimulation();
-		building.attachAgentBehaviourRegistry("activation.behaviours", registry);
-		require(building.setAgentBehaviourAssignment(agent, behaviour,
+		core::World world("Activation lifetime", 12, 2);
+		auto const room = world.addRoom("Room", 0, 0, 0, 12, 1);
+		world.addSectorMarker(room, 0, 10.5f, "Destination");
+		world.finishBuild();
+		auto const agent = world.createAgent("Sleeper", room, 0, 0.5f);
+		auto const destination = world.getMarkerIds().front();
+		world.pauseSimulation();
+		world.attachAgentBehaviourRegistry("activation.behaviours", registry);
+		require(world.setAgentBehaviourAssignment(agent, behaviour,
 			registry->lookupAgentBehaviour(behaviour)->getRevision(),
 			{ { "destination", destination } }),
 			"Could not assign activation lifetime fixture");
-		require(building.resumeSimulation(), "Could not start activation fixture");
-		building.consumeSimulationEvents();
-		building.advanceTick(); // on_start at tick 0; timer due at tick 3.
-		building.pauseSimulation();
-		building.consumeSimulationEvents();
-		require(building.setAgentActive(agent, false), "Could not deactivate Agent");
-		require(building.setAgentActive(agent, false),
+		require(world.resumeSimulation(), "Could not start activation fixture");
+		world.consumeSimulationEvents();
+		world.advanceTick(); // on_start at tick 0; timer due at tick 3.
+		world.pauseSimulation();
+		world.consumeSimulationEvents();
+		require(world.setAgentActive(agent, false), "Could not deactivate Agent");
+		require(world.setAgentActive(agent, false),
 			"Idempotent deactivation was refused");
 		unsigned deactivatedEvents = 0;
-		for (auto const& event : building.consumeSimulationEvents())
+		for (auto const& event : world.consumeSimulationEvents())
 			deactivatedEvents += event.type
 				== core::SimulationEventType::AgentDeactivated;
 		require(deactivatedEvents == 1,
@@ -1269,33 +1269,33 @@ return {
 		auto writer = core::YamlSerializer::toString();
 		core::SerializationWorkData work;
 		work.markSerializedUnmodified = false;
-		building.serialize(*writer, work);
+		world.serialize(*writer, work);
 		writer->serialize();
 		auto const yaml = writer->getSerializedString();
 		require(yaml.find("secret_instance_155") == std::string::npos
 			&& yaml.find("frozen_timer_155") == std::string::npos,
-			"Private instance state or timers entered Building persistence");
+			"Private instance state or timers entered World persistence");
 
-		require(building.resumeSimulation(), "Could not run deactivated fixture");
-		building.advanceTicks(5);
-		require(!building.lookupAgent(agent).entity->getPath(),
+		require(world.resumeSimulation(), "Could not run deactivated fixture");
+		world.advanceTicks(5);
+		require(!world.lookupAgent(agent).entity->getPath(),
 			"A suspended timer or command moved a deactivated Agent");
-		building.pauseSimulation();
-		building.consumeSimulationEvents();
-		require(building.setAgentActive(agent, true), "Could not reactivate Agent");
+		world.pauseSimulation();
+		world.consumeSimulationEvents();
+		require(world.setAgentActive(agent, true), "Could not reactivate Agent");
 		unsigned activatedEvents = 0;
-		for (auto const& event : building.consumeSimulationEvents())
+		for (auto const& event : world.consumeSimulationEvents())
 			activatedEvents += event.type == core::SimulationEventType::AgentActivated;
 		require(activatedEvents == 1,
 			"Reactivation did not publish exactly one semantic transition");
-		require(building.resumeSimulation(), "Could not resume reactivated fixture");
-		building.advanceTick();
-		building.advanceTick();
-		require(!building.lookupAgent(agent).entity->getPath(),
+		require(world.resumeSimulation(), "Could not resume reactivated fixture");
+		world.advanceTick();
+		world.advanceTick();
+		require(!world.lookupAgent(agent).entity->getPath(),
 			"Frozen timer used elapsed deactivation ticks");
-		building.advanceTick();
-		require(building.lookupAgent(agent).entity->getPath()
-			&& building.consumeAgentBehaviourRuntimeDiagnostics().empty(),
+		world.advanceTick();
+		require(world.lookupAgent(agent).entity->getPath()
+			&& world.consumeAgentBehaviourRuntimeDiagnostics().empty(),
 			"Reactivation did not resume the same instance at the remaining timer duration");
 	}
 
@@ -1348,47 +1348,47 @@ return {
 				{ "destination", core::AgentBehaviourSchemaType::Marker }
 			});
 
-		core::Building building("Interaction outcomes", 10, 2);
-		auto const room = building.addRoom("Room", 0, 0, 0, 10, 1);
-		building.addSectorMarker(room, 0, 8.5f, "Destination");
+		core::World world("Interaction outcomes", 10, 2);
+		auto const room = world.addRoom("Room", 0, 0, 0, 10, 1);
+		world.addSectorMarker(room, 0, 8.5f, "Destination");
 		auto const sector = core::SectorId{ static_cast<uint64_t>(room) + 1 };
 		core::InteractionBinding command{
 			{ core::DeviceCommandType::SetSectorLights, sector, true },
 			core::InteractionBindingRequirement::Required };
-		auto const working = building.createInteractionPoint("Working control", sector,
+		auto const working = world.createInteractionPoint("Working control", sector,
 			{ 0.5f, 0.0f }, 0.6f, 0.0f, { command });
-		auto const broken = building.createInteractionPoint("Broken control", sector,
+		auto const broken = world.createInteractionPoint("Broken control", sector,
 			{ 0.5f, 0.0f }, 0.6f, 0.0f, { command });
-		building.finishBuild();
-		auto const agent = building.createAgent("Operator", room, 0, 0.5f);
-		building.pauseSimulation();
-		building.attachAgentBehaviourRegistry("interactions.behaviours", registry);
-		require(building.setAgentBehaviourAssignment(agent, behaviour,
+		world.finishBuild();
+		auto const agent = world.createAgent("Operator", room, 0, 0.5f);
+		world.pauseSimulation();
+		world.attachAgentBehaviourRegistry("interactions.behaviours", registry);
+		require(world.setAgentBehaviourAssignment(agent, behaviour,
 			registry->lookupAgentBehaviour(behaviour)->getRevision(),
-			{ { "destination", building.getMarkerIds().front() } }),
+			{ { "destination", world.getMarkerIds().front() } }),
 			"Could not assign interaction outcome fixture");
-		require(building.resumeSimulation(), "Could not start interaction fixture");
-		building.advanceTick(); // Construct and start the instance.
+		require(world.resumeSimulation(), "Could not start interaction fixture");
+		world.advanceTick(); // Construct and start the instance.
 
-		auto const completedRequest = building.requestInteraction(working, agent);
-		auto completed = building.lookupInteractionRequest(completedRequest);
+		auto const completedRequest = world.requestInteraction(working, agent);
+		auto completed = world.lookupInteractionRequest(completedRequest);
 		require(completed && !completed.entity->getOperations().empty(),
 			"Could not create completed interaction fixture");
-		building.lookupDeviceOperation(completed.entity->getOperations().front().first)
+		world.lookupDeviceOperation(completed.entity->getOperations().front().first)
 			.entity->setState(core::DeviceOperationState::Succeeded);
-		building.advanceTick(); // Publish completion.
-		building.advanceTick(); // Deliver completion.
+		world.advanceTick(); // Publish completion.
+		world.advanceTick(); // Deliver completion.
 
-		auto const failedRequest = building.requestInteraction(broken, agent);
-		auto failed = building.lookupInteractionRequest(failedRequest);
+		auto const failedRequest = world.requestInteraction(broken, agent);
+		auto failed = world.lookupInteractionRequest(failedRequest);
 		require(failed && !failed.entity->getOperations().empty(),
 			"Could not create failed interaction fixture");
-		building.lookupDeviceOperation(failed.entity->getOperations().front().first)
+		world.lookupDeviceOperation(failed.entity->getOperations().front().first)
 			.entity->setState(core::DeviceOperationState::Failed);
-		building.advanceTick(); // Publish failure.
-		building.advanceTick(); // Deliver failure and its movement command.
-		require(building.lookupAgent(agent).entity->getPath()
-			&& building.consumeAgentBehaviourRuntimeDiagnostics().empty(),
+		world.advanceTick(); // Publish failure.
+		world.advanceTick(); // Deliver failure and its movement command.
+		require(world.lookupAgent(agent).entity->getPath()
+			&& world.consumeAgentBehaviourRuntimeDiagnostics().empty(),
 			"Immutable semantic interaction outcomes were not delivered correctly");
 	}
 
@@ -1446,9 +1446,9 @@ return {
   api_version = host.api_version,
   factory = function()
     return { on_stop = function(reason, context)
-      if reason ~= "building_close" or context.cancel_movement ~= nil
+      if reason ~= "world_close" or context.cancel_movement ~= nil
           or context.cancel_timer ~= nil or context.random_number ~= nil then
-        error("wrong Building-close teardown")
+        error("wrong World-close teardown")
       end
       error("close failure must not escape")
     end }
@@ -1458,35 +1458,35 @@ return {
 		auto const closeBehaviour = registry->addAgentBehaviour("Close",
 			"close.lua", {});
 
-		auto makeBuilding = [&]
+		auto makeWorld = [&]
 		{
-			auto building = std::make_unique<core::Building>("Teardown", 6, 2);
-			auto const room = building->addRoom("Room", 0, 0, 0, 6, 1);
-			building->finishBuild();
-			auto const agent = building->createAgent("Agent", room, 0, 0.5f);
-			building->pauseSimulation();
-			building->attachAgentBehaviourRegistry("teardown.behaviours", registry);
-			return std::pair{ std::move(building), agent };
+			auto world = std::make_unique<core::World>("Teardown", 6, 2);
+			auto const room = world->addRoom("Room", 0, 0, 0, 6, 1);
+			world->finishBuild();
+			auto const agent = world->createAgent("Agent", room, 0, 0.5f);
+			world->pauseSimulation();
+			world->attachAgentBehaviourRegistry("teardown.behaviours", registry);
+			return std::pair{ std::move(world), agent };
 		};
 
 		{
-			auto [building, agent] = makeBuilding();
-			require(building->setAgentBehaviourAssignment(agent, failureBehaviour,
+			auto [world, agent] = makeWorld();
+			require(world->setAgentBehaviourAssignment(agent, failureBehaviour,
 				registry->lookupAgentBehaviour(failureBehaviour)->getRevision(), {}),
 				"Could not assign failure teardown fixture");
-			require(building->resumeSimulation(), "Could not start failure teardown");
-			building->advanceTicks(2);
+			require(world->resumeSimulation(), "Could not start failure teardown");
+			world->advanceTicks(2);
 			auto writer = core::YamlSerializer::toString();
 			core::SerializationWorkData work;
 			work.markSerializedUnmodified = false;
-			building->serialize(*writer, work);
+			world->serialize(*writer, work);
 			writer->serialize();
 			require(writer->getSerializedString().find("primary callback failure")
 					== std::string::npos
 				&& writer->getSerializedString().find("best-effort stop failure")
 					== std::string::npos,
-				"Runtime diagnostics entered Building persistence");
-			auto diagnostics = building->consumeAgentBehaviourRuntimeDiagnostics();
+				"Runtime diagnostics entered World persistence");
+			auto diagnostics = world->consumeAgentBehaviourRuntimeDiagnostics();
 			require(diagnostics.size() == 2
 				&& diagnostics[0].callback == "on_timer"
 				&& diagnostics[0].diagnostic.find("primary callback failure")
@@ -1494,36 +1494,36 @@ return {
 				&& diagnostics[1].callback == "on_stop"
 				&& diagnostics[1].diagnostic.find("best-effort stop failure")
 					!= std::string::npos
-				&& !building->agentBehaviourOwnsMovement(agent),
+				&& !world->agentBehaviourOwnsMovement(agent),
 				"Instance failure did not complete best-effort teardown");
 		}
 
 		{
-			auto [building, agent] = makeBuilding();
-			require(building->setAgentBehaviourAssignment(agent, unassignmentBehaviour,
+			auto [world, agent] = makeWorld();
+			require(world->setAgentBehaviourAssignment(agent, unassignmentBehaviour,
 				registry->lookupAgentBehaviour(unassignmentBehaviour)->getRevision(), {}),
 				"Could not assign unassignment teardown fixture");
-			require(building->resumeSimulation(), "Could not start unassignment fixture");
-			building->advanceTick();
-			building->pauseSimulation();
-			require(building->clearAgentBehaviourAssignment(agent),
+			require(world->resumeSimulation(), "Could not start unassignment fixture");
+			world->advanceTick();
+			world->pauseSimulation();
+			require(world->clearAgentBehaviourAssignment(agent),
 				"A failing on_stop vetoed unassignment");
-			auto diagnostics = building->consumeAgentBehaviourRuntimeDiagnostics();
+			auto diagnostics = world->consumeAgentBehaviourRuntimeDiagnostics();
 			require(diagnostics.size() == 1 && diagnostics[0].callback == "on_stop"
 				&& diagnostics[0].diagnostic.find("unassignment stop observed")
 					!= std::string::npos
-				&& !building->agentBehaviourOwnsMovement(agent),
+				&& !world->agentBehaviourOwnsMovement(agent),
 				"Unassignment did not finish after on_stop failed");
 		}
 
 		{
-			auto [building, agent] = makeBuilding();
-			require(building->setAgentBehaviourAssignment(agent, closeBehaviour,
+			auto [world, agent] = makeWorld();
+			require(world->setAgentBehaviourAssignment(agent, closeBehaviour,
 				registry->lookupAgentBehaviour(closeBehaviour)->getRevision(), {}),
-				"Could not assign Building-close teardown fixture");
-			require(building->resumeSimulation(), "Could not start close fixture");
-			building->advanceTick();
-			building.reset(); // A failing on_stop must not block or escape close.
+				"Could not assign World-close teardown fixture");
+			require(world->resumeSimulation(), "Could not start close fixture");
+			world->advanceTick();
+			world.reset(); // A failing on_stop must not block or escape close.
 		}
 	}
 
@@ -1585,34 +1585,34 @@ return {
 				== core::AgentBehaviourModuleStatus::Loaded,
 			"The composite schedule fixture did not preflight");
 
-		struct ScheduleBuilding
+		struct ScheduleWorld
 		{
-			std::shared_ptr<core::Building> building;
+			std::shared_ptr<core::World> world;
 			core::AgentId first;
 			core::AgentId second;
 		};
-		auto makeBuilding = [&](bool extra, uint64_t seed = 0x1545eedu)
+		auto makeWorld = [&](bool extra, uint64_t seed = 0x1545eedu)
 		{
-			ScheduleBuilding fixture;
-			fixture.building = std::make_shared<core::Building>("Schedules", 36, 2);
-			auto const room = fixture.building->addRoom("Room", 0, 0, 0, 36, 1);
-			fixture.building->addSectorMarker(room, 0, 4.5f, "Work");
-			fixture.building->addSectorMarker(room, 0, 10.5f, "Lunch");
-			fixture.building->addSectorMarker(room, 0, 17.5f, "Home");
-			fixture.building->addSectorMarker(room, 0, 24.5f, "Gym");
-			fixture.building->addSectorMarker(room, 0, 31.5f, "Park");
-			fixture.building->finishBuild();
-			fixture.first = fixture.building->createAgent("First", room, 0, 0.5f);
-			fixture.second = fixture.building->createAgent("Second", room, 0, 1.5f);
+			ScheduleWorld fixture;
+			fixture.world = std::make_shared<core::World>("Schedules", 36, 2);
+			auto const room = fixture.world->addRoom("Room", 0, 0, 0, 36, 1);
+			fixture.world->addSectorMarker(room, 0, 4.5f, "Work");
+			fixture.world->addSectorMarker(room, 0, 10.5f, "Lunch");
+			fixture.world->addSectorMarker(room, 0, 17.5f, "Home");
+			fixture.world->addSectorMarker(room, 0, 24.5f, "Gym");
+			fixture.world->addSectorMarker(room, 0, 31.5f, "Park");
+			fixture.world->finishBuild();
+			fixture.first = fixture.world->createAgent("First", room, 0, 0.5f);
+			fixture.second = fixture.world->createAgent("Second", room, 0, 1.5f);
 			auto const third = extra
-				? fixture.building->createAgent("Noisy", room, 0, 2.5f)
+				? fixture.world->createAgent("Noisy", room, 0, 2.5f)
 				: core::AgentId{};
-			fixture.building->pauseSimulation();
+			fixture.world->pauseSimulation();
 			std::string diagnostic;
-			require(fixture.building->setRandomSeed(seed, &diagnostic),
-				"Could not author the Building random seed: " + diagnostic);
-			fixture.building->attachAgentBehaviourRegistry("schedule.behaviours", registry);
-			auto const markers = fixture.building->getMarkerIds();
+			require(fixture.world->setRandomSeed(seed, &diagnostic),
+				"Could not author the World random seed: " + diagnostic);
+			fixture.world->attachAgentBehaviourRegistry("schedule.behaviours", registry);
+			auto const markers = fixture.world->getMarkerIds();
 			auto schedule = [](core::MarkerId firstMarker, uint64_t firstDuration,
 				core::MarkerId secondMarker, uint64_t secondDuration)
 			{
@@ -1627,24 +1627,24 @@ return {
 					} } };
 			};
 			auto const revision = registry->lookupAgentBehaviour(behaviour)->getRevision();
-			require(fixture.building->setAgentBehaviourAssignment(fixture.first,
+			require(fixture.world->setAgentBehaviourAssignment(fixture.first,
 				behaviour, revision, schedule(markers[0], 2, markers[1], 3), &diagnostic)
-				&& fixture.building->setAgentBehaviourAssignment(fixture.second,
+				&& fixture.world->setAgentBehaviourAssignment(fixture.second,
 					behaviour, revision, schedule(markers[2], 4, markers[3], 1), &diagnostic),
 				"Could not assign distinct composite schedules: " + diagnostic);
 			if (third)
-				require(fixture.building->setAgentBehaviourAssignment(third,
+				require(fixture.world->setAgentBehaviourAssignment(third,
 					behaviour, revision, schedule(markers[4], 1, markers[4], 1), &diagnostic),
 					"Could not assign the independent-stream noise Agent");
 			return fixture;
 		};
 
-		auto run = [](ScheduleBuilding const& fixture)
+		auto run = [](ScheduleWorld const& fixture)
 		{
-			if (fixture.building->isSimulationPaused())
-				require(fixture.building->resumeSimulation(),
+			if (fixture.world->isSimulationPaused())
+				require(fixture.world->resumeSimulation(),
 					"Could not resume a schedule replay");
-			fixture.building->consumeSimulationEvents();
+			fixture.world->consumeSimulationEvents();
 			std::ostringstream digest;
 			unsigned firstReached = 0, secondReached = 0;
 			for (unsigned tick = 0; tick < 5000
@@ -1652,12 +1652,12 @@ return {
 			{
 				if (tick == 10)
 				{
-					fixture.building->pauseSimulation();
-					require(fixture.building->resumeSimulation(),
+					fixture.world->pauseSimulation();
+					require(fixture.world->resumeSimulation(),
 						"Pause/resume did not preserve schedule state");
 				}
-				fixture.building->advanceTick();
-				for (auto const& event : fixture.building->consumeSimulationEvents())
+				fixture.world->advanceTick();
+				for (auto const& event : fixture.world->consumeSimulationEvents())
 				{
 					if (event.type != core::SimulationEventType::DestinationReached
 						|| (event.agent.id != fixture.first
@@ -1676,7 +1676,7 @@ return {
 						<< event.destinationMarker.value << '|';
 				}
 			}
-			auto diagnostics = fixture.building->consumeAgentBehaviourRuntimeDiagnostics();
+			auto diagnostics = fixture.world->consumeAgentBehaviourRuntimeDiagnostics();
 			std::string detail = " (first=" + std::to_string(firstReached)
 				+ ", second=" + std::to_string(secondReached) + ")";
 			if (!diagnostics.empty()) detail += ": " + diagnostics.front().diagnostic;
@@ -1687,41 +1687,41 @@ return {
 			return digest.str();
 		};
 
-		auto fixture = makeBuilding(false);
+		auto fixture = makeWorld(false);
 		auto writer = core::YamlSerializer::toString();
 		core::SerializationWorkData writeWork;
 		writeWork.markSerializedUnmodified = false;
-		fixture.building->serialize(*writer, writeWork);
+		fixture.world->serialize(*writer, writeWork);
 		writer->serialize();
 		auto const authoredYaml = writer->getSerializedString();
 		require(authoredYaml.find("randomSeed: 22306541") != std::string::npos,
-			"The authored Building random seed was not persisted");
+			"The authored World random seed was not persisted");
 
 		auto const first = run(fixture);
-		fixture.building->resetSimulation();
-		require(fixture.building->getRandomSeed() == 0x1545eedu,
-			"Simulation reset lost the authored Building random seed");
+		fixture.world->resetSimulation();
+		require(fixture.world->getRandomSeed() == 0x1545eedu,
+			"Simulation reset lost the authored World random seed");
 		auto const afterReset = run(fixture);
 		require(first == afterReset,
 			"Simulation reset did not recreate schedule state and random streams");
 
-		auto reopened = std::make_shared<core::Building>("Loading", 1, 1);
+		auto reopened = std::make_shared<core::World>("Loading", 1, 1);
 		auto reader = core::YamlSerializer::fromString(authoredYaml);
 		reader->deserialize();
 		core::SerializationWorkData readWork;
 		require(reopened->deserialize(*reader, readWork),
-			"The authored schedule Building did not reload");
+			"The authored schedule World did not reload");
 		reopened->resolveAgentBehaviourRegistry(registry);
-		ScheduleBuilding loaded{ reopened, fixture.first, fixture.second };
+		ScheduleWorld loaded{ reopened, fixture.first, fixture.second };
 		require(run(loaded) == first,
 			"Save/load did not reproduce configured schedule outcomes");
 
-		auto noisy = makeBuilding(true);
+		auto noisy = makeWorld(true);
 		require(run(noisy) == first,
 			"Another Agent's callbacks altered an independent random stream");
-		auto differentSeed = makeBuilding(false, 0x1545eedu + 1u);
+		auto differentSeed = makeWorld(false, 0x1545eedu + 1u);
 		require(run(differentSeed) != first,
-			"The authored Building seed did not affect deterministic random streams");
+			"The authored World seed did not affect deterministic random streams");
 	}
 
 	std::string runBoundedStormAndFailureFixture()
@@ -1779,25 +1779,25 @@ end }
 
 		std::ostringstream digest;
 		{
-			core::Building building("Callback storm", 8, 2,
+			core::World world("Callback storm", 8, 2,
 				{ 64u * 1024u * 1024u, 100'000u, 256u, 3u, 32u, 100u, 600u });
-			auto const room = building.addRoom("Room", 0, 0, 0, 8, 1);
-			building.finishBuild();
-			auto const storm = building.createAgent("Storm", room, 0, 0.5f);
-			auto const unaffected = building.createAgent("Unaffected", room, 0, 1.5f);
-			building.pauseSimulation();
-			building.attachAgentBehaviourRegistry("storms.behaviours", registry);
-			require(building.setAgentBehaviourAssignment(storm, callbackStorm,
+			auto const room = world.addRoom("Room", 0, 0, 0, 8, 1);
+			world.finishBuild();
+			auto const storm = world.createAgent("Storm", room, 0, 0.5f);
+			auto const unaffected = world.createAgent("Unaffected", room, 0, 1.5f);
+			world.pauseSimulation();
+			world.attachAgentBehaviourRegistry("storms.behaviours", registry);
+			require(world.setAgentBehaviourAssignment(storm, callbackStorm,
 				registry->lookupAgentBehaviour(callbackStorm)->getRevision(), {})
-				&& building.setAgentBehaviourAssignment(unaffected, safe,
+				&& world.setAgentBehaviourAssignment(unaffected, safe,
 					registry->lookupAgentBehaviour(safe)->getRevision(), {}),
 				"Could not assign callback-storm fixtures");
-			require(building.resumeSimulation() && building.advanceTick(),
+			require(world.resumeSimulation() && world.advanceTick(),
 				"Callback-storm startup did not complete");
-			require(!building.advanceTick() && building.isSimulationPaused()
-				&& building.getSimulationTick() == 1,
+			require(!world.advanceTick() && world.isSimulationPaused()
+				&& world.getSimulationTick() == 1,
 				"Callback storm did not stop before the overflowing tick");
-			auto diagnostics = building.consumeAgentBehaviourRuntimeDiagnostics();
+			auto diagnostics = world.consumeAgentBehaviourRuntimeDiagnostics();
 			require(diagnostics.size() == 1 && diagnostics[0].agent == storm
 				&& diagnostics[0].behaviour == callbackStorm
 				&& diagnostics[0].agentName == "Storm"
@@ -1805,105 +1805,105 @@ end }
 				&& diagnostics[0].callback == "on_timer" && diagnostics[0].tick == 1
 				&& diagnostics[0].diagnostic.find("limit of 3") != std::string::npos
 				&& !diagnostics[0].traceback.empty()
-				&& !building.agentBehaviourOwnsMovement(storm)
-				&& building.agentBehaviourOwnsMovement(unaffected),
+				&& !world.agentBehaviourOwnsMovement(storm)
+				&& world.agentBehaviourOwnsMovement(unaffected),
 				"Callback-storm diagnostic, isolation, or ordering changed");
 			digest << diagnostics[0].agent.value << ':' << diagnostics[0].tick << ':'
 				<< diagnostics[0].diagnostic << '|';
 		}
 
 		{
-			core::Building building("Command storm", 8, 2);
-			auto const defaults = building.getAgentBehaviourRuntimeLimits();
+			core::World world("Command storm", 8, 2);
+			auto const defaults = world.getAgentBehaviourRuntimeLimits();
 			require(defaults.callbacksPerBoundary == 10'000u
 				&& defaults.commandsPerCallback == 32u
 				&& defaults.timersPerInstance == 256u
 				&& defaults.logMessagesPerWindow == 100u
 				&& defaults.logWindowTicks == 600u,
 				"Agent behaviour storm defaults changed");
-			auto const room = building.addRoom("Room", 0, 0, 0, 8, 1);
-			building.finishBuild();
-			auto const storm = building.createAgent("Commands", room, 0, 0.5f);
-			auto const unaffected = building.createAgent("Safe", room, 0, 1.5f);
-			building.pauseSimulation();
-			building.attachAgentBehaviourRegistry("storms.behaviours", registry);
-			require(building.setAgentBehaviourAssignment(storm, commandStorm,
+			auto const room = world.addRoom("Room", 0, 0, 0, 8, 1);
+			world.finishBuild();
+			auto const storm = world.createAgent("Commands", room, 0, 0.5f);
+			auto const unaffected = world.createAgent("Safe", room, 0, 1.5f);
+			world.pauseSimulation();
+			world.attachAgentBehaviourRegistry("storms.behaviours", registry);
+			require(world.setAgentBehaviourAssignment(storm, commandStorm,
 				registry->lookupAgentBehaviour(commandStorm)->getRevision(), {})
-				&& building.setAgentBehaviourAssignment(unaffected, safe,
+				&& world.setAgentBehaviourAssignment(unaffected, safe,
 					registry->lookupAgentBehaviour(safe)->getRevision(), {}),
 				"Could not assign command-storm fixtures");
-			require(building.resumeSimulation() && !building.advanceTick()
-				&& building.isSimulationPaused() && building.getSimulationTick() == 0,
+			require(world.resumeSimulation() && !world.advanceTick()
+				&& world.isSimulationPaused() && world.getSimulationTick() == 0,
 				"Command storm partially entered the overflowing tick");
-			auto diagnostics = building.consumeAgentBehaviourRuntimeDiagnostics();
+			auto diagnostics = world.consumeAgentBehaviourRuntimeDiagnostics();
 			auto const commandDetail = diagnostics.empty() ? std::string("no diagnostic")
 				: diagnostics[0].diagnostic;
 			require(diagnostics.size() == 1 && diagnostics[0].agent == storm
 				&& diagnostics[0].callback == "on_start"
 				&& diagnostics[0].diagnostic.find("limit of 32") != std::string::npos
-				&& !building.agentBehaviourOwnsMovement(storm)
-				&& building.agentBehaviourOwnsMovement(unaffected),
+				&& !world.agentBehaviourOwnsMovement(storm)
+				&& world.agentBehaviourOwnsMovement(unaffected),
 				"Command storm partially applied or affected an unrelated Agent: "
 					+ commandDetail + " (count=" + std::to_string(diagnostics.size())
-					+ ", stormOwns=" + std::to_string(building.agentBehaviourOwnsMovement(storm))
-					+ ", safeOwns=" + std::to_string(building.agentBehaviourOwnsMovement(unaffected)) + ")");
+					+ ", stormOwns=" + std::to_string(world.agentBehaviourOwnsMovement(storm))
+					+ ", safeOwns=" + std::to_string(world.agentBehaviourOwnsMovement(unaffected)) + ")");
 			digest << diagnostics[0].agent.value << ':' << diagnostics[0].tick << ':'
 				<< diagnostics[0].diagnostic << '|';
 		}
 
 		{
-			core::Building building("Module failure", 8, 2,
+			core::World world("Module failure", 8, 2,
 				{ 64u * 1024u * 1024u, 1'000u });
-			auto const room = building.addRoom("Room", 0, 0, 0, 8, 1);
-			building.finishBuild();
-			auto const first = building.createAgent("First affected", room, 0, 0.5f);
-			auto const second = building.createAgent("Second affected", room, 0, 1.5f);
-			auto const unaffected = building.createAgent("Other module", room, 0, 2.5f);
-			building.pauseSimulation();
-			building.attachAgentBehaviourRegistry("storms.behaviours", registry);
-			require(building.setAgentBehaviourAssignment(first, loadFailure,
+			auto const room = world.addRoom("Room", 0, 0, 0, 8, 1);
+			world.finishBuild();
+			auto const first = world.createAgent("First affected", room, 0, 0.5f);
+			auto const second = world.createAgent("Second affected", room, 0, 1.5f);
+			auto const unaffected = world.createAgent("Other module", room, 0, 2.5f);
+			world.pauseSimulation();
+			world.attachAgentBehaviourRegistry("storms.behaviours", registry);
+			require(world.setAgentBehaviourAssignment(first, loadFailure,
 				registry->lookupAgentBehaviour(loadFailure)->getRevision(), {})
-				&& building.setAgentBehaviourAssignment(second, loadFailure,
+				&& world.setAgentBehaviourAssignment(second, loadFailure,
 					registry->lookupAgentBehaviour(loadFailure)->getRevision(), {})
-				&& building.setAgentBehaviourAssignment(unaffected, safe,
+				&& world.setAgentBehaviourAssignment(unaffected, safe,
 					registry->lookupAgentBehaviour(safe)->getRevision(), {}),
 				"Could not assign module-scope fixtures");
-			require(building.resumeSimulation() && !building.advanceTick()
-				&& building.isSimulationPaused(),
+			require(world.resumeSimulation() && !world.advanceTick()
+				&& world.isSimulationPaused(),
 				"Module failure did not stop the headless run");
-			auto diagnostics = building.consumeAgentBehaviourRuntimeDiagnostics();
+			auto diagnostics = world.consumeAgentBehaviourRuntimeDiagnostics();
 			require(diagnostics.size() == 1 && diagnostics[0].agent == first
 				&& diagnostics[0].behaviour == loadFailure
 				&& diagnostics[0].stage == core::AgentBehaviourRuntimeStage::ModuleLoad
-				&& !building.agentBehaviourOwnsMovement(first)
-				&& !building.agentBehaviourOwnsMovement(second)
-				&& building.agentBehaviourOwnsMovement(unaffected),
+				&& !world.agentBehaviourOwnsMovement(first)
+				&& !world.agentBehaviourOwnsMovement(second)
+				&& world.agentBehaviourOwnsMovement(unaffected),
 				"Module failure did not disable exactly its affected instances");
 			digest << diagnostics[0].agent.value << ':'
 				<< static_cast<unsigned>(diagnostics[0].stage) << '|';
 		}
 
 		{
-			core::Building building("Log suppression", 8, 2);
-			auto const room = building.addRoom("Room", 0, 0, 0, 8, 1);
-			building.finishBuild();
-			auto const agent = building.createAgent("Logger", room, 0, 0.5f);
-			building.pauseSimulation();
-			building.attachAgentBehaviourRegistry("storms.behaviours", registry);
-			require(building.setAgentBehaviourAssignment(agent, logging,
+			core::World world("Log suppression", 8, 2);
+			auto const room = world.addRoom("Room", 0, 0, 0, 8, 1);
+			world.finishBuild();
+			auto const agent = world.createAgent("Logger", room, 0, 0.5f);
+			world.pauseSimulation();
+			world.attachAgentBehaviourRegistry("storms.behaviours", registry);
+			require(world.setAgentBehaviourAssignment(agent, logging,
 				registry->lookupAgentBehaviour(logging)->getRevision(), {})
-				&& building.resumeSimulation() && building.advanceTick(),
+				&& world.resumeSimulation() && world.advanceTick(),
 				"Could not run log-suppression fixture");
 			auto messages = core::consumeLogMessages();
 			require(messages.size() == 101
 				&& messages.back().msg.find("further messages suppressed")
 					!= std::string::npos,
 				"Log storm did not produce exactly one suppression summary");
-			require(building.advanceTicks(600) && building.advanceTick(),
+			require(world.advanceTicks(600) && world.advanceTick(),
 				"Log-window fixture did not reach its next window");
 			messages = core::consumeLogMessages();
 			require(messages.size() == 1 && messages[0].msg == "new-window",
-				"Building log allowance did not reset after 600 ticks");
+				"World log allowance did not reset after 600 ticks");
 			digest << "logs:101:1|";
 		}
 		return digest.str();

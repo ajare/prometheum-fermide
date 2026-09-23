@@ -21,7 +21,7 @@
 - [x] Every physical control uses interaction points and typed command bindings.
 - [x] Every stateful device reports queryable operations without legacy completion callbacks.
 - [x] Agents no longer inherit from a device-controller or usability base.
-- [x] Building-owned registries are the authoritative lifetime owners of migrated simulation entities.
+- [x] World-owned registries are the authoritative lifetime owners of migrated simulation entities.
 - [x] UI and rendering consume stable IDs and read-only state rather than legacy mutable pointers.
 - [x] The old usability, controller, controllable, orchestrator, orchestrated-system, and vertex-controller implementations have no remaining call sites.
 - [x] Legacy types and construction adapters are deleted rather than retained as aliases.

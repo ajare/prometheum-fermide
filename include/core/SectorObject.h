@@ -13,7 +13,7 @@ namespace core
 
 	class Vertex;
 	class Sector;
-	class Building;
+	class World;
 
 	// Intended as a base class for Interactables, Windows, etc.
 	class SectorObject : public Area

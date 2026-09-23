@@ -1,7 +1,7 @@
 // Ticket #57: deleting an Agent which is riding a Lift must not leak its slot.
 //
 // The editor deletes a selected Agent by calling clearPath() and then
-// Building::removeAgent(). clearPath() cancels the route - which for an onboard
+// World::removeAgent(). clearPath() cancels the route - which for an onboard
 // Agent means "ask for a safe transport exit" - and leaves the Agent Idle. Idle is
 // what removeAgent() has always accepted, so the Agent entity vanished while the
 // Lift's manifest still owned its handle. The safe-exit machinery then dropped the
@@ -27,7 +27,7 @@
 #include <vector>
 
 #include "core/Agent.h"
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/Simulation.h"
 
 namespace
@@ -39,27 +39,27 @@ namespace
 
 	constexpr uint64_t DrainTicks = 1000;
 
-	// A two-stop, capacity-one Lift between two Corridors: the smallest building
+	// A two-stop, capacity-one Lift between two Corridors: the smallest world
 	// where a passenger can be genuinely onboard a moving car.
 	struct LiftScenario
 	{
-		core::Building building;
+		core::World world;
 		uint32_t lower{ 0 };
 		uint32_t upper{ 0 };
 		core::TraversalResourceId lift{};
 
 		explicit LiftScenario(std::string const& name)
-			: building(name, 8, 6)
+			: world(name, 8, 6)
 		{
-			lower = building.addCorridor(0, 0, 7);
-			upper = building.addCorridor(2, 0, 7);
-			core::Building::CreateLiftOptions options;
+			lower = world.addCorridor(0, 0, 7);
+			upper = world.addCorridor(2, 0, 7);
+			core::World::CreateLiftOptions options;
 			options.cellsWide = 1;
 			options.stopOffsets = { 0, 2 };
 			options.capacity = 1;
-			auto created = building.addLift(1, 0, 2, options);
+			auto created = world.addLift(1, 0, 2, options);
 			lift = created.traversalResource;
-			building.finishBuild();
+			world.finishBuild();
 		}
 
 		core::TraversalResourceSnapshot const& liftSnapshot(
@@ -77,13 +77,13 @@ namespace
 
 		core::AgentId boardPassenger(std::string const& name)
 		{
-			auto target = building.getGraph()->getClosestVertexInSector(
-				building.getSector(upper).get(), { 2.5f, 2.0f });
+			auto target = world.getGraph()->getClosestVertexInSector(
+				world.getSector(upper).get(), { 2.5f, 2.0f });
 			require(target != nullptr, "No route target in the upper Corridor");
-			auto passengerId = building.createAgent(name, lower, 0, 0.5f);
-			auto passenger = building.lookupAgent(passengerId).entity;
+			auto passengerId = world.createAgent(name, lower, 0, 0.5f);
+			auto passenger = world.lookupAgent(passengerId).entity;
 			require(passenger != nullptr, "The passenger was not created");
-			auto path = building.getGraph()->calculatePath(passenger, target);
+			auto path = world.getGraph()->calculatePath(passenger, target);
 			require(path != nullptr, "No route was found for the passenger");
 			passenger->setPath(path, true);
 			return passengerId;
@@ -95,8 +95,8 @@ namespace
 		{
 			for (uint64_t tick = 0; tick < DrainTicks; ++tick)
 			{
-				building.advanceTick();
-				auto const snapshot = building.getSimulationSnapshot();
+				world.advanceTick();
+				auto const snapshot = world.getSimulationSnapshot();
 				auto const& liftState = liftSnapshot(snapshot);
 				if (liftState.liftMoving && liftState.occupantCount == 1
 					&& liftState.liftPassenger == passengerId)
@@ -167,21 +167,21 @@ namespace
 		scenario.advanceUntilMovingWithOccupant(passengerId);
 
 		// Exactly what UI.cpp does for Delete and for a clipboard cut.
-		auto passenger = scenario.building.lookupAgent(passengerId).entity;
+		auto passenger = scenario.world.lookupAgent(passengerId).entity;
 		require(passenger != nullptr, "The rider vanished before the delete");
 		passenger->clearPath();
-		auto const removal = scenario.building.removeAgent(passengerId);
+		auto const removal = scenario.world.removeAgent(passengerId);
 		require(removal.removed, std::format(
 			"Deleting an onboard Agent was refused: {}", removal.diagnostic).c_str());
-		require(!scenario.building.lookupAgent(passengerId),
+		require(!scenario.world.lookupAgent(passengerId),
 			"The Agent entity survived removeAgent()");
 
 		for (uint64_t tick = 0; tick < DrainTicks; ++tick)
 		{
-			scenario.building.advanceTick();
+			scenario.world.advanceTick();
 		}
 
-		auto const snapshot = scenario.building.getSimulationSnapshot();
+		auto const snapshot = scenario.world.getSimulationSnapshot();
 		auto const& liftState = scenario.liftSnapshot(snapshot);
 		require(liftState.occupantCount == 0, std::format(
 			"The Lift still reports {} occupant(s) after its rider was deleted",
@@ -202,21 +202,21 @@ namespace
 		auto const firstId = scenario.boardPassenger("First rider");
 		scenario.advanceUntilMovingWithOccupant(firstId);
 
-		auto first = scenario.building.lookupAgent(firstId).entity;
+		auto first = scenario.world.lookupAgent(firstId).entity;
 		require(first != nullptr, "The first rider vanished before the delete");
 		first->clearPath();
-		require(scenario.building.removeAgent(firstId).removed,
+		require(scenario.world.removeAgent(firstId).removed,
 			"Deleting the first rider was refused");
 
 		auto const secondId = scenario.boardPassenger("Second rider");
 		for (uint64_t tick = 0; tick < DrainTicks * 4; ++tick)
 		{
-			scenario.building.advanceTick();
-			auto const* second = scenario.building.lookupAgent(secondId).entity;
-			if (second && second->getSector() == scenario.building.getSector(scenario.upper).get()
+			scenario.world.advanceTick();
+			auto const* second = scenario.world.lookupAgent(secondId).entity;
+			if (second && second->getSector() == scenario.world.getSector(scenario.upper).get()
 				&& second->getState() == core::Agent::State::Idle)
 			{
-				auto const snapshot = scenario.building.getSimulationSnapshot();
+				auto const snapshot = scenario.world.getSimulationSnapshot();
 				requireNoStaleHandles(snapshot, firstId, "Reusing the released slot");
 				return;
 			}
@@ -233,14 +233,14 @@ namespace
 		scenario.advanceUntilMovingWithOccupant(riderId);
 
 		auto const waiterId = scenario.boardPassenger("Queued waiter");
-		auto waiter = scenario.building.lookupAgent(waiterId).entity;
+		auto waiter = scenario.world.lookupAgent(waiterId).entity;
 		require(waiter != nullptr, "The waiter was not created");
 
 		// Let the waiter reach the Lift's door queue.
 		for (uint64_t tick = 0; tick < DrainTicks; ++tick)
 		{
-			scenario.building.advanceTick();
-			auto const snapshot = scenario.building.getSimulationSnapshot();
+			scenario.world.advanceTick();
+			auto const snapshot = scenario.world.getSimulationSnapshot();
 			auto const held = std::any_of(snapshot.traversalRequests.begin(),
 				snapshot.traversalRequests.end(),
 				[&](core::TraversalRequestSnapshot const& request)
@@ -248,11 +248,11 @@ namespace
 			if (!held) continue;
 
 			waiter->clearPath();
-			require(scenario.building.removeAgent(waiterId).removed,
+			require(scenario.world.removeAgent(waiterId).removed,
 				"Deleting a queued waiter was refused");
 			for (uint64_t drained = 0; drained < DrainTicks; ++drained)
-				scenario.building.advanceTick();
-			requireNoStaleHandles(scenario.building.getSimulationSnapshot(), waiterId,
+				scenario.world.advanceTick();
+			requireNoStaleHandles(scenario.world.getSimulationSnapshot(), waiterId,
 				"Deleting a queued waiter");
 			return;
 		}
@@ -267,16 +267,16 @@ namespace
 		auto const riderId = scenario.boardPassenger("Rider");
 		scenario.advanceUntilMovingWithOccupant(riderId);
 
-		auto rider = scenario.building.lookupAgent(riderId).entity;
+		auto rider = scenario.world.lookupAgent(riderId).entity;
 		require(rider != nullptr, "The rider vanished before the delete");
 		rider->clearPath();
-		require(scenario.building.removeAgent(riderId).removed,
+		require(scenario.world.removeAgent(riderId).removed,
 			"Deleting the rider was refused");
 
 		for (uint64_t tick = 0; tick < DrainTicks; ++tick)
 		{
-			scenario.building.advanceTick();
-			auto const snapshot = scenario.building.getSimulationSnapshot();
+			scenario.world.advanceTick();
+			auto const snapshot = scenario.world.getSimulationSnapshot();
 			auto const& liftState = scenario.liftSnapshot(snapshot);
 			require(liftState.enabled, "The Lift disabled itself after losing its rider");
 			if (!liftState.liftMoving && liftState.occupantCount == 0
@@ -290,30 +290,30 @@ namespace
 	// stays extended for somebody who no longer exists.
 	void deletingAClimberReleasesTheExtensionLease()
 	{
-		core::Building building("Delete climber", 4, 4);
-		auto const lower = building.addCorridor(0, 0, 3);
-		auto const upper = building.addCorridor(2, 0, 3);
-		core::Building::CreateLadderOptions options{ 3, true, false };
-		auto const created = building.addLadder(1, 0, 1, options);
-		building.finishBuild();
+		core::World world("Delete climber", 4, 4);
+		auto const lower = world.addCorridor(0, 0, 3);
+		auto const upper = world.addCorridor(2, 0, 3);
+		core::World::CreateLadderOptions options{ 3, true, false };
+		auto const created = world.addLadder(1, 0, 1, options);
+		world.finishBuild();
 
-		auto target = building.getGraph()->getClosestVertexInSector(
-			building.getSector(upper).get(), { 1.5f, 2.0f });
+		auto target = world.getGraph()->getClosestVertexInSector(
+			world.getSector(upper).get(), { 1.5f, 2.0f });
 		require(target != nullptr, "No route target above the ladder");
-		auto const first = building.createAgent("Climber one", lower, 0, 1.5f);
-		auto const second = building.createAgent("Climber two", lower, 0, 1.5f);
+		auto const first = world.createAgent("Climber one", lower, 0, 1.5f);
+		auto const second = world.createAgent("Climber two", lower, 0, 1.5f);
 		for (auto id : { first, second })
 		{
-			auto agent = building.lookupAgent(id).entity;
+			auto agent = world.lookupAgent(id).entity;
 			require(agent != nullptr, "A climber was not created");
-			auto path = building.getGraph()->calculatePath(agent, target);
+			auto path = world.getGraph()->calculatePath(agent, target);
 			require(path != nullptr, "No route was found for a climber");
 			agent->setPath(path, true);
 		}
 
 		auto onCapacity = [&](core::AgentId id, core::TraversalResourceSnapshot const& resource)
 		{
-			auto const* agent = building.lookupAgent(id).entity;
+			auto const* agent = world.lookupAgent(id).entity;
 			return agent && agent->getSector()
 				&& core::SectorId{ (uint64_t)agent->getSector()->getIndex() + 1 } == resource.capacitySector;
 		};
@@ -321,8 +321,8 @@ namespace
 		core::AgentId deleted{};
 		for (uint64_t tick = 0; tick < 1000 && !deleted; ++tick)
 		{
-			building.advanceTick();
-			auto const snapshot = building.getSimulationSnapshot();
+			world.advanceTick();
+			auto const snapshot = world.getSimulationSnapshot();
 			auto const resource = std::find_if(snapshot.traversalResources.begin(),
 				snapshot.traversalResources.end(),
 				[&](core::TraversalResourceSnapshot const& value)
@@ -333,9 +333,9 @@ namespace
 			for (auto id : { first, second })
 			{
 				if (!onCapacity(id, *resource)) continue;
-				auto agent = building.lookupAgent(id).entity;
+				auto agent = world.lookupAgent(id).entity;
 				agent->clearPath();
-				require(building.removeAgent(id).removed,
+				require(world.removeAgent(id).removed,
 					"Deleting a climber from the ladder was refused");
 				deleted = id;
 				break;
@@ -346,21 +346,21 @@ namespace
 		auto const survivorId = first == deleted ? second : first;
 		for (uint64_t tick = 0; tick < 4000; ++tick)
 		{
-			building.advanceTick();
-			auto const* survivor = building.lookupAgent(survivorId).entity;
+			world.advanceTick();
+			auto const* survivor = world.lookupAgent(survivorId).entity;
 			if (survivor && survivor->getState() == core::Agent::State::Idle
-				&& survivor->getSector() == building.getSector(upper).get())
+				&& survivor->getSector() == world.getSector(upper).get())
 				break;
 		}
 
-		auto const snapshot = building.getSimulationSnapshot();
+		auto const snapshot = world.getSimulationSnapshot();
 		auto const resource = std::find_if(snapshot.traversalResources.begin(),
 			snapshot.traversalResources.end(),
 			[&](core::TraversalResourceSnapshot const& value)
 			{ return value.id == created.traversalResource; });
 		require(resource != snapshot.traversalResources.end(), "The ladder vanished");
-		auto const* survivor = building.lookupAgent(survivorId).entity;
-		require(survivor && survivor->getSector() == building.getSector(upper).get(),
+		auto const* survivor = world.lookupAgent(survivorId).entity;
+		require(survivor && survivor->getSector() == world.getSector(upper).get(),
 			"The surviving climber could not finish after its companion was deleted");
 		require(std::none_of(resource->capacityPositions.begin(),
 			resource->capacityPositions.end(),

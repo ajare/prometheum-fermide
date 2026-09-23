@@ -1,28 +1,28 @@
-// Building snapshot integration; see include/DocumentEdit.h.
+// World snapshot integration; see include/DocumentEdit.h.
 
 #include "DocumentEdit.h"
 
 #include <exception>
 #include <utility>
 
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/Log.h"
 #include "core/YamlSerializer.h"
 
 using namespace std;
 
-DocumentHistory gBuildingDocumentHistory;
+DocumentHistory gWorldDocumentHistory;
 
 optional<DocumentSnapshot> captureDocumentSnapshot(
-	shared_ptr<const core::Building> const& building, DocumentHistory const& history)
+	shared_ptr<const core::World> const& world, DocumentHistory const& history)
 {
-	if (!building) return nullopt;
+	if (!world) return nullopt;
 	try
 	{
 		auto serializer = core::YamlSerializer::toString();
 		core::SerializationWorkData workData;
 		workData.markSerializedUnmodified = false;
-		building->serialize(*serializer, workData);
+		world->serialize(*serializer, workData);
 		serializer->serialize();
 		return history.capture(serializer->getSerializedString());
 	}

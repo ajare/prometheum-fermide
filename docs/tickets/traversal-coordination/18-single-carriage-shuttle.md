@@ -18,4 +18,4 @@
 - [x] Linear shuttle stop requests use LOOK scheduling with fair idle dispatch.
 - [x] Full-capacity and disembark-before-embark scenarios preserve waiting priority.
 - [x] Cancellation and deactivation reach the same safe outcomes as lift journeys.
-- [x] Existing shuttle rendering and building construction use the new authoritative state.
+- [x] Existing shuttle rendering and world construction use the new authoritative state.

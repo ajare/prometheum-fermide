@@ -2,7 +2,7 @@
 #include <string>
 
 #include "core/Agent.h"
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/Graph.h"
 #include "core/Path.h"
 #include "core/Vertex.h"
@@ -23,26 +23,26 @@ namespace
 	// as no Path, the same as any unreachable target.
 	void pathingAcrossAnOpenSharedWallFindsAPath()
 	{
-		// Minimal reproduction of Agent 15 in door-test-1.yaml: the Agent starts
+		// Minimal reproduction of Agent 15 in door-test-1.world.yaml: the Agent starts
 		// in the right-hand Corridor, whose left wall is open into the adjacent
 		// Room containing the destination Marker.
-		core::Building building("Open shared wall", 16, 6);
-		auto const room = building.addRoom("Destination room", 0, 2, 6, 4, 1);
-		auto const corridor = building.addCorridor(0, 2, 10, 6, 1);
+		core::World world("Open shared wall", 16, 6);
+		auto const room = world.addRoom("Destination room", 0, 2, 6, 4, 1);
+		auto const corridor = world.addCorridor(0, 2, 10, 6, 1);
 		uint32_t markerIdentifier = 0;
-		building.addSectorMarker(room, 0, 0.5625f, &markerIdentifier);
-		building.pauseSimulation();
-		building.removeLocationWall(corridor, 0, CORE_SIDE_LEFT);
-		building.finishBuild();
-		building.resumeSimulation();
+		world.addSectorMarker(room, 0, 0.5625f, &markerIdentifier);
+		world.pauseSimulation();
+		world.removeLocationWall(corridor, 0, CORE_SIDE_LEFT);
+		world.finishBuild();
+		world.resumeSimulation();
 
-		auto const agentId = building.createAgent("Agent 15", corridor, 0, 1.484375f);
-		auto const agent = building.lookupAgent(agentId).entity;
-		auto const destination = building.getGraph()->getVertexByIdentifier(markerIdentifier);
+		auto const agentId = world.createAgent("Agent 15", corridor, 0, 1.484375f);
+		auto const agent = world.lookupAgent(agentId).entity;
+		auto const destination = world.getGraph()->getVertexByIdentifier(markerIdentifier);
 		require(agent != nullptr && destination != nullptr,
 			"The open-wall pathing fixture was not constructed");
 
-		auto const path = building.getGraph()->calculatePath(agent, destination);
+		auto const path = world.getGraph()->calculatePath(agent, destination);
 		require(path && path->nodes.size() >= 2,
 			"Agent 15 cannot path from the Corridor through its open wall to the Room Marker");
 		require(path->nodes.front().targetVertex->getSector()->getIndex() == corridor
@@ -51,7 +51,7 @@ namespace
 
 		agent->setPath(path, true);
 		for (uint32_t tick = 0; tick < 1000 && agent->getState() != core::Agent::State::Idle; ++tick)
-			building.advanceTick();
+			world.advanceTick();
 		require(agent->getState() == core::Agent::State::Idle
 			&& agent->getSector()->getIndex() == room
 			&& agent->getGlobalPosition().distanceTo(destination->getPosition()) < 0.001f,
@@ -60,38 +60,38 @@ namespace
 
 	void pathingFromAnIsolatedLocationReturnsNoPath()
 	{
-		core::Building building("Isolated corridor", 12, 1);
+		core::World world("Isolated corridor", 12, 1);
 
 		// The stranded Corridor is split from the connected part of the
-		// building by a Room, with no Door or traversable Window anywhere, so
+		// world by a Room, with no Door or traversable Window anywhere, so
 		// the Graph builds no vertices for it.
-		auto const stranded = building.addCorridor(0, 0, 3);
-		building.addRoom("Blocker", 0, 0, 3, 2, 1);
-		auto const connected = building.addCorridor(0, 5, 4);
+		auto const stranded = world.addCorridor(0, 0, 3);
+		world.addRoom("Blocker", 0, 0, 3, 2, 1);
+		auto const connected = world.addCorridor(0, 5, 4);
 		uint32_t markerIdentifier = 0;
-		building.addSectorMarker(connected, 0, 1.5f, &markerIdentifier);
-		building.finishBuild();
+		world.addSectorMarker(connected, 0, 1.5f, &markerIdentifier);
+		world.finishBuild();
 
-		auto const destination = building.getGraph()->getVertexByIdentifier(markerIdentifier);
+		auto const destination = world.getGraph()->getVertexByIdentifier(markerIdentifier);
 		require(destination != nullptr,
 			"The connected Corridor's Marker has no Graph vertex; the scenario is not wired as intended");
 
 		// Control: an Agent in the connected Corridor reaches the Marker, so
-		// the Building's graph really is traversable.
-		auto const settledAgentId = building.createAgent("Settled agent", connected, 0, 2.5f);
-		auto const settledAgent = building.lookupAgent(settledAgentId).entity;
+		// the World's graph really is traversable.
+		auto const settledAgentId = world.createAgent("Settled agent", connected, 0, 2.5f);
+		auto const settledAgent = world.lookupAgent(settledAgentId).entity;
 		require(settledAgent != nullptr, "The settled agent was not created");
-		auto const settledPath = building.getGraph()->calculatePath(settledAgent, destination);
+		auto const settledPath = world.getGraph()->calculatePath(settledAgent, destination);
 		require(settledPath && !settledPath->nodes.empty(),
 			"No path exists inside the connected Corridor; the scenario is not wired as intended");
 
 		// The regression: the route request out of the stranded Corridor must
 		// not throw.
-		auto const strandedAgentId = building.createAgent("Stranded agent", stranded, 0, 1.0f);
-		auto const strandedAgent = building.lookupAgent(strandedAgentId).entity;
+		auto const strandedAgentId = world.createAgent("Stranded agent", stranded, 0, 1.0f);
+		auto const strandedAgent = world.lookupAgent(strandedAgentId).entity;
 		require(strandedAgent != nullptr, "The stranded agent was not created");
 
-		auto const path = building.getGraph()->calculatePath(strandedAgent, destination);
+		auto const path = world.getGraph()->calculatePath(strandedAgent, destination);
 		require(!path || path->nodes.empty(),
 			"A route was found out of an isolated Corridor with no traversable threshold");
 	}

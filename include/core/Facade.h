@@ -22,7 +22,7 @@ namespace core
 	// ever emitted for one. A Facade with a wall would semantically be a
 	// Room, so the edit is refused rather than allowed to blur the type.
 	//
-	// Building::addFacade() is the creation path: a Facade is placed on any
+	// World::addFacade() is the creation path: a Facade is placed on any
 	// one Layer over a block of free cells with the same placement validation
 	// a Room plays by, and is persisted as a ConstructionType::Facade record
 	// carrying its name, footprint, and packed colour.

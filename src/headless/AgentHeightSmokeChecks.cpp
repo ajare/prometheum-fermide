@@ -23,7 +23,7 @@
 #include "core/Agent.h"
 #include "core/AgentTag.h"
 #include "core/AgentTagRegistry.h"
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/Defines.h"
 #include "core/Graph.h"
 #include "core/SerializationWorkData.h"
@@ -51,12 +51,12 @@ namespace
 		return writer->getSerializedString();
 	}
 
-	std::string serializeBuilding(core::Building const& building)
+	std::string serializeWorld(core::World const& world)
 	{
 		auto writer = core::YamlSerializer::toString();
 		core::SerializationWorkData work;
 		work.markSerializedUnmodified = false;
-		building.serialize(*writer, work);
+		world.serialize(*writer, work);
 		writer->serialize();
 		return writer->getSerializedString();
 	}
@@ -72,15 +72,15 @@ namespace
 		return registry;
 	}
 
-	std::shared_ptr<core::Building> deserializeBuilding(std::string const& yaml)
+	std::shared_ptr<core::World> deserializeWorld(std::string const& yaml)
 	{
-		auto building = std::make_shared<core::Building>("Loading", 1, 1);
+		auto world = std::make_shared<core::World>("Loading", 1, 1);
 		auto reader = core::YamlSerializer::fromString(yaml);
 		reader->deserialize();
 		core::SerializationWorkData work;
-		require(building->deserialize(*reader, work),
-			"The Height Building did not deserialize");
-		return building;
+		require(world->deserialize(*reader, work),
+			"The Height World did not deserialize");
+		return world;
 	}
 
 	void rangesAreBoundedRevisionedAndPersisted()
@@ -144,14 +144,14 @@ namespace
 			&diagnostic), diagnostic);
 		require(registry->addAgentTagHeightModifier(duplicate, &diagnostic), diagnostic);
 
-		auto building = std::make_shared<core::Building>("Height assignment", 8, 2);
-		building->attachAgentTagRegistry("height.tags.yaml", registry);
-		auto const corridor = building->addCorridor(0, 0, 7);
-		building->finishBuild();
-		auto const agent = building->createAgent("Short", corridor, 0, 1.5f);
-		building->pauseSimulation();
-		require(building->assignAgentTag(agent, shortTag, &diagnostic), diagnostic);
-		auto const sample = building->lookupAgent(agent).entity->getHeightModifierSample();
+		auto world = std::make_shared<core::World>("Height assignment", 8, 2);
+		world->attachAgentTagRegistry("height.tags.yaml", registry);
+		auto const corridor = world->addCorridor(0, 0, 7);
+		world->finishBuild();
+		auto const agent = world->createAgent("Short", corridor, 0, 1.5f);
+		world->pauseSimulation();
+		require(world->assignAgentTag(agent, shortTag, &diagnostic), diagnostic);
+		auto const sample = world->lookupAgent(agent).entity->getHeightModifierSample();
 		require(sample && sample->type == core::SampledAgentPropertyType::HeightModifier
 			&& sample->sourceTag == shortTag
 			&& sample->propertyRevision
@@ -159,15 +159,15 @@ namespace
 			&& std::abs(sample->value - 0.7f) < 0.000001f,
 			"Height assignment did not create the fixed sample with exact provenance");
 
-		auto const beforeConflict = serializeBuilding(*building);
-		require(!building->assignAgentTag(agent, duplicate, &diagnostic)
+		auto const beforeConflict = serializeWorld(*world);
+		require(!world->assignAgentTag(agent, duplicate, &diagnostic)
 			&& diagnostic.find("Height modifier") != std::string::npos
 			&& diagnostic.find("#short") != std::string::npos
 			&& diagnostic.find("#duplicate") != std::string::npos
-			&& serializeBuilding(*building) == beforeConflict,
+			&& serializeWorld(*world) == beforeConflict,
 			"A duplicate inherited Height modifier was not refused atomically");
 
-		require(building->assignAgentTag(agent, pending, &diagnostic), diagnostic);
+		require(world->assignAgentTag(agent, pending, &diagnostic), diagnostic);
 		auto const registryBefore = serializeRegistry(*registry);
 		auto const revisionBefore = registry->getNextPropertyRevision();
 		require(!registry->addAgentTagHeightModifier(pending, &diagnostic)
@@ -177,11 +177,11 @@ namespace
 			"A conflicting Height property addition changed the registry");
 
 		auto const exactSample = *sample;
-		auto reopened = deserializeBuilding(serializeBuilding(*building));
+		auto reopened = deserializeWorld(serializeWorld(*world));
 		reopened->resolveAgentTagRegistry(registry);
 		require(reopened->lookupAgent(agent).entity->getHeightModifierSample()
 			== std::optional<core::AgentPropertySample>{ exactSample },
-			"The exact Height sample did not survive Building persistence");
+			"The exact Height sample did not survive World persistence");
 		reopened->resetSimulation();
 		require(reopened->lookupAgent(agent).entity->getHeightModifierSample()
 			== std::optional<core::AgentPropertySample>{ exactSample },
@@ -197,17 +197,17 @@ namespace
 		require(registry->setAgentTagHeightModifier(tag, { 0.8f, 0.8f }, &diagnostic),
 			diagnostic);
 
-		auto building = std::make_shared<core::Building>("Height revisions", 8, 2);
-		building->attachAgentTagRegistry("revisioned.tags.yaml", registry);
-		auto const corridor = building->addCorridor(0, 0, 7);
-		building->finishBuild();
-		building->pauseSimulation();
+		auto world = std::make_shared<core::World>("Height revisions", 8, 2);
+		world->attachAgentTagRegistry("revisioned.tags.yaml", registry);
+		auto const corridor = world->addCorridor(0, 0, 7);
+		world->finishBuild();
+		world->pauseSimulation();
 		std::vector<core::AgentId> agents;
 		for (int index = 0; index < 3; ++index)
 		{
-			auto const agent = building->createAgent("Agent " + std::to_string(index),
+			auto const agent = world->createAgent("Agent " + std::to_string(index),
 				corridor, 0, static_cast<float>(index) + 0.5f);
-			require(building->assignAgentTag(agent, tag, &diagnostic), diagnostic);
+			require(world->assignAgentTag(agent, tag, &diagnostic), diagnostic);
 			agents.push_back(agent);
 		}
 		auto samples = [&]()
@@ -215,7 +215,7 @@ namespace
 			std::vector<core::AgentPropertySample> result;
 			for (auto const agent : agents)
 			{
-				auto const& sample = building->lookupAgent(agent).entity
+				auto const& sample = world->lookupAgent(agent).entity
 					->getHeightModifierSample();
 				require(sample.has_value(), "A revisioned Agent lost its Height sample");
 				result.push_back(*sample);
@@ -224,20 +224,20 @@ namespace
 		};
 
 		registry->markUnmodified();
-		building->markSaved();
+		world->markSaved();
 		forgetAgentTagRegistryDocument(registry);
 		auto& history = agentTagRegistryDocumentHistory(registry);
 		auto const originalProperty = *registry->getAgentTagHeightModifier(tag);
 		auto const originalSamples = samples();
 		auto const originalRegistry = serializeRegistry(*registry);
-		auto const originalBuilding = serializeBuilding(*building);
+		auto const originalWorld = serializeWorld(*world);
 		require(!commitAgentTagHeightModifierEdit(registry, tag,
 			originalProperty.range, diagnostic)
 			&& diagnostic.find("unchanged") != std::string::npos
 			&& history.undoCount() == 0 && registry->getNextPropertyRevision() == 3
 			&& serializeRegistry(*registry) == originalRegistry
-			&& serializeBuilding(*building) == originalBuilding
-			&& !agentTagRegistryIsModified(registry) && !building->isModified(),
+			&& serializeWorld(*world) == originalWorld
+			&& !agentTagRegistryIsModified(registry) && !world->isModified(),
 			"An unchanged Height range consumed state, randomness, or history");
 
 		require(commitAgentTagHeightModifierEdit(registry, tag, { 0.7f, 1.0f },
@@ -245,7 +245,7 @@ namespace
 		auto const editedProperty = *registry->getAgentTagHeightModifier(tag);
 		auto const editedSamples = samples();
 		require(editedProperty.revision == 3 && registry->getNextPropertyRevision() == 4
-			&& history.undoCount() == 1 && building->isModified(),
+			&& history.undoCount() == 1 && world->isModified(),
 			"A Height range edit did not create one revisioned transaction");
 		for (auto const& sample : editedSamples)
 		{
@@ -259,12 +259,12 @@ namespace
 		require(restoreAgentTagRegistrySnapshot(registry, false, &diagnostic), diagnostic);
 		require(*registry->getAgentTagHeightModifier(tag) == originalProperty
 			&& samples() == originalSamples && registry->getNextPropertyRevision() == 4
-			&& !building->isModified(),
+			&& !world->isModified(),
 			"Height undo did not restore the exact old revision and samples");
 		require(restoreAgentTagRegistrySnapshot(registry, true, &diagnostic), diagnostic);
 		require(*registry->getAgentTagHeightModifier(tag) == editedProperty
 			&& samples() == editedSamples && registry->getNextPropertyRevision() == 4
-			&& building->isModified(),
+			&& world->isModified(),
 			"Height redo rerolled instead of restoring exact replacement samples");
 
 		require(commitAgentTagHeightModifierRemove(registry, tag, diagnostic), diagnostic);
@@ -320,19 +320,19 @@ namespace
 			&diagnostic), diagnostic);
 		require(registry->addAgentTagHeightModifier(tallTag, &diagnostic), diagnostic);
 
-		auto building = std::make_shared<core::Building>("Visual Height", 12, 2);
-		building->attachAgentTagRegistry("visual.tags.yaml", registry);
-		auto const corridor = building->addCorridor(0, 0, 11);
+		auto world = std::make_shared<core::World>("Visual Height", 12, 2);
+		world->attachAgentTagRegistry("visual.tags.yaml", registry);
+		auto const corridor = world->addCorridor(0, 0, 11);
 		uint32_t targetIdentifier{ 0x48313336u };
-		building->addSectorMarker(corridor, 0, 10.5f, &targetIdentifier);
-		building->finishBuild();
-		auto const shortId = building->createAgent("Short", corridor, 0, 1.5f);
-		auto const tallId = building->createAgent("Tall", corridor, 0, 3.5f);
-		building->pauseSimulation();
-		require(building->assignAgentTag(shortId, shortTag, &diagnostic), diagnostic);
-		require(building->assignAgentTag(tallId, tallTag, &diagnostic), diagnostic);
-		auto* shortAgent = building->lookupAgent(shortId).entity;
-		auto* tallAgent = building->lookupAgent(tallId).entity;
+		world->addSectorMarker(corridor, 0, 10.5f, &targetIdentifier);
+		world->finishBuild();
+		auto const shortId = world->createAgent("Short", corridor, 0, 1.5f);
+		auto const tallId = world->createAgent("Tall", corridor, 0, 3.5f);
+		world->pauseSimulation();
+		require(world->assignAgentTag(shortId, shortTag, &diagnostic), diagnostic);
+		require(world->assignAgentTag(tallId, tallTag, &diagnostic), diagnostic);
+		auto* shortAgent = world->lookupAgent(shortId).entity;
+		auto* tallAgent = world->lookupAgent(tallId).entity;
 
 		require(std::abs(shortAgent->getHeight() - CORE_AGENT_MAX_HEIGHT * 0.7f)
 			< 0.000001f && std::abs(tallAgent->getHeight() - CORE_AGENT_MAX_HEIGHT)
@@ -350,9 +350,9 @@ namespace
 			&& std::abs(shortAgent->getClimbSpeed() - tallAgent->getClimbSpeed()) < 0.000001f,
 			"Visual Height changed width or movement observations");
 
-		auto const target = building->getGraph()->getVertexByIdentifier(targetIdentifier);
-		auto shortPath = building->getGraph()->calculatePath(shortAgent, target);
-		auto tallPath = building->getGraph()->calculatePath(tallAgent, target);
+		auto const target = world->getGraph()->getVertexByIdentifier(targetIdentifier);
+		auto shortPath = world->getGraph()->calculatePath(shortAgent, target);
+		auto tallPath = world->getGraph()->calculatePath(tallAgent, target);
 		require(shortPath && tallPath && shortPath->nodes.size() == tallPath->nodes.size()
 			&& std::abs(shortPath->nodes.back().edgeWeight
 				- tallPath->nodes.back().edgeWeight) < 0.000001f,
@@ -394,8 +394,8 @@ namespace
 		ImGui::NewFrame();
 		ImGui::Begin("Selection");
 		ImGui::LogToClipboard();
-		renderAgentEffectiveProperties(building, shortId);
-		renderAgentEffectiveProperties(building, tallId);
+		renderAgentEffectiveProperties(world, shortId);
+		renderAgentEffectiveProperties(world, tallId);
 		ImGui::End();
 		ImGui::Render();
 		std::string visible;

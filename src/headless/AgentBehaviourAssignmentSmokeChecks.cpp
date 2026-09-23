@@ -7,7 +7,7 @@
 #include "AgentBehaviourAssignmentPanel.h"
 #include "DocumentEdit.h"
 #include "core/AgentBehaviourRegistry.h"
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/YamlSerializer.h"
 #include "imgui/imgui.h"
 
@@ -20,24 +20,24 @@ namespace
 		if (!condition) throw std::runtime_error(message);
 	}
 
-	std::string serialize(core::Building const& building)
+	std::string serialize(core::World const& world)
 	{
 		auto writer = core::YamlSerializer::toString();
 		core::SerializationWorkData work;
 		work.markSerializedUnmodified = false;
-		building.serialize(*writer, work);
+		world.serialize(*writer, work);
 		writer->serialize();
 		return writer->getSerializedString();
 	}
 
-	std::shared_ptr<core::Building> deserialize(std::string const& yaml,
+	std::shared_ptr<core::World> deserialize(std::string const& yaml,
 		std::shared_ptr<core::AgentBehaviourRegistry> const& registry)
 	{
-		auto result = std::make_shared<core::Building>("Loading", 1, 1);
+		auto result = std::make_shared<core::World>("Loading", 1, 1);
 		auto reader = core::YamlSerializer::fromString(yaml);
 		reader->deserialize();
 		core::SerializationWorkData work;
-		require(result->deserialize(*reader, work), "Building assignment snapshot did not load");
+		require(result->deserialize(*reader, work), "World assignment snapshot did not load");
 		if (result->hasAgentBehaviourRegistryReference())
 			result->resolveAgentBehaviourRegistry(registry);
 		result->pauseSimulation();
@@ -46,8 +46,8 @@ namespace
 
 	struct Fixture
 	{
-		std::shared_ptr<core::Building> building
-			= std::make_shared<core::Building>("Assignments", 12, 2);
+		std::shared_ptr<core::World> world
+			= std::make_shared<core::World>("Assignments", 12, 2);
 		std::shared_ptr<core::AgentBehaviourRegistry> registry
 			= core::AgentBehaviourRegistry::create();
 		core::AgentBehaviourId behaviour;
@@ -57,14 +57,14 @@ namespace
 
 		Fixture()
 		{
-			auto room = building->addRoom("Room", 0, 0, 0, 12, 1);
-			auto markerObject = building->addSectorMarker(room, 0, 8.5f, "Destination");
+			auto room = world->addRoom("Room", 0, 0, 0, 12, 1);
+			auto markerObject = world->addSectorMarker(room, 0, 8.5f, "Destination");
 			(void)markerObject;
-			marker = building->getMarkerIds().front();
-			first = building->createAgent("Ada", room, 0, 1.5f);
-			second = building->createAgent("Ben", room, 0, 2.5f);
-			building->pauseSimulation();
-			building->attachAgentBehaviourRegistry("assignments.behaviours", registry);
+			marker = world->getMarkerIds().front();
+			first = world->createAgent("Ada", room, 0, 1.5f);
+			second = world->createAgent("Ben", room, 0, 2.5f);
+			world->pauseSimulation();
+			world->attachAgentBehaviourRegistry("assignments.behaviours", registry);
 			std::vector<core::AgentBehaviourSchemaField> schema{
 				{ "enabled", core::AgentBehaviourSchemaType::Boolean, {}, true, std::nullopt },
 				{ "count", core::AgentBehaviourSchemaType::Integer, {}, true, std::nullopt },
@@ -88,13 +88,13 @@ namespace
 	void assignEditClearUndoRedoAndPersistence()
 	{
 		Fixture fixture;
-		gBuildingDocumentHistory.clear();
+		gWorldDocumentHistory.clear();
 		std::string diagnostic;
 		auto const revision = fixture.registry->lookupAgentBehaviour(fixture.behaviour)->getRevision();
-		require(commitAgentBehaviourAssignment(fixture.building, fixture.first,
+		require(commitAgentBehaviourAssignment(fixture.world, fixture.first,
 			fixture.behaviour, revision, fixture.configuration(), diagnostic),
 			"Valid assignment was refused: " + diagnostic);
-		auto assigned = fixture.building->getAgentBehaviourAssignment(fixture.first);
+		auto assigned = fixture.world->getAgentBehaviourAssignment(fixture.first);
 		require(assigned && assigned->configuration.size() == 6
 			&& *core::agentBehaviourConfigurationGetIf<std::string>(
 				&assigned->configuration.at("label")) == "default",
@@ -102,24 +102,24 @@ namespace
 
 		auto edited = assigned->configuration;
 		edited["count"] = int64_t{ 9 };
-		require(commitAgentBehaviourAssignment(fixture.building, fixture.first,
+		require(commitAgentBehaviourAssignment(fixture.world, fixture.first,
 			fixture.behaviour, revision, edited, diagnostic)
-			&& gBuildingDocumentHistory.undoCount() == 2,
-			"Configuration edit was not one undoable Building edit");
+			&& gWorldDocumentHistory.undoCount() == 2,
+			"Configuration edit was not one undoable World edit");
 
-		auto current = fixture.building;
+		auto current = fixture.world;
 		auto restore = [&](DocumentSnapshot const& snapshot)
 		{
 			try { current = deserialize(snapshot.yaml, fixture.registry); return true; }
 			catch (...) { return false; }
 		};
-		require(gBuildingDocumentHistory.undo(
-			gBuildingDocumentHistory.capture(serialize(*current)), restore), "Undo failed");
+		require(gWorldDocumentHistory.undo(
+			gWorldDocumentHistory.capture(serialize(*current)), restore), "Undo failed");
 		require(*core::agentBehaviourConfigurationGetIf<int64_t>(
 			&current->getAgentBehaviourAssignment(fixture.first)
 				->configuration.at("count")) == 3, "Undo did not restore configuration");
-		require(gBuildingDocumentHistory.redo(
-			gBuildingDocumentHistory.capture(serialize(*current)), restore), "Redo failed");
+		require(gWorldDocumentHistory.redo(
+			gWorldDocumentHistory.capture(serialize(*current)), restore), "Redo failed");
 		require(*core::agentBehaviourConfigurationGetIf<int64_t>(
 			&current->getAgentBehaviourAssignment(fixture.first)
 				->configuration.at("count")) == 9, "Redo did not restore configuration edit");
@@ -143,14 +143,14 @@ namespace
 		std::string diagnostic;
 		auto const revision = fixture.registry->lookupAgentBehaviour(fixture.behaviour)->getRevision();
 		auto valid = fixture.configuration();
-		auto before = serialize(*fixture.building);
+		auto before = serialize(*fixture.world);
 		auto expectRefused = [&](core::AgentBehaviourId behaviour, uint64_t candidateRevision,
 			core::AgentBehaviourConfiguration configuration, std::string const& field)
 		{
-			require(!fixture.building->setAgentBehaviourAssignment(fixture.first, behaviour,
+			require(!fixture.world->setAgentBehaviourAssignment(fixture.first, behaviour,
 				candidateRevision, configuration, &diagnostic)
 				&& diagnostic.find(field) != std::string::npos
-				&& serialize(*fixture.building) == before,
+				&& serialize(*fixture.world) == before,
 				"Malformed configuration was not refused atomically with a field diagnostic");
 		};
 		auto missing = valid; missing.erase("count");
@@ -164,13 +164,13 @@ namespace
 		expectRefused(core::AgentBehaviourId{ 999 }, revision, valid, "999");
 		expectRefused(fixture.behaviour, revision + 1, valid, "revision");
 
-		fixture.building->finishBuild();
-		require(fixture.building->resumeSimulation(), "Fixture could not run");
-		require(!fixture.building->setAgentBehaviourAssignment(fixture.first,
+		fixture.world->finishBuild();
+		require(fixture.world->resumeSimulation(), "Fixture could not run");
+		require(!fixture.world->setAgentBehaviourAssignment(fixture.first,
 			fixture.behaviour, revision, valid, &diagnostic)
 			&& diagnostic.find("Pause") != std::string::npos,
 			"Running assignment was accepted");
-		fixture.building->pauseSimulation();
+		fixture.world->pauseSimulation();
 	}
 
 	void compositeSchedulesValidatePersistAndUndo()
@@ -202,11 +202,11 @@ namespace
 			} }
 		};
 		std::string diagnostic;
-		gBuildingDocumentHistory.clear();
-		require(commitAgentBehaviourAssignment(fixture.building, fixture.first,
+		gWorldDocumentHistory.clear();
+		require(commitAgentBehaviourAssignment(fixture.world, fixture.first,
 			scheduleBehaviour, revision, configuration, diagnostic),
 			"Nested schedule was refused: " + diagnostic);
-		auto normalized = fixture.building->getAgentBehaviourAssignment(
+		auto normalized = fixture.world->getAgentBehaviourAssignment(
 			fixture.first)->configuration;
 		auto const* schedule = core::agentBehaviourConfigurationGetIf<
 			core::AgentBehaviourConfigurationList>(&normalized.at("schedule"));
@@ -220,26 +220,26 @@ namespace
 		auto* reorderedList = core::agentBehaviourConfigurationGetIf<
 			core::AgentBehaviourConfigurationList>(&reordered.at("schedule"));
 		std::swap((*reorderedList)[0], (*reorderedList)[1]);
-		require(commitAgentBehaviourAssignment(fixture.building, fixture.first,
+		require(commitAgentBehaviourAssignment(fixture.world, fixture.first,
 			scheduleBehaviour, revision, reordered, diagnostic),
 			"Reordering a schedule was not committed as an editor transaction");
-		auto current = fixture.building;
+		auto current = fixture.world;
 		auto restore = [&](DocumentSnapshot const& snapshot)
 		{
 			try { current = deserialize(snapshot.yaml, fixture.registry); return true; }
 			catch (...) { return false; }
 		};
-		require(gBuildingDocumentHistory.undo(
-			gBuildingDocumentHistory.capture(serialize(*current)), restore)
+		require(gWorldDocumentHistory.undo(
+			gWorldDocumentHistory.capture(serialize(*current)), restore)
 			&& current->getAgentBehaviourAssignment(fixture.first)->configuration
 				== normalized,
 			"Undo did not restore the authored schedule order");
-		require(gBuildingDocumentHistory.redo(
-			gBuildingDocumentHistory.capture(serialize(*current)), restore)
+		require(gWorldDocumentHistory.redo(
+			gWorldDocumentHistory.capture(serialize(*current)), restore)
 			&& current->getAgentBehaviourAssignment(fixture.first)->configuration
 				== reordered,
 			"Redo did not restore the reordered authored schedule");
-		fixture.building = current;
+		fixture.world = current;
 
 		auto malformed = configuration;
 		auto* malformedList = core::agentBehaviourConfigurationGetIf<
@@ -247,7 +247,7 @@ namespace
 		auto* malformedRecord = core::agentBehaviourConfigurationGetIf<
 			core::AgentBehaviourConfigurationRecord>(&(*malformedList)[1]);
 		(*malformedRecord)["destination"] = std::string("not a Marker");
-		require(!fixture.building->setAgentBehaviourAssignment(fixture.second,
+		require(!fixture.world->setAgentBehaviourAssignment(fixture.second,
 			scheduleBehaviour, revision, malformed, &diagnostic)
 			&& diagnostic.find("schedule[1].destination") != std::string::npos,
 			"A nested type error lacked its exact List index and Record field path");
@@ -257,7 +257,7 @@ namespace
 			core::AgentBehaviourConfigurationList>(&excessive.at("schedule"));
 		excessiveList->resize(core::MaxAgentBehaviourListElements + 1,
 			excessiveList->front());
-		require(!fixture.building->setAgentBehaviourAssignment(fixture.second,
+		require(!fixture.world->setAgentBehaviourAssignment(fixture.second,
 			scheduleBehaviour, revision, excessive, &diagnostic)
 			&& diagnostic.find("4096") != std::string::npos,
 			"A schedule over 4096 entries was accepted");
@@ -272,12 +272,12 @@ namespace
 			&& diagnostic.find("16") != std::string::npos,
 			"A schema deeper than 16 levels was accepted");
 
-		auto yaml = serialize(*fixture.building);
+		auto yaml = serialize(*fixture.world);
 		auto reopened = deserialize(yaml, fixture.registry);
 		require(reopened->getAgentBehaviourAssignment(fixture.first)
-			== fixture.building->getAgentBehaviourAssignment(fixture.first),
+			== fixture.world->getAgentBehaviourAssignment(fixture.first),
 			"A nested schedule did not survive save/load");
-		require(!fixture.building->removeSectorMarker(0, 0, &diagnostic)
+		require(!fixture.world->removeSectorMarker(0, 0, &diagnostic)
 			&& diagnostic.find("schedule[0].destination") != std::string::npos,
 			"Nested Marker dependency diagnostics omitted the schedule path");
 
@@ -289,7 +289,7 @@ namespace
 		io.Fonts->GetTexDataAsRGBA32(&pixels, &width, &height);
 		ImGui::NewFrame();
 		ImGui::Begin("Composite schedule panel smoke");
-		renderAgentBehaviourConfigurationPanel(fixture.building, fixture.first);
+		renderAgentBehaviourConfigurationPanel(fixture.world, fixture.first);
 		ImGui::End();
 		ImGui::Render();
 		ImGui::DestroyContext();
@@ -300,17 +300,17 @@ namespace
 		Fixture fixture;
 		std::string diagnostic;
 		auto const revision = fixture.registry->lookupAgentBehaviour(fixture.behaviour)->getRevision();
-		require(fixture.building->setAgentBehaviourAssignment(fixture.first,
+		require(fixture.world->setAgentBehaviourAssignment(fixture.first,
 			fixture.behaviour, revision, fixture.configuration(), &diagnostic)
-			&& fixture.building->setAgentBehaviourAssignment(fixture.second,
+			&& fixture.world->setAgentBehaviourAssignment(fixture.second,
 				fixture.behaviour, revision, fixture.configuration(), &diagnostic),
 			"Marker-reference fixture assignments failed");
-		auto marker = fixture.building->lookupMarker(fixture.marker);
-		require(marker && !fixture.building->removeSectorMarker(0, 0, &diagnostic)
+		auto marker = fixture.world->lookupMarker(fixture.marker);
+		require(marker && !fixture.world->removeSectorMarker(0, 0, &diagnostic)
 			&& diagnostic.find("Ada") != std::string::npos
 			&& diagnostic.find("Ben") != std::string::npos
 			&& diagnostic.find("destination") != std::string::npos
-			&& fixture.building->lookupMarker(fixture.marker),
+			&& fixture.world->lookupMarker(fixture.marker),
 			"Referenced Marker deletion was not refused with every Agent and field");
 
 		ImGui::CreateContext();
@@ -321,8 +321,8 @@ namespace
 		io.Fonts->GetTexDataAsRGBA32(&pixels, &width, &height);
 		ImGui::NewFrame();
 		ImGui::Begin("Assignment panel smoke");
-		renderAgentBehaviourAssignmentCell(fixture.building, fixture.first);
-		renderAgentBehaviourConfigurationPanel(fixture.building, fixture.first);
+		renderAgentBehaviourAssignmentCell(fixture.world, fixture.first);
+		renderAgentBehaviourConfigurationPanel(fixture.world, fixture.first);
 		ImGui::End();
 		ImGui::Render();
 		ImGui::DestroyContext();

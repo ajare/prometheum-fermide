@@ -1,6 +1,6 @@
 # Sector Ladder agent flow
 
-This document describes an Agent traversing a **Sector Ladder**: a `LadderSectorObject` embedded in one Room/Location by `Building::addSectorLadder()`. Both Ladder endpoints therefore belong to the same `Sector`; the Agent changes vertical graph vertices, but not Sector membership, while climbing.
+This document describes an Agent traversing a **Sector Ladder**: a `LadderSectorObject` embedded in one Room/Location by `World::addSectorLadder()`. Both Ladder endpoints therefore belong to the same `Sector`; the Agent changes vertical graph vertices, but not Sector membership, while climbing.
 
 ## Graph topology
 
@@ -21,7 +21,7 @@ flowchart LR
     A --> B --> C --> D --> E --> F --> G --> H --> I
 ```
 
-Only the `LadderEdge` consumes Sector Ladder climbing capacity. `Building::isLadderAdmission()` excludes the two `LadderMountEdge`s and recognizes the same-Sector `LadderEdge` as the admission point.
+Only the `LadderEdge` consumes Sector Ladder climbing capacity. `World::isLadderAdmission()` excludes the two `LadderMountEdge`s and recognizes the same-Sector `LadderEdge` as the admission point.
 
 ## End-to-end process
 
@@ -32,25 +32,25 @@ flowchart TD
     SourceLocation["Reach source SectorObjectVertex"]
     MountRequest["Request and traverse source LadderMountEdge"]
     SourceLadder["Reach source LadderVertex"]
-    Intent["Create LadderEdge request<br/>Agent::collectTraversalIntent<br/>Building::createTraversalRequest"]
-    AdmissionCheck["Building::isLadderAdmission<br/>classifies LadderEdge as capacity admission"]
-    QueueAttach["Building::attachLadderAdmissionRequest<br/>fix ascending/descending direction<br/>attach logical ticket and admission order"]
-    QueuePlace["Building::attachQueueTicket<br/>Building::refreshQueuePositions<br/>select source-end queue lane and physical spot"]
-    Allocation["Agent::allocateTraversal<br/>Building::allocateTraversalRequest"]
+    Intent["Create LadderEdge request<br/>Agent::collectTraversalIntent<br/>World::createTraversalRequest"]
+    AdmissionCheck["World::isLadderAdmission<br/>classifies LadderEdge as capacity admission"]
+    QueueAttach["World::attachLadderAdmissionRequest<br/>fix ascending/descending direction<br/>attach logical ticket and admission order"]
+    QueuePlace["World::attachQueueTicket<br/>World::refreshQueuePositions<br/>select source-end queue lane and physical spot"]
+    Allocation["Agent::allocateTraversal<br/>World::allocateTraversalRequest"]
     Extended{"Ladder fully extended?"}
     Prepare["Prepare/extend Ladder<br/>hold extension request lease"]
-    GrantCheck["Building::tryGrantLadderAdmissions"]
+    GrantCheck["World::tryGrantLadderAdmissions"]
     Eligible{"Resource enabled,<br/>direction and batch allowed,<br/>capacity slot free,<br/>Agent physically ready?"}
     HasSpot{"Physical queue spot assigned?"}
     WalkQueue["Set mTraversalLocalGoal<br/>Agent::update walks to queue spot"]
     LogicalWait["Keep logical queue ticket<br/>wait for a physical spot"]
     Retry["Capacity, direction, position,<br/>or Ladder state changes"]
     Reserve["Remove physical queue ownership<br/>reserve exact capacity position<br/>increment directional batch count"]
-    Permit["Building::grantTraversalRequest<br/>Agent adopts permit"]
+    Permit["World::grantTraversalRequest<br/>Agent adopts permit"]
     Climb["Agent::update traverses LadderEdge<br/>using getClimbSpeed"]
-    Commit["Agent::commitTraversal<br/>Building::commitTraversal"]
-    Release["Release admission reservation<br/>Building::releaseLadderAdmission"]
-    Next["Building::tryGrantLadderAdmissions<br/>offers freed slot to next waiter"]
+    Commit["Agent::commitTraversal<br/>World::commitTraversal"]
+    Release["Release admission reservation<br/>World::releaseLadderAdmission"]
+    Next["World::tryGrantLadderAdmissions<br/>offers freed slot to next waiter"]
     Dismount["Request and traverse destination LadderMountEdge<br/>immediate permit"]
     Exit["Reach destination SectorObjectVertex<br/>continue Location path"]
     Cleanup["Agent::cleanupTraversal<br/>releases completed climb request and permit"]
@@ -73,7 +73,7 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    Call["Building::tryGrantLadderAdmissions"]
+    Call["World::tryGrantLadderAdmissions"]
     Gate{"Resource enabled,<br/>is Ladder/Stairwell,<br/>and fully extended?"}
     Direction{"Active direction set?"}
     Oldest["Choose direction of oldest pending request<br/>reset batch count"]
@@ -116,21 +116,21 @@ flowchart TD
 
 ### Queue rules
 
-1. `Building::configureLadderQueueLanes()` creates one lane per endpoint. Positions start away from the endpoint so mounting and dismounting space remains clear.
-2. `Building::attachQueueTicket()` selects the lane whose endpoint is closest to the request's source endpoint.
-3. `Building::attachLadderAdmissionRequest()` keeps deterministic logical order by queued tick, Agent ID, then request ID.
-4. `Building::refreshQueuePositions()` assigns scarce physical positions nearest the Ladder first, then nearest the waiting Agent. A request can retain its logical place without owning a physical position.
+1. `World::configureLadderQueueLanes()` creates one lane per endpoint. Positions start away from the endpoint so mounting and dismounting space remains clear.
+2. `World::attachQueueTicket()` selects the lane whose endpoint is closest to the request's source endpoint.
+3. `World::attachLadderAdmissionRequest()` keeps deterministic logical order by queued tick, Agent ID, then request ID.
+4. `World::refreshQueuePositions()` assigns scarce physical positions nearest the Ladder first, then nearest the waiting Agent. A request can retain its logical place without owning a physical position.
 5. While pending, `Agent::update()` walks toward `mTraversalLocalGoal`. Admission requires the Agent to have reached that queue position. An Agent already exactly at the source endpoint may be admitted directly when it did not approach through an early queue side.
-6. `Building::tryGrantLadderAdmissions()` admits only the active direction. Opposite-direction demand stops the current batch at `mDirectionalBatchLimit`; direction changes only after reservations/occupancy drain.
-7. `Building::ladderEntryHasClearedSpacing()` staggers entry: every climber moves at the same climb speed, so a new climber is admitted only once all in-flight climbers (occupants and granted reservations still walking to the mount point) have cleared the entry altitude by a full `CORE_LADDER_AGENT_SPACING`. Without this, simultaneously admitted Agents would catch up and overlap on the span.
-8. Cancellation, denial, timeout, or completion calls `Building::releaseLadderAdmission()`, then queue positions are refreshed so waiting Agents advance.
+6. `World::tryGrantLadderAdmissions()` admits only the active direction. Opposite-direction demand stops the current batch at `mDirectionalBatchLimit`; direction changes only after reservations/occupancy drain.
+7. `World::ladderEntryHasClearedSpacing()` staggers entry: every climber moves at the same climb speed, so a new climber is admitted only once all in-flight climbers (occupants and granted reservations still walking to the mount point) have cleared the entry altitude by a full `CORE_LADDER_AGENT_SPACING`. Without this, simultaneously admitted Agents would catch up and overlap on the span.
+8. Cancellation, denial, timeout, or completion calls `World::releaseLadderAdmission()`, then queue positions are refreshed so waiting Agents advance.
 
 ## Capacity lifecycle for a Sector Ladder
 
 ```mermaid
 sequenceDiagram
     participant A as Agent
-    participant B as Building
+    participant B as World
     participant Q as Queue lane
     participant R as Ladder resource
 
@@ -155,27 +155,27 @@ sequenceDiagram
     A->>A: continue path away
 ```
 
-For a Sector Ladder, the capacity position remains an **admission reservation** for the duration of the same-Sector `LadderEdge`; `Building::commitTraversal()` releases it when the climb completes. A dedicated `LadderTransit` differs slightly: entry converts the reservation into `mOccupants`, and leaving the Ladder sector calls `Building::releaseLadderOccupancy()`.
+For a Sector Ladder, the capacity position remains an **admission reservation** for the duration of the same-Sector `LadderEdge`; `World::commitTraversal()` releases it when the climb completes. A dedicated `LadderTransit` differs slightly: entry converts the reservation into `mOccupants`, and leaving the Ladder sector calls `World::releaseLadderOccupancy()`.
 
 ## Code reference index
 
 | Responsibility | Function |
 |---|---|
-| Create the Sector Ladder and resource | `src/core/Building.cpp: Building::addSectorLadder()` |
-| Derive Ladder capacity positions | `src/core/Building.cpp: Building::createLadderTraversalResource()` |
-| Configure endpoint queue lanes | `src/core/Building.cpp: Building::configureLadderQueueLanes()` |
+| Create the Sector Ladder and resource | `src/core/World.cpp: World::addSectorLadder()` |
+| Derive Ladder capacity positions | `src/core/World.cpp: World::createLadderTraversalResource()` |
+| Configure endpoint queue lanes | `src/core/World.cpp: World::configureLadderQueueLanes()` |
 | Create endpoint/mount graph topology | `src/core/Graph.cpp: Graph::processLadderObject()` |
 | Join endpoints with the climbing edge | `src/core/Graph.cpp: Graph::processCrossDeckVertices()` and `src/core/LadderSectorObject.cpp: LadderSectorObject::createCrossDeckEdge()` |
-| Approach a path vertex / detect early queue tails | `src/core/Agent.cpp: Agent::moveToVertex()` and `src/core/Building.cpp: Building::stopForAvailableQueuePosition()` |
-| Create traversal intent | `src/core/Agent.cpp: Agent::collectTraversalIntent()` and `src/core/Building.cpp: Building::createTraversalRequest()` |
-| Decide whether an edge claims Ladder capacity | `src/core/Building.cpp: Building::isLadderAdmission()` |
-| Establish direction and logical order | `src/core/Building.cpp: Building::attachLadderAdmissionRequest()` |
-| Attach and physically arrange waiters | `src/core/Building.cpp: Building::attachQueueTicket()` and `Building::refreshQueuePositions()` |
-| Allocate extension/admission | `src/core/Agent.cpp: Agent::allocateTraversal()` and `src/core/Building.cpp: Building::allocateTraversalRequest()` |
-| Decide when the next Agent can climb | `src/core/Building.cpp: Building::tryGrantLadderAdmissions()` |
-| Keep climbing entries physically spaced | `src/core/Building.cpp: Building::ladderEntryHasClearedSpacing()` |
+| Approach a path vertex / detect early queue tails | `src/core/Agent.cpp: Agent::moveToVertex()` and `src/core/World.cpp: World::stopForAvailableQueuePosition()` |
+| Create traversal intent | `src/core/Agent.cpp: Agent::collectTraversalIntent()` and `src/core/World.cpp: World::createTraversalRequest()` |
+| Decide whether an edge claims Ladder capacity | `src/core/World.cpp: World::isLadderAdmission()` |
+| Establish direction and logical order | `src/core/World.cpp: World::attachLadderAdmissionRequest()` |
+| Attach and physically arrange waiters | `src/core/World.cpp: World::attachQueueTicket()` and `World::refreshQueuePositions()` |
+| Allocate extension/admission | `src/core/Agent.cpp: Agent::allocateTraversal()` and `src/core/World.cpp: World::allocateTraversalRequest()` |
+| Decide when the next Agent can climb | `src/core/World.cpp: World::tryGrantLadderAdmissions()` |
+| Keep climbing entries physically spaced | `src/core/World.cpp: World::ladderEntryHasClearedSpacing()` |
 | Walk or climb | `src/core/Agent.cpp: Agent::update()` |
-| Commit climb and release capacity | `src/core/Agent.cpp: Agent::commitTraversal()` and `src/core/Building.cpp: Building::commitTraversal()` |
-| Release queue/reservation ownership | `src/core/Building.cpp: Building::releaseLadderAdmission()` |
-| Release dedicated Ladder-sector occupancy | `src/core/Building.cpp: Building::releaseLadderOccupancy()` |
+| Commit climb and release capacity | `src/core/Agent.cpp: Agent::commitTraversal()` and `src/core/World.cpp: World::commitTraversal()` |
+| Release queue/reservation ownership | `src/core/World.cpp: World::releaseLadderAdmission()` |
+| Release dedicated Ladder-sector occupancy | `src/core/World.cpp: World::releaseLadderOccupancy()` |
 | Clean completed request/permit state | `src/core/Agent.cpp: Agent::cleanupTraversal()` |

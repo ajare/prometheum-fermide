@@ -1,6 +1,6 @@
-// Safe cross-Building Agent tag deletion, ticket #141. The checks exercise
+// Safe cross-World Agent tag deletion, ticket #141. The checks exercise
 // confirmation, property-sample cleanup, exact coordinated undo/redo, atomic
-// refusal, and the closed-Building stale-ID failure through public workflows.
+// refusal, and the closed-World stale-ID failure through public workflows.
 
 #include "TagsPanel.h"
 
@@ -14,7 +14,7 @@
 #include "core/Agent.h"
 #include "core/AgentTagRegistry.h"
 #include "core/AgentTagRegistryDocument.h"
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/SerializationWorkData.h"
 #include "core/YamlSerializer.h"
 
@@ -37,12 +37,12 @@ namespace
 		return writer->getSerializedString();
 	}
 
-	std::string serializeBuilding(core::Building const& building)
+	std::string serializeWorld(core::World const& world)
 	{
 		auto writer = core::YamlSerializer::toString();
 		core::SerializationWorkData work;
 		work.markSerializedUnmodified = false;
-		building.serialize(*writer, work);
+		world.serialize(*writer, work);
 		writer->serialize();
 		return writer->getSerializedString();
 	}
@@ -70,10 +70,10 @@ namespace
 	struct Fixture
 	{
 		std::shared_ptr<core::AgentTagRegistry> registry{ core::AgentTagRegistry::create() };
-		std::shared_ptr<core::Building> first{
-			std::make_shared<core::Building>("First Building", 10, 3) };
-		std::shared_ptr<core::Building> second{
-			std::make_shared<core::Building>("Second Building", 10, 3) };
+		std::shared_ptr<core::World> first{
+			std::make_shared<core::World>("First World", 10, 3) };
+		std::shared_ptr<core::World> second{
+			std::make_shared<core::World>("Second World", 10, 3) };
 		core::AgentTagId used;
 		core::AgentTagId unused;
 		core::AgentGroupId firstGroup;
@@ -140,22 +140,22 @@ namespace
 			"The Tags panel name filter is not case-insensitive or does not include the # display form");
 		require(loadedAgentTagUsageCount(*fixture.registry, fixture.used) == 3
 			&& loadedAgentTagUsageCount(*fixture.registry, fixture.unused) == 0,
-			"Loaded-Agent usage was not aggregated across dependent Buildings");
+			"Loaded-Agent usage was not aggregated across dependent Worlds");
 		auto const usage = fixture.registry->getLoadedAgentTagUsage(fixture.used);
-		require(usage.size() == 2, "The shared registry did not track both loaded Buildings");
+		require(usage.size() == 2, "The shared registry did not track both loaded Worlds");
 
-		auto empty = std::make_shared<core::Building>("Empty Building", 4, 2);
+		auto empty = std::make_shared<core::World>("Empty World", 4, 2);
 		empty->attachAgentTagRegistry("shared.tags.yaml", fixture.registry);
 		empty->pauseSimulation();
 		auto const confirmation = agentTagDeleteConfirmationText(
 			*fixture.registry, fixture.used);
-		require(confirmation.find("Empty Building: 0 Agents") != std::string::npos,
-			"The deletion confirmation omitted a loaded Building with zero usage");
+		require(confirmation.find("Empty World: 0 Agents") != std::string::npos,
+			"The deletion confirmation omitted a loaded World with zero usage");
 		empty.reset();
 
 		fixture.second.reset();
 		require(loadedAgentTagUsageCount(*fixture.registry, fixture.used) == 1,
-			"Closing a Building did not remove its Agents from loaded usage");
+			"Closing a World did not remove its Agents from loaded usage");
 	}
 
 	void unusedDeletionIsImmediateAndUndoable()
@@ -181,18 +181,18 @@ namespace
 		auto const confirmation = agentTagDeleteConfirmationText(
 			*fixture.registry, fixture.used);
 		require(confirmation.find("3 loaded Agents") != std::string::npos
-			&& confirmation.find("First Building: 1 Agent") != std::string::npos
-			&& confirmation.find("Second Building: 2 Agents") != std::string::npos
+			&& confirmation.find("First World: 1 Agent") != std::string::npos
+			&& confirmation.find("Second World: 2 Agents") != std::string::npos
 			&& confirmation.find("samples sourced from this tag") != std::string::npos
-			&& confirmation.find("Closed Buildings cannot be counted") != std::string::npos
+			&& confirmation.find("Closed Worlds cannot be counted") != std::string::npos
 			&& confirmation.find("refused when loaded") != std::string::npos,
-			"The deletion confirmation did not report usage, samples, and closed-Building risk");
+			"The deletion confirmation did not report usage, samples, and closed-World risk");
 
 		auto& history = agentTagRegistryDocumentHistory(fixture.registry);
 		auto const undoBefore = history.undoCount();
 		auto const registryBefore = serializeRegistry(*fixture.registry);
-		auto const firstBefore = serializeBuilding(*fixture.first);
-		auto const secondBefore = serializeBuilding(*fixture.second);
+		auto const firstBefore = serializeWorld(*fixture.first);
+		auto const secondBefore = serializeWorld(*fixture.second);
 		auto const nextTagBefore = fixture.registry->getNextAgentTagId();
 		auto const nextRevisionBefore = fixture.registry->getNextPropertyRevision();
 		auto const walkPropertyBefore
@@ -216,15 +216,15 @@ namespace
 			"Cancelling Agent tag deletion left confirmation pending");
 		require(serializeRegistry(*fixture.registry) == registryBefore,
 			"Cancelling Agent tag deletion changed the registry");
-		require(serializeBuilding(*fixture.first) == firstBefore
-			&& serializeBuilding(*fixture.second) == secondBefore,
-			"Cancelling Agent tag deletion changed a Building");
+		require(serializeWorld(*fixture.first) == firstBefore
+			&& serializeWorld(*fixture.second) == secondBefore,
+			"Cancelling Agent tag deletion changed a World");
 		require(!fixture.registry->isModified(),
 			"Cancelling Agent tag deletion changed registry dirty state");
 		require(!fixture.first->isModified(),
-			"Cancelling Agent tag deletion changed the first Building dirty state");
+			"Cancelling Agent tag deletion changed the first World dirty state");
 		require(!fixture.second->isModified(),
-			"Cancelling Agent tag deletion changed the second Building dirty state");
+			"Cancelling Agent tag deletion changed the second World dirty state");
 		require(history.undoCount() == undoBefore,
 			"Cancelling Agent tag deletion changed registry history");
 
@@ -255,14 +255,14 @@ namespace
 			&& fixture.registry->getNextPropertyRevision() == nextRevisionBefore,
 			"The cascade was not one edit or changed an identity allocator");
 		auto const registryAfter = serializeRegistry(*fixture.registry);
-		auto const firstAfter = serializeBuilding(*fixture.first);
-		auto const secondAfter = serializeBuilding(*fixture.second);
+		auto const firstAfter = serializeWorld(*fixture.first);
+		auto const secondAfter = serializeWorld(*fixture.second);
 
 		require(restoreAgentTagRegistrySnapshot(fixture.registry, false, &diagnostic),
 			"Undoing the used Agent tag deletion failed: " + diagnostic);
 		require(serializeRegistry(*fixture.registry) == registryBefore
-			&& serializeBuilding(*fixture.first) == firstBefore
-			&& serializeBuilding(*fixture.second) == secondBefore
+			&& serializeWorld(*fixture.first) == firstBefore
+			&& serializeWorld(*fixture.second) == secondBefore
 			&& *fixture.registry->getAgentTagWalkSpeedModifier(fixture.used)
 				== walkPropertyBefore
 			&& *fixture.registry->getAgentTagHeightModifier(fixture.used)
@@ -279,8 +279,8 @@ namespace
 
 		require(restoreAgentTagRegistrySnapshot(fixture.registry, true, &diagnostic)
 			&& serializeRegistry(*fixture.registry) == registryAfter
-			&& serializeBuilding(*fixture.first) == firstAfter
-			&& serializeBuilding(*fixture.second) == secondAfter
+			&& serializeWorld(*fixture.first) == firstAfter
+			&& serializeWorld(*fixture.second) == secondAfter
 			&& fixture.first->getAgentTagSampleCount() == 0
 			&& fixture.second->getAgentTagSampleCount() == 0,
 			"Redo did not reapply the exact complete cascade: " + diagnostic);
@@ -290,7 +290,7 @@ namespace
 			"Deletion or coordinated undo/redo reused the deleted AgentTagId");
 	}
 
-	void runningDependentBuildingRefusesWithoutPartialMutation()
+	void runningDependentWorldRefusesWithoutPartialMutation()
 	{
 		Fixture fixture;
 		require(fixture.second->resumeSimulation(),
@@ -298,18 +298,18 @@ namespace
 		auto& history = agentTagRegistryDocumentHistory(fixture.registry);
 		auto const undoBefore = history.undoCount();
 		auto const registryBefore = serializeRegistry(*fixture.registry);
-		auto const firstBefore = serializeBuilding(*fixture.first);
-		auto const secondBefore = serializeBuilding(*fixture.second);
+		auto const firstBefore = serializeWorld(*fixture.first);
+		auto const secondBefore = serializeWorld(*fixture.second);
 		auto const registryModifiedBefore = fixture.registry->isModified();
 		auto const firstModifiedBefore = fixture.first->isModified();
 		auto const secondModifiedBefore = fixture.second->isModified();
 		std::string diagnostic;
 		require(!commitAgentTagDelete(fixture.registry, fixture.used, diagnostic)
 			&& diagnostic.find("Pause") != std::string::npos,
-			"A used tag was deleted while one dependent Building was running");
+			"A used tag was deleted while one dependent World was running");
 		require(serializeRegistry(*fixture.registry) == registryBefore
-			&& serializeBuilding(*fixture.first) == firstBefore
-			&& serializeBuilding(*fixture.second) == secondBefore
+			&& serializeWorld(*fixture.first) == firstBefore
+			&& serializeWorld(*fixture.second) == secondBefore
 			&& fixture.registry->isModified() == registryModifiedBefore
 			&& fixture.first->isModified() == firstModifiedBefore
 			&& fixture.second->isModified() == secondModifiedBefore
@@ -317,14 +317,14 @@ namespace
 			"A refused shared deletion partially mutated documents, dirty state, or history");
 	}
 
-	void closedBuildingRetainingDeletedIdIsRefused()
+	void closedWorldRetainingDeletedIdIsRefused()
 	{
 		TemporaryDirectory temporary;
-		auto const closedPath = temporary.path / "closed.yaml";
-		auto const editorPath = temporary.path / "editor.yaml";
+		auto const closedPath = temporary.path / "closed.world.yaml";
+		auto const editorPath = temporary.path / "editor.world.yaml";
 		auto const registryPath = temporary.path / "closed.tags.yaml";
 
-		auto closed = std::make_shared<core::Building>("Closed Building", 8, 2);
+		auto closed = std::make_shared<core::World>("Closed World", 8, 2);
 		auto const closedCorridor = closed->addCorridor(0, 0, 7);
 		closed->finishBuild();
 		closed->saveTo(closedPath.string());
@@ -339,13 +339,13 @@ namespace
 		registry->saveTo(registryPath.string());
 		closed->saveTo(closedPath.string());
 
-		auto editor = std::make_shared<core::Building>("Loaded Editor", 8, 2);
+		auto editor = std::make_shared<core::World>("Loaded Editor", 8, 2);
 		auto const editorCorridor = editor->addCorridor(0, 0, 7);
 		editor->finishBuild();
 		editor->saveTo(editorPath.string());
 		auto shared = core::selectAndAttachAgentTagRegistry(
 			*editor, editorPath, registryPath);
-		require(shared == registry, "The closed-Building fixture did not share its registry");
+		require(shared == registry, "The closed-World fixture did not share its registry");
 		editor->pauseSimulation();
 		auto const editorAgent = editor->createAgent(
 			"Loaded Agent", editorCorridor, 0, 2.0f);
@@ -366,7 +366,7 @@ namespace
 		std::string refusal;
 		try
 		{
-			(void)core::loadBuildingDocument(closedPath);
+			(void)core::loadWorldDocument(closedPath);
 		}
 		catch (std::exception const& error)
 		{
@@ -376,7 +376,7 @@ namespace
 			&& refusal.find(std::to_string(tag.value)) != std::string::npos
 			&& !registry->lookupAgentTag(tag)
 			&& editor->getAgentTags(editorAgent).empty(),
-			"A closed Building retaining the deleted AgentTagId was not refused: " + refusal);
+			"A closed World retaining the deleted AgentTagId was not refused: " + refusal);
 		forgetAgentTagRegistryDocument(registry);
 	}
 }
@@ -386,6 +386,6 @@ void runAgentTagDeleteSmokeChecks()
 	filteringAndAggregateLoadedUsage();
 	unusedDeletionIsImmediateAndUndoable();
 	usedDeletionConfirmsCascadesAndRestoresAtomically();
-	runningDependentBuildingRefusesWithoutPartialMutation();
-	closedBuildingRetainingDeletedIdIsRefused();
+	runningDependentWorldRefusesWithoutPartialMutation();
+	closedWorldRetainingDeletedIdIsRefused();
 }

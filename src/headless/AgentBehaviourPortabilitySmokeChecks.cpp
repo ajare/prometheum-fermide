@@ -16,7 +16,7 @@
 #include "core/AgentBehaviourRegistry.h"
 #include "core/AgentBehaviourRegistryDocument.h"
 #include "core/AgentTagRegistryDocument.h"
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/SerializationWorkData.h"
 #include "core/YamlSerializer.h"
 
@@ -51,7 +51,7 @@ namespace
 
 	struct World
 	{
-		std::shared_ptr<core::Building> building;
+		std::shared_ptr<core::World> world;
 		uint32_t room{};
 		core::MarkerId alpha{};
 		core::MarkerId beta{};
@@ -62,20 +62,20 @@ namespace
 		bool shiftMarkerIds)
 	{
 		World result;
-		result.building = std::make_shared<core::Building>(name, 12, 2);
-		result.room = result.building->addRoom("Room", 0, 0, 0, 12, 1);
+		result.world = std::make_shared<core::World>(name, 12, 2);
+		result.room = result.world->addRoom("Room", 0, 0, 0, 12, 1);
 		if (shiftMarkerIds)
 		{
-			result.building->addSectorMarker(result.room, 0, 1.5f, "Other");
-			result.building->removeSectorMarker(result.room, 0);
+			result.world->addSectorMarker(result.room, 0, 1.5f, "Other");
+			result.world->removeSectorMarker(result.room, 0);
 		}
-		result.building->addSectorMarker(result.room, 0, 8.5f, "Alpha");
-		result.alpha = result.building->getMarkerIds().back();
-		result.building->addSectorMarker(result.room, 0, 9.5f, "Beta");
-		result.beta = result.building->getMarkerIds().back();
-		result.building->finishBuild();
-		result.building->pauseSimulation();
-		result.building->attachAgentBehaviourRegistry(name + ".behaviours", registry);
+		result.world->addSectorMarker(result.room, 0, 8.5f, "Alpha");
+		result.alpha = result.world->getMarkerIds().back();
+		result.world->addSectorMarker(result.room, 0, 9.5f, "Beta");
+		result.beta = result.world->getMarkerIds().back();
+		result.world->finishBuild();
+		result.world->pauseSimulation();
+		result.world->attachAgentBehaviourRegistry(name + ".behaviours", registry);
 		return result;
 	}
 
@@ -120,12 +120,12 @@ namespace
 		auto registry = core::AgentBehaviourRegistry::create();
 		auto behaviour = registry->addAgentBehaviour("Schedule", "schedule.lua", schema());
 		auto source = makeWorld("Source", registry, false);
-		auto agent = source.building->createAgent("Ada", source.room, 0, 2.0f);
+		auto agent = source.world->createAgent("Ada", source.room, 0, 2.0f);
 		std::string diagnostic;
-		require(source.building->setAgentBehaviourAssignment(agent, behaviour, 1,
+		require(source.world->setAgentBehaviourAssignment(agent, behaviour, 1,
 			configuration(source), &diagnostic), diagnostic);
 		auto text = makeAgentClipboardText(makeAgentClipboardPayload(
-			*source.building, agent, "Ada copy"), false);
+			*source.world, agent, "Ada copy"), false);
 		require(text.find("registryUuid") != std::string::npos
 			&& text.find("identity") != std::string::npos
 			&& text.find("type: marker") != std::string::npos
@@ -133,36 +133,36 @@ namespace
 			"Clipboard text omitted portable behaviour or Marker identity");
 		auto payload = parse(text);
 
-		gBuildingDocumentHistory.clear();
+		gWorldDocumentHistory.clear();
 		core::AgentId same{};
-		require(commitAgentPlacement(source.building, payload,
-			source.building->getSector(source.room), 0, 3.0f, same, diagnostic), diagnostic);
-		require(source.building->getAgentBehaviourAssignment(same)
-			== source.building->getAgentBehaviourAssignment(agent),
-			"Same-Building paste changed typed behaviour configuration");
+		require(commitAgentPlacement(source.world, payload,
+			source.world->getSector(source.room), 0, 3.0f, same, diagnostic), diagnostic);
+		require(source.world->getAgentBehaviourAssignment(same)
+			== source.world->getAgentBehaviourAssignment(agent),
+			"Same-World paste changed typed behaviour configuration");
 
 		auto destination = makeWorld("Destination", registry, true);
 		require(destination.alpha != source.alpha,
-			"Cross-Building fixture did not use foreign Marker IDs");
+			"Cross-World fixture did not use foreign Marker IDs");
 		core::AgentId crossed{};
-		require(commitAgentPlacement(destination.building, payload,
-			destination.building->getSector(destination.room), 0, 3.0f,
+		require(commitAgentPlacement(destination.world, payload,
+			destination.world->getSector(destination.room), 0, 3.0f,
 			crossed, diagnostic), diagnostic);
-		auto assignment = destination.building->getAgentBehaviourAssignment(crossed);
+		auto assignment = destination.world->getAgentBehaviourAssignment(crossed);
 		require(assignment && *core::agentBehaviourConfigurationGetIf<core::MarkerId>(
 			&assignment->configuration.at("destination")) == destination.alpha,
-			"Cross-Building paste retained a foreign Marker ID");
+			"Cross-World paste retained a foreign Marker ID");
 
 		PendingAgentPlacement pending;
-		require(armAgentPlacement(pending, *destination.building, payload,
-			destination.building->getSector(destination.room), 0, 4.0f, diagnostic),
+		require(armAgentPlacement(pending, *destination.world, payload,
+			destination.world->getSector(destination.room), 0, 4.0f, diagnostic),
 			diagnostic);
-		auto before = destination.building->getSimulationSnapshot().agents.size();
+		auto before = destination.world->getSimulationSnapshot().agents.size();
 		pending.cancel();
-		require(destination.building->getSimulationSnapshot().agents.size() == before,
-			"Cancelling a behaviour paste changed the Building");
+		require(destination.world->getSimulationSnapshot().agents.size() == before,
+			"Cancelling a behaviour paste changed the World");
 
-		auto missing = std::make_shared<core::Building>("Missing", 12, 2);
+		auto missing = std::make_shared<core::World>("Missing", 12, 2);
 		auto room = missing->addRoom("Room", 0, 0, 0, 12, 1);
 		missing->addSectorMarker(room, 0, 8.5f, "Alpha");
 		missing->finishBuild();
@@ -190,55 +190,55 @@ namespace
 		TemporaryDirectory temporary;
 		auto sourceDirectory = temporary.path / "source";
 		std::filesystem::create_directory(sourceDirectory);
-		auto buildingPath = sourceDirectory / "station.yaml";
-		auto building = std::make_shared<core::Building>("Station", 10, 2);
-		auto room = building->addRoom("Room", 0, 0, 0, 10, 1);
-		building->addSectorMarker(room, 0, 7.5f, "Alpha");
-		building->finishBuild();
-		building->pauseSimulation();
-		building->saveTo(buildingPath.string());
-		auto registry = core::createAndAttachAgentBehaviourRegistry(*building, buildingPath);
-		auto package = core::defaultAgentBehaviourRegistryPackagePath(buildingPath);
+		auto worldPath = sourceDirectory / "station.world.yaml";
+		auto world = std::make_shared<core::World>("Station", 10, 2);
+		auto room = world->addRoom("Room", 0, 0, 0, 10, 1);
+		world->addSectorMarker(room, 0, 7.5f, "Alpha");
+		world->finishBuild();
+		world->pauseSimulation();
+		world->saveTo(worldPath.string());
+		auto registry = core::createAndAttachAgentBehaviourRegistry(*world, worldPath);
+		auto package = core::defaultAgentBehaviourRegistryPackagePath(worldPath);
 		writeFile(package / "modules" / "schedule.lua",
 			"return { api_version = 1, factory = function(configuration) return {} end }\n");
 		auto behaviour = registry->addAgentBehaviour("Schedule",
 			"modules/schedule.lua", { { "destination", core::AgentBehaviourSchemaType::Marker } });
-		building->pauseSimulation();
-		auto agent = building->createAgent("Ada", room, 0, 2.0f);
+		world->pauseSimulation();
+		auto agent = world->createAgent("Ada", room, 0, 2.0f);
 		std::string diagnostic;
-		require(building->setAgentBehaviourAssignment(agent, behaviour, 1,
-			{ { "destination", building->getMarkerIds().front() } }, &diagnostic), diagnostic);
+		require(world->setAgentBehaviourAssignment(agent, behaviour, 1,
+			{ { "destination", world->getMarkerIds().front() } }, &diagnostic), diagnostic);
 		DocumentHistory history;
-		require(saveBuildingDocument({ building, buildingPath.string(), {}, &history,
+		require(saveWorldDocument({ world, worldPath.string(), {}, &history,
 			package.string() }, &diagnostic), diagnostic);
 		auto sourceUuid = registry->getUuid();
 
 		auto destinationDirectory = temporary.path / "copy";
 		std::filesystem::create_directory(destinationDirectory);
-		auto destinationBuilding = destinationDirectory / "copy.yaml";
-		require(saveBuildingDocument({ building, destinationBuilding.string(), {},
+		auto destinationWorld = destinationDirectory / "copy.world.yaml";
+		require(saveWorldDocument({ world, destinationWorld.string(), {},
 			&history, package.string() }, &diagnostic),
 			"Behaviour package Save As failed: " + diagnostic);
 		auto copiedPackage = destinationDirectory / package.filename();
 		require(std::filesystem::is_regular_file(copiedPackage / "behaviours.yaml")
 			&& std::filesystem::is_regular_file(copiedPackage / "modules" / "schedule.lua")
-			&& building->getExpectedAgentBehaviourRegistryUuid() != sourceUuid,
+			&& world->getExpectedAgentBehaviourRegistryUuid() != sourceUuid,
 			"Save As did not install an independent complete behaviour package");
-		auto copiedRegistry = building->getAgentBehaviourRegistry();
-		building.reset();
+		auto copiedRegistry = world->getAgentBehaviourRegistry();
+		world.reset();
 		require(core::unloadAgentBehaviourRegistryDocumentIfUnused(copiedRegistry),
-			"Copied package remained manager-owned after its Building closed");
+			"Copied package remained manager-owned after its World closed");
 		copiedRegistry.reset();
-		auto reopened = core::loadBuildingDocument(destinationBuilding);
+		auto reopened = core::loadWorldDocument(destinationWorld);
 		require(reopened->hasAttachedAgentBehaviourRegistry()
 			&& reopened->getAgentBehaviourAssignmentCount() == 1,
-			"Copied Building/package set did not reload from disk with its assignment");
+			"Copied World/package set did not reload from disk with its assignment");
 
 		auto failureDirectory = temporary.path / "failure";
 		std::filesystem::create_directory(failureDirectory);
-		auto failedBuilding = failureDirectory / "failed.yaml";
+		auto failedWorld = failureDirectory / "failed.world.yaml";
 		core::YamlSerializer::setWriteFailureAfterBytesForTesting(1);
-		auto saved = saveBuildingDocument({ reopened, failedBuilding.string(), {},
+		auto saved = saveWorldDocument({ reopened, failedWorld.string(), {},
 			&history, copiedPackage.string() }, &diagnostic);
 		core::YamlSerializer::setWriteFailureAfterBytesForTesting(0);
 		require(!saved && !std::filesystem::exists(

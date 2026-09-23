@@ -16,7 +16,8 @@
 #include "UI.h"
 
 #include "core/Graph.h"
-#include "core/Building.h"
+#include "core/World.h"
+#include "core/AgentTagRegistryDocument.h"
 #include "core/BulkheadDoorSectorObject.h"
 #include "core/Defines.h"
 #include "core/Door.h"
@@ -131,6 +132,56 @@ namespace
 		require(reader->readString("source") == "file", "YAML file did not round-trip");
 	}
 
+	void worldDocumentsRequireTheWorldYamlSuffix()
+	{
+		namespace filesystem = std::filesystem;
+		auto const directory = filesystem::temp_directory_path()
+			/ "pf-world-document-filename-smoke";
+		std::error_code error;
+		filesystem::remove_all(directory, error);
+		filesystem::create_directories(directory);
+		struct DirectoryCleanup
+		{
+			filesystem::path path;
+			~DirectoryCleanup()
+			{
+				std::error_code ignored;
+				filesystem::remove_all(path, ignored);
+			}
+		} cleanup{ directory };
+
+		core::World world("Filename", 4, 2);
+		auto const legacyPath = directory / "filename.yaml";
+		bool saveRefused{ false };
+		try { world.saveTo(legacyPath.string()); }
+		catch (core::SerializationException const& exception)
+		{
+			saveRefused = std::string(exception.what()).find(".world.yaml")
+				!= std::string::npos;
+		}
+		require(saveRefused && !filesystem::exists(legacyPath),
+			"A World save without the .world.yaml suffix was accepted");
+
+		auto const worldPath = directory / "filename.world.yaml";
+		world.saveTo(worldPath.string());
+		require(filesystem::is_regular_file(worldPath),
+			"A .world.yaml World document was not saved");
+		auto loaded = core::loadWorldDocument(worldPath);
+		require(loaded && loaded->getName() == "Filename",
+			"A .world.yaml World document did not load");
+
+		filesystem::copy_file(worldPath, legacyPath);
+		bool loadRefused{ false };
+		try { (void)core::loadWorldDocument(legacyPath); }
+		catch (core::SerializationException const& exception)
+		{
+			loadRefused = std::string(exception.what()).find(".world.yaml")
+				!= std::string::npos;
+		}
+		require(loadRefused,
+			"A World load without the .world.yaml suffix was accepted");
+	}
+
 	// #62: a late save write failure must report failure and leave the previous
 	// save file intact, with no temporary file left behind.
 	void lateWriteFailurePreservesThePreviousSaveFile()
@@ -149,7 +200,7 @@ namespace
 				filesystem::remove_all(path, ignored);
 			}
 		} cleanup{ directory };
-		filesystem::path const destination = directory / "building.yaml";
+		filesystem::path const destination = directory / "world.world.yaml";
 
 		auto const originalContents = std::string("original save contents\n");
 		{
@@ -274,7 +325,7 @@ namespace
 				filesystem::remove_all(path, ignored);
 			}
 		} cleanup{ directory };
-		filesystem::path const destination = directory / "building.yaml";
+		filesystem::path const destination = directory / "world.world.yaml";
 		{
 			std::ofstream original(destination, std::ios::binary);
 			original << "old\n";
@@ -297,7 +348,7 @@ namespace
 	}
 #endif
 
-	// #63: a failed save must not clear the Building's unsaved-changes state.
+	// #63: a failed save must not clear the World's unsaved-changes state.
 	// The clean-state transition may only happen after the file write has fully
 	// succeeded, so Save stays available and closing still prompts for unsaved
 	// changes after any open, write, flush, close, or replacement error.
@@ -317,31 +368,31 @@ namespace
 				filesystem::remove_all(path, ignored);
 			}
 		} cleanup{ directory };
-		filesystem::path const destination = directory / "building.yaml";
+		filesystem::path const destination = directory / "world.world.yaml";
 
-		core::Building building("Dirty save", 8, 2);
-		building.addRoom("Fore room", 0, 0, 0, 7, 1);
-		building.addRoom("Back room", 1, 0, 0, 7, 1);
-		building.finishBuild();
+		core::World world("Dirty save", 8, 2);
+		world.addRoom("Fore room", 0, 0, 0, 7, 1);
+		world.addRoom("Back room", 1, 0, 0, 7, 1);
+		world.finishBuild();
 		// Enough Agents that the YAML exceeds the injected failure threshold,
 		// so the failure lands mid-write rather than at open.
 		for (int i = 0; i < 200; ++i)
 		{
-			building.createAgent("Agent keeping the document dirty " + std::to_string(i), 0, 0, 0.5f);
+			world.createAgent("Agent keeping the document dirty " + std::to_string(i), 0, 0, 0.5f);
 		}
 
 		// A fully successful save marks the document clean.
-		building.saveTo(destination.string());
-		require(!building.isModified(), "successful save did not clear the unsaved-changes state");
+		world.saveTo(destination.string());
+		require(!world.isModified(), "successful save did not clear the unsaved-changes state");
 
 		// Edit again, then fail the save mid-write.
-		building.markModified();
-		require(building.isModified(), "Building did not become dirty after an edit");
+		world.markModified();
+		require(world.isModified(), "World did not become dirty after an edit");
 		core::YamlSerializer::setWriteFailureAfterBytesForTesting(4096);
 		bool reportedFailure = false;
 		try
 		{
-			building.saveTo(destination.string());
+			world.saveTo(destination.string());
 		}
 		catch (core::SerializationException const&)
 		{
@@ -349,13 +400,13 @@ namespace
 		}
 		core::YamlSerializer::setWriteFailureAfterBytesForTesting(0);
 		require(reportedFailure, "injected write failure did not report a save error");
-		require(building.isModified(),
+		require(world.isModified(),
 			"failed save cleared the unsaved-changes state; Save would be disabled and "
 			"closing would not prompt for unsaved changes");
 
 		// Retrying the save after the failure succeeds and only then goes clean.
-		building.saveTo(destination.string());
-		require(!building.isModified(), "retry save after failure did not clear the unsaved-changes state");
+		world.saveTo(destination.string());
+		require(!world.isModified(), "retry save after failure did not clear the unsaved-changes state");
 	}
 
 	void malformedValuesAndInvalidUsageThrowUsefulErrors()
@@ -396,12 +447,12 @@ namespace
 		}
 	}
 
-	void buildingRoundTripsAuthoredStateAndAgents()
+	void worldRoundTripsAuthoredStateAndAgents()
 	{
-		core::Building original("Serializable building", 8, 3);
+		core::World original("Serializable world", 8, 3);
 		auto const fore = original.addRoom("Fore room", 0, 0, 0, 7, 2);
 		original.addRoom("Back room", 1, 0, 0, 7, 2);
-		core::Building::CreateDoorOptions doorOptions;
+		core::World::CreateDoorOptions doorOptions;
 		doorOptions.width = 2;
 		doorOptions.activationMode = core::DoorActivationMode::RemoteControlled;
 		doorOptions.controls[0] = true;
@@ -412,7 +463,7 @@ namespace
 		uint32_t destinationIdentifier{ 0x53455231u };
 		original.addSectorMarker(fore, 0, 2.5f, &destinationIdentifier);
 		require(original.removeSectorMarker(fore, removedMarker.index),
-			"Marker could not be removed through Building");
+			"Marker could not be removed through World");
 		require(!original.removeSectorMarker(fore, removedMarker.index),
 			"Marker deletion accepted an empty object slot");
 		original.finishBuild();
@@ -438,18 +489,18 @@ namespace
 			&& yaml.find("cellsWide:") != std::string::npos
 			&& yaml.find("foreControl: true") != std::string::npos
 			&& yaml.find("\n    a:") == std::string::npos,
-			"Building YAML did not use the explicit construction schema");
+			"World YAML did not use the explicit construction schema");
 		require(yaml.find("construction") != std::string::npos
 			&& yaml.find("agents") != std::string::npos
 			&& yaml.find("path:") != std::string::npos
 			&& yaml.find("destinationSector:") != std::string::npos
 			&& yaml.find("active: true") != std::string::npos,
-			"Building YAML omitted authored structure, agents, or Agent paths");
+			"World YAML omitted authored structure, agents, or Agent paths");
 
-		core::Building loaded("placeholder", 2, 2);
+		core::World loaded("placeholder", 2, 2);
 		auto reader = core::YamlSerializer::fromString(yaml);
 		reader->deserialize();
-		require(loaded.deserialize(*reader, workData), "Building deserialization failed");
+		require(loaded.deserialize(*reader, workData), "World deserialization failed");
 		require(loaded.getName() == original.getName()
 			&& loaded.getCellsWide() == original.getCellsWide()
 			&& loaded.getDecksHigh() == original.getDecksHigh()
@@ -457,9 +508,9 @@ namespace
 			&& loaded.getLayerName(0) == "Layer 0"
 			&& loaded.getLayerName(1) == "Layer 1"
 			&& loaded.getNumSectors() == original.getNumSectors(),
-			"Building metadata or sectors did not round-trip");
+			"World metadata or sectors did not round-trip");
 		require(loaded.getGraph() && !loaded.getGraph()->getVertices().empty(),
-			"Building graph was not regenerated after deserialization");
+			"World graph was not regenerated after deserialization");
 		uint32_t markerCount{ 0 };
 		auto const loadedFore = loaded.getSector(fore);
 		for (uint32_t i = 0; i < loadedFore->getNumObjects(); ++i)
@@ -478,27 +529,27 @@ namespace
 			&& loadedAgent.entity->getPath()->nodes.back().targetVertex->getSector()->getIndex() == fore
 			&& std::abs(loadedAgent.entity->getPath()->nodes.back().targetVertex->getSectorOffset().x
 				- destination->getSectorOffset().x) < 0.0001f,
-			"Building-owned Agent or its active path did not round-trip");
-		require(!loaded.isModified(), "deserialized Building was unexpectedly modified");
+			"World-owned Agent or its active path did not round-trip");
+		require(!loaded.isModified(), "deserialized World was unexpectedly modified");
 		auto replacementPath = loaded.getGraph()->calculatePath(loadedAgent.entity,
 			loadedAgent.entity->getPath()->nodes.back().targetVertex);
 		require(replacementPath && !replacementPath->nodes.empty(),
 			"Replacement Agent path could not be created");
 		loadedAgent.entity->setPath(std::move(replacementPath), false);
-		require(loaded.isModified(), "Setting an Agent path did not mark its Building modified");
+		require(loaded.isModified(), "Setting an Agent path did not mark its World modified");
 		loadedAgent.entity->clearPath();
 		require(loaded.removeAgent(agentId).removed, "deserialized Agent could not be removed");
-		require(loaded.isModified(), "removing an Agent did not modify its Building");
+		require(loaded.isModified(), "removing an Agent did not modify its World");
 	}
 
 	// Ticket #60: a hand-edited Agent position must refuse the open rather than
 	// seed the world with an Agent that can be neither drawn nor hit-tested.
 	void agentRestoreRejectsMalformedPositions()
 	{
-		core::Building original("Position probe", 8, 3);
+		core::World original("Position probe", 8, 3);
 		original.addRoom("Fore room", 0, 0, 0, 7, 2);
 		original.addRoom("Back room", 1, 0, 0, 7, 2);
-		core::Building::CreateDoorOptions doorOptions;
+		core::World::CreateDoorOptions doorOptions;
 		doorOptions.width = 2;
 		original.addSectorDoor(0, 0, 3, doorOptions);
 		original.finishBuild();
@@ -518,12 +569,12 @@ namespace
 		{
 			// A reused instance: the previous contents must not survive the failed
 			// open, and neither must the Agent the bad record half-restored.
-			core::Building reused("reused", 2, 2);
+			core::World reused("reused", 2, 2);
 			{
 				auto goodReader = core::YamlSerializer::fromString(yaml);
 				goodReader->deserialize();
 				require(reused.deserialize(*goodReader, workData),
-					"The good Building did not load into a reused instance");
+					"The good World did not load into a reused instance");
 				require(reused.getSimulationSnapshot().agents.size() == 1,
 					"The reused instance did not start with one Agent");
 			}
@@ -546,7 +597,7 @@ namespace
 				|| message.find("path") != std::string::npos,
 				("Malformed " + what + " gave an imprecise diagnostic: " + message).c_str());
 			require(reused.getSimulationSnapshot().agents.empty(),
-				("Malformed " + what + " left an Agent owned by the reused Building").c_str());
+				("Malformed " + what + " left an Agent owned by the reused World").c_str());
 			require(reused.getSector(0)->getAgents().empty(),
 				("Malformed " + what + " left an Agent in the Sector").c_str());
 		};
@@ -578,14 +629,14 @@ namespace
 		// Two Door-joined pairs of Rooms on separate Layers, plus a Background.
 		// A<->B and D<->E each connect, but nothing joins the pairs, so a route
 		// from A to D cannot be rebuilt.
-		core::Building original("Background and route probe", 16, 3);
+		core::World original("Background and route probe", 16, 3);
 		original.addLayer();
 		original.addLayer();
 		original.addRoom("A", 0, 0, 0, 3, 2);
 		original.addRoom("B", 1, 0, 0, 3, 2);
 		original.addRoom("D", 2, 0, 5, 3, 2);
 		original.addRoom("E", 3, 0, 5, 3, 2);
-		core::Building::CreateDoorOptions doorOptions;
+		core::World::CreateDoorOptions doorOptions;
 		doorOptions.width = 1;
 		original.addSectorDoor(0, 0, 2, doorOptions);
 		original.addSectorDoor(2, 0, 7, doorOptions);
@@ -597,9 +648,9 @@ namespace
 			if (original.getSector(i)->getType() == core::SectorType::Background)
 				backgroundIndex = i;
 		}
-		require(backgroundIndex != ~0u, "The probe Building has no Background to target");
+		require(backgroundIndex != ~0u, "The probe World has no Background to target");
 		require(original.getGraph()->getVertices().size() >= 4,
-			"The probe Building built no route vertices, so the route cases prove nothing");
+			"The probe World built no route vertices, so the route cases prove nothing");
 
 		core::SerializationWorkData workData;
 		auto writer = core::YamlSerializer::toString();
@@ -607,12 +658,12 @@ namespace
 		writer->serialize();
 		auto const yaml = writer->getSerializedString();
 		auto const agentsAt = yaml.find("\nagents:");
-		require(agentsAt != std::string::npos, "The probe Building serialized no agents section");
+		require(agentsAt != std::string::npos, "The probe World serialized no agents section");
 		auto const head = yaml.substr(0, agentsAt + 1);
 
 		auto rejects = [&](std::string const& agentsBlock, std::string const& what)
 		{
-			core::Building reused("reused", 2, 2);
+			core::World reused("reused", 2, 2);
 			auto reader = core::YamlSerializer::fromString(head + agentsBlock);
 			reader->deserialize();
 			bool threw{ false };
@@ -626,7 +677,7 @@ namespace
 			}
 			require(threw, ("Malformed " + what + " was accepted").c_str());
 			require(reused.getSimulationSnapshot().agents.empty(),
-				("Malformed " + what + " left an Agent owned by the reused Building").c_str());
+				("Malformed " + what + " left an Agent owned by the reused World").c_str());
 			for (uint32_t i = 0; i < reused.getNumSectors(); ++i)
 			{
 				require(reused.getSector(i)->getAgents().empty(),
@@ -660,7 +711,7 @@ namespace
 			"      active: false\n", "unreachable destination");
 	}
 
-	void legacyBuildingYamlStillLoads()
+	void legacyWorldYamlStillLoads()
 	{
 		auto const yaml = R"yaml(version: 1
 name: Legacy
@@ -685,16 +736,16 @@ construction:
     values: []
 agents: []
 )yaml";
-		core::Building loaded("placeholder", 1, 1);
+		core::World loaded("placeholder", 1, 1);
 		core::SerializationWorkData workData;
 		auto reader = core::YamlSerializer::fromString(yaml);
 		reader->deserialize();
-		require(loaded.deserialize(*reader, workData), "version 1 Building YAML no longer loads");
+		require(loaded.deserialize(*reader, workData), "version 1 World YAML no longer loads");
 		require(loaded.getName() == "Legacy" && loaded.getNumSectors() == 1,
-			"version 1 Building YAML loaded incorrectly");
+			"version 1 World YAML loaded incorrectly");
 	}
 
-	void legacyVersion3BuildingYamlStillLoadsWithDefaultLayers()
+	void legacyVersion3WorldYamlStillLoadsWithDefaultLayers()
 	{
 		auto const yaml = R"yaml(version: 3
 name: Legacy v3
@@ -708,20 +759,20 @@ construction:
     decksHigh: 1
 agents: []
 )yaml";
-		core::Building loaded("placeholder", 1, 1);
+		core::World loaded("placeholder", 1, 1);
 		core::SerializationWorkData workData;
 		auto reader = core::YamlSerializer::fromString(yaml);
 		reader->deserialize();
-		require(loaded.deserialize(*reader, workData), "version 3 Building YAML no longer loads");
+		require(loaded.deserialize(*reader, workData), "version 3 World YAML no longer loads");
 		require(loaded.getName() == "Legacy v3"
 			&& loaded.getLayerCount() == 2
 			&& loaded.getLayerName(0) == "Layer 0"
 			&& loaded.getLayerName(1) == "Layer 1",
-			"version 3 Building YAML loaded with wrong layer defaults");
+			"version 3 World YAML loaded with wrong layer defaults");
 	}
 
 	// The version 5 writer must not strand the version 4 files already on disk.
-	void version4BuildingYamlStillLoads()
+	void version4WorldYamlStillLoads()
 	{
 		auto const yaml = R"yaml(version: 4
 name: Legacy v4
@@ -751,23 +802,23 @@ construction:
     topDeckHeight: 0.9
 agents: []
 )yaml";
-		core::Building loaded("placeholder", 1, 1);
+		core::World loaded("placeholder", 1, 1);
 		core::SerializationWorkData workData;
 		auto reader = core::YamlSerializer::fromString(yaml);
 		reader->deserialize();
-		require(loaded.deserialize(*reader, workData), "version 4 Building YAML no longer loads");
-		core::Building const& loadedRef = loaded;
+		require(loaded.deserialize(*reader, workData), "version 4 World YAML no longer loads");
+		core::World const& loadedRef = loaded;
 		require(loaded.getName() == "Legacy v4"
 			&& loaded.getLayerCount() == 3
 			&& loadedRef.getNumSectors() == 2
 			&& loadedRef.getSector(0)->getLayerIndex() == 0
 			&& loadedRef.getSector(1)->getLayerIndex() == 2,
-			"version 4 Building YAML did not load into the same shape");
+			"version 4 World YAML did not load into the same shape");
 	}
 
-	void buildingLayerNamesRoundTrip()
+	void worldLayerNamesRoundTrip()
 	{
-		core::Building original("Named layers", 4, 2);
+		core::World original("Named layers", 4, 2);
 		original.setLayerName(0, "Front");
 		original.setLayerName(1, "Rear");
 		original.addCorridor(0, 0, 4);
@@ -783,10 +834,10 @@ agents: []
 			&& yaml.find("- Rear") != std::string::npos,
 			"Custom layer names were not serialized");
 
-		core::Building loaded("placeholder", 1, 1);
+		core::World loaded("placeholder", 1, 1);
 		auto reader = core::YamlSerializer::fromString(yaml);
 		reader->deserialize();
-		require(loaded.deserialize(*reader, workData), "Named layer Building did not deserialize");
+		require(loaded.deserialize(*reader, workData), "Named layer World did not deserialize");
 		require(loaded.getLayerCount() == 2
 			&& loaded.getLayerName(0) == "Front"
 			&& loaded.getLayerName(1) == "Rear",
@@ -823,13 +874,13 @@ construction:
     topDeckHeight: 0.9
 agents: []
 )yaml";
-		core::Building loaded("placeholder", 1, 1);
+		core::World loaded("placeholder", 1, 1);
 		core::SerializationWorkData workData;
 		auto reader = core::YamlSerializer::fromString(yaml);
 		reader->deserialize();
 		require(loaded.deserialize(*reader, workData),
-			"A Building mixing legacy layer names and layer indices did not load");
-		core::Building const& loadedRef = loaded;
+			"A World mixing legacy layer names and layer indices did not load");
+		core::World const& loadedRef = loaded;
 		require(loadedRef.getNumSectors() == 2
 			&& loadedRef.getSector(0)->getLayerIndex() == 0
 			&& loadedRef.getSector(1)->getLayerIndex() == 2,
@@ -838,9 +889,9 @@ agents: []
 
 	void addedLayersAppendToTheBackAndRoundTrip()
 	{
-		core::Building original("Growing", 4, 2);
+		core::World original("Growing", 4, 2);
 		original.addCorridor(0, 0, 4);
-		require(original.getLayerCount() == 2, "A new Building does not start with two layers");
+		require(original.getLayerCount() == 2, "A new World does not start with two layers");
 
 		auto const appended = original.addLayer();
 		require(appended == 2 && original.getLayerCount() == 3,
@@ -863,59 +914,59 @@ agents: []
 			&& yaml.find("- Sub-basement") != std::string::npos,
 			"The added layer was not serialized");
 
-		core::Building loaded("placeholder", 1, 1);
+		core::World loaded("placeholder", 1, 1);
 		auto reader = core::YamlSerializer::fromString(yaml);
 		reader->deserialize();
-		require(loaded.deserialize(*reader, workData), "The three-layer Building did not deserialize");
+		require(loaded.deserialize(*reader, workData), "The three-layer World did not deserialize");
 		require(loaded.getLayerCount() == 3
 			&& loaded.getLayerName(0) == "Layer 0"
 			&& loaded.getLayerName(1) == "Layer 1"
 			&& loaded.getLayerName(2) == "Sub-basement",
 			"The added layer did not round-trip");
-		core::Building const& loadedRef = loaded;
+		core::World const& loadedRef = loaded;
 		require(loadedRef.getLayer(2) && loadedRef.getLayer(2)->getZ() == 2,
 			"The added layer was not created at the expected depth");
 	}
 
 	void layerCountIsCappedAtCoreMaxLayers()
 	{
-		core::Building building("Capped", 1, 1);
-		while (building.getLayerCount() < CORE_MAX_LAYERS) building.addLayer();
-		require(building.getLayerCount() == CORE_MAX_LAYERS,
+		core::World world("Capped", 1, 1);
+		while (world.getLayerCount() < CORE_MAX_LAYERS) world.addLayer();
+		require(world.getLayerCount() == CORE_MAX_LAYERS,
 			"addLayer() stopped short of CORE_MAX_LAYERS");
 
 		bool rejected = false;
 		try
 		{
-			building.addLayer();
+			world.addLayer();
 		}
 		catch (std::exception const&)
 		{
 			rejected = true;
 		}
 		require(rejected, "addLayer() did not reject going beyond CORE_MAX_LAYERS");
-		require(building.getLayerCount() == CORE_MAX_LAYERS,
+		require(world.getLayerCount() == CORE_MAX_LAYERS,
 			"A rejected addLayer() still changed the layer count");
 	}
 
 	void deletingAMiddleLayerCompactsTheLayersAboveIt()
 	{
-		core::Building building("Compacting", 8, 3);
-		building.addLayer();
-		building.addCorridor(0, 0, 8);
-		building.addRoom("Basement", 1, 0, 0, 8, 1);
-		building.addRoom("Cellar", 2, 0, 0, 8, 1);
-		building.setLayerName(2, "Deep Cellar");
-		building.addSectorDoor(0, 0, 2);
+		core::World world("Compacting", 8, 3);
+		world.addLayer();
+		world.addCorridor(0, 0, 8);
+		world.addRoom("Basement", 1, 0, 0, 8, 1);
+		world.addRoom("Cellar", 2, 0, 0, 8, 1);
+		world.setLayerName(2, "Deep Cellar");
+		world.addSectorDoor(0, 0, 2);
 		// Authored on the front Layer of the 1<->2 pair, so it crosses the Layer the
 		// test deletes.
-		building.addSectorWindow(1, 0, 5, 1, 1);
-		building.finishBuild();
-		auto const survivor = building.createAgent("Walker", 0, 0, 1.0f);
-		auto const buried = building.createAgent("Buried", 1, 0, 1.0f);
+		world.addSectorWindow(1, 0, 5, 1, 1);
+		world.finishBuild();
+		auto const survivor = world.createAgent("Walker", 0, 0, 1.0f);
+		auto const buried = world.createAgent("Buried", 1, 0, 1.0f);
 
-		building.pauseSimulation();
-		auto const plan = building.planDeleteLayer(1);
+		world.pauseSimulation();
+		auto const plan = world.planDeleteLayer(1);
 		require(plan.valid, ("Middle layer deletion was rejected: " + plan.diagnostic).c_str());
 		require(plan.layerCountBefore == 3 && plan.layerCountAfter == 2,
 			"Layer deletion did not report its compaction");
@@ -925,31 +976,31 @@ agents: []
 		require(plan.requiresConfirmation(),
 			"A destructive layer deletion did not require confirmation");
 		require(!plan.consequences.empty(), "Layer deletion produced no consequence list");
-		require(building.applyDeleteLayer(plan), "Layer deletion was not applied");
+		require(world.applyDeleteLayer(plan), "Layer deletion was not applied");
 
-		require(building.getLayerCount() == 2, "Layers were not compacted");
-		require(building.getLayerName(1) == "Deep Cellar",
+		require(world.getLayerCount() == 2, "Layers were not compacted");
+		require(world.getLayerName(1) == "Deep Cellar",
 			"Layer names did not travel with the compacted layer");
-		require(building.getNumSectors() == 2, "Sectors were not removed with their layer");
-		require(building.getSector(0)->getLayerIndex() == 0
-			&& building.getSector(1)->getName() == "Cellar"
-			&& building.getSector(1)->getLayerIndex() == 1,
+		require(world.getNumSectors() == 2, "Sectors were not removed with their layer");
+		require(world.getSector(0)->getLayerIndex() == 0
+			&& world.getSector(1)->getName() == "Cellar"
+			&& world.getSector(1)->getLayerIndex() == 1,
 			"Higher layers were not compacted down by one");
-		require(building.lookupAgent(survivor).entity != nullptr,
+		require(world.lookupAgent(survivor).entity != nullptr,
 			"Agent outside the deleted layer was removed");
-		require(building.lookupAgent(buried).entity == nullptr,
+		require(world.lookupAgent(buried).entity == nullptr,
 			"Agent in the deleted layer was retained");
-		require(building.isSimulationPaused(), "Layer deletion resumed the simulation");
+		require(world.isSimulationPaused(), "Layer deletion resumed the simulation");
 
 		core::SerializationWorkData workData;
 		auto writer = core::YamlSerializer::toString();
-		building.serialize(*writer, workData);
+		world.serialize(*writer, workData);
 		writer->serialize();
-		core::Building reloaded("placeholder", 1, 1);
+		core::World reloaded("placeholder", 1, 1);
 		auto reader = core::YamlSerializer::fromString(writer->getSerializedString());
 		reader->deserialize();
 		require(reloaded.deserialize(*reader, workData),
-			"A compacted Building did not round-trip");
+			"A compacted World did not round-trip");
 		require(reloaded.getLayerCount() == 2
 			&& reloaded.getLayerName(1) == "Deep Cellar"
 			&& reloaded.getNumSectors() == 2
@@ -959,29 +1010,29 @@ agents: []
 
 	void deletingTheFrontLayerRemovesTransitsOneLayerBehind()
 	{
-		core::Building building("Front deletion", 8, 3);
-		building.addLayer();
-		building.addCorridor(0, 0, 8);
-		building.addCorridor(2, 0, 8);
-		building.addRoom("Deep", 2, 0, 0, 8, 3);
-		building.addLadder(1, 0, 3, { 3, false, true });
-		building.finishBuild();
-		auto const climber = building.createAgent("Climber", 3, 0, 0.5f);
+		core::World world("Front deletion", 8, 3);
+		world.addLayer();
+		world.addCorridor(0, 0, 8);
+		world.addCorridor(2, 0, 8);
+		world.addRoom("Deep", 2, 0, 0, 8, 3);
+		world.addLadder(1, 0, 3, { 3, false, true });
+		world.finishBuild();
+		auto const climber = world.createAgent("Climber", 3, 0, 0.5f);
 
-		building.pauseSimulation();
-		auto const plan = building.planDeleteLayer(0);
+		world.pauseSimulation();
+		auto const plan = world.planDeleteLayer(0);
 		require(plan.valid, ("Front layer deletion was rejected: " + plan.diagnostic).c_str());
 		require(plan.locationsRemoved == 2, "Front layer Sectors were not counted");
 		require(plan.transitsRemoved == 1,
 			"Transits one layer behind the deletion were not counted");
 		require(plan.agentsRemoved == 1, "Agents in the deleted Transit were not counted");
-		require(building.applyDeleteLayer(plan), "Front layer deletion was not applied");
-		require(building.getLayerCount() == 2, "Layers were not compacted");
-		require(building.getNumSectors() == 1
-			&& building.getSector(0)->getName() == "Deep"
-			&& building.getSector(0)->getLayerIndex() == 1,
+		require(world.applyDeleteLayer(plan), "Front layer deletion was not applied");
+		require(world.getLayerCount() == 2, "Layers were not compacted");
+		require(world.getNumSectors() == 1
+			&& world.getSector(0)->getName() == "Deep"
+			&& world.getSector(0)->getLayerIndex() == 1,
 			"The surviving Room did not compact to the layer behind the deletion");
-		require(building.lookupAgent(climber).entity == nullptr,
+		require(world.lookupAgent(climber).entity == nullptr,
 			"Agent in a removed Transit was retained");
 	}
 
@@ -990,36 +1041,36 @@ agents: []
 	// Sector must keep pointing at the same Sector after the indices compact.
 	void layerDeletionPreservesAuthoredRecordDependencies()
 	{
-		core::Building building("Dependencies", 16, 3);
-		building.addLayer();
-		building.addCorridor(0, 0, 7);
-		building.addCorridor(1, 3, 7);
-		building.addStaircase(1, 0, 4, { 4, CORE_SIDE_RIGHT, 0.4f });
-		building.addRoom("Room 1", 0, 1, 10, 4, 2);
-		building.addCorridor(2, 14, 2);
-		building.removeLocationWall(3, 1, CORE_SIDE_RIGHT);
-		building.addStaircase(1, 1, 11, { 3, CORE_SIDE_RIGHT, 0.0f });
-		building.finishBuild();
-		building.pauseSimulation();
+		core::World world("Dependencies", 16, 3);
+		world.addLayer();
+		world.addCorridor(0, 0, 7);
+		world.addCorridor(1, 3, 7);
+		world.addStaircase(1, 0, 4, { 4, CORE_SIDE_RIGHT, 0.4f });
+		world.addRoom("Room 1", 0, 1, 10, 4, 2);
+		world.addCorridor(2, 14, 2);
+		world.removeLocationWall(3, 1, CORE_SIDE_RIGHT);
+		world.addStaircase(1, 1, 11, { 3, CORE_SIDE_RIGHT, 0.0f });
+		world.finishBuild();
+		world.pauseSimulation();
 
 		// Deleting the Transit Layer drops two Sectors ahead of the Room, so the
 		// wall removal must follow the Room rather than land on a renumbered Sector.
-		auto const middle = building.planDeleteLayer(1);
+		auto const middle = world.planDeleteLayer(1);
 		require(middle.valid,
 			("Dependency-aware layer deletion was rejected: " + middle.diagnostic).c_str());
 		require(middle.transitsRemoved == 2, "Dependency test dropped the wrong Transits");
-		building.applyDeleteLayer(middle);
-		require(building.getNumSectors() == 4, "Dependency test compacted to the wrong Sector count");
-		require(building.getSector(2)->getName() == "Room 1",
+		world.applyDeleteLayer(middle);
+		require(world.getNumSectors() == 4, "Dependency test compacted to the wrong Sector count");
+		require(world.getSector(2)->getName() == "Room 1",
 			"The wall removal did not follow its Room through the Sector compaction");
-		require(building.getSector(2)->getEndType(1, CORE_SIDE_RIGHT) != core::SectorEndType::Wall,
+		require(world.getSector(2)->getEndType(1, CORE_SIDE_RIGHT) != core::SectorEndType::Wall,
 			"The removed wall came back after the layer deletion");
-		require(building.isTraversalTopologyValid(),
-			("Layer deletion left an invalid topology: " + building.getTopologyDiagnostic()).c_str());
+		require(world.isTraversalTopologyValid(),
+			("Layer deletion left an invalid topology: " + world.getTopologyDiagnostic()).c_str());
 
 		// Deleting the back-most Layer drops nothing, so this exercises the record
 		// ordering alone.
-		core::Building untouched("Dependencies", 16, 3);
+		core::World untouched("Dependencies", 16, 3);
 		untouched.addLayer();
 		untouched.addCorridor(0, 0, 7);
 		untouched.addCorridor(1, 3, 7);
@@ -1043,31 +1094,31 @@ agents: []
 
 	void layerDeletionKeepsAtLeastTwoLayers()
 	{
-		core::Building building("Two layers", 4, 2);
-		building.addCorridor(0, 0, 4);
-		building.finishBuild();
+		core::World world("Two layers", 4, 2);
+		world.addCorridor(0, 0, 4);
+		world.finishBuild();
 
-		auto const last = building.planDeleteLayer(1);
+		auto const last = world.planDeleteLayer(1);
 		require(!last.valid && !last.diagnostic.empty(),
 			"Deleting down to a single layer was not rejected");
 
 		bool threw = false;
 		try
 		{
-			building.applyDeleteLayer(last);
+			world.applyDeleteLayer(last);
 		}
 		catch (std::exception const&)
 		{
 			threw = true;
 		}
 		require(threw, "applyDeleteLayer did not reject an invalid plan");
-		require(building.getLayerCount() == 2, "A rejected layer deletion changed the layer count");
+		require(world.getLayerCount() == 2, "A rejected layer deletion changed the layer count");
 
-		auto const missing = building.planDeleteLayer(7);
+		auto const missing = world.planDeleteLayer(7);
 		require(!missing.valid && !missing.diagnostic.empty(),
 			"Deleting a nonexistent layer was not rejected");
 
-		core::Building emptyBack("Empty back", 4, 2);
+		core::World emptyBack("Empty back", 4, 2);
 		emptyBack.addCorridor(0, 0, 4);
 		emptyBack.addLayer();
 		emptyBack.finishBuild();
@@ -1084,34 +1135,34 @@ agents: []
 
 	void locationEditsArePlannedAndAppliedAtomically()
 	{
-		core::Building building("Editable", 8, 3);
-		auto room = building.addRoom("Room", 0, 0, 0, 5, 2);
-		building.addSectorMarker(room, 0, 4.5f);
-		auto removed = building.addSectorMarker(room, 0, 1.5f);
-		building.removeSectorMarker(room, removed.index);
-		building.addSectorMarker(room, 0, 2.5f);
-		building.finishBuild();
-		auto agent = building.createAgent("Cropped", room, 0, 4.5f);
+		core::World world("Editable", 8, 3);
+		auto room = world.addRoom("Room", 0, 0, 0, 5, 2);
+		world.addSectorMarker(room, 0, 4.5f);
+		auto removed = world.addSectorMarker(room, 0, 1.5f);
+		world.removeSectorMarker(room, removed.index);
+		world.addSectorMarker(room, 0, 2.5f);
+		world.finishBuild();
+		auto agent = world.createAgent("Cropped", room, 0, 4.5f);
 
-		auto resize = building.planResizeLocation(room, 0, 0, 3, 2);
+		auto resize = world.planResizeLocation(room, 0, 0, 3, 2);
 		require(resize.valid && resize.requiresConfirmation(),
 			"Location shrink did not report its cascading deletions");
-		building.pauseSimulation();
-		auto resized = building.applyLocationEdit(resize);
-		require(building.getSector(resized)->getCellsWide() == 3,
+		world.pauseSimulation();
+		auto resized = world.applyLocationEdit(resize);
+		require(world.getSector(resized)->getCellsWide() == 3,
 			"Location width was not changed");
-		require(!building.lookupAgent(agent), "Agent cropped by resize was retained");
+		require(!world.lookupAgent(agent), "Agent cropped by resize was retained");
 		uint32_t retainedObjects = 0;
-		for (uint32_t i = 0; i < building.getSector(resized)->getNumObjects(); ++i)
-			if (building.getSector(resized)->getObject(i)) ++retainedObjects;
+		for (uint32_t i = 0; i < world.getSector(resized)->getNumObjects(); ++i)
+			if (world.getSector(resized)->getObject(i)) ++retainedObjects;
 		require(retainedObjects == 1, "Resize did not preserve the correct authored object slots");
-		require(building.isSimulationPaused(), "Location edit resumed the simulation");
+		require(world.isSimulationPaused(), "Location edit resumed the simulation");
 
 		core::SerializationWorkData workData;
 		auto writer = core::YamlSerializer::toString();
-		building.serialize(*writer, workData);
+		world.serialize(*writer, workData);
 		writer->serialize();
-		core::Building reloaded("placeholder", 1, 1);
+		core::World reloaded("placeholder", 1, 1);
 		auto reader = core::YamlSerializer::fromString(writer->getSerializedString());
 		reader->deserialize();
 		require(reloaded.deserialize(*reader, workData)
@@ -1122,70 +1173,70 @@ agents: []
 			if (reloaded.getSector(resized)->getObject(i)) ++reloadedObjects;
 		require(reloadedObjects == 1, "Edited object tombstones did not survive serialization");
 
-		auto movedAgent = building.createAgent("Moved", resized, 0, 1.0f);
-		auto move = building.planResizeLocation(resized, 4, 0, 3, 2);
+		auto movedAgent = world.createAgent("Moved", resized, 0, 1.0f);
+		auto move = world.planResizeLocation(resized, 4, 0, 3, 2);
 		if (!move.valid || !move.move || move.requiresConfirmation())
 			throw std::runtime_error("Free Location move was not planned without deletions: "
 				+ move.diagnostic + " consequences=" + std::to_string(move.consequences.size()));
-		auto moved = building.applyLocationEdit(move);
-		require(building.getSector(moved)->getCellX() == 4
-			&& building.getSector(moved)->getCellY() == 0,
+		auto moved = world.applyLocationEdit(move);
+		require(world.getSector(moved)->getCellX() == 4
+			&& world.getSector(moved)->getCellY() == 0,
 			"Location was not moved to its planned cells");
-		auto movedLookup = building.lookupAgent(movedAgent);
+		auto movedLookup = world.lookupAgent(movedAgent);
 		require(movedLookup && std::abs(movedLookup.entity->getGlobalPosition().x - 5.0f) < 0.001f
 			&& std::abs(movedLookup.entity->getGlobalPosition().y) < 0.001f,
 			"Agent did not move with its Location");
 		std::shared_ptr<const core::SectorObject> movedObject;
-		for (uint32_t i = 0; i < building.getSector(moved)->getNumObjects(); ++i)
-			if (building.getSector(moved)->getObject(i)) movedObject = building.getSector(moved)->getObject(i);
+		for (uint32_t i = 0; i < world.getSector(moved)->getNumObjects(); ++i)
+			if (world.getSector(moved)->getObject(i)) movedObject = world.getSector(moved)->getObject(i);
 		require(movedObject && movedObject->getCellX() == 6,
 			"Sector object did not move with its Location");
 
-		auto remove = building.planRemoveLocation(moved);
+		auto remove = world.planRemoveLocation(moved);
 		require(remove.valid, "Valid Location deletion was rejected");
-		building.applyLocationEdit(remove);
-		require(building.getNumSectors() == 0, "Deleted Location was retained");
+		world.applyLocationEdit(remove);
+		require(world.getNumSectors() == 0, "Deleted Location was retained");
 
-		core::Building fullWidthBuilding("Full width", 16, 2);
-		auto createdFullWidth = fullWidthBuilding.addCorridor(0, 0, 16);
-		require(fullWidthBuilding.getSector(createdFullWidth)->getCellX1() == 15,
+		core::World fullWidthWorld("Full width", 16, 2);
+		auto createdFullWidth = fullWidthWorld.addCorridor(0, 0, 16);
+		require(fullWidthWorld.getSector(createdFullWidth)->getCellX1() == 15,
 			"Location creation did not include the final world column");
 
-		core::Building boundaryBuilding("Boundary", 16, 2);
-		auto boundaryCorridor = boundaryBuilding.addCorridor(0, 0, 15);
-		boundaryBuilding.finishBuild();
-		auto boundaryResize = boundaryBuilding.planResizeLocation(boundaryCorridor, 0, 0, 16, 1);
+		core::World boundaryWorld("Boundary", 16, 2);
+		auto boundaryCorridor = boundaryWorld.addCorridor(0, 0, 15);
+		boundaryWorld.finishBuild();
+		auto boundaryResize = boundaryWorld.planResizeLocation(boundaryCorridor, 0, 0, 16, 1);
 		require(boundaryResize.valid,
 			"Location could not be resized through the final world column");
-		boundaryBuilding.pauseSimulation();
-		auto fullWidthCorridor = boundaryBuilding.applyLocationEdit(boundaryResize);
-		require(boundaryBuilding.getSector(fullWidthCorridor)->getCellX1() == 15,
+		boundaryWorld.pauseSimulation();
+		auto fullWidthCorridor = boundaryWorld.applyLocationEdit(boundaryResize);
+		require(boundaryWorld.getSector(fullWidthCorridor)->getCellX1() == 15,
 			"Location resize did not include the final world column");
 	}
 
 	void editedShuttleRoundTripsWithoutSchemaChanges()
 	{
-		core::Building building("Serializable Shuttle", 32, 3);
-		building.addCorridor(0, 0, 31);
-		building.addCorridor(1, 0, 31);
-		core::Building::CreateShuttleOptions options{ 2, 3, { 0, 18 }, 0 };
+		core::World world("Serializable Shuttle", 32, 3);
+		world.addCorridor(0, 0, 31);
+		world.addCorridor(1, 0, 31);
+		core::World::CreateShuttleOptions options{ 2, 3, { 0, 18 }, 0 };
 		options.capacity = 2;
 		options.doorMask = 0b101;
 		options.minimumDwellSeconds = 1.25f;
 		options.maximumBoardingSeconds = 4.5f;
-		auto created = building.addShuttle(1, 0, 0, 27, options);
-		building.finishBuild();
-		building.pauseSimulation();
-		auto move = building.planResizeShuttle(created.shuttle.sector->getIndex(), 1, 1, 27);
+		auto created = world.addShuttle(1, 0, 0, 27, options);
+		world.finishBuild();
+		world.pauseSimulation();
+		auto move = world.planResizeShuttle(created.shuttle.sector->getIndex(), 1, 1, 27);
 		require(move.valid, "Serializable Shuttle move was rejected");
-		auto shuttleIndex = building.applyShuttleEdit(move);
-		auto add = building.planAddShuttleStop(shuttleIndex, 9);
+		auto shuttleIndex = world.applyShuttleEdit(move);
+		auto add = world.planAddShuttleStop(shuttleIndex, 9);
 		require(add.valid, "Serializable Shuttle stop addition was rejected");
-		shuttleIndex = building.applyShuttleEdit(add);
+		shuttleIndex = world.applyShuttleEdit(add);
 
 		core::SerializationWorkData workData;
 		auto writer = core::YamlSerializer::toString();
-		building.serialize(*writer, workData);
+		world.serialize(*writer, workData);
 		writer->serialize();
 		auto yaml = writer->getSerializedString();
 		require(yaml.find("type: shuttle") != std::string::npos
@@ -1195,7 +1246,7 @@ agents: []
 			&& yaml.find("allowPartialLandings: false") != std::string::npos,
 			"Edited Shuttle did not use the existing explicit YAML schema");
 
-		core::Building loaded("placeholder", 1, 1);
+		core::World loaded("placeholder", 1, 1);
 		auto reader = core::YamlSerializer::fromString(yaml);
 		reader->deserialize();
 		require(loaded.deserialize(*reader, workData), "Edited Shuttle YAML did not deserialize");
@@ -1203,7 +1254,7 @@ agents: []
 		require(shuttle && shuttle->getCellX() == 1 && shuttle->getCellY() == 1
 			&& shuttle->getCellsWide() == 27 && shuttle->getNumStops() == 3,
 			"Edited Shuttle geometry or stops did not round-trip");
-		core::Building::CreateShuttleOptions loadedOptions{};
+		core::World::CreateShuttleOptions loadedOptions{};
 		require(loaded.getShuttleOptions(shuttle->getShuttle().get(), loadedOptions)
 			&& loadedOptions.numCars == 2 && loadedOptions.carWidth == 3
 			&& loadedOptions.capacity == 2 && loadedOptions.doorMask == 0b101
@@ -1213,13 +1264,13 @@ agents: []
 			"Edited Shuttle configuration did not round-trip");
 	}
 
-	float controlCenterX(core::Building::CreateObjectResult const& control)
+	float controlCenterX(core::World::CreateObjectResult const& control)
 	{
 		auto object = control.sector->getObject(control.index)->_getObject();
 		return object->getPosition().x + object->getSize().x * 0.5f;
 	}
 
-	float controlCenterY(core::Building::CreateObjectResult const& control)
+	float controlCenterY(core::World::CreateObjectResult const& control)
 	{
 		auto object = control.sector->getObject(control.index)->_getObject();
 		return object->getPosition().y + object->getSize().y * 0.5f;
@@ -1227,15 +1278,15 @@ agents: []
 
 	void physicalControlsPreferDistinctWallPositions()
 	{
-		core::Building building("Control placement", 9, 2);
-		building.addCorridor(0, 1, 7);
-		auto room = building.addRoom("Back room", 1, 0, 4, 3, 1);
-		core::Building::CreateDoorOptions options;
+		core::World world("Control placement", 9, 2);
+		world.addCorridor(0, 1, 7);
+		auto room = world.addRoom("Back room", 1, 0, 4, 3, 1);
+		core::World::CreateDoorOptions options;
 		options.activationMode = core::DoorActivationMode::RemoteControlled;
 		options.controls[1] = true;
 
-		auto first = building.addSectorDoor(0, 0, 5, options);
-		auto second = building.addSectorDoor(0, 0, 6, options);
+		auto first = world.addSectorDoor(0, 0, 5, options);
+		auto second = world.addSectorDoor(0, 0, 6, options);
 		require(std::abs(controlCenterX(first.controls[1]) - 5.0f) < 0.0001f
 			&& std::abs(controlCenterX(second.controls[1]) - 6.0f) < 0.0001f,
 			"Adjacent Citadel-style Door controls did not choose distinct X positions");
@@ -1248,9 +1299,9 @@ agents: []
 
 		core::SerializationWorkData workData;
 		auto writer = core::YamlSerializer::toString();
-		building.serialize(*writer, workData);
+		world.serialize(*writer, workData);
 		writer->serialize();
-		core::Building replayed("placeholder", 1, 1);
+		core::World replayed("placeholder", 1, 1);
 		auto reader = core::YamlSerializer::fromString(writer->getSerializedString());
 		reader->deserialize();
 		require(replayed.deserialize(*reader, workData), "Control-placement replay failed");
@@ -1268,14 +1319,14 @@ agents: []
 			&& std::abs(replayedCenters[1] - 6.0f) < 0.0001f,
 			"Control placement was not deterministic after YAML replay");
 
-		building.finishBuild();
-		building.pauseSimulation();
-		require(building.removeSectorDoor(second.door.sector->getIndex(), second.door.index),
+		world.finishBuild();
+		world.pauseSimulation();
+		require(world.removeSectorDoor(second.door.sector->getIndex(), second.door.index),
 			"Adjacent Door could not be removed");
 		std::vector<float> remainingCenters;
-		for (uint32_t i = 0; i < building.getSector(room)->getNumObjects(); ++i)
+		for (uint32_t i = 0; i < world.getSector(room)->getNumObjects(); ++i)
 		{
-			auto object = building.getSector(room)->getObject(i);
+			auto object = world.getSector(room)->getObject(i);
 			if (object && object->getObjectType() == core::SectorObjectType::InteractionPoint)
 				remainingCenters.push_back(object->_getObject()->getPosition().x
 					+ object->_getObject()->getSize().x * 0.5f);
@@ -1284,7 +1335,7 @@ agents: []
 			&& std::abs(remainingCenters[0] - 6.0f) < 0.0001f,
 			"Remaining Door control did not return to its preferred position after removal");
 
-		core::Building fallback("Control fallback", 4, 2);
+		core::World fallback("Control fallback", 4, 2);
 		fallback.addCorridor(0, 0, 2);
 		fallback.addRoom("Narrow back room", 1, 0, 0, 2, 1);
 		auto left = fallback.addSectorDoor(0, 0, 0, options);
@@ -1298,14 +1349,14 @@ agents: []
 
 	void platformLiftStopDurationRoundTrips()
 	{
-		core::Building original("Serializable PlatformLift", 7, 4);
+		core::World original("Serializable PlatformLift", 7, 4);
 		auto room = original.addRoom("Platform room", 0, 0, 0, 6, 3);
 		for (uint32_t deck = 1; deck <= 2; ++deck)
 		{
 			original.addSectorWalkway(room, deck, 2);
 			original.addSectorWalkway(room, deck, 3);
 		}
-		core::Building::CreateLiftOptions options;
+		core::World::CreateLiftOptions options;
 		options.stopOffsets = { 0, 1, 2 };
 		options.platformStopDurationSeconds = 3.5f;
 		auto created = original.addSectorPlatformLift(room, 0, 2, options);
@@ -1321,17 +1372,17 @@ agents: []
 			&& yaml.find("maximumBoardingSeconds") == std::string::npos,
 			"PlatformLift did not serialize its single stop timer");
 
-		core::Building loaded("placeholder", 1, 1);
+		core::World loaded("placeholder", 1, 1);
 		auto reader = core::YamlSerializer::fromString(yaml);
 		reader->deserialize();
 		require(loaded.deserialize(*reader, workData), "PlatformLift YAML did not deserialize");
-		core::Building::CreateLiftOptions loadedOptions;
+		core::World::CreateLiftOptions loadedOptions;
 		require(loaded.getPlatformLiftOptions(created.lift.sector->getIndex(), created.lift.index,
 				loadedOptions)
 			&& std::abs(loadedOptions.platformStopDurationSeconds - 3.5f) < 0.001f,
 			"PlatformLift stop timer did not round-trip");
 
-		core::Building::CreateLiftOptions defaults;
+		core::World::CreateLiftOptions defaults;
 		require(std::abs(defaults.platformStopDurationSeconds
 			- CORE_PLATFORM_LIFT_STOP_DURATION) < 0.001f,
 			"PlatformLift stop timer default is not the Defines.h value");
@@ -1339,20 +1390,20 @@ agents: []
 
 	void enclosedLiftsSupportMultiDeckRooms()
 	{
-		core::Building building("Room lift", 16, 3);
-		auto room = building.addRoom("Lift Hall", 0, 0, 0, 16, 3);
+		core::World world("Room lift", 16, 3);
+		auto room = world.addRoom("Lift Hall", 0, 0, 0, 16, 3);
 		for (uint32_t deck = 1; deck < 3; ++deck)
 			for (uint32_t x = 0; x < 16; ++x)
-				building.addSectorWalkway(room, deck, x);
+				world.addSectorWalkway(room, deck, x);
 
-		core::Building::CreateLiftOptions options;
+		core::World::CreateLiftOptions options;
 		options.cellsWide = 1;
 		options.decksHigh = 3;
 		options.stopOffsets = { 0, 1, 2 };
-		auto created = building.addLift(1, 0, 8, options);
-		building.addSectorMarker(room, 1, 0.5f);
-		building.addSectorMarker(room, 2, 15.5f);
-		building.finishBuild();
+		auto created = world.addLift(1, 0, 8, options);
+		world.addSectorMarker(room, 1, 0.5f);
+		world.addSectorMarker(room, 2, 15.5f);
+		world.finishBuild();
 
 		auto lift = std::dynamic_pointer_cast<const core::LiftTransit>(created.lift.sector);
 		require(lift && lift->getNumStops() == 3 && created.doors.size() == 3,
@@ -1361,15 +1412,15 @@ agents: []
 
 	void stopDerivingAddLiftRejectsInvalidLayerIndex()
 	{
-		core::Building building("Lift layer validation", 8, 2);
+		core::World world("Lift layer validation", 8, 2);
 
 		bool rejected = false;
 		try
 		{
 			// Layer 0 is the front-most Layer: it has no Layer in front for the landings.
-			building.addLift(0, 0, 2, 1, 1);
+			world.addLift(0, 0, 2, 1, 1);
 		}
-		catch (core::BuildingException const&)
+		catch (core::WorldException const&)
 		{
 			rejected = true;
 		}
@@ -1378,9 +1429,9 @@ agents: []
 		rejected = false;
 		try
 		{
-			building.addLift(2, 0, 2, 1, 1);
+			world.addLift(2, 0, 2, 1, 1);
 		}
-		catch (core::BuildingException const&)
+		catch (core::WorldException const&)
 		{
 			rejected = true;
 		}
@@ -1451,34 +1502,34 @@ agents: []
 			&& right.getAnimationPhase() == 0.0f,
 			"Escalator step animation does not follow its signed world speed");
 
-		core::Building building("Staircase", 6, 3);
-		building.addCorridor(0, 0, 1);
-		building.addCorridor(0, 3, 1);
-		building.addCorridor(1, 0, 1);
-		building.addCorridor(1, 3, 1);
+		core::World world("Staircase", 6, 3);
+		world.addCorridor(0, 0, 1);
+		world.addCorridor(0, 3, 1);
+		world.addCorridor(1, 0, 1);
+		world.addCorridor(1, 3, 1);
 		std::string diagnostic;
-		require(!building.canAddStaircase(1, 0, 0, 1, CORE_SIDE_RIGHT, &diagnostic),
+		require(!world.canAddStaircase(1, 0, 0, 1, CORE_SIDE_RIGHT, &diagnostic),
 			"A one-cell Staircase was accepted");
-		require(building.canAddStaircase(1, 0, 0, 4, CORE_SIDE_RIGHT, &diagnostic),
+		require(world.canAddStaircase(1, 0, 0, 4, CORE_SIDE_RIGHT, &diagnostic),
 			"A valid Staircase between endpoint Corridors was rejected");
-		auto index = building.addStaircase(1, 0, 0, 4, CORE_SIDE_RIGHT, 1.25f);
-		building.finishBuild();
-		auto transit = std::dynamic_pointer_cast<const core::StaircaseTransit>(building.getSector(index));
+		auto index = world.addStaircase(1, 0, 0, 4, CORE_SIDE_RIGHT, 1.25f);
+		world.finishBuild();
+		auto transit = std::dynamic_pointer_cast<const core::StaircaseTransit>(world.getSector(index));
 		require(transit && transit->getCellsWide() == 4 && transit->getDecksHigh() == 2,
 			"Staircase Transit has the wrong footprint");
-		core::Building::CreateStaircaseOptions options;
-		require(building.getStaircaseOptions(index, options) && options.cellsWide == 4
+		core::World::CreateStaircaseOptions options;
+		require(world.getStaircaseOptions(index, options) && options.cellsWide == 4
 			&& options.riseSide == CORE_SIDE_RIGHT && std::abs(options.speed - 1.25f) < 0.001f,
 			"Staircase authored options were not retained");
 
 		core::SerializationWorkData workData;
 		auto writer = core::YamlSerializer::toString();
-		building.serialize(*writer, workData); writer->serialize();
+		world.serialize(*writer, workData); writer->serialize();
 		auto yaml = writer->getSerializedString();
 		require(yaml.find("type: staircase") != std::string::npos
 			&& yaml.find("speed: 1.25") != std::string::npos,
 			"Staircase speed was not serialized");
-		core::Building loaded("placeholder", 1, 1);
+		core::World loaded("placeholder", 1, 1);
 		auto reader = core::YamlSerializer::fromString(yaml); reader->deserialize();
 		require(loaded.deserialize(*reader, workData), "Staircase YAML did not deserialize");
 		auto loadedTransit = std::dynamic_pointer_cast<const core::StaircaseTransit>(loaded.getSector(index));
@@ -1486,10 +1537,10 @@ agents: []
 			&& std::abs(loadedTransit->getStaircase()->getSpeed() - 1.25f) < 0.001f,
 			"Staircase did not round-trip through YAML");
 
-		auto escalatorEdge = std::find_if(building.getGraph()->getEdges().begin(),
-			building.getGraph()->getEdges().end(), [](auto const& edge)
+		auto escalatorEdge = std::find_if(world.getGraph()->getEdges().begin(),
+			world.getGraph()->getEdges().end(), [](auto const& edge)
 			{ return edge->getType() == core::EdgeType::Staircase; });
-		require(escalatorEdge != building.getGraph()->getEdges().end(),
+		require(escalatorEdge != world.getGraph()->getEdges().end(),
 			"Escalator traversal edge was not created");
 		auto edge = *escalatorEdge;
 		auto low = edge->getVertex(0)->getPosition().y < edge->getVertex(1)->getPosition().y
@@ -1501,16 +1552,16 @@ agents: []
 			&& std::abs(edge->getTraversalSpeed(nullptr) - 1.25f) < 0.001f,
 			"Positive-speed Escalator is not one-way upward at its configured speed");
 
-		building.pauseSimulation();
-		auto flip = building.planResizeStaircase(index, 0, 0, { 4, CORE_SIDE_LEFT, -0.75f });
+		world.pauseSimulation();
+		auto flip = world.planResizeStaircase(index, 0, 0, { 4, CORE_SIDE_LEFT, -0.75f });
 		require(flip.valid, "A valid Staircase direction flip was rejected");
-		index = building.applyStaircaseEdit(flip);
-		transit = std::dynamic_pointer_cast<const core::StaircaseTransit>(building.getSector(index));
+		index = world.applyStaircaseEdit(flip);
+		transit = std::dynamic_pointer_cast<const core::StaircaseTransit>(world.getSector(index));
 		require(transit && transit->getRiseSide() == CORE_SIDE_LEFT
 			&& std::abs(transit->getStaircase()->getSpeed() + 0.75f) < 0.001f,
 			"Staircase direction or Escalator speed was not edited");
-		escalatorEdge = std::find_if(building.getGraph()->getEdges().begin(),
-			building.getGraph()->getEdges().end(), [](auto const& candidate)
+		escalatorEdge = std::find_if(world.getGraph()->getEdges().begin(),
+			world.getGraph()->getEdges().end(), [](auto const& candidate)
 			{ return candidate->getType() == core::EdgeType::Staircase; });
 		edge = *escalatorEdge;
 		low = edge->getVertex(0)->getPosition().y < edge->getVertex(1)->getPosition().y
@@ -1519,12 +1570,12 @@ agents: []
 		require(edge->isTraversable(low, nullptr) && !edge->isTraversable(high, nullptr)
 			&& std::abs(edge->getTraversalSpeed(nullptr) - 0.75f) < 0.001f,
 			"Negative-speed Escalator is not one-way downward at its configured speed");
-		auto removal = building.planRemoveStaircase(index);
+		auto removal = world.planRemoveStaircase(index);
 		require(removal.valid && removal.requiresConfirmation(),
 			"Staircase deletion was not planned as a confirmed edit");
-		require(building.applyStaircaseEdit(removal) == ~0u,
+		require(world.applyStaircaseEdit(removal) == ~0u,
 			"Staircase deletion did not return the removed-sector sentinel");
-		require(!static_cast<core::Building const&>(building).getLayer(1)
+		require(!static_cast<core::World const&>(world).getLayer(1)
 			->getCellDefinition(0, 0).occupied(),
 			"Deleted Staircase still occupies the Back layer");
 	}
@@ -1547,12 +1598,12 @@ agents: []
 			&& shouldRenderSectorAgents(core::SectorType::Ladder, LayerRenderStyle::Aperture)
 			&& shouldRenderSectorAgents(core::SectorType::Ladder, LayerRenderStyle::Solid),
 			"Sector Ladder Agents do not obey the Ladder's aperture clipping");
-		core::Building edgeBuilding("Edge Ladder controls", 5, 3);
-		edgeBuilding.addCorridor(0, 0, 5);
-		edgeBuilding.addCorridor(2, 0, 5);
-		auto edgeLadder = edgeBuilding.addLadder(1, 0, 4, { 3, true, true });
-		auto interiorLadder = edgeBuilding.addLadder(1, 0, 0, { 3, true, true });
-		auto retractedLadder = edgeBuilding.addLadder(1, 0, 2, { 3, true, false });
+		core::World edgeWorld("Edge Ladder controls", 5, 3);
+		edgeWorld.addCorridor(0, 0, 5);
+		edgeWorld.addCorridor(2, 0, 5);
+		auto edgeLadder = edgeWorld.addLadder(1, 0, 4, { 3, true, true });
+		auto interiorLadder = edgeWorld.addLadder(1, 0, 0, { 3, true, true });
+		auto retractedLadder = edgeWorld.addLadder(1, 0, 2, { 3, true, false });
 		core::Vector2 retractedMin, retractedMax;
 		std::static_pointer_cast<const core::LadderTransit>(retractedLadder.ladder.sector)
 			->getLadder()->getCurrentShape(retractedMin, retractedMax);
@@ -1565,42 +1616,42 @@ agents: []
 			&& std::abs(controlCenterX(interiorLadder.controls[CORE_LEVEL_HIGH]) - 0.8f) < 0.0001f,
 			"Right-side Ladder controls were not placed at the cell's 0.8 offset");
 
-		core::Building building("Ladder editing", 10, 5);
+		core::World world("Ladder editing", 10, 5);
 		std::vector<uint32_t> corridors;
-		for (uint32_t y = 0; y < 5; ++y) corridors.push_back(building.addCorridor(y, 0, 10));
+		for (uint32_t y = 0; y < 5; ++y) corridors.push_back(world.addCorridor(y, 0, 10));
 		std::string diagnostic;
-		require(!building.canAddLadder(1, 0, 1, 1, &diagnostic)
+		require(!world.canAddLadder(1, 0, 1, 1, &diagnostic)
 			&& diagnostic.find("at least two") != std::string::npos,
 			"Ladder placement accepted a one-deck footprint");
-		require(building.canAddLadder(1, 0, 1, 3, &diagnostic),
+		require(world.canAddLadder(1, 0, 1, 3, &diagnostic),
 			"Valid Ladder placement was rejected");
-		auto created = building.addLadder(1, 0, 1, { 3, false, true });
-		building.finishBuild();
-		building.pauseSimulation();
-		auto agentId = building.createAgent("Ladder user", created.ladder.sector->getIndex(), 1, 0.5f);
-		auto originalAgentPosition = building.lookupAgent(agentId).entity->getGlobalPosition();
+		auto created = world.addLadder(1, 0, 1, { 3, false, true });
+		world.finishBuild();
+		world.pauseSimulation();
+		auto agentId = world.createAgent("Ladder user", created.ladder.sector->getIndex(), 1, 0.5f);
+		auto originalAgentPosition = world.lookupAgent(agentId).entity->getGlobalPosition();
 
-		core::Building::CreateLadderOptions edited{ 3, true, false, 3 };
-		auto move = building.planResizeLadder(created.ladder.sector->getIndex(), 4, 1, edited);
+		core::World::CreateLadderOptions edited{ 3, true, false, 3 };
+		auto move = world.planResizeLadder(created.ladder.sector->getIndex(), 4, 1, edited);
 		require(move.valid && move.move, "Valid Ladder move was not planned");
-		auto movedIndex = building.applyLadderEdit(move);
-		auto ladder = std::dynamic_pointer_cast<const core::LadderTransit>(building.getSector(movedIndex));
+		auto movedIndex = world.applyLadderEdit(move);
+		auto ladder = std::dynamic_pointer_cast<const core::LadderTransit>(world.getSector(movedIndex));
 		require(ladder && ladder->getCellX() == 4 && ladder->getCellY() == 1
 			&& ladder->getDecksHigh() == 3,
 			"Ladder geometry was not edited");
-		auto movedAgent = building.lookupAgent(agentId).entity;
+		auto movedAgent = world.lookupAgent(agentId).entity;
 		require(movedAgent
 			&& std::abs(movedAgent->getGlobalPosition().x - originalAgentPosition.x - 3.0f) < 0.001f
 			&& std::abs(movedAgent->getGlobalPosition().y - originalAgentPosition.y - 1.0f) < 0.001f,
 			"An occupying Agent did not move with the Ladder");
-		core::Building::CreateLadderOptions loaded{};
-		require(building.getLadderOptions(movedIndex, loaded) && loaded.extensible
+		core::World::CreateLadderOptions loaded{};
+		require(world.getLadderOptions(movedIndex, loaded) && loaded.extensible
 			&& !loaded.startExtended && loaded.directionalBatchLimit == 3,
 			"Ladder configuration was not retained");
 		auto countControls = [&](uint32_t sectorIndex)
 		{
 			uint32_t count = 0;
-			auto sector = building.getSector(sectorIndex);
+			auto sector = world.getSector(sectorIndex);
 			for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
 				if (sector->getObject(i)->getObjectType() == core::SectorObjectType::InteractionPoint)
 					++count;
@@ -1609,67 +1660,67 @@ agents: []
 		require(countControls(corridors[1]) == 1 && countControls(corridors[3]) == 1,
 			"Enabling Ladder extensibility did not create both endpoint controls");
 
-		auto unsupportedLocation = building.planResizeLocation(corridors[1], 0, 1, 3, 1);
+		auto unsupportedLocation = world.planResizeLocation(corridors[1], 0, 1, 3, 1);
 		require(!unsupportedLocation.valid
 			&& unsupportedLocation.diagnostic.find("Ladder") != std::string::npos,
 			"A Location edit was allowed to invalidate a Ladder endpoint");
-		auto blocked = building.planResizeLadder(movedIndex, 10, 1, edited);
+		auto blocked = world.planResizeLadder(movedIndex, 10, 1, edited);
 		require(!blocked.valid, "Out-of-bounds Ladder edit was accepted");
-		auto removal = building.planRemoveLadder(movedIndex);
+		auto removal = world.planRemoveLadder(movedIndex);
 		require(removal.valid && removal.requiresConfirmation(),
 			"Ladder deletion was not planned as a confirmed edit");
-		require(building.applyLadderEdit(removal) == ~0u,
+		require(world.applyLadderEdit(removal) == ~0u,
 			"Ladder deletion did not return the removed-sector sentinel");
-		require(!static_cast<core::Building const&>(building).getLayer(1)
+		require(!static_cast<core::World const&>(world).getLayer(1)
 			->getCellDefinition(4, 1).occupied(),
 			"Deleted Ladder still occupies the Back layer");
 	}
 
 	void stairwellsCanBeValidatedEditedAndDeleted()
 	{
-		core::Building building("Stairwell editing", 10, 5);
-		for (uint32_t y = 0; y < 5; ++y) building.addCorridor(y, 0, 10);
+		core::World world("Stairwell editing", 10, 5);
+		for (uint32_t y = 0; y < 5; ++y) world.addCorridor(y, 0, 10);
 		std::string diagnostic;
-		require(!building.canAddStairwell(1, 0, 1, 1, &diagnostic)
+		require(!world.canAddStairwell(1, 0, 1, 1, &diagnostic)
 			&& diagnostic.find("at least two") != std::string::npos,
 			"Stairwell placement accepted a one-deck footprint");
-		require(building.canAddStairwell(1, 0, 1, 3, &diagnostic),
+		require(world.canAddStairwell(1, 0, 1, 3, &diagnostic),
 			"Valid Stairwell placement was rejected");
-		auto created = building.addStairwell(1, 0, 1,
-			core::Building::CreateStairwellOptions{ 3, CORE_SIDE_LEFT });
-		building.finishBuild();
-		building.pauseSimulation();
-		auto agentId = building.createAgent("Stair user", created.sectorIndex, 1, 1.0f);
-		auto originalAgentPosition = building.lookupAgent(agentId).entity->getGlobalPosition();
+		auto created = world.addStairwell(1, 0, 1,
+			core::World::CreateStairwellOptions{ 3, CORE_SIDE_LEFT });
+		world.finishBuild();
+		world.pauseSimulation();
+		auto agentId = world.createAgent("Stair user", created.sectorIndex, 1, 1.0f);
+		auto originalAgentPosition = world.lookupAgent(agentId).entity->getGlobalPosition();
 
-		core::Building::CreateStairwellOptions edited{ 3, CORE_SIDE_RIGHT, 2, 3 };
-		auto move = building.planResizeStairwell(created.sectorIndex, 4, 1, edited);
+		core::World::CreateStairwellOptions edited{ 3, CORE_SIDE_RIGHT, 2, 3 };
+		auto move = world.planResizeStairwell(created.sectorIndex, 4, 1, edited);
 		require(move.valid && move.move, "Valid Stairwell move was not planned");
-		auto movedIndex = building.applyStairwellEdit(move);
+		auto movedIndex = world.applyStairwellEdit(move);
 		auto stairwell = std::dynamic_pointer_cast<const core::StairwellTransit>(
-			building.getSector(movedIndex));
+			world.getSector(movedIndex));
 		require(stairwell && stairwell->getCellX() == 4 && stairwell->getCellY() == 1
 			&& stairwell->getDecksHigh() == 3 && stairwell->getMountSide() == CORE_SIDE_RIGHT,
 			"Stairwell geometry or mounting side was not edited");
-		auto movedAgent = building.lookupAgent(agentId).entity;
+		auto movedAgent = world.lookupAgent(agentId).entity;
 		require(movedAgent
 			&& std::abs(movedAgent->getGlobalPosition().x - originalAgentPosition.x - 3.0f) < 0.001f
 			&& std::abs(movedAgent->getGlobalPosition().y - originalAgentPosition.y - 1.0f) < 0.001f,
 			"An occupying Agent did not move with the Stairwell");
-		core::Building::CreateStairwellOptions loaded{};
-		require(building.getStairwellOptions(movedIndex, loaded)
+		core::World::CreateStairwellOptions loaded{};
+		require(world.getStairwellOptions(movedIndex, loaded)
 			&& loaded.directionalCapacity == 2 && loaded.directionalBatchLimit == 3,
 			"Stairwell coordination properties were not retained");
 
 		core::SerializationWorkData workData;
 		auto writer = core::YamlSerializer::toString();
-		building.serialize(*writer, workData);
+		world.serialize(*writer, workData);
 		writer->serialize();
-		core::Building replayed("placeholder", 1, 1);
+		core::World replayed("placeholder", 1, 1);
 		auto reader = core::YamlSerializer::fromString(writer->getSerializedString());
 		reader->deserialize();
 		require(replayed.deserialize(*reader, workData), "Edited Stairwell YAML did not deserialize");
-		core::Building::CreateStairwellOptions replayedOptions{};
+		core::World::CreateStairwellOptions replayedOptions{};
 		auto replayedStairwell = std::dynamic_pointer_cast<const core::StairwellTransit>(
 			replayed.getSector(movedIndex));
 		require(replayedStairwell && replayedStairwell->getCellX() == 4
@@ -1680,39 +1731,39 @@ agents: []
 			&& replayedOptions.directionalBatchLimit == 3,
 			"Edited Stairwell did not round-trip through YAML");
 
-		auto blocked = building.planResizeStairwell(movedIndex, 9, 1, edited);
+		auto blocked = world.planResizeStairwell(movedIndex, 9, 1, edited);
 		require(!blocked.valid, "Out-of-bounds Stairwell edit was accepted");
-		auto removal = building.planRemoveStairwell(movedIndex);
+		auto removal = world.planRemoveStairwell(movedIndex);
 		require(removal.valid && removal.requiresConfirmation(),
 			"Stairwell deletion was not planned as a confirmed edit");
-		require(building.applyStairwellEdit(removal) == ~0u,
+		require(world.applyStairwellEdit(removal) == ~0u,
 			"Stairwell deletion did not return the removed-sector sentinel");
-		require(!static_cast<core::Building const&>(building).getLayer(1)
+		require(!static_cast<core::World const&>(world).getLayer(1)
 			->getCellDefinition(4, 1).occupied(),
 			"Deleted Stairwell still occupies the Back layer");
 	}
 
-	// Mirrors resources/test-maps/stairs-test-1.yaml: the Stairwell is authored
+	// Mirrors resources/test-worlds/stairs-test-1.world.yaml: the Stairwell is authored
 	// before the Room its upper landing would rest on, and replaying an edit in
 	// authored order used to reject the extension because the landing cell read
 	// as unoccupied during the candidate replay.
 	void stairwellEditsReplayLocationsBeforeTransits()
 	{
-		core::Building building("Stairwell landing order", 16, 6);
-		building.addCorridor(0u, 1, 0, 16, 1);
-		building.addCorridor(0u, 2, 0, 7, 1);
-		auto created = building.addStairwell(1, 1, 2,
-			core::Building::CreateStairwellOptions{ 2, CORE_SIDE_LEFT });
-		building.addRoom("Room 1", 0, 3, 0, 7, 1);
-		building.finishBuild();
-		building.pauseSimulation();
+		core::World world("Stairwell landing order", 16, 6);
+		world.addCorridor(0u, 1, 0, 16, 1);
+		world.addCorridor(0u, 2, 0, 7, 1);
+		auto created = world.addStairwell(1, 1, 2,
+			core::World::CreateStairwellOptions{ 2, CORE_SIDE_LEFT });
+		world.addRoom("Room 1", 0, 3, 0, 7, 1);
+		world.finishBuild();
+		world.pauseSimulation();
 
-		core::Building::CreateStairwellOptions extended{ 3, CORE_SIDE_LEFT };
-		auto plan = building.planResizeStairwell(created.sectorIndex, 2, 1, extended);
+		core::World::CreateStairwellOptions extended{ 3, CORE_SIDE_LEFT };
+		auto plan = world.planResizeStairwell(created.sectorIndex, 2, 1, extended);
 		require(plan.valid, "Extending a Stairwell onto a Location authored after it was rejected");
-		auto edited = building.applyStairwellEdit(plan);
+		auto edited = world.applyStairwellEdit(plan);
 		auto stairwell = std::dynamic_pointer_cast<const core::StairwellTransit>(
-			building.getSector(edited));
+			world.getSector(edited));
 		require(stairwell && stairwell->getDecksHigh() == 3,
 			"The extended Stairwell does not span the new deck");
 	}
@@ -1721,20 +1772,20 @@ agents: []
 	// Location authored after it must replay Locations before Transits.
 	void ladderEditsReplayLocationsBeforeTransits()
 	{
-		core::Building building("Ladder landing order", 16, 6);
-		building.addCorridor(0u, 1, 0, 16, 1);
-		building.addCorridor(0u, 2, 0, 7, 1);
-		auto created = building.addLadder(1, 1, 2, { 2, false, true });
-		building.addCorridor(0u, 3, 0, 7, 1);
-		building.finishBuild();
-		building.pauseSimulation();
+		core::World world("Ladder landing order", 16, 6);
+		world.addCorridor(0u, 1, 0, 16, 1);
+		world.addCorridor(0u, 2, 0, 7, 1);
+		auto created = world.addLadder(1, 1, 2, { 2, false, true });
+		world.addCorridor(0u, 3, 0, 7, 1);
+		world.finishBuild();
+		world.pauseSimulation();
 
-		core::Building::CreateLadderOptions extended{ 3, false, true };
-		auto plan = building.planResizeLadder(created.ladder.sector->getIndex(), 2, 1, extended);
+		core::World::CreateLadderOptions extended{ 3, false, true };
+		auto plan = world.planResizeLadder(created.ladder.sector->getIndex(), 2, 1, extended);
 		require(plan.valid, "Extending a Ladder onto a Location authored after it was rejected");
-		auto edited = building.applyLadderEdit(plan);
+		auto edited = world.applyLadderEdit(plan);
 		auto ladder = std::dynamic_pointer_cast<const core::LadderTransit>(
-			building.getSector(edited));
+			world.getSector(edited));
 		require(ladder && ladder->getDecksHigh() == 3,
 			"The extended Ladder does not span the new deck");
 	}
@@ -1746,20 +1797,20 @@ agents: []
 	// before Transits, like every other Transit edit.
 	void staircaseEditsReplayLocationsBeforeTransits()
 	{
-		core::Building building("Staircase landing order", 16, 6);
-		building.addCorridor(0u, 1, 0, 16, 1);
-		building.addCorridor(0u, 2, 0, 16, 1);
-		auto index = building.addStaircase(1, 1, 2, { 2, CORE_SIDE_RIGHT, 0.0f });
-		building.addCorridor(0u, 3, 0, 7, 1);
-		building.finishBuild();
-		building.pauseSimulation();
+		core::World world("Staircase landing order", 16, 6);
+		world.addCorridor(0u, 1, 0, 16, 1);
+		world.addCorridor(0u, 2, 0, 16, 1);
+		auto index = world.addStaircase(1, 1, 2, { 2, CORE_SIDE_RIGHT, 0.0f });
+		world.addCorridor(0u, 3, 0, 7, 1);
+		world.finishBuild();
+		world.pauseSimulation();
 
-		core::Building::CreateStaircaseOptions moved{ 2, CORE_SIDE_RIGHT, 0.0f };
-		auto plan = building.planResizeStaircase(index, 2, 2, moved);
+		core::World::CreateStaircaseOptions moved{ 2, CORE_SIDE_RIGHT, 0.0f };
+		auto plan = world.planResizeStaircase(index, 2, 2, moved);
 		require(plan.valid && plan.move, "Moving a Staircase onto a Location authored after it was rejected");
-		auto edited = building.applyStaircaseEdit(plan);
+		auto edited = world.applyStaircaseEdit(plan);
 		auto staircase = std::dynamic_pointer_cast<const core::StaircaseTransit>(
-			building.getSector(edited));
+			world.getSector(edited));
 		require(staircase && staircase->getCellY() == 2,
 			"The moved Staircase did not reach the new deck");
 	}
@@ -1786,20 +1837,20 @@ agents: []
 
 		// A Lift opens one doorway per landing, inset from the shaft's cells.
 		{
-			core::Building building("Lift apertures", 16, 3);
-			auto room = building.addRoom("Lift Hall", 0, 0, 0, 16, 3);
+			core::World world("Lift apertures", 16, 3);
+			auto room = world.addRoom("Lift Hall", 0, 0, 0, 16, 3);
 			for (uint32_t deck = 1; deck < 3; ++deck)
 				for (uint32_t x = 0; x < 16; ++x)
-					building.addSectorWalkway(room, deck, x);
-			core::Building::CreateLiftOptions options;
+					world.addSectorWalkway(room, deck, x);
+			core::World::CreateLiftOptions options;
 			options.cellsWide = 1;
 			options.decksHigh = 3;
 			options.stopOffsets = { 0, 1, 2 };
-			auto created = building.addLift(1, 0, 8, options);
-			building.finishBuild();
+			auto created = world.addLift(1, 0, 8, options);
+			world.finishBuild();
 
 			auto const transit = created.lift.sector;
-			auto const apertures = transitApertures(transit, 0, building.getSectors(0));
+			auto const apertures = transitApertures(transit, 0, world.getSectors(0));
 			require(apertures.size() == 3,
 				"A three-stop Lift does not expose one aperture per landing");
 			for (auto const& aperture : apertures)
@@ -1814,26 +1865,26 @@ agents: []
 			}
 			require(std::abs(apertures[1].min.y - apertures[0].min.y - 1.0f) < 0.0001f,
 				"Lift landing apertures do not step one deck each");
-			require(transitApertures(transit, 1, building.getSectors(1)).empty(),
+			require(transitApertures(transit, 1, world.getSectors(1)).empty(),
 				"A Lift exposes apertures on a Layer it is not directly behind");
 		}
 
 		// A Shuttle opens one doorway per carriage door it actually owns, at that
 		// Door's own rectangle - not one per landing at the stop's origin cell.
 		{
-			core::Building building("Shuttle apertures", 32, 3);
-			building.addCorridor(0, 0, 31);
-			building.addCorridor(1, 0, 31);
-			core::Building::CreateShuttleOptions options{ 2, 3, { 0, 18 }, 0 };
+			core::World world("Shuttle apertures", 32, 3);
+			world.addCorridor(0, 0, 31);
+			world.addCorridor(1, 0, 31);
+			core::World::CreateShuttleOptions options{ 2, 3, { 0, 18 }, 0 };
 			options.capacity = 2;
 			// Doors on carriage cells 1 and 2, so no doorway sits at a stop's origin
 			// cell and the old stop-derived aperture is distinguishable from a real one.
 			options.doorMask = 0b110;
-			auto created = building.addShuttle(1, 0, 0, 27, options);
-			building.finishBuild();
+			auto created = world.addShuttle(1, 0, 0, 27, options);
+			world.finishBuild();
 
 			auto const transit = created.shuttle.sector;
-			auto const apertures = transitApertures(transit, 0, building.getSectors(0));
+			auto const apertures = transitApertures(transit, 0, world.getSectors(0));
 
 			// Two stops x two carriages x two doors each. The stop's origin cell is
 			// not a doorway, so deriving apertures from stops rather than from the
@@ -1844,7 +1895,7 @@ agents: []
 			// The apertures are exactly the Doors the Shuttle owns on the Layer in
 			// front of it, rectangle for rectangle.
 			std::vector<std::pair<float, float>> ownedDoorways;
-			for (auto const& sector : building.getSectors(0))
+			for (auto const& sector : world.getSectors(0))
 				for (uint32_t index = 0; index < sector->getNumObjects(); ++index)
 				{
 					auto const object = sector->getObject(index);
@@ -1889,19 +1940,19 @@ agents: []
 						"A Shuttle aperture sits at its stop's origin cell rather than at its carriage door");
 			}
 
-			require(transitApertures(transit, 1, building.getSectors(1)).empty(),
+			require(transitApertures(transit, 1, world.getSectors(1)).empty(),
 				"A Shuttle exposes apertures on a Layer it is not directly behind");
 		}
 
 		// A Ladder opens the whole of each Location it lands in.
 		{
-			core::Building building("Ladder apertures", 10, 5);
-			for (uint32_t y = 0; y < 5; ++y) building.addCorridor(y, 0, 10);
-			auto created = building.addLadder(1, 0, 1, { 3, false, true });
-			building.finishBuild();
+			core::World world("Ladder apertures", 10, 5);
+			for (uint32_t y = 0; y < 5; ++y) world.addCorridor(y, 0, 10);
+			auto created = world.addLadder(1, 0, 1, { 3, false, true });
+			world.finishBuild();
 
 			auto const transit = created.ladder.sector;
-			auto const apertures = transitApertures(transit, 0, building.getSectors(0));
+			auto const apertures = transitApertures(transit, 0, world.getSectors(0));
 			require(apertures.size() == 2,
 				"A Ladder does not expose one aperture per landing Location");
 			require(apertures[0].location != apertures[1].location,
@@ -1914,20 +1965,20 @@ agents: []
 					&& aperture.max.x == hi.x && aperture.max.y == hi.y,
 					"A Ladder aperture is not the full bounds of its landing Location");
 			}
-			require(apertures.size() < building.getSectors(0).size(),
+			require(apertures.size() < world.getSectors(0).size(),
 				"A Ladder is clipped by every Location rather than only its landings");
 		}
 
 		// A Stairwell opens one doorway per deck of its own shaft.
 		{
-			core::Building building("Stairwell apertures", 10, 5);
-			for (uint32_t y = 0; y < 5; ++y) building.addCorridor(y, 0, 10);
-			auto created = building.addStairwell(1, 0, 1,
-				core::Building::CreateStairwellOptions{ 3, CORE_SIDE_LEFT });
-			building.finishBuild();
+			core::World world("Stairwell apertures", 10, 5);
+			for (uint32_t y = 0; y < 5; ++y) world.addCorridor(y, 0, 10);
+			auto created = world.addStairwell(1, 0, 1,
+				core::World::CreateStairwellOptions{ 3, CORE_SIDE_LEFT });
+			world.finishBuild();
 
-			auto const transit = building.getSector(created.sectorIndex);
-			auto const apertures = transitApertures(transit, 0, building.getSectors(0));
+			auto const transit = world.getSector(created.sectorIndex);
+			auto const apertures = transitApertures(transit, 0, world.getSectors(0));
 			require(apertures.size() == 3,
 				"A three-deck Stairwell does not expose one aperture per deck");
 			for (auto const& aperture : apertures)
@@ -1943,19 +1994,19 @@ agents: []
 		// A Staircase crosses the whole selected Layer, so every Location there
 		// clips it.
 		{
-			core::Building building("Staircase apertures", 6, 3);
-			building.addCorridor(0, 0, 1);
-			building.addCorridor(0, 3, 1);
-			building.addCorridor(1, 0, 1);
-			building.addCorridor(1, 3, 1);
-			auto const index = building.addStaircase(1, 0, 0, 4, CORE_SIDE_RIGHT, 1.25f);
-			building.finishBuild();
+			core::World world("Staircase apertures", 6, 3);
+			world.addCorridor(0, 0, 1);
+			world.addCorridor(0, 3, 1);
+			world.addCorridor(1, 0, 1);
+			world.addCorridor(1, 3, 1);
+			auto const index = world.addStaircase(1, 0, 0, 4, CORE_SIDE_RIGHT, 1.25f);
+			world.finishBuild();
 
-			auto const viewSectors = building.getSectors(0);
+			auto const viewSectors = world.getSectors(0);
 			uint32_t locations{ 0 };
 			for (auto const& sector : viewSectors)
 				if (sector->getType() == core::SectorType::Location) ++locations;
-			auto const apertures = transitApertures(building.getSector(index), 0, viewSectors);
+			auto const apertures = transitApertures(world.getSector(index), 0, viewSectors);
 			require(apertures.size() == locations,
 				"A Staircase is not clipped by every Location on the selected Layer");
 			for (auto const& aperture : apertures)
@@ -1965,54 +2016,54 @@ agents: []
 
 		// A Location is not a Transit and never exposes an aperture.
 		{
-			core::Building building("Locations are not Transits", 4, 2);
-			auto const corridor = building.addCorridor(0, 0, 4);
-			building.finishBuild();
-			require(transitApertures(building.getSector(corridor), 0, building.getSectors(0)).empty(),
+			core::World world("Locations are not Transits", 4, 2);
+			auto const corridor = world.addCorridor(0, 0, 4);
+			world.finishBuild();
+			require(transitApertures(world.getSector(corridor), 0, world.getSectors(0)).empty(),
 				"A Location exposes a Transit aperture of its own");
-			require(transitApertures(nullptr, 0, building.getSectors(0)).empty(),
+			require(transitApertures(nullptr, 0, world.getSectors(0)).empty(),
 				"A missing Sector exposes a Transit aperture");
 		}
 	}
 
 	void bulkheadDoorsSupportIndependentObjectEditing()
 	{
-		core::Building building("Bulkhead editor", 7, 2);
-		auto const left = building.addRoom("Left", 0, 0, 0, 2, 1);
-		building.addRoom("Middle", 0, 0, 2, 2, 1);
-		building.addRoom("Right", 0, 0, 4, 2, 1);
+		core::World world("Bulkhead editor", 7, 2);
+		auto const left = world.addRoom("Left", 0, 0, 0, 2, 1);
+		world.addRoom("Middle", 0, 0, 2, 2, 1);
+		world.addRoom("Right", 0, 0, 4, 2, 1);
 		std::string diagnostic;
-		require(building.canAddSectorBulkheadDoor(0, 0, 2,
+		require(world.canAddSectorBulkheadDoor(0, 0, 2,
 			CORE_SIDE_LEFT, {}, &diagnostic), "valid left-edge Bulkhead Door placement was rejected");
-		require(!building.canAddSectorBulkheadDoor(0, 0, 0,
+		require(!world.canAddSectorBulkheadDoor(0, 0, 0,
 			CORE_SIDE_LEFT, {}, &diagnostic), "Bulkhead Door was accepted at the world edge");
-		require(!building.canAddSectorBulkheadDoor(0, 0, 1,
+		require(!world.canAddSectorBulkheadDoor(0, 0, 1,
 			CORE_SIDE_LEFT, {}, &diagnostic), "Bulkhead Door was accepted inside one Location");
 
-		auto created = building.addSectorBulkheadDoor(0, 0, 2, CORE_SIDE_LEFT);
+		auto created = world.addSectorBulkheadDoor(0, 0, 2, CORE_SIDE_LEFT);
 		std::shared_ptr<const core::SectorObject> object =
 			created.door.sector->getObject(created.door.index);
 		require(object && object->getObjectType() == core::SectorObjectType::BulkheadDoor
 			&& object->getCellX() + 1 == 2,
 			"Bulkhead Door was not created on the selected cell's left edge");
 		uint32_t ownedControls = 0;
-		for (auto const& sector : building.getSectors(0))
+		for (auto const& sector : world.getSectors(0))
 			for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
-				if (building.isBulkheadDoorOwnedControl(sector->getObject(i))) ++ownedControls;
+				if (world.isBulkheadDoorOwnedControl(sector->getObject(i))) ++ownedControls;
 		require(ownedControls == 2, "Bulkhead Door controls were not recognized as managed objects");
 
-		core::Building::CreateBulkheadDoorOptions options;
-		require(building.getSectorBulkheadDoorOptions(left, created.door.index, options)
+		core::World::CreateBulkheadDoorOptions options;
+		require(world.getSectorBulkheadDoorOptions(left, created.door.index, options)
 			&& options.controls[0] && options.controls[1]
 			&& options.activationMode == core::DoorActivationMode::RemoteControlled,
 			"Bulkhead Door authored options could not be read");
-		building.finishBuild();
-		building.pauseSimulation();
+		world.finishBuild();
+		world.pauseSimulation();
 		options.controls[0] = options.controls[1] = false;
 		options.activationMode = core::DoorActivationMode::Manual;
 		options.holdOpenSeconds = 3.0f;
 		options.crossingLanes = 1;
-		object = building.applySectorBulkheadDoorOptions(left, created.door.index, options);
+		object = world.applySectorBulkheadDoorOptions(left, created.door.index, options);
 		require(object && object->getCellX() + 1 == 2,
 			"Bulkhead Door settings edit lost the selected object");
 
@@ -2020,15 +2071,15 @@ agents: []
 		uint32_t objectIndex = ~0u;
 		for (uint32_t i = 0; i < owner->getNumObjects(); ++i)
 			if (owner->getObject(i) == object) { objectIndex = i; break; }
-		auto plan = building.planMoveSectorObject(owner->getIndex(), objectIndex, 4, 0);
+		auto plan = world.planMoveSectorObject(owner->getIndex(), objectIndex, 4, 0);
 		require(plan.valid, "Bulkhead Door move to another left-edge boundary was rejected");
-		object = building.applyObjectMove(plan);
+		object = world.applyObjectMove(plan);
 		require(object && object->getCellX() + 1 == 4,
 			"Bulkhead Door move did not use the target cell's left edge");
 		owner = object->getSector(); objectIndex = ~0u;
 		for (uint32_t i = 0; i < owner->getNumObjects(); ++i)
 			if (owner->getObject(i) == object) { objectIndex = i; break; }
-		require(building.getSectorBulkheadDoorOptions(owner->getIndex(), objectIndex, options)
+		require(world.getSectorBulkheadDoorOptions(owner->getIndex(), objectIndex, options)
 			&& options.activationMode == core::DoorActivationMode::Manual
 			&& !options.controls[0] && !options.controls[1]
 			&& std::abs(options.holdOpenSeconds - 3.0f) < 0.0001f
@@ -2037,11 +2088,11 @@ agents: []
 
 		core::SerializationWorkData workData;
 		auto writer = core::YamlSerializer::toString();
-		building.serialize(*writer, workData); writer->serialize();
-		core::Building loaded("placeholder", 1, 1);
+		world.serialize(*writer, workData); writer->serialize();
+		core::World loaded("placeholder", 1, 1);
 		auto reader = core::YamlSerializer::fromString(writer->getSerializedString());
 		reader->deserialize();
-		require(loaded.deserialize(*reader, workData), "Bulkhead Door building did not round-trip");
+		require(loaded.deserialize(*reader, workData), "Bulkhead Door world did not round-trip");
 		auto loadedLeft = loaded.getSectorAtPosition(0, 3.5f, 0.5f);
 		objectIndex = ~0u;
 		for (uint32_t i = 0; loadedLeft && i < loadedLeft->getNumObjects(); ++i)
@@ -2063,10 +2114,10 @@ agents: []
 	// legacy records without a style default to OpenUp while unknown names fail clearly.
 	void doorOpeningStyleIsAuthoredPersistedAndLegacyDefaulted()
 	{
-		auto findDoor = [](core::Building const& building, uint32_t sectorIndex)
+		auto findDoor = [](core::World const& world, uint32_t sectorIndex)
 			-> std::shared_ptr<const core::Door>
 		{
-			auto sector = building.getSector(sectorIndex);
+			auto sector = world.getSector(sectorIndex);
 			if (!sector) return nullptr;
 			for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
 			{
@@ -2077,10 +2128,10 @@ agents: []
 			return nullptr;
 		};
 
-		core::Building original("OpenUp door", 8, 3);
+		core::World original("OpenUp door", 8, 3);
 		original.addRoom("Fore room", 0, 0, 0, 7, 2);
 		original.addRoom("Back room", 1, 0, 0, 7, 2);
-		core::Building::CreateDoorOptions doorOptions;
+		core::World::CreateDoorOptions doorOptions;
 		doorOptions.width = 2;
 		doorOptions.openStyle = core::Door::OpenStyle::OpenUp;
 		auto const created = original.addSectorDoor(0, 0, 3, doorOptions);
@@ -2088,7 +2139,7 @@ agents: []
 		auto const createdDoor = findDoor(original, created.door.sector->getIndex());
 		require(createdDoor && createdDoor->getOpenStyle() == core::Door::OpenStyle::OpenUp,
 			"Ordinary Door creation did not carry the OpenUp opening style");
-		core::Building::CreateDoorOptions readBack;
+		core::World::CreateDoorOptions readBack;
 		require(original.getSectorDoorOptions(0, 0, 3, 2, readBack)
 			&& readBack.openStyle == core::Door::OpenStyle::OpenUp,
 			"Authored Door options did not report the OpenUp opening style");
@@ -2099,12 +2150,12 @@ agents: []
 		writer->serialize();
 		auto const yaml = writer->getSerializedString();
 		require(yaml.find("openStyle: openUp") != std::string::npos,
-			"Building YAML did not persist the Door's openStyle: openUp");
+			"World YAML did not persist the Door's openStyle: openUp");
 
-		core::Building loaded("placeholder", 1, 1);
+		core::World loaded("placeholder", 1, 1);
 		auto reader = core::YamlSerializer::fromString(yaml);
 		reader->deserialize();
-		require(loaded.deserialize(*reader, workData), "OpenUp Door building did not round-trip");
+		require(loaded.deserialize(*reader, workData), "OpenUp Door world did not round-trip");
 		auto const loadedDoor = findDoor(loaded, created.door.sector->getIndex());
 		require(loadedDoor && loadedDoor->getOpenStyle() == core::Door::OpenStyle::OpenUp,
 			"Loaded Door lost its OpenUp opening style");
@@ -2142,7 +2193,7 @@ agents: []
 			require(at != std::string::npos, "Door openStyle line was not where expected");
 			legacyYaml = yaml.substr(0, at) + yaml.substr(at + needle.size());
 		}
-		core::Building legacy("placeholder", 1, 1);
+		core::World legacy("placeholder", 1, 1);
 		{
 			auto legacyReader = core::YamlSerializer::fromString(legacyYaml);
 			legacyReader->deserialize();
@@ -2160,7 +2211,7 @@ agents: []
 			auto const lineEnd = legacyYaml.find('\n', at);
 			auto const unknownStyle = legacyYaml.substr(0, lineEnd + 1)
 				+ "    openStyle: openSideways\n" + legacyYaml.substr(lineEnd + 1);
-			core::Building rejected("placeholder", 1, 1);
+			core::World rejected("placeholder", 1, 1);
 			auto badReader = core::YamlSerializer::fromString(unknownStyle);
 			badReader->deserialize();
 			bool threw{ false };
@@ -2185,10 +2236,10 @@ agents: []
 	// defaults to regular for legacy records, and OpenUp keeps one vertical speed.
 	void doorHeightPersistsAndIsLimitedToRooms()
 	{
-		auto findDoor = [](core::Building const& building, uint32_t sectorIndex)
+		auto findDoor = [](core::World const& world, uint32_t sectorIndex)
 			-> std::shared_ptr<const core::Door>
 		{
-			auto sector = building.getSector(sectorIndex);
+			auto sector = world.getSector(sectorIndex);
 			if (!sector) return nullptr;
 			for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
 			{
@@ -2199,10 +2250,10 @@ agents: []
 			return nullptr;
 		};
 
-		core::Building original("Tall Room door", 8, 2);
+		core::World original("Tall Room door", 8, 2);
 		original.addRoom("Fore room", 0, 0, 0, 7, 1);
 		original.addRoom("Back room", 1, 0, 0, 7, 1);
-		core::Building::CreateDoorOptions options;
+		core::World::CreateDoorOptions options;
 		options.height = core::Door::Height::Tall;
 		auto const created = original.addSectorDoor(0, 0, 3, options);
 		original.finishBuild();
@@ -2220,25 +2271,25 @@ agents: []
 		writer->serialize();
 		auto yaml = writer->getSerializedString();
 		require(yaml.find("height: tall") != std::string::npos,
-			"Building YAML did not persist the tall Door height");
-		core::Building loaded("placeholder", 1, 1);
+			"World YAML did not persist the tall Door height");
+		core::World loaded("placeholder", 1, 1);
 		auto reader = core::YamlSerializer::fromString(yaml);
 		reader->deserialize();
-		require(loaded.deserialize(*reader, workData), "Tall Door building did not round-trip");
+		require(loaded.deserialize(*reader, workData), "Tall Door world did not round-trip");
 		require(findDoor(loaded, created.door.sector->getIndex())->getHeight()
 			== core::Door::Height::Tall, "Loaded Door lost its tall height");
 
 		auto const heightAt = yaml.find("    height: tall");
 		require(heightAt != std::string::npos, "No Door height field in YAML fixture");
 		yaml.erase(heightAt, yaml.find('\n', heightAt) - heightAt + 1);
-		core::Building legacy("placeholder", 1, 1);
+		core::World legacy("placeholder", 1, 1);
 		auto legacyReader = core::YamlSerializer::fromString(yaml);
 		legacyReader->deserialize();
 		require(legacy.deserialize(*legacyReader, workData), "Legacy Door record did not load");
 		require(findDoor(legacy, created.door.sector->getIndex())->getHeight()
 			== core::Door::Height::Regular, "Legacy Door did not default to regular height");
 
-		core::Building corridor("Corridor tall refusal", 8, 1);
+		core::World corridor("Corridor tall refusal", 8, 1);
 		corridor.addCorridor(0, 0, 7);
 		corridor.addCorridor(1, 0, 0, 7, 1);
 		std::string diagnostic;
@@ -2248,15 +2299,15 @@ agents: []
 
 	// Ticket #82: OpenLeft is a fully-fledged authored Door opening style. It is
 	// carried by creation options, persisted as openStyle: openLeft, replayed on
-	// load, editable through the selected-Door editor's Building call (which moves
+	// load, editable through the selected-Door editor's World call (which moves
 	// the authored record and the live Door together), preserved by moves, and
 	// rides the snapshot-based undo/redo and the option-based clipboard copy/paste.
 	void doorOpenLeftPersistsThroughEveryEditorPath()
 	{
-		auto findDoor = [](core::Building const& building, uint32_t sectorIndex)
+		auto findDoor = [](core::World const& world, uint32_t sectorIndex)
 			-> std::shared_ptr<const core::Door>
 		{
-			auto sector = building.getSector(sectorIndex);
+			auto sector = world.getSector(sectorIndex);
 			if (!sector) return nullptr;
 			for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
 			{
@@ -2266,28 +2317,28 @@ agents: []
 			}
 			return nullptr;
 		};
-		auto snapshotYaml = [](core::Building& building)
+		auto snapshotYaml = [](core::World& world)
 		{
 			core::SerializationWorkData workData;
 			auto writer = core::YamlSerializer::toString();
-			building.serialize(*writer, workData);
+			world.serialize(*writer, workData);
 			writer->serialize();
 			return writer->getSerializedString();
 		};
 		auto loadYaml = [](std::string const& yaml)
 		{
-			auto building = std::make_shared<core::Building>("placeholder", 1, 1);
+			auto world = std::make_shared<core::World>("placeholder", 1, 1);
 			core::SerializationWorkData workData;
 			auto reader = core::YamlSerializer::fromString(yaml);
 			reader->deserialize();
-			building->deserialize(*reader, workData);
-			return building;
+			world->deserialize(*reader, workData);
+			return world;
 		};
 
-		core::Building original("OpenLeft door", 8, 3);
+		core::World original("OpenLeft door", 8, 3);
 		original.addRoom("Fore room", 0, 0, 0, 7, 2);
 		original.addRoom("Back room", 1, 0, 0, 7, 2);
-		core::Building::CreateDoorOptions doorOptions;
+		core::World::CreateDoorOptions doorOptions;
 		doorOptions.width = 2;
 		doorOptions.openStyle = core::Door::OpenStyle::OpenLeft;
 		auto const created = original.addSectorDoor(0, 0, 3, doorOptions);
@@ -2296,7 +2347,7 @@ agents: []
 		auto const createdDoor = findDoor(original, doorSectorIndex);
 		require(createdDoor && createdDoor->getOpenStyle() == core::Door::OpenStyle::OpenLeft,
 			"Ordinary Door creation did not carry the OpenLeft opening style");
-		core::Building::CreateDoorOptions readBack;
+		core::World::CreateDoorOptions readBack;
 		require(original.getSectorDoorOptions(0, 0, 3, 2, readBack)
 			&& readBack.openStyle == core::Door::OpenStyle::OpenLeft,
 			"Authored Door options did not report the OpenLeft opening style");
@@ -2304,7 +2355,7 @@ agents: []
 		// Save/load: the record persists the style and replays it on load.
 		auto const yaml = snapshotYaml(original);
 		require(yaml.find("openStyle: openLeft") != std::string::npos,
-			"Building YAML did not persist the Door's openStyle: openLeft");
+			"World YAML did not persist the Door's openStyle: openLeft");
 		auto loaded = loadYaml(yaml);
 		auto const loadedDoor = findDoor(*loaded, doorSectorIndex);
 		require(loadedDoor && loadedDoor->getOpenStyle() == core::Door::OpenStyle::OpenLeft,
@@ -2376,7 +2427,7 @@ agents: []
 		// through CreateDoorOptions unchanged.
 		require(moveTarget.getSectorDoorOptions(0, 0, 5, 2, readBack),
 			"Copied Door options could not be read");
-		core::Building pasteTarget("OpenLeft paste", 8, 3);
+		core::World pasteTarget("OpenLeft paste", 8, 3);
 		pasteTarget.addRoom("Fore room", 0, 0, 0, 7, 2);
 		pasteTarget.addRoom("Back room", 1, 0, 0, 7, 2);
 		auto const pasted = pasteTarget.addSectorDoor(0, 0, 1, readBack);
@@ -2391,17 +2442,17 @@ agents: []
 
 	// Ticket #83: OpenRight is the mirror-image sibling of OpenLeft and rides the
 	// very same authored-style pipeline - creation options, the openStyle:
-	// openRight record, load replay, the selected-Door editor's Building call
+	// openRight record, load replay, the selected-Door editor's World call
 	// (record and live Door moving together), moves, snapshot-based undo/redo,
 	// and option-based clipboard copy/paste. The checks move between OpenRight
 	// and OpenLeft rather than OpenUp so the two horizontal styles are proven
 	// distinct at every step.
 	void doorOpenRightPersistsThroughEveryEditorPath()
 	{
-		auto findDoor = [](core::Building const& building, uint32_t sectorIndex)
+		auto findDoor = [](core::World const& world, uint32_t sectorIndex)
 			-> std::shared_ptr<const core::Door>
 		{
-			auto sector = building.getSector(sectorIndex);
+			auto sector = world.getSector(sectorIndex);
 			if (!sector) return nullptr;
 			for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
 			{
@@ -2411,28 +2462,28 @@ agents: []
 			}
 			return nullptr;
 		};
-		auto snapshotYaml = [](core::Building& building)
+		auto snapshotYaml = [](core::World& world)
 		{
 			core::SerializationWorkData workData;
 			auto writer = core::YamlSerializer::toString();
-			building.serialize(*writer, workData);
+			world.serialize(*writer, workData);
 			writer->serialize();
 			return writer->getSerializedString();
 		};
 		auto loadYaml = [](std::string const& yaml)
 		{
-			auto building = std::make_shared<core::Building>("placeholder", 1, 1);
+			auto world = std::make_shared<core::World>("placeholder", 1, 1);
 			core::SerializationWorkData workData;
 			auto reader = core::YamlSerializer::fromString(yaml);
 			reader->deserialize();
-			building->deserialize(*reader, workData);
-			return building;
+			world->deserialize(*reader, workData);
+			return world;
 		};
 
-		core::Building original("OpenRight door", 8, 3);
+		core::World original("OpenRight door", 8, 3);
 		original.addRoom("Fore room", 0, 0, 0, 7, 2);
 		original.addRoom("Back room", 1, 0, 0, 7, 2);
-		core::Building::CreateDoorOptions doorOptions;
+		core::World::CreateDoorOptions doorOptions;
 		doorOptions.width = 2;
 		doorOptions.openStyle = core::Door::OpenStyle::OpenRight;
 		auto const created = original.addSectorDoor(0, 0, 3, doorOptions);
@@ -2441,7 +2492,7 @@ agents: []
 		auto const createdDoor = findDoor(original, doorSectorIndex);
 		require(createdDoor && createdDoor->getOpenStyle() == core::Door::OpenStyle::OpenRight,
 			"Ordinary Door creation did not carry the OpenRight opening style");
-		core::Building::CreateDoorOptions readBack;
+		core::World::CreateDoorOptions readBack;
 		require(original.getSectorDoorOptions(0, 0, 3, 2, readBack)
 			&& readBack.openStyle == core::Door::OpenStyle::OpenRight,
 			"Authored Door options did not report the OpenRight opening style");
@@ -2449,7 +2500,7 @@ agents: []
 		// Save/load: the record persists the style and replays it on load.
 		auto const yaml = snapshotYaml(original);
 		require(yaml.find("openStyle: openRight") != std::string::npos,
-			"Building YAML did not persist the Door's openStyle: openRight");
+			"World YAML did not persist the Door's openStyle: openRight");
 		auto loaded = loadYaml(yaml);
 		auto const loadedDoor = findDoor(*loaded, doorSectorIndex);
 		require(loadedDoor && loadedDoor->getOpenStyle() == core::Door::OpenStyle::OpenRight,
@@ -2524,7 +2575,7 @@ agents: []
 		// through CreateDoorOptions unchanged.
 		require(moveTarget.getSectorDoorOptions(0, 0, 5, 2, readBack),
 			"Copied Door options could not be read");
-		core::Building pasteTarget("OpenRight paste", 8, 3);
+		core::World pasteTarget("OpenRight paste", 8, 3);
 		pasteTarget.addRoom("Fore room", 0, 0, 0, 7, 2);
 		pasteTarget.addRoom("Back room", 1, 0, 0, 7, 2);
 		auto const pasted = pasteTarget.addSectorDoor(0, 0, 1, readBack);
@@ -2540,16 +2591,16 @@ agents: []
 	// Ticket #84: OpenApart is the fourth authored Door opening style and rides
 	// the same authored-style pipeline as its siblings - creation options, the
 	// openStyle: openApart record, load replay, the selected-Door editor's
-	// Building call (record and live Door moving together), moves, snapshot-based
+	// World call (record and live Door moving together), moves, snapshot-based
 	// undo/redo, and option-based clipboard copy/paste. The checks move between
 	// OpenApart and OpenLeft rather than OpenUp so the two horizontal styles are
 	// proven distinct at every step.
 	void doorOpenApartPersistsThroughEveryEditorPath()
 	{
-		auto findDoor = [](core::Building const& building, uint32_t sectorIndex)
+		auto findDoor = [](core::World const& world, uint32_t sectorIndex)
 			-> std::shared_ptr<const core::Door>
 		{
-			auto sector = building.getSector(sectorIndex);
+			auto sector = world.getSector(sectorIndex);
 			if (!sector) return nullptr;
 			for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
 			{
@@ -2559,28 +2610,28 @@ agents: []
 			}
 			return nullptr;
 		};
-		auto snapshotYaml = [](core::Building& building)
+		auto snapshotYaml = [](core::World& world)
 		{
 			core::SerializationWorkData workData;
 			auto writer = core::YamlSerializer::toString();
-			building.serialize(*writer, workData);
+			world.serialize(*writer, workData);
 			writer->serialize();
 			return writer->getSerializedString();
 		};
 		auto loadYaml = [](std::string const& yaml)
 		{
-			auto building = std::make_shared<core::Building>("placeholder", 1, 1);
+			auto world = std::make_shared<core::World>("placeholder", 1, 1);
 			core::SerializationWorkData workData;
 			auto reader = core::YamlSerializer::fromString(yaml);
 			reader->deserialize();
-			building->deserialize(*reader, workData);
-			return building;
+			world->deserialize(*reader, workData);
+			return world;
 		};
 
-		core::Building original("OpenApart door", 8, 3);
+		core::World original("OpenApart door", 8, 3);
 		original.addRoom("Fore room", 0, 0, 0, 7, 2);
 		original.addRoom("Back room", 1, 0, 0, 7, 2);
-		core::Building::CreateDoorOptions doorOptions;
+		core::World::CreateDoorOptions doorOptions;
 		doorOptions.width = 2;
 		doorOptions.openStyle = core::Door::OpenStyle::OpenApart;
 		auto const created = original.addSectorDoor(0, 0, 3, doorOptions);
@@ -2589,7 +2640,7 @@ agents: []
 		auto const createdDoor = findDoor(original, doorSectorIndex);
 		require(createdDoor && createdDoor->getOpenStyle() == core::Door::OpenStyle::OpenApart,
 			"Ordinary Door creation did not carry the OpenApart opening style");
-		core::Building::CreateDoorOptions readBack;
+		core::World::CreateDoorOptions readBack;
 		require(original.getSectorDoorOptions(0, 0, 3, 2, readBack)
 			&& readBack.openStyle == core::Door::OpenStyle::OpenApart,
 			"Authored Door options did not report the OpenApart opening style");
@@ -2597,7 +2648,7 @@ agents: []
 		// Save/load: the record persists the style and replays it on load.
 		auto const yaml = snapshotYaml(original);
 		require(yaml.find("openStyle: openApart") != std::string::npos,
-			"Building YAML did not persist the Door's openStyle: openApart");
+			"World YAML did not persist the Door's openStyle: openApart");
 		auto loaded = loadYaml(yaml);
 		auto const loadedDoor = findDoor(*loaded, doorSectorIndex);
 		require(loadedDoor && loadedDoor->getOpenStyle() == core::Door::OpenStyle::OpenApart,
@@ -2672,7 +2723,7 @@ agents: []
 		// through CreateDoorOptions unchanged.
 		require(moveTarget.getSectorDoorOptions(0, 0, 5, 2, readBack),
 			"Copied Door options could not be read");
-		core::Building pasteTarget("OpenApart paste", 8, 3);
+		core::World pasteTarget("OpenApart paste", 8, 3);
 		pasteTarget.addRoom("Fore room", 0, 0, 0, 7, 2);
 		pasteTarget.addRoom("Back room", 1, 0, 0, 7, 2);
 		auto const pasted = pasteTarget.addSectorDoor(0, 0, 1, readBack);
@@ -2693,7 +2744,7 @@ agents: []
 	// reconstructs its landing Doors OpenApart.
 	void liftDoorsDefaultToOpenApartWhileOtherDoorsKeepOpenUp()
 	{
-		auto doorFromResult = [](core::Building::CreateObjectResult const& result)
+		auto doorFromResult = [](core::World::CreateObjectResult const& result)
 			-> std::shared_ptr<const core::Door>
 		{
 			if (!result.sector || result.index == ~0u) return nullptr;
@@ -2703,13 +2754,13 @@ agents: []
 		};
 		// Every Door of one ownership kind, found through the public ownership
 		// predicates rather than by remembering where creation left it.
-		auto collectOwnedDoorStyles = [](core::Building const& building, bool liftDoors)
+		auto collectOwnedDoorStyles = [](core::World const& world, bool liftDoors)
 		{
 			std::vector<core::Door::OpenStyle> styles;
 			std::set<core::Door const*> seen;
-			for (uint32_t sectorIndex = 0; sectorIndex < building.getNumSectors(); ++sectorIndex)
+			for (uint32_t sectorIndex = 0; sectorIndex < world.getNumSectors(); ++sectorIndex)
 			{
-				auto const sector = building.getSector(sectorIndex);
+				auto const sector = world.getSector(sectorIndex);
 				if (!sector) continue;
 				for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
 				{
@@ -2717,8 +2768,8 @@ agents: []
 					if (!object || object->getObjectType() != core::SectorObjectType::Door) continue;
 					uint32_t ownerSector{ ~0u }, stopIndex{ ~0u }, carriageIndex{ ~0u };
 					bool const owned = liftDoors
-						? building.isLiftOwnedDoor(object, &ownerSector, &stopIndex)
-						: building.isShuttleOwnedDoor(object, &ownerSector, &stopIndex, &carriageIndex);
+						? world.isLiftOwnedDoor(object, &ownerSector, &stopIndex)
+						: world.isShuttleOwnedDoor(object, &ownerSector, &stopIndex, &carriageIndex);
 					if (!owned) continue;
 					auto const door = static_pointer_cast<const core::DoorSectorObject>(object)->getDoor();
 					if (!seen.insert(door.get()).second) continue;
@@ -2737,33 +2788,33 @@ agents: []
 		};
 
 		// An ordinary Door with no style set keeps the OpenUp default.
-		core::Building ordinary("Ordinary door defaults", 12, 3);
+		core::World ordinary("Ordinary door defaults", 12, 3);
 		ordinary.addRoom("Fore", 0, 0, 0, 11, 2);
 		ordinary.addRoom("Aft", 1, 0, 0, 11, 2);
-		auto const ordinaryDoor = ordinary.addSectorDoor(0, 0, 3, core::Building::CreateDoorOptions{});
+		auto const ordinaryDoor = ordinary.addSectorDoor(0, 0, 3, core::World::CreateDoorOptions{});
 		ordinary.finishBuild();
 		require(doorFromResult(ordinaryDoor.door)
 			&& doorFromResult(ordinaryDoor.door)->getOpenStyle() == core::Door::OpenStyle::OpenUp,
 			"An ordinary Door no longer defaults to OpenUp");
 
 		// Every landing Door a Lift generates is authored OpenApart.
-		core::Building liftBuilding("Lift door defaults", 16, 3);
-		auto hall = liftBuilding.addRoom("Lift Hall", 0, 0, 0, 16, 3);
+		core::World liftWorld("Lift door defaults", 16, 3);
+		auto hall = liftWorld.addRoom("Lift Hall", 0, 0, 0, 16, 3);
 		for (uint32_t deck = 1; deck < 3; ++deck)
 			for (uint32_t x = 0; x < 16; ++x)
-				liftBuilding.addSectorWalkway(hall, deck, x);
-		core::Building::CreateLiftOptions liftOptions;
+				liftWorld.addSectorWalkway(hall, deck, x);
+		core::World::CreateLiftOptions liftOptions;
 		liftOptions.cellsWide = 1;
 		liftOptions.decksHigh = 3;
 		liftOptions.stopOffsets = { 0, 1, 2 };
-		auto const lift = liftBuilding.addLift(1, 0, 8, liftOptions);
-		liftBuilding.finishBuild();
+		auto const lift = liftWorld.addLift(1, 0, 8, liftOptions);
+		liftWorld.finishBuild();
 		require(lift.doors.size() == 3, "The Lift did not generate one Door per stop");
 		for (size_t i = 0; i < lift.doors.size(); ++i)
 			require(doorFromResult(lift.doors[i].door)
 				&& doorFromResult(lift.doors[i].door)->getOpenStyle() == core::Door::OpenStyle::OpenApart,
 				"A newly created Lift Door does not default to OpenApart");
-		requireAll(collectOwnedDoorStyles(liftBuilding, true), core::Door::OpenStyle::OpenApart, 3,
+		requireAll(collectOwnedDoorStyles(liftWorld, true), core::Door::OpenStyle::OpenApart, 3,
 			"A Lift-owned Door");
 
 		// The Lift record carries no style of its own, so replaying a legacy map -
@@ -2771,7 +2822,7 @@ agents: []
 		// generated-Door default rather than an explicit override.
 		core::SerializationWorkData workData;
 		auto writer = core::YamlSerializer::toString();
-		liftBuilding.serialize(*writer, workData);
+		liftWorld.serialize(*writer, workData);
 		writer->serialize();
 		auto const liftYaml = writer->getSerializedString();
 		require(liftYaml.find("type: lift") != std::string::npos,
@@ -2779,7 +2830,7 @@ agents: []
 		require(liftYaml.find("openStyle") == std::string::npos,
 			"A Lift record grew its own opening style, so a legacy Lift map would no "
 			"longer reconstruct through the generated-Door default");
-		auto legacy = std::make_shared<core::Building>("placeholder", 1, 1);
+		auto legacy = std::make_shared<core::World>("placeholder", 1, 1);
 		{
 			auto reader = core::YamlSerializer::fromString(liftYaml);
 			reader->deserialize();
@@ -2789,15 +2840,15 @@ agents: []
 			"A reconstructed Lift Door");
 
 		// Shuttle-owned Doors keep the OpenUp default: only Lift Doors change.
-		core::Building shuttleBuilding("Shuttle door defaults", 32, 3);
-		shuttleBuilding.addCorridor(0, 0, 31);
-		shuttleBuilding.addCorridor(1, 0, 31);
-		core::Building::CreateShuttleOptions shuttleOptions{ 2, 3, { 0, 18 }, 0 };
+		core::World shuttleWorld("Shuttle door defaults", 32, 3);
+		shuttleWorld.addCorridor(0, 0, 31);
+		shuttleWorld.addCorridor(1, 0, 31);
+		core::World::CreateShuttleOptions shuttleOptions{ 2, 3, { 0, 18 }, 0 };
 		shuttleOptions.capacity = 2;
 		shuttleOptions.doorMask = 0b101;
-		shuttleBuilding.addShuttle(1, 0, 0, 27, shuttleOptions);
-		shuttleBuilding.finishBuild();
-		requireAll(collectOwnedDoorStyles(shuttleBuilding, false), core::Door::OpenStyle::OpenUp, 2,
+		shuttleWorld.addShuttle(1, 0, 0, 27, shuttleOptions);
+		shuttleWorld.finishBuild();
+		requireAll(collectOwnedDoorStyles(shuttleWorld, false), core::Door::OpenStyle::OpenUp, 2,
 			"A Shuttle-owned Door");
 	}
 
@@ -2809,10 +2860,10 @@ agents: []
 	// Lift-owned Doors when no style field is present.
 	void doorStyleMapsAdvanceTheSchemaVersionAndLegacySixStillLoads()
 	{
-		auto findDoor = [](core::Building const& building, uint32_t sectorIndex)
+		auto findDoor = [](core::World const& world, uint32_t sectorIndex)
 			-> std::shared_ptr<const core::Door>
 		{
-			auto sector = building.getSector(sectorIndex);
+			auto sector = world.getSector(sectorIndex);
 			if (!sector) return nullptr;
 			for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
 			{
@@ -2824,13 +2875,13 @@ agents: []
 		};
 		// Every Door of one ownership kind, found through the public ownership
 		// predicates rather than by remembering where creation left it.
-		auto collectOwnedDoorStyles = [](core::Building const& building, bool liftDoors)
+		auto collectOwnedDoorStyles = [](core::World const& world, bool liftDoors)
 		{
 			std::vector<core::Door::OpenStyle> styles;
 			std::set<core::Door const*> seen;
-			for (uint32_t sectorIndex = 0; sectorIndex < building.getNumSectors(); ++sectorIndex)
+			for (uint32_t sectorIndex = 0; sectorIndex < world.getNumSectors(); ++sectorIndex)
 			{
-				auto const sector = building.getSector(sectorIndex);
+				auto const sector = world.getSector(sectorIndex);
 				if (!sector) continue;
 				for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
 				{
@@ -2838,8 +2889,8 @@ agents: []
 					if (!object || object->getObjectType() != core::SectorObjectType::Door) continue;
 					uint32_t ownerSector{ ~0u }, stopIndex{ ~0u }, carriageIndex{ ~0u };
 					bool const owned = liftDoors
-						? building.isLiftOwnedDoor(object, &ownerSector, &stopIndex)
-						: building.isShuttleOwnedDoor(object, &ownerSector, &stopIndex, &carriageIndex);
+						? world.isLiftOwnedDoor(object, &ownerSector, &stopIndex)
+						: world.isShuttleOwnedDoor(object, &ownerSector, &stopIndex, &carriageIndex);
 					if (!owned) continue;
 					auto const door = static_pointer_cast<const core::DoorSectorObject>(object)->getDoor();
 					if (!seen.insert(door.get()).second) continue;
@@ -2857,11 +2908,11 @@ agents: []
 				require(style == expected,
 					(std::string(what) + " has the wrong opening style").c_str());
 		};
-		auto serialize = [](core::Building const& building)
+		auto serialize = [](core::World const& world)
 		{
 			core::SerializationWorkData workData;
 			auto writer = core::YamlSerializer::toString();
-			building.serialize(*writer, workData);
+			world.serialize(*writer, workData);
 			writer->serialize();
 			return writer->getSerializedString();
 		};
@@ -2880,10 +2931,10 @@ agents: []
 		{
 			auto reader = core::YamlSerializer::fromString(yaml);
 			reader->deserialize();
-			reader->beginMap("building");
+			reader->beginMap("world");
 			auto const version = reader->readUint32("version");
 			if (version > preDoorStyleVersionCeiling)
-				throw core::SerializationException("Unsupported Building serialization version");
+				throw core::SerializationException("Unsupported World serialization version");
 			reader->beginArray("construction");
 			while (reader->nextArrayItem())
 			{
@@ -2891,7 +2942,7 @@ agents: []
 				auto const type = reader->readString("type");
 				if (preDoorStyleRecordNames.find(type) == preDoorStyleRecordNames.end())
 					throw core::SerializationException(
-						"Unknown Building construction record type: " + type);
+						"Unknown World construction record type: " + type);
 				reader->endMap();
 			}
 			reader->endArray();
@@ -2901,10 +2952,10 @@ agents: []
 		// One map exercising every ownership kind and every style field: an
 		// ordinary OpenLeft Door, a Lift with a per-stop override, and a Shuttle
 		// with a per-Door override.
-		core::Building authored("Door-style schema", 40, 3);
+		core::World authored("Door-style schema", 40, 3);
 		authored.addRoom("Fore hall", 0, 0, 0, 8, 3);
 		authored.addRoom("Aft room", 1, 0, 0, 8, 3);
-		core::Building::CreateDoorOptions doorOptions;
+		core::World::CreateDoorOptions doorOptions;
 		doorOptions.width = 2;
 		doorOptions.openStyle = core::Door::OpenStyle::OpenLeft;
 		auto const ordinaryDoor = authored.addSectorDoor(0, 0, 3, doorOptions);
@@ -2912,13 +2963,13 @@ agents: []
 		for (uint32_t deck = 1; deck < 3; ++deck)
 			for (uint32_t x = 0; x < 8; ++x)
 				authored.addSectorWalkway(liftHall, deck, x);
-		core::Building::CreateLiftOptions liftOptions;
+		core::World::CreateLiftOptions liftOptions;
 		liftOptions.cellsWide = 1;
 		liftOptions.decksHigh = 3;
 		liftOptions.stopOffsets = { 0, 1, 2 };
 		auto const lift = authored.addLift(1, 0, 13, liftOptions);
 		authored.addCorridor(0, 0, 20, 20, 1);
-		core::Building::CreateShuttleOptions shuttleOptions{ 2, 3, { 0, 12 }, 0 };
+		core::World::CreateShuttleOptions shuttleOptions{ 2, 3, { 0, 12 }, 0 };
 		shuttleOptions.doorOpenStyles = { static_cast<uint32_t>(core::Door::OpenStyle::OpenApart),
 			~0u, ~0u, ~0u };
 		auto const shuttle = authored.addShuttle(1, 0, 20, 20, shuttleOptions);
@@ -2961,21 +3012,21 @@ agents: []
 		// A defaults-only map replays exactly like a pre-feature version-6 file:
 		// every style field absent.  Reconstruct that legacy shape by rewriting
 		// the version and dropping the only style line the writer emitted.
-		core::Building defaults("Legacy-shaped map", 40, 3);
+		core::World defaults("Legacy-shaped map", 40, 3);
 		defaults.addRoom("Fore hall", 0, 0, 0, 8, 3);
 		defaults.addRoom("Aft room", 1, 0, 0, 8, 3);
-		auto const defaultDoor = defaults.addSectorDoor(0, 0, 3, core::Building::CreateDoorOptions{});
+		auto const defaultDoor = defaults.addSectorDoor(0, 0, 3, core::World::CreateDoorOptions{});
 		auto const defaultHall = defaults.addRoom("Lift hall", 0, 0, 10, 8, 3);
 		for (uint32_t deck = 1; deck < 3; ++deck)
 			for (uint32_t x = 0; x < 8; ++x)
 				defaults.addSectorWalkway(defaultHall, deck, x);
-		core::Building::CreateLiftOptions defaultLiftOptions;
+		core::World::CreateLiftOptions defaultLiftOptions;
 		defaultLiftOptions.cellsWide = 1;
 		defaultLiftOptions.decksHigh = 3;
 		defaultLiftOptions.stopOffsets = { 0, 1, 2 };
 		auto const defaultLift = defaults.addLift(1, 0, 13, defaultLiftOptions);
 		defaults.addCorridor(0, 0, 20, 20, 1);
-		core::Building::CreateShuttleOptions defaultShuttleOptions{ 2, 3, { 0, 12 }, 0 };
+		core::World::CreateShuttleOptions defaultShuttleOptions{ 2, 3, { 0, 12 }, 0 };
 		auto const defaultShuttle = defaults.addShuttle(1, 0, 20, 20, defaultShuttleOptions);
 		defaults.finishBuild();
 
@@ -3000,7 +3051,7 @@ agents: []
 		// The current reader loads version 6 and supplies the owner-sensitive
 		// defaults: OpenUp for the ordinary and Shuttle-owned Doors, OpenApart
 		// for the Lift-owned Doors.
-		auto legacy = std::make_shared<core::Building>("placeholder", 1, 1);
+		auto legacy = std::make_shared<core::World>("placeholder", 1, 1);
 		{
 			core::SerializationWorkData workData;
 			auto reader = core::YamlSerializer::fromString(strippedYaml);
@@ -3025,7 +3076,7 @@ agents: []
 			core::SerializationWorkData workData;
 			auto reader = core::YamlSerializer::fromString(futureYaml);
 			reader->deserialize();
-			core::Building rejected("placeholder", 1, 1);
+			core::World rejected("placeholder", 1, 1);
 			rejected.deserialize(*reader, workData);
 		}
 		catch (core::SerializationException const&)
@@ -3037,91 +3088,91 @@ agents: []
 
 	// Ticket #85: each Door at a Lift stop carries an individually authored
 	// opening-style override while the Lift's topology stays fixed. Editing one
-	// stop changes no sibling, the overrides round-trip through Building
+	// stop changes no sibling, the overrides round-trip through World
 	// persistence, snapshot-based undo/redo restores the previous per-stop
 	// style, and reconstructing an unchanged Lift retains every override.
 	void liftStopDoorStyleOverridesArePerStopAndPersist()
 	{
-		auto findLiftStopDoor = [](core::Building const& building, uint32_t liftSector,
+		auto findLiftStopDoor = [](core::World const& world, uint32_t liftSector,
 			uint32_t stopIndex) -> std::shared_ptr<const core::Door>
 		{
-			for (uint32_t sectorIndex = 0; sectorIndex < building.getNumSectors(); ++sectorIndex)
+			for (uint32_t sectorIndex = 0; sectorIndex < world.getNumSectors(); ++sectorIndex)
 			{
-				auto const sector = building.getSector(sectorIndex);
+				auto const sector = world.getSector(sectorIndex);
 				if (!sector) continue;
 				for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
 				{
 					auto const object = sector->getObject(i);
 					if (!object || object->getObjectType() != core::SectorObjectType::Door) continue;
 					uint32_t ownerSector{ ~0u }, ownerStop{ ~0u };
-					if (building.isLiftOwnedDoor(object, &ownerSector, &ownerStop)
+					if (world.isLiftOwnedDoor(object, &ownerSector, &ownerStop)
 						&& ownerSector == liftSector && ownerStop == stopIndex)
 						return static_pointer_cast<const core::DoorSectorObject>(object)->getDoor();
 				}
 			}
 			return nullptr;
 		};
-		auto snapshotYaml = [](core::Building& building)
+		auto snapshotYaml = [](core::World& world)
 		{
 			core::SerializationWorkData workData;
 			auto writer = core::YamlSerializer::toString();
-			building.serialize(*writer, workData);
+			world.serialize(*writer, workData);
 			writer->serialize();
 			return writer->getSerializedString();
 		};
 		auto loadYaml = [](std::string const& yaml)
 		{
-			auto building = std::make_shared<core::Building>("placeholder", 1, 1);
+			auto world = std::make_shared<core::World>("placeholder", 1, 1);
 			core::SerializationWorkData workData;
 			auto reader = core::YamlSerializer::fromString(yaml);
 			reader->deserialize();
-			building->deserialize(*reader, workData);
-			return building;
+			world->deserialize(*reader, workData);
+			return world;
 		};
 
-		core::Building building("Lift stop door styles", 12, 3);
-		building.addRoom("Landing A", 0, 0, 0, 12, 1);
-		building.addRoom("Landing B", 0, 1, 0, 12, 1);
-		building.addRoom("Landing C", 0, 2, 0, 12, 1);
-		auto const created = building.addLift(1, 0, 2, 1, 3);
-		building.finishBuild();
+		core::World world("Lift stop door styles", 12, 3);
+		world.addRoom("Landing A", 0, 0, 0, 12, 1);
+		world.addRoom("Landing B", 0, 1, 0, 12, 1);
+		world.addRoom("Landing C", 0, 2, 0, 12, 1);
+		auto const created = world.addLift(1, 0, 2, 1, 3);
+		world.finishBuild();
 		require(created.doors.size() == 3, "The Lift did not generate three landing Doors");
 		auto const liftSector = created.lift.sector->getIndex();
-		building.pauseSimulation();
+		world.pauseSimulation();
 
 		// A Lift with no per-stop choices persists no style data at all, and an
 		// override outside the authored topology is refused.
-		require(snapshotYaml(building).find("stopDoorOpenStyles") == std::string::npos,
+		require(snapshotYaml(world).find("stopDoorOpenStyles") == std::string::npos,
 			"A Lift with no per-stop overrides persisted a stopDoorOpenStyles array");
 		std::string diagnostic;
-		require(!building.setLiftStopDoorOpenStyle(liftSector, 3,
+		require(!world.setLiftStopDoorOpenStyle(liftSector, 3,
 			core::Door::OpenStyle::OpenLeft, &diagnostic),
 			"An override was accepted for a stop outside the Lift's authored topology");
 
 		// Editing one stop takes effect live and touches no sibling stop.
-		require(building.setLiftStopDoorOpenStyle(liftSector, 1,
+		require(world.setLiftStopDoorOpenStyle(liftSector, 1,
 			core::Door::OpenStyle::OpenLeft, &diagnostic),
 			("A per-stop override was refused: " + diagnostic).c_str());
-		require(findLiftStopDoor(building, liftSector, 1)->getOpenStyle()
+		require(findLiftStopDoor(world, liftSector, 1)->getOpenStyle()
 			== core::Door::OpenStyle::OpenLeft,
 			"The edited Lift stop Door did not take the override live");
-		require(findLiftStopDoor(building, liftSector, 0)->getOpenStyle()
+		require(findLiftStopDoor(world, liftSector, 0)->getOpenStyle()
 				== core::Door::OpenStyle::OpenApart
-			&& findLiftStopDoor(building, liftSector, 2)->getOpenStyle()
+			&& findLiftStopDoor(world, liftSector, 2)->getOpenStyle()
 				== core::Door::OpenStyle::OpenApart,
 			"Editing one Lift stop Door changed a sibling stop");
 
 		// A second stop takes its own style while the first keeps its own.
-		require(building.setLiftStopDoorOpenStyle(liftSector, 2,
+		require(world.setLiftStopDoorOpenStyle(liftSector, 2,
 			core::Door::OpenStyle::OpenUp, &diagnostic),
 			("A second per-stop override was refused: " + diagnostic).c_str());
-		require(findLiftStopDoor(building, liftSector, 1)->getOpenStyle()
+		require(findLiftStopDoor(world, liftSector, 1)->getOpenStyle()
 			== core::Door::OpenStyle::OpenLeft,
 			"Editing a second Lift stop changed the first stop's override");
 
 		// Save/load: the overrides ride in the Lift's own record, and the stop
 		// without an override replays as the generated OpenApart default.
-		auto const yaml = snapshotYaml(building);
+		auto const yaml = snapshotYaml(world);
 		require(yaml.find("stopDoorOpenStyles") != std::string::npos,
 			"The Lift record did not persist its per-stop Door styles");
 		require(yaml.find("openLeft") != std::string::npos
@@ -3192,26 +3243,26 @@ agents: []
 	// stop identities.
 	void liftCreationStopDoorStylesAreAuthoredAndPersist()
 	{
-		auto findLiftStopDoor = [](core::Building const& building, uint32_t liftSector,
+		auto findLiftStopDoor = [](core::World const& world, uint32_t liftSector,
 			uint32_t stopIndex) -> std::shared_ptr<const core::Door>
 		{
-			for (uint32_t sectorIndex = 0; sectorIndex < building.getNumSectors(); ++sectorIndex)
+			for (uint32_t sectorIndex = 0; sectorIndex < world.getNumSectors(); ++sectorIndex)
 			{
-				auto const sector = building.getSector(sectorIndex);
+				auto const sector = world.getSector(sectorIndex);
 				if (!sector) continue;
 				for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
 				{
 					auto const object = sector->getObject(i);
 					if (!object || object->getObjectType() != core::SectorObjectType::Door) continue;
 					uint32_t ownerSector{ ~0u }, ownerStop{ ~0u };
-					if (building.isLiftOwnedDoor(object, &ownerSector, &ownerStop)
+					if (world.isLiftOwnedDoor(object, &ownerSector, &ownerStop)
 						&& ownerSector == liftSector && ownerStop == stopIndex)
 						return static_pointer_cast<const core::DoorSectorObject>(object)->getDoor();
 				}
 			}
 			return nullptr;
 		};
-		auto requireStyles = [&findLiftStopDoor](core::Building const& building, uint32_t liftSector,
+		auto requireStyles = [&findLiftStopDoor](core::World const& world, uint32_t liftSector,
 			char const* context)
 		{
 			auto const expected = { core::Door::OpenStyle::OpenLeft, core::Door::OpenStyle::OpenApart,
@@ -3219,7 +3270,7 @@ agents: []
 			uint32_t stop = 0;
 			for (auto const style : expected)
 			{
-				auto const door = findLiftStopDoor(building, liftSector, stop);
+				auto const door = findLiftStopDoor(world, liftSector, stop);
 				require(static_cast<bool>(door),
 					(std::string(context) + ": landing Door is missing").c_str());
 				require(door->getOpenStyle() == style,
@@ -3228,31 +3279,31 @@ agents: []
 				++stop;
 			}
 		};
-		auto snapshotYaml = [](core::Building& building)
+		auto snapshotYaml = [](core::World& world)
 		{
 			core::SerializationWorkData workData;
 			auto writer = core::YamlSerializer::toString();
-			building.serialize(*writer, workData);
+			world.serialize(*writer, workData);
 			writer->serialize();
 			return writer->getSerializedString();
 		};
 		auto loadYaml = [](std::string const& yaml)
 		{
-			auto building = std::make_shared<core::Building>("placeholder", 1, 1);
+			auto world = std::make_shared<core::World>("placeholder", 1, 1);
 			core::SerializationWorkData workData;
 			auto reader = core::YamlSerializer::fromString(yaml);
 			reader->deserialize();
-			building->deserialize(*reader, workData);
-			return building;
+			world->deserialize(*reader, workData);
+			return world;
 		};
 
 		// Landings live on floors 1-3 so extending the shaft downward shifts
 		// every stop offset while retaining the same stop floors.
-		core::Building building("Lift creation styles", 12, 4);
-		building.addRoom("Landing 1", 0, 1, 0, 12, 1);
-		building.addRoom("Landing 2", 0, 2, 0, 12, 1);
-		building.addRoom("Landing 3", 0, 3, 0, 12, 1);
-		core::Building::CreateLiftOptions options;
+		core::World world("Lift creation styles", 12, 4);
+		world.addRoom("Landing 1", 0, 1, 0, 12, 1);
+		world.addRoom("Landing 2", 0, 2, 0, 12, 1);
+		world.addRoom("Landing 3", 0, 3, 0, 12, 1);
+		core::World::CreateLiftOptions options;
 		options.cellsWide = 1;
 		options.decksHigh = 3;
 		options.stopOffsets = { 0, 1, 2 };
@@ -3260,16 +3311,16 @@ agents: []
 		// OpenApart default through every replay.
 		options.stopDoorOpenStyles = { static_cast<uint32_t>(core::Door::OpenStyle::OpenLeft),
 			~0u, static_cast<uint32_t>(core::Door::OpenStyle::OpenUp) };
-		auto const created = building.addLift(1, 1, 2, options);
-		building.finishBuild();
-		building.pauseSimulation();
+		auto const created = world.addLift(1, 1, 2, options);
+		world.finishBuild();
+		world.pauseSimulation();
 		require(created.doors.size() == 3, "The Lift did not generate three landing Doors");
 		auto const liftSector = created.lift.sector->getIndex();
-		requireStyles(building, liftSector, "Lift styled at creation");
+		requireStyles(world, liftSector, "Lift styled at creation");
 
 		// The styles are authored record data, so they reach the persistence
 		// boundary immediately rather than only the initial Door objects.
-		auto const yaml = snapshotYaml(building);
+		auto const yaml = snapshotYaml(world);
 		require(yaml.find("stopDoorOpenStyles") != std::string::npos,
 			"A Lift styled at creation did not persist its stopDoorOpenStyles array");
 		require(yaml.find("openLeft") != std::string::npos
@@ -3316,31 +3367,31 @@ agents: []
 	// sentinel.
 	void liftShortStopDoorStyleVectorEditPreservesEarlierOverrides()
 	{
-		auto findLiftStopDoor = [](core::Building const& building, uint32_t liftSector,
+		auto findLiftStopDoor = [](core::World const& world, uint32_t liftSector,
 			uint32_t stopIndex) -> std::shared_ptr<const core::Door>
 		{
-			for (uint32_t sectorIndex = 0; sectorIndex < building.getNumSectors(); ++sectorIndex)
+			for (uint32_t sectorIndex = 0; sectorIndex < world.getNumSectors(); ++sectorIndex)
 			{
-				auto const sector = building.getSector(sectorIndex);
+				auto const sector = world.getSector(sectorIndex);
 				if (!sector) continue;
 				for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
 				{
 					auto const object = sector->getObject(i);
 					if (!object || object->getObjectType() != core::SectorObjectType::Door) continue;
 					uint32_t ownerSector{ ~0u }, ownerStop{ ~0u };
-					if (building.isLiftOwnedDoor(object, &ownerSector, &ownerStop)
+					if (world.isLiftOwnedDoor(object, &ownerSector, &ownerStop)
 						&& ownerSector == liftSector && ownerStop == stopIndex)
 						return static_pointer_cast<const core::DoorSectorObject>(object)->getDoor();
 				}
 			}
 			return nullptr;
 		};
-		auto requireStyles = [&findLiftStopDoor](core::Building const& building, uint32_t liftSector,
+		auto requireStyles = [&findLiftStopDoor](core::World const& world, uint32_t liftSector,
 			std::vector<core::Door::OpenStyle> const& styles, char const* context)
 		{
 			for (size_t stop = 0; stop < styles.size(); ++stop)
 			{
-				auto const door = findLiftStopDoor(building, liftSector, (uint32_t)stop);
+				auto const door = findLiftStopDoor(world, liftSector, (uint32_t)stop);
 				require(static_cast<bool>(door),
 					(std::string(context) + ": landing Door is missing").c_str());
 				require(door->getOpenStyle() == styles[stop],
@@ -3348,62 +3399,62 @@ agents: []
 						+ " does not carry its expected style").c_str());
 			}
 		};
-		auto snapshotYaml = [](core::Building& building)
+		auto snapshotYaml = [](core::World& world)
 		{
 			core::SerializationWorkData workData;
 			auto writer = core::YamlSerializer::toString();
-			building.serialize(*writer, workData);
+			world.serialize(*writer, workData);
 			writer->serialize();
 			return writer->getSerializedString();
 		};
 		auto loadYaml = [](std::string const& yaml)
 		{
-			auto building = std::make_shared<core::Building>("placeholder", 1, 1);
+			auto world = std::make_shared<core::World>("placeholder", 1, 1);
 			core::SerializationWorkData workData;
 			auto reader = core::YamlSerializer::fromString(yaml);
 			reader->deserialize();
-			building->deserialize(*reader, workData);
-			return building;
+			world->deserialize(*reader, workData);
+			return world;
 		};
 		auto const expectedAfterEdit = { core::Door::OpenStyle::OpenLeft,
 			core::Door::OpenStyle::OpenApart, core::Door::OpenStyle::OpenRight };
 
-		core::Building building("Lift short style vector edit", 12, 4);
-		building.addRoom("Landing 1", 0, 1, 0, 12, 1);
-		building.addRoom("Landing 2", 0, 2, 0, 12, 1);
-		building.addRoom("Landing 3", 0, 3, 0, 12, 1);
-		core::Building::CreateLiftOptions options;
+		core::World world("Lift short style vector edit", 12, 4);
+		world.addRoom("Landing 1", 0, 1, 0, 12, 1);
+		world.addRoom("Landing 2", 0, 2, 0, 12, 1);
+		world.addRoom("Landing 3", 0, 3, 0, 12, 1);
+		core::World::CreateLiftOptions options;
 		options.cellsWide = 1;
 		options.decksHigh = 3;
 		options.stopOffsets = { 0, 1, 2 };
 		// A creation-time vector shorter than the stop list: only stop 0 is
 		// styled; stops 1 and 2 replay with the generated OpenApart default.
 		options.stopDoorOpenStyles = { static_cast<uint32_t>(core::Door::OpenStyle::OpenLeft) };
-		auto const created = building.addLift(1, 1, 2, options);
-		building.finishBuild();
-		building.pauseSimulation();
+		auto const created = world.addLift(1, 1, 2, options);
+		world.finishBuild();
+		world.pauseSimulation();
 		require(created.doors.size() == 3, "The Lift did not generate three landing Doors");
 		auto const liftSector = created.lift.sector->getIndex();
-		requireStyles(building, liftSector,
+		requireStyles(world, liftSector,
 			{ core::Door::OpenStyle::OpenLeft, core::Door::OpenStyle::OpenApart,
 				core::Door::OpenStyle::OpenApart },
 			"Lift created with a one-entry style vector");
 
 		// The creation-time document persists the short array as written by
 		// addLift: a single openLeft entry with no padding.
-		auto const shortYaml = snapshotYaml(building);
+		auto const shortYaml = snapshotYaml(world);
 		require(shortYaml.find("stopDoorOpenStyles") != std::string::npos,
 			"The short creation-time style vector was not persisted");
 
 		// Editing a later stop preserves the creation-time override on stop 0
 		// and default-fills only the slots that had no authored style.
 		std::string diagnostic;
-		require(building.setLiftStopDoorOpenStyle(liftSector, 2,
+		require(world.setLiftStopDoorOpenStyle(liftSector, 2,
 			core::Door::OpenStyle::OpenRight, &diagnostic),
 			("A per-stop override on a short-vector Lift was refused: " + diagnostic).c_str());
-		requireStyles(building, liftSector, expectedAfterEdit,
+		requireStyles(world, liftSector, expectedAfterEdit,
 			"Live Lift after editing stop 2 of a short-vector Lift");
-		auto const editedYaml = snapshotYaml(building);
+		auto const editedYaml = snapshotYaml(world);
 		require(editedYaml.find("openLeft") != std::string::npos
 			&& editedYaml.find("openRight") != std::string::npos
 			&& editedYaml.find("default") != std::string::npos,
@@ -3446,40 +3497,40 @@ agents: []
 	// styles survive save/load.
 	void liftDoorStylesFollowStopsWhenTheLiftMovesOrResizes()
 	{
-		auto findLiftStopDoor = [](core::Building const& building, uint32_t liftSector,
+		auto findLiftStopDoor = [](core::World const& world, uint32_t liftSector,
 			uint32_t stopIndex) -> std::shared_ptr<const core::Door>
 		{
-			for (uint32_t sectorIndex = 0; sectorIndex < building.getNumSectors(); ++sectorIndex)
+			for (uint32_t sectorIndex = 0; sectorIndex < world.getNumSectors(); ++sectorIndex)
 			{
-				auto const sector = building.getSector(sectorIndex);
+				auto const sector = world.getSector(sectorIndex);
 				if (!sector) continue;
 				for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
 				{
 					auto const object = sector->getObject(i);
 					if (!object || object->getObjectType() != core::SectorObjectType::Door) continue;
 					uint32_t ownerSector{ ~0u }, ownerStop{ ~0u };
-					if (building.isLiftOwnedDoor(object, &ownerSector, &ownerStop)
+					if (world.isLiftOwnedDoor(object, &ownerSector, &ownerStop)
 						&& ownerSector == liftSector && ownerStop == stopIndex)
 						return static_pointer_cast<const core::DoorSectorObject>(object)->getDoor();
 				}
 			}
 			return nullptr;
 		};
-		auto stopFloor = [](core::Building const& building, uint32_t liftSector,
+		auto stopFloor = [](core::World const& world, uint32_t liftSector,
 			uint32_t stopIndex) -> uint32_t
 		{
 			auto const lift = std::dynamic_pointer_cast<const core::LiftTransit>(
-				building.getSector(liftSector));
+				world.getSector(liftSector));
 			require(static_cast<bool>(lift), "The Lift transit disappeared");
 			auto const& value = lift->getStop(stopIndex);
 			return static_cast<uint32_t>((int)value.sector->getCellY() + value.sectorOffsetY);
 		};
-		auto requireStyles = [&findLiftStopDoor](core::Building const& building, uint32_t liftSector,
+		auto requireStyles = [&findLiftStopDoor](core::World const& world, uint32_t liftSector,
 			std::vector<core::Door::OpenStyle> const& styles, char const* context)
 		{
 			for (size_t stop = 0; stop < styles.size(); ++stop)
 			{
-				auto const door = findLiftStopDoor(building, liftSector, (uint32_t)stop);
+				auto const door = findLiftStopDoor(world, liftSector, (uint32_t)stop);
 				require(static_cast<bool>(door),
 					(std::string(context) + ": landing Door is missing").c_str());
 				require(door->getOpenStyle() == styles[stop],
@@ -3487,34 +3538,34 @@ agents: []
 						+ " does not carry its own style").c_str());
 			}
 		};
-		auto snapshotYaml = [](core::Building& building)
+		auto snapshotYaml = [](core::World& world)
 		{
 			core::SerializationWorkData workData;
 			auto writer = core::YamlSerializer::toString();
-			building.serialize(*writer, workData);
+			world.serialize(*writer, workData);
 			writer->serialize();
 			return writer->getSerializedString();
 		};
 		auto loadYaml = [](std::string const& yaml)
 		{
-			auto building = std::make_shared<core::Building>("placeholder", 1, 1);
+			auto world = std::make_shared<core::World>("placeholder", 1, 1);
 			core::SerializationWorkData workData;
 			auto reader = core::YamlSerializer::fromString(yaml);
 			reader->deserialize();
-			building->deserialize(*reader, workData);
-			return building;
+			world->deserialize(*reader, workData);
+			return world;
 		};
 
 		// Landings live on floors 1-3 so the shaft's bottom anchor never sits on
 		// a stop: extending the shaft downward shifts every stop offset while
 		// retaining the same stop floors.
-		core::Building building("Lift move style retention", 12, 4);
-		building.addRoom("Landing 1", 0, 1, 0, 12, 1);
-		building.addRoom("Landing 2", 0, 2, 0, 12, 1);
-		building.addRoom("Landing 3", 0, 3, 0, 12, 1);
-		auto const created = building.addLift(1, 1, 2, 1, 3);
-		building.finishBuild();
-		building.pauseSimulation();
+		core::World world("Lift move style retention", 12, 4);
+		world.addRoom("Landing 1", 0, 1, 0, 12, 1);
+		world.addRoom("Landing 2", 0, 2, 0, 12, 1);
+		world.addRoom("Landing 3", 0, 3, 0, 12, 1);
+		auto const created = world.addLift(1, 1, 2, 1, 3);
+		world.finishBuild();
+		world.pauseSimulation();
 		require(created.doors.size() == 3, "The Lift did not generate three landing Doors");
 		auto liftSector = created.lift.sector->getIndex();
 		std::string diagnostic;
@@ -3522,53 +3573,53 @@ agents: []
 			core::Door::OpenStyle::OpenLeft, core::Door::OpenStyle::OpenUp,
 			core::Door::OpenStyle::OpenRight };
 		for (uint32_t stop = 0; stop < 3; ++stop)
-			require(building.setLiftStopDoorOpenStyle(liftSector, stop, styles[stop], &diagnostic),
+			require(world.setLiftStopDoorOpenStyle(liftSector, stop, styles[stop], &diagnostic),
 				("A per-stop override was refused: " + diagnostic).c_str());
-		requireStyles(building, liftSector, styles, "Freshly styled Lift");
+		requireStyles(world, liftSector, styles, "Freshly styled Lift");
 
 		// A sideways move retains the stop set and every style.
 		{
-			auto const plan = building.planResizeLift(liftSector, 6, 1, 1, 3);
+			auto const plan = world.planResizeLift(liftSector, 6, 1, 1, 3);
 			require(plan.valid, ("A sideways Lift move was refused: " + plan.diagnostic).c_str());
 			require(plan.stopOffsets == std::vector<uint32_t>{ 0, 1, 2 },
 				"The sideways move did not retain the stop offsets");
-			liftSector = building.applyLiftEdit(plan);
-			require(stopFloor(building, liftSector, 0) == 1
-				&& stopFloor(building, liftSector, 1) == 2
-				&& stopFloor(building, liftSector, 2) == 3,
+			liftSector = world.applyLiftEdit(plan);
+			require(stopFloor(world, liftSector, 0) == 1
+				&& stopFloor(world, liftSector, 1) == 2
+				&& stopFloor(world, liftSector, 2) == 3,
 				"The sideways move changed the stop floors");
-			requireStyles(building, liftSector, styles, "Lift moved sideways");
+			requireStyles(world, liftSector, styles, "Lift moved sideways");
 		}
 
 		// Extending the shaft downward keeps the same stop floors but shifts
 		// every stop offset by one; each style must follow its stop's floor
 		// instead of sliding onto the neighbouring Door.
 		{
-			auto const plan = building.planResizeLift(liftSector, 6, 0, 1, 4);
+			auto const plan = world.planResizeLift(liftSector, 6, 0, 1, 4);
 			require(plan.valid, ("A shaft-extension resize was refused: " + plan.diagnostic).c_str());
 			require(plan.stopOffsets == std::vector<uint32_t>{ 1, 2, 3 },
 				"The shaft extension did not shift the stop offsets as expected");
-			liftSector = building.applyLiftEdit(plan);
-			require(stopFloor(building, liftSector, 0) == 1
-				&& stopFloor(building, liftSector, 1) == 2
-				&& stopFloor(building, liftSector, 2) == 3,
+			liftSector = world.applyLiftEdit(plan);
+			require(stopFloor(world, liftSector, 0) == 1
+				&& stopFloor(world, liftSector, 1) == 2
+				&& stopFloor(world, liftSector, 2) == 3,
 				"The shaft extension changed the stop floors");
-			requireStyles(building, liftSector, styles, "Lift shaft extended below its stops");
+			requireStyles(world, liftSector, styles, "Lift shaft extended below its stops");
 		}
 
 		// Widening the Lift while retaining the stops retains every style.
 		{
-			auto const plan = building.planResizeLift(liftSector, 6, 0, 2, 4);
+			auto const plan = world.planResizeLift(liftSector, 6, 0, 2, 4);
 			require(plan.valid, ("A width resize was refused: " + plan.diagnostic).c_str());
 			require(plan.stopOffsets == std::vector<uint32_t>{ 1, 2, 3 },
 				"The width change did not retain the stop offsets");
-			liftSector = building.applyLiftEdit(plan);
-			requireStyles(building, liftSector, styles, "Lift widened to two cells");
+			liftSector = world.applyLiftEdit(plan);
+			requireStyles(world, liftSector, styles, "Lift widened to two cells");
 		}
 
 		// The reconciled styles ride in the Lift's record: a save/load after
 		// the move and resize retains them.
-		auto const loaded = loadYaml(snapshotYaml(building));
+		auto const loaded = loadYaml(snapshotYaml(world));
 		requireStyles(*loaded, liftSector, styles, "Loaded Lift after move and resize");
 
 		// Deleting the middle stop takes its override with it; the surviving
@@ -3596,51 +3647,51 @@ agents: []
 	// reconciled result round-trips through save/load.
 	void liftDoorStylesReconcileWhenStopsChange()
 	{
-		auto findLiftStopDoor = [](core::Building const& building, uint32_t liftSector,
+		auto findLiftStopDoor = [](core::World const& world, uint32_t liftSector,
 			uint32_t stopIndex) -> std::shared_ptr<const core::Door>
 		{
-			for (uint32_t sectorIndex = 0; sectorIndex < building.getNumSectors(); ++sectorIndex)
+			for (uint32_t sectorIndex = 0; sectorIndex < world.getNumSectors(); ++sectorIndex)
 			{
-				auto const sector = building.getSector(sectorIndex);
+				auto const sector = world.getSector(sectorIndex);
 				if (!sector) continue;
 				for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
 				{
 					auto const object = sector->getObject(i);
 					if (!object || object->getObjectType() != core::SectorObjectType::Door) continue;
 					uint32_t ownerSector{ ~0u }, ownerStop{ ~0u };
-					if (building.isLiftOwnedDoor(object, &ownerSector, &ownerStop)
+					if (world.isLiftOwnedDoor(object, &ownerSector, &ownerStop)
 						&& ownerSector == liftSector && ownerStop == stopIndex)
 						return static_pointer_cast<const core::DoorSectorObject>(object)->getDoor();
 				}
 			}
 			return nullptr;
 		};
-		auto stopFloor = [](core::Building const& building, uint32_t liftSector,
+		auto stopFloor = [](core::World const& world, uint32_t liftSector,
 			uint32_t stopIndex) -> uint32_t
 		{
 			auto const lift = std::dynamic_pointer_cast<const core::LiftTransit>(
-				building.getSector(liftSector));
+				world.getSector(liftSector));
 			require(static_cast<bool>(lift), "The Lift transit disappeared");
 			auto const& value = lift->getStop(stopIndex);
 			return static_cast<uint32_t>((int)value.sector->getCellY() + value.sectorOffsetY);
 		};
-		auto stopCount = [](core::Building const& building, uint32_t liftSector) -> uint32_t
+		auto stopCount = [](core::World const& world, uint32_t liftSector) -> uint32_t
 		{
 			auto const lift = std::dynamic_pointer_cast<const core::LiftTransit>(
-				building.getSector(liftSector));
+				world.getSector(liftSector));
 			require(static_cast<bool>(lift), "The Lift transit disappeared");
 			return lift->getNumStops();
 		};
 		// Styles are asserted against the stop's landing floor, not its index
 		// in the stop list: the floor is the stop's identity for reconciliation.
-		auto requireStyleAtFloor = [&](core::Building const& building, uint32_t liftSector,
+		auto requireStyleAtFloor = [&](core::World const& world, uint32_t liftSector,
 			uint32_t floor, core::Door::OpenStyle expected, char const* context)
 		{
-			auto const count = stopCount(building, liftSector);
+			auto const count = stopCount(world, liftSector);
 			for (uint32_t stop = 0; stop < count; ++stop)
 			{
-				if (stopFloor(building, liftSector, stop) != floor) continue;
-				auto const door = findLiftStopDoor(building, liftSector, stop);
+				if (stopFloor(world, liftSector, stop) != floor) continue;
+				auto const door = findLiftStopDoor(world, liftSector, stop);
 				require(static_cast<bool>(door),
 					(std::string(context) + ": landing Door is missing at floor "
 						+ std::to_string(floor)).c_str());
@@ -3652,11 +3703,11 @@ agents: []
 			require(false, (std::string(context) + ": no stop exists at floor "
 				+ std::to_string(floor)).c_str());
 		};
-		auto requireNoStopAtFloor = [](core::Building const& building, uint32_t liftSector,
+		auto requireNoStopAtFloor = [](core::World const& world, uint32_t liftSector,
 			uint32_t floor, char const* context)
 		{
 			auto const lift = std::dynamic_pointer_cast<const core::LiftTransit>(
-				building.getSector(liftSector));
+				world.getSector(liftSector));
 			require(static_cast<bool>(lift), "The Lift transit disappeared");
 			for (uint32_t stop = 0; stop < lift->getNumStops(); ++stop)
 			{
@@ -3668,50 +3719,50 @@ agents: []
 						+ std::to_string(floor)).c_str());
 			}
 		};
-		auto snapshotYaml = [](core::Building& building)
+		auto snapshotYaml = [](core::World& world)
 		{
 			core::SerializationWorkData workData;
 			auto writer = core::YamlSerializer::toString();
-			building.serialize(*writer, workData);
+			world.serialize(*writer, workData);
 			writer->serialize();
 			return writer->getSerializedString();
 		};
 		auto loadYaml = [](std::string const& yaml)
 		{
-			auto building = std::make_shared<core::Building>("placeholder", 1, 1);
+			auto world = std::make_shared<core::World>("placeholder", 1, 1);
 			core::SerializationWorkData workData;
 			auto reader = core::YamlSerializer::fromString(yaml);
 			reader->deserialize();
-			building->deserialize(*reader, workData);
-			return building;
+			world->deserialize(*reader, workData);
+			return world;
 		};
 
 		// Landings on floors 1-3; further landings are added mid-lifecycle so
 		// stops can be created at the top and bottom of the shaft.
-		core::Building building("Lift stop style reconciliation", 12, 5);
-		building.addRoom("Landing 1", 0, 1, 0, 12, 1);
-		building.addRoom("Landing 2", 0, 2, 0, 12, 1);
-		building.addRoom("Landing 3", 0, 3, 0, 12, 1);
-		auto const created = building.addLift(1, 1, 2, 1, 3);
-		building.finishBuild();
-		building.pauseSimulation();
+		core::World world("Lift stop style reconciliation", 12, 5);
+		world.addRoom("Landing 1", 0, 1, 0, 12, 1);
+		world.addRoom("Landing 2", 0, 2, 0, 12, 1);
+		world.addRoom("Landing 3", 0, 3, 0, 12, 1);
+		auto const created = world.addLift(1, 1, 2, 1, 3);
+		world.finishBuild();
+		world.pauseSimulation();
 		auto liftSector = created.lift.sector->getIndex();
 		std::string diagnostic;
 		require(created.doors.size() == 3, "The Lift did not generate three landing Doors");
-		require(building.setLiftStopDoorOpenStyle(liftSector, 0,
+		require(world.setLiftStopDoorOpenStyle(liftSector, 0,
 			core::Door::OpenStyle::OpenLeft, &diagnostic),
 			("Styling stop 0 was refused: " + diagnostic).c_str());
-		require(building.setLiftStopDoorOpenStyle(liftSector, 1,
+		require(world.setLiftStopDoorOpenStyle(liftSector, 1,
 			core::Door::OpenStyle::OpenUp, &diagnostic),
 			("Styling stop 1 was refused: " + diagnostic).c_str());
-		require(building.setLiftStopDoorOpenStyle(liftSector, 2,
+		require(world.setLiftStopDoorOpenStyle(liftSector, 2,
 			core::Door::OpenStyle::OpenRight, &diagnostic),
 			("Styling stop 2 was refused: " + diagnostic).c_str());
-		requireStyleAtFloor(building, liftSector, 1, core::Door::OpenStyle::OpenLeft,
+		requireStyleAtFloor(world, liftSector, 1, core::Door::OpenStyle::OpenLeft,
 			"Freshly styled Lift");
-		requireStyleAtFloor(building, liftSector, 2, core::Door::OpenStyle::OpenUp,
+		requireStyleAtFloor(world, liftSector, 2, core::Door::OpenStyle::OpenUp,
 			"Freshly styled Lift");
-		requireStyleAtFloor(building, liftSector, 3, core::Door::OpenStyle::OpenRight,
+		requireStyleAtFloor(world, liftSector, 3, core::Door::OpenStyle::OpenRight,
 			"Freshly styled Lift");
 
 		// Adding a stop: extending the shaft over a new landing creates a stop
@@ -3719,41 +3770,41 @@ agents: []
 		// Door takes the Lift's generated OpenApart default.  The added Room
 		// record canonicalizes ahead of the Lift, so follow the Lift's Sector.
 		{
-			building.addRoom("Landing 4", 0, 4, 0, 12, 1);
-			auto const plan = building.planResizeLift(liftSector, 2, 1, 1, 4);
+			world.addRoom("Landing 4", 0, 4, 0, 12, 1);
+			auto const plan = world.planResizeLift(liftSector, 2, 1, 1, 4);
 			require(plan.valid, ("Extending the Lift over a new landing was refused: "
 				+ plan.diagnostic).c_str());
 			require(plan.stopOffsets == std::vector<uint32_t>{ 0, 1, 2, 3 },
 				"The extended Lift did not gain the new stop");
-			liftSector = building.applyLiftEdit(plan);
-			require(stopCount(building, liftSector) == 4,
+			liftSector = world.applyLiftEdit(plan);
+			require(stopCount(world, liftSector) == 4,
 				"The Lift did not gain exactly one new stop");
-			requireStyleAtFloor(building, liftSector, 1, core::Door::OpenStyle::OpenLeft,
+			requireStyleAtFloor(world, liftSector, 1, core::Door::OpenStyle::OpenLeft,
 				"Lift after adding a stop");
-			requireStyleAtFloor(building, liftSector, 2, core::Door::OpenStyle::OpenUp,
+			requireStyleAtFloor(world, liftSector, 2, core::Door::OpenStyle::OpenUp,
 				"Lift after adding a stop");
-			requireStyleAtFloor(building, liftSector, 3, core::Door::OpenStyle::OpenRight,
+			requireStyleAtFloor(world, liftSector, 3, core::Door::OpenStyle::OpenRight,
 				"Lift after adding a stop");
-			requireStyleAtFloor(building, liftSector, 4, core::Door::OpenStyle::OpenApart,
+			requireStyleAtFloor(world, liftSector, 4, core::Door::OpenStyle::OpenApart,
 				"The newly added stop");
 		}
 
 		// Removing a stop: deleting the middle stop (floor 2) takes its OpenUp
 		// override with it; the surviving stops keep their own styles.
 		{
-			auto const plan = building.planRemoveLiftStop(liftSector, 1);
+			auto const plan = world.planRemoveLiftStop(liftSector, 1);
 			require(plan.valid, ("Removing the stop at floor 2 was refused: "
 				+ plan.diagnostic).c_str());
-			liftSector = building.applyLiftEdit(plan);
-			require(stopCount(building, liftSector) == 3,
+			liftSector = world.applyLiftEdit(plan);
+			require(stopCount(world, liftSector) == 3,
 				"Removing a stop did not leave three stops");
-			requireNoStopAtFloor(building, liftSector, 2,
+			requireNoStopAtFloor(world, liftSector, 2,
 				"Lift after removing its floor-2 stop");
-			requireStyleAtFloor(building, liftSector, 1, core::Door::OpenStyle::OpenLeft,
+			requireStyleAtFloor(world, liftSector, 1, core::Door::OpenStyle::OpenLeft,
 				"Lift after removing a stop");
-			requireStyleAtFloor(building, liftSector, 3, core::Door::OpenStyle::OpenRight,
+			requireStyleAtFloor(world, liftSector, 3, core::Door::OpenStyle::OpenRight,
 				"Lift after removing a stop");
-			requireStyleAtFloor(building, liftSector, 4, core::Door::OpenStyle::OpenApart,
+			requireStyleAtFloor(world, liftSector, 4, core::Door::OpenStyle::OpenApart,
 				"Lift after removing a stop");
 		}
 
@@ -3762,21 +3813,21 @@ agents: []
 		// generated with the Lift's OpenApart default while every survivor is
 		// untouched.
 		{
-			auto const plan = building.planResizeLift(liftSector, 2, 1, 1, 4);
+			auto const plan = world.planResizeLift(liftSector, 2, 1, 1, 4);
 			require(plan.valid, ("Re-adding the stop at floor 2 was refused: "
 				+ plan.diagnostic).c_str());
 			require(plan.stopOffsets == std::vector<uint32_t>{ 0, 1, 2, 3 },
 				"The Lift did not re-derive the stop at floor 2");
-			liftSector = building.applyLiftEdit(plan);
-			require(stopCount(building, liftSector) == 4,
+			liftSector = world.applyLiftEdit(plan);
+			require(stopCount(world, liftSector) == 4,
 				"The Lift did not regain its fourth stop");
-			requireStyleAtFloor(building, liftSector, 1, core::Door::OpenStyle::OpenLeft,
+			requireStyleAtFloor(world, liftSector, 1, core::Door::OpenStyle::OpenLeft,
 				"Lift after re-adding the floor-2 stop");
-			requireStyleAtFloor(building, liftSector, 2, core::Door::OpenStyle::OpenApart,
+			requireStyleAtFloor(world, liftSector, 2, core::Door::OpenStyle::OpenApart,
 				"The new stop replacing the removed one");
-			requireStyleAtFloor(building, liftSector, 3, core::Door::OpenStyle::OpenRight,
+			requireStyleAtFloor(world, liftSector, 3, core::Door::OpenStyle::OpenRight,
 				"Lift after re-adding the floor-2 stop");
-			requireStyleAtFloor(building, liftSector, 4, core::Door::OpenStyle::OpenApart,
+			requireStyleAtFloor(world, liftSector, 4, core::Door::OpenStyle::OpenApart,
 				"Lift after re-adding the floor-2 stop");
 		}
 
@@ -3785,30 +3836,30 @@ agents: []
 		// Each style follows its stop's landing floor instead of sliding onto
 		// the Door that now sits at the style's old index.
 		{
-			building.addRoom("Landing 0", 0, 0, 0, 12, 1);
-			auto const plan = building.planResizeLift(liftSector, 2, 0, 1, 5);
+			world.addRoom("Landing 0", 0, 0, 0, 12, 1);
+			auto const plan = world.planResizeLift(liftSector, 2, 0, 1, 5);
 			require(plan.valid, ("Inserting a stop below the Lift was refused: "
 				+ plan.diagnostic).c_str());
 			require(plan.stopOffsets == std::vector<uint32_t>{ 0, 1, 2, 3, 4 },
 				"The Lift did not gain the bottom stop");
-			liftSector = building.applyLiftEdit(plan);
-			require(stopCount(building, liftSector) == 5,
+			liftSector = world.applyLiftEdit(plan);
+			require(stopCount(world, liftSector) == 5,
 				"Inserting the bottom stop changed the stop count unexpectedly");
-			require(stopFloor(building, liftSector, 0) == 0
-				&& stopFloor(building, liftSector, 1) == 1
-				&& stopFloor(building, liftSector, 2) == 2
-				&& stopFloor(building, liftSector, 3) == 3
-				&& stopFloor(building, liftSector, 4) == 4,
+			require(stopFloor(world, liftSector, 0) == 0
+				&& stopFloor(world, liftSector, 1) == 1
+				&& stopFloor(world, liftSector, 2) == 2
+				&& stopFloor(world, liftSector, 3) == 3
+				&& stopFloor(world, liftSector, 4) == 4,
 				"The shifted stop list is not on the expected floors");
-			requireStyleAtFloor(building, liftSector, 0, core::Door::OpenStyle::OpenApart,
+			requireStyleAtFloor(world, liftSector, 0, core::Door::OpenStyle::OpenApart,
 				"The newly inserted bottom stop");
-			requireStyleAtFloor(building, liftSector, 1, core::Door::OpenStyle::OpenLeft,
+			requireStyleAtFloor(world, liftSector, 1, core::Door::OpenStyle::OpenLeft,
 				"Lift after its stop indices shifted down");
-			requireStyleAtFloor(building, liftSector, 2, core::Door::OpenStyle::OpenApart,
+			requireStyleAtFloor(world, liftSector, 2, core::Door::OpenStyle::OpenApart,
 				"Lift after its stop indices shifted down");
-			requireStyleAtFloor(building, liftSector, 3, core::Door::OpenStyle::OpenRight,
+			requireStyleAtFloor(world, liftSector, 3, core::Door::OpenStyle::OpenRight,
 				"Lift after its stop indices shifted down");
-			requireStyleAtFloor(building, liftSector, 4, core::Door::OpenStyle::OpenApart,
+			requireStyleAtFloor(world, liftSector, 4, core::Door::OpenStyle::OpenApart,
 				"Lift after its stop indices shifted down");
 		}
 
@@ -3816,7 +3867,7 @@ agents: []
 		// the removal, and the reindexing retains every style on its own
 		// stop's landing floor.
 		{
-			auto const yaml = snapshotYaml(building);
+			auto const yaml = snapshotYaml(world);
 			auto const loaded = loadYaml(yaml);
 			require(stopCount(*loaded, liftSector) == 5,
 				"The loaded Lift lost stops in the round-trip");
@@ -3836,19 +3887,19 @@ agents: []
 	// Ticket #88: each generated Shuttle Door carries an individually authored
 	// opening-style override while the Shuttle's topology stays fixed. Editing
 	// one Shuttle Door changes no sibling Door at the same or another stop, the
-	// overrides round-trip through Building persistence, snapshot-based
+	// overrides round-trip through World persistence, snapshot-based
 	// undo/redo restores the previous per-Door style, and reconstructing an
 	// unchanged Shuttle retains every override. Shuttle Doors without an
 	// override keep OpenUp.
 	void shuttleDoorStyleOverridesAreIndividualAndPersist()
 	{
-		auto findShuttleDoor = [](core::Building const& building, uint32_t shuttleSector,
+		auto findShuttleDoor = [](core::World const& world, uint32_t shuttleSector,
 			uint32_t stopIndex, uint32_t carriageIndex, uint32_t doorIndex)
 			-> std::shared_ptr<const core::Door>
 		{
-			for (uint32_t sectorIndex = 0; sectorIndex < building.getNumSectors(); ++sectorIndex)
+			for (uint32_t sectorIndex = 0; sectorIndex < world.getNumSectors(); ++sectorIndex)
 			{
-				auto const sector = building.getSector(sectorIndex);
+				auto const sector = world.getSector(sectorIndex);
 				if (!sector) continue;
 				for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
 				{
@@ -3856,7 +3907,7 @@ agents: []
 					if (!object || object->getObjectType() != core::SectorObjectType::Door) continue;
 					uint32_t ownerSector{ ~0u }, ownerStop{ ~0u };
 					uint32_t ownerCarriage{ ~0u }, ownerDoor{ ~0u };
-					if (building.isShuttleOwnedDoor(object, &ownerSector, &ownerStop,
+					if (world.isShuttleOwnedDoor(object, &ownerSector, &ownerStop,
 							&ownerCarriage, &ownerDoor)
 						&& ownerSector == shuttleSector && ownerStop == stopIndex
 						&& ownerCarriage == carriageIndex && ownerDoor == doorIndex)
@@ -3865,43 +3916,43 @@ agents: []
 			}
 			return nullptr;
 		};
-		auto snapshotYaml = [](core::Building& building)
+		auto snapshotYaml = [](core::World& world)
 		{
 			core::SerializationWorkData workData;
 			auto writer = core::YamlSerializer::toString();
-			building.serialize(*writer, workData);
+			world.serialize(*writer, workData);
 			writer->serialize();
 			return writer->getSerializedString();
 		};
 		auto loadYaml = [](std::string const& yaml)
 		{
-			auto building = std::make_shared<core::Building>("placeholder", 1, 1);
+			auto world = std::make_shared<core::World>("placeholder", 1, 1);
 			core::SerializationWorkData workData;
 			auto reader = core::YamlSerializer::fromString(yaml);
 			reader->deserialize();
-			building->deserialize(*reader, workData);
-			return building;
+			world->deserialize(*reader, workData);
+			return world;
 		};
 
-		core::Building building("Shuttle door styles", 32, 3);
-		building.addCorridor(0, 0, 31);
-		building.addCorridor(1, 0, 31);
-		core::Building::CreateShuttleOptions options{ 2, 3, { 0, 18 }, 0 };
+		core::World world("Shuttle door styles", 32, 3);
+		world.addCorridor(0, 0, 31);
+		world.addCorridor(1, 0, 31);
+		core::World::CreateShuttleOptions options{ 2, 3, { 0, 18 }, 0 };
 		options.capacity = 2;
 		options.doorMask = 0b101; // Two doors per carriage: cells 0 and 2.
-		auto const created = building.addShuttle(1, 0, 0, 27, options);
-		building.finishBuild();
+		auto const created = world.addShuttle(1, 0, 0, 27, options);
+		world.finishBuild();
 		require(created.doors.size() == 8,
 			"The Shuttle did not generate eight landing Doors");
 		auto const shuttleSector = created.shuttle.sector->getIndex();
-		building.pauseSimulation();
+		world.pauseSimulation();
 
 		// Every generated Shuttle Door without an override opens Up.
 		for (uint32_t stop = 0; stop < 2; ++stop)
 			for (uint32_t car = 0; car < 2; ++car)
 				for (uint32_t door = 0; door < 2; ++door)
 				{
-					auto const generated = findShuttleDoor(building, shuttleSector, stop, car, door);
+					auto const generated = findShuttleDoor(world, shuttleSector, stop, car, door);
 					require(generated != nullptr, "A generated Shuttle Door could not be found");
 					require(generated->getOpenStyle() == core::Door::OpenStyle::OpenUp,
 						"A Shuttle Door without an override is not OpenUp");
@@ -3909,48 +3960,48 @@ agents: []
 
 		// A Shuttle with no per-Door choices persists no style data at all, and
 		// overrides outside the authored stop/carriage/door grid are refused.
-		require(snapshotYaml(building).find("doorOpenStyles") == std::string::npos,
+		require(snapshotYaml(world).find("doorOpenStyles") == std::string::npos,
 			"A Shuttle with no per-Door overrides persisted a doorOpenStyles array");
 		std::string diagnostic;
-		require(!building.setShuttleDoorOpenStyle(shuttleSector, 2, 0, 0,
+		require(!world.setShuttleDoorOpenStyle(shuttleSector, 2, 0, 0,
 			core::Door::OpenStyle::OpenLeft, &diagnostic),
 			"An override was accepted for a stop outside the Shuttle's authored topology");
-		require(!building.setShuttleDoorOpenStyle(shuttleSector, 0, 2, 0,
+		require(!world.setShuttleDoorOpenStyle(shuttleSector, 0, 2, 0,
 			core::Door::OpenStyle::OpenLeft, &diagnostic),
 			"An override was accepted for a carriage outside the Shuttle's authored topology");
-		require(!building.setShuttleDoorOpenStyle(shuttleSector, 0, 0, 2,
+		require(!world.setShuttleDoorOpenStyle(shuttleSector, 0, 0, 2,
 			core::Door::OpenStyle::OpenLeft, &diagnostic),
 			"An override was accepted for a door cell outside the Shuttle's doorMask");
 
 		// Editing one Door takes effect live and touches no sibling Door at the
 		// same or another stop.
-		require(building.setShuttleDoorOpenStyle(shuttleSector, 0, 0, 0,
+		require(world.setShuttleDoorOpenStyle(shuttleSector, 0, 0, 0,
 			core::Door::OpenStyle::OpenLeft, &diagnostic),
 			("A per-Door override was refused: " + diagnostic).c_str());
-		require(findShuttleDoor(building, shuttleSector, 0, 0, 0)->getOpenStyle()
+		require(findShuttleDoor(world, shuttleSector, 0, 0, 0)->getOpenStyle()
 			== core::Door::OpenStyle::OpenLeft,
 			"The edited Shuttle Door did not take the override live");
-		require(findShuttleDoor(building, shuttleSector, 0, 0, 1)->getOpenStyle()
+		require(findShuttleDoor(world, shuttleSector, 0, 0, 1)->getOpenStyle()
 			== core::Door::OpenStyle::OpenUp,
 			"Editing one Shuttle Door changed its sibling door on the same carriage");
-		require(findShuttleDoor(building, shuttleSector, 0, 1, 0)->getOpenStyle()
+		require(findShuttleDoor(world, shuttleSector, 0, 1, 0)->getOpenStyle()
 			== core::Door::OpenStyle::OpenUp,
 			"Editing one Shuttle Door changed a sibling carriage at the same stop");
-		require(findShuttleDoor(building, shuttleSector, 1, 0, 0)->getOpenStyle()
+		require(findShuttleDoor(world, shuttleSector, 1, 0, 0)->getOpenStyle()
 			== core::Door::OpenStyle::OpenUp,
 			"Editing one Shuttle Door changed a sibling Door at another stop");
 
 		// A second Door takes its own style while the first keeps its own.
-		require(building.setShuttleDoorOpenStyle(shuttleSector, 1, 1, 1,
+		require(world.setShuttleDoorOpenStyle(shuttleSector, 1, 1, 1,
 			core::Door::OpenStyle::OpenRight, &diagnostic),
 			("A second per-Door override was refused: " + diagnostic).c_str());
-		require(findShuttleDoor(building, shuttleSector, 0, 0, 0)->getOpenStyle()
+		require(findShuttleDoor(world, shuttleSector, 0, 0, 0)->getOpenStyle()
 			== core::Door::OpenStyle::OpenLeft,
 			"Editing a second Shuttle Door changed the first Door's override");
 
 		// Save/load: the overrides ride in the Shuttle's own record, and Doors
 		// without an override replay as the generated OpenUp default.
-		auto const yaml = snapshotYaml(building);
+		auto const yaml = snapshotYaml(world);
 		require(yaml.find("doorOpenStyles") != std::string::npos,
 			"The Shuttle record did not persist its per-Door styles");
 		require(yaml.find("openLeft") != std::string::npos
@@ -4025,13 +4076,13 @@ agents: []
 	// reconstruction, and a save/load all keep every style on its own Door.
 	void shuttleDoorStylesSurviveShuttleMovement()
 	{
-		auto findShuttleDoor = [](core::Building const& building, uint32_t shuttleSector,
+		auto findShuttleDoor = [](core::World const& world, uint32_t shuttleSector,
 			uint32_t stopIndex, uint32_t carriageIndex, uint32_t doorIndex)
 			-> std::shared_ptr<const core::Door>
 		{
-			for (uint32_t sectorIndex = 0; sectorIndex < building.getNumSectors(); ++sectorIndex)
+			for (uint32_t sectorIndex = 0; sectorIndex < world.getNumSectors(); ++sectorIndex)
 			{
-				auto const sector = building.getSector(sectorIndex);
+				auto const sector = world.getSector(sectorIndex);
 				if (!sector) continue;
 				for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
 				{
@@ -4039,7 +4090,7 @@ agents: []
 					if (!object || object->getObjectType() != core::SectorObjectType::Door) continue;
 					uint32_t ownerSector{ ~0u }, ownerStop{ ~0u };
 					uint32_t ownerCarriage{ ~0u }, ownerDoor{ ~0u };
-					if (building.isShuttleOwnedDoor(object, &ownerSector, &ownerStop,
+					if (world.isShuttleOwnedDoor(object, &ownerSector, &ownerStop,
 							&ownerCarriage, &ownerDoor)
 						&& ownerSector == shuttleSector && ownerStop == stopIndex
 						&& ownerCarriage == carriageIndex && ownerDoor == doorIndex)
@@ -4048,22 +4099,22 @@ agents: []
 			}
 			return nullptr;
 		};
-		auto snapshotYaml = [](core::Building& building)
+		auto snapshotYaml = [](core::World& world)
 		{
 			core::SerializationWorkData workData;
 			auto writer = core::YamlSerializer::toString();
-			building.serialize(*writer, workData);
+			world.serialize(*writer, workData);
 			writer->serialize();
 			return writer->getSerializedString();
 		};
 		auto loadYaml = [](std::string const& yaml)
 		{
-			auto building = std::make_shared<core::Building>("placeholder", 1, 1);
+			auto world = std::make_shared<core::World>("placeholder", 1, 1);
 			core::SerializationWorkData workData;
 			auto reader = core::YamlSerializer::fromString(yaml);
 			reader->deserialize();
-			building->deserialize(*reader, workData);
-			return building;
+			world->deserialize(*reader, workData);
+			return world;
 		};
 		// Every one of the eight stop/carriage/door identities carries its own
 		// expected style; no two adjacent identities share a style so a swap
@@ -4073,62 +4124,62 @@ agents: []
 			  { core::Door::OpenStyle::OpenRight, core::Door::OpenStyle::OpenUp } },
 			{ { core::Door::OpenStyle::OpenApart, core::Door::OpenStyle::OpenRight },
 			  { core::Door::OpenStyle::OpenUp, core::Door::OpenStyle::OpenLeft } } };
-		auto requireAllStyles = [&](core::Building const& building, uint32_t shuttleSector,
+		auto requireAllStyles = [&](core::World const& world, uint32_t shuttleSector,
 			char const* context)
 		{
 			for (uint32_t stop = 0; stop < 2; ++stop)
 				for (uint32_t car = 0; car < 2; ++car)
 					for (uint32_t door = 0; door < 2; ++door)
 					{
-						auto const found = findShuttleDoor(building, shuttleSector, stop, car, door);
+						auto const found = findShuttleDoor(world, shuttleSector, stop, car, door);
 						require(found != nullptr,
 							("Shuttle Door identity lost in " + std::string(context)).c_str());
 						require(found->getOpenStyle() == expected[stop][car][door],
 							("Shuttle Door style wrong in " + std::string(context)).c_str());
 					}
 		};
-		auto requireTransitAt = [](core::Building const& building, uint32_t shuttleSector,
+		auto requireTransitAt = [](core::World const& world, uint32_t shuttleSector,
 			uint32_t x, uint32_t y, char const* context)
 		{
 			auto const transit = std::dynamic_pointer_cast<const core::ShuttleTransit>(
-				building.getSector(shuttleSector));
+				world.getSector(shuttleSector));
 			require(transit != nullptr,
 				("The Shuttle Sector is not a Shuttle Transit in " + std::string(context)).c_str());
 			require(transit->getCellX() == x && transit->getCellY() == y,
 				("The Shuttle did not reach its requested position in " + std::string(context)).c_str());
 		};
 
-		core::Building building("Shuttle move styles", 48, 3);
+		core::World world("Shuttle move styles", 48, 3);
 		for (uint32_t row = 0; row < 3; ++row)
-			building.addCorridor(0u, row, 0u, 47u, 1u);
-		core::Building::CreateShuttleOptions options{ 2, 3, { 0, 18 }, 0 };
+			world.addCorridor(0u, row, 0u, 47u, 1u);
+		core::World::CreateShuttleOptions options{ 2, 3, { 0, 18 }, 0 };
 		options.capacity = 2;
 		options.doorMask = 0b101; // Two doors per carriage: cells 0 and 2.
-		auto const created = building.addShuttle(1, 0, 0, 27, options);
-		building.finishBuild();
-		building.pauseSimulation();
+		auto const created = world.addShuttle(1, 0, 0, 27, options);
+		world.finishBuild();
+		world.pauseSimulation();
 		auto shuttleSector = created.shuttle.sector->getIndex();
 
 		std::string diagnostic;
 		for (uint32_t stop = 0; stop < 2; ++stop)
 			for (uint32_t car = 0; car < 2; ++car)
 				for (uint32_t door = 0; door < 2; ++door)
-					require(building.setShuttleDoorOpenStyle(shuttleSector, stop, car, door,
+					require(world.setShuttleDoorOpenStyle(shuttleSector, stop, car, door,
 						expected[stop][car][door], &diagnostic),
 						("Styling a Shuttle Door was refused: " + diagnostic).c_str());
-		requireAllStyles(building, shuttleSector, "authored styles");
+		requireAllStyles(world, shuttleSector, "authored styles");
 
 		// Move the Shuttle sideways without changing stops, carriages, or door
 		// positions.  Every style must follow its own structural Door identity.
 		{
-			auto const plan = building.planResizeShuttle(shuttleSector, 4, 0, 27);
+			auto const plan = world.planResizeShuttle(shuttleSector, 4, 0, 27);
 			require(plan.valid, ("Moving the Shuttle was refused: " + plan.diagnostic).c_str());
 			require(plan.move, "A sideways Shuttle edit was not recognized as a move");
 			require(plan.stopOffsets == std::vector<uint32_t>{ 0, 18 },
 				"The move changed the Shuttle's stop topology unexpectedly");
-			shuttleSector = building.applyShuttleEdit(plan);
-			requireTransitAt(building, shuttleSector, 4, 0, "Shuttle after moving");
-			requireAllStyles(building, shuttleSector, "Shuttle after moving");
+			shuttleSector = world.applyShuttleEdit(plan);
+			requireTransitAt(world, shuttleSector, 4, 0, "Shuttle after moving");
+			requireAllStyles(world, shuttleSector, "Shuttle after moving");
 		}
 
 		// Restyling at the new position addresses the same structural identity:
@@ -4137,58 +4188,58 @@ agents: []
 		{
 			expected[1][1][1] = core::Door::OpenStyle::OpenRight;
 			expected[0][0][0] = core::Door::OpenStyle::OpenUp;
-			require(building.setShuttleDoorOpenStyle(shuttleSector, 1, 1, 1,
+			require(world.setShuttleDoorOpenStyle(shuttleSector, 1, 1, 1,
 				core::Door::OpenStyle::OpenRight, &diagnostic),
 				("Restyling after the move was refused: " + diagnostic).c_str());
-			require(building.setShuttleDoorOpenStyle(shuttleSector, 0, 0, 0,
+			require(world.setShuttleDoorOpenStyle(shuttleSector, 0, 0, 0,
 				core::Door::OpenStyle::OpenUp, &diagnostic),
 				("Restyling after the move was refused: " + diagnostic).c_str());
-			requireAllStyles(building, shuttleSector, "Shuttle restyled after moving");
+			requireAllStyles(world, shuttleSector, "Shuttle restyled after moving");
 		}
 
 		// A second move, this time vertically as well as sideways, keeps every
 		// style on its own stop/carriage/door identity.
 		{
-			auto const plan = building.planResizeShuttle(shuttleSector, 10, 1, 27);
+			auto const plan = world.planResizeShuttle(shuttleSector, 10, 1, 27);
 			require(plan.valid, ("Moving the Shuttle to another row was refused: "
 				+ plan.diagnostic).c_str());
 			require(plan.move, "A diagonal Shuttle edit was not recognized as a move");
-			shuttleSector = building.applyShuttleEdit(plan);
-			requireTransitAt(building, shuttleSector, 10, 1, "Shuttle after the second move");
-			requireAllStyles(building, shuttleSector, "Shuttle after the second move");
+			shuttleSector = world.applyShuttleEdit(plan);
+			requireTransitAt(world, shuttleSector, 10, 1, "Shuttle after the second move");
+			requireAllStyles(world, shuttleSector, "Shuttle after the second move");
 		}
 
 		// Extending the track to the left shifts every stop offset while keeping
 		// the same stops, carriages, and door configuration; styles must stay on
 		// their own structural identities, not slide with the offsets.
 		{
-			auto const plan = building.planResizeShuttle(shuttleSector, 8, 1, 29);
+			auto const plan = world.planResizeShuttle(shuttleSector, 8, 1, 29);
 			require(plan.valid, ("Extending the Shuttle track leftward was refused: "
 				+ plan.diagnostic).c_str());
 			require(plan.stopOffsets == std::vector<uint32_t>{ 2, 20 },
 				("Left extension did not shift stop offsets as expected: got "
 					+ std::to_string(plan.stopOffsets.size()) + " stops").c_str());
-			shuttleSector = building.applyShuttleEdit(plan);
-			requireTransitAt(building, shuttleSector, 8, 1, "Shuttle after left extension");
-			requireAllStyles(building, shuttleSector, "Shuttle after left extension");
+			shuttleSector = world.applyShuttleEdit(plan);
+			requireTransitAt(world, shuttleSector, 8, 1, "Shuttle after left extension");
+			requireAllStyles(world, shuttleSector, "Shuttle after left extension");
 		}
 
 		// A topology-equivalent reconstruction at the new position must not
 		// reset or swap styles.
 		{
-			auto const plan = building.planResizeShuttle(shuttleSector, 8, 1, 29);
+			auto const plan = world.planResizeShuttle(shuttleSector, 8, 1, 29);
 			require(plan.valid, ("Reconstructing the moved Shuttle was refused: "
 				+ plan.diagnostic).c_str());
-			shuttleSector = building.applyShuttleEdit(plan);
-			requireTransitAt(building, shuttleSector, 8, 1,
+			shuttleSector = world.applyShuttleEdit(plan);
+			requireTransitAt(world, shuttleSector, 8, 1,
 				"Shuttle after topology-equivalent reconstruction");
-			requireAllStyles(building, shuttleSector,
+			requireAllStyles(world, shuttleSector,
 				"Shuttle after topology-equivalent reconstruction");
 		}
 
 		// Save/load after the moves retains the reconciled styles.
 		{
-			auto const loaded = loadYaml(snapshotYaml(building));
+			auto const loaded = loadYaml(snapshotYaml(world));
 			requireTransitAt(*loaded, shuttleSector, 8, 1, "Loaded Shuttle after movement");
 			requireAllStyles(*loaded, shuttleSector, "Loaded Shuttle after movement");
 		}
@@ -4204,13 +4255,13 @@ agents: []
 	// through save/load.
 	void shuttleDoorStylesReconcileWhenStopsChange()
 	{
-		auto findShuttleDoor = [](core::Building const& building, uint32_t shuttleSector,
+		auto findShuttleDoor = [](core::World const& world, uint32_t shuttleSector,
 			uint32_t stopIndex, uint32_t carriageIndex, uint32_t doorIndex)
 			-> std::shared_ptr<const core::Door>
 		{
-			for (uint32_t sectorIndex = 0; sectorIndex < building.getNumSectors(); ++sectorIndex)
+			for (uint32_t sectorIndex = 0; sectorIndex < world.getNumSectors(); ++sectorIndex)
 			{
-				auto const sector = building.getSector(sectorIndex);
+				auto const sector = world.getSector(sectorIndex);
 				if (!sector) continue;
 				for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
 				{
@@ -4218,7 +4269,7 @@ agents: []
 					if (!object || object->getObjectType() != core::SectorObjectType::Door) continue;
 					uint32_t ownerSector{ ~0u }, ownerStop{ ~0u };
 					uint32_t ownerCarriage{ ~0u }, ownerDoor{ ~0u };
-					if (building.isShuttleOwnedDoor(object, &ownerSector, &ownerStop,
+					if (world.isShuttleOwnedDoor(object, &ownerSector, &ownerStop,
 							&ownerCarriage, &ownerDoor)
 						&& ownerSector == shuttleSector && ownerStop == stopIndex
 						&& ownerCarriage == carriageIndex && ownerDoor == doorIndex)
@@ -4227,51 +4278,51 @@ agents: []
 			}
 			return nullptr;
 		};
-		auto snapshotYaml = [](core::Building& building)
+		auto snapshotYaml = [](core::World& world)
 		{
 			core::SerializationWorkData workData;
 			auto writer = core::YamlSerializer::toString();
-			building.serialize(*writer, workData);
+			world.serialize(*writer, workData);
 			writer->serialize();
 			return writer->getSerializedString();
 		};
 		auto loadYaml = [](std::string const& yaml)
 		{
-			auto building = std::make_shared<core::Building>("placeholder", 1, 1);
+			auto world = std::make_shared<core::World>("placeholder", 1, 1);
 			core::SerializationWorkData workData;
 			auto reader = core::YamlSerializer::fromString(yaml);
 			reader->deserialize();
-			building->deserialize(*reader, workData);
-			return building;
+			world->deserialize(*reader, workData);
+			return world;
 		};
 		// The style the Shuttle's own record carries for one grid slot,
 		// ~0u when the record holds no override there.
-		auto recordedStyle = [](core::Building const& building, uint32_t shuttleSector,
+		auto recordedStyle = [](core::World const& world, uint32_t shuttleSector,
 			uint32_t stop, uint32_t car, uint32_t door) -> uint32_t
 		{
 			auto const transit = std::dynamic_pointer_cast<const core::ShuttleTransit>(
-				building.getSector(shuttleSector));
+				world.getSector(shuttleSector));
 			require(transit != nullptr, "The Shuttle Sector is not a Shuttle Transit");
-			core::Building::CreateShuttleOptions options{};
-			require(building.getShuttleOptions(transit->getShuttle().get(), options),
+			core::World::CreateShuttleOptions options{};
+			require(world.getShuttleOptions(transit->getShuttle().get(), options),
 				"The Shuttle record could not be read back");
 			auto const slot = (stop * 2 + car) * 2 + door;
 			return slot < options.doorOpenStyles.size() ? options.doorOpenStyles[slot] : ~0u;
 		};
 		// Every live Shuttle-owned Door column, to prove removed stops take
 		// their Doors with them and omitted partial landings stay unbuilt.
-		auto shuttleDoorColumns = [](core::Building const& building, uint32_t shuttleSector)
+		auto shuttleDoorColumns = [](core::World const& world, uint32_t shuttleSector)
 		{
 			std::set<uint32_t> columns;
-			for (uint32_t sectorIndex = 0; sectorIndex < building.getNumSectors(); ++sectorIndex)
+			for (uint32_t sectorIndex = 0; sectorIndex < world.getNumSectors(); ++sectorIndex)
 			{
-				auto const sector = building.getSector(sectorIndex);
+				auto const sector = world.getSector(sectorIndex);
 				if (!sector) continue;
 				for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
 				{
 					auto const object = sector->getObject(i);
 					uint32_t ownerSector{ ~0u };
-					if (building.isShuttleOwnedDoor(object, &ownerSector)
+					if (world.isShuttleOwnedDoor(object, &ownerSector)
 						&& ownerSector == shuttleSector)
 						columns.insert(object->getCellX());
 				}
@@ -4281,14 +4332,14 @@ agents: []
 		using Style = core::Door::OpenStyle;
 		// present[stop][car][door]: the Door must exist and carry the
 		// expected style (when present) or must not exist at all.
-		auto requireGrid = [&](core::Building const& building, uint32_t shuttleSector,
+		auto requireGrid = [&](core::World const& world, uint32_t shuttleSector,
 			bool const present[3][2][2], Style const expected[3][2][2], char const* context)
 		{
 			for (uint32_t stop = 0; stop < 3; ++stop)
 				for (uint32_t car = 0; car < 2; ++car)
 					for (uint32_t door = 0; door < 2; ++door)
 					{
-						auto const found = findShuttleDoor(building, shuttleSector, stop, car, door);
+						auto const found = findShuttleDoor(world, shuttleSector, stop, car, door);
 						if (!present[stop][car][door])
 						{
 							require(found == nullptr,
@@ -4315,22 +4366,22 @@ agents: []
 		// The front-layer platform leaves cells 31 and 32 empty: the last
 		// stop's first carriage second door has no landing and is omitted as
 		// an unsupported partial landing.
-		core::Building building("Shuttle stop style reconciliation", 48, 3);
-		building.addCorridor(0, 0, 0, 31, 1);
-		building.addCorridor(0, 0, 33, 15, 1);
-		core::Building::CreateShuttleOptions options{ 2, 3, { 0, 18, 29 }, 0 };
+		core::World world("Shuttle stop style reconciliation", 48, 3);
+		world.addCorridor(0, 0, 0, 31, 1);
+		world.addCorridor(0, 0, 33, 15, 1);
+		core::World::CreateShuttleOptions options{ 2, 3, { 0, 18, 29 }, 0 };
 		options.capacity = 2;
 		options.doorMask = 0b101; // Two doors per carriage: cells 0 and 2.
 		options.allowPartialLandings = true;
-		auto const created = building.addShuttle(1, 0, 0, 40, options);
-		building.finishBuild();
+		auto const created = world.addShuttle(1, 0, 0, 40, options);
+		world.finishBuild();
 		require(created.doors.size() == 12,
 			"The Shuttle did not generate its twelve-slot landing Door grid");
 		require(!created.doors[(2 * 2 + 0) * 2 + 1].traversalResource,
 			"An unsupported partial landing produced a Door instead of being omitted");
-		building.pauseSimulation();
+		world.pauseSimulation();
 		auto shuttleSector = created.shuttle.sector->getIndex();
-		require(shuttleDoorColumns(building, shuttleSector)
+		require(shuttleDoorColumns(world, shuttleSector)
 			== std::set<uint32_t>{ 0, 2, 4, 6, 18, 20, 22, 24, 29, 33, 35 },
 			"The authored Shuttle does not own the expected landing Door columns");
 
@@ -4363,37 +4414,37 @@ agents: []
 				for (uint32_t door = 0; door < 2; ++door)
 				{
 					if (!present[stop][car][door]) continue;
-					require(building.setShuttleDoorOpenStyle(shuttleSector, stop, car, door,
+					require(world.setShuttleDoorOpenStyle(shuttleSector, stop, car, door,
 						expected[stop][car][door], &diagnostic),
 						("Styling a Shuttle Door was refused: " + diagnostic).c_str());
 				}
 		// An override addressed to the omitted partial-landing Door is a
 		// valid grid slot that governs no live Door; reconciliation must
 		// take it away with the omission rather than leave it live.
-		require(building.setShuttleDoorOpenStyle(shuttleSector, 2, 0, 1,
+		require(world.setShuttleDoorOpenStyle(shuttleSector, 2, 0, 1,
 			Style::OpenRight, &diagnostic),
 			("Styling the omitted partial-landing slot was refused: " + diagnostic).c_str());
-		require(findShuttleDoor(building, shuttleSector, 2, 0, 1) == nullptr,
+		require(findShuttleDoor(world, shuttleSector, 2, 0, 1) == nullptr,
 			"The omitted partial-landing slot has a live Door");
-		requireGrid(building, shuttleSector, present, expected, "authored styles");
+		requireGrid(world, shuttleSector, present, expected, "authored styles");
 
 		// Deleting the middle stop reindexes the far stop: its styles stay on
 		// its own stop, the deleted stop's overrides leave with it, and the
 		// override on the omitted partial-landing Door is dropped too.
 		{
-			auto const plan = building.planRemoveShuttleStop(shuttleSector, 1);
+			auto const plan = world.planRemoveShuttleStop(shuttleSector, 1);
 			require(plan.valid, ("Deleting the middle Shuttle stop was refused: " + plan.diagnostic).c_str());
-			shuttleSector = building.applyShuttleEdit(plan);
+			shuttleSector = world.applyShuttleEdit(plan);
 			copyPresence(present[0], fullStop);
 			copyPresence(present[1], partialStop);
 			copyPresence(present[2], noStop);
 			copyStyles(expected[0], rowA);
 			copyStyles(expected[1], rowC);
-			requireGrid(building, shuttleSector, present, expected, "after deleting the middle stop");
-			require(shuttleDoorColumns(building, shuttleSector)
+			requireGrid(world, shuttleSector, present, expected, "after deleting the middle stop");
+			require(shuttleDoorColumns(world, shuttleSector)
 				== std::set<uint32_t>{ 0, 2, 4, 6, 29, 33, 35 },
 				"The deleted stop left Doors behind or the omitted landing gained one");
-			require(recordedStyle(building, shuttleSector, 1, 0, 1) == ~0u,
+			require(recordedStyle(world, shuttleSector, 1, 0, 1) == ~0u,
 				"The omitted partial-landing Door retained a live override");
 		}
 
@@ -4401,20 +4452,20 @@ agents: []
 		// survivor keeps its own style and the new stop's Doors generate
 		// OpenUp with no override of their own.
 		{
-			auto const plan = building.planAddShuttleStop(shuttleSector, 10);
+			auto const plan = world.planAddShuttleStop(shuttleSector, 10);
 			require(plan.valid, ("Adding a Shuttle stop was refused: " + plan.diagnostic).c_str());
-			shuttleSector = building.applyShuttleEdit(plan);
+			shuttleSector = world.applyShuttleEdit(plan);
 			copyPresence(present[0], fullStop);
 			copyPresence(present[1], fullStop);
 			copyPresence(present[2], partialStop);
 			copyStyles(expected[0], rowA);
 			copyStyles(expected[1], rowNew);
 			copyStyles(expected[2], rowC);
-			requireGrid(building, shuttleSector, present, expected, "after adding a middle stop");
-			require(recordedStyle(building, shuttleSector, 1, 0, 0) == ~0u
-				&& recordedStyle(building, shuttleSector, 1, 1, 1) == ~0u,
+			requireGrid(world, shuttleSector, present, expected, "after adding a middle stop");
+			require(recordedStyle(world, shuttleSector, 1, 0, 0) == ~0u
+				&& recordedStyle(world, shuttleSector, 1, 1, 1) == ~0u,
 				"A newly added stop's Door did not default to no override");
-			require(recordedStyle(building, shuttleSector, 2, 0, 1) == ~0u,
+			require(recordedStyle(world, shuttleSector, 2, 0, 1) == ~0u,
 				"The omitted partial-landing override survived the stop addition");
 		}
 
@@ -4422,22 +4473,22 @@ agents: []
 		// offset cannot resurrect its discarded overrides: the re-added
 		// Doors are new identities and generate OpenUp.
 		{
-			auto const remove = building.planRemoveShuttleStop(shuttleSector, 0);
+			auto const remove = world.planRemoveShuttleStop(shuttleSector, 0);
 			require(remove.valid, ("Deleting the styled first stop was refused: " + remove.diagnostic).c_str());
-			shuttleSector = building.applyShuttleEdit(remove);
-			auto const readd = building.planAddShuttleStop(shuttleSector, 0);
+			shuttleSector = world.applyShuttleEdit(remove);
+			auto const readd = world.planAddShuttleStop(shuttleSector, 0);
 			require(readd.valid, ("Re-adding the deleted stop offset was refused: " + readd.diagnostic).c_str());
-			shuttleSector = building.applyShuttleEdit(readd);
+			shuttleSector = world.applyShuttleEdit(readd);
 			copyPresence(present[0], fullStop);
 			copyPresence(present[1], fullStop);
 			copyPresence(present[2], partialStop);
 			copyStyles(expected[0], rowNew);
 			copyStyles(expected[1], rowNew);
 			copyStyles(expected[2], rowC);
-			requireGrid(building, shuttleSector, present, expected,
+			requireGrid(world, shuttleSector, present, expected,
 				"after re-adding the deleted first stop");
-			require(recordedStyle(building, shuttleSector, 0, 0, 0) == ~0u
-				&& recordedStyle(building, shuttleSector, 0, 1, 1) == ~0u,
+			require(recordedStyle(world, shuttleSector, 0, 0, 0) == ~0u
+				&& recordedStyle(world, shuttleSector, 0, 1, 1) == ~0u,
 				"A re-added stop resurrected the deleted stop's overrides");
 		}
 
@@ -4446,11 +4497,11 @@ agents: []
 		// Shuttle rebuild builds it fresh at OpenUp - the override dropped
 		// with the omission does not come back.
 		{
-			building.addCorridor(0, 0, 31, 2, 1);
-			auto const plan = building.planResizeShuttle(shuttleSector, 0, 0, 40);
+			world.addCorridor(0, 0, 31, 2, 1);
+			auto const plan = world.planResizeShuttle(shuttleSector, 0, 0, 40);
 			require(plan.valid, ("Rebuilding the Shuttle over the extended platform was refused: "
 				+ plan.diagnostic).c_str());
-			shuttleSector = building.applyShuttleEdit(plan);
+			shuttleSector = world.applyShuttleEdit(plan);
 			copyPresence(present[0], fullStop);
 			copyPresence(present[1], fullStop);
 			copyPresence(present[2], fullStop);
@@ -4458,17 +4509,17 @@ agents: []
 			copyStyles(expected[1], rowNew);
 			copyStyles(expected[2], rowC);
 			expected[2][0][1] = Style::OpenUp;
-			requireGrid(building, shuttleSector, present, expected,
+			requireGrid(world, shuttleSector, present, expected,
 				"after the omitted landing became supported");
-			require(shuttleDoorColumns(building, shuttleSector).count(31) == 1,
+			require(shuttleDoorColumns(world, shuttleSector).count(31) == 1,
 				"The newly supported landing did not gain its Door");
-			require(recordedStyle(building, shuttleSector, 2, 0, 1) == ~0u,
+			require(recordedStyle(world, shuttleSector, 2, 0, 1) == ~0u,
 				"The newly supported Door carried a stale override");
 		}
 
 		// The reconciled result round-trips through save/load unchanged.
 		{
-			auto const loaded = loadYaml(snapshotYaml(building));
+			auto const loaded = loadYaml(snapshotYaml(world));
 			requireGrid(*loaded, shuttleSector, present, expected, "loaded Shuttle");
 			require(recordedStyle(*loaded, shuttleSector, 2, 0, 1) == ~0u,
 				"The loaded Shuttle carried an override for the once-omitted Door");
@@ -4494,13 +4545,13 @@ agents: []
 	// round-trips through save/load.
 	void shuttleDoorStylesReconcileWhenCarriageAndDoorLayoutChanges()
 	{
-		auto findShuttleDoorObject = [](core::Building const& building, uint32_t shuttleSector,
+		auto findShuttleDoorObject = [](core::World const& world, uint32_t shuttleSector,
 			uint32_t stopIndex, uint32_t carriageIndex, uint32_t doorIndex)
 			-> std::shared_ptr<const core::SectorObject>
 		{
-			for (uint32_t sectorIndex = 0; sectorIndex < building.getNumSectors(); ++sectorIndex)
+			for (uint32_t sectorIndex = 0; sectorIndex < world.getNumSectors(); ++sectorIndex)
 			{
-				auto const sector = building.getSector(sectorIndex);
+				auto const sector = world.getSector(sectorIndex);
 				if (!sector) continue;
 				for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
 				{
@@ -4508,7 +4559,7 @@ agents: []
 					if (!object || object->getObjectType() != core::SectorObjectType::Door) continue;
 					uint32_t ownerSector{ ~0u }, ownerStop{ ~0u };
 					uint32_t ownerCarriage{ ~0u }, ownerDoor{ ~0u };
-					if (building.isShuttleOwnedDoor(object, &ownerSector, &ownerStop,
+					if (world.isShuttleOwnedDoor(object, &ownerSector, &ownerStop,
 							&ownerCarriage, &ownerDoor)
 						&& ownerSector == shuttleSector && ownerStop == stopIndex
 						&& ownerCarriage == carriageIndex && ownerDoor == doorIndex)
@@ -4517,31 +4568,31 @@ agents: []
 			}
 			return nullptr;
 		};
-		auto findShuttleDoor = [&findShuttleDoorObject](core::Building const& building,
+		auto findShuttleDoor = [&findShuttleDoorObject](core::World const& world,
 			uint32_t shuttleSector, uint32_t stopIndex, uint32_t carriageIndex, uint32_t doorIndex)
 			-> std::shared_ptr<const core::Door>
 		{
-			auto const object = findShuttleDoorObject(building, shuttleSector, stopIndex,
+			auto const object = findShuttleDoorObject(world, shuttleSector, stopIndex,
 				carriageIndex, doorIndex);
 			return object ? static_pointer_cast<const core::DoorSectorObject>(object)->getDoor()
 				: nullptr;
 		};
-		auto snapshotYaml = [](core::Building& building)
+		auto snapshotYaml = [](core::World& world)
 		{
 			core::SerializationWorkData workData;
 			auto writer = core::YamlSerializer::toString();
-			building.serialize(*writer, workData);
+			world.serialize(*writer, workData);
 			writer->serialize();
 			return writer->getSerializedString();
 		};
 		auto loadYaml = [](std::string const& yaml)
 		{
-			auto building = std::make_shared<core::Building>("placeholder", 1, 1);
+			auto world = std::make_shared<core::World>("placeholder", 1, 1);
 			core::SerializationWorkData workData;
 			auto reader = core::YamlSerializer::fromString(yaml);
 			reader->deserialize();
-			building->deserialize(*reader, workData);
-			return building;
+			world->deserialize(*reader, workData);
+			return world;
 		};
 		auto offsetsOf = [](uint32_t mask)
 		{
@@ -4552,31 +4603,31 @@ agents: []
 		};
 		// The style the Shuttle's own record carries for one grid slot,
 		// ~0u when the record holds no override there.
-		auto recordedStyle = [](core::Building const& building, uint32_t shuttleSector,
+		auto recordedStyle = [](core::World const& world, uint32_t shuttleSector,
 			uint32_t numCars, uint32_t doorCount, uint32_t stop, uint32_t car, uint32_t door)
 			-> uint32_t
 		{
 			auto const transit = std::dynamic_pointer_cast<const core::ShuttleTransit>(
-				building.getSector(shuttleSector));
+				world.getSector(shuttleSector));
 			require(transit != nullptr, "The Shuttle Sector is not a Shuttle Transit");
-			core::Building::CreateShuttleOptions options{};
-			require(building.getShuttleOptions(transit->getShuttle().get(), options),
+			core::World::CreateShuttleOptions options{};
+			require(world.getShuttleOptions(transit->getShuttle().get(), options),
 				"The Shuttle record could not be read back");
 			auto const slot = (stop * numCars + car) * doorCount + door;
 			return slot < options.doorOpenStyles.size() ? options.doorOpenStyles[slot] : ~0u;
 		};
-		auto shuttleDoorColumns = [](core::Building const& building, uint32_t shuttleSector)
+		auto shuttleDoorColumns = [](core::World const& world, uint32_t shuttleSector)
 		{
 			std::set<uint32_t> columns;
-			for (uint32_t sectorIndex = 0; sectorIndex < building.getNumSectors(); ++sectorIndex)
+			for (uint32_t sectorIndex = 0; sectorIndex < world.getNumSectors(); ++sectorIndex)
 			{
-				auto const sector = building.getSector(sectorIndex);
+				auto const sector = world.getSector(sectorIndex);
 				if (!sector) continue;
 				for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
 				{
 					auto const object = sector->getObject(i);
 					uint32_t ownerSector{ ~0u };
-					if (building.isShuttleOwnedDoor(object, &ownerSector)
+					if (world.isShuttleOwnedDoor(object, &ownerSector)
 						&& ownerSector == shuttleSector)
 						columns.insert(object->getCellX());
 				}
@@ -4590,7 +4641,7 @@ agents: []
 		// expected holds the authored styles that should still be live, keyed by
 		// (stop, carriage, configured carriage cell).  Any identity absent from
 		// the map must show the generated OpenUp default.
-		auto requireLayout = [&](core::Building const& building, uint32_t shuttleSector,
+		auto requireLayout = [&](core::World const& world, uint32_t shuttleSector,
 			uint32_t shuttleX, uint32_t numCars, uint32_t carWidth, uint32_t doorMask,
 			std::vector<uint32_t> const& stopOffsets,
 			std::map<std::array<uint32_t, 3>, Style> const& expected,
@@ -4599,10 +4650,10 @@ agents: []
 			auto const offsets = offsetsOf(doorMask);
 			auto const doorCount = static_cast<uint32_t>(offsets.size());
 			auto const transit = std::dynamic_pointer_cast<const core::ShuttleTransit>(
-				building.getSector(shuttleSector));
+				world.getSector(shuttleSector));
 			require(transit != nullptr, "The Shuttle Sector is not a Shuttle Transit");
-			core::Building::CreateShuttleOptions options{};
-			require(building.getShuttleOptions(transit->getShuttle().get(), options),
+			core::World::CreateShuttleOptions options{};
+			require(world.getShuttleOptions(transit->getShuttle().get(), options),
 				"The Shuttle record could not be read back");
 			require(options.numCars == numCars && options.carWidth == carWidth
 				&& options.doorMask == doorMask,
@@ -4620,20 +4671,20 @@ agents: []
 						auto const label = std::string(context) + " (stop " + std::to_string(stop)
 							+ ", carriage " + std::to_string(car) + ", carriage cell "
 							+ std::to_string(offset) + ")";
-						auto const recorded = recordedStyle(building, shuttleSector, numCars,
+						auto const recorded = recordedStyle(world, shuttleSector, numCars,
 								doorCount, stop, car, door);
 						if (doorX == holeX)
 						{
-							require(findShuttleDoor(building, shuttleSector, stop, car, door) == nullptr,
+							require(findShuttleDoor(world, shuttleSector, stop, car, door) == nullptr,
 								("A Door was built on a landing that does not exist in " + label).c_str());
 							require(recorded == ~0u,
 								("An override survived a Door with no landing in " + label).c_str());
 							continue;
 						}
-						auto const found = findShuttleDoor(building, shuttleSector, stop, car, door);
+						auto const found = findShuttleDoor(world, shuttleSector, stop, car, door);
 						require(found != nullptr,
 							("A supported Shuttle Door is missing in " + label).c_str());
-						auto const foundObject = findShuttleDoorObject(building, shuttleSector,
+						auto const foundObject = findShuttleDoorObject(world, shuttleSector,
 							stop, car, door);
 						require(foundObject != nullptr && foundObject->getCellX() == doorX,
 							("A Shuttle Door does not sit on the cell its own identity addresses in "
@@ -4646,35 +4697,35 @@ agents: []
 						require(recorded == wantRecord,
 							("The recorded override disagrees with the live Door in " + label).c_str());
 					}
-			require(shuttleDoorColumns(building, shuttleSector) == expectedColumns,
+			require(shuttleDoorColumns(world, shuttleSector) == expectedColumns,
 				("The Shuttle does not own the expected landing Door columns in "
 					+ std::string(context)).c_str());
 		};
-		auto applyVehicle = [](core::Building& building, uint32_t shuttleSector,
+		auto applyVehicle = [](core::World& world, uint32_t shuttleSector,
 			uint32_t numCars, uint32_t carWidth, uint32_t doorMask) -> uint32_t
 		{
-			auto const plan = building.planEditShuttleVehicle(shuttleSector, numCars, carWidth, doorMask);
+			auto const plan = world.planEditShuttleVehicle(shuttleSector, numCars, carWidth, doorMask);
 			require(plan.valid, ("Re-authoring the Shuttle vehicle was refused: " + plan.diagnostic).c_str());
 			require(!plan.move, "A vehicle-only edit was mistaken for a Shuttle move");
 			require(plan.requiresConfirmation(),
 				"A vehicle change reported no consequence for the rebuilt landings");
 			require(plan.numCars == numCars && plan.carWidth == carWidth && plan.doorMask == doorMask,
 				"The plan did not carry the requested vehicle layout");
-			return building.applyShuttleEdit(plan);
+			return world.applyShuttleEdit(plan);
 		};
 
 		// The front Layer covers every landing column the Shuttle will ever use
 		// except cell 7, which stays empty for the width-change step.
-		core::Building building("Shuttle vehicle style reconciliation", 64, 3);
-		building.addCorridor(0, 0, 0, 7, 1);
-		building.addCorridor(0, 0, 8, 44, 1);
-		core::Building::CreateShuttleOptions options{ 2, 3, { 0, 20 }, 0 };
+		core::World world("Shuttle vehicle style reconciliation", 64, 3);
+		world.addCorridor(0, 0, 0, 7, 1);
+		world.addCorridor(0, 0, 8, 44, 1);
+		core::World::CreateShuttleOptions options{ 2, 3, { 0, 20 }, 0 };
 		options.capacity = 2;
 		options.doorMask = 0b101; // Two doors per carriage: cells 0 and 2.
 		options.allowPartialLandings = true;
-		auto const created = building.addShuttle(1, 0, 0, 40, options);
-		building.finishBuild();
-		building.pauseSimulation();
+		auto const created = world.addShuttle(1, 0, 0, 40, options);
+		world.finishBuild();
+		world.pauseSimulation();
 		auto shuttleSector = created.shuttle.sector->getIndex();
 		std::vector<uint32_t> const stops{ 0, 20 };
 
@@ -4694,17 +4745,17 @@ agents: []
 			auto const doorIndex = static_cast<uint32_t>(
 				std::find(authoredOffsets.begin(), authoredOffsets.end(), key[2])
 				- authoredOffsets.begin());
-			require(building.setShuttleDoorOpenStyle(shuttleSector, key[0], key[1], doorIndex,
+			require(world.setShuttleDoorOpenStyle(shuttleSector, key[0], key[1], doorIndex,
 				entry.second, &diagnostic),
 				("Styling an authored Shuttle Door was refused: " + diagnostic).c_str());
 		}
-		requireLayout(building, shuttleSector, 0, 2, 3, 0b101, stops, expected,
+		requireLayout(world, shuttleSector, 0, 2, 3, 0b101, stops, expected,
 			{ 0, 2, 4, 6, 20, 22, 24, 26 }, "authored two-carriage Shuttle");
 
 		// Adding a carriage keeps every surviving carriage's styles and gives the
 		// new carriage the OpenUp default.
-		shuttleSector = applyVehicle(building, shuttleSector, 3, 3, 0b101);
-		requireLayout(building, shuttleSector, 0, 3, 3, 0b101, stops, expected,
+		shuttleSector = applyVehicle(world, shuttleSector, 3, 3, 0b101);
+		requireLayout(world, shuttleSector, 0, 3, 3, 0b101, stops, expected,
 			{ 0, 2, 4, 6, 8, 10, 20, 22, 24, 26, 28, 30 },
 			"Shuttle with an added carriage");
 
@@ -4714,12 +4765,12 @@ agents: []
 			{ 1, 2, 0, Style::OpenApart }, { 1, 2, 2, Style::OpenRight } })
 		{
 			auto const doorIndex = slot.offset == 0u ? 0u : 1u;
-			require(building.setShuttleDoorOpenStyle(shuttleSector, slot.stop, slot.car, doorIndex,
+			require(world.setShuttleDoorOpenStyle(shuttleSector, slot.stop, slot.car, doorIndex,
 				slot.style, &diagnostic),
 				("Styling the added carriage's Door was refused: " + diagnostic).c_str());
 			expected[std::array<uint32_t, 3>{ slot.stop, slot.car, slot.offset }] = slot.style;
 		}
-		requireLayout(building, shuttleSector, 0, 3, 3, 0b101, stops, expected,
+		requireLayout(world, shuttleSector, 0, 3, 3, 0b101, stops, expected,
 			{ 0, 2, 4, 6, 8, 10, 20, 22, 24, 26, 28, 30 },
 			"Shuttle with the added carriage styled");
 
@@ -4730,12 +4781,12 @@ agents: []
 			{ { 0, 1, 0 }, Style::OpenRight }, { { 0, 1, 2 }, Style::OpenLeft },
 			{ { 1, 0, 0 }, Style::OpenApart }, { { 1, 0, 2 }, Style::OpenRight },
 			{ { 1, 1, 0 }, Style::OpenLeft }, { { 1, 1, 2 }, Style::OpenApart } };
-		shuttleSector = applyVehicle(building, shuttleSector, 2, 3, 0b101);
-		requireLayout(building, shuttleSector, 0, 2, 3, 0b101, stops, expected,
+		shuttleSector = applyVehicle(world, shuttleSector, 2, 3, 0b101);
+		requireLayout(world, shuttleSector, 0, 2, 3, 0b101, stops, expected,
 			{ 0, 2, 4, 6, 20, 22, 24, 26 }, "Shuttle with the carriage removed");
 		for (uint32_t stop = 0; stop < 2; ++stop)
 			for (uint32_t door = 0; door < 2; ++door)
-				require(findShuttleDoor(building, shuttleSector, stop, 2, door) == nullptr,
+				require(findShuttleDoor(world, shuttleSector, stop, 2, door) == nullptr,
 					"The removed carriage still owns a landing Door");
 
 		// Deselecting carriage cell 0 discards those Doors' styles instead of
@@ -4744,32 +4795,32 @@ agents: []
 		expected = {
 			{ { 0, 0, 2 }, Style::OpenApart }, { { 0, 1, 2 }, Style::OpenLeft },
 			{ { 1, 0, 2 }, Style::OpenRight }, { { 1, 1, 2 }, Style::OpenApart } };
-		shuttleSector = applyVehicle(building, shuttleSector, 2, 3, 0b110);
-		requireLayout(building, shuttleSector, 0, 2, 3, 0b110, stops, expected,
+		shuttleSector = applyVehicle(world, shuttleSector, 2, 3, 0b110);
+		requireLayout(world, shuttleSector, 0, 2, 3, 0b110, stops, expected,
 			{ 1, 2, 5, 6, 21, 22, 25, 26 }, "Shuttle with cell 0 deselected");
-		require(findShuttleDoor(building, shuttleSector, 0, 0, 0)->getOpenStyle()
+		require(findShuttleDoor(world, shuttleSector, 0, 0, 0)->getOpenStyle()
 			== Style::OpenUp,
 			"The deselected cell 0 style slid onto the newly configured cell 1");
 
 		// Re-selecting cell 0 does not resurrect the style it carried before it
 		// was deselected.
-		shuttleSector = applyVehicle(building, shuttleSector, 2, 3, 0b111);
-		requireLayout(building, shuttleSector, 0, 2, 3, 0b111, stops, expected,
+		shuttleSector = applyVehicle(world, shuttleSector, 2, 3, 0b111);
+		requireLayout(world, shuttleSector, 0, 2, 3, 0b111, stops, expected,
 			{ 0, 1, 2, 4, 5, 6, 20, 21, 22, 24, 25, 26 },
 			"Shuttle with cell 0 re-selected");
-		require(findShuttleDoor(building, shuttleSector, 0, 0, 0)->getOpenStyle()
+		require(findShuttleDoor(world, shuttleSector, 0, 0, 0)->getOpenStyle()
 			== Style::OpenUp,
 			"A discarded style came back when its carriage cell was re-selected");
 		for (auto const& slot : std::vector<Slot>{
 			{ 0, 0, 0, Style::OpenRight }, { 0, 1, 0, Style::OpenApart },
 			{ 1, 0, 0, Style::OpenLeft }, { 1, 1, 0, Style::OpenRight } })
 		{
-			require(building.setShuttleDoorOpenStyle(shuttleSector, slot.stop, slot.car, 0,
+			require(world.setShuttleDoorOpenStyle(shuttleSector, slot.stop, slot.car, 0,
 				slot.style, &diagnostic),
 				("Restyling a re-selected Door was refused: " + diagnostic).c_str());
 			expected[std::array<uint32_t, 3>{ slot.stop, slot.car, 0 }] = slot.style;
 		}
-		requireLayout(building, shuttleSector, 0, 2, 3, 0b111, stops, expected,
+		requireLayout(world, shuttleSector, 0, 2, 3, 0b111, stops, expected,
 			{ 0, 1, 2, 4, 5, 6, 20, 21, 22, 24, 25, 26 },
 			"Shuttle with every cell of width 3 styled");
 
@@ -4779,14 +4830,14 @@ agents: []
 		// dropped there rather than leaking onto cell 6 or cell 8; the new cell 3
 		// generates OpenUp.
 		expected.erase(std::array<uint32_t, 3>{ 0u, 1u, 2u });
-		shuttleSector = applyVehicle(building, shuttleSector, 2, 4, 0b1111);
-		requireLayout(building, shuttleSector, 0, 2, 4, 0b1111, stops, expected,
+		shuttleSector = applyVehicle(world, shuttleSector, 2, 4, 0b1111);
+		requireLayout(world, shuttleSector, 0, 2, 4, 0b1111, stops, expected,
 			{ 0, 1, 2, 3, 5, 6, 8, 20, 21, 22, 23, 25, 26, 27, 28 },
 			"Shuttle on wider carriages");
 
 		// The reconciled result round-trips through save/load.
 		{
-			auto const loaded = loadYaml(snapshotYaml(building));
+			auto const loaded = loadYaml(snapshotYaml(world));
 			requireLayout(*loaded, shuttleSector, 0, 2, 4, 0b1111, stops, expected,
 				{ 0, 1, 2, 3, 5, 6, 8, 20, 21, 22, 23, 25, 26, 27, 28 },
 				"loaded Shuttle after the vehicle changes");
@@ -4798,20 +4849,20 @@ agents: []
 	// than consumed as the internal keep-current sentinel.
 	void shuttleVehicleEditsRejectZeroValuedFields()
 	{
-		core::Building building("Shuttle vehicle edit validation", 32, 2);
-		building.addCorridor(0, 0, 0, 31, 1);
-		core::Building::CreateShuttleOptions options{ 1, 3, { 0, 18 }, 0 };
+		core::World world("Shuttle vehicle edit validation", 32, 2);
+		world.addCorridor(0, 0, 0, 31, 1);
+		core::World::CreateShuttleOptions options{ 1, 3, { 0, 18 }, 0 };
 		options.capacity = 2;
 		options.doorMask = 0b101;
-		auto const created = building.addShuttle(1, 0, 0, 27, options);
-		building.finishBuild();
-		building.pauseSimulation();
+		auto const created = world.addShuttle(1, 0, 0, 27, options);
+		world.finishBuild();
+		world.pauseSimulation();
 		auto const index = created.shuttle.sector->getIndex();
 
 		auto const rejected = [&](uint32_t numCars, uint32_t carWidth, uint32_t doorMask,
 			std::string const& needle, std::string const& field)
 		{
-			auto const plan = building.planEditShuttleVehicle(index, numCars, carWidth, doorMask);
+			auto const plan = world.planEditShuttleVehicle(index, numCars, carWidth, doorMask);
 			require(!plan.valid,
 				("A zero-valued " + field + " was accepted as a Shuttle vehicle edit").c_str());
 			require(plan.diagnostic.find(needle) != std::string::npos,
@@ -4823,12 +4874,12 @@ agents: []
 		rejected(1, 3, 0, "at least one cell", "door mask");
 
 		// The pre-existing range diagnostics stay enforced through the public API.
-		auto const tooNarrow = building.planEditShuttleVehicle(index, 1, 2, 0b11);
+		auto const tooNarrow = world.planEditShuttleVehicle(index, 1, 2, 0b11);
 		require(!tooNarrow.valid
 			&& tooNarrow.diagnostic.find("between 3 and 5") != std::string::npos,
 			("An out-of-range carriage width was accepted: "
 				+ tooNarrow.diagnostic).c_str());
-		auto const maskBeyondWidth = building.planEditShuttleVehicle(index, 1, 3, 0b1000);
+		auto const maskBeyondWidth = world.planEditShuttleVehicle(index, 1, 3, 0b1000);
 		require(!maskBeyondWidth.valid
 			&& maskBeyondWidth.diagnostic.find("within the carriage width") != std::string::npos,
 			("A door mask reaching past the carriage width was accepted: "
@@ -4836,23 +4887,23 @@ agents: []
 
 		// The sentinel stays private to the track-resize path, which keeps the
 		// current vehicle layout.
-		auto const trackOnly = building.planResizeShuttle(index, 0, 0, 27);
+		auto const trackOnly = world.planResizeShuttle(index, 0, 0, 27);
 		require(trackOnly.valid && trackOnly.numCars == 1 && trackOnly.carWidth == 3
 			&& trackOnly.doorMask == 0b101,
 			("A track-only Shuttle edit did not preserve the authored vehicle layout: "
 				+ trackOnly.diagnostic).c_str());
 
 		// A valid vehicle edit still plans and applies end to end.
-		auto const valid = building.planEditShuttleVehicle(index, 2, 4, 0b1001);
+		auto const valid = world.planEditShuttleVehicle(index, 2, 4, 0b1001);
 		require(valid.valid, ("A valid Shuttle vehicle edit was refused: " + valid.diagnostic).c_str());
 		require(valid.numCars == 2 && valid.carWidth == 4 && valid.doorMask == 0b1001,
 			"The valid vehicle plan did not carry the requested layout");
-		auto const edited = building.applyShuttleEdit(valid);
+		auto const edited = world.applyShuttleEdit(valid);
 		auto const transit = std::dynamic_pointer_cast<const core::ShuttleTransit>(
-			building.getSector(edited));
+			world.getSector(edited));
 		require(transit != nullptr, "The edited Shuttle is no longer a Shuttle Transit");
-		core::Building::CreateShuttleOptions applied{};
-		require(building.getShuttleOptions(transit->getShuttle().get(), applied)
+		core::World::CreateShuttleOptions applied{};
+		require(world.getShuttleOptions(transit->getShuttle().get(), applied)
 			&& applied.numCars == 2 && applied.carWidth == 4 && applied.doorMask == 0b1001,
 			"The applied Shuttle vehicle does not match the plan");
 	}
@@ -4866,16 +4917,50 @@ agents: []
 		RecentFiles first(3);
 		first.initialize(file);
 		require(std::filesystem::exists(file), "Recent-file storage was not created on first startup");
-		first.add("/tmp/alpha.yaml");
-		first.add("/tmp/beta.yaml");
-		first.add("/tmp/alpha.yaml");
+		first.add("/tmp/alpha.world.yaml");
+		first.add("/tmp/beta.world.yaml");
+		first.add("/tmp/alpha.world.yaml");
 		RecentFiles restarted(3);
 		restarted.initialize(file);
 		require(restarted.entries().size() == 2,
 			"Recent files were not restored after startup");
-		require(restarted.entries()[0] == "/tmp/alpha.yaml"
-			&& restarted.entries()[1] == "/tmp/beta.yaml",
+		require(restarted.entries()[0] == "/tmp/alpha.world.yaml"
+			&& restarted.entries()[1] == "/tmp/beta.world.yaml",
 			"Recent files did not retain most-recent-first order or deduplication");
+		std::filesystem::remove_all(directory);
+	}
+
+	void missingRecentFilesCanBeRemovedPersistently()
+	{
+		auto directory = std::filesystem::temp_directory_path()
+			/ "prometheum-fermide-missing-recent-file-smoke";
+		std::filesystem::remove_all(directory);
+		std::filesystem::create_directories(directory);
+		auto const storage = directory / "recent-files.txt";
+		auto const missing = (directory / "moved.world.yaml").string();
+
+		RecentFiles recent(3);
+		recent.initialize(storage);
+		recent.add(missing);
+		require(recent.removeUnavailable(missing),
+			"A selected missing World was not removed from recent files");
+		require(recent.empty(),
+			"A removed missing World remained in the in-memory recent files");
+
+		auto const available = directory / "available.world.yaml";
+		std::ofstream(available) << "version: 14\n";
+		recent.add(available.string());
+		require(!recent.removeUnavailable(available.string())
+			&& recent.entries().size() == 1,
+			"An available recent World was removed");
+		std::filesystem::remove(available);
+		require(recent.removeUnavailable(available.string()),
+			"A recently removed World was not pruned after becoming unavailable");
+
+		RecentFiles restarted(3);
+		restarted.initialize(storage);
+		require(restarted.empty(),
+			"A removed missing World returned after recent files were reloaded");
 		std::filesystem::remove_all(directory);
 	}
 
@@ -4919,7 +5004,7 @@ void layerHelperApiIsConsistentWithLayerCount()
 	require(core::isBackMostLayer(1, 2), "back layer is not reported as back-most");
 	require(!core::isBackMostLayer(0, 2), "fore layer reported as back-most");
 	require(core::isBackMostLayer(2, 3) && !core::isBackMostLayer(1, 3),
-		"isBackMostLayer does not follow the Building's Layer count");
+		"isBackMostLayer does not follow the World's Layer count");
 	require(core::layerInFront(1) == 0, "layerInFront(back) did not return fore");
 	require(core::layerBehind(0) == 1, "layerBehind(fore) did not return back");
 	require(CORE_MAX_LAYERS == 256, "CORE_MAX_LAYERS is not 256");
@@ -4948,7 +5033,7 @@ void onlyTheSelectedLayerAndTheLayerBehindAreDrawn()
 		"The back-most Layer does not draw itself, or leaves other Layers drawn");
 
 	require(!isLayerDrawn(3, 0, 3) && !isLayerDrawn(0, 3, 3),
-		"A Layer index outside the Building's Layers is drawn");
+		"A Layer index outside the World's Layers is drawn");
 
 	// The selected Layer is drawn first and whole, the Layer directly behind it
 	// next through the selected Layer's apertures, and finally outlined over the
@@ -4977,31 +5062,31 @@ void onlyTheSelectedLayerAndTheLayerBehindAreDrawn()
 			"The back-most Layer has no Layer behind it but produced more than its own pass");
 	}
 
-	// The same policy against a live Building: whatever the Layer count, exactly the
+	// The same policy against a live World: whatever the Layer count, exactly the
 	// selected Layer and the Layer directly behind it are drawn.
-	core::Building building("Render layer policy", 4, 2);
-	building.addCorridor(0, 0, 4);
-	building.addLayer();
-	building.addLayer();
-	require(building.getLayerCount() == 4, "A four-layer Building could not be created");
+	core::World world("Render layer policy", 4, 2);
+	world.addCorridor(0, 0, 4);
+	world.addLayer();
+	world.addLayer();
+	require(world.getLayerCount() == 4, "A four-layer World could not be created");
 
-	for (uint32_t view = 0; view < building.getLayerCount(); ++view)
+	for (uint32_t view = 0; view < world.getLayerCount(); ++view)
 	{
 		uint32_t drawn{ 0 };
-		for (uint32_t layer = 0; layer < building.getLayerCount(); ++layer)
+		for (uint32_t layer = 0; layer < world.getLayerCount(); ++layer)
 		{
-			if (!isLayerDrawn(layer, view, building.getLayerCount())) continue;
+			if (!isLayerDrawn(layer, view, world.getLayerCount())) continue;
 			++drawn;
 			require(layer == view || layer == view + 1,
 				"A drawn Layer is neither the selected Layer nor the Layer directly behind it");
 		}
-		auto const expected = view + 1 < building.getLayerCount() ? 2u : 1u;
+		auto const expected = view + 1 < world.getLayerCount() ? 2u : 1u;
 		require(drawn == expected,
 			"The number of drawn Layers does not match the selected Layer");
 	}
 }
 
-// Graph construction walks every adjacent Layer pair of the Building - 0<->1, 1<->2,
+// Graph construction walks every adjacent Layer pair of the World - 0<->1, 1<->2,
 // and so on - rather than one hard-coded Fore/Back pass.  Every Layer therefore
 // contributes Vertices, and each pair keeps its own inter-layer lookup so that a
 // threshold is only ever joined to the pair it was authored on.
@@ -5015,33 +5100,33 @@ void graphConstructionWalksEveryAdjacentLayerPair()
 
 	for (uint32_t layerCount = 2; layerCount <= maxLayerCount; ++layerCount)
 	{
-		core::Building building("Adjacent Pairs", 8, 2);
-		while (building.getLayerCount() < layerCount) building.addLayer();
+		core::World world("Adjacent Pairs", 8, 2);
+		while (world.getLayerCount() < layerCount) world.addLayer();
 
 		std::vector<uint32_t> rooms;
 		for (uint32_t layer = 0; layer < layerCount; ++layer)
 		{
-			rooms.push_back(building.addRoom(roomNames[layer], layer, 0, 0, 8, 1));
+			rooms.push_back(world.addRoom(roomNames[layer], layer, 0, 0, 8, 1));
 		}
 
 		// One Marker per Layer gives every Layer a Vertex of its own, so the scan
 		// coverage of each Layer can be observed directly.
 		for (uint32_t layer = 0; layer < layerCount; ++layer)
 		{
-			building.addSectorMarker(rooms[layer], 0, 3.0f);
+			world.addSectorMarker(rooms[layer], 0, 3.0f);
 		}
 
-		building.addSectorDoor(0, 0, 5);
-		building.finishBuild();
+		world.addSectorDoor(0, 0, 5);
+		world.finishBuild();
 
-		core::Graph graph(&building);
+		core::Graph graph(&world);
 		graph.build();
 
 		std::vector<uint32_t> verticesPerLayer(layerCount, 0);
 		for (auto const& vertex : graph.getVertices())
 		{
 			auto const layer = vertex->getSector()->getLayerIndex();
-			require(layer < layerCount, "A Vertex belongs to a Layer the Building does not have");
+			require(layer < layerCount, "A Vertex belongs to a Layer the World does not have");
 			++verticesPerLayer[layer];
 		}
 
@@ -5072,64 +5157,64 @@ void graphConstructionWalksEveryAdjacentLayerPair()
 
 // Every threshold and Transit type pairs its inter-layer Vertices against the
 // adjacent Layer pair it was authored on, not just the front pair.  A four-Layer
-// Building carries one of each across three different pairs; the Graph must join
+// World carries one of each across three different pairs; the Graph must join
 // every one of them to the Layer directly in front, and never skip a Layer.
 void thresholdsAndTransitsPairTheirOwnAdjacentLayerPair()
 {
-	core::Building building("Deep Pairing", 40, 2);
-	while (building.getLayerCount() < 4) building.addLayer();
+	core::World world("Deep Pairing", 40, 2);
+	while (world.getLayerCount() < 4) world.addLayer();
 
 	// Layer 0 - front-most.  Two stacked Corridors give the Layer 1 Ladder two
 	// distinct landing Locations.
-	building.addCorridor(0, 0, 0, 4, 1);
-	building.addCorridor(0, 1, 0, 4, 1);
+	world.addCorridor(0, 0, 0, 4, 1);
+	world.addCorridor(0, 1, 0, 4, 1);
 
 	// Layer 1 - back of pair 0<->1, landing Layer for the Layer 2 Transits, and
 	// front of pair 1<->2.
-	building.addRoom("Store", 1, 0, 0, 2, 1);
-	building.addCorridor(1, 0, 8, 8, 1);
-	building.addCorridor(1, 1, 8, 8, 1);
-	building.addCorridor(1, 1, 30, 8, 1);   // Shuttle landing run
+	world.addRoom("Store", 1, 0, 0, 2, 1);
+	world.addCorridor(1, 0, 8, 8, 1);
+	world.addCorridor(1, 1, 8, 8, 1);
+	world.addCorridor(1, 1, 30, 8, 1);   // Shuttle landing run
 
 	// Layer 2 - back of pair 1<->2, landing Layer for the Layer 3 Transits, and
 	// front of pair 2<->3.
-	building.addRoom("Deep Store", 2, 0, 8, 2, 1);
-	building.addRoom("Annexe", 2, 0, 11, 1, 1);
-	building.addCorridor(2, 0, 16, 8, 1);
-	building.addCorridor(2, 1, 16, 8, 1);
-	building.addCorridor(2, 0, 24, 2, 1);
-	building.addCorridor(2, 1, 24, 2, 1);
-	building.addRoom("Stair Hall Lower", 2, 0, 28, 2, 1);
-	building.addRoom("Bulkhead Left", 2, 0, 30, 2, 1);
-	building.addRoom("Bulkhead Right", 2, 0, 32, 2, 1);
-	building.addRoom("Stair Hall Upper", 2, 1, 28, 2, 1);
+	world.addRoom("Deep Store", 2, 0, 8, 2, 1);
+	world.addRoom("Annexe", 2, 0, 11, 1, 1);
+	world.addCorridor(2, 0, 16, 8, 1);
+	world.addCorridor(2, 1, 16, 8, 1);
+	world.addCorridor(2, 0, 24, 2, 1);
+	world.addCorridor(2, 1, 24, 2, 1);
+	world.addRoom("Stair Hall Lower", 2, 0, 28, 2, 1);
+	world.addRoom("Bulkhead Left", 2, 0, 30, 2, 1);
+	world.addRoom("Bulkhead Right", 2, 0, 32, 2, 1);
+	world.addRoom("Stair Hall Upper", 2, 1, 28, 2, 1);
 
 	// Layer 3 - back-most.
-	building.addRoom("Deep Room", 3, 0, 16, 2, 1);
-	building.addRoom("Deep Annexe", 3, 0, 19, 1, 1);
+	world.addRoom("Deep Room", 3, 0, 16, 2, 1);
+	world.addRoom("Deep Annexe", 3, 0, 19, 1, 1);
 
 	// One of every threshold and Transit, each on a different adjacent Layer pair.
 	// Pair 0<->1.
-	building.addSectorDoor(0, 0, 1);
-	building.addLadder(1, 0, 2, { 2, false, false });
+	world.addSectorDoor(0, 0, 1);
+	world.addLadder(1, 0, 2, { 2, false, false });
 	// Pair 1<->2.
-	building.addSectorDoor(1, 0, 9);
-	building.addSectorWindow(1, 0, 11, 1, 1, { true });
-	building.addLadder(2, 0, 10, { 2, false, false });
-	building.addLift(2, 0, 12, 1, 2);
-	building.addShuttle(2, 1, 30, 8, { 1, 3, { 0, 5 }, 0 });
+	world.addSectorDoor(1, 0, 9);
+	world.addSectorWindow(1, 0, 11, 1, 1, { true });
+	world.addLadder(2, 0, 10, { 2, false, false });
+	world.addLift(2, 0, 12, 1, 2);
+	world.addShuttle(2, 1, 30, 8, { 1, 3, { 0, 5 }, 0 });
 	// Pair 2<->3.
-	building.addSectorDoor(2, 0, 17);
-	building.addSectorWindow(2, 0, 19, 1, 1, { true });
-	building.addLadder(3, 0, 18, { 2, false, false });
-	building.addStairwell(3, 0, 28, 2, CORE_SIDE_LEFT);
-	building.addStaircase(3, 0, 24, 2, CORE_SIDE_RIGHT);
+	world.addSectorDoor(2, 0, 17);
+	world.addSectorWindow(2, 0, 19, 1, 1, { true });
+	world.addLadder(3, 0, 18, { 2, false, false });
+	world.addStairwell(3, 0, 28, 2, CORE_SIDE_LEFT);
+	world.addStaircase(3, 0, 24, 2, CORE_SIDE_RIGHT);
 	// A Bulkhead Door joins two Locations on its own Layer, so it pairs nothing.
-	building.addSectorBulkheadDoor(2, 0, 32, CORE_SIDE_LEFT);
+	world.addSectorBulkheadDoor(2, 0, 32, CORE_SIDE_LEFT);
 
-	building.finishBuild();
+	world.finishBuild();
 
-	core::Graph graph(&building);
+	core::Graph graph(&world);
 	graph.build();
 
 	// Nothing may reach across a Layer it did not pair with.
@@ -5142,10 +5227,10 @@ void thresholdsAndTransitsPairTheirOwnAdjacentLayerPair()
 	}
 
 	// Every Layer contributes Vertices.
-	std::vector<uint32_t> verticesPerLayer(building.getLayerCount(), 0);
+	std::vector<uint32_t> verticesPerLayer(world.getLayerCount(), 0);
 	for (auto const& vertex : graph.getVertices())
 		++verticesPerLayer[vertex->getSector()->getLayerIndex()];
-	for (uint32_t layer = 0; layer < building.getLayerCount(); ++layer)
+	for (uint32_t layer = 0; layer < world.getLayerCount(); ++layer)
 		require(verticesPerLayer[layer] > 0, "A Layer contributed no Vertices to the Graph");
 
 	auto countEdgesAcross = [&](core::EdgeType type, uint32_t front, uint32_t back)
@@ -5238,13 +5323,13 @@ void thresholdsAndTransitsPairTheirOwnAdjacentLayerPair()
 	// The authored pairings survive a save and reload unchanged.
 	core::SerializationWorkData workData;
 	auto writer = core::YamlSerializer::toString();
-	building.serialize(*writer, workData);
+	world.serialize(*writer, workData);
 	writer->serialize();
 	auto reader = core::YamlSerializer::fromString(writer->getSerializedString());
 	reader->deserialize();
-	core::Building reloaded("placeholder", 1, 1);
-	require(reloaded.deserialize(*reader, workData), "A deep Building did not round-trip");
-	require(reloaded.getLayerCount() == building.getLayerCount(),
+	core::World reloaded("placeholder", 1, 1);
+	require(reloaded.deserialize(*reader, workData), "A deep World did not round-trip");
+	require(reloaded.getLayerCount() == world.getLayerCount(),
 		"Round-tripping changed the Layer count");
 
 	core::Graph reloadedGraph(&reloaded);
@@ -5257,7 +5342,7 @@ void thresholdsAndTransitsPairTheirOwnAdjacentLayerPair()
 		auto const b = edge->getVertex(1)->getSector()->getLayerIndex();
 		if ((a == 2 && b == 3) || (a == 3 && b == 2)) ++deepDoors;
 	}
-	require(deepDoors == 1, "The reloaded Building lost its deep Door pairing");
+	require(deepDoors == 1, "The reloaded World lost its deep Door pairing");
 }
 
 void doorAndWindowRemovalWorksOnDeepLayerPairs()
@@ -5266,20 +5351,20 @@ void doorAndWindowRemovalWorksOnDeepLayerPairs()
 	// Layer indices and passed them to Door/Window::getSector(), which expects a
 	// pair side (0 or 1). With three Layers, getSector(2) asserted or read past
 	// the end of mSectors.
-	core::Building building("Deep pair removal", 8, 3);
-	building.addLayer();
-	building.addCorridor(0, 0, 8);
-	building.addRoom("Basement", 1, 0, 0, 8, 1);
-	building.addRoom("Cellar", 2, 0, 0, 8, 1);
+	core::World world("Deep pair removal", 8, 3);
+	world.addLayer();
+	world.addCorridor(0, 0, 8);
+	world.addRoom("Basement", 1, 0, 0, 8, 1);
+	world.addRoom("Cellar", 2, 0, 0, 8, 1);
 
-	auto const door = building.addSectorDoor(0, 0, 3);
-	auto const window = building.addSectorWindow(1, 0, 5, 1, 1, { true });
+	auto const door = world.addSectorDoor(0, 0, 3);
+	auto const window = world.addSectorWindow(1, 0, 5, 1, 1, { true });
 
-	building.pauseSimulation();
-	require(building.removeSectorDoor(door.door.sector->getIndex(), door.door.index),
-		"Door on a three-layer Building could not be removed");
-	require(building.removeSectorWindow(window.window.sector->getIndex(), window.window.index),
-		"Window on a three-layer Building could not be removed");
+	world.pauseSimulation();
+	require(world.removeSectorDoor(door.door.sector->getIndex(), door.door.index),
+		"Door on a three-layer World could not be removed");
+	require(world.removeSectorWindow(window.window.sector->getIndex(), window.window.index),
+		"Window on a three-layer World could not be removed");
 }
 
 void shuttleDoorCandidatesAreFoundOnTheShuttleLayer()
@@ -5290,14 +5375,14 @@ void shuttleDoorCandidatesAreFoundOnTheShuttleLayer()
 	// candidate, so the Add Shuttle stop popup never appeared.
 	auto const probe = [](uint32_t shuttleLayer)
 	{
-		core::Building building("Shuttle door candidate layers", 32, 2);
-		while (building.getLayerCount() <= shuttleLayer) building.addLayer();
+		core::World world("Shuttle door candidate layers", 32, 2);
+		while (world.getLayerCount() <= shuttleLayer) world.addLayer();
 		for (uint32_t layer = 0; layer < shuttleLayer; ++layer)
-			building.addCorridor(layer, 0, 0, 31, 1);
-		core::Building::CreateShuttleOptions options{ 2, 3, { 0, 18 }, 0 };
+			world.addCorridor(layer, 0, 0, 31, 1);
+		core::World::CreateShuttleOptions options{ 2, 3, { 0, 18 }, 0 };
 		options.doorMask = 0b101;
-		auto const created = building.addShuttle(shuttleLayer, 0, 0, 27, options);
-		building.finishBuild();
+		auto const created = world.addShuttle(shuttleLayer, 0, 0, 27, options);
+		world.finishBuild();
 		auto const shuttle = std::dynamic_pointer_cast<const core::ShuttleTransit>(
 			created.shuttle.sector);
 		require(shuttle && shuttle->getLayerIndex() == shuttleLayer,
@@ -5305,7 +5390,7 @@ void shuttleDoorCandidatesAreFoundOnTheShuttleLayer()
 
 		// A new stop at offset 9 lines carriage 0's first door up with column 9 of
 		// the landing Layer directly in front of the Shuttle.
-		auto const found = building.getShuttleStopCandidatesForDoor(shuttleLayer, 0, 9);
+		auto const found = world.getShuttleStopCandidatesForDoor(shuttleLayer, 0, 9);
 		require(any_of(found.begin(), found.end(), [&](auto const& candidate)
 			{
 				return candidate.sectorIndex == shuttle->getIndex() && candidate.stopOffset == 9;
@@ -5313,7 +5398,7 @@ void shuttleDoorCandidatesAreFoundOnTheShuttleLayer()
 			"No Shuttle stop candidate was offered for a Door over a Shuttle door");
 		// The Layer the Door is authored on holds no Shuttle, so querying it as a
 		// Shuttle Layer must find nothing.
-		require(building.getShuttleStopCandidatesForDoor(shuttleLayer - 1, 0, 9).empty(),
+		require(world.getShuttleStopCandidatesForDoor(shuttleLayer - 1, 0, 9).empty(),
 			"A Door Layer was treated as a Shuttle Layer");
 	};
 	probe(1);
@@ -5325,20 +5410,20 @@ void candidateReplayIncludesAllLayers()
 	// Regression for ticket #17: validation candidates were constructed with the
 	// default two Layers, so any construction record on Layer >= 2 threw an out-of-
 	// bounds error and every rebuild-based edit was reported as invalid.
-	core::Building building("Deep candidate replay", 8, 3);
-	building.addLayer();
-	auto const fore = building.addCorridor(0, 0, 8);
-	building.addRoom("Deep room", 2, 0, 0, 8, 1);
-	building.finishBuild();
+	core::World world("Deep candidate replay", 8, 3);
+	world.addLayer();
+	auto const fore = world.addCorridor(0, 0, 8);
+	world.addRoom("Deep room", 2, 0, 0, 8, 1);
+	world.finishBuild();
 
-	auto resize = building.planResizeLocation(fore, 0, 0, 4, 1);
+	auto resize = world.planResizeLocation(fore, 0, 0, 4, 1);
 	require(resize.valid,
-		("Layer-0 Location edit was rejected on a three-layer Building: " + resize.diagnostic).c_str());
+		("Layer-0 Location edit was rejected on a three-layer World: " + resize.diagnostic).c_str());
 
-	building.pauseSimulation();
-	auto const resized = building.applyLocationEdit(resize);
-	require(building.getSector(resized) && building.getSector(resized)->getCellsWide() == 4,
-		"Layer-0 Location edit was not applied on a three-layer Building");
+	world.pauseSimulation();
+	auto const resized = world.applyLocationEdit(resize);
+	require(world.getSector(resized) && world.getSector(resized)->getCellsWide() == 4,
+		"Layer-0 Location edit was not applied on a three-layer World");
 }
 
 // Regression for ticket #18: the Transit edit planners read blockers from Layer 1
@@ -5351,58 +5436,58 @@ void liftEditsUseTheLiftsOwnLayer()
 {
 	auto const probe = [](uint32_t transitLayer)
 	{
-		core::Building building("Deep Lift edit", 12, 3);
-		while (building.getLayerCount() <= transitLayer) building.addLayer();
-		building.addRoom("Landing A", transitLayer - 1, 0, 0, 12, 1);
-		building.addRoom("Landing B", transitLayer - 1, 1, 0, 12, 1);
-		building.addRoom("Landing C", transitLayer - 1, 2, 0, 12, 1);
+		core::World world("Deep Lift edit", 12, 3);
+		while (world.getLayerCount() <= transitLayer) world.addLayer();
+		world.addRoom("Landing A", transitLayer - 1, 0, 0, 12, 1);
+		world.addRoom("Landing B", transitLayer - 1, 1, 0, 12, 1);
+		world.addRoom("Landing C", transitLayer - 1, 2, 0, 12, 1);
 		// A neighbour on the Lift's own Layer, to prove the blocker scan still runs
 		// against that Layer rather than being skipped.
-		building.addRoom("Shaft neighbour", transitLayer, 1, 8, 1, 1);
-		auto const created = building.addLift(transitLayer, 0, 2, 1, 3);
-		building.finishBuild();
-		building.pauseSimulation();
+		world.addRoom("Shaft neighbour", transitLayer, 1, 8, 1, 1);
+		auto const created = world.addLift(transitLayer, 0, 2, 1, 3);
+		world.finishBuild();
+		world.pauseSimulation();
 		auto const index = created.lift.sector->getIndex();
 		require(created.lift.sector->getLayerIndex() == transitLayer,
 			"The Lift was not authored on the probed Layer");
 
-		auto const blocked = building.planResizeLift(index, 8, 0, 1, 3);
+		auto const blocked = world.planResizeLift(index, 8, 0, 1, 3);
 		require(!blocked.valid
 			&& blocked.diagnostic.find("8,1 blocks the Lift") != std::string::npos,
 			("A Lift move into a Sector on its own Layer was not blocked: "
 				+ blocked.diagnostic).c_str());
 
-		auto const plan = building.planResizeLift(index, 5, 0, 1, 3);
+		auto const plan = world.planResizeLift(index, 5, 0, 1, 3);
 		require(plan.valid && plan.move,
 			("A Lift move on Layer " + std::to_string(transitLayer)
 				+ " was rejected: " + plan.diagnostic).c_str());
 		require(plan.stopOffsets == std::vector<uint32_t>{ 0, 1, 2 },
 			"The Lift stops were not derived from the Layer in front of the Lift");
-		auto const moved = building.applyLiftEdit(plan);
+		auto const moved = world.applyLiftEdit(plan);
 		require(moved == index,
 			"applyLiftEdit returned a Sector from the wrong Layer");
 		auto const lift = std::dynamic_pointer_cast<const core::LiftTransit>(
-			building.getSector(moved));
+			world.getSector(moved));
 		require(lift && lift->getCellX() == 5 && lift->getLayerIndex() == transitLayer
 			&& lift->getNumStops() == 3,
 			"The Lift was not moved on its own Layer");
 
-		auto const stopRemoval = building.planRemoveLiftStop(moved, 1);
+		auto const stopRemoval = world.planRemoveLiftStop(moved, 1);
 		require(stopRemoval.valid,
 			("Deleting a Lift stop on Layer " + std::to_string(transitLayer)
 				+ " was rejected: " + stopRemoval.diagnostic).c_str());
-		auto const trimmed = building.applyLiftEdit(stopRemoval);
+		auto const trimmed = world.applyLiftEdit(stopRemoval);
 		auto const trimmedLift = std::dynamic_pointer_cast<const core::LiftTransit>(
-			building.getSector(trimmed));
+			world.getSector(trimmed));
 		require(trimmedLift && trimmedLift->getNumStops() == 2
 			&& trimmedLift->getLayerIndex() == transitLayer,
 			"The deep Lift did not lose its deleted stop");
 
-		auto const removal = building.planRemoveLift(trimmed);
+		auto const removal = world.planRemoveLift(trimmed);
 		require(removal.valid,
 			("A Lift deletion on Layer " + std::to_string(transitLayer)
 				+ " was rejected: " + removal.diagnostic).c_str());
-		require(building.applyLiftEdit(removal) == ~0u,
+		require(world.applyLiftEdit(removal) == ~0u,
 			"Deleting a deep Lift did not return the removed-sector sentinel");
 	};
 	probe(1);
@@ -5413,64 +5498,64 @@ void shuttleEditsUseTheShuttlesOwnLayer()
 {
 	auto const probe = [](uint32_t transitLayer)
 	{
-		core::Building building("Deep Shuttle edit", 32, 2);
-		while (building.getLayerCount() <= transitLayer) building.addLayer();
-		building.addCorridor(transitLayer - 1, 0, 0, 31, 1);
-		core::Building::CreateShuttleOptions options{ 2, 3, { 0, 18 }, 0 };
+		core::World world("Deep Shuttle edit", 32, 2);
+		while (world.getLayerCount() <= transitLayer) world.addLayer();
+		world.addCorridor(transitLayer - 1, 0, 0, 31, 1);
+		core::World::CreateShuttleOptions options{ 2, 3, { 0, 18 }, 0 };
 		options.capacity = 2;
 		options.doorMask = 0b101;
 		// A neighbour on the Shuttle's own Layer keeps the blocker scan honest.
-		building.addRoom("Track neighbour", transitLayer, 0, 29, 1, 1);
-		auto const created = building.addShuttle(transitLayer, 0, 0, 27, options);
-		building.finishBuild();
-		building.pauseSimulation();
+		world.addRoom("Track neighbour", transitLayer, 0, 29, 1, 1);
+		auto const created = world.addShuttle(transitLayer, 0, 0, 27, options);
+		world.finishBuild();
+		world.pauseSimulation();
 		auto const index = created.shuttle.sector->getIndex();
 		require(created.shuttle.sector->getLayerIndex() == transitLayer,
 			"The Shuttle was not authored on the probed Layer");
 
-		auto const plan = building.planResizeShuttle(index, 2, 0, 27);
+		auto const plan = world.planResizeShuttle(index, 2, 0, 27);
 		require(plan.valid && plan.move,
 			("A Shuttle move on Layer " + std::to_string(transitLayer)
 				+ " was rejected: " + plan.diagnostic).c_str());
-		auto const moved = building.applyShuttleEdit(plan);
+		auto const moved = world.applyShuttleEdit(plan);
 		require(moved == index,
 			"applyShuttleEdit returned a Sector from the wrong Layer");
 		auto const shuttle = std::dynamic_pointer_cast<const core::ShuttleTransit>(
-			building.getSector(moved));
+			world.getSector(moved));
 		require(shuttle && shuttle->getCellX() == 2 && shuttle->getLayerIndex() == transitLayer
 			&& shuttle->getNumStops() == 2,
 			"The Shuttle was not moved on its own Layer");
 
-		auto const blocked = building.planResizeShuttle(moved, 3, 0, 27);
+		auto const blocked = world.planResizeShuttle(moved, 3, 0, 27);
 		require(!blocked.valid
 			&& blocked.diagnostic.find("29,0 blocks the Shuttle") != std::string::npos,
 			("A Shuttle track grown into a Sector on its own Layer was not blocked: "
 				+ blocked.diagnostic).c_str());
-		auto const addStop = building.planAddShuttleStop(moved, 9);
+		auto const addStop = world.planAddShuttleStop(moved, 9);
 		require(addStop.valid,
 			("Adding a Shuttle stop on Layer " + std::to_string(transitLayer)
 				+ " was rejected: " + addStop.diagnostic).c_str());
-		auto const widened = building.applyShuttleEdit(addStop);
+		auto const widened = world.applyShuttleEdit(addStop);
 		auto const widenedShuttle = std::dynamic_pointer_cast<const core::ShuttleTransit>(
-			building.getSector(widened));
+			world.getSector(widened));
 		require(widenedShuttle && widenedShuttle->getNumStops() == 3
 			&& widenedShuttle->getLayerIndex() == transitLayer,
 			"The deep Shuttle did not gain its new stop");
-		auto const removeStop = building.planRemoveShuttleStop(widened, 1);
+		auto const removeStop = world.planRemoveShuttleStop(widened, 1);
 		require(removeStop.valid,
 			("Deleting a Shuttle stop on Layer " + std::to_string(transitLayer)
 				+ " was rejected: " + removeStop.diagnostic).c_str());
-		auto const narrowed = building.applyShuttleEdit(removeStop);
+		auto const narrowed = world.applyShuttleEdit(removeStop);
 		auto const narrowedShuttle = std::dynamic_pointer_cast<const core::ShuttleTransit>(
-			building.getSector(narrowed));
+			world.getSector(narrowed));
 		require(narrowedShuttle && narrowedShuttle->getNumStops() == 2,
 			"The deep Shuttle did not lose its deleted stop");
 
-		auto const removal = building.planRemoveShuttle(narrowed);
+		auto const removal = world.planRemoveShuttle(narrowed);
 		require(removal.valid,
 			("A Shuttle deletion on Layer " + std::to_string(transitLayer)
 				+ " was rejected: " + removal.diagnostic).c_str());
-		require(building.applyShuttleEdit(removal) == ~0u,
+		require(world.applyShuttleEdit(removal) == ~0u,
 			"Deleting a deep Shuttle did not return the removed-sector sentinel");
 	};
 	probe(1);
@@ -5484,23 +5569,23 @@ void shuttleDeletionRemovesWindowsOverTheShuttleItself()
 	// own Layer.  Deleting the Shuttle must take the dependent Window with it.
 	auto const probe = [](uint32_t transitLayer)
 	{
-		core::Building building("Deep Shuttle Window dependency", 32, 2);
-		while (building.getLayerCount() <= transitLayer) building.addLayer();
-		building.addCorridor(transitLayer - 1, 0, 0, 31, 1);
-		core::Building::CreateShuttleOptions options{ 2, 3, { 0, 18 }, 0 };
+		core::World world("Deep Shuttle Window dependency", 32, 2);
+		while (world.getLayerCount() <= transitLayer) world.addLayer();
+		world.addCorridor(transitLayer - 1, 0, 0, 31, 1);
+		core::World::CreateShuttleOptions options{ 2, 3, { 0, 18 }, 0 };
 		options.doorMask = 0b101;
-		auto const created = building.addShuttle(transitLayer, 0, 0, 27, options);
+		auto const created = world.addShuttle(transitLayer, 0, 0, 27, options);
 		// Columns 8 and 9 carry no carriage door, so the Window lands on bare Shuttle.
-		building.addSectorWindow(transitLayer - 1, 0, 8, 2, 1);
-		building.finishBuild();
-		building.pauseSimulation();
+		world.addSectorWindow(transitLayer - 1, 0, 8, 2, 1);
+		world.finishBuild();
+		world.pauseSimulation();
 		auto const shuttleIndex = created.shuttle.sector->getIndex();
 		auto const shuttle = std::dynamic_pointer_cast<const core::ShuttleTransit>(
-			building.getSector(shuttleIndex));
+			world.getSector(shuttleIndex));
 		require(shuttle && shuttle->getLayerIndex() == transitLayer,
 			"The Shuttle was not authored on the probed Layer");
 
-		auto const plan = building.planRemoveShuttle(shuttleIndex);
+		auto const plan = world.planRemoveShuttle(shuttleIndex);
 		require(plan.valid,
 			("Deleting a Shuttle with a dependent Window on Layer "
 				+ std::to_string(transitLayer) + " was rejected: " + plan.diagnostic).c_str());
@@ -5510,9 +5595,9 @@ void shuttleDeletionRemovesWindowsOverTheShuttleItself()
 				return consequence.find("dependent Window") != std::string::npos;
 			}),
 			"The dependent Window was not reported as a consequence of Shuttle deletion");
-		require(building.applyShuttleEdit(plan) == ~0u,
+		require(world.applyShuttleEdit(plan) == ~0u,
 			"Deleting a deep Shuttle with a dependent Window failed");
-		require(!static_cast<core::Building const&>(building).getLayer(transitLayer)
+		require(!static_cast<core::World const&>(world).getLayer(transitLayer)
 			->getCellDefinition(8, 0).occupied(),
 			"The deleted Shuttle still occupies its own Layer");
 	};
@@ -5524,35 +5609,35 @@ void ladderEditsUseTheLaddersOwnLayer()
 {
 	auto const probe = [](uint32_t transitLayer)
 	{
-		core::Building building("Deep Ladder edit", 10, 5);
-		while (building.getLayerCount() <= transitLayer) building.addLayer();
-		for (uint32_t y = 0; y < 5; ++y) building.addCorridor(transitLayer - 1, y, 0, 10, 1);
-		auto const created = building.addLadder(transitLayer, 0, 1, { 3, false, true });
-		building.finishBuild();
-		building.pauseSimulation();
+		core::World world("Deep Ladder edit", 10, 5);
+		while (world.getLayerCount() <= transitLayer) world.addLayer();
+		for (uint32_t y = 0; y < 5; ++y) world.addCorridor(transitLayer - 1, y, 0, 10, 1);
+		auto const created = world.addLadder(transitLayer, 0, 1, { 3, false, true });
+		world.finishBuild();
+		world.pauseSimulation();
 		auto const index = created.ladder.sector->getIndex();
 		require(created.ladder.sector->getLayerIndex() == transitLayer,
 			"The Ladder was not authored on the probed Layer");
 
-		core::Building::CreateLadderOptions edited{ 3, true, false, 3 };
-		auto const plan = building.planResizeLadder(index, 4, 1, edited);
+		core::World::CreateLadderOptions edited{ 3, true, false, 3 };
+		auto const plan = world.planResizeLadder(index, 4, 1, edited);
 		require(plan.valid && plan.move,
 			("A Ladder move on Layer " + std::to_string(transitLayer)
 				+ " was rejected: " + plan.diagnostic).c_str());
-		auto const moved = building.applyLadderEdit(plan);
+		auto const moved = world.applyLadderEdit(plan);
 		require(moved == index,
 			"applyLadderEdit returned a Sector from the wrong Layer");
 		auto const ladder = std::dynamic_pointer_cast<const core::LadderTransit>(
-			building.getSector(moved));
+			world.getSector(moved));
 		require(ladder && ladder->getCellX() == 4 && ladder->getLayerIndex() == transitLayer
 			&& ladder->getDecksHigh() == 3,
 			"The Ladder was not moved on its own Layer");
 
-		auto const removal = building.planRemoveLadder(moved);
+		auto const removal = world.planRemoveLadder(moved);
 		require(removal.valid,
 			("A Ladder deletion on Layer " + std::to_string(transitLayer)
 				+ " was rejected: " + removal.diagnostic).c_str());
-		require(building.applyLadderEdit(removal) == ~0u,
+		require(world.applyLadderEdit(removal) == ~0u,
 			"Deleting a deep Ladder did not return the removed-sector sentinel");
 	};
 	probe(1);
@@ -5563,36 +5648,36 @@ void stairwellEditsUseTheStairwellsOwnLayer()
 {
 	auto const probe = [](uint32_t transitLayer)
 	{
-		core::Building building("Deep Stairwell edit", 10, 5);
-		while (building.getLayerCount() <= transitLayer) building.addLayer();
-		for (uint32_t y = 0; y < 5; ++y) building.addCorridor(transitLayer - 1, y, 0, 10, 1);
-		auto const created = building.addStairwell(transitLayer, 0, 1,
-			core::Building::CreateStairwellOptions{ 3, CORE_SIDE_LEFT });
-		building.finishBuild();
-		building.pauseSimulation();
+		core::World world("Deep Stairwell edit", 10, 5);
+		while (world.getLayerCount() <= transitLayer) world.addLayer();
+		for (uint32_t y = 0; y < 5; ++y) world.addCorridor(transitLayer - 1, y, 0, 10, 1);
+		auto const created = world.addStairwell(transitLayer, 0, 1,
+			core::World::CreateStairwellOptions{ 3, CORE_SIDE_LEFT });
+		world.finishBuild();
+		world.pauseSimulation();
 		auto const index = created.sectorIndex;
-		require(building.getSector(index)->getLayerIndex() == transitLayer,
+		require(world.getSector(index)->getLayerIndex() == transitLayer,
 			"The Stairwell was not authored on the probed Layer");
 
-		core::Building::CreateStairwellOptions edited{ 3, CORE_SIDE_RIGHT, 2, 3 };
-		auto const plan = building.planResizeStairwell(index, 4, 1, edited);
+		core::World::CreateStairwellOptions edited{ 3, CORE_SIDE_RIGHT, 2, 3 };
+		auto const plan = world.planResizeStairwell(index, 4, 1, edited);
 		require(plan.valid && plan.move,
 			("A Stairwell move on Layer " + std::to_string(transitLayer)
 				+ " was rejected: " + plan.diagnostic).c_str());
-		auto const moved = building.applyStairwellEdit(plan);
+		auto const moved = world.applyStairwellEdit(plan);
 		require(moved == index,
 			"applyStairwellEdit returned a Sector from the wrong Layer");
 		auto const stairwell = std::dynamic_pointer_cast<const core::StairwellTransit>(
-			building.getSector(moved));
+			world.getSector(moved));
 		require(stairwell && stairwell->getCellX() == 4
 			&& stairwell->getLayerIndex() == transitLayer && stairwell->getDecksHigh() == 3,
 			"The Stairwell was not moved on its own Layer");
 
-		auto const removal = building.planRemoveStairwell(moved);
+		auto const removal = world.planRemoveStairwell(moved);
 		require(removal.valid,
 			("A Stairwell deletion on Layer " + std::to_string(transitLayer)
 				+ " was rejected: " + removal.diagnostic).c_str());
-		require(building.applyStairwellEdit(removal) == ~0u,
+		require(world.applyStairwellEdit(removal) == ~0u,
 			"Deleting a deep Stairwell did not return the removed-sector sentinel");
 	};
 	probe(1);
@@ -5605,28 +5690,28 @@ void staircaseEditsReturnTheStaircaseOwnLayer()
 	// applyStaircaseEdit still read its return value from Layer 1.
 	auto const probe = [](uint32_t transitLayer)
 	{
-		core::Building building("Deep Staircase edit", 6, 3);
-		while (building.getLayerCount() <= transitLayer) building.addLayer();
-		building.addCorridor(transitLayer - 1, 0, 0, 1, 1);
-		building.addCorridor(transitLayer - 1, 0, 3, 1, 1);
-		building.addCorridor(transitLayer - 1, 1, 0, 1, 1);
-		building.addCorridor(transitLayer - 1, 1, 3, 1, 1);
-		auto const index = building.addStaircase(transitLayer, 0, 0, 4, CORE_SIDE_RIGHT, 1.25f);
-		building.finishBuild();
-		building.pauseSimulation();
-		require(building.getSector(index)->getLayerIndex() == transitLayer,
+		core::World world("Deep Staircase edit", 6, 3);
+		while (world.getLayerCount() <= transitLayer) world.addLayer();
+		world.addCorridor(transitLayer - 1, 0, 0, 1, 1);
+		world.addCorridor(transitLayer - 1, 0, 3, 1, 1);
+		world.addCorridor(transitLayer - 1, 1, 0, 1, 1);
+		world.addCorridor(transitLayer - 1, 1, 3, 1, 1);
+		auto const index = world.addStaircase(transitLayer, 0, 0, 4, CORE_SIDE_RIGHT, 1.25f);
+		world.finishBuild();
+		world.pauseSimulation();
+		require(world.getSector(index)->getLayerIndex() == transitLayer,
 			"The Staircase was not authored on the probed Layer");
 
-		auto const plan = building.planResizeStaircase(index, 0, 0,
+		auto const plan = world.planResizeStaircase(index, 0, 0,
 			{ 4, CORE_SIDE_LEFT, -0.75f });
 		require(plan.valid,
 			("A Staircase flip on Layer " + std::to_string(transitLayer)
 				+ " was rejected: " + plan.diagnostic).c_str());
-		auto const flipped = building.applyStaircaseEdit(plan);
+		auto const flipped = world.applyStaircaseEdit(plan);
 		require(flipped == index,
 			"applyStaircaseEdit returned a Sector from the wrong Layer");
 		auto const transit = std::dynamic_pointer_cast<const core::StaircaseTransit>(
-			building.getSector(flipped));
+			world.getSector(flipped));
 		require(transit && transit->getLayerIndex() == transitLayer
 			&& transit->getRiseSide() == CORE_SIDE_LEFT,
 			"The Staircase was not edited on its own Layer");
@@ -5644,6 +5729,7 @@ void runSerializationSmokeChecks()
 	transitsOnTheLayerBehindAreOnlyDrawnThroughApertures();
 	stringYamlRoundTripsPrimitiveValues();
 	fileYamlRoundTrips();
+	worldDocumentsRequireTheWorldYamlSuffix();
 	lateWriteFailurePreservesThePreviousSaveFile();
 #if !defined(_WIN32)
 	saveThroughSymlinkUpdatesItsTarget();
@@ -5651,15 +5737,15 @@ void runSerializationSmokeChecks()
 #endif
 	failedSavePreservesUnsavedChangesState();
 	malformedValuesAndInvalidUsageThrowUsefulErrors();
-	buildingRoundTripsAuthoredStateAndAgents();
+	worldRoundTripsAuthoredStateAndAgents();
 	agentRestoreRejectsMalformedPositions();
 	agentRestoreRejectsBackgroundAndUnreachableDestination();
 	platformLiftStopDurationRoundTrips();
-	legacyBuildingYamlStillLoads();
-	legacyVersion3BuildingYamlStillLoadsWithDefaultLayers();
-	version4BuildingYamlStillLoads();
+	legacyWorldYamlStillLoads();
+	legacyVersion3WorldYamlStillLoadsWithDefaultLayers();
+	version4WorldYamlStillLoads();
 	layerFieldsAcceptLegacyNamesAndIndices();
-	buildingLayerNamesRoundTrip();
+	worldLayerNamesRoundTrip();
 	addedLayersAppendToTheBackAndRoundTrip();
 	layerCountIsCappedAtCoreMaxLayers();
 	deletingAMiddleLayerCompactsTheLayersAboveIt();
@@ -5697,6 +5783,7 @@ void runSerializationSmokeChecks()
 	shuttleDoorStylesReconcileWhenCarriageAndDoorLayoutChanges();
 	shuttleVehicleEditsRejectZeroValuedFields();
 	recentFilesPersistAcrossStartup();
+	missingRecentFilesCanBeRemovedPersistently();
 	serializableTracksModificationState();
 	doorAndWindowRemovalWorksOnDeepLayerPairs();
 	candidateReplayIncludesAllLayers();

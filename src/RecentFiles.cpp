@@ -41,10 +41,25 @@ void RecentFiles::add(string filepath)
 {
 	if (mFilepath.empty()) throw logic_error("RecentFiles must be initialized before use");
 	if (filepath.empty()) return;
-	mEntries.erase(remove(mEntries.begin(), mEntries.end(), filepath), mEntries.end());
+	mEntries.erase(std::remove(mEntries.begin(), mEntries.end(), filepath), mEntries.end());
 	mEntries.push_front(std::move(filepath));
 	while (mEntries.size() > mMaximumEntries) mEntries.pop_back();
 	save();
+}
+
+bool RecentFiles::removeUnavailable(string const& filepath)
+{
+	if (mFilepath.empty()) throw logic_error("RecentFiles must be initialized before use");
+	error_code error;
+	auto const status = filesystem::status(filepath, error);
+	if ((!error && filesystem::is_regular_file(status))
+		|| (error && error != errc::no_such_file_or_directory)) return false;
+
+	auto const previousSize = mEntries.size();
+	mEntries.erase(std::remove(mEntries.begin(), mEntries.end(), filepath), mEntries.end());
+	if (mEntries.size() == previousSize) return false;
+	save();
+	return true;
 }
 
 void RecentFiles::save() const

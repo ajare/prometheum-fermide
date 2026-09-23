@@ -2,7 +2,7 @@
 
 ## Problem Statement
 
-Agents can plan routes through the building, but executing those routes does not consistently enforce the rules represented by doors, lifts, shuttles, ladders, and other shared resources. Agents can bypass edge traversal checks, controlled doors can be opened without their controls, capacities are not enforced, transport passengers are not associated with a specific vehicle or carriage, and queue reservations can leak or be assigned incorrectly.
+Agents can plan routes through the world, but executing those routes does not consistently enforce the rules represented by doors, lifts, shuttles, ladders, and other shared resources. Agents can bypass edge traversal checks, controlled doors can be opened without their controls, capacities are not enforced, transport passengers are not associated with a specific vehicle or carriage, and queue reservations can leak or be assigned incorrectly.
 
 Device interaction and movement permission are split across overlapping controller hierarchies with ambiguous names and responsibilities. Callback-driven device actions, mixed pointer ownership, and update ordering make cancellation, failure, fairness, and safe transport departure difficult to reason about. The result is a system that can find the intended route but cannot reliably coordinate agents while they follow it.
 
@@ -16,7 +16,7 @@ Replace the overlapping controller hierarchies with a single explicit traversal 
 - Interaction points accept physical interaction from agents and issue typed commands to devices or transport coordinators.
 - Devices expose deterministic state machines and queryable, cancellable operations instead of callback chains.
 - Transport vehicles own motion and scheduling; lift cars and shuttle carriages own occupants and interior positions; stop coordinators own door interlocks and boarding phases.
-- The building owns simulation entities and advances them through fixed, deterministic phases.
+- The world owns simulation entities and advances them through fixed, deterministic phases.
 
 Agents will approach resources, queue at reserved positions, operate required controls, wait for safe admission, cross visibly, and commit occupancy changes atomically. Lifts and shuttles will enforce capacity, destination selection, disembark-before-embark, door interlocks, dwell windows, and LOOK scheduling. The same resource model will support doors, ladders, narrow stairs, force bridges, windows, bulkheads, and platform lifts.
 
@@ -50,13 +50,13 @@ Agents will approach resources, queue at reserved positions, operate required co
 26. As an agent, I want an active equivalent request to satisfy my need, so that shared device operations are reused safely.
 27. As an agent, I want temporary interaction failures retried, so that a busy control does not permanently invalidate my route.
 28. As an agent, I want permanent interaction rejection distinguished from temporary blocking, so that I can replan promptly when necessary.
-29. As an agent, I want remote-controlled doors to require their designated controls, so that traversal cannot bypass the building’s control layout.
+29. As an agent, I want remote-controlled doors to require their designated controls, so that traversal cannot bypass the world’s control layout.
 30. As an agent, I want automatic doors to open in response to coordinated presence, so that I can pass without pressing a control.
 31. As an agent, I want manual doors to be operated directly at the threshold, so that their interaction matches their activation mode.
 32. As an agent, I want unavailable doors to reject traversal, so that their state is respected by route execution.
 33. As an agent crossing a door, I want it held fully open until I finish, so that it cannot close through me.
-34. As a building occupant, I want ordinary doors to reopen for a new request or obstruction, so that closing doors remain safe.
-35. As a building occupant, I want doors to close after their hold-open period, so that agents need not issue explicit close commands.
+34. As a world occupant, I want ordinary doors to reopen for a new request or obstruction, so that closing doors remain safe.
+35. As a world occupant, I want doors to close after their hold-open period, so that agents need not issue explicit close commands.
 36. As a passenger, I want to call a lift or shuttle using its landing control, so that transport service requires physical interaction.
 37. As a passenger, I want my intended destination known while I wait, so that only a compatible vehicle run admits me.
 38. As a passenger, I want my pickup request activated only after the call control is used, so that merely approaching a stop does not bypass the button.
@@ -112,7 +112,7 @@ Agents will approach resources, queue at reserved positions, operate required co
 88. As a developer, I want fixed simulation ticks and stable ID ordering, so that identical inputs produce identical outcomes.
 89. As a developer, I want value-based events processed in defined phases, so that UI and logging cannot cause re-entrant simulation mutation.
 90. As a developer, I want read-only coordination snapshots, so that queues, schedules, leases, and failures can be inspected without exposing mutable internals.
-91. As a developer, I want the building to own simulation entities centrally, so that pointer cycles and dangling ownership relationships are eliminated.
+91. As a developer, I want the world to own simulation entities centrally, so that pointer cycles and dangling ownership relationships are eliminated.
 92. As a developer, I want explicit names for interaction, device operation, and traversal concepts, so that device control cannot be confused with movement authority.
 93. As a developer, I want one movement authority per edge during migration, so that legacy and replacement systems cannot grant conflicting permission.
 94. As a developer, I want each migrated resource protected by deterministic behavioural tests, so that obsolete controllers can be removed safely.
@@ -127,7 +127,7 @@ Agents will approach resources, queue at reserved positions, operate required co
 
 ### Architectural boundaries
 
-- A controlled breaking redesign of the simulation core is permitted. Existing building construction, rendering, and path topology should be preserved where practical, but compatibility layers must not dictate the new model.
+- A controlled breaking redesign of the simulation core is permitted. Existing world construction, rendering, and path topology should be preserved where practical, but compatibility layers must not dictate the new model.
 - Device interaction, device state, traversal permission, and movement are separate responsibilities.
 - Ambiguous legacy base types will not be repurposed. The replacement vocabulary uses explicit concepts such as interaction point, device operation, traversal resource, traversal request, traversal permit, transport vehicle, carriage, and stop coordinator.
 - An agent is an actor and does not inherit from a device controller or interaction target.
@@ -137,7 +137,7 @@ Agents will approach resources, queue at reserved positions, operate required co
 
 ### Ownership and identity
 
-- The building is the sole lifetime owner of agents, devices, traversal resources, vehicles, and coordinators.
+- The world is the sole lifetime owner of agents, devices, traversal resources, vehicles, and coordinators.
 - Relationships use stable typed IDs or validated non-owning handles rather than webs of owning shared pointers and raw back-pointers.
 - Requests, reservations, permits, leases, operations, and stop requests have stable IDs and explicit owners.
 - Removing or pausing an agent cancels all of that agent’s pending reservations and requests immediately. Occupancy already committed to a moving vehicle remains until a safe exit.
@@ -313,7 +313,7 @@ Agents will approach resources, queue at reserved positions, operate required co
 ### Configuration, diagnostics, and scale
 
 - Timings have resource-type defaults and optional per-instance overrides, including interaction duration, open and close duration, hold-open delay, dwell windows, retry delays, batch sizes, and permit deadlines.
-- Invalid queue geometry, unreachable required controls, insufficient interior positions, mismatched transport doors, and invalid stop mappings reject building construction with precise diagnostics.
+- Invalid queue geometry, unreachable required controls, insufficient interior positions, mismatched transport doors, and invalid stop mappings reject world construction with precise diagnostics.
 - Read-only diagnostic snapshots expose resource state, queues, positions, reservations, permits, leases, operations, manifests, and vehicle schedules.
 - The target is hundreds of active agents and dozens of resources, with a stretch goal of approximately 1,000 agents.
 - Coordination uses indexed local queues and resource-local work. Global all-agent collision detection and per-frame global replanning are prohibited.
@@ -331,7 +331,7 @@ Agents will approach resources, queue at reserved positions, operate required co
 
 ### Primary test seam
 
-- The primary seam is the highest available boundary: construct a small headless building through the public simulation API, provide agent destinations or interaction intents, advance a fixed number of simulation ticks, and inspect public read-only state snapshots and emitted value events.
+- The primary seam is the highest available boundary: construct a small headless world through the public simulation API, provide agent destinations or interaction intents, advance a fixed number of simulation ticks, and inspect public read-only state snapshots and emitted value events.
 - Tests assert externally observable behaviour: agent sector and position, queue order, occupancy, active permits, door state, vehicle position, schedule, operation outcome, and eventual progress.
 - Tests do not call private coordinator methods, mutate reservations directly, depend on container iteration order, or inspect owning pointers.
 - This single scenario seam covers the integration among pathfinding, traversal tasks, interactions, devices, resources, and movement.

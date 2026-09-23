@@ -18,7 +18,8 @@
 #include "core/AgentTagRegistryDocument.h"
 #include "core/AgentBehaviourRegistry.h"
 #include "core/AgentBehaviourRegistryDocument.h"
-#include "core/Building.h"
+#include "core/World.h"
+#include "core/WorldDocument.h"
 #include "core/Log.h"
 #include "core/YamlSerializer.h"
 #include "imgui/IconsFontAwesome5.h"
@@ -74,9 +75,9 @@ namespace
 		string diagnostic;
 	};
 
-	struct RegistryBuildingSnapshot
+	struct RegistryWorldSnapshot
 	{
-		core::Building* building{ nullptr };
+		core::World* world{ nullptr };
 		weak_ptr<void const> lifetime;
 		string yaml;
 		bool modified{ false };
@@ -87,15 +88,15 @@ namespace
 	{
 		weak_ptr<core::AgentTagRegistry> registry;
 		core::AgentTagId affectedTag{};
-		vector<RegistryBuildingSnapshot> buildings;
+		vector<RegistryWorldSnapshot> worlds;
 
 		bool isRestorable() const override
 		{
 			auto loadedRegistry = registry.lock();
 			if (!loadedRegistry) return false;
-			for (auto const& entry : buildings)
+			for (auto const& entry : worlds)
 				if (entry.lifetime.expired()
-					|| !loadedRegistry->hasLoadedBuilding(entry.building)) return false;
+					|| !loadedRegistry->hasLoadedWorld(entry.world)) return false;
 			return true;
 		}
 	};
@@ -112,8 +113,8 @@ namespace
 
 	struct PendingAgentTagRegistryChange
 	{
-		weak_ptr<core::Building> building;
-		string buildingFilepath;
+		weak_ptr<core::World> world;
+		string worldFilepath;
 		string registryFilepath;
 		string consequence;
 		bool detach{ false };
@@ -141,19 +142,19 @@ namespace
 		buffer[buffer.size() - 1] = '\0';
 	}
 
-	string serializeBuilding(core::Building const& building)
+	string serializeWorld(core::World const& world)
 	{
 		auto serializer = core::YamlSerializer::toString();
 		core::SerializationWorkData workData;
 		workData.markSerializedUnmodified = false;
-		building.serialize(*serializer, workData);
+		world.serialize(*serializer, workData);
 		serializer->serialize();
 		return serializer->getSerializedString();
 	}
 
 	optional<DocumentSnapshot> captureRegistrySnapshot(
 		shared_ptr<core::AgentTagRegistry> const& registry,
-		vector<core::Building*> const& participatingBuildings = {},
+		vector<core::World*> const& participatingWorlds = {},
 		core::AgentTagId affectedTag = {})
 	{
 		if (!registry) return nullopt;
@@ -167,20 +168,20 @@ namespace
 			auto snapshot = agentTagRegistryDocumentHistory(registry).capture(
 				serializer->getSerializedString());
 
-			if (affectedTag || !participatingBuildings.empty())
+			if (affectedTag || !participatingWorlds.empty())
 			{
 				auto context = make_shared<RegistryEditSnapshotContext>();
 				context->registry = registry;
 				context->affectedTag = affectedTag;
-				context->buildings.reserve(participatingBuildings.size());
-				for (auto* building : participatingBuildings)
+				context->worlds.reserve(participatingWorlds.size());
+				for (auto* world : participatingWorlds)
 				{
-					if (!registry->hasLoadedBuilding(building))
+					if (!registry->hasLoadedWorld(world))
 						throw runtime_error(
-							"A Building participating in the tag edit is no longer loaded");
-					context->buildings.push_back({ building, building->getLifetimeToken(),
-						serializeBuilding(*building), building->isModified(),
-						building->isSimulationPaused() });
+							"A World participating in the tag edit is no longer loaded");
+					context->worlds.push_back({ world, world->getLifetimeToken(),
+						serializeWorld(*world), world->isModified(),
+						world->isSimulationPaused() });
 				}
 				snapshot.context = std::move(context);
 			}
@@ -194,12 +195,12 @@ namespace
 		}
 	}
 
-	filesystem::path attachedRegistryPath(core::Building const& building,
-		string const& buildingFilepath)
+	filesystem::path attachedRegistryPath(core::World const& world,
+		string const& worldFilepath)
 	{
-		if (buildingFilepath.empty() || !building.hasAgentTagRegistryReference()) return {};
-		return filesystem::path(buildingFilepath).parent_path()
-			/ building.getAgentTagRegistryFilename();
+		if (worldFilepath.empty() || !world.hasAgentTagRegistryReference()) return {};
+		return filesystem::path(worldFilepath).parent_path()
+			/ world.getAgentTagRegistryFilename();
 	}
 
 	void releaseRegistryIfUnused(
@@ -211,12 +212,12 @@ namespace
 			gRegistryHistories.erase(uuid);
 	}
 
-	string registryChangeConsequence(core::Building const& building, bool detach,
+	string registryChangeConsequence(core::World const& world, bool detach,
 		string const& registryFilepath)
 	{
-		auto const assignments = building.getAgentTagAssignmentCount();
-		auto const agents = building.getAgentTagAssignedAgentCount();
-		auto const samples = building.getAgentTagSampleCount();
+		auto const assignments = world.getAgentTagAssignmentCount();
+		auto const agents = world.getAgentTagAssignedAgentCount();
+		auto const samples = world.getAgentTagSampleCount();
 		ostringstream text;
 		text << (detach ? "Detach" : "Switch") << " Agent tag registry?\n"
 			<< "This destructive action will:\n"
@@ -227,12 +228,12 @@ namespace
 			<< (samples == 1 ? "y" : "ies") << "\n";
 		if (detach)
 		{
-			text << "- detach " << building.getAgentTagRegistryFilename() << "\n"
+			text << "- detach " << world.getAgentTagRegistryFilename() << "\n"
 				<< "The registry file will not be deleted or renamed.";
 		}
 		else
 		{
-			text << "- detach " << building.getAgentTagRegistryFilename()
+			text << "- detach " << world.getAgentTagRegistryFilename()
 				<< " and attach " << filesystem::path(registryFilepath).filename().string()
 				<< " as the replacement registry\n"
 				<< "Neither registry file will be deleted or renamed.\n"
@@ -745,11 +746,11 @@ namespace
 		return changed;
 	}
 
-	bool renderAttachedRegistry(shared_ptr<core::Building> const& building,
-		string const& buildingFilepath,
+	bool renderAttachedRegistry(shared_ptr<core::World> const& world,
+		string const& worldFilepath,
 		AgentTagRegistryPathSelector const& selectRegistryPath)
 	{
-		auto const& registry = building->getAgentTagRegistry();
+		auto const& registry = world->getAgentTagRegistry();
 		if (!registry)
 		{
 			ImGui::TextDisabled("The referenced Agent tag registry is not loaded.");
@@ -758,12 +759,12 @@ namespace
 
 		ImGui::TextUnformatted("Agent tag registry");
 		ImGui::SameLine();
-		ImGui::Text("%s", building->getAgentTagRegistryFilename().c_str());
+		ImGui::Text("%s", world->getAgentTagRegistryFilename().c_str());
 		ImGui::TextDisabled("UUID %s", registry->getUuid().c_str());
 
 		string switchDiagnostic;
 		auto canSwitch = canSelectAgentTagRegistry(
-			building, buildingFilepath, &switchDiagnostic);
+			world, worldFilepath, &switchDiagnostic);
 		if (!selectRegistryPath)
 		{
 			canSwitch = false;
@@ -782,15 +783,15 @@ namespace
 			auto selectedPath = selectRegistryPath();
 			if (selectedPath)
 			{
-				if (building->getAgentTagAssignmentCount() != 0)
+				if (world->getAgentTagAssignmentCount() != 0)
 				{
 					requestAgentTagRegistrySwitch(
-						building, buildingFilepath, *selectedPath);
+						world, worldFilepath, *selectedPath);
 				}
 				else
 				{
 					string diagnostic;
-					if (commitAgentTagRegistrySwitch(building, buildingFilepath,
+					if (commitAgentTagRegistrySwitch(world, worldFilepath,
 						*selectedPath, diagnostic)) return true;
 					if (!diagnostic.empty())
 						core::addLogMessage("Tags", 0, core::LogLevel::Warning, diagnostic);
@@ -799,12 +800,12 @@ namespace
 		}
 		if (detachClicked)
 		{
-			if (building->getAgentTagAssignmentCount() != 0)
-				requestAgentTagRegistryDetach(building);
+			if (world->getAgentTagAssignmentCount() != 0)
+				requestAgentTagRegistryDetach(world);
 			else
 			{
 				string diagnostic;
-				if (commitAgentTagRegistryDetach(building, diagnostic)) return true;
+				if (commitAgentTagRegistryDetach(world, diagnostic)) return true;
 				if (!diagnostic.empty())
 					core::addLogMessage("Tags", 0, core::LogLevel::Warning, diagnostic);
 			}
@@ -825,7 +826,7 @@ namespace
 		{
 			string diagnostic;
 			if (!saveAgentTagRegistry(registry,
-				attachedRegistryPath(*building, buildingFilepath).string(), &diagnostic))
+				attachedRegistryPath(*world, worldFilepath).string(), &diagnostic))
 				core::addLogMessage("Tags", 0, core::LogLevel::Error, diagnostic);
 		}
 		ImGui::EndDisabled();
@@ -836,7 +837,7 @@ namespace
 		{
 			string diagnostic;
 			if (!reloadAgentTagRegistry(registry,
-				attachedRegistryPath(*building, buildingFilepath).string(), &diagnostic))
+				attachedRegistryPath(*world, worldFilepath).string(), &diagnostic))
 				core::addLogMessage("Tags", 0, core::LogLevel::Error, diagnostic);
 		}
 		ImGui::EndDisabled();
@@ -908,32 +909,32 @@ namespace
 		if (!definitionEditsAllowed)
 			ImGui::TextColored(ImVec4(1.0f, 0.65f, 0.2f, 1.0f), "%s",
 				editDiagnostic.c_str());
-		ImGui::TextDisabled("Closed Buildings cannot be counted and may retain stale tag references after deletion.");
+		ImGui::TextDisabled("Closed Worlds cannot be counted and may retain stale tag references after deletion.");
 		renderTagDeleteConfirmation(registry);
 		return renderRegistryChangeConfirmation();
 	}
 }
 
-bool commitAgentTagRegistryDetach(shared_ptr<core::Building> const& building,
+bool commitAgentTagRegistryDetach(shared_ptr<core::World> const& world,
 	string& diagnostic)
 {
 	diagnostic.clear();
-	if (!building || !building->hasAgentTagRegistryReference())
+	if (!world || !world->hasAgentTagRegistryReference())
 	{
 		diagnostic = "There is no Agent tag registry to detach";
 		return false;
 	}
-	auto undo = captureDocumentSnapshot(building);
+	auto undo = captureDocumentSnapshot(world);
 	if (!undo)
 	{
-		diagnostic = "Could not capture the Building before detaching its Agent tag registry";
+		diagnostic = "Could not capture the World before detaching its Agent tag registry";
 		return false;
 	}
 	try
 	{
-		auto const filename = building->getAgentTagRegistryFilename();
-		auto registry = building->getAgentTagRegistry();
-		building->detachAgentTagRegistry();
+		auto const filename = world->getAgentTagRegistryFilename();
+		auto registry = world->getAgentTagRegistry();
+		world->detachAgentTagRegistry();
 		commitDocumentEdit(std::move(undo));
 		releaseRegistryIfUnused(registry);
 		resetTagsPanelState();
@@ -949,25 +950,25 @@ bool commitAgentTagRegistryDetach(shared_ptr<core::Building> const& building,
 }
 
 bool commitAgentTagRegistryDetachClearingAssignments(
-	shared_ptr<core::Building> const& building, string& diagnostic)
+	shared_ptr<core::World> const& world, string& diagnostic)
 {
 	diagnostic.clear();
-	if (!building || !building->hasAgentTagRegistryReference())
+	if (!world || !world->hasAgentTagRegistryReference())
 	{
 		diagnostic = "There is no Agent tag registry to detach";
 		return false;
 	}
-	auto undo = captureDocumentSnapshot(building);
+	auto undo = captureDocumentSnapshot(world);
 	if (!undo)
 	{
-		diagnostic = "Could not capture the Building before clearing Agent tags and detaching the registry";
+		diagnostic = "Could not capture the World before clearing Agent tags and detaching the registry";
 		return false;
 	}
 	try
 	{
-		auto const filename = building->getAgentTagRegistryFilename();
-		auto registry = building->getAgentTagRegistry();
-		building->detachAgentTagRegistryAndClearAssignments();
+		auto const filename = world->getAgentTagRegistryFilename();
+		auto registry = world->getAgentTagRegistry();
+		world->detachAgentTagRegistryAndClearAssignments();
 		commitDocumentEdit(std::move(undo));
 		releaseRegistryIfUnused(registry);
 		resetTagsPanelState();
@@ -983,34 +984,34 @@ bool commitAgentTagRegistryDetachClearingAssignments(
 	}
 }
 
-bool commitAgentTagRegistrySwitch(shared_ptr<core::Building> const& building,
-	string const& buildingFilepath, string const& registryFilepath,
+bool commitAgentTagRegistrySwitch(shared_ptr<core::World> const& world,
+	string const& worldFilepath, string const& registryFilepath,
 	string& diagnostic)
 {
 	diagnostic.clear();
-	if (!building)
+	if (!world)
 	{
-		diagnostic = "No Building is open";
+		diagnostic = "No World is open";
 		return false;
 	}
-	auto undo = captureDocumentSnapshot(building);
+	auto undo = captureDocumentSnapshot(world);
 	if (!undo)
 	{
-		diagnostic = "Could not capture the Building before switching Agent tag registries";
+		diagnostic = "Could not capture the World before switching Agent tag registries";
 		return false;
 	}
 	try
 	{
-		auto previousRegistry = building->hasAttachedAgentTagRegistry()
-			? building->getAgentTagRegistry() : nullptr;
-		auto const previousFilename = building->hasAgentTagRegistryReference()
-			? building->getAgentTagRegistryFilename() : string{};
-		auto const previousUuid = building->hasAgentTagRegistryReference()
-			? building->getExpectedAgentTagRegistryUuid() : string{};
+		auto previousRegistry = world->hasAttachedAgentTagRegistry()
+			? world->getAgentTagRegistry() : nullptr;
+		auto const previousFilename = world->hasAgentTagRegistryReference()
+			? world->getAgentTagRegistryFilename() : string{};
+		auto const previousUuid = world->hasAgentTagRegistryReference()
+			? world->getExpectedAgentTagRegistryUuid() : string{};
 		auto registry = core::selectAndAttachAgentTagRegistry(
-			*building, buildingFilepath, registryFilepath);
-		if (building->getAgentTagRegistryFilename() == previousFilename
-			&& building->getExpectedAgentTagRegistryUuid() == previousUuid)
+			*world, worldFilepath, registryFilepath);
+		if (world->getAgentTagRegistryFilename() == previousFilename
+			&& world->getExpectedAgentTagRegistryUuid() == previousUuid)
 		{
 			diagnostic = "The selected Agent tag registry is already attached";
 			return false;
@@ -1020,7 +1021,7 @@ bool commitAgentTagRegistrySwitch(shared_ptr<core::Building> const& building,
 		if (previousRegistry != registry) releaseRegistryIfUnused(previousRegistry);
 		resetTagsPanelState();
 		core::addLogMessage("Tags", 0, core::LogLevel::Info,
-			"Switched to Agent tag registry " + building->getAgentTagRegistryFilename()
+			"Switched to Agent tag registry " + world->getAgentTagRegistryFilename()
 				+ " (" + registry->getUuid() + ")");
 		return true;
 	}
@@ -1032,33 +1033,33 @@ bool commitAgentTagRegistrySwitch(shared_ptr<core::Building> const& building,
 }
 
 bool commitAgentTagRegistrySwitchClearingAssignments(
-	shared_ptr<core::Building> const& building, string const& buildingFilepath,
+	shared_ptr<core::World> const& world, string const& worldFilepath,
 	string const& registryFilepath, string& diagnostic)
 {
 	diagnostic.clear();
-	if (!building)
+	if (!world)
 	{
-		diagnostic = "No Building is open";
+		diagnostic = "No World is open";
 		return false;
 	}
-	auto undo = captureDocumentSnapshot(building);
+	auto undo = captureDocumentSnapshot(world);
 	if (!undo)
 	{
-		diagnostic = "Could not capture the Building before clearing Agent tags and switching registries";
+		diagnostic = "Could not capture the World before clearing Agent tags and switching registries";
 		return false;
 	}
 	try
 	{
-		auto previousRegistry = building->hasAttachedAgentTagRegistry()
-			? building->getAgentTagRegistry() : nullptr;
-		auto const previousFilename = building->hasAgentTagRegistryReference()
-			? building->getAgentTagRegistryFilename() : string{};
-		auto const previousUuid = building->hasAgentTagRegistryReference()
-			? building->getExpectedAgentTagRegistryUuid() : string{};
+		auto previousRegistry = world->hasAttachedAgentTagRegistry()
+			? world->getAgentTagRegistry() : nullptr;
+		auto const previousFilename = world->hasAgentTagRegistryReference()
+			? world->getAgentTagRegistryFilename() : string{};
+		auto const previousUuid = world->hasAgentTagRegistryReference()
+			? world->getExpectedAgentTagRegistryUuid() : string{};
 		auto registry = core::selectAndAttachAgentTagRegistryClearingAssignments(
-			*building, buildingFilepath, registryFilepath);
-		if (building->getAgentTagRegistryFilename() == previousFilename
-			&& building->getExpectedAgentTagRegistryUuid() == previousUuid)
+			*world, worldFilepath, registryFilepath);
+		if (world->getAgentTagRegistryFilename() == previousFilename
+			&& world->getExpectedAgentTagRegistryUuid() == previousUuid)
 		{
 			diagnostic = "The selected Agent tag registry is already attached";
 			return false;
@@ -1069,7 +1070,7 @@ bool commitAgentTagRegistrySwitchClearingAssignments(
 		resetTagsPanelState();
 		core::addLogMessage("Tags", 0, core::LogLevel::Info,
 			"Cleared all Agent tag assignments and samples, then switched to "
-			+ building->getAgentTagRegistryFilename() + " (" + registry->getUuid() + ")");
+			+ world->getAgentTagRegistryFilename() + " (" + registry->getUuid() + ")");
 		return true;
 	}
 	catch (std::exception const& error)
@@ -1079,28 +1080,28 @@ bool commitAgentTagRegistrySwitchClearingAssignments(
 	}
 }
 
-void requestAgentTagRegistryDetach(shared_ptr<core::Building> const& building)
+void requestAgentTagRegistryDetach(shared_ptr<core::World> const& world)
 {
-	if (!building || !building->hasAgentTagRegistryReference()
-		|| building->getAgentTagAssignmentCount() == 0) return;
-	gPendingAgentTagRegistryChange.building = building;
+	if (!world || !world->hasAgentTagRegistryReference()
+		|| world->getAgentTagAssignmentCount() == 0) return;
+	gPendingAgentTagRegistryChange.world = world;
 	gPendingAgentTagRegistryChange.consequence
-		= registryChangeConsequence(*building, true, {});
+		= registryChangeConsequence(*world, true, {});
 	gPendingAgentTagRegistryChange.detach = true;
 	gPendingAgentTagRegistryChange.active = true;
 	gPendingAgentTagRegistryChange.openRequested = true;
 }
 
-void requestAgentTagRegistrySwitch(shared_ptr<core::Building> const& building,
-	string buildingFilepath, string registryFilepath)
+void requestAgentTagRegistrySwitch(shared_ptr<core::World> const& world,
+	string worldFilepath, string registryFilepath)
 {
-	if (!building || !building->hasAgentTagRegistryReference()
-		|| building->getAgentTagAssignmentCount() == 0) return;
-	gPendingAgentTagRegistryChange.building = building;
-	gPendingAgentTagRegistryChange.buildingFilepath = std::move(buildingFilepath);
+	if (!world || !world->hasAgentTagRegistryReference()
+		|| world->getAgentTagAssignmentCount() == 0) return;
+	gPendingAgentTagRegistryChange.world = world;
+	gPendingAgentTagRegistryChange.worldFilepath = std::move(worldFilepath);
 	gPendingAgentTagRegistryChange.registryFilepath = std::move(registryFilepath);
 	gPendingAgentTagRegistryChange.consequence = registryChangeConsequence(
-		*building, false, gPendingAgentTagRegistryChange.registryFilepath);
+		*world, false, gPendingAgentTagRegistryChange.registryFilepath);
 	gPendingAgentTagRegistryChange.detach = false;
 	gPendingAgentTagRegistryChange.active = true;
 	gPendingAgentTagRegistryChange.openRequested = true;
@@ -1122,16 +1123,16 @@ bool confirmPendingAgentTagRegistryChange(string& diagnostic)
 	}
 	auto pending = gPendingAgentTagRegistryChange;
 	cancelPendingAgentTagRegistryChange();
-	auto building = pending.building.lock();
-	if (!building)
+	auto world = pending.world.lock();
+	if (!world)
 	{
-		diagnostic = "The Building awaiting an Agent tag registry change is no longer open";
+		diagnostic = "The World awaiting an Agent tag registry change is no longer open";
 		return false;
 	}
 	if (pending.detach)
-		return commitAgentTagRegistryDetachClearingAssignments(building, diagnostic);
-	return commitAgentTagRegistrySwitchClearingAssignments(building,
-		pending.buildingFilepath, pending.registryFilepath, diagnostic);
+		return commitAgentTagRegistryDetachClearingAssignments(world, diagnostic);
+	return commitAgentTagRegistrySwitchClearingAssignments(world,
+		pending.worldFilepath, pending.registryFilepath, diagnostic);
 }
 
 void cancelPendingAgentTagRegistryChange()
@@ -1175,12 +1176,12 @@ string agentTagDeleteConfirmationText(core::AgentTagRegistry const& registry,
 		<< " this tag.";
 	for (auto const& entry : usage)
 	{
-		if (!entry.building) continue;
-		text << "\n- " << entry.building->getName() << ": " << entry.agentCount
+		if (!entry.world) continue;
+		text << "\n- " << entry.world->getName() << ": " << entry.agentCount
 			<< " Agent" << (entry.agentCount == 1 ? "" : "s");
 	}
 	text << "\nAll loaded assignments and samples sourced from this tag will be removed."
-		<< "\nClosed Buildings cannot be counted. Any that retain this tag ID will be refused when loaded.";
+		<< "\nClosed Worlds cannot be counted. Any that retain this tag ID will be refused when loaded.";
 	return text.str();
 }
 
@@ -1392,12 +1393,12 @@ bool commitAgentTagWalkSpeedModifierAdd(
 		diagnostic = "There is no Agent tag registry in which to add Walk speed modifier";
 		return false;
 	}
-	vector<core::Building*> participants;
+	vector<core::World*> participants;
 	try
 	{
 		for (auto const& usage : registry->getLoadedAgentTagUsage(id))
-			if (usage.building && usage.agentCount > 0)
-				participants.push_back(const_cast<core::Building*>(usage.building));
+			if (usage.world && usage.agentCount > 0)
+				participants.push_back(const_cast<core::World*>(usage.world));
 	}
 	catch (std::exception const& error)
 	{
@@ -1407,7 +1408,7 @@ bool commitAgentTagWalkSpeedModifierAdd(
 	auto undo = captureRegistrySnapshot(registry, participants, id);
 	if (!undo)
 	{
-		diagnostic = "Could not capture the registry and loaded Buildings before adding Walk speed modifier";
+		diagnostic = "Could not capture the registry and loaded Worlds before adding Walk speed modifier";
 		return false;
 	}
 	if (!registry->addAgentTagWalkSpeedModifier(id, &diagnostic)) return false;
@@ -1425,12 +1426,12 @@ bool commitAgentTagWalkSpeedModifierEdit(
 		diagnostic = "There is no Agent tag registry in which to edit Walk speed modifier";
 		return false;
 	}
-	vector<core::Building*> participants;
+	vector<core::World*> participants;
 	try
 	{
 		for (auto const& usage : registry->getLoadedAgentTagUsage(id))
-			if (usage.building && usage.agentCount > 0)
-				participants.push_back(const_cast<core::Building*>(usage.building));
+			if (usage.world && usage.agentCount > 0)
+				participants.push_back(const_cast<core::World*>(usage.world));
 	}
 	catch (std::exception const& error)
 	{
@@ -1439,11 +1440,11 @@ bool commitAgentTagWalkSpeedModifierEdit(
 	}
 	// The definition and all samples are one history entry. Capturing before the
 	// core call also means validation failures and unchanged submissions commit
-	// neither a partial Building snapshot nor an undo entry.
+	// neither a partial World snapshot nor an undo entry.
 	auto undo = captureRegistrySnapshot(registry, participants, id);
 	if (!undo)
 	{
-		diagnostic = "Could not capture the registry and loaded Buildings before editing Walk speed modifier";
+		diagnostic = "Could not capture the registry and loaded Worlds before editing Walk speed modifier";
 		return false;
 	}
 	if (!registry->setAgentTagWalkSpeedModifier(id, range, &diagnostic)) return false;
@@ -1461,12 +1462,12 @@ bool commitAgentTagWalkSpeedModifierRemove(
 		diagnostic = "There is no Agent tag registry from which to remove Walk speed modifier";
 		return false;
 	}
-	vector<core::Building*> participants;
+	vector<core::World*> participants;
 	try
 	{
 		for (auto const& usage : registry->getLoadedAgentTagUsage(id))
-			if (usage.building && usage.agentCount > 0)
-				participants.push_back(const_cast<core::Building*>(usage.building));
+			if (usage.world && usage.agentCount > 0)
+				participants.push_back(const_cast<core::World*>(usage.world));
 	}
 	catch (std::exception const& error)
 	{
@@ -1476,7 +1477,7 @@ bool commitAgentTagWalkSpeedModifierRemove(
 	auto undo = captureRegistrySnapshot(registry, participants, id);
 	if (!undo)
 	{
-		diagnostic = "Could not capture the registry and loaded Buildings before removing Walk speed modifier";
+		diagnostic = "Could not capture the registry and loaded Worlds before removing Walk speed modifier";
 		return false;
 	}
 	if (!registry->removeAgentTagWalkSpeedModifier(id, &diagnostic)) return false;
@@ -1494,12 +1495,12 @@ bool commitAgentTagHeightModifierAdd(
 		diagnostic = "There is no Agent tag registry in which to add Height modifier";
 		return false;
 	}
-	vector<core::Building*> participants;
+	vector<core::World*> participants;
 	try
 	{
 		for (auto const& usage : registry->getLoadedAgentTagUsage(id))
-			if (usage.building && usage.agentCount > 0)
-				participants.push_back(const_cast<core::Building*>(usage.building));
+			if (usage.world && usage.agentCount > 0)
+				participants.push_back(const_cast<core::World*>(usage.world));
 	}
 	catch (std::exception const& error)
 	{
@@ -1509,7 +1510,7 @@ bool commitAgentTagHeightModifierAdd(
 	auto undo = captureRegistrySnapshot(registry, participants, id);
 	if (!undo)
 	{
-		diagnostic = "Could not capture the registry and loaded Buildings before adding Height modifier";
+		diagnostic = "Could not capture the registry and loaded Worlds before adding Height modifier";
 		return false;
 	}
 	if (!registry->addAgentTagHeightModifier(id, &diagnostic)) return false;
@@ -1527,12 +1528,12 @@ bool commitAgentTagHeightModifierEdit(
 		diagnostic = "There is no Agent tag registry in which to edit Height modifier";
 		return false;
 	}
-	vector<core::Building*> participants;
+	vector<core::World*> participants;
 	try
 	{
 		for (auto const& usage : registry->getLoadedAgentTagUsage(id))
-			if (usage.building && usage.agentCount > 0)
-				participants.push_back(const_cast<core::Building*>(usage.building));
+			if (usage.world && usage.agentCount > 0)
+				participants.push_back(const_cast<core::World*>(usage.world));
 	}
 	catch (std::exception const& error)
 	{
@@ -1542,7 +1543,7 @@ bool commitAgentTagHeightModifierEdit(
 	auto undo = captureRegistrySnapshot(registry, participants, id);
 	if (!undo)
 	{
-		diagnostic = "Could not capture the registry and loaded Buildings before editing Height modifier";
+		diagnostic = "Could not capture the registry and loaded Worlds before editing Height modifier";
 		return false;
 	}
 	if (!registry->setAgentTagHeightModifier(id, range, &diagnostic)) return false;
@@ -1560,12 +1561,12 @@ bool commitAgentTagHeightModifierRemove(
 		diagnostic = "There is no Agent tag registry from which to remove Height modifier";
 		return false;
 	}
-	vector<core::Building*> participants;
+	vector<core::World*> participants;
 	try
 	{
 		for (auto const& usage : registry->getLoadedAgentTagUsage(id))
-			if (usage.building && usage.agentCount > 0)
-				participants.push_back(const_cast<core::Building*>(usage.building));
+			if (usage.world && usage.agentCount > 0)
+				participants.push_back(const_cast<core::World*>(usage.world));
 	}
 	catch (std::exception const& error)
 	{
@@ -1575,7 +1576,7 @@ bool commitAgentTagHeightModifierRemove(
 	auto undo = captureRegistrySnapshot(registry, participants, id);
 	if (!undo)
 	{
-		diagnostic = "Could not capture the registry and loaded Buildings before removing Height modifier";
+		diagnostic = "Could not capture the registry and loaded Worlds before removing Height modifier";
 		return false;
 	}
 	if (!registry->removeAgentTagHeightModifier(id, &diagnostic)) return false;
@@ -1592,12 +1593,12 @@ bool commitAgentTagDelete(shared_ptr<core::AgentTagRegistry> const& registry,
 		diagnostic = "There is no Agent tag registry from which to delete a tag";
 		return false;
 	}
-	vector<core::Building*> participants;
+	vector<core::World*> participants;
 	try
 	{
 		for (auto const& usage : registry->getLoadedAgentTagUsage(id))
-			if (usage.building && usage.agentCount > 0)
-				participants.push_back(const_cast<core::Building*>(usage.building));
+			if (usage.world && usage.agentCount > 0)
+				participants.push_back(const_cast<core::World*>(usage.world));
 	}
 	catch (std::exception const& error)
 	{
@@ -1607,7 +1608,7 @@ bool commitAgentTagDelete(shared_ptr<core::AgentTagRegistry> const& registry,
 	auto undo = captureRegistrySnapshot(registry, participants, id);
 	if (!undo)
 	{
-		diagnostic = "Could not capture the registry and loaded Buildings before deleting the Agent tag";
+		diagnostic = "Could not capture the registry and loaded Worlds before deleting the Agent tag";
 		return false;
 	}
 	if (!registry->deleteAgentTag(id, &diagnostic)) return false;
@@ -1635,14 +1636,14 @@ bool restoreAgentTagRegistrySnapshot(shared_ptr<core::AgentTagRegistry> const& r
 	if (source.empty()) return false;
 	auto targetContext = dynamic_pointer_cast<RegistryEditSnapshotContext>(
 		source.back().context);
-	vector<core::Building*> participants;
+	vector<core::World*> participants;
 	if (targetContext)
 	{
-		participants.reserve(targetContext->buildings.size());
-		for (auto const& entry : targetContext->buildings)
-			participants.push_back(entry.building);
+		participants.reserve(targetContext->worlds.size());
+		for (auto const& entry : targetContext->worlds)
+			participants.push_back(entry.world);
 		// A tag restored by undo may have gained new loaded assignments before
-		// redo. Include those Buildings in the inverse snapshot so redo clears
+		// redo. Include those Worlds in the inverse snapshot so redo clears
 		// them and the following undo can restore them without stale references.
 		if (targetContext->affectedTag
 			&& registry->lookupAgentTag(targetContext->affectedTag))
@@ -1650,7 +1651,7 @@ bool restoreAgentTagRegistrySnapshot(shared_ptr<core::AgentTagRegistry> const& r
 			for (auto const& usage : registry->getLoadedAgentTagUsage(
 				targetContext->affectedTag))
 			{
-				auto* loaded = const_cast<core::Building*>(usage.building);
+				auto* loaded = const_cast<core::World*>(usage.world);
 				if (loaded && usage.agentCount > 0
 					&& find(participants.begin(), participants.end(), loaded)
 						== participants.end())
@@ -1669,7 +1670,7 @@ bool restoreAgentTagRegistrySnapshot(shared_ptr<core::AgentTagRegistry> const& r
 			DocumentSnapshot const& target)
 		{
 			// Parse and validate every document into temporary objects before the
-			// shared live instance or any loaded Building is changed.
+			// shared live instance or any loaded World is changed.
 			auto replacement = core::AgentTagRegistry::create();
 			auto registryReader = core::YamlSerializer::fromString(target.yaml);
 			registryReader->deserialize();
@@ -1678,22 +1679,22 @@ bool restoreAgentTagRegistrySnapshot(shared_ptr<core::AgentTagRegistry> const& r
 
 			auto context = dynamic_pointer_cast<RegistryEditSnapshotContext>(
 				target.context);
-			vector<shared_ptr<core::Building>> validatedBuildings;
+			vector<shared_ptr<core::World>> validatedWorlds;
 			if (context)
 			{
-				validatedBuildings.reserve(context->buildings.size());
-				for (auto const& entry : context->buildings)
+				validatedWorlds.reserve(context->worlds.size());
+				for (auto const& entry : context->worlds)
 				{
-					if (!registry->hasLoadedBuilding(entry.building))
+					if (!registry->hasLoadedWorld(entry.world))
 						throw runtime_error(
-							"A Building participating in this registry history entry is no longer loaded");
-					auto candidate = make_shared<core::Building>("Loading", 1, 1);
+							"A World participating in this registry history entry is no longer loaded");
+					auto candidate = make_shared<core::World>("Loading", 1, 1);
 					auto reader = core::YamlSerializer::fromString(entry.yaml);
 					reader->deserialize();
 					core::SerializationWorkData work;
 					if (!candidate->deserialize(*reader, work)) return false;
 					candidate->resolveAgentTagRegistry(replacement);
-					validatedBuildings.push_back(std::move(candidate));
+					validatedWorlds.push_back(std::move(candidate));
 				}
 			}
 
@@ -1711,21 +1712,21 @@ bool restoreAgentTagRegistrySnapshot(shared_ptr<core::AgentTagRegistry> const& r
 
 			// Definition-only redo can become incompatible with assignments authored
 			// after its undo. Judge the prospective registry against every currently
-			// loaded Building before touching the shared live instance.
+			// loaded World before touching the shared live instance.
 			string validationDiagnostic;
-			vector<core::Building const*> restoredBuildings;
+			vector<core::World const*> restoredWorlds;
 			if (context)
 			{
-				restoredBuildings.reserve(context->buildings.size());
-				for (auto const& entry : context->buildings)
-					restoredBuildings.push_back(entry.building);
+				restoredWorlds.reserve(context->worlds.size());
+				for (auto const& entry : context->worlds)
+					restoredWorlds.push_back(entry.world);
 			}
-			if (!registry->loadedBuildingAssignmentsAreValid(
-				*replacement, &validationDiagnostic, restoredBuildings))
+			if (!registry->loadedWorldAssignmentsAreValid(
+				*replacement, &validationDiagnostic, restoredWorlds))
 				throw runtime_error(validationDiagnostic);
 
 			// Validation succeeded as a whole. Restore the registry first, then
-			// each dependent Building snapshot and reattach the same shared object.
+			// each dependent World snapshot and reattach the same shared object.
 			auto liveReader = core::YamlSerializer::fromString(target.yaml);
 			liveReader->deserialize();
 			core::SerializationWorkData liveRegistryWork;
@@ -1734,15 +1735,15 @@ bool restoreAgentTagRegistrySnapshot(shared_ptr<core::AgentTagRegistry> const& r
 				> replacement->getNextPropertyRevision();
 			if (context)
 			{
-				for (auto const& entry : context->buildings)
+				for (auto const& entry : context->worlds)
 				{
 					auto reader = core::YamlSerializer::fromString(entry.yaml);
 					reader->deserialize();
 					core::SerializationWorkData work;
-					if (!entry.building->deserialize(*reader, work)) return false;
-					entry.building->resolveAgentTagRegistry(registry);
-					if (entry.modified) entry.building->markModified();
-					if (entry.paused) entry.building->pauseSimulation();
+					if (!entry.world->deserialize(*reader, work)) return false;
+					entry.world->resolveAgentTagRegistry(registry);
+					if (entry.modified) entry.world->markModified();
+					if (entry.paused) entry.world->pauseSimulation();
 				}
 			}
 			return true;
@@ -1840,37 +1841,37 @@ bool agentTagRegistryIsModified(shared_ptr<core::AgentTagRegistry> const& regist
 		|| agentTagRegistryDocumentHistory(registry).isModified());
 }
 
-bool attachedAgentTagRegistryIsModified(shared_ptr<const core::Building> const& building)
+bool attachedAgentTagRegistryIsModified(shared_ptr<const core::World> const& world)
 {
-	if (!building || !building->hasAttachedAgentTagRegistry()) return false;
-	return agentTagRegistryIsModified(building->getAgentTagRegistry());
+	if (!world || !world->hasAttachedAgentTagRegistry()) return false;
+	return agentTagRegistryIsModified(world->getAgentTagRegistry());
 }
 
 namespace
 {
-	bool buildingDocumentIsModified(BuildingDocumentSaveTarget const& target)
+	bool worldDocumentIsModified(WorldDocumentSaveTarget const& target)
 	{
-		return target.building && (target.building->isModified()
-			|| (target.buildingHistory && target.buildingHistory->isModified()));
+		return target.world && (target.world->isModified()
+			|| (target.worldHistory && target.worldHistory->isModified()));
 	}
 
-	filesystem::path registrySavePath(BuildingDocumentSaveTarget const& target)
+	filesystem::path registrySavePath(WorldDocumentSaveTarget const& target)
 	{
 		if (!target.registryFilepath.empty()) return target.registryFilepath;
-		if (!target.building || target.buildingFilepath.empty()
-			|| !target.building->hasAgentTagRegistryReference()) return {};
-		return filesystem::path(target.buildingFilepath).parent_path()
-			/ target.building->getAgentTagRegistryFilename();
+		if (!target.world || target.worldFilepath.empty()
+			|| !target.world->hasAgentTagRegistryReference()) return {};
+		return filesystem::path(target.worldFilepath).parent_path()
+			/ target.world->getAgentTagRegistryFilename();
 	}
 
 	filesystem::path behaviourPackageSavePath(
-		BuildingDocumentSaveTarget const& target)
+		WorldDocumentSaveTarget const& target)
 	{
 		if (!target.behaviourPackagePath.empty()) return target.behaviourPackagePath;
-		if (!target.building || target.buildingFilepath.empty()
-			|| !target.building->hasAgentBehaviourRegistryReference()) return {};
-		return filesystem::path(target.buildingFilepath).parent_path()
-			/ target.building->getAgentBehaviourRegistryPackageName();
+		if (!target.world || target.worldFilepath.empty()
+			|| !target.world->hasAgentBehaviourRegistryReference()) return {};
+		return filesystem::path(target.worldFilepath).parent_path()
+			/ target.world->getAgentBehaviourRegistryPackageName();
 	}
 
 	filesystem::path normalizedSavePath(filesystem::path path)
@@ -1883,8 +1884,8 @@ namespace
 		return path.lexically_normal();
 	}
 
-	bool saveDocuments(vector<BuildingDocumentSaveTarget> const& targets,
-		bool forceBuildingSave, string* diagnostic)
+	bool saveDocuments(vector<WorldDocumentSaveTarget> const& targets,
+		bool forceWorldSave, string* diagnostic)
 	{
 		if (diagnostic) diagnostic->clear();
 		struct RegistrySave
@@ -1894,11 +1895,11 @@ namespace
 		};
 		struct RegistryCopy
 		{
-			BuildingDocumentSaveTarget const* target{ nullptr };
+			WorldDocumentSaveTarget const* target{ nullptr };
 			shared_ptr<core::AgentTagRegistry> source;
 			shared_ptr<core::AgentTagRegistry> copy;
 			filesystem::path destination;
-			bool buildingWasModified{ false };
+			bool worldWasModified{ false };
 			bool committed{ false };
 		};
 		struct BehaviourRegistrySave
@@ -1908,12 +1909,12 @@ namespace
 		};
 		struct BehaviourRegistryCopy
 		{
-			BuildingDocumentSaveTarget const* target{ nullptr };
+			WorldDocumentSaveTarget const* target{ nullptr };
 			shared_ptr<core::AgentBehaviourRegistry> source;
 			shared_ptr<core::AgentBehaviourRegistry> copy;
 			filesystem::path sourcePackage;
 			filesystem::path destination;
-			bool buildingWasModified{ false };
+			bool worldWasModified{ false };
 			bool committed{ false };
 		};
 		vector<RegistrySave> registries;
@@ -1922,9 +1923,9 @@ namespace
 		vector<BehaviourRegistrySave> behaviourRegistries;
 		map<core::AgentBehaviourRegistry const*, size_t> behaviourRegistryIndices;
 		vector<BehaviourRegistryCopy> behaviourCopies;
-		map<filesystem::path, BuildingDocumentSaveTarget const*> copyDestinations;
-		vector<BuildingDocumentSaveTarget const*> buildings;
-		map<core::Building const*, filesystem::path> buildingPaths;
+		map<filesystem::path, WorldDocumentSaveTarget const*> copyDestinations;
+		vector<WorldDocumentSaveTarget const*> worlds;
+		map<core::World const*, filesystem::path> worldPaths;
 
 		auto refuse = [diagnostic](string message)
 		{
@@ -1953,36 +1954,38 @@ namespace
 
 		// Validate and plan the complete ordering before writing any document.
 		// This includes every cross-directory copy collision, so a refused Save As
-		// cannot save the source registry or mutate either Building namespace.
+		// cannot save the source registry or mutate either World namespace.
 		for (auto const& target : targets)
 		{
-			if (!target.building) return refuse("There is no Building document to save");
-			auto const saveBuilding = forceBuildingSave || buildingDocumentIsModified(target);
-			if (saveBuilding)
+			if (!target.world) return refuse("There is no World document to save");
+			auto const saveWorld = forceWorldSave || worldDocumentIsModified(target);
+			if (saveWorld)
 			{
-				if (target.buildingFilepath.empty())
-					return refuse("The Building has no file path");
-				auto const path = normalizedSavePath(target.buildingFilepath);
-				auto const [entry, inserted] = buildingPaths.emplace(
-					target.building.get(), path);
+				if (target.worldFilepath.empty())
+					return refuse("The World has no file path");
+				if (!core::isWorldDocumentPath(target.worldFilepath))
+					return refuse("A World document file must end with .world.yaml");
+				auto const path = normalizedSavePath(target.worldFilepath);
+				auto const [entry, inserted] = worldPaths.emplace(
+					target.world.get(), path);
 				if (!inserted && entry->second != path)
-					return refuse("The same Building was given more than one save path");
-				if (inserted) buildings.push_back(&target);
+					return refuse("The same World was given more than one save path");
+				if (inserted) worlds.push_back(&target);
 
-				if (target.building->hasAttachedAgentTagRegistry())
+				if (target.world->hasAttachedAgentTagRegistry())
 				{
 					auto const sourcePath = registrySavePath(target);
 					if (sourcePath.empty())
 						return refuse("The attached Agent tag registry has no file path");
 					auto const normalizedSource = normalizedSavePath(sourcePath);
 					auto const destination = path.parent_path()
-						/ target.building->getAgentTagRegistryFilename();
+						/ target.world->getAgentTagRegistryFilename();
 					if (normalizedSource == path)
-						return refuse("The Building and its Agent tag registry cannot use the same file path");
+						return refuse("The World and its Agent tag registry cannot use the same file path");
 					if (normalizedSource.parent_path() != destination.parent_path())
 					{
 						if (destination == path)
-							return refuse("The Building and its Agent tag registry copy cannot use the same file path");
+							return refuse("The World and its Agent tag registry copy cannot use the same file path");
 						bool occupied{ false };
 						if (!pathIsOccupied(destination, occupied)) return false;
 						if (occupied)
@@ -1992,18 +1995,18 @@ namespace
 							return refuse("More than one dependency copy targets "
 								+ destination.string());
 						copies.push_back({ &target,
-							target.building->getAgentTagRegistry(), {}, destination,
-							target.building->isModified(), false });
+							target.world->getAgentTagRegistry(), {}, destination,
+							target.world->isModified(), false });
 					}
 				}
-				if (target.building->hasAttachedAgentBehaviourRegistry())
+				if (target.world->hasAttachedAgentBehaviourRegistry())
 				{
 					auto const sourcePackage = behaviourPackageSavePath(target);
 					if (sourcePackage.empty())
 						return refuse("The attached Agent behaviour registry has no package path");
 					auto const normalizedSource = normalizedSavePath(sourcePackage);
 					auto const destination = path.parent_path()
-						/ target.building->getAgentBehaviourRegistryPackageName();
+						/ target.world->getAgentBehaviourRegistryPackageName();
 					if (normalizedSource.parent_path() != destination.parent_path())
 					{
 						bool occupied{ false };
@@ -2015,35 +2018,35 @@ namespace
 							return refuse("More than one dependency copy targets "
 								+ destination.string());
 						behaviourCopies.push_back({ &target,
-							target.building->getAgentBehaviourRegistry(), {},
+							target.world->getAgentBehaviourRegistry(), {},
 							normalizedSource, destination,
-							target.building->isModified(), false });
+							target.world->isModified(), false });
 					}
 				}
 			}
 
-			if (target.building->hasAttachedAgentTagRegistry()
-				&& attachedAgentTagRegistryIsModified(target.building))
+			if (target.world->hasAttachedAgentTagRegistry()
+				&& attachedAgentTagRegistryIsModified(target.world))
 			{
 				auto const registryPath = registrySavePath(target);
 				if (registryPath.empty())
 					return refuse("The attached Agent tag registry has no file path");
 				auto const normalized = normalizedSavePath(registryPath);
-				auto const& registry = target.building->getAgentTagRegistry();
+				auto const& registry = target.world->getAgentTagRegistry();
 				auto const [entry, inserted] = registryIndices.emplace(
 					registry.get(), registries.size());
 				if (inserted) registries.push_back({ registry, normalized });
 				else if (registries[entry->second].path != normalized)
 					return refuse("The same Agent tag registry was given more than one save path");
 			}
-			if (target.building->hasAttachedAgentBehaviourRegistry()
-				&& attachedAgentBehaviourRegistryIsModified(target.building))
+			if (target.world->hasAttachedAgentBehaviourRegistry()
+				&& attachedAgentBehaviourRegistryIsModified(target.world))
 			{
 				auto const package = behaviourPackageSavePath(target);
 				if (package.empty())
 					return refuse("The attached Agent behaviour registry has no package path");
 				auto const normalized = normalizedSavePath(package);
-				auto const& registry = target.building->getAgentBehaviourRegistry();
+				auto const& registry = target.world->getAgentBehaviourRegistry();
 				auto const [entry, inserted] = behaviourRegistryIndices.emplace(
 					registry.get(), behaviourRegistries.size());
 				if (inserted) behaviourRegistries.push_back({ registry, normalized });
@@ -2052,7 +2055,7 @@ namespace
 			}
 		}
 
-		// Save All is deliberately phased: no Building is written until every
+		// Save All is deliberately phased: no World is written until every
 		// dirty source registry and every required independent copy has succeeded.
 		// Claim copy destinations before changing source save state, so even a
 		// destination created after preflight leaves the source untouched.
@@ -2109,7 +2112,7 @@ namespace
 		}
 
 		// Shared dirty source registries are written once, after all no-clobber
-		// copy installations have succeeded and before any dependent Building.
+		// copy installations have succeeded and before any dependent World.
 		for (auto const& entry : registries)
 		{
 			string registryDiagnostic;
@@ -2132,7 +2135,7 @@ namespace
 			}
 		}
 
-		for (auto const* target : buildings)
+		for (auto const* target : worlds)
 		{
 			auto copy = find_if(copies.begin(), copies.end(),
 				[target](RegistryCopy const& entry) { return entry.target == target; });
@@ -2144,48 +2147,48 @@ namespace
 			{
 				if (copy != copies.end())
 				{
-					target->building->replaceAgentTagRegistryWithIndependentCopy(
+					target->world->replaceAgentTagRegistryWithIndependentCopy(
 						copy->destination.filename().string(), copy->copy);
 					attachedCopy = true;
 				}
 				if (behaviourCopy != behaviourCopies.end())
 				{
-					target->building->replaceAgentBehaviourRegistryWithIndependentCopy(
+					target->world->replaceAgentBehaviourRegistryWithIndependentCopy(
 						behaviourCopy->destination.filename().string(), behaviourCopy->copy);
 					attachedBehaviourCopy = true;
 				}
-				target->building->saveTo(target->buildingFilepath);
+				target->world->saveTo(target->worldFilepath);
 			}
 			catch (std::exception const& error)
 			{
 				try
 				{
 					if (attachedBehaviourCopy)
-						target->building->replaceAgentBehaviourRegistryWithIndependentCopy(
+						target->world->replaceAgentBehaviourRegistryWithIndependentCopy(
 							behaviourCopy->sourcePackage.filename().string(),
 							behaviourCopy->source);
 					if (attachedCopy)
-						target->building->replaceAgentTagRegistryWithIndependentCopy(
+						target->world->replaceAgentTagRegistryWithIndependentCopy(
 							copy->destination.filename().string(), copy->source);
 					bool const wasModified = attachedBehaviourCopy
-						? behaviourCopy->buildingWasModified
-						: (attachedCopy ? copy->buildingWasModified : true);
-					if (!wasModified) target->building->markSaved();
+						? behaviourCopy->worldWasModified
+						: (attachedCopy ? copy->worldWasModified : true);
+					if (!wasModified) target->world->markSaved();
 				}
 				catch (...) {}
 				discardUncommittedCopies();
-				return refuse("Could not save Building: " + string(error.what()));
+				return refuse("Could not save World: " + string(error.what()));
 			}
 
-			// Once the Building reaches disk, its adjacent copies are committed and
+			// Once the World reaches disk, its adjacent copies are committed and
 			// must not be removed by cleanup for a later independent save failure.
 			if (copy != copies.end()) copy->committed = true;
 			if (behaviourCopy != behaviourCopies.end()) behaviourCopy->committed = true;
-			if (target->buildingHistory)
+			if (target->worldHistory)
 			{
 				if (copy != copies.end() || behaviourCopy != behaviourCopies.end())
-					target->buildingHistory->clear();
-				target->buildingHistory->markSaved();
+					target->worldHistory->clear();
+				target->worldHistory->markSaved();
 			}
 			if (copy != copies.end())
 			{
@@ -2202,7 +2205,7 @@ namespace
 					+ behaviourCopy->destination.string());
 			}
 			core::addLogMessage("File", 0, core::LogLevel::Info,
-				"Saved Building to " + target->buildingFilepath);
+				"Saved World to " + target->worldFilepath);
 		}
 		if (!copies.empty()) resetTagsPanelState();
 		if (!behaviourCopies.empty()) resetBehavioursPanelState();
@@ -2210,35 +2213,35 @@ namespace
 	}
 }
 
-bool saveBuildingDocument(BuildingDocumentSaveTarget const& target,
+bool saveWorldDocument(WorldDocumentSaveTarget const& target,
 	string* diagnostic)
 {
 	return saveDocuments({ target }, true, diagnostic);
 }
 
-bool saveAllDocuments(vector<BuildingDocumentSaveTarget> const& targets,
+bool saveAllDocuments(vector<WorldDocumentSaveTarget> const& targets,
 	string* diagnostic)
 {
 	return saveDocuments(targets, false, diagnostic);
 }
 
-string unsavedDocumentPromptText(BuildingDocumentSaveTarget const& target)
+string unsavedDocumentPromptText(WorldDocumentSaveTarget const& target)
 {
-	if (!target.building) return "There are no unsaved documents.";
+	if (!target.world) return "There are no unsaved documents.";
 	ostringstream text;
 	text << "Save unsaved documents?";
-	if (buildingDocumentIsModified(target))
+	if (worldDocumentIsModified(target))
 	{
-		auto label = filesystem::path(target.buildingFilepath).filename().string();
-		if (label.empty()) label = target.building->getName() + " (not yet saved)";
-		text << "\n- Building: " << label;
+		auto label = filesystem::path(target.worldFilepath).filename().string();
+		if (label.empty()) label = target.world->getName() + " (not yet saved)";
+		text << "\n- World: " << label;
 	}
-	if (attachedAgentTagRegistryIsModified(target.building))
+	if (attachedAgentTagRegistryIsModified(target.world))
 		text << "\n- Agent tag registry: "
-			<< target.building->getAgentTagRegistryFilename();
-	if (attachedAgentBehaviourRegistryIsModified(target.building))
+			<< target.world->getAgentTagRegistryFilename();
+	if (attachedAgentBehaviourRegistryIsModified(target.world))
 		text << "\n- Agent behaviour registry: "
-			<< target.building->getAgentBehaviourRegistryPackageName();
+			<< target.world->getAgentBehaviourRegistryPackageName();
 	return text.str();
 }
 
@@ -2261,7 +2264,7 @@ void resetTagsPanelState()
 void forgetAgentTagRegistryDocument(shared_ptr<core::AgentTagRegistry> const& registry)
 {
 	// Callers use this only after an explicit close/discard decision. Attached
-	// registries remain manager-owned through their Building; an unreferenced
+	// registries remain manager-owned through their World; an unreferenced
 	// dirty registry may therefore be released here without pretending it saved.
 	if (registry)
 	{
@@ -2271,60 +2274,60 @@ void forgetAgentTagRegistryDocument(shared_ptr<core::AgentTagRegistry> const& re
 	resetTagsPanelState();
 }
 
-bool canCreateAgentTagRegistry(shared_ptr<const core::Building> const& building,
-	string const& buildingFilepath, string* diagnostic)
+bool canCreateAgentTagRegistry(shared_ptr<const core::World> const& world,
+	string const& worldFilepath, string* diagnostic)
 {
 	auto refuse = [diagnostic](string message)
 	{
 		if (diagnostic) *diagnostic = std::move(message);
 		return false;
 	};
-	if (!building) return refuse("No Building is open");
-	if (building->hasAgentTagRegistryReference())
-		return refuse("This Building already has an Agent tag registry");
-	if (buildingFilepath.empty())
-		return refuse("Save the Building before creating an Agent tag registry");
+	if (!world) return refuse("No World is open");
+	if (world->hasAgentTagRegistryReference())
+		return refuse("This World already has an Agent tag registry");
+	if (worldFilepath.empty())
+		return refuse("Save the World before creating an Agent tag registry");
 
 	error_code error;
-	if (!filesystem::is_regular_file(buildingFilepath, error) || error)
-		return refuse("Save the Building before creating an Agent tag registry");
-	auto const registryPath = core::defaultAgentTagRegistryPath(buildingFilepath);
+	if (!filesystem::is_regular_file(worldFilepath, error) || error)
+		return refuse("Save the World before creating an Agent tag registry");
+	auto const registryPath = core::defaultAgentTagRegistryPath(worldFilepath);
 	if (filesystem::exists(registryPath, error) || error)
 		return refuse("The adjacent registry file already exists");
 	if (diagnostic) diagnostic->clear();
 	return true;
 }
 
-bool canSelectAgentTagRegistry(shared_ptr<const core::Building> const& building,
-	string const& buildingFilepath, string* diagnostic)
+bool canSelectAgentTagRegistry(shared_ptr<const core::World> const& world,
+	string const& worldFilepath, string* diagnostic)
 {
 	auto refuse = [diagnostic](string message)
 	{
 		if (diagnostic) *diagnostic = std::move(message);
 		return false;
 	};
-	if (!building) return refuse("No Building is open");
-	if (buildingFilepath.empty())
-		return refuse("Save the Building before selecting an Agent tag registry");
+	if (!world) return refuse("No World is open");
+	if (worldFilepath.empty())
+		return refuse("Save the World before selecting an Agent tag registry");
 
 	error_code error;
-	if (!filesystem::is_regular_file(buildingFilepath, error) || error)
-		return refuse("Save the Building before selecting an Agent tag registry");
+	if (!filesystem::is_regular_file(worldFilepath, error) || error)
+		return refuse("Save the World before selecting an Agent tag registry");
 	if (diagnostic) diagnostic->clear();
 	return true;
 }
 
-bool renderTagsPanel(shared_ptr<core::Building> const& building,
-	string const& buildingFilepath,
+bool renderTagsPanel(shared_ptr<core::World> const& world,
+	string const& worldFilepath,
 	AgentTagRegistryPathSelector const& selectRegistryPath)
 {
-	if (building->hasAgentTagRegistryReference())
-		return renderAttachedRegistry(building, buildingFilepath, selectRegistryPath);
+	if (world->hasAgentTagRegistryReference())
+		return renderAttachedRegistry(world, worldFilepath, selectRegistryPath);
 
 	ImGui::TextDisabled("No Agent tag registry attached.");
 	string createDiagnostic;
 	auto const canCreate = canCreateAgentTagRegistry(
-		building, buildingFilepath, &createDiagnostic);
+		world, worldFilepath, &createDiagnostic);
 	ImGui::BeginDisabled(!canCreate);
 	auto const createClicked = ImGui::Button("Create empty registry");
 	ImGui::EndDisabled();
@@ -2334,7 +2337,7 @@ bool renderTagsPanel(shared_ptr<core::Building> const& building,
 	ImGui::SameLine();
 	string selectDiagnostic;
 	auto canSelect = canSelectAgentTagRegistry(
-		building, buildingFilepath, &selectDiagnostic);
+		world, worldFilepath, &selectDiagnostic);
 	if (!selectRegistryPath)
 	{
 		canSelect = false;
@@ -2351,25 +2354,25 @@ bool renderTagsPanel(shared_ptr<core::Building> const& building,
 	{
 		if (createClicked)
 		{
-			auto undo = captureDocumentSnapshot(building);
-			auto registry = core::createAndAttachAgentTagRegistry(*building, buildingFilepath);
+			auto undo = captureDocumentSnapshot(world);
+			auto registry = core::createAndAttachAgentTagRegistry(*world, worldFilepath);
 			commitDocumentEdit(std::move(undo));
 			(void)agentTagRegistryDocumentHistory(registry);
 			core::addLogMessage("Tags", 0, core::LogLevel::Info,
-				"Created Agent tag registry " + building->getAgentTagRegistryFilename()
+				"Created Agent tag registry " + world->getAgentTagRegistryFilename()
 					+ " (" + registry->getUuid() + ")");
 			return true;
 		}
 
 		auto selectedPath = selectRegistryPath();
 		if (!selectedPath) return false;
-		auto undo = captureDocumentSnapshot(building);
+		auto undo = captureDocumentSnapshot(world);
 		auto registry = core::selectAndAttachAgentTagRegistry(
-			*building, buildingFilepath, *selectedPath);
+			*world, worldFilepath, *selectedPath);
 		commitDocumentEdit(std::move(undo));
 		(void)agentTagRegistryDocumentHistory(registry);
 		core::addLogMessage("Tags", 0, core::LogLevel::Info,
-			"Selected Agent tag registry " + building->getAgentTagRegistryFilename()
+			"Selected Agent tag registry " + world->getAgentTagRegistryFilename()
 				+ " (" + registry->getUuid() + ")");
 		return true;
 	}

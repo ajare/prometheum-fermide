@@ -1,7 +1,7 @@
 // Assigning Agents to Agent groups, for ticket #110.
 //
 // Everything here crosses the same two seams the group definitions did in
-// #109: the public Building authoring API, and a complete Building
+// #109: the public World authoring API, and a complete World
 // serialize/deserialize round trip. The registries behind the API are never
 // inspected, and the YAML is read as a whole document - never asserted
 // against incidental formatting.
@@ -10,7 +10,7 @@
 //
 //   every Agent starts with no Agent group, and so does every Agent read from
 //   a document that never carried the assignment field
-//   assigning and clearing go through Building, and an unknown Agent or an
+//   assigning and clearing go through World, and an unknown Agent or an
 //   unknown Agent group is refused with a reason and changes nothing
 //   the assignment is a reference to stable identity: renaming the group
 //   moves the label every assigned Agent shows and leaves the reference alone
@@ -45,7 +45,7 @@
 #include "imgui/imgui_internal.h"
 
 #include "core/Agent.h"
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/EntityId.h"
 #include "core/Exceptions.h"
 #include "core/Sector.h"
@@ -62,35 +62,35 @@ namespace
 		if (!condition) throw std::runtime_error(message);
 	}
 
-	std::string serializeBuilding(core::Building& building)
+	std::string serializeWorld(core::World& world)
 	{
 		core::SerializationWorkData workData;
 		auto writer = core::YamlSerializer::toString();
-		building.serialize(*writer, workData);
+		world.serialize(*writer, workData);
 		writer->serialize();
 		return writer->getSerializedString();
 	}
 
 	// A whole-document load, the way the editor opens a file.
-	std::shared_ptr<core::Building> loadBuilding(std::string const& yaml)
+	std::shared_ptr<core::World> loadWorld(std::string const& yaml)
 	{
-		auto loaded = std::make_shared<core::Building>("Loaded Building", 1, 1);
+		auto loaded = std::make_shared<core::World>("Loaded World", 1, 1);
 		core::SerializationWorkData workData;
 		auto reader = core::YamlSerializer::fromString(yaml);
 		reader->deserialize();
-		require(reader != nullptr, "The serialised Building could not be read back");
-		require(loaded->deserialize(*reader, workData), "The Building did not reload");
+		require(reader != nullptr, "The serialised World could not be read back");
+		require(loaded->deserialize(*reader, workData), "The World did not reload");
 		return loaded;
 	}
 
-	// Loads over a Building that already exists, which is how a refused open
+	// Loads over a World that already exists, which is how a refused open
 	// gets caught out for leftover state.
-	void loadInto(core::Building& target, std::string const& yaml)
+	void loadInto(core::World& target, std::string const& yaml)
 	{
 		core::SerializationWorkData workData;
 		auto reader = core::YamlSerializer::fromString(yaml);
 		reader->deserialize();
-		require(target.deserialize(*reader, workData), "The Building did not reload");
+		require(target.deserialize(*reader, workData), "The World did not reload");
 	}
 
 	std::string replaceOnce(std::string const& yaml, std::string const& find,
@@ -98,7 +98,7 @@ namespace
 	{
 		auto const found = yaml.find(find);
 		require(found != std::string::npos,
-			("The serialised Building did not contain \"" + find + "\" to rewrite").c_str());
+			("The serialised World did not contain \"" + find + "\" to rewrite").c_str());
 		return yaml.substr(0, found) + replace + yaml.substr(found + find.size());
 	}
 
@@ -124,16 +124,16 @@ namespace
 		}
 
 		require(removedAny,
-			"The serialised Building carried no Agent group assignment to strip");
+			"The serialised World carried no Agent group assignment to strip");
 		return out.str();
 	}
 
-	std::vector<core::Agent const*> allAgents(core::Building const& building)
+	std::vector<core::Agent const*> allAgents(core::World const& world)
 	{
 		std::vector<core::Agent const*> agents;
-		for (uint32_t layer = 0; layer < building.getLayerCount(); ++layer)
+		for (uint32_t layer = 0; layer < world.getLayerCount(); ++layer)
 		{
-			for (auto const& sector : building.getSectors(layer))
+			for (auto const& sector : world.getSectors(layer))
 			{
 				if (!sector) continue;
 				for (auto* agent : sector->getAgents())
@@ -145,13 +145,13 @@ namespace
 		return agents;
 	}
 
-	// A Building with a little world in it, so an Agent is never the only
+	// A World with a little world in it, so an Agent is never the only
 	// thing the document carries.
-	void buildWorld(core::Building& building)
+	void buildWorld(core::World& world)
 	{
-		building.addCorridor(0, 0, 8);
-		building.addRoom("Depot", 0, 2, 0, 4, 1);
-		building.finishBuild();
+		world.addCorridor(0, 0, 8);
+		world.addRoom("Depot", 0, 2, 0, 4, 1);
+		world.finishBuild();
 	}
 
 	// ImGui writes its render-time text log to the clipboard on the frame the
@@ -247,7 +247,7 @@ namespace
 
 	void resetUndoHistory()
 	{
-		gBuildingDocumentHistory.clear();
+		gWorldDocumentHistory.clear();
 	}
 
 	// ---------------------------------------------------------------- checks
@@ -256,122 +256,122 @@ namespace
 	// strength of having none.
 	void everyAgentStartsWithNoAgentGroup()
 	{
-		core::Building building("Assignment defaults", 12, 3);
-		buildWorld(building);
+		core::World world("Assignment defaults", 12, 3);
+		buildWorld(world);
 
-		building.addAgentGroup("Crew");
-		auto const first = building.createAgent("Alice", 0);
-		auto const second = building.createAgent("Bob", 0);
+		world.addAgentGroup("Crew");
+		auto const first = world.createAgent("Alice", 0);
+		auto const second = world.createAgent("Bob", 0);
 
-		require(!building.lookupAgent(first).entity->getAgentGroupId(),
+		require(!world.lookupAgent(first).entity->getAgentGroupId(),
 			"A newly created Agent came with an Agent group already assigned");
-		require(!building.getAgentGroup(first),
-			"Building reported an Agent group for a freshly created Agent");
-		require(!building.lookupAgent(second).entity->getAgentGroupId(),
+		require(!world.getAgentGroup(first),
+			"World reported an Agent group for a freshly created Agent");
+		require(!world.lookupAgent(second).entity->getAgentGroupId(),
 			"A second newly created Agent came with an Agent group already assigned");
 
 		// Clearing an Agent that has nothing to clear is a legitimate no-op,
 		// not an error: `<none>` is a choice the user can always make.
 		std::string diagnostic;
-		require(building.canSetAgentGroup(first, {}, &diagnostic),
+		require(world.canSetAgentGroup(first, {}, &diagnostic),
 			("Clearing an Agent with no Agent group was refused: " + diagnostic).c_str());
-		require(building.setAgentGroup(first, {}, &diagnostic),
+		require(world.setAgentGroup(first, {}, &diagnostic),
 			("Clearing an Agent with no Agent group failed: " + diagnostic).c_str());
-		require(!building.lookupAgent(first).entity->getAgentGroupId(),
+		require(!world.lookupAgent(first).entity->getAgentGroupId(),
 			"Clearing an Agent that had no Agent group gave it one");
 	}
 
-	// The Building is the only way in, and it refuses both halves of a bad
+	// The World is the only way in, and it refuses both halves of a bad
 	// assignment without moving anything.
-	void anAgentCanBeAssignedAndClearedThroughTheBuilding()
+	void anAgentCanBeAssignedAndClearedThroughTheWorld()
 	{
-		core::Building building("Assignment API", 12, 3);
-		buildWorld(building);
+		core::World world("Assignment API", 12, 3);
+		buildWorld(world);
 
-		auto const crew = building.addAgentGroup("Crew");
-		auto const nightShift = building.addAgentGroup("Night shift");
-		auto const alice = building.createAgent("Alice", 0);
+		auto const crew = world.addAgentGroup("Crew");
+		auto const nightShift = world.addAgentGroup("Night shift");
+		auto const alice = world.createAgent("Alice", 0);
 
 		std::string diagnostic;
-		require(building.canSetAgentGroup(alice, crew, &diagnostic),
+		require(world.canSetAgentGroup(alice, crew, &diagnostic),
 			("Assigning an Agent to a defined group was refused: " + diagnostic).c_str());
-		require(building.setAgentGroup(alice, crew, &diagnostic),
+		require(world.setAgentGroup(alice, crew, &diagnostic),
 			("Assigning an Agent to a defined group failed: " + diagnostic).c_str());
-		require(building.lookupAgent(alice).entity->getAgentGroupId() == crew,
+		require(world.lookupAgent(alice).entity->getAgentGroupId() == crew,
 			"An assigned Agent does not report the group it was assigned to");
-		require(building.getAgentGroup(alice) == crew,
-			"Building.getAgentGroup did not read back the assignment");
+		require(world.getAgentGroup(alice) == crew,
+			"World.getAgentGroup did not read back the assignment");
 
 		// Re-assigning replaces the previous group rather than adding a second:
 		// an Agent belongs to one Agent group, or to none.
-		require(building.setAgentGroup(alice, nightShift, &diagnostic),
+		require(world.setAgentGroup(alice, nightShift, &diagnostic),
 			("Reassigning an Agent failed: " + diagnostic).c_str());
-		require(building.getAgentGroup(alice) == nightShift,
+		require(world.getAgentGroup(alice) == nightShift,
 			"Reassigning an Agent left it on its previous group");
 
-		require(building.setAgentGroup(alice, {}, &diagnostic),
+		require(world.setAgentGroup(alice, {}, &diagnostic),
 			("Clearing an assignment failed: " + diagnostic).c_str());
-		require(!building.getAgentGroup(alice),
+		require(!world.getAgentGroup(alice),
 			"Clearing an assignment left the Agent holding a group");
 
 		// Unknown Agent: refused, with a reason, and nothing else moved.
-		require(!building.canSetAgentGroup(core::AgentId{ 424242 }, crew, &diagnostic),
-			"Assigning an Agent this Building never issued succeeded");
+		require(!world.canSetAgentGroup(core::AgentId{ 424242 }, crew, &diagnostic),
+			"Assigning an Agent this World never issued succeeded");
 		require(diagnostic.find("424242") != std::string::npos,
 			("The unknown-Agent refusal did not name the Agent: " + diagnostic).c_str());
-		require(!building.setAgentGroup(core::AgentId{ 424242 }, crew, &diagnostic),
-			"Building.setAgentGroup accepted an Agent it does not own");
+		require(!world.setAgentGroup(core::AgentId{ 424242 }, crew, &diagnostic),
+			"World.setAgentGroup accepted an Agent it does not own");
 		require(!diagnostic.empty(),
 			"An unknown Agent was refused without a diagnostic");
 
 		// Unknown group: refused, with the group's ID in the reason.
-		require(!building.canSetAgentGroup(alice, core::AgentGroupId{ 999 }, &diagnostic),
-			"Assigning an Agent to an Agent group this Building never defined succeeded");
+		require(!world.canSetAgentGroup(alice, core::AgentGroupId{ 999 }, &diagnostic),
+			"Assigning an Agent to an Agent group this World never defined succeeded");
 		require(diagnostic.find("999") != std::string::npos,
 			("The unknown-group refusal did not name the group: " + diagnostic).c_str());
-		require(!building.setAgentGroup(alice, core::AgentGroupId{ 999 }, &diagnostic),
-			"Building.setAgentGroup accepted a group it does not own");
-		require(!building.getAgentGroup(alice),
+		require(!world.setAgentGroup(alice, core::AgentGroupId{ 999 }, &diagnostic),
+			"World.setAgentGroup accepted a group it does not own");
+		require(!world.getAgentGroup(alice),
 			"A refused assignment still changed the Agent");
 	}
 
-	// The Agent holds an ID, the Building holds the name, and that is why a
+	// The Agent holds an ID, the World holds the name, and that is why a
 	// rename never has to visit the members.
 	void anAssignedAgentFollowsItsGroupRename()
 	{
-		core::Building building("Assignment rename", 12, 3);
-		buildWorld(building);
+		core::World world("Assignment rename", 12, 3);
+		buildWorld(world);
 
-		auto const crew = building.addAgentGroup("Crew");
-		auto const alpha = building.addAgentGroup("Alpha");
-		auto const alice = building.createAgent("Alice", 0);
-		auto const bob = building.createAgent("Bob", 0);
+		auto const crew = world.addAgentGroup("Crew");
+		auto const alpha = world.addAgentGroup("Alpha");
+		auto const alice = world.createAgent("Alice", 0);
+		auto const bob = world.createAgent("Bob", 0);
 
 		std::string diagnostic;
-		require(building.setAgentGroup(alice, crew, &diagnostic)
-			&& building.setAgentGroup(bob, crew, &diagnostic),
+		require(world.setAgentGroup(alice, crew, &diagnostic)
+			&& world.setAgentGroup(bob, crew, &diagnostic),
 			("Assigning two Agents to one group failed: " + diagnostic).c_str());
 
-		require(building.renameAgentGroup(crew, "Facilities", &diagnostic),
+		require(world.renameAgentGroup(crew, "Facilities", &diagnostic),
 			("Renaming an assigned group was refused: " + diagnostic).c_str());
 
-		require(building.getAgentGroup(alice) == crew
-			&& building.getAgentGroup(bob) == crew,
+		require(world.getAgentGroup(alice) == crew
+			&& world.getAgentGroup(bob) == crew,
 			"Renaming an Agent group broke the assignment it carried");
-		require(building.getAgentGroupName(building.getAgentGroup(alice)) == "Facilities",
+		require(world.getAgentGroupName(world.getAgentGroup(alice)) == "Facilities",
 			"An assigned Agent does not read the group's new name through its ID");
-		require(building.getAgentGroupName(building.getAgentGroup(bob)) == "Facilities",
+		require(world.getAgentGroupName(world.getAgentGroup(bob)) == "Facilities",
 			"A second assigned Agent does not read the group's new name through its ID");
-		require(building.getAgentGroupName(alpha) == "Alpha",
+		require(world.getAgentGroupName(alpha) == "Alpha",
 			"Renaming one Agent group disturbed another");
 
 		// The panel's own label follows the same way, which is what the user
 		// sees in the table without the Agent being touched.
-		require(agentGroupAssignmentLabel(building, alice) == "Facilities",
+		require(agentGroupAssignmentLabel(world, alice) == "Facilities",
 			"The Group cell label did not follow the rename");
-		require(agentGroupAssignmentLabel(building, bob) == "Facilities",
+		require(agentGroupAssignmentLabel(world, bob) == "Facilities",
 			"A second assigned Agent's Group cell label did not follow the rename");
-		require(agentGroupAssignmentLabel(building, building.createAgent("Carol", 0)) == "<none>",
+		require(agentGroupAssignmentLabel(world, world.createAgent("Carol", 0)) == "<none>",
 			"An Agent with no Agent group does not read as <none>");
 	}
 
@@ -390,21 +390,21 @@ namespace
 	AssignmentFixture assignmentFixture()
 	{
 		AssignmentFixture fixture;
-		core::Building building("Assignment round trip", 12, 3);
-		buildWorld(building);
+		core::World world("Assignment round trip", 12, 3);
+		buildWorld(world);
 
-		fixture.crew = building.addAgentGroup("Crew");
-		fixture.nightShift = building.addAgentGroup("Night shift");
-		fixture.alice = building.createAgent("Alice", 0);
-		fixture.bob = building.createAgent("Bob", 0);
-		fixture.carol = building.createAgent("Carol", 0);
+		fixture.crew = world.addAgentGroup("Crew");
+		fixture.nightShift = world.addAgentGroup("Night shift");
+		fixture.alice = world.createAgent("Alice", 0);
+		fixture.bob = world.createAgent("Bob", 0);
+		fixture.carol = world.createAgent("Carol", 0);
 
 		std::string diagnostic;
-		require(building.setAgentGroup(fixture.alice, fixture.crew, &diagnostic)
-			&& building.setAgentGroup(fixture.bob, fixture.nightShift, &diagnostic),
+		require(world.setAgentGroup(fixture.alice, fixture.crew, &diagnostic)
+			&& world.setAgentGroup(fixture.bob, fixture.nightShift, &diagnostic),
 			("Setting up the assignment round trip failed: " + diagnostic).c_str());
 
-		fixture.yaml = serializeBuilding(building);
+		fixture.yaml = serializeWorld(world);
 		return fixture;
 	}
 
@@ -414,12 +414,12 @@ namespace
 		auto const fixture = assignmentFixture();
 
 		require(fixture.yaml.find("version: 14") != std::string::npos,
-			"Agent group assignments were not written under the current Building schema");
+			"Agent group assignments were not written under the current World schema");
 		require(fixture.yaml.find("group: 1") != std::string::npos
 			&& fixture.yaml.find("group: 2") != std::string::npos,
 			"The Agent group assignments were not persisted by ID");
 
-		auto const loaded = loadBuilding(fixture.yaml);
+		auto const loaded = loadWorld(fixture.yaml);
 		require(loaded->getAgentGroup(fixture.alice) == fixture.crew,
 			"An assigned Agent came back without its Agent group");
 		require(loaded->getAgentGroup(fixture.bob) == fixture.nightShift,
@@ -431,20 +431,20 @@ namespace
 
 		// Re-saving what was just loaded produces the same document, so the
 		// stored form is canonical and a load cannot drift it.
-		require(serializeBuilding(*loaded) == fixture.yaml,
-			"Re-saving a reloaded Building produced a different assignment document");
+		require(serializeWorld(*loaded) == fixture.yaml,
+			"Re-saving a reloaded World produced a different assignment document");
 
-		// And the reloaded Building still assigns, clears and refuses exactly
+		// And the reloaded World still assigns, clears and refuses exactly
 		// the way the original did.
 		std::string diagnostic;
 		require(loaded->setAgentGroup(fixture.carol, fixture.crew, &diagnostic),
-			("Assigning on a reloaded Building failed: " + diagnostic).c_str());
+			("Assigning on a reloaded World failed: " + diagnostic).c_str());
 		require(loaded->getAgentGroup(fixture.carol) == fixture.crew,
 			"An assignment made after a load was not kept");
 		require(!loaded->setAgentGroup(fixture.alice, core::AgentGroupId{ 7777 }, &diagnostic),
-			"A reloaded Building accepted an Agent group it never defined");
+			"A reloaded World accepted an Agent group it never defined");
 		require(loaded->getAgentGroup(fixture.alice) == fixture.crew,
-			"A refused assignment on a reloaded Building changed the Agent");
+			"A refused assignment on a reloaded World changed the Agent");
 	}
 
 	// A document that never carried the field is not an error and is not a
@@ -454,7 +454,7 @@ namespace
 		auto const fixture = assignmentFixture();
 		auto const stripped = withoutAssignmentFields(fixture.yaml);
 
-		auto const loaded = loadBuilding(stripped);
+		auto const loaded = loadWorld(stripped);
 		require(loaded->getAgentGroupCount() == 2,
 			"Stripping the assignment fields took the Agent group definitions with them");
 		require(!loaded->getAgentGroup(fixture.alice)
@@ -468,7 +468,7 @@ namespace
 	// The hazard this guards is a silent downgrade: an assignment to a group
 	// that is not in the file could be dropped on the floor and look like a
 	// choice the user never made. It is refused instead, and refused before any
-	// of the file's Agents is taken in, so the Building is never left holding
+	// of the file's Agents is taken in, so the World is never left holding
 	// part of a document it rejected.
 	void aDanglingAssignmentRefusesTheFileBeforeAnyAgentIsTakenIn()
 	{
@@ -476,7 +476,7 @@ namespace
 		// Bob's assignment points at a group the document never defines.
 		auto const dangling = replaceOnce(fixture.yaml, "group: 2", "group: 99");
 
-		core::Building target("Dangling target", 12, 3);
+		core::World target("Dangling target", 12, 3);
 		buildWorld(target);
 		target.addAgentGroup("Existing");
 		auto const ownAgent = target.createAgent("Mine", 0);
@@ -513,108 +513,108 @@ namespace
 	{
 		resetUndoHistory();
 
-		auto const building = std::make_shared<core::Building>("Assignment edits", 12, 3);
-		buildWorld(*building);
-		require(!building->isSimulationPaused(),
-			"The test Building started paused, so it proved nothing about running edits");
+		auto const world = std::make_shared<core::World>("Assignment edits", 12, 3);
+		buildWorld(*world);
+		require(!world->isSimulationPaused(),
+			"The test World started paused, so it proved nothing about running edits");
 
-		auto const crew = building->addAgentGroup("Crew");
-		auto const nightShift = building->addAgentGroup("Night shift");
-		auto const alice = building->createAgent("Alice", 0);
+		auto const crew = world->addAgentGroup("Crew");
+		auto const nightShift = world->addAgentGroup("Night shift");
+		auto const alice = world->createAgent("Alice", 0);
 
 		// Let the world actually run, then come back to the document clean so
 		// "marked modified" means this operation did it. markSaved() rather than
 		// markUnmodified(): the Agents this test created are children of the
 		// document, and a dirty Agent keeps isModified() true on its own.
-		building->advanceTick();
-		building->advanceTick();
-		building->markSaved();
-		require(!building->isModified(), "The test Building did not come back clean");
+		world->advanceTick();
+		world->advanceTick();
+		world->markSaved();
+		require(!world->isModified(), "The test World did not come back clean");
 
-		auto const topologyBefore = building->getTopologyGeneration();
+		auto const topologyBefore = world->getTopologyGeneration();
 		std::string diagnostic;
 
-		require(commitAgentGroupAssignment(building, alice, crew, diagnostic),
+		require(commitAgentGroupAssignment(world, alice, crew, diagnostic),
 			("Assigning through the panel seam failed: " + diagnostic).c_str());
-		require(building->getAgentGroup(alice) == crew,
+		require(world->getAgentGroup(alice) == crew,
 			"The panel seam did not assign the Agent");
-		require(building->isModified(),
+		require(world->isModified(),
 			"Assigning an Agent to an Agent group did not mark the document modified");
-		require(gBuildingDocumentHistory.undoCount() == 1,
+		require(gWorldDocumentHistory.undoCount() == 1,
 			"Assigning an Agent did not commit exactly one undoable document edit");
-		require(!gBuildingDocumentHistory.canRedo(), "Assigning an Agent produced a redo entry");
-		require(!building->isSimulationPaused(),
+		require(!gWorldDocumentHistory.canRedo(), "Assigning an Agent produced a redo entry");
+		require(!world->isSimulationPaused(),
 			"Assigning an Agent paused the simulation");
-		require(building->getTopologyGeneration() == topologyBefore,
+		require(world->getTopologyGeneration() == topologyBefore,
 			"Assigning an Agent rebuilt the traversal topology");
 
-		require(commitAgentGroupAssignment(building, alice, nightShift, diagnostic),
+		require(commitAgentGroupAssignment(world, alice, nightShift, diagnostic),
 			("Reassigning through the panel seam failed: " + diagnostic).c_str());
-		require(gBuildingDocumentHistory.undoCount() == 2,
+		require(gWorldDocumentHistory.undoCount() == 2,
 			"Reassigning an Agent did not commit exactly one undoable document edit");
 
-		require(commitAgentGroupAssignment(building, alice, {}, diagnostic),
+		require(commitAgentGroupAssignment(world, alice, {}, diagnostic),
 			("Clearing through the panel seam failed: " + diagnostic).c_str());
-		require(!building->getAgentGroup(alice),
+		require(!world->getAgentGroup(alice),
 			"Clearing through the panel seam left the Agent assigned");
-		require(gBuildingDocumentHistory.undoCount() == 3,
+		require(gWorldDocumentHistory.undoCount() == 3,
 			"Clearing an Agent did not commit exactly one undoable document edit");
 
 		// Refused operations leave the history exactly where it was.
-		require(!commitAgentGroupAssignment(building, core::AgentId{ 4242 }, crew, diagnostic),
+		require(!commitAgentGroupAssignment(world, core::AgentId{ 4242 }, crew, diagnostic),
 			"Assigning an unknown Agent succeeded through the panel seam");
-		require(gBuildingDocumentHistory.undoCount() == 3,
+		require(gWorldDocumentHistory.undoCount() == 3,
 			"A refused assignment committed an undo entry");
 		require(!diagnostic.empty(),
 			"An assignment refused through the panel seam failed without a diagnostic");
 
-		require(!commitAgentGroupAssignment(building, alice, core::AgentGroupId{ 31337 }, diagnostic),
+		require(!commitAgentGroupAssignment(world, alice, core::AgentGroupId{ 31337 }, diagnostic),
 			"Assigning to an unknown Agent group succeeded through the panel seam");
-		require(gBuildingDocumentHistory.undoCount() == 3,
+		require(gWorldDocumentHistory.undoCount() == 3,
 			"An assignment to an unknown group committed an undo entry");
-		require(!building->getAgentGroup(alice),
+		require(!world->getAgentGroup(alice),
 			"A refused assignment changed the live Agent");
 
 		// Undo is a snapshot restore, so the entries themselves are the
 		// history: the newest holds the state with the assignment still on,
 		// the oldest the state before the first assignment was made.
-		require(gBuildingDocumentHistory.undoCount() == 3, "The undo stack is not the three edits made");
-		auto const beforeClear = loadBuilding(gBuildingDocumentHistory.undoEntries().back().yaml);
+		require(gWorldDocumentHistory.undoCount() == 3, "The undo stack is not the three edits made");
+		auto const beforeClear = loadWorld(gWorldDocumentHistory.undoEntries().back().yaml);
 		require(beforeClear->getAgentGroup(alice) == nightShift,
 			"The newest undo snapshot did not hold the state before the clearing");
-		auto const beforeFirst = loadBuilding(gBuildingDocumentHistory.undoEntries().front().yaml);
+		auto const beforeFirst = loadWorld(gWorldDocumentHistory.undoEntries().front().yaml);
 		require(!beforeFirst->getAgentGroup(alice),
 			"The oldest undo snapshot already carried the first assignment");
 
-		// And the live Building is where the redo would take it.
-		require(!building->getAgentGroup(alice),
-			"The live Building did not hold the cleared assignment");
+		// And the live World is where the redo would take it.
+		require(!world->getAgentGroup(alice),
+			"The live World did not hold the cleared assignment");
 	}
 
 	// The label the cell shows, checked against the states it can be in. The
-	// choice order itself is the Building's creation order, which #109 pins
+	// choice order itself is the World's creation order, which #109 pins
 	// down; the cell renders straight off it, `<none>` always leading.
 	void theGroupCellLabelShowsTheAssignment()
 	{
-		core::Building building("Assignment label", 12, 3);
-		buildWorld(building);
+		core::World world("Assignment label", 12, 3);
+		buildWorld(world);
 
-		auto const crew = building.addAgentGroup("Crew");
-		auto const alice = building.createAgent("Alice", 0);
+		auto const crew = world.addAgentGroup("Crew");
+		auto const alice = world.createAgent("Alice", 0);
 
-		require(agentGroupAssignmentLabel(building, alice) == "<none>",
+		require(agentGroupAssignmentLabel(world, alice) == "<none>",
 			"An unassigned Group cell does not read <none>");
 		std::string diagnostic;
-		require(building.setAgentGroup(alice, crew, &diagnostic),
+		require(world.setAgentGroup(alice, crew, &diagnostic),
 			("Assigning for the label check failed: " + diagnostic).c_str());
-		require(agentGroupAssignmentLabel(building, alice) == "Crew",
+		require(agentGroupAssignmentLabel(world, alice) == "Crew",
 			"An assigned Group cell does not show the group's name");
-		require(building.renameAgentGroup(crew, "Response team", &diagnostic),
+		require(world.renameAgentGroup(crew, "Response team", &diagnostic),
 			("Renaming for the label check failed: " + diagnostic).c_str());
-		require(agentGroupAssignmentLabel(building, alice) == "Response team",
+		require(agentGroupAssignmentLabel(world, alice) == "Response team",
 			"An assigned Group cell does not follow a rename");
-		require(building.setAgentGroup(alice, {}, &diagnostic)
-			&& agentGroupAssignmentLabel(building, alice) == "<none>",
+		require(world.setAgentGroup(alice, {}, &diagnostic)
+			&& agentGroupAssignmentLabel(world, alice) == "<none>",
 			"A cleared Group cell does not read <none> again");
 	}
 
@@ -625,7 +625,7 @@ namespace
 	{
 		ImGuiGuard guard;
 
-		auto const shared = std::make_shared<core::Building>("Group cell render", 12, 3);
+		auto const shared = std::make_shared<core::World>("Group cell render", 12, 3);
 		buildWorld(*shared);
 		auto const crew = shared->addAgentGroup("Crew");
 		// A second group so the cell has a list to render, not just the choice
@@ -642,7 +642,7 @@ namespace
 			else if (shared->isSimulationPaused()) shared->resumeSimulation();
 
 			ImGui::NewFrame();
-			ImGui::Begin("Building");
+			ImGui::Begin("World");
 
 			ImGuiTableFlags const flags =
 				ImGuiTableFlags_SizingStretchSame |
@@ -703,19 +703,19 @@ namespace
 		resetUndoHistory();
 		ImGuiGuard guard;
 
-		auto const building = std::make_shared<core::Building>("Hash pair names", 12, 3);
-		buildWorld(*building);
+		auto const world = std::make_shared<core::World>("Hash pair names", 12, 3);
+		buildWorld(*world);
 
 		// Every shape the pair can take in an otherwise valid name: embedded,
 		// leading, and a tripled run.
-		auto const crewDay = building->addAgentGroup("Crew##Day");
-		auto const crewNight = building->addAgentGroup("Crew##Night");
-		auto const leadingHashes = building->addAgentGroup("##Night shift");
-		auto const tripleHash = building->addAgentGroup("Trip###le");
+		auto const crewDay = world->addAgentGroup("Crew##Day");
+		auto const crewNight = world->addAgentGroup("Crew##Night");
+		auto const leadingHashes = world->addAgentGroup("##Night shift");
+		auto const tripleHash = world->addAgentGroup("Trip###le");
 
-		auto const alice = building->createAgent("Alice", 0);
+		auto const alice = world->createAgent("Alice", 0);
 		std::string diagnostic;
-		require(building->setAgentGroup(alice, crewNight, &diagnostic),
+		require(world->setAgentGroup(alice, crewNight, &diagnostic),
 			("Assigning a group whose name carries ## failed: " + diagnostic).c_str());
 
 		ImVec2 cellMin{};
@@ -725,7 +725,7 @@ namespace
 		FrameRender const frame = [&](std::vector<std::string>* capture)
 		{
 			ImGui::NewFrame();
-			ImGui::Begin("Building");
+			ImGui::Begin("World");
 			if (capture) ImGui::LogToClipboard();
 
 			ImGuiTableFlags const flags =
@@ -743,7 +743,7 @@ namespace
 
 			ImGui::TableNextRow();
 			ImGui::TableSetColumnIndex(1);
-			renderAgentGroupAssignmentCell(building, alice);
+			renderAgentGroupAssignmentCell(world, alice);
 
 			// Recorded on the first, closed frame, while the cell's own item is
 			// still the last one ImGui laid out.
@@ -796,7 +796,7 @@ namespace
 				+ visible + "]");
 
 		// The rows, as the list itself lays them out: one for `<none>` plus one
-		// for each group the Building defines.
+		// for each group the World defines.
 		size_t const expectedRows = 1 + 4;
 		auto const rows = scanChoiceRows(clickX, cellMax.y + 1.0f,
 			cellMax.y + 400.0f, frame);
@@ -837,9 +837,9 @@ namespace
 			clickAt(clickX, rows[pick.row], frame);
 			require(!ImGui::IsPopupOpen(ImGuiID{}, ImGuiPopupFlags_AnyPopup),
 				"Picking " + pick.name + " left the list open");
-			require(building->getAgentGroup(alice) == pick.group,
+			require(world->getAgentGroup(alice) == pick.group,
 				"Clicking the row showing " + pick.name + " assigned "
-					+ std::to_string(building->getAgentGroup(alice).value)
+					+ std::to_string(world->getAgentGroup(alice).value)
 					+ " instead of " + std::to_string(pick.group.value));
 
 			guard.clipboardWrites.clear();
@@ -855,19 +855,19 @@ namespace
 		// same one-edit-per-pick accounting the plain names get.
 		clickAt(clickX, clickY, frame);
 		clickAt(clickX, rows[0], frame);
-		require(!building->getAgentGroup(alice),
+		require(!world->getAgentGroup(alice),
 			"The <none> row did not clear the assignment");
 		// One edit per pick, the clearing included: five choices made, five
 		// entries on the stack, no more.
-		require(gBuildingDocumentHistory.undoCount() == picks.size() + 1,
-			"The hash-pair picks committed " + std::to_string(gBuildingDocumentHistory.undoCount())
+		require(gWorldDocumentHistory.undoCount() == picks.size() + 1,
+			"The hash-pair picks committed " + std::to_string(gWorldDocumentHistory.undoCount())
 				+ " undoable edits, expected " + std::to_string(picks.size() + 1));
 
 		// A rename that adds another pair shows up in the preview whole, the
 		// same way a freshly chosen name does: the cell reads the name through
-		// the Building and draws it literally either way.
-		require(building->setAgentGroup(alice, crewDay, &diagnostic)
-			&& building->renameAgentGroup(crewDay, "Crew##Day##Night", &diagnostic),
+		// the World and draws it literally either way.
+		require(world->setAgentGroup(alice, crewDay, &diagnostic)
+			&& world->renameAgentGroup(crewDay, "Crew##Day##Night", &diagnostic),
 			("Renaming a hash-pair group failed: " + diagnostic).c_str());
 		guard.clipboardWrites.clear();
 		frame(&guard.clipboardWrites);
@@ -881,36 +881,36 @@ namespace
 	// published, rendered as text so two runs can be compared as wholes.
 	std::string walkTheCorridor(bool withGroups)
 	{
-		core::Building building("Assignment walk", 12, 3);
-		auto const corridor = building.addCorridor(0, 0, 8);
+		core::World world("Assignment walk", 12, 3);
+		auto const corridor = world.addCorridor(0, 0, 8);
 		uint32_t destinationIdentifier{ 0x41475231u };
-		building.addSectorMarker(corridor, 0, 7.5f, &destinationIdentifier);
-		building.finishBuild();
+		world.addSectorMarker(corridor, 0, 7.5f, &destinationIdentifier);
+		world.finishBuild();
 
 		core::AgentGroupId crew{};
 		if (withGroups)
 		{
-			crew = building.addAgentGroup("Crew");
-			building.addAgentGroup("Night shift");
+			crew = world.addAgentGroup("Crew");
+			world.addAgentGroup("Night shift");
 		}
 
-		auto const walker = building.createAgent("Walker", corridor, 0, 0.5f);
+		auto const walker = world.createAgent("Walker", corridor, 0, 0.5f);
 		if (withGroups)
 		{
 			std::string diagnostic;
-			require(building.setAgentGroup(walker, crew, &diagnostic),
+			require(world.setAgentGroup(walker, crew, &diagnostic),
 				("Grouping the walking Agent failed: " + diagnostic).c_str());
 		}
 
-		auto* agent = building.lookupAgent(walker).entity;
-		auto const destination = building.getGraph()->getVertexByIdentifier(destinationIdentifier);
+		auto* agent = world.lookupAgent(walker).entity;
+		auto const destination = world.getGraph()->getVertexByIdentifier(destinationIdentifier);
 		require(destination != nullptr, "The walk destination vertex is missing");
-		auto path = building.getGraph()->calculatePath(agent, destination);
+		auto path = world.getGraph()->calculatePath(agent, destination);
 		require(path && !path->nodes.empty(), "The walk route could not be calculated");
 		agent->setPath(std::move(path), true);
 
 		auto const startGlobal = agent->getGlobalPosition();
-		for (uint32_t tick = 0; tick < 90; ++tick) building.advanceTick();
+		for (uint32_t tick = 0; tick < 90; ++tick) world.advanceTick();
 
 		require(agent->getGlobalPosition().distanceTo(startGlobal) > 0.01f,
 			"The test Agent did not actually move, so the comparison proved nothing");
@@ -920,7 +920,7 @@ namespace
 		std::ostringstream out;
 		out << std::fixed << std::setprecision(6);
 
-		auto const snapshot = building.getSimulationSnapshot();
+		auto const snapshot = world.getSimulationSnapshot();
 		out << "tick=" << snapshot.tick
 			<< " paused=" << snapshot.paused
 			<< " topology=" << snapshot.topologyGeneration << "\n";
@@ -938,7 +938,7 @@ namespace
 				<< " permit=" << entry.traversalPermit.value
 				<< " interaction=" << entry.interactionRequest.value << "\n";
 		}
-		for (auto const& event : building.consumeSimulationEvents())
+		for (auto const& event : world.consumeSimulationEvents())
 		{
 			out << "event " << event.sequence << ':' << event.tick
 				<< ':' << static_cast<int>(event.type)
@@ -947,7 +947,7 @@ namespace
 		return out.str();
 	}
 
-	// Grouping is editor metadata. Two Buildings that differ only in whether
+	// Grouping is editor metadata. Two Worlds that differ only in whether
 	// their Agent has an Agent group must move, snapshot, and event alike.
 	void groupingAnAgentChangesNothingInTheSimulation()
 	{
@@ -965,7 +965,7 @@ namespace
 void runAgentGroupAssignmentSmokeChecks()
 {
 	everyAgentStartsWithNoAgentGroup();
-	anAgentCanBeAssignedAndClearedThroughTheBuilding();
+	anAgentCanBeAssignedAndClearedThroughTheWorld();
 	anAssignedAgentFollowsItsGroupRename();
 	assignmentsRoundTripThroughSaveAndLoad();
 	aMissingAssignmentFieldLoadsAsNoGroup();

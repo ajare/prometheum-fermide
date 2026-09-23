@@ -9,7 +9,7 @@
 #include <utility>
 
 #include "core/Defines.h"
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/AgentBehaviourRegistry.h"
 #include "core/AgentBehaviourRuntime.h"
 #include "core/AgentTagRegistry.h"
@@ -41,15 +41,15 @@ namespace core
 	// its doors occupy - lives in SimulationCoordinator with the shuttle door
 	// assignment family that consumes that indexing (ADR 0004).
 
-	Building::CreateDoorOptions Building::ManualDoor1Options{ 1, Door::Height::Regular, { false, false }, DoorActivationMode::Manual };
-	Building::CreateDoorOptions Building::RemoteControlledDoor1Options{ 1, Door::Height::Regular, { true, true }, DoorActivationMode::RemoteControlled };
-	Building::CreateDoorOptions Building::UnavailableDoor1Options{ 1, Door::Height::Regular, { false, false }, DoorActivationMode::Unavailable };
-	Building::CreateDoorOptions Building::ManualDoor2Options{ 2, Door::Height::Regular, { false, false }, DoorActivationMode::Manual };
-	Building::CreateDoorOptions Building::RemoteControlledDoor2Options{ 2, Door::Height::Regular, { true, true }, DoorActivationMode::RemoteControlled };
-	Building::CreateDoorOptions Building::UnavailableDoor2Options{ 2, Door::Height::Regular, { false, false }, DoorActivationMode::Unavailable };
+	World::CreateDoorOptions World::ManualDoor1Options{ 1, Door::Height::Regular, { false, false }, DoorActivationMode::Manual };
+	World::CreateDoorOptions World::RemoteControlledDoor1Options{ 1, Door::Height::Regular, { true, true }, DoorActivationMode::RemoteControlled };
+	World::CreateDoorOptions World::UnavailableDoor1Options{ 1, Door::Height::Regular, { false, false }, DoorActivationMode::Unavailable };
+	World::CreateDoorOptions World::ManualDoor2Options{ 2, Door::Height::Regular, { false, false }, DoorActivationMode::Manual };
+	World::CreateDoorOptions World::RemoteControlledDoor2Options{ 2, Door::Height::Regular, { true, true }, DoorActivationMode::RemoteControlled };
+	World::CreateDoorOptions World::UnavailableDoor2Options{ 2, Door::Height::Regular, { false, false }, DoorActivationMode::Unavailable };
 
 	/*
-	Building
+	World
 	--------
 
 	This class essentially holds a game map, with all the sub-structures within it.
@@ -58,20 +58,20 @@ namespace core
 	Sector, Location and SectorObject.
 	
 	It also generates a Graph which is the master path-finding source.  While each Agent
-	may have their own internal Graph, Building's is the one which these are initially 
+	may have their own internal Graph, World's is the one which these are initially
 	generated from.
 
-	A Building has two Layers, and there is quite a bit of hard-coding and reliance around
+	A World has two Layers, and there is quite a bit of hard-coding and reliance around
 	this, which is to say that increasing to three or more would be a lot of work.
 
 	One important concept to bear in mind is the API difference between "y" and "deckIndex".
 	"y" is used as an absolute value within the Layer, whereas "deckIndex" is used as an absolute
 	value within a Sector, ie it is relative to a Sector's base y offset within the Layer.
 
-	Buildings are created piece by piece, and must be valid at every stage of their construction.
+	Worlds are created piece by piece, and must be valid at every stage of their construction.
 	There is no post-build validation, this happens after each construction command.
 
-	Rules for creation of Buildings:
+	Rules for creation of Worlds:
 	
 	There are two types of Sector: Locations and Transits
 
@@ -96,7 +96,7 @@ namespace core
 
 	*/
 
-	Building::Building(string const& name, uint32_t cellsWide, uint32_t decksHigh,
+	World::World(string const& name, uint32_t cellsWide, uint32_t decksHigh,
 		AgentBehaviourRuntimeLimits behaviourRuntimeLimits)
 		: mName(name)
 		, mCellsWide(cellsWide)
@@ -115,34 +115,34 @@ namespace core
 		mGraph = make_shared<Graph>(this);
 	}
 
-	Building::~Building()
+	World::~World()
 	{
-		// Lua teardown needs the final Building and Agent value views, so it runs
+		// Lua teardown needs the final World and Agent value views, so it runs
 		// before registries and domain storage begin destruction. on_stop is
-		// best-effort and cannot prevent the Building from closing.
+		// best-effort and cannot prevent the World from closing.
 		mAgentBehaviourRuntime->teardownAll(*this,
-			AgentBehaviourTeardownReason::BuildingClose);
-		if (mAgentTagRegistry) mAgentTagRegistry->unregisterBuilding(*this);
-		if (mAgentBehaviourRegistry) mAgentBehaviourRegistry->unregisterBuilding(*this);
+			AgentBehaviourTeardownReason::WorldClose);
+		if (mAgentTagRegistry) mAgentTagRegistry->unregisterWorld(*this);
+		if (mAgentBehaviourRegistry) mAgentBehaviourRegistry->unregisterWorld(*this);
 	}
 
-	string const& Building::getName() const
+	string const& World::getName() const
 	{
 		return mName;
 	}
 
-	bool Building::setRandomSeed(uint64_t seed, string* diagnostic)
+	bool World::setRandomSeed(uint64_t seed, string* diagnostic)
 	{
 		if (diagnostic) diagnostic->clear();
 		if (!mSimulationPaused)
 		{
 			if (diagnostic) *diagnostic =
-				"Pause the simulation before changing the Building random seed";
+				"Pause the simulation before changing the World random seed";
 			return false;
 		}
 		if (mRandomSeed == seed)
 		{
-			if (diagnostic) *diagnostic = "The Building random seed is unchanged";
+			if (diagnostic) *diagnostic = "The World random seed is unchanged";
 			return false;
 		}
 		mAgentBehaviourRuntime->teardownAll(*this,
@@ -155,36 +155,36 @@ namespace core
 		return true;
 	}
 
-	bool Building::hasAgentTagRegistryReference() const
+	bool World::hasAgentTagRegistryReference() const
 	{
 		return mAgentTagRegistryReference.has_value();
 	}
 
-	bool Building::hasAttachedAgentTagRegistry() const
+	bool World::hasAttachedAgentTagRegistry() const
 	{
 		return mAgentTagRegistry != nullptr;
 	}
 
-	string const& Building::getAgentTagRegistryFilename() const
+	string const& World::getAgentTagRegistryFilename() const
 	{
 		if (!mAgentTagRegistryReference)
-			throw runtime_error("The Building has no Agent tag registry reference");
+			throw runtime_error("The World has no Agent tag registry reference");
 		return mAgentTagRegistryReference->filename;
 	}
 
-	string const& Building::getExpectedAgentTagRegistryUuid() const
+	string const& World::getExpectedAgentTagRegistryUuid() const
 	{
 		if (!mAgentTagRegistryReference)
-			throw runtime_error("The Building has no Agent tag registry reference");
+			throw runtime_error("The World has no Agent tag registry reference");
 		return mAgentTagRegistryReference->expectedUuid;
 	}
 
-	shared_ptr<AgentTagRegistry> const& Building::getAgentTagRegistry() const
+	shared_ptr<AgentTagRegistry> const& World::getAgentTagRegistry() const
 	{
 		return mAgentTagRegistry;
 	}
 
-	uint64_t Building::getAgentTagAssignmentCount() const
+	uint64_t World::getAgentTagAssignmentCount() const
 	{
 		uint64_t count{ 0 };
 		for (auto const& [agentId, agent] : mAgents.entries())
@@ -195,7 +195,7 @@ namespace core
 		return count;
 	}
 
-	uint32_t Building::getAgentTagAssignedAgentCount() const
+	uint32_t World::getAgentTagAssignedAgentCount() const
 	{
 		uint32_t count{ 0 };
 		for (auto const& [agentId, agent] : mAgents.entries())
@@ -206,7 +206,7 @@ namespace core
 		return count;
 	}
 
-	uint64_t Building::getAgentTagSampleCount() const
+	uint64_t World::getAgentTagSampleCount() const
 	{
 		uint64_t count{ 0 };
 		for (auto const& [agentId, agent] : mAgents.entries())
@@ -219,7 +219,7 @@ namespace core
 		return count;
 	}
 
-	void Building::attachAgentTagRegistry(string filename,
+	void World::attachAgentTagRegistry(string filename,
 		shared_ptr<AgentTagRegistry> registry)
 	{
 		filesystem::path const path(filename);
@@ -247,15 +247,15 @@ namespace core
 
 		AgentTagRegistryReference replacement{ std::move(filename), registry->getUuid() };
 		auto const registryChanges = mAgentTagRegistry != registry;
-		if (registryChanges) registry->registerBuilding(*this);
+		if (registryChanges) registry->registerWorld(*this);
 		if (registryChanges && mAgentTagRegistry)
-			mAgentTagRegistry->unregisterBuilding(*this);
+			mAgentTagRegistry->unregisterWorld(*this);
 		mAgentTagRegistryReference = std::move(replacement);
 		mAgentTagRegistry = std::move(registry);
 		modify();
 	}
 
-	void Building::attachAgentTagRegistryAndClearAssignments(string filename,
+	void World::attachAgentTagRegistryAndClearAssignments(string filename,
 		shared_ptr<AgentTagRegistry> registry)
 	{
 		filesystem::path const path(filename);
@@ -278,16 +278,16 @@ namespace core
 		// clearing samples, and changing namespace commit as one operation.
 		AgentTagRegistryReference replacement{ std::move(filename), registry->getUuid() };
 		auto const registryChanges = mAgentTagRegistry != registry;
-		if (registryChanges) registry->registerBuilding(*this);
+		if (registryChanges) registry->registerWorld(*this);
 		clearAllAgentTagAssignmentsAndSamples();
 		if (registryChanges && mAgentTagRegistry)
-			mAgentTagRegistry->unregisterBuilding(*this);
+			mAgentTagRegistry->unregisterWorld(*this);
 		mAgentTagRegistryReference = std::move(replacement);
 		mAgentTagRegistry = std::move(registry);
 		modify();
 	}
 
-	void Building::detachAgentTagRegistry()
+	void World::detachAgentTagRegistry()
 	{
 		if (!mAgentTagRegistryReference) return;
 		if (getAgentTagAssignmentCount() != 0 || getAgentTagSampleCount() != 0)
@@ -295,44 +295,44 @@ namespace core
 			throw invalid_argument(
 				"Cannot detach the Agent tag registry while assignments or samples exist; use the confirmed destructive action to clear them first");
 		}
-		if (mAgentTagRegistry) mAgentTagRegistry->unregisterBuilding(*this);
+		if (mAgentTagRegistry) mAgentTagRegistry->unregisterWorld(*this);
 		mAgentTagRegistry.reset();
 		mAgentTagRegistryReference.reset();
 		modify();
 	}
 
-	void Building::detachAgentTagRegistryAndClearAssignments()
+	void World::detachAgentTagRegistryAndClearAssignments()
 	{
 		if (!mAgentTagRegistryReference) return;
 		clearAllAgentTagAssignmentsAndSamples();
-		if (mAgentTagRegistry) mAgentTagRegistry->unregisterBuilding(*this);
+		if (mAgentTagRegistry) mAgentTagRegistry->unregisterWorld(*this);
 		mAgentTagRegistry.reset();
 		mAgentTagRegistryReference.reset();
 		modify();
 	}
 
-	void Building::resolveAgentTagRegistry(shared_ptr<AgentTagRegistry> registry)
+	void World::resolveAgentTagRegistry(shared_ptr<AgentTagRegistry> registry)
 	{
 		if (!mAgentTagRegistryReference)
-			throw invalid_argument("The Building has no Agent tag registry reference to resolve");
+			throw invalid_argument("The World has no Agent tag registry reference to resolve");
 		if (!registry)
 			throw invalid_argument("Cannot resolve a null Agent tag registry");
 		if (registry->getUuid() != mAgentTagRegistryReference->expectedUuid)
 		{
 			throw runtime_error(format(
-				"Agent tag registry UUID mismatch: Building expects {}, file contains {}",
+				"Agent tag registry UUID mismatch: World expects {}, file contains {}",
 				mAgentTagRegistryReference->expectedUuid, registry->getUuid()));
 		}
 
 		// Reconciliation is completed before registration, so a refusal neither
-		// exposes this Building through the shared registry nor changes any Agent.
+		// exposes this World through the shared registry nor changes any Agent.
 		reconcileAgentTagAssignments(*registry);
-		if (mAgentTagRegistry) mAgentTagRegistry->unregisterBuilding(*this);
+		if (mAgentTagRegistry) mAgentTagRegistry->unregisterWorld(*this);
 		mAgentTagRegistry = std::move(registry);
-		mAgentTagRegistry->registerBuilding(*this);
+		mAgentTagRegistry->registerWorld(*this);
 	}
 
-	void Building::replaceAgentTagRegistryWithIndependentCopy(string filename,
+	void World::replaceAgentTagRegistryWithIndependentCopy(string filename,
 		shared_ptr<AgentTagRegistry> registry)
 	{
 		filesystem::path const path(filename);
@@ -344,7 +344,7 @@ namespace core
 				"An Agent tag registry reference must be a .tags.yaml basename");
 		}
 		if (!mAgentTagRegistry || !mAgentTagRegistryReference)
-			throw invalid_argument("The Building has no attached Agent tag registry to copy");
+			throw invalid_argument("The World has no attached Agent tag registry to copy");
 		if (!registry || !AgentTagRegistry::uuidIsValid(registry->getUuid()))
 			throw invalid_argument("Cannot attach an invalid Agent tag registry copy");
 		if (registry == mAgentTagRegistry
@@ -359,50 +359,50 @@ namespace core
 			throw invalid_argument(diagnostic);
 
 		AgentTagRegistryReference replacement{ std::move(filename), registry->getUuid() };
-		registry->registerBuilding(*this);
-		mAgentTagRegistry->unregisterBuilding(*this);
+		registry->registerWorld(*this);
+		mAgentTagRegistry->unregisterWorld(*this);
 		mAgentTagRegistryReference = std::move(replacement);
 		mAgentTagRegistry = std::move(registry);
 		modify();
 	}
 
-	bool Building::hasAgentBehaviourRegistryReference() const
+	bool World::hasAgentBehaviourRegistryReference() const
 	{
 		return mAgentBehaviourRegistryReference.has_value();
 	}
 
-	bool Building::hasAttachedAgentBehaviourRegistry() const
+	bool World::hasAttachedAgentBehaviourRegistry() const
 	{
 		return mAgentBehaviourRegistry != nullptr;
 	}
 
-	string const& Building::getAgentBehaviourRegistryPackageName() const
+	string const& World::getAgentBehaviourRegistryPackageName() const
 	{
 		if (!mAgentBehaviourRegistryReference)
-			throw runtime_error("The Building has no Agent behaviour registry reference");
+			throw runtime_error("The World has no Agent behaviour registry reference");
 		return mAgentBehaviourRegistryReference->packageName;
 	}
 
-	string const& Building::getExpectedAgentBehaviourRegistryUuid() const
+	string const& World::getExpectedAgentBehaviourRegistryUuid() const
 	{
 		if (!mAgentBehaviourRegistryReference)
-			throw runtime_error("The Building has no Agent behaviour registry reference");
+			throw runtime_error("The World has no Agent behaviour registry reference");
 		return mAgentBehaviourRegistryReference->expectedUuid;
 	}
 
-	shared_ptr<AgentBehaviourRegistry> const& Building::getAgentBehaviourRegistry() const
+	shared_ptr<AgentBehaviourRegistry> const& World::getAgentBehaviourRegistry() const
 	{
 		return mAgentBehaviourRegistry;
 	}
 
 	namespace
 	{
-		bool validateConfigurationRecord(Building const& building,
+		bool validateConfigurationRecord(World const& world,
 			vector<AgentBehaviourSchemaField> const& fields,
 			AgentBehaviourConfigurationRecord& record, string const& path,
 			size_t depth, string* diagnostic);
 
-		bool validateConfigurationValue(Building const& building,
+		bool validateConfigurationValue(World const& world,
 			AgentBehaviourSchemaField const& field,
 			AgentBehaviourConfigurationValue& value, string const& path,
 			size_t depth, string* diagnostic)
@@ -427,24 +427,24 @@ namespace core
 				duration && duration->ticks == 0)
 				return reject("Duration must be at least one tick");
 			if (auto const* marker = agentBehaviourConfigurationGetIf<MarkerId>(&value);
-				marker && (!*marker || !building.lookupMarker(*marker)))
+				marker && (!*marker || !world.lookupMarker(*marker)))
 				return reject(format("references unknown Marker {}", marker->value));
 			if (auto* list = agentBehaviourConfigurationGetIf<AgentBehaviourConfigurationList>(&value))
 			{
 				if (list->size() > MaxAgentBehaviourListElements)
 					return reject("contains more than 4096 List elements");
 				for (size_t index = 0; index < list->size(); ++index)
-					if (!validateConfigurationValue(building, field.children.front(),
+					if (!validateConfigurationValue(world, field.children.front(),
 						(*list)[index], path + "[" + to_string(index) + "]",
 						depth + 1, diagnostic)) return false;
 			}
 			if (auto* nested = agentBehaviourConfigurationGetIf<AgentBehaviourConfigurationRecord>(&value))
-				return validateConfigurationRecord(building, field.children, *nested,
+				return validateConfigurationRecord(world, field.children, *nested,
 					path, depth + 1, diagnostic);
 			return true;
 		}
 
-		bool validateConfigurationRecord(Building const& building,
+		bool validateConfigurationRecord(World const& world,
 			vector<AgentBehaviourSchemaField> const& fields,
 			AgentBehaviourConfigurationRecord& record, string const& path,
 			size_t depth, string* diagnostic)
@@ -482,13 +482,13 @@ namespace core
 					}
 					found = record.emplace(field.name, *field.defaultValue).first;
 				}
-				if (!validateConfigurationValue(building, field, found->second,
+				if (!validateConfigurationValue(world, field, found->second,
 					fieldPath, depth, diagnostic)) return false;
 			}
 			return true;
 		}
 
-		bool validateBehaviourConfiguration(Building const& building,
+		bool validateBehaviourConfiguration(World const& world,
 			AgentBehaviourRegistry const& registry, AgentBehaviourId behaviourId,
 			uint64_t revision, AgentBehaviourConfiguration const& configuration,
 			AgentBehaviourConfiguration* normalized, string* diagnostic)
@@ -508,18 +508,18 @@ namespace core
 					behaviour->getName(), revision, behaviour->getRevision()));
 
 			AgentBehaviourConfiguration candidate = configuration;
-			if (!validateConfigurationRecord(building, behaviour->getSchema(),
+			if (!validateConfigurationRecord(world, behaviour->getSchema(),
 				candidate, {}, 1, diagnostic)) return false;
 			if (normalized) *normalized = std::move(candidate);
 			return true;
 		}
 	}
 
-	void Building::attachAgentBehaviourRegistry(string packageName,
+	void World::attachAgentBehaviourRegistry(string packageName,
 		shared_ptr<AgentBehaviourRegistry> registry)
 	{
 		if (!isSimulationPaused())
-			throw invalid_argument("Pause the Building before changing its Agent behaviour registry");
+			throw invalid_argument("Pause the World before changing its Agent behaviour registry");
 		filesystem::path const path(packageName);
 		if (packageName.empty() || path.is_absolute() || path.has_parent_path()
 			|| path.filename().string() != packageName
@@ -549,7 +549,7 @@ namespace core
 		// Build every assigned factory in a private candidate runtime before the
 		// shared dependency list, persisted reference, assignments, or live runtime
 		// changes. A repaired expected package therefore becomes usable as one
-		// operation and a bad factory leaves the unresolved Building untouched.
+		// operation and a bad factory leaves the unresolved World untouched.
 		unique_ptr<AgentBehaviourRuntimeAdapter> candidateRuntime;
 		vector<AgentBehaviourRuntimeDiagnostic> runtimeDiagnostics;
 		if (!AgentBehaviourRuntimeAdapter::prepareReload(*this, *registry,
@@ -570,14 +570,14 @@ namespace core
 			|| mAgentBehaviourRegistryReference->expectedUuid != replacement.expectedUuid;
 		auto previousRegistry = mAgentBehaviourRegistry;
 		auto const registryChanges = previousRegistry != registry;
-		if (registryChanges) registry->registerBuilding(*this);
+		if (registryChanges) registry->registerWorld(*this);
 		mAgentBehaviourRuntime->teardownAll(*this,
 			AgentBehaviourTeardownReason::Reload);
 		candidateRuntime->appendDiagnostics(
 			mAgentBehaviourRuntime->consumeDiagnostics());
 		mAgentBehaviourRuntime = std::move(candidateRuntime);
 		if (registryChanges && previousRegistry)
-			previousRegistry->unregisterBuilding(*this);
+			previousRegistry->unregisterWorld(*this);
 		mAgentBehaviourRegistryReference = std::move(replacement);
 		mAgentBehaviourRegistry = std::move(registry);
 		mAgentBehaviourDependencyDiagnostic.clear();
@@ -587,11 +587,11 @@ namespace core
 		if (referenceChanges) modify();
 	}
 
-	void Building::attachAgentBehaviourRegistryAndClearAssignments(string packageName,
+	void World::attachAgentBehaviourRegistryAndClearAssignments(string packageName,
 		shared_ptr<AgentBehaviourRegistry> registry)
 	{
 		if (!isSimulationPaused())
-			throw invalid_argument("Pause the Building before replacing its Agent behaviour registry");
+			throw invalid_argument("Pause the World before replacing its Agent behaviour registry");
 		filesystem::path const path(packageName);
 		if (packageName.empty() || path.is_absolute() || path.has_parent_path()
 			|| path.filename().string() != packageName
@@ -607,7 +607,7 @@ namespace core
 			mAgentBehaviourRuntime->getLimits());
 		auto previousRegistry = mAgentBehaviourRegistry;
 		auto const registryChanges = previousRegistry != registry;
-		if (registryChanges) registry->registerBuilding(*this);
+		if (registryChanges) registry->registerWorld(*this);
 		mAgentBehaviourRuntime->teardownAll(*this,
 			AgentBehaviourTeardownReason::Unassignment);
 		candidateRuntime->appendDiagnostics(
@@ -619,7 +619,7 @@ namespace core
 			agent->clearBehaviourAssignment();
 		}
 		if (registryChanges && previousRegistry)
-			previousRegistry->unregisterBuilding(*this);
+			previousRegistry->unregisterWorld(*this);
 		mAgentBehaviourRuntime = std::move(candidateRuntime);
 		mAgentBehaviourRegistryReference = AgentBehaviourRegistryReference{
 			std::move(packageName), registry->getUuid() };
@@ -628,26 +628,26 @@ namespace core
 		modify();
 	}
 
-	void Building::detachAgentBehaviourRegistry()
+	void World::detachAgentBehaviourRegistry()
 	{
 		if (!mAgentBehaviourRegistryReference) return;
 		if (!isSimulationPaused())
-			throw invalid_argument("Pause the Building before detaching its Agent behaviour registry");
+			throw invalid_argument("Pause the World before detaching its Agent behaviour registry");
 		if (countAgentBehaviourAssignments() != 0)
 			throw invalid_argument(
 				"Cannot detach a used Agent behaviour registry; use the confirmed destructive action to clear every assignment and configuration first");
-		if (mAgentBehaviourRegistry) mAgentBehaviourRegistry->unregisterBuilding(*this);
+		if (mAgentBehaviourRegistry) mAgentBehaviourRegistry->unregisterWorld(*this);
 		mAgentBehaviourRegistry.reset();
 		mAgentBehaviourRegistryReference.reset();
 		mAgentBehaviourDependencyDiagnostic.clear();
 		modify();
 	}
 
-	void Building::detachAgentBehaviourRegistryAndClearAssignments()
+	void World::detachAgentBehaviourRegistryAndClearAssignments()
 	{
 		if (!mAgentBehaviourRegistryReference) return;
 		if (!isSimulationPaused())
-			throw invalid_argument("Pause the Building before detaching its Agent behaviour registry");
+			throw invalid_argument("Pause the World before detaching its Agent behaviour registry");
 		auto candidateRuntime = make_unique<AgentBehaviourRuntimeAdapter>(
 			mAgentBehaviourRuntime->getLimits());
 		mAgentBehaviourRuntime->teardownAll(*this,
@@ -660,7 +660,7 @@ namespace core
 			mSimulationCoordinator.clearAgentMovementForBehaviourEdit(agentId);
 			agent->clearBehaviourAssignment();
 		}
-		if (mAgentBehaviourRegistry) mAgentBehaviourRegistry->unregisterBuilding(*this);
+		if (mAgentBehaviourRegistry) mAgentBehaviourRegistry->unregisterWorld(*this);
 		mAgentBehaviourRuntime = std::move(candidateRuntime);
 		mAgentBehaviourRegistry.reset();
 		mAgentBehaviourRegistryReference.reset();
@@ -668,24 +668,24 @@ namespace core
 		modify();
 	}
 
-	void Building::resolveAgentBehaviourRegistry(shared_ptr<AgentBehaviourRegistry> registry)
+	void World::resolveAgentBehaviourRegistry(shared_ptr<AgentBehaviourRegistry> registry)
 	{
 		if (!mAgentBehaviourRegistryReference)
-			throw invalid_argument("The Building has no Agent behaviour registry reference to resolve");
+			throw invalid_argument("The World has no Agent behaviour registry reference to resolve");
 		if (!registry)
 			throw invalid_argument("Cannot resolve a null Agent behaviour registry");
 		if (registry->getUuid() != mAgentBehaviourRegistryReference->expectedUuid)
 		{
 			throw runtime_error(format(
-				"Agent behaviour registry UUID mismatch: Building expects {}, file contains {}",
+				"Agent behaviour registry UUID mismatch: World expects {}, file contains {}",
 				mAgentBehaviourRegistryReference->expectedUuid, registry->getUuid()));
 		}
 		auto previousRegistry = mAgentBehaviourRegistry;
 		auto const registryChanges = previousRegistry != registry;
-		if (registryChanges) registry->registerBuilding(*this);
+		if (registryChanges) registry->registerWorld(*this);
 		auto rollbackRegistry = [&]
 		{
-			if (registryChanges) registry->unregisterBuilding(*this);
+			if (registryChanges) registry->unregisterWorld(*this);
 		};
 
 		AgentBehaviourSchemaMigrationPreview preview;
@@ -699,14 +699,14 @@ namespace core
 		vector<string> mismatches;
 		for (auto const& item : preview.configurations)
 		{
-			if (item.building != this) continue;
+			if (item.world != this) continue;
 			if (item.fromRevision == item.toRevision)
 			{
 				string details;
 				for (auto const& field : item.fields)
 					details += (details.empty() ? "" : "; ") + field.diagnostic;
 				mismatches.push_back(format(
-					"Building '{}' / Agent '{}' ({}): {}", getName(),
+					"World '{}' / Agent '{}' ({}): {}", getName(),
 					item.agentName, item.agent.value, details));
 				continue;
 			}
@@ -716,7 +716,7 @@ namespace core
 				for (auto const& field : item.fields)
 					fields += (fields.empty() ? "" : ", ") + field.path
 						+ " (" + field.diagnostic + ")";
-				mismatches.push_back(format("Building '{}' / Agent '{}' ({}) / {}: {}",
+				mismatches.push_back(format("World '{}' / Agent '{}' ({}) / {}: {}",
 					getName(), item.agentName, item.agent.value,
 					item.behaviourName, fields));
 				continue;
@@ -749,7 +749,7 @@ namespace core
 					(mAgentBehaviourDependencyDiagnostic.empty() ? "" : "\n") + mismatch;
 			mSimulationPaused = true;
 			if (registryChanges && previousRegistry)
-				previousRegistry->unregisterBuilding(*this);
+				previousRegistry->unregisterWorld(*this);
 			return;
 		}
 
@@ -783,17 +783,17 @@ namespace core
 		if (!reconciled.empty()) modify();
 		mAgentBehaviourDependencyDiagnostic.clear();
 		if (registryChanges && previousRegistry)
-			previousRegistry->unregisterBuilding(*this);
+			previousRegistry->unregisterWorld(*this);
 		for (auto const& [agentId, agent] : mAgents.entries())
 			if (agent && agent->getBehaviourAssignment())
 				mSimulationCoordinator.clearAgentMovementForBehaviourEdit(agentId);
 	}
 
-	void Building::markAgentBehaviourRegistryUnavailable(string diagnostic)
+	void World::markAgentBehaviourRegistryUnavailable(string diagnostic)
 	{
 		if (!mAgentBehaviourRegistryReference) return;
 		// An admitted in-memory registry/runtime is not discarded merely because a
-		// later disk resolution attempt failed. Freshly deserialized Buildings have
+		// later disk resolution attempt failed. Freshly deserialized Worlds have
 		// no attachment here; explicit replacement failures therefore preserve the
 		// old dependency and runtime as well.
 		mAgentBehaviourDependencyDiagnostic = format(
@@ -806,11 +806,11 @@ namespace core
 		mSimulationPaused = true;
 	}
 
-	void Building::replaceAgentBehaviourRegistryWithIndependentCopy(
+	void World::replaceAgentBehaviourRegistryWithIndependentCopy(
 		string packageName, shared_ptr<AgentBehaviourRegistry> registry)
 	{
 		if (!isSimulationPaused())
-			throw invalid_argument("Pause the Building before replacing its Agent behaviour registry with a Save As copy");
+			throw invalid_argument("Pause the World before replacing its Agent behaviour registry with a Save As copy");
 		filesystem::path const path(packageName);
 		if (packageName.empty() || path.is_absolute() || path.has_parent_path()
 			|| path.filename().string() != packageName
@@ -835,14 +835,14 @@ namespace core
 			candidateRuntime, runtimeDiagnostics))
 			throw invalid_argument("Copied Agent behaviour package runtime preflight failed");
 
-		registry->registerBuilding(*this);
+		registry->registerWorld(*this);
 		auto previous = mAgentBehaviourRegistry;
 		mAgentBehaviourRuntime->teardownAll(*this,
 			AgentBehaviourTeardownReason::Reload);
 		candidateRuntime->appendDiagnostics(
 			mAgentBehaviourRuntime->consumeDiagnostics());
 		mAgentBehaviourRuntime = std::move(candidateRuntime);
-		previous->unregisterBuilding(*this);
+		previous->unregisterWorld(*this);
 		mAgentBehaviourRegistryReference = AgentBehaviourRegistryReference{
 			std::move(packageName), registry->getUuid() };
 		mAgentBehaviourRegistry = std::move(registry);
@@ -850,21 +850,21 @@ namespace core
 		modify();
 	}
 
-	bool Building::validateAgentBehaviourAssignment(AgentBehaviourId behaviour,
+	bool World::validateAgentBehaviourAssignment(AgentBehaviourId behaviour,
 		uint64_t revision, AgentBehaviourConfiguration const& configuration,
 		AgentBehaviourConfiguration* normalized, string* diagnostic) const
 	{
 		if (!mAgentBehaviourRegistry)
 		{
 			if (diagnostic) *diagnostic =
-				"This Building has no attached Agent behaviour registry";
+				"This World has no attached Agent behaviour registry";
 			return false;
 		}
 		return validateAgentBehaviourAssignmentAgainst(*mAgentBehaviourRegistry,
 			behaviour, revision, configuration, normalized, diagnostic);
 	}
 
-	bool Building::validateAgentBehaviourAssignmentAgainst(
+	bool World::validateAgentBehaviourAssignmentAgainst(
 		AgentBehaviourRegistry const& registry, AgentBehaviourId behaviour,
 		uint64_t revision, AgentBehaviourConfiguration const& configuration,
 		AgentBehaviourConfiguration* normalized, string* diagnostic) const
@@ -873,7 +873,7 @@ namespace core
 			configuration, normalized, diagnostic);
 	}
 
-	bool Building::setAgentBehaviourAssignment(AgentId agentId,
+	bool World::setAgentBehaviourAssignment(AgentId agentId,
 		AgentBehaviourId behaviour, uint64_t revision,
 		AgentBehaviourConfiguration const& configuration, string* diagnostic)
 	{
@@ -910,7 +910,7 @@ namespace core
 		return true;
 	}
 
-	bool Building::clearAgentBehaviourAssignment(AgentId agentId, string* diagnostic)
+	bool World::clearAgentBehaviourAssignment(AgentId agentId, string* diagnostic)
 	{
 		if (diagnostic) diagnostic->clear();
 		auto const lookup = lookupAgent(agentId);
@@ -938,15 +938,15 @@ namespace core
 		return true;
 	}
 
-	optional<AgentBehaviourAssignment> const& Building::getAgentBehaviourAssignment(
+	optional<AgentBehaviourAssignment> const& World::getAgentBehaviourAssignment(
 		AgentId agent) const
 	{
 		auto const lookup = lookupAgent(agent);
-		if (!lookup) throw BuildingException(this, lookup.diagnostic);
+		if (!lookup) throw WorldException(this, lookup.diagnostic);
 		return lookup.entity->getBehaviourAssignment();
 	}
 
-	uint32_t Building::countAgentBehaviourAssignments() const
+	uint32_t World::countAgentBehaviourAssignments() const
 	{
 		uint32_t count = 0;
 		for (auto const& [id, agent] : mAgents.entries())
@@ -957,12 +957,12 @@ namespace core
 		return count;
 	}
 
-	uint32_t Building::getAgentBehaviourAssignmentCount() const
+	uint32_t World::getAgentBehaviourAssignmentCount() const
 	{
 		return countAgentBehaviourAssignments();
 	}
 
-	bool Building::agentBehaviourOwnsMovement(AgentId id) const
+	bool World::agentBehaviourOwnsMovement(AgentId id) const
 	{
 		auto agent = mAgents.find(id);
 		if (!agent || !agent->getBehaviourAssignment()) return false;
@@ -975,23 +975,23 @@ namespace core
 	}
 
 	vector<AgentBehaviourRuntimeDiagnostic>
-	Building::getAgentBehaviourRuntimeDiagnostics() const
+	World::getAgentBehaviourRuntimeDiagnostics() const
 	{
 		return mAgentBehaviourRuntime->getDiagnostics();
 	}
 
 	vector<AgentBehaviourRuntimeDiagnostic>
-	Building::consumeAgentBehaviourRuntimeDiagnostics()
+	World::consumeAgentBehaviourRuntimeDiagnostics()
 	{
 		return mAgentBehaviourRuntime->consumeDiagnostics();
 	}
 
-	AgentBehaviourRuntimeLimits Building::getAgentBehaviourRuntimeLimits() const
+	AgentBehaviourRuntimeLimits World::getAgentBehaviourRuntimeLimits() const
 	{
 		return mAgentBehaviourRuntime->getLimits();
 	}
 
-	bool Building::inspectAgentBehaviourAssignments(
+	bool World::inspectAgentBehaviourAssignments(
 		AgentBehaviourRegistry const& registry, string* diagnostic) const
 	{
 		vector<string> failures;
@@ -1022,7 +1022,7 @@ namespace core
 		return false;
 	}
 
-	bool Building::inspectAgentTagAssignments(AgentTagRegistry const& registry,
+	bool World::inspectAgentTagAssignments(AgentTagRegistry const& registry,
 		bool allowSampleReconciliation, vector<AgentTagReconciliation>* repairs,
 		string* diagnostic) const
 	{
@@ -1185,13 +1185,13 @@ namespace core
 		return true;
 	}
 
-	bool Building::agentTagAssignmentsAreValid(AgentTagRegistry const& registry,
+	bool World::agentTagAssignmentsAreValid(AgentTagRegistry const& registry,
 		string* diagnostic) const
 	{
 		return inspectAgentTagAssignments(registry, false, nullptr, diagnostic);
 	}
 
-	void Building::applyAgentTagReconciliations(
+	void World::applyAgentTagReconciliations(
 		vector<AgentTagReconciliation> const& repairs)
 	{
 		// A caller validates the complete transaction before reaching this seam.
@@ -1222,7 +1222,7 @@ namespace core
 		if (!repairs.empty()) modify();
 	}
 
-	void Building::reconcileAgentTagAssignments(AgentTagRegistry const& registry)
+	void World::reconcileAgentTagAssignments(AgentTagRegistry const& registry)
 	{
 		vector<AgentTagReconciliation> repairs;
 		string diagnostic;
@@ -1231,7 +1231,7 @@ namespace core
 		applyAgentTagReconciliations(repairs);
 	}
 
-	uint32_t Building::countAgentTagAssignments(AgentTagId id) const
+	uint32_t World::countAgentTagAssignments(AgentTagId id) const
 	{
 		uint32_t count{ 0 };
 		for (auto const& [agentId, agent] : mAgents.entries())
@@ -1242,7 +1242,7 @@ namespace core
 		return count;
 	}
 
-	void Building::clearAgentTagAssignments(AgentTagId id)
+	void World::clearAgentTagAssignments(AgentTagId id)
 	{
 		bool changed{ false };
 		for (auto& [agentId, agent] : mAgents.entries())
@@ -1261,7 +1261,7 @@ namespace core
 		if (changed) modify();
 	}
 
-	void Building::clearAllAgentTagAssignmentsAndSamples()
+	void World::clearAllAgentTagAssignmentsAndSamples()
 	{
 		for (auto& [agentId, agent] : mAgents.entries())
 		{
@@ -1273,7 +1273,7 @@ namespace core
 		}
 	}
 
-	void Building::addAgentTagWalkSpeedModifierSamples(AgentTagId id,
+	void World::addAgentTagWalkSpeedModifierSamples(AgentTagId id,
 		AgentWalkSpeedModifierProperty const& property)
 	{
 		bool changed{ false };
@@ -1289,7 +1289,7 @@ namespace core
 		if (changed) modify();
 	}
 
-	void Building::clearAgentTagWalkSpeedModifierSamples(AgentTagId id)
+	void World::clearAgentTagWalkSpeedModifierSamples(AgentTagId id)
 	{
 		bool changed{ false };
 		for (auto& [agentId, agent] : mAgents.entries())
@@ -1303,7 +1303,7 @@ namespace core
 		if (changed) modify();
 	}
 
-	void Building::addAgentTagHeightModifierSamples(AgentTagId id,
+	void World::addAgentTagHeightModifierSamples(AgentTagId id,
 		AgentHeightModifierProperty const& property)
 	{
 		bool changed{ false };
@@ -1319,7 +1319,7 @@ namespace core
 		if (changed) modify();
 	}
 
-	void Building::clearAgentTagHeightModifierSamples(AgentTagId id)
+	void World::clearAgentTagHeightModifierSamples(AgentTagId id)
 	{
 		bool changed{ false };
 		for (auto& [agentId, agent] : mAgents.entries())
@@ -1333,47 +1333,47 @@ namespace core
 		if (changed) modify();
 	}
 
-	uint32_t Building::getCellsWide() const
+	uint32_t World::getCellsWide() const
 	{
 		return mCellsWide;
 	}
 
-	uint32_t Building::getDecksHigh() const
+	uint32_t World::getDecksHigh() const
 	{
 		return mDecksHigh;
 	}
 
-	uint32_t Building::getLayerCount() const
+	uint32_t World::getLayerCount() const
 	{
 		return static_cast<uint32_t>(mLayers.size());
 	}
 
-	string const& Building::getLayerName(uint32_t layerIndex) const
+	string const& World::getLayerName(uint32_t layerIndex) const
 	{
-		validateLayer("Building::getLayerName", layerIndex);
+		validateLayer("World::getLayerName", layerIndex);
 		return mLayerNames[layerIndex];
 	}
 
-	void Building::setLayerName(uint32_t layerIndex, std::string name)
+	void World::setLayerName(uint32_t layerIndex, std::string name)
 	{
-		validateLayer("Building::setLayerName", layerIndex);
+		validateLayer("World::setLayerName", layerIndex);
 		mLayerNames[layerIndex] = std::move(name);
 		modify();
 	}
 
-	string Building::defaultLayerName(uint32_t layer)
+	string World::defaultLayerName(uint32_t layer)
 	{
 		return format("Layer {}", layer);
 	}
 
-	uint32_t Building::addLayer()
+	uint32_t World::addLayer()
 	{
 		auto const layerIndex = static_cast<uint32_t>(mLayers.size());
 
 		if (layerIndex >= CORE_MAX_LAYERS)
 		{
-			throw BuildingException(this,
-				format("Building cannot have more than {} layers", CORE_MAX_LAYERS));
+			throw WorldException(this,
+				format("World cannot have more than {} layers", CORE_MAX_LAYERS));
 		}
 
 		mLayers.push_back(make_shared<Layer>(this, mCellsWide, mDecksHigh, layerIndex));
@@ -1383,12 +1383,12 @@ namespace core
 		return layerIndex;
 	}
 
-	uint32_t Building::getNumSectors() const
+	uint32_t World::getNumSectors() const
 	{
 		return (uint32_t)mSectors.size();
 	}
 
-	void Building::validateCellOccupied(string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y) const
+	void World::validateCellOccupied(string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y) const
 	{
 		auto layer = getLayer(layerIndex);
 
@@ -1396,11 +1396,11 @@ namespace core
 
 		if (!cellDef.occupied())
 		{
-			throw BuildingException(this, format("{} - cell at {},{} is not occupied.", caller, x, y));
+			throw WorldException(this, format("{} - cell at {},{} is not occupied.", caller, x, y));
 		}
 	}
 
-	void Building::validateCellUnoccupied(string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y) const
+	void World::validateCellUnoccupied(string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y) const
 	{
 		auto layer = getLayer(layerIndex);
 
@@ -1408,11 +1408,11 @@ namespace core
 
 		if (cellDef.occupied())
 		{
-			throw BuildingException(this, format("{} - cell at {},{} is occupied.", caller, x, y));
+			throw WorldException(this, format("{} - cell at {},{} is occupied.", caller, x, y));
 		}
 	}
 
-	void Building::validateCellIsInSector(string const& caller, uint32_t x, uint32_t y, shared_ptr<const Sector> sector) const
+	void World::validateCellIsInSector(string const& caller, uint32_t x, uint32_t y, shared_ptr<const Sector> sector) const
 	{
 		auto layer = getLayer(sector->getLayerIndex());
 
@@ -1421,11 +1421,11 @@ namespace core
 
 		if (cellDef.sectorIndex != sectorIndex)
 		{
-			throw BuildingException(this, format("{} - cell at {},{} is not in sector {}.", caller, x, y, sectorIndex));
+			throw WorldException(this, format("{} - cell at {},{} is not in sector {}.", caller, x, y, sectorIndex));
 		}
 	}
 
-	void Building::validateCellHasNoObject(string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y) const
+	void World::validateCellHasNoObject(string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y) const
 	{
 		auto layer = getLayer(layerIndex);
 
@@ -1433,76 +1433,76 @@ namespace core
 
 		if (cellDef.hasObject())
 		{
-			throw BuildingException(this, format("{} - cell at {},{} has an object.", caller, x, y));
+			throw WorldException(this, format("{} - cell at {},{} has an object.", caller, x, y));
 		}
 	}
 
-	void Building::validateCellHasNoDoor(string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y) const
+	void World::validateCellHasNoDoor(string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y) const
 	{
 		auto layer = getLayer(layerIndex);
 		auto const& cellDef = layer->getCellDefinition(x, y);
 
 		if (cellDef.sectorObjectType == SectorObjectType::Door)
 		{
-			throw BuildingException(this, format("{} - cell at {},{} has a door.", caller, x, y));
+			throw WorldException(this, format("{} - cell at {},{} has a door.", caller, x, y));
 		}
 	}
 
-	void Building::validateCellHasNoPhysicalControl(string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y, int side) const
+	void World::validateCellHasNoPhysicalControl(string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y, int side) const
 	{
 		auto layer = getLayer(layerIndex);
 		auto const& cellDef = layer->getCellDefinition(x, y);
 
 		if (cellDef.controls[side] != ~0u)
 		{
-			throw BuildingException(this, format("{} - cell at {},{} (side {}) has a physical control.", caller, x, y, side));
+			throw WorldException(this, format("{} - cell at {},{} (side {}) has a physical control.", caller, x, y, side));
 		}
 	}
 
 
-	void Building::validateCellTraversableOnFoot(string const& caller, string const& desiredObject, uint32_t layerIndex, uint32_t x, uint32_t y) const
+	void World::validateCellTraversableOnFoot(string const& caller, string const& desiredObject, uint32_t layerIndex, uint32_t x, uint32_t y) const
 	{
 		auto layer = getLayer(layerIndex);
 		auto const& cellDef = layer->getCellDefinition(x, y);
 
 		if (!cellDef.isTraversableOnFoot())
 		{
-			throw BuildingException(this, format("{} - cell at {},{} is not traversable, which blocks {} being placed", caller, x, y, desiredObject));
+			throw WorldException(this, format("{} - cell at {},{} is not traversable, which blocks {} being placed", caller, x, y, desiredObject));
 		}
 	}
 
-	void Building::validateLayer(string const& caller, uint32_t layerIndex) const
+	void World::validateLayer(string const& caller, uint32_t layerIndex) const
 	{
 		if (layerIndex >= mLayers.size())
 		{
-			throw BuildingException(this, format("{} - layerIndex={} is out of bounds", caller, layerIndex));
+			throw WorldException(this, format("{} - layerIndex={} is out of bounds", caller, layerIndex));
 		}
 	}
 
-	void Building::validateBounds(string const& caller, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh) const
+	void World::validateBounds(string const& caller, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh) const
 	{
 		if (x >= mCellsWide)
 		{
-			throw BuildingException(this, format("{} - x={} is out of bounds", caller, x));
+			throw WorldException(this, format("{} - x={} is out of bounds", caller, x));
 		}
 
 		if (cellsWide > mCellsWide - x)
 		{
-			throw BuildingException(this, format("{} - cellsWide={} is out of bounds", caller, cellsWide));
+			throw WorldException(this, format("{} - cellsWide={} is out of bounds", caller, cellsWide));
 		}
 
 		if (y >= mDecksHigh)
 		{
-			throw BuildingException(this, format("{} - y={} is out of bounds", caller, y));
+			throw WorldException(this, format("{} - y={} is out of bounds", caller, y));
 		}
 
 		if (decksHigh > mDecksHigh - y)
 		{
-			throw BuildingException(this, format("{} - decksHigh={} is out of bounds", caller, decksHigh));
+			throw WorldException(this, format("{} - decksHigh={} is out of bounds", caller, decksHigh));
 		}
 	}
 
-	void Building::validateLayerSpace(string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh) const
+	void World::validateLayerSpace(string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh) const
 	{
 		auto layer = getLayer(layerIndex);
 
@@ -1515,27 +1515,27 @@ namespace core
 		}
 	}
 
-	void Building::validateObjectAllowedInSector(string const& caller, SectorObjectType type, uint32_t sectorIndex) const
+	void World::validateObjectAllowedInSector(string const& caller, SectorObjectType type, uint32_t sectorIndex) const
 	{
 		auto sector = getSector(sectorIndex);
 
 		if (!sector->sectorSupportsObjectType(type))
 		{
-			throw BuildingException(this, format("{} - Sector type '{}' does not support SectorObject type '{}'", caller, getSectorTypeString(sector->getType()), getSectorObjectTypeString(type)));
+			throw WorldException(this, format("{} - Sector type '{}' does not support SectorObject type '{}'", caller, getSectorTypeString(sector->getType()), getSectorObjectTypeString(type)));
 		}
 	}
 
-	void Building::validateObjectAllowedInSectorAsLookTarget(string const& caller, SectorObjectType type, uint32_t sectorIndex) const
+	void World::validateObjectAllowedInSectorAsLookTarget(string const& caller, SectorObjectType type, uint32_t sectorIndex) const
 	{
 		auto sector = getSector(sectorIndex);
 
 		if (!sector->sectorSupportsObjectAsLookTarget(type))
 		{
-			throw BuildingException(this, format("{} - Sector type '{}' does not support SectorObject type '{}'", caller, getSectorTypeString(sector->getType()), getSectorObjectTypeString(type)));
+			throw WorldException(this, format("{} - Sector type '{}' does not support SectorObject type '{}'", caller, getSectorTypeString(sector->getType()), getSectorObjectTypeString(type)));
 		}
 	}
 
-	void Building::validateSpaceOnlyInOneSector(string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh, bool allowAllBackgroundSpan) const
+	void World::validateSpaceOnlyInOneSector(string const& caller, uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh, bool allowAllBackgroundSpan) const
 	{
 		auto layer = getLayer(layerIndex);
 
@@ -1560,7 +1560,7 @@ namespace core
 				}
 			if (seesBackground && !seesOccupiedOther) return;
 			if (seesBackground && seesOccupiedOther)
-				throw BuildingException(this, format(
+				throw WorldException(this, format(
 					"{} - bounds {},{} -> {},{} mix a Background with a Location or Transit on Layer {}; a Window cannot look half into a room and half into a Background, since there should be a wall where the room ends",
 					caller, x, y, x + cellsWide, y + decksHigh, layerIndex));
 		}
@@ -1575,123 +1575,123 @@ namespace core
 
 				if (cellDef.sectorIndex != sectorIndex)
 				{
-					throw BuildingException(this, format("{} - bounds {},{} -> {},{} cross multiple Sectors", caller, x, y, x + cellsWide, y + decksHigh));
+					throw WorldException(this, format("{} - bounds {},{} -> {},{} cross multiple Sectors", caller, x, y, x + cellsWide, y + decksHigh));
 				}
 			}
 		}
 	}
 
-	void Building::validateSectorDoorOptions(string const& caller, CreateDoorOptions const& options) const
+	void World::validateSectorDoorOptions(string const& caller, CreateDoorOptions const& options) const
 	{
 		if (options.height != Door::Height::Regular && options.height != Door::Height::Tall)
-			throw BuildingException(this, format("{} - unknown Door height", caller));
+			throw WorldException(this, format("{} - unknown Door height", caller));
 		if (options.holdOpenSeconds < 0.0f)
 		{
-			throw BuildingException(this, format("{} - Door hold-open time cannot be negative.", caller));
+			throw WorldException(this, format("{} - Door hold-open time cannot be negative.", caller));
 		}
 	}
 
-	void Building::validateSectorForceBridgeOptions(string const& caller, CreateForceBridgeOptions const& options) const
+	void World::validateSectorForceBridgeOptions(string const& caller, CreateForceBridgeOptions const& options) const
 	{
 		if (options.width == 0 || options.width > CORE_FORCEBRIDGE_MAX_SIZE)
-			throw BuildingException(this, format("{} - ForceBridge width must be [1,{}], not {}",
+			throw WorldException(this, format("{} - ForceBridge width must be [1,{}], not {}",
 				caller, CORE_FORCEBRIDGE_MAX_SIZE, options.width));
 		if (options.extensible && (options.controlCount < 1 || options.controlCount > 2))
-			throw BuildingException(this, format("{} - Physical control count must be [1,2] for a controlled ForceBridge, not {}", caller, options.controlCount));
+			throw WorldException(this, format("{} - Physical control count must be [1,2] for a controlled ForceBridge, not {}", caller, options.controlCount));
 		if (!options.extensible && (options.controlCount != 0 || !options.startExtended))
-			throw BuildingException(this, format("{} - A non-extensible ForceBridge must be permanently extended and have no controls", caller));
+			throw WorldException(this, format("{} - A non-extensible ForceBridge must be permanently extended and have no controls", caller));
 	}
 
-	void Building::validateSectorLadderOptions(string const& caller, CreateLadderOptions const& options) const
+	void World::validateSectorLadderOptions(string const& caller, CreateLadderOptions const& options) const
 	{
 		if (options.directionalBatchLimit == 0)
 		{
-			throw BuildingException(this, format("{} - Ladder directional batch limit must be positive.", caller));
+			throw WorldException(this, format("{} - Ladder directional batch limit must be positive.", caller));
 		}
 	}
 
-	void Building::validateLiftOptions(string const& caller, CreateLiftOptions const& options) const
+	void World::validateLiftOptions(string const& caller, CreateLiftOptions const& options) const
 	{
 		if (options.cellsWide == 0)
 		{
-			throw BuildingException(this, format("{} - Lift width must be positive.", caller));
+			throw WorldException(this, format("{} - Lift width must be positive.", caller));
 		}
 		if (options.stopOffsets.size() < 2)
 		{
-			throw BuildingException(this, format("{} - Lift must have at least 2 stops.", caller));
+			throw WorldException(this, format("{} - Lift must have at least 2 stops.", caller));
 		}
 		for (size_t i = 1; i < options.stopOffsets.size(); ++i)
 		{
 			if (options.stopOffsets[i] <= options.stopOffsets[i - 1])
 			{
-				throw BuildingException(this, format("{} - Lift stop offsets must be strictly increasing; stop {} ({}) is not above stop {} ({}).",
+				throw WorldException(this, format("{} - Lift stop offsets must be strictly increasing; stop {} ({}) is not above stop {} ({}).",
 					caller, i, options.stopOffsets[i], i - 1, options.stopOffsets[i - 1]));
 			}
 		}
 		if (options.capacity == 0)
 		{
-			throw BuildingException(this, format("{} - Lift capacity must be positive.", caller));
+			throw WorldException(this, format("{} - Lift capacity must be positive.", caller));
 		}
 		if (options.initialStop >= options.stopOffsets.size())
 		{
-			throw BuildingException(this, format("{} - Lift initial stop is out of range.", caller));
+			throw WorldException(this, format("{} - Lift initial stop is out of range.", caller));
 		}
 		auto representablePositions = (uint32_t)floor((float)options.cellsWide / CORE_AGENT_MAX_WIDTH);
 		if (options.capacity > representablePositions)
 		{
-			throw BuildingException(this, format("{} - Lift capacity {} exceeds {} representable interior standing positions.",
+			throw WorldException(this, format("{} - Lift capacity {} exceeds {} representable interior standing positions.",
 				caller, options.capacity, representablePositions));
 		}
 		if (options.minimumDwellSeconds < 0.0f || options.maximumBoardingSeconds < 0.0f
 			|| options.maximumBoardingSeconds < options.minimumDwellSeconds)
 		{
-			throw BuildingException(this, format("{} - Lift timing requires 0 <= minimum dwell <= maximum boarding time.", caller));
+			throw WorldException(this, format("{} - Lift timing requires 0 <= minimum dwell <= maximum boarding time.", caller));
 		}
 	}
 
-	void Building::validateShuttleOptions(string const& caller, CreateShuttleOptions const& options) const
+	void World::validateShuttleOptions(string const& caller, CreateShuttleOptions const& options) const
 	{
 		if (options.numCars == 0)
-			throw BuildingException(this, format("{} - Shuttle must have at least one carriage.", caller));
+			throw WorldException(this, format("{} - Shuttle must have at least one carriage.", caller));
 		if (options.carWidth < 3 || options.carWidth > 5)
 		{
-			throw BuildingException(this, format("{} - Shuttle car width must be between 3 and 5.", caller));
+			throw WorldException(this, format("{} - Shuttle car width must be between 3 and 5.", caller));
 		}
 		if (options.doorMask == 0 || (options.doorMask >> options.carWidth) != 0)
 		{
-			throw BuildingException(this, format("{} - Shuttle carriage door layout must select at least one cell and remain within the carriage width.", caller));
+			throw WorldException(this, format("{} - Shuttle carriage door layout must select at least one cell and remain within the carriage width.", caller));
 		}
 
 		if (options.stopOffsets.size() < 2)
-			throw BuildingException(this, format("{} - Shuttle must have at least two stops.", caller));
+			throw WorldException(this, format("{} - Shuttle must have at least two stops.", caller));
 		if (options.initialStop >= (uint32_t)options.stopOffsets.size())
 		{
-			throw BuildingException(this, format("{} - Shuttle initialStop parameter out of bounds.", caller));
+			throw WorldException(this, format("{} - Shuttle initialStop parameter out of bounds.", caller));
 		}
 		for (size_t i = 1; i < options.stopOffsets.size(); ++i)
 			if (options.stopOffsets[i] <= options.stopOffsets[i - 1])
-				throw BuildingException(this, format("{} - Shuttle stop offsets must be strictly increasing.", caller));
+				throw WorldException(this, format("{} - Shuttle stop offsets must be strictly increasing.", caller));
 		if (options.capacity == 0
 			|| options.capacity > (uint32_t)floor((float)options.carWidth / CORE_AGENT_MAX_WIDTH))
-			throw BuildingException(this, format("{} - Shuttle capacity cannot be represented by carriage standing positions.", caller));
+			throw WorldException(this, format("{} - Shuttle capacity cannot be represented by carriage standing positions.", caller));
 		if (options.minimumDwellSeconds < 0.0f
 			|| options.maximumBoardingSeconds < options.minimumDwellSeconds)
-			throw BuildingException(this, format("{} - Shuttle timing requires 0 <= minimum dwell <= maximum boarding time.", caller));
+			throw WorldException(this, format("{} - Shuttle timing requires 0 <= minimum dwell <= maximum boarding time.", caller));
 	}
 
-	shared_ptr<const Layer> Building::getLayer(uint32_t layerIndex) const
+	shared_ptr<const Layer> World::getLayer(uint32_t layerIndex) const
 	{
-		validateLayer(format("Building::getLayer({})", layerIndex), layerIndex);
+		validateLayer(format("World::getLayer({})", layerIndex), layerIndex);
 		return mLayers[layerIndex];
 	}
 
-	shared_ptr<Layer> Building::getLayer(uint32_t layerIndex)
+	shared_ptr<Layer> World::getLayer(uint32_t layerIndex)
 	{
-		validateLayer(format("Building::getLayer({})", layerIndex), layerIndex);
+		validateLayer(format("World::getLayer({})", layerIndex), layerIndex);
 		return mLayers[layerIndex];
 	}
 
-	uint32_t Building::createLocation(string const& name, SectorType type, uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh, float topDeckHeight, bool isCorridor)
+	uint32_t World::createLocation(string const& name, SectorType type, uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh, float topDeckHeight, bool isCorridor)
 	{
 		auto sectorIndex = (uint32_t)mSectors.size();
 
@@ -1701,7 +1701,7 @@ namespace core
 		return sectorIndex;
 	}
 
-	uint32_t Building::createLadder(uint32_t layerIndex, uint32_t x, uint32_t y, CreateLadderOptions const& options)
+	uint32_t World::createLadder(uint32_t layerIndex, uint32_t x, uint32_t y, CreateLadderOptions const& options)
 	{
 		auto y0 = y;
 		auto y1 = y + options.decksHigh - 1;
@@ -1730,7 +1730,7 @@ namespace core
 		return sectorIndex;
 	}
 
-	uint32_t Building::createStairwell(uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t decksHigh, int mountSide)
+	uint32_t World::createStairwell(uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t decksHigh, int mountSide)
 	{
 		ASSERT_SIDE_OK(mountSide);
 
@@ -1759,7 +1759,7 @@ namespace core
 		return sectorIndex;
 	}
 
-	uint32_t Building::createStaircase(uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide,
+	uint32_t World::createStaircase(uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide,
 		int riseSide, float speed)
 	{
 		ASSERT_SIDE_OK(riseSide);
@@ -1780,7 +1780,7 @@ namespace core
 		return sectorIndex;
 	}
 
-	Building::CreateObjectResult Building::createLift(uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide,
+	World::CreateObjectResult World::createLift(uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide,
 		uint32_t decksHigh, vector<uint32_t> const& stopOffsets)
 	{
 		// Get Locations this Lift connects, all on the Layer directly in front.
@@ -1813,7 +1813,7 @@ namespace core
 		};
 	}
 
-	Building::CreateObjectResult Building::createShuttle(uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t numCars, uint32_t carWidth, vector<uint32_t> const& stopOffsets)
+	World::CreateObjectResult World::createShuttle(uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t numCars, uint32_t carWidth, vector<uint32_t> const& stopOffsets)
 	{
 		// Get Locations this Shuttle connects, all on the Layer directly in front.
 		vector<TransitStop> stops;
@@ -1856,9 +1856,9 @@ namespace core
 		};
 	}
 
-	uint32_t Building::addLocation(string const& name, SectorType type, uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh, float topDeckHeight, bool isCorridor)
+	uint32_t World::addLocation(string const& name, SectorType type, uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh, float topDeckHeight, bool isCorridor)
 	{
-		string caller = format("Building::addLocation({}, {}, {}, {}, {}, {}, {} {})", name, getSectorTypeString(type), layerIndex, x, y, cellsWide, decksHigh, topDeckHeight);
+		string caller = format("World::addLocation({}, {}, {}, {}, {}, {}, {} {})", name, getSectorTypeString(type), layerIndex, x, y, cellsWide, decksHigh, topDeckHeight);
 		
 		validateBounds(caller, x, y, cellsWide, decksHigh);
 		validateLayerSpace(caller, layerIndex, x, y, cellsWide, decksHigh);
@@ -1883,10 +1883,10 @@ namespace core
 		return sectorIndex;
 	}
 
-	Building::CreateObjectResult Building::createDoor(uint32_t layerIndex, uint32_t x, uint32_t y,
+	World::CreateObjectResult World::createDoor(uint32_t layerIndex, uint32_t x, uint32_t y,
 		uint32_t cellsWide, Door::Height height, uint32_t* vertexIdentifier)
 	{	
-		string caller = format("Building::createDoor({}, {}, {}, {})", layerIndex, x, y, cellsWide);
+		string caller = format("World::createDoor({}, {}, {}, {})", layerIndex, x, y, cellsWide);
 
 		// A Door is authored on the front Layer of its pair and opens into the Layer
 		// directly behind it.
@@ -1917,9 +1917,9 @@ namespace core
 		};
 	}
 
-	Building::CreateObjectResult Building::createWindow(uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh, uint32_t* vertexIdentifier)
+	World::CreateObjectResult World::createWindow(uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t decksHigh, uint32_t* vertexIdentifier)
 	{
-		string caller = format("Building::createWindow({}, {}, {}, {}, {})", layerIndex, x, y, cellsWide, decksHigh);
+		string caller = format("World::createWindow({}, {}, {}, {}, {})", layerIndex, x, y, cellsWide, decksHigh);
 
 		// A Window is authored on the front Layer of the pair it crosses.  The Layer
 		// behind it is only absent when a map written before the back-most Layer rule
@@ -1962,11 +1962,11 @@ namespace core
 		};
 	}
 
-	Building::CreateObjectResult Building::createBulkheadDoor(uint32_t layerIndex, uint32_t x, uint32_t y, int side)
+	World::CreateObjectResult World::createBulkheadDoor(uint32_t layerIndex, uint32_t x, uint32_t y, int side)
 	{
 		ASSERT_SIDE_OK(side);
 
-		string caller = format("Building::createBulkheadDoor({}, {}, {}, {})", layerIndex, x, y, side);
+		string caller = format("World::createBulkheadDoor({}, {}, {}, {})", layerIndex, x, y, side);
 		uint32_t cx0, cx1;
 
 		if (side == CORE_SIDE_LEFT)
@@ -2007,11 +2007,11 @@ namespace core
 		};
 	}
 
-	Building::CreateObjectResult Building::createPhysicalControl(string const& name,
+	World::CreateObjectResult World::createPhysicalControl(string const& name,
 		uint32_t layerIndex, uint32_t x, uint32_t y, int side, uint32_t flags,
 		uint32_t* vertexIdentifier, uint32_t alternateX, int alternateSide)
 	{
-		string caller = format("Building::createPhysicalControl({}, {}, {}, {}, {})", layerIndex, x, y, side, flags);
+		string caller = format("World::createPhysicalControl({}, {}, {}, {}, {})", layerIndex, x, y, side, flags);
 		vector<PhysicalControlCandidate> candidates{ { x, side } };
 		if (alternateX != ~0u && alternateSide >= CORE_SIDE_LEFT
 			&& alternateSide <= CORE_SIDE_MIDDLE
@@ -2029,7 +2029,7 @@ namespace core
 			auto const& cell = mLayers[layerIndex]->getCellDefinition(candidate.cellX, y);
 			if (sectorIndex == ~0u) sectorIndex = cell.sectorIndex;
 			else if (sectorIndex != cell.sectorIndex)
-				throw BuildingException(this, format("{} - candidate positions cross Sector boundaries", caller));
+				throw WorldException(this, format("{} - candidate positions cross Sector boundaries", caller));
 			if (cell.controls[candidate.side] == ~0u && initialCandidate == ~0u)
 				initialCandidate = i;
 		}
@@ -2071,7 +2071,7 @@ namespace core
 		return { controlIndex, SectorObjectType::InteractionPoint, sector };
 	}
 
-	void Building::reflowPhysicalControls(uint32_t layerIndex, uint32_t sectorIndex, uint32_t y)
+	void World::reflowPhysicalControls(uint32_t layerIndex, uint32_t sectorIndex, uint32_t y)
 	{
 		vector<uint32_t> row;
 		for (uint32_t i = 0; i < mPhysicalControlPlacements.size(); ++i)
@@ -2186,7 +2186,7 @@ namespace core
 				}
 			};
 			search(0);
-			if (!haveBest) throw BuildingException(this, "Physical-control placement constraints cannot be satisfied");
+			if (!haveBest) throw WorldException(this, "Physical-control placement constraints cannot be satisfied");
 			for (uint32_t i = 0; i < component.size(); ++i)
 				mPhysicalControlPlacements[component[i]].currentCandidate = bestChoice[i];
 		}
@@ -2210,7 +2210,7 @@ namespace core
 			if (placement.objectIndex != ~0u)
 			{
 				auto& slot = mLayers[layerIndex]->getCellDefinition(candidate.cellX, y).controls[candidate.side];
-				if (slot != ~0u) throw BuildingException(this, "Physical-control slot assignment collided with an existing control");
+				if (slot != ~0u) throw WorldException(this, "Physical-control slot assignment collided with an existing control");
 				slot = placement.objectIndex;
 			}
 			collisions[centerKey(candidate)].push_back(index);
@@ -2250,7 +2250,7 @@ namespace core
 		}
 	}
 
-	void Building::bindPhysicalControl(CreateObjectResult& control, InteractionPointId point)
+	void World::bindPhysicalControl(CreateObjectResult& control, InteractionPointId point)
 	{
 		control.interactionPoint = point;
 		auto object = control.sector->getObject(control.index)->_getObject();
@@ -2272,7 +2272,7 @@ namespace core
 		}
 	}
 
-	InteractionPointId Building::createPhysicalControlInteractionPoint(string const& name,
+	InteractionPointId World::createPhysicalControlInteractionPoint(string const& name,
 		CreateObjectResult& control, float standingY, float reach,
 		float durationSeconds, vector<InteractionBinding> bindings)
 	{
@@ -2289,9 +2289,9 @@ namespace core
 		return point;
 	}
 
-	Building::CreateObjectResult Building::createWalkway(uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t* vertexIdentifier)
+	World::CreateObjectResult World::createWalkway(uint32_t layerIndex, uint32_t x, uint32_t y, uint32_t* vertexIdentifier)
 	{
-		string caller = format("Building::createWalkway({}, {}, {})", layerIndex, x, y);
+		string caller = format("World::createWalkway({}, {}, {})", layerIndex, x, y);
 		
 		validateCellOccupied(caller, layerIndex, x, y);
 
@@ -2307,10 +2307,10 @@ namespace core
 		};
 	}
 
-	Building::CreateObjectResult Building::createMarker(uint32_t layerIndex, uint32_t x,
+	World::CreateObjectResult World::createMarker(uint32_t layerIndex, uint32_t x,
 		uint32_t y, float xOffset, MarkerId id, string name, uint32_t* vertexIdentifier)
 	{
-		string caller = format("Building::createMarker({}, {}, {}, {})", layerIndex, x, y, xOffset);
+		string caller = format("World::createMarker({}, {}, {}, {})", layerIndex, x, y, xOffset);
 
 		float xPos = x + xOffset;
 		x = (uint32_t)xPos;
@@ -2330,11 +2330,11 @@ namespace core
 		};
 	}
 
-	Building::CreateObjectResult Building::createForceBridge(uint32_t layerIndex, uint32_t x, uint32_t y, CreateForceBridgeOptions const& options)
+	World::CreateObjectResult World::createForceBridge(uint32_t layerIndex, uint32_t x, uint32_t y, CreateForceBridgeOptions const& options)
 	{
 		ASSERT_SIDE_OK(options.fromSide);
 
-		string caller = format("Building::createForceBridge({}, {}, {}, {}, {}, {})", layerIndex, x, y, options.width, options.fromSide, options.startExtended);
+		string caller = format("World::createForceBridge({}, {}, {}, {}, {}, {})", layerIndex, x, y, options.width, options.fromSide, options.startExtended);
 
 		validateCellOccupied(caller, layerIndex, x, y);
 
@@ -2350,11 +2350,11 @@ namespace core
 		};
 	}
 
-	Building::CreateObjectResult Building::createLadderSectorObject(uint32_t layerIndex, uint32_t x, uint32_t y, CreateLadderOptions const& options, uint32_t* vertexIdentifier)
+	World::CreateObjectResult World::createLadderSectorObject(uint32_t layerIndex, uint32_t x, uint32_t y, CreateLadderOptions const& options, uint32_t* vertexIdentifier)
 	{
 		auto layer = getLayer(layerIndex);
 
-		string caller = format("Building::createLadderSectorObject({}, {}, {}, {}, {})", layerIndex, x, y, options.startExtended, options.decksHigh);
+		string caller = format("World::createLadderSectorObject({}, {}, {}, {}, {})", layerIndex, x, y, options.startExtended, options.decksHigh);
 
 		auto const& cellDef = layer->getCellDefinition(x, y);
 		auto sector = _getSector(cellDef.sectorIndex);
@@ -2366,11 +2366,11 @@ namespace core
 		};
 	}
 
-	Building::CreateObjectResult Building::createPlatformLiftSectorObject(uint32_t layerIndex, uint32_t x, uint32_t y, CreateLiftOptions const& options, uint32_t* vertexIdentifier)
+	World::CreateObjectResult World::createPlatformLiftSectorObject(uint32_t layerIndex, uint32_t x, uint32_t y, CreateLiftOptions const& options, uint32_t* vertexIdentifier)
 	{
 		auto layer = getLayer(layerIndex);
 
-		string caller = format("Building::createPlatformLiftSectorObject({}, {}, {})", layerIndex, x, y);
+		string caller = format("World::createPlatformLiftSectorObject({}, {}, {})", layerIndex, x, y);
 
 		auto const& cellDef = layer->getCellDefinition(x, y);
 		auto sector = _getSector(cellDef.sectorIndex);
@@ -2386,27 +2386,27 @@ namespace core
 		};
 	}
 
-	shared_ptr<Sector> Building::_getSector(uint32_t index)
+	shared_ptr<Sector> World::_getSector(uint32_t index)
 	{
 		if (index >= getNumSectors())
 		{
-			throw BuildingException(this, format("Building::getSector({}) - index={} is out of range.", index, index));
+			throw WorldException(this, format("World::getSector({}) - index={} is out of range.", index, index));
 		}
 
 		return mSectors[index];
 	}
 
-	shared_ptr<const Sector> Building::getSector(uint32_t index) const
+	shared_ptr<const Sector> World::getSector(uint32_t index) const
 	{
 		if (index >= getNumSectors())
 		{
-			throw BuildingException(this, format("Building::getSector({}) - index={} is out of range.", index, index));
+			throw WorldException(this, format("World::getSector({}) - index={} is out of range.", index, index));
 		}
 
 		return mSectors[index];
 	}
 
-	vector<shared_ptr<const Sector>> Building::getSectorsInBounds(uint32_t layerIndex, float x, float y, float width, float height) const
+	vector<shared_ptr<const Sector>> World::getSectorsInBounds(uint32_t layerIndex, float x, float y, float width, float height) const
 	{
 		auto layer = getLayer(layerIndex);
 
@@ -2437,7 +2437,7 @@ namespace core
 		return vector<shared_ptr<const Sector>>(sectors.begin(), sectors.end());
 	}
 
-	vector<shared_ptr<const Sector>> Building::getSectors(uint32_t layerIndex) const
+	vector<shared_ptr<const Sector>> World::getSectors(uint32_t layerIndex) const
 	{
 		vector<shared_ptr<const Sector>> sectors;
 
@@ -2452,25 +2452,25 @@ namespace core
 		return sectors;
 	}
 
-	shared_ptr<const Graph> Building::getGraph() const
+	shared_ptr<const Graph> World::getGraph() const
 	{
 		return mGraph;
 	}
 
-	Log const& Building::getBuildLog() const
+	Log const& World::getBuildLog() const
 	{
 		return mBuildLog;
 	}
 
-	uint32_t Building::addCorridor(uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t decksHigh)
+	uint32_t World::addCorridor(uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t decksHigh)
 	{
 		return addCorridor(0, y, x, cellsWide, decksHigh);
 	}
 
-	uint32_t Building::addCorridor(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide,
+	uint32_t World::addCorridor(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide,
 		uint32_t decksHigh)
 	{
-		string const caller = format("Building::addCorridor({}, {}, {}, {}, {})", layerIndex, y, x, cellsWide, decksHigh);
+		string const caller = format("World::addCorridor({}, {}, {}, {}, {})", layerIndex, y, x, cellsWide, decksHigh);
 		// Every rejecting check runs before beginStructuralEdit() so a refused
 		// call stays a true no-op: no modified flag, no topology invalidation
 		// (ticket #93).
@@ -2479,9 +2479,9 @@ namespace core
 		// nothing, leaving a Sector no cell references: invisible, unselectable, and
 		// unreachable forever (ticket #64).
 		if (cellsWide == 0)
-			throw BuildingException(this, format("{} - a Corridor must be at least one cell wide", caller));
+			throw WorldException(this, format("{} - a Corridor must be at least one cell wide", caller));
 		if (decksHigh == 0)
-			throw BuildingException(this, format("{} - a Corridor must be at least one deck high", caller));
+			throw WorldException(this, format("{} - a Corridor must be at least one deck high", caller));
 		beginStructuralEdit("addCorridor");
 		auto const result = addLocation("Corridor", SectorType::Location, layerIndex, x, y, cellsWide, decksHigh, CORE_CORRIDOR_HEIGHT, true);
 		ConstructionRecord record{ ConstructionType::Corridor };
@@ -2491,9 +2491,9 @@ namespace core
 		return result;
 	}
 
-	uint32_t Building::addRoom(string const& name, uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t decksHigh, float topDeckHeight)
+	uint32_t World::addRoom(string const& name, uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t decksHigh, float topDeckHeight)
 	{
-		string const caller = format("Building::addRoom({}, {}, {}, {}, {}, {}, {})", name, layerIndex, y, x, cellsWide, decksHigh, topDeckHeight);
+		string const caller = format("World::addRoom({}, {}, {}, {}, {}, {}, {})", name, layerIndex, y, x, cellsWide, decksHigh, topDeckHeight);
 		// Every rejecting check runs before beginStructuralEdit() so a refused
 		// call stays a true no-op: no modified flag, no topology invalidation
 		// (ticket #93).
@@ -2502,15 +2502,15 @@ namespace core
 		// through (ticket #55).
 		if (!(topDeckHeight >= CORE_ROOM_MIN_HEIGHT && topDeckHeight <= CORE_ROOM_MAX_HEIGHT))
 		{
-			throw BuildingException(this, format("{} - topDeckHeight={} is out of range", caller, topDeckHeight));
+			throw WorldException(this, format("{} - topDeckHeight={} is out of range", caller, topDeckHeight));
 		}
 		// Minimum (1,1), the same invariant Background and Facade enforce: a
 		// zero-sized Room would pass the bounds checks by covering nothing,
 		// leaving a Sector no cell references (ticket #64).
 		if (cellsWide == 0)
-			throw BuildingException(this, format("{} - a Room must be at least one cell wide", caller));
+			throw WorldException(this, format("{} - a Room must be at least one cell wide", caller));
 		if (decksHigh == 0)
-			throw BuildingException(this, format("{} - a Room must be at least one deck high", caller));
+			throw WorldException(this, format("{} - a Room must be at least one deck high", caller));
 
 		beginStructuralEdit("addRoom");
 
@@ -2523,12 +2523,12 @@ namespace core
 		return result;
 	}
 
-	bool Building::canAddBackground(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide,
+	bool World::canAddBackground(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide,
 		uint32_t decksHigh, string* diagnostic) const
 	{
 		if (diagnostic) diagnostic->clear();
 
-		string caller = format("Building::addBackground({}, {}, {}, {}, {})",
+		string caller = format("World::addBackground({}, {}, {}, {}, {})",
 			layerIndex, y, x, cellsWide, decksHigh);
 
 		try
@@ -2538,9 +2538,9 @@ namespace core
 			// Minimum (1,1). A zero-sized block would pass the bounds checks by covering
 			// nothing, which is not a Background worth authoring.
 			if (cellsWide == 0)
-				throw BuildingException(this, format("{} - a Background must be at least one cell wide", caller));
+				throw WorldException(this, format("{} - a Background must be at least one cell wide", caller));
 			if (decksHigh == 0)
-				throw BuildingException(this, format("{} - a Background must be at least one deck high", caller));
+				throw WorldException(this, format("{} - a Background must be at least one deck high", caller));
 
 			validateBounds(caller, x, y, cellsWide, decksHigh);
 
@@ -2563,12 +2563,12 @@ namespace core
 		return true;
 	}
 
-	uint32_t Building::addBackground(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide,
+	uint32_t World::addBackground(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide,
 		uint32_t decksHigh, BackgroundColour const& colour)
 	{
 		string diagnostic;
 		if (!canAddBackground(layerIndex, y, x, cellsWide, decksHigh, &diagnostic))
-			throw BuildingException(this, diagnostic);
+			throw WorldException(this, diagnostic);
 
 		beginStructuralEdit("addBackground");
 
@@ -2601,12 +2601,12 @@ namespace core
 		return sectorIndex;
 	}
 
-	bool Building::canAddFacade(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide,
+	bool World::canAddFacade(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide,
 		uint32_t decksHigh, float topDeckHeight, string* diagnostic) const
 	{
 		if (diagnostic) diagnostic->clear();
 
-		string caller = format("Building::addFacade({}, {}, {}, {}, {})",
+		string caller = format("World::addFacade({}, {}, {}, {}, {})",
 			layerIndex, y, x, cellsWide, decksHigh);
 
 		try
@@ -2614,15 +2614,15 @@ namespace core
 			validateLayer(caller, layerIndex);
 
 			// A Facade is placed exactly as a Room is: minimum (1,1), inside the
-			// Building bounds, and on cells unoccupied on its own Layer.
+			// World bounds, and on cells unoccupied on its own Layer.
 			if (cellsWide == 0)
-				throw BuildingException(this, format("{} - a Facade must be at least one cell wide", caller));
+				throw WorldException(this, format("{} - a Facade must be at least one cell wide", caller));
 			if (decksHigh == 0)
-				throw BuildingException(this, format("{} - a Facade must be at least one deck high", caller));
+				throw WorldException(this, format("{} - a Facade must be at least one deck high", caller));
 			// Same negated in-range test as addRoom: a NaN topDeckHeight must
 			// not sail through the < / > pair (ticket #55).
 			if (!(topDeckHeight >= CORE_ROOM_MIN_HEIGHT && topDeckHeight <= CORE_ROOM_MAX_HEIGHT))
-				throw BuildingException(this, format("{} - topDeckHeight={} is out of range", caller, topDeckHeight));
+				throw WorldException(this, format("{} - topDeckHeight={} is out of range", caller, topDeckHeight));
 
 			validateBounds(caller, x, y, cellsWide, decksHigh);
 			validateLayerSpace(caller, layerIndex, x, y, cellsWide, decksHigh);
@@ -2640,19 +2640,19 @@ namespace core
 		return true;
 	}
 
-	uint32_t Building::addFacade(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide,
+	uint32_t World::addFacade(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide,
 		uint32_t decksHigh, float topDeckHeight, BackgroundColour const& colour)
 	{
 		return addFacade(Facade::defaultName(), layerIndex, y, x, cellsWide, decksHigh,
 			topDeckHeight, colour);
 	}
 
-	uint32_t Building::addFacade(std::string const& name, uint32_t layerIndex, uint32_t y, uint32_t x,
+	uint32_t World::addFacade(std::string const& name, uint32_t layerIndex, uint32_t y, uint32_t x,
 		uint32_t cellsWide, uint32_t decksHigh, float topDeckHeight, BackgroundColour const& colour)
 	{
 		string diagnostic;
 		if (!canAddFacade(layerIndex, y, x, cellsWide, decksHigh, topDeckHeight, &diagnostic))
-			throw BuildingException(this, diagnostic);
+			throw WorldException(this, diagnostic);
 
 		beginStructuralEdit("addFacade");
 
@@ -2686,7 +2686,7 @@ namespace core
 		return sectorIndex;
 	}
 
-	bool Building::canAddLadder(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t decksHigh,
+	bool World::canAddLadder(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t decksHigh,
 		string* diagnostic) const
 	{
 		auto reject = [&](string message)
@@ -2699,7 +2699,7 @@ namespace core
 			return reject("A Ladder must sit on a Layer that has a Layer in front of it to land on");
 		if (decksHigh < 2) return reject("A Ladder must span at least two decks");
 		if (x >= mCellsWide || y >= mDecksHigh || y + decksHigh > mDecksHigh)
-			return reject("The Ladder is outside the Building bounds");
+			return reject("The Ladder is outside the World bounds");
 		auto const& transitLayer = mLayers[layerIndex];
 		auto const& landing = mLayers[layerInFront(layerIndex)];
 		for (uint32_t iy = y; iy < y + decksHigh; ++iy)
@@ -2731,7 +2731,7 @@ namespace core
 		return true;
 	}
 
-	Building::CreateLadderResult Building::addLadder(uint32_t layerIndex, uint32_t y, uint32_t x, CreateLadderOptions const& options)
+	World::CreateLadderResult World::addLadder(uint32_t layerIndex, uint32_t y, uint32_t x, CreateLadderOptions const& options)
 	{
 		beginStructuralEdit("addLadder");
 		// A Ladder Transit sits on layerIndex and lands on the Layer directly in front.
@@ -2739,17 +2739,17 @@ namespace core
 		auto transitLayer = getLayer(layerIndex);
 
 		// Checks
-		string caller = format("Building::addLadder({}, {}, {}, {}, {})", layerIndex, y, x, options.decksHigh, options.startExtended);
+		string caller = format("World::addLadder({}, {}, {}, {}, {})", layerIndex, y, x, options.decksHigh, options.startExtended);
 
 		validateLayer(caller, layerIndex);
 		if (isFrontMostLayer(layerIndex))
 		{
-			throw BuildingException(this, format("{} - a Ladder cannot be placed on the front-most Layer, because it has no Layer in front to land on", caller));
+			throw WorldException(this, format("{} - a Ladder cannot be placed on the front-most Layer, because it has no Layer in front to land on", caller));
 		}
 
 		if (options.decksHigh < 2)
 		{
-			throw BuildingException(this, format("{} - Ladder at {},{} must be at least 2 decks high", caller, x, y));
+			throw WorldException(this, format("{} - Ladder at {},{} must be at least 2 decks high", caller, x, y));
 		}
 
 		validateBounds(caller, x, y, 1, options.decksHigh);
@@ -2766,15 +2766,15 @@ namespace core
 
 		if (foreSectorIndex0 == ~0u)
 		{
-			throw BuildingException(this, format("{} - landing cell at {},{} is not occupied, which blocks ladder being placed", caller, x, y0));
+			throw WorldException(this, format("{} - landing cell at {},{} is not occupied, which blocks ladder being placed", caller, x, y0));
 		}
 		if (foreSectorIndex1 == ~0u)
 		{
-			throw BuildingException(this, format("{} - landing cell at {},{} is not occupied, which blocks ladder being placed", caller, x, y1));
+			throw WorldException(this, format("{} - landing cell at {},{} is not occupied, which blocks ladder being placed", caller, x, y1));
 		}
 		if (foreSectorIndex0 == foreSectorIndex1)
 		{
-			throw BuildingException(this, format("{} - landing cells from {},{} to {},{} are the same sector, which blocks ladder being placed", caller, x, y0, x, y1));
+			throw WorldException(this, format("{} - landing cells from {},{} to {},{} are the same sector, which blocks ladder being placed", caller, x, y0, x, y1));
 		}
 
 		// Ladders can only connect location-like Sectors: Rooms, Corridors, and
@@ -2784,11 +2784,11 @@ namespace core
 
 		if (!isLocationLike(foreSector0->getType()))
 		{
-			throw BuildingException(this, format("{} - landing cell at {},{} is not a Location, which blocks ladder being placed", caller, x, y0));
+			throw WorldException(this, format("{} - landing cell at {},{} is not a Location, which blocks ladder being placed", caller, x, y0));
 		}
 		if (!isLocationLike(foreSector1->getType()))
 		{
-			throw BuildingException(this, format("{} - landing cell at {},{} is not a Location, which blocks ladder being placed", caller, x, y1));
+			throw WorldException(this, format("{} - landing cell at {},{} is not a Location, which blocks ladder being placed", caller, x, y1));
 		}
 
 		// Ladders ends must not be in the air
@@ -2861,7 +2861,7 @@ namespace core
 		return result;
 	}
 
-	bool Building::canAddStairwell(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t decksHigh,
+	bool World::canAddStairwell(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t decksHigh,
 		string* diagnostic) const
 	{
 		auto reject = [&](string message)
@@ -2875,7 +2875,7 @@ namespace core
 		if (decksHigh < 2) return reject("A Stairwell must span at least two decks");
 		if (x >= mCellsWide || y >= mDecksHigh || x + 2 > mCellsWide
 			|| y + decksHigh > mDecksHigh)
-			return reject("The Stairwell is outside the Building bounds");
+			return reject("The Stairwell is outside the World bounds");
 		auto const& transitLayer = mLayers[layerIndex];
 		auto const& landing = mLayers[layerInFront(layerIndex)];
 		for (uint32_t iy = y; iy < y + decksHigh; ++iy)
@@ -2903,13 +2903,13 @@ namespace core
 		return true;
 	}
 
-	uint32_t Building::addStairwell(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t decksHigh, int mountSide)
+	uint32_t World::addStairwell(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t decksHigh, int mountSide)
 	{
 		beginStructuralEdit("addStairwell");
 		return addStairwell(layerIndex, y, x, CreateStairwellOptions{ decksHigh, mountSide }).sectorIndex;
 	}
 
-	Building::CreateStairwellResult Building::addStairwell(uint32_t layerIndex, uint32_t y, uint32_t x,
+	World::CreateStairwellResult World::addStairwell(uint32_t layerIndex, uint32_t y, uint32_t x,
 		CreateStairwellOptions const& options)
 	{
 		beginStructuralEdit("addStairwell");
@@ -2923,17 +2923,17 @@ namespace core
 		const uint32_t cellsWide = 2;
 
 		// Checks
-		string caller = format("Building::addStairwell({}, {}, {}, {}, {})", layerIndex, y, x, decksHigh, mountSide);
+		string caller = format("World::addStairwell({}, {}, {}, {}, {})", layerIndex, y, x, decksHigh, mountSide);
 
 		validateLayer(caller, layerIndex);
 		if (isFrontMostLayer(layerIndex))
 		{
-			throw BuildingException(this, format("{} - a Stairwell cannot be placed on the front-most Layer, because it has no Layer in front to land on", caller));
+			throw WorldException(this, format("{} - a Stairwell cannot be placed on the front-most Layer, because it has no Layer in front to land on", caller));
 		}
 
 		if (decksHigh < 2)
 		{
-			throw BuildingException(this, format("{} - Stairwell at {},{} must be at least 2 decks high", caller, x, y));
+			throw WorldException(this, format("{} - Stairwell at {},{} must be at least 2 decks high", caller, x, y));
 		}
 
 		validateBounds(caller, x, y, cellsWide, decksHigh);
@@ -2953,13 +2953,13 @@ namespace core
 				// Stairwells cannot span different Sectors horizontally, due to placement of the door leading to them.
 				if (foreSectorIndex != deckSectorIndex)
 				{
-					throw BuildingException(this, format("{} - the stairwell horizontally spans different landing Sectors between {},{} and {},{}, which is not allowed", caller, x, iy, x + 1, iy));
+					throw WorldException(this, format("{} - the stairwell horizontally spans different landing Sectors between {},{} and {},{}, which is not allowed", caller, x, iy, x + 1, iy));
 				}
 
 				// Landing Sector can't be empty
 				if (foreSectorIndex == ~0u)
 				{
-					throw BuildingException(this, format("{} - landing cell at {},{} is not occupied, which blocks stairwell being placed", caller, ix, iy));
+					throw WorldException(this, format("{} - landing cell at {},{} is not occupied, which blocks stairwell being placed", caller, ix, iy));
 				}
 
 				// Stairwells can only connect location-like Sectors: Rooms,
@@ -2968,7 +2968,7 @@ namespace core
 
 				if (!isLocationLike(foreSector->getType()))
 				{
-					throw BuildingException(this, format("{} - landing cell at {},{} is not a Location, which blocks stairwell being placed", caller, ix, iy));
+					throw WorldException(this, format("{} - landing cell at {},{} is not a Location, which blocks stairwell being placed", caller, ix, iy));
 				}
 
 				// Stairwells must not be in the air
@@ -2978,7 +2978,7 @@ namespace core
 
 		if (options.directionalCapacity > 0 && options.directionalBatchLimit == 0)
 		{
-			throw BuildingException(this, format("{} - Narrow stairwell directional batch limit must be positive.", caller));
+			throw WorldException(this, format("{} - Narrow stairwell directional batch limit must be positive.", caller));
 		}
 
 		// Create stairwell
@@ -3014,7 +3014,7 @@ namespace core
 		return { sectorIndex, traversalResource };
 	}
 
-	bool Building::validateStaircaseEndpoint(uint32_t layerIndex, uint32_t x, uint32_t y, bool upperEndpoint,
+	bool World::validateStaircaseEndpoint(uint32_t layerIndex, uint32_t x, uint32_t y, bool upperEndpoint,
 		int /*riseSide*/, string& diagnostic) const
 	{
 		auto const& cell = mLayers[layerIndex]->getCellDefinition(x, y);
@@ -3062,7 +3062,7 @@ namespace core
 		return false;
 	}
 
-	bool Building::canAddStaircase(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide,
+	bool World::canAddStaircase(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide,
 		int riseSide, string* diagnostic) const
 	{
 		auto reject = [&](string message) { if (diagnostic) *diagnostic = std::move(message); return false; };
@@ -3073,7 +3073,7 @@ namespace core
 			return reject("The Staircase rise direction is invalid");
 		if (cellsWide < 2) return reject("A Staircase must be at least two cells wide");
 		if (x >= mCellsWide || y >= mDecksHigh || cellsWide > mCellsWide - x || y + 1 >= mDecksHigh)
-			return reject("The Staircase is outside the Building bounds");
+			return reject("The Staircase is outside the World bounds");
 		for (uint32_t iy = y; iy <= y + 1; ++iy)
 			for (uint32_t ix = x; ix < x + cellsWide; ++ix)
 				if (mLayers[layerIndex]->getCellDefinition(ix, iy).occupied())
@@ -3089,20 +3089,20 @@ namespace core
 		return true;
 	}
 
-	uint32_t Building::addStaircase(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide,
+	uint32_t World::addStaircase(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide,
 		int riseSide, float speed)
 	{
 		return addStaircase(layerIndex, y, x, CreateStaircaseOptions{ cellsWide, riseSide, speed });
 	}
 
-	uint32_t Building::addStaircase(uint32_t layerIndex, uint32_t y, uint32_t x, CreateStaircaseOptions const& options)
+	uint32_t World::addStaircase(uint32_t layerIndex, uint32_t y, uint32_t x, CreateStaircaseOptions const& options)
 	{
 		beginStructuralEdit("addStaircase");
 		string diagnostic;
 		if (!isfinite(options.speed))
-			throw BuildingException(this, "A Staircase speed must be finite");
+			throw WorldException(this, "A Staircase speed must be finite");
 		if (!canAddStaircase(layerIndex, y, x, options.cellsWide, options.riseSide, &diagnostic))
-			throw BuildingException(this, format("Building::addStaircase({}, {}, {}, {}) - {}", layerIndex, y, x, options.cellsWide, diagnostic));
+			throw WorldException(this, format("World::addStaircase({}, {}, {}, {}) - {}", layerIndex, y, x, options.cellsWide, diagnostic));
 		auto sectorIndex = createStaircase(layerIndex, x, y, options.cellsWide, options.riseSide, options.speed);
 		auto transitLayer = getLayer(layerIndex);
 		for (uint32_t iy = y; iy <= y + 1; ++iy)
@@ -3116,7 +3116,7 @@ namespace core
 		return sectorIndex;
 	}
 
-	std::vector<Building::LiftLandingRow> Building::getLiftLandingRows(uint32_t layerIndex,
+	std::vector<World::LiftLandingRow> World::getLiftLandingRows(uint32_t layerIndex,
 		uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t decksHigh) const
 	{
 		vector<LiftLandingRow> rows;
@@ -3158,48 +3158,48 @@ namespace core
 		return rows;
 	}
 
-	Building::CreateLiftResult Building::addLift(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide,
+	World::CreateLiftResult World::addLift(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide,
 		uint32_t decksHigh)
 	{
 		CreateLiftOptions options;
 		options.cellsWide = cellsWide;
 		options.decksHigh = decksHigh;
 		if (cellsWide == 0 || cellsWide > 2 || decksHigh == 0)
-			throw BuildingException(this, "Editor lifts must be one or two cells wide and at least one deck high");
-		validateLayer(format("Building::addLift({}, ...)", layerIndex), layerIndex);
+			throw WorldException(this, "Editor lifts must be one or two cells wide and at least one deck high");
+		validateLayer(format("World::addLift({}, ...)", layerIndex), layerIndex);
 		if (isFrontMostLayer(layerIndex))
-			throw BuildingException(this, "A Lift cannot be placed on the front-most Layer, because it has no Layer in front to land on");
+			throw WorldException(this, "A Lift cannot be placed on the front-most Layer, because it has no Layer in front to land on");
 		for (auto const& row : getLiftLandingRows(layerIndex, y, x, cellsWide, decksHigh))
 		{
 			if (!row.fullyOverlapping) continue;
 			if (row.obstructed)
-				throw BuildingException(this, format("An object blocks the Lift landing at floor {}", y + row.offset));
+				throw WorldException(this, format("An object blocks the Lift landing at floor {}", y + row.offset));
 			options.stopOffsets.push_back(row.offset);
 		}
 		return addLift(layerIndex, y, x, options);
 	}
 
-	Building::CreateLiftResult Building::addLift(uint32_t layerIndex, uint32_t y, uint32_t x, CreateLiftOptions const& options)
+	World::CreateLiftResult World::addLift(uint32_t layerIndex, uint32_t y, uint32_t x, CreateLiftOptions const& options)
 	{
 		beginStructuralEdit("addLift");
 		// The Lift Transit occupies layerIndex; its landings are the fore Layer of the
 		// pair it forms, which is the Layer directly in front.
-		validateLayer(format("Building::addLift({}, ...)", layerIndex), layerIndex);
+		validateLayer(format("World::addLift({}, ...)", layerIndex), layerIndex);
 		if (isFrontMostLayer(layerIndex))
-			throw BuildingException(this, "A Lift cannot be placed on the front-most Layer, because it has no Layer in front to land on");
+			throw WorldException(this, "A Lift cannot be placed on the front-most Layer, because it has no Layer in front to land on");
 		auto foreLayer = getLayer(layerInFront(layerIndex));
 		auto backLayer = getLayer(layerIndex);
 
 		// Checks
-		string caller = format("Building::addLift({}, {}, {}, {}, <stopOffsts>)", layerIndex, y, x, options.cellsWide);
+		string caller = format("World::addLift({}, {}, {}, {}, <stopOffsts>)", layerIndex, y, x, options.cellsWide);
 
 		validateLiftOptions(caller, options);
 		if (options.cellsWide > 2)
-			throw BuildingException(this, format("{} - enclosed Lift width must be one or two cells.", caller));
+			throw WorldException(this, format("{} - enclosed Lift width must be one or two cells.", caller));
 
 		auto decksHigh = options.decksHigh ? options.decksHigh : options.stopOffsets.back() + 1;
 		if (options.stopOffsets.back() >= decksHigh)
-			throw BuildingException(this, format("{} - Lift stop is outside the shaft bounds.", caller));
+			throw WorldException(this, format("{} - Lift stop is outside the shaft bounds.", caller));
 
 		validateBounds(caller, x, y, options.cellsWide, decksHigh);
 		validateLayerSpace(caller, layerIndex, x, y, options.cellsWide, decksHigh);
@@ -3220,13 +3220,13 @@ namespace core
 				// Lifts cannot span different Sectors horizontally, due to placement of the door leading to them.
 				if (foreSectorIndex != deckSectorIndex)
 				{
-					throw BuildingException(this, format("{} - the lift horizontally spans different foreground Sectors between {},{} and {},{}, which is not allowed", caller, x, iy, x + 1, iy));
+					throw WorldException(this, format("{} - the lift horizontally spans different foreground Sectors between {},{} and {},{}, which is not allowed", caller, x, iy, x + 1, iy));
 				}
 
 				// Fore Sector can't be empty
 				if (foreSectorIndex == ~0u)
 				{
-					throw BuildingException(this, format("{} - foreground cell at {},{} is not occupied, which blocks lift being placed", caller, ix, iy));
+					throw WorldException(this, format("{} - foreground cell at {},{} is not occupied, which blocks lift being placed", caller, ix, iy));
 				}
 
 				// Enclosed lifts connect fully overlapping Fore-layer Locations.
@@ -3235,17 +3235,17 @@ namespace core
 
 				if (!location)
 				{
-					throw BuildingException(this, format("{} - foreground cell at {},{} is not a Location, which blocks lift being placed", caller, ix, iy));
+					throw WorldException(this, format("{} - foreground cell at {},{} is not a Location, which blocks lift being placed", caller, ix, iy));
 				}
 
 				// Lifts must not be in the air and every intersecting landing must be clear.
 				validateCellTraversableOnFoot(caller, "Lift", layerInFront(layerIndex), ix, iy);
 				if (cellDef.hasObject() || !cellDef.markers.empty())
-					throw BuildingException(this, format("{} - an object blocks the Lift landing at {},{}", caller, ix, iy));
+					throw WorldException(this, format("{} - an object blocks the Lift landing at {},{}", caller, ix, iy));
 			}
 			if (x == getSector(deckSectorIndex)->getCellX0()
 				&& x + options.cellsWide - 1 == getSector(deckSectorIndex)->getCellX1())
-				throw BuildingException(this, format("{} - there is no space for a Lift call button at floor {}", caller, iy));
+				throw WorldException(this, format("{} - there is no space for a Lift call button at floor {}", caller, iy));
 		}
 
 		// Create lift
@@ -3376,19 +3376,19 @@ namespace core
 		return liftRes;
 	}
 
-	Building::CreateShuttleResult Building::addShuttle(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide, CreateShuttleOptions const& options)
+	World::CreateShuttleResult World::addShuttle(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide, CreateShuttleOptions const& options)
 	{
 		beginStructuralEdit("addShuttle");
 		// The Shuttle Transit occupies layerIndex; its landings are the fore Layer of
 		// the pair it forms, which is the Layer directly in front.
-		validateLayer(format("Building::addShuttle({}, ...)", layerIndex), layerIndex);
+		validateLayer(format("World::addShuttle({}, ...)", layerIndex), layerIndex);
 		if (isFrontMostLayer(layerIndex))
-			throw BuildingException(this, "A Shuttle cannot be placed on the front-most Layer, because it has no Layer in front to land on");
+			throw WorldException(this, "A Shuttle cannot be placed on the front-most Layer, because it has no Layer in front to land on");
 		auto foreLayer = getLayer(layerInFront(layerIndex));
 		auto backLayer = getLayer(layerIndex);
 
 		// Checks
-		string caller = format("Building::addShuttle({}, {}, {}, {}, <options>)", layerIndex, y, x, cellsWide);
+		string caller = format("World::addShuttle({}, {}, {}, {}, <options>)", layerIndex, y, x, cellsWide);
 
 		// Bear in mind that we may have to allow extra space on the transit layer beyond the x/x+cellsWide
 		// extents.  Eg, for where a=x and b=x+cellsWide, and s=stop offsets:
@@ -3407,7 +3407,7 @@ namespace core
 		// Make sure the shuttle track is long enough
 		if (shuttleWidth > cellsWide)
 		{
-			throw BuildingException(this, format("{} - shuttle track is not wide enough for shuttle", caller));
+			throw WorldException(this, format("{} - shuttle track is not wide enough for shuttle", caller));
 		}
 
 		auto numStops = (uint32_t)options.stopOffsets.size();
@@ -3422,14 +3422,14 @@ namespace core
 
 				if (ix1 - ix < shuttleWidth)
 				{
-					throw BuildingException(this, format("{} - shuttle is too wide to fit between stop offsets {} and {}", caller, i, i + 1));
+					throw WorldException(this, format("{} - shuttle is too wide to fit between stop offsets {} and {}", caller, i, i + 1));
 				}
 			}
 
 			// Must be able to fit whole shuttle into stop
 			if (ix + shuttleWidth > (x + cellsWide))
 			{
-				throw BuildingException(this, format("{} - shuttle is too wide to fit at stop offset {}", caller, i));
+				throw WorldException(this, format("{} - shuttle is too wide to fit at stop offset {}", caller, i));
 			}
 
 			// A stop remains usable when at least one configured carriage door has
@@ -3446,12 +3446,12 @@ namespace core
 					bool supported = cell.sectorIndex != ~0u
 						&& isLocationLike(getSector(cell.sectorIndex)->getType());
 					if (!supported && !options.allowPartialLandings)
-						throw BuildingException(this, format("{} - door {} of carriage {} at stop offset {} has no supported landing",
+						throw WorldException(this, format("{} - door {} of carriage {} at stop offset {} has no supported landing",
 							caller, door, car, options.stopOffsets[i]));
 					hasLanding = hasLanding || supported;
 				}
 			if (!hasLanding)
-				throw BuildingException(this, format("{} - stop offset {} has no supported carriage landing", caller, options.stopOffsets[i]));
+				throw WorldException(this, format("{} - stop offset {} has no supported carriage landing", caller, options.stopOffsets[i]));
 		}
 
 		// Create shuttle
@@ -3623,7 +3623,7 @@ namespace core
 		return shuttleRes;
 	}
 
-	bool Building::canRemoveLocationWall(uint32_t sectorIndex, uint32_t deckIndex, int side,
+	bool World::canRemoveLocationWall(uint32_t sectorIndex, uint32_t deckIndex, int side,
 		string* diagnostic) const
 	{
 		auto reject = [&](string message)
@@ -3646,7 +3646,7 @@ namespace core
 			? (int)sector->getCellX() - 1
 			: (int)sector->getCellX() + (int)sector->getCellsWide();
 		if (neighbourX < 0 || neighbourX >= (int)getCellsWide())
-			return reject("The wall is on the outside of the Building");
+			return reject("The wall is on the outside of the World");
 		auto const& neighbourCell = mLayers[sector->getLayerIndex()]
 			->getCellDefinition((uint32_t)neighbourX, globalY);
 		if (neighbourCell.sectorIndex == ~0u || neighbourCell.sectorIndex == sectorIndex)
@@ -3679,7 +3679,7 @@ namespace core
 		return true;
 	}
 
-	bool Building::canAddLocationWall(uint32_t sectorIndex, uint32_t deckIndex, int side,
+	bool World::canAddLocationWall(uint32_t sectorIndex, uint32_t deckIndex, int side,
 		string* diagnostic) const
 	{
 		auto reject = [&](string message)
@@ -3702,7 +3702,7 @@ namespace core
 			? (int)sector->getCellX() - 1
 			: (int)sector->getCellX() + (int)sector->getCellsWide();
 		if (neighbourX < 0 || neighbourX >= (int)getCellsWide())
-			return reject("The wall is on the outside of the Building");
+			return reject("The wall is on the outside of the World");
 		auto const& neighbourCell = mLayers[sector->getLayerIndex()]
 			->getCellDefinition((uint32_t)neighbourX, globalY);
 		if (neighbourCell.sectorIndex == ~0u || neighbourCell.sectorIndex == sectorIndex)
@@ -3721,11 +3721,11 @@ namespace core
 		return true;
 	}
 
-	void Building::removeLocationWall(uint32_t sectorIndex, uint32_t deckIndex, int side)
+	void World::removeLocationWall(uint32_t sectorIndex, uint32_t deckIndex, int side)
 	{
 		string diagnostic;
 		if (!canRemoveLocationWall(sectorIndex, deckIndex, side, &diagnostic))
-			throw BuildingException(this, "Building::removeLocationWall - " + diagnostic);
+			throw WorldException(this, "World::removeLocationWall - " + diagnostic);
 		beginStructuralEdit("removeLocationWall");
 
 		auto sector = _getSector(sectorIndex);
@@ -3745,11 +3745,11 @@ namespace core
 		recordConstruction(std::move(record));
 	}
 
-	void Building::addLocationWall(uint32_t sectorIndex, uint32_t deckIndex, int side)
+	void World::addLocationWall(uint32_t sectorIndex, uint32_t deckIndex, int side)
 	{
 		string diagnostic;
 		if (!canAddLocationWall(sectorIndex, deckIndex, side, &diagnostic))
-			throw BuildingException(this, "Building::addLocationWall - " + diagnostic);
+			throw WorldException(this, "World::addLocationWall - " + diagnostic);
 		beginStructuralEdit("addLocationWall");
 
 		auto sector = _getSector(sectorIndex);
@@ -3784,7 +3784,7 @@ namespace core
 			}), mConstructionRecords.end());
 	}
 
-	Building::CreateObjectResult Building::_createSectorButton(string const& name, shared_ptr<const Sector> sector, uint32_t x, uint32_t y, uint32_t flags, uint32_t* index)
+	World::CreateObjectResult World::_createSectorButton(string const& name, shared_ptr<const Sector> sector, uint32_t x, uint32_t y, uint32_t flags, uint32_t* index)
 	{
 		auto side = CORE_SIDE_MIDDLE;
 		uint32_t buttonX = sector->getCellX() + x;
@@ -3799,7 +3799,7 @@ namespace core
 		return obj;
 	}
 
-	Building::CreateObjectResult Building::_createDoorButton(shared_ptr<const Sector> sector, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t flags, uint32_t* index)
+	World::CreateObjectResult World::_createDoorButton(shared_ptr<const Sector> sector, uint32_t x, uint32_t y, uint32_t cellsWide, uint32_t flags, uint32_t* index)
 	{
 		int side = ((x + cellsWide) - 1) == sector->getCellX1() ? CORE_SIDE_LEFT : CORE_SIDE_RIGHT;
 		uint32_t buttonX = x + (side == CORE_SIDE_LEFT ? 0 : cellsWide - 1);
@@ -3827,7 +3827,7 @@ namespace core
 		return obj;
 	}
 
-	Building::CreateObjectResult Building::_createBulkheadDoorButton(shared_ptr<const Sector> sector, uint32_t y, int side, uint32_t* index)
+	World::CreateObjectResult World::_createBulkheadDoorButton(shared_ptr<const Sector> sector, uint32_t y, int side, uint32_t* index)
 	{
 		uint32_t buttonX = side == CORE_SIDE_LEFT ? sector->getCellX1() : sector->getCellX0();
 
@@ -3841,7 +3841,7 @@ namespace core
 		return obj;
 	}
 
-	Building::CreateObjectResult Building::_createForceBridgeButton(shared_ptr<const Sector> sector, uint32_t x, uint32_t y, uint32_t cellsWide, int side, uint32_t flags, uint32_t* index)
+	World::CreateObjectResult World::_createForceBridgeButton(shared_ptr<const Sector> sector, uint32_t x, uint32_t y, uint32_t cellsWide, int side, uint32_t flags, uint32_t* index)
 	{
 		string caller = format("_createForceBridgeButton(<sector>, {}, {}, {}, {}, {}, <index>)", x, y, cellsWide, side, flags);
 		uint32_t buttonX = x + (side == CORE_SIDE_LEFT ? 0 : cellsWide - 1);
@@ -3859,7 +3859,7 @@ namespace core
 		return obj;
 	}
 
-	Building::CreateObjectResult Building::_createLadderButton(shared_ptr<const Sector> sector,
+	World::CreateObjectResult World::_createLadderButton(shared_ptr<const Sector> sector,
 		uint32_t x, uint32_t y, int side, uint32_t flags, uint32_t* index,
 		bool insetWithinCell)
 	{
@@ -3890,7 +3890,7 @@ namespace core
 		return obj;
 	}
 
-	Building::CreateObjectResult Building::_createPlatformLiftButton(shared_ptr<const Sector> sector, uint32_t x, uint32_t y, uint32_t cellsWide, int side, uint32_t flags, uint32_t* index)
+	World::CreateObjectResult World::_createPlatformLiftButton(shared_ptr<const Sector> sector, uint32_t x, uint32_t y, uint32_t cellsWide, int side, uint32_t flags, uint32_t* index)
 	{
 		string caller = format("_createPlatformLiftButton(<sector>, {}, {}, {}, {}, {}, <index>)", x, y, cellsWide, side, flags);
 		uint32_t buttonX = x + (side == CORE_SIDE_LEFT ? 0 : cellsWide - 1);
@@ -3908,7 +3908,7 @@ namespace core
 		return obj;
 	}
 
-	bool Building::getLiftLandingGeometry(uint32_t layerIndex, uint32_t y, uint32_t x,
+	bool World::getLiftLandingGeometry(uint32_t layerIndex, uint32_t y, uint32_t x,
 		uint32_t& landingX, uint32_t& landingWidth) const
 	{
 		if (layerIndex >= getLayerCount()) return false;
@@ -3922,7 +3922,7 @@ namespace core
 		return y >= lift->getCellY() && y <= lift->getCellY1();
 	}
 
-	bool Building::isLiftOwnedDoor(shared_ptr<const SectorObject> const& object,
+	bool World::isLiftOwnedDoor(shared_ptr<const SectorObject> const& object,
 		uint32_t* liftSectorIndex, uint32_t* stopIndex) const
 	{
 		auto doorObject = dynamic_pointer_cast<const DoorSectorObject>(object);
@@ -3936,7 +3936,7 @@ namespace core
 		return true;
 	}
 
-	bool Building::isLiftOwnedControl(shared_ptr<const SectorObject> const& object,
+	bool World::isLiftOwnedControl(shared_ptr<const SectorObject> const& object,
 		uint32_t* liftSectorIndex, uint32_t* stopIndex) const
 	{
 		if (!object || object->getObjectType() != SectorObjectType::InteractionPoint) return false;
@@ -3956,7 +3956,7 @@ namespace core
 		return false;
 	}
 
-	bool Building::isShuttleOwnedDoor(shared_ptr<const SectorObject> const& object,
+	bool World::isShuttleOwnedDoor(shared_ptr<const SectorObject> const& object,
 		uint32_t* shuttleSectorIndex, uint32_t* stopIndex, uint32_t* carriageIndex,
 		uint32_t* doorIndex) const
 	{
@@ -4006,7 +4006,7 @@ namespace core
 		return true;
 	}
 
-	bool Building::isShuttleOwnedControl(shared_ptr<const SectorObject> const& object,
+	bool World::isShuttleOwnedControl(shared_ptr<const SectorObject> const& object,
 		uint32_t* shuttleSectorIndex, uint32_t* stopIndex) const
 	{
 		if (!object || object->getObjectType() != SectorObjectType::InteractionPoint) return false;
@@ -4026,7 +4026,7 @@ namespace core
 		return false;
 	}
 
-	vector<uint32_t> Building::getValidShuttleStopOffsets(uint32_t layerIndex, uint32_t y, uint32_t x,
+	vector<uint32_t> World::getValidShuttleStopOffsets(uint32_t layerIndex, uint32_t y, uint32_t x,
 		uint32_t cellsWide, uint32_t numCars, uint32_t carWidth,
 		bool allowPartialLandings, uint32_t doorMask) const
 	{
@@ -4067,7 +4067,7 @@ namespace core
 		return result;
 	}
 
-	bool Building::getShuttleOptions(Shuttle const* shuttle, CreateShuttleOptions& options) const
+	bool World::getShuttleOptions(Shuttle const* shuttle, CreateShuttleOptions& options) const
 	{
 		if (!shuttle) return false;
 		uint32_t sectorIndex = 0;
@@ -4093,7 +4093,7 @@ namespace core
 		return false;
 	}
 
-	vector<Building::ShuttleStopCandidate> Building::getShuttleStopCandidatesForDoor(
+	vector<World::ShuttleStopCandidate> World::getShuttleStopCandidatesForDoor(
 		uint32_t shuttleLayer, uint32_t y, uint32_t doorX) const
 	{
 		vector<ShuttleStopCandidate> result;
@@ -4129,7 +4129,7 @@ namespace core
 		return result;
 	}
 
-	bool Building::canAddCorridorDoor(uint32_t layerIndex, uint32_t y, uint32_t x, string* diagnostic) const
+	bool World::canAddCorridorDoor(uint32_t layerIndex, uint32_t y, uint32_t x, string* diagnostic) const
 	{
 		uint32_t liftX, liftWidth;
 		if (getLiftLandingGeometry(layerBehind(layerIndex), y, x, liftX, liftWidth))
@@ -4141,7 +4141,7 @@ namespace core
 		return canAddCorridorDoor(layerIndex, y, x, CreateDoorOptions{}, diagnostic);
 	}
 
-	bool Building::canAddCorridorDoor(uint32_t layerIndex, uint32_t y, uint32_t x,
+	bool World::canAddCorridorDoor(uint32_t layerIndex, uint32_t y, uint32_t x,
 		CreateDoorOptions const& options, string* diagnostic) const
 	{
 		auto reject = [diagnostic](string reason)
@@ -4154,13 +4154,13 @@ namespace core
 			return reject("A Door needs a Layer directly behind the Layer it is authored on");
 		auto const backLayer = layerBehind(layerIndex);
 		constexpr uint32_t decksHigh = 1;
-		// Door authoring reserves the final column as the building boundary.
+		// Door authoring reserves the final column as the world boundary.
 		if (options.width == 0 || x >= mCellsWide || options.width > mCellsWide - x
 			|| x + options.width >= mCellsWide || y + decksHigh > mDecksHigh)
-			return reject("Door position is outside the building");
+			return reject("Door position is outside the world");
 		try
 		{
-			string const caller = "Building::canAddCorridorDoor";
+			string const caller = "World::canAddCorridorDoor";
 			validateSectorDoorOptions(caller, options);
 			uint32_t liftX, liftWidth;
 			bool const liftLanding = getLiftLandingGeometry(backLayer, y, x, liftX, liftWidth);
@@ -4238,7 +4238,7 @@ namespace core
 		return true;
 	}
 
-	bool Building::getSectorDoorOptions(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t width,
+	bool World::getSectorDoorOptions(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t width,
 		CreateDoorOptions& options) const
 	{
 		auto found = find_if(mConstructionRecords.rbegin(), mConstructionRecords.rend(),
@@ -4260,7 +4260,7 @@ namespace core
 		return true;
 	}
 
-	bool Building::setSectorDoorHeight(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t width,
+	bool World::setSectorDoorHeight(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t width,
 		Door::Height height, std::string* diagnostic)
 	{
 		CreateDoorOptions options;
@@ -4304,7 +4304,7 @@ namespace core
 		return true;
 	}
 
-	bool Building::setSectorDoorOpenStyle(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t width,
+	bool World::setSectorDoorOpenStyle(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t width,
 		Door::OpenStyle style, std::string* diagnostic)
 	{
 		// Same patch shape as a Background recolour: the authored record is the
@@ -4354,12 +4354,12 @@ namespace core
 		return true;
 	}
 
-	Building::CreateDoorResult Building::addSectorDoor(uint32_t layerIndex, uint32_t y, uint32_t x)
+	World::CreateDoorResult World::addSectorDoor(uint32_t layerIndex, uint32_t y, uint32_t x)
 	{
 		return addSectorDoor(layerIndex, y, x, CreateDoorOptions{});
 	}
 
-	bool Building::setLiftStopDoorOpenStyle(uint32_t liftSectorIndex, uint32_t stopIndex,
+	bool World::setLiftStopDoorOpenStyle(uint32_t liftSectorIndex, uint32_t stopIndex,
 		Door::OpenStyle style, std::string* diagnostic)
 	{
 		// A Lift's landing Doors have no Door records of their own; the Lift's
@@ -4428,7 +4428,7 @@ namespace core
 		return true;
 	}
 
-	bool Building::setShuttleDoorOpenStyle(uint32_t shuttleSectorIndex, uint32_t stopIndex,
+	bool World::setShuttleDoorOpenStyle(uint32_t shuttleSectorIndex, uint32_t stopIndex,
 		uint32_t carriageIndex, uint32_t doorIndex, Door::OpenStyle style, std::string* diagnostic)
 	{
 		// A Shuttle's landing Doors have no Door records of their own; the Shuttle's
@@ -4500,7 +4500,7 @@ namespace core
 		return true;
 	}
 
-	Building::CreateDoorResult Building::addSectorDoor(uint32_t layerIndex, uint32_t y, uint32_t x, CreateDoorOptions const& options)
+	World::CreateDoorResult World::addSectorDoor(uint32_t layerIndex, uint32_t y, uint32_t x, CreateDoorOptions const& options)
 	{
 		beginStructuralEdit("addSectorDoor");
 		uint32_t liftX, liftWidth;
@@ -4510,12 +4510,12 @@ namespace core
 			CreateDoorOptions normalized;
 			normalized.width = liftWidth;
 			if (!canAddCorridorDoor(layerIndex, y, liftX, normalized, &diagnostic))
-				throw BuildingException(this, diagnostic);
+				throw WorldException(this, diagnostic);
 			auto const liftIndex = mLayers[layerBehind(layerIndex)]->getCellDefinition(liftX, y).sectorIndex;
 			auto lift = dynamic_pointer_cast<LiftTransit>(_getSector(liftIndex));
 			auto idlePlan = planResizeLift(liftIndex, lift->getCellX(), lift->getCellY(),
 				lift->getCellsWide(), lift->getDecksHigh());
-			if (!idlePlan.valid) throw BuildingException(this, idlePlan.diagnostic);
+			if (!idlePlan.valid) throw WorldException(this, idlePlan.diagnostic);
 			idlePlan.stopOffsets.clear();
 			for (uint32_t stop = 0; stop < lift->getNumStops(); ++stop)
 			{
@@ -4526,7 +4526,7 @@ namespace core
 			idlePlan.stopOffsets.push_back(y - lift->getCellY());
 			sort(idlePlan.stopOffsets.begin(), idlePlan.stopOffsets.end());
 			vector<ConstructionRecord> records;
-			if (!prepareLiftEdit(idlePlan, records, diagnostic)) throw BuildingException(this, diagnostic);
+			if (!prepareLiftEdit(idlePlan, records, diagnostic)) throw WorldException(this, diagnostic);
 			rebuildFromConstructionRecords(std::move(records));
 			auto const& cell = mLayers[layerIndex]->getCellDefinition(liftX, y);
 			auto sector = _getSector(cell.sectorIndex);
@@ -4546,21 +4546,21 @@ namespace core
 		return result;
 	}
 
-	void Building::addSectorDoorButton(uint32_t sectorIndex, uint32_t objectIndex)
+	void World::addSectorDoorButton(uint32_t sectorIndex, uint32_t objectIndex)
 	{
 		if (sectorIndex >= mSectors.size() || !mSectors[sectorIndex]
 			|| objectIndex >= mSectors[sectorIndex]->getNumObjects())
 		{
-			throw BuildingException(this, "The selected Door no longer exists");
+			throw WorldException(this, "The selected Door no longer exists");
 		}
 
 		auto doorObject = dynamic_pointer_cast<DoorSectorObject>(
 			mSectors[sectorIndex]->getObject(objectIndex));
 		if (doorObject && (isLiftOwnedDoor(doorObject) || isShuttleOwnedDoor(doorObject)))
-			throw BuildingException(this, "Transport-owned Doors are read-only; their call button is managed by the transport");
+			throw WorldException(this, "Transport-owned Doors are read-only; their call button is managed by the transport");
 		if (!doorObject)
 		{
-			throw BuildingException(this, "The selected object is not a Door");
+			throw WorldException(this, "The selected object is not a Door");
 		}
 		auto door = doorObject->getDoor();
 		auto sector = mSectors[sectorIndex];
@@ -4570,7 +4570,7 @@ namespace core
 		bool const isFrontSide = door->getFrontSector() == sector;
 		if (!isFrontSide && door->getBackSector() != sector)
 		{
-			throw BuildingException(this, "The selected Door does not belong to this Sector");
+			throw WorldException(this, "The selected Door does not belong to this Sector");
 		}
 		auto const doorLayer = isFrontSide ? sector->getLayerIndex() : sector->getLayerIndex() - 1;
 
@@ -4585,11 +4585,11 @@ namespace core
 			});
 		if (source == mConstructionRecords.end())
 		{
-			throw BuildingException(this, "This Door does not support an added Door Button");
+			throw WorldException(this, "This Door does not support an added Door Button");
 		}
 		if (source->p && source->q)
 		{
-			throw BuildingException(this, "This Door already has Door Buttons on both sides");
+			throw WorldException(this, "This Door already has Door Buttons on both sides");
 		}
 
 		// The edit is all-or-nothing: every side that still lacks a Button must
@@ -4604,7 +4604,7 @@ namespace core
 			if (doorObject->getCellX() == sides[side]->getCellX0()
 				&& doorObject->getCellX() + door->getCellsWide() - 1 == sides[side]->getCellX1())
 			{
-				throw BuildingException(this,
+				throw WorldException(this,
 					"There is no space to place Door Buttons on both sides of this Door");
 			}
 		}
@@ -4630,7 +4630,7 @@ namespace core
 				getFixedTimestep(), { { command, InteractionBindingRequirement::Required } });
 			if (!addTraversalControl(door->getTraversalResourceId(), point))
 			{
-				throw BuildingException(this, "Could not bind the Door Button to its Door");
+				throw WorldException(this, "Could not bind the Door Button to its Door");
 			}
 		}
 
@@ -4651,7 +4651,7 @@ namespace core
 		source->q = true;
 	}
 
-	bool Building::canAddSectorDoorButton(uint32_t sectorIndex, uint32_t objectIndex) const
+	bool World::canAddSectorDoorButton(uint32_t sectorIndex, uint32_t objectIndex) const
 	{
 		if (sectorIndex >= mSectors.size() || !mSectors[sectorIndex]
 			|| objectIndex >= mSectors[sectorIndex]->getNumObjects()) return false;
@@ -4675,7 +4675,7 @@ namespace core
 		return source != mConstructionRecords.end() && !(source->p && source->q);
 	}
 
-	bool Building::canRemoveSectorDoorButton(uint32_t sectorIndex, uint32_t objectIndex) const
+	bool World::canRemoveSectorDoorButton(uint32_t sectorIndex, uint32_t objectIndex) const
 	{
 		if (sectorIndex >= mSectors.size() || !mSectors[sectorIndex]
 			|| objectIndex >= mSectors[sectorIndex]->getNumObjects()) return false;
@@ -4699,30 +4699,30 @@ namespace core
 		return source != mConstructionRecords.cend() && (source->p || source->q);
 	}
 
-	shared_ptr<const DoorSectorObject> Building::removeSectorDoorButton(uint32_t sectorIndex,
+	shared_ptr<const DoorSectorObject> World::removeSectorDoorButton(uint32_t sectorIndex,
 		uint32_t objectIndex)
 	{
 		if (!mSimulationPaused)
-			throw BuildingException(this, "Removing a Door Button requires the simulation to be paused");
+			throw WorldException(this, "Removing a Door Button requires the simulation to be paused");
 		if (sectorIndex >= mSectors.size() || !mSectors[sectorIndex]
 			|| objectIndex >= mSectors[sectorIndex]->getNumObjects())
 		{
-			throw BuildingException(this, "The selected Door no longer exists");
+			throw WorldException(this, "The selected Door no longer exists");
 		}
 		auto doorObject = dynamic_pointer_cast<DoorSectorObject>(
 			mSectors[sectorIndex]->getObject(objectIndex));
 		if (doorObject && (isLiftOwnedDoor(doorObject) || isShuttleOwnedDoor(doorObject)))
-			throw BuildingException(this, "Transport-owned Doors are read-only; their call button is managed by the transport");
+			throw WorldException(this, "Transport-owned Doors are read-only; their call button is managed by the transport");
 		if (!doorObject)
 		{
-			throw BuildingException(this, "The selected object is not a Door");
+			throw WorldException(this, "The selected object is not a Door");
 		}
 		auto door = doorObject->getDoor();
 		auto sector = mSectors[sectorIndex];
 		bool const isFrontSide = door->getFrontSector() == sector;
 		if (!isFrontSide && door->getBackSector() != sector)
 		{
-			throw BuildingException(this, "The selected Door does not belong to this Sector");
+			throw WorldException(this, "The selected Door does not belong to this Sector");
 		}
 		auto const doorLayer = isFrontSide ? sector->getLayerIndex() : sector->getLayerIndex() - 1;
 		auto const doorX = doorObject->getCellX();
@@ -4739,11 +4739,11 @@ namespace core
 			});
 		if (source == mConstructionRecords.end())
 		{
-			throw BuildingException(this, "This Door does not support an added Door Button");
+			throw WorldException(this, "This Door does not support an added Door Button");
 		}
 		if (!source->p && !source->q)
 		{
-			throw BuildingException(this, "This Door has no Door Buttons to remove");
+			throw WorldException(this, "This Door has no Door Buttons to remove");
 		}
 
 		// The record is the authored source of truth: clearing its control flags
@@ -4779,10 +4779,10 @@ namespace core
 		return nullptr;
 	}
 
-	Building::CreateDoorResult Building::_addSectorDoor(uint32_t layerIndex, uint32_t y, uint32_t x,
+	World::CreateDoorResult World::_addSectorDoor(uint32_t layerIndex, uint32_t y, uint32_t x,
 		CreateDoorOptions const& options, bool controlsAreExternallyBound)
 	{
-		string caller = format("Building::addSectorDoor({}, {}, {}, {})", layerIndex, y, x, options.width);
+		string caller = format("World::addSectorDoor({}, {}, {}, {})", layerIndex, y, x, options.width);
 
 		auto cellsWide = options.width;
 
@@ -4790,7 +4790,7 @@ namespace core
 		validateLayer(caller, layerIndex);
 		if (layerIndex + 1 >= getLayerCount())
 		{
-			throw BuildingException(this,
+			throw WorldException(this,
 				format("{} - a Door needs a Layer directly behind the Layer it is authored on", caller));
 		}
 		auto const backLayer = layerBehind(layerIndex);
@@ -4799,7 +4799,7 @@ namespace core
 		if (!controlsAreExternallyBound && options.activationMode != DoorActivationMode::RemoteControlled
 			&& (options.controls[0] || options.controls[1]))
 		{
-			throw BuildingException(this,
+			throw WorldException(this,
 				format("{} - physical controls require remote-controlled activation", caller));
 		}
 		constexpr uint32_t decksHigh = 1;
@@ -4819,7 +4819,7 @@ namespace core
 
 			if (cellDef0.sectorIndex == ~0u)
 			{
-				throw BuildingException(this, format("{} - front Layer cell at {},{} is not occupied.", caller, ix, iy));
+				throw WorldException(this, format("{} - front Layer cell at {},{} is not occupied.", caller, ix, iy));
 			}
 
 			sectors[0] = _getSector(cellDef0.sectorIndex);
@@ -4827,19 +4827,19 @@ namespace core
 			{
 				auto const room = dynamic_pointer_cast<Location>(sectors[0]);
 				if (!room || room->getType() != SectorType::Location || room->isCorridor())
-					throw BuildingException(this, format("{} - a tall Door is only available in a Room", caller));
+					throw WorldException(this, format("{} - a tall Door is only available in a Room", caller));
 			}
 
 			if (cellDef1.sectorIndex == ~0u)
 			{
-				throw BuildingException(this, format("{} - back Layer cell at {},{} is not occupied.", caller, ix, iy));
+				throw WorldException(this, format("{} - back Layer cell at {},{} is not occupied.", caller, ix, iy));
 			}
 
 			sectors[1] = _getSector(cellDef1.sectorIndex);
 
 			if (cellDef0.hasObject() || !cellDef0.markers.empty())
 			{
-				throw BuildingException(this, format(
+				throw WorldException(this, format(
 					"{} - another object occupies front Layer cell at {},{}", caller, ix, iy));
 			}
 
@@ -4848,7 +4848,7 @@ namespace core
 			if (iy != y && (cellDef0.floorType != CellFloorType::None
 				|| cellDef1.floorType != CellFloorType::None))
 			{
-				throw BuildingException(this, format(
+				throw WorldException(this, format(
 					"{} - a Door cannot open through a Walkway above its threshold", caller));
 			}
 
@@ -4947,7 +4947,7 @@ namespace core
 			{
 				if (x == sectors[i]->getCellX0() && (x + options.width - 1) == sectors[i]->getCellX1())
 				{
-					throw BuildingException(this, format("{} - No space to place Buttons for Door", caller));
+					throw WorldException(this, format("{} - No space to place Buttons for Door", caller));
 				}
 
 				auto buttonObject = _createDoorButton(sectors[i], x, y, cellsWide, CORE_BUTTON_F_AUTO_REENABLE, &createdControls[i].index);
@@ -4977,10 +4977,10 @@ namespace core
 		return { doorObject, { createdControls[0], createdControls[1] }, traversalResource };
 	}
 
-	bool Building::canAddSectorWindow(uint32_t layerIndex, uint32_t y, uint32_t x,
+	bool World::canAddSectorWindow(uint32_t layerIndex, uint32_t y, uint32_t x,
 		uint32_t cellsWide, uint32_t decksHigh, string* diagnostic) const
 	{
-		string caller = format("Building::addSectorWindow({}, {}, {}, {})", layerIndex, y, x, cellsWide);
+		string caller = format("World::addSectorWindow({}, {}, {}, {})", layerIndex, y, x, cellsWide);
 		try
 		{
 			validateLayer(caller, layerIndex);
@@ -4991,7 +4991,7 @@ namespace core
 			// could never take part in the Graph.  Maps written before the rule can still
 			// replay one from that Layer - see createWindow() - but none may be authored.
 			if (!mDeserializingConstruction && isBackMostLayer(layerIndex, getLayerCount()))
-				throw BuildingException(this, format(
+				throw WorldException(this, format(
 					"{} - a Window needs a Layer behind it, and Layer {} is the back-most Layer",
 					caller, layerIndex));
 
@@ -5013,7 +5013,7 @@ namespace core
 					{
 						auto const& cellDef = layer->getCellDefinition(ix, iy);
 						if (cellDef.sectorIndex == ~0u)
-							throw BuildingException(this, format("{} - Layer {} cell at {},{} is not occupied.",
+							throw WorldException(this, format("{} - Layer {} cell at {},{} is not occupied.",
 								caller, requiredLayer, ix, iy));
 						if (requiredLayer == layerIndex)
 							validateObjectAllowedInSector(caller, SectorObjectType::Window, cellDef.sectorIndex);
@@ -5021,7 +5021,7 @@ namespace core
 							validateObjectAllowedInSectorAsLookTarget(caller, SectorObjectType::Window, cellDef.sectorIndex);
 						if (requiredLayer == layerIndex
 							&& (cellDef.hasObject() || !cellDef.markers.empty()))
-							throw BuildingException(this, format("{} - another object occupies cell at {},{}",
+							throw WorldException(this, format("{} - another object occupies cell at {},{}",
 								caller, ix, iy));
 					}
 			}
@@ -5040,17 +5040,17 @@ namespace core
 		return true;
 	}
 
-	uint32_t Building::addSectorWindow(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t decksHigh)
+	uint32_t World::addSectorWindow(uint32_t layerIndex, uint32_t y, uint32_t x, uint32_t cellsWide, uint32_t decksHigh)
 	{
 		return addSectorWindow(layerIndex, y, x, cellsWide, decksHigh, {}).window.index;
 	}
 
-	Building::CreateWindowResult Building::addSectorWindow(uint32_t layerIndex, uint32_t y, uint32_t x,
+	World::CreateWindowResult World::addSectorWindow(uint32_t layerIndex, uint32_t y, uint32_t x,
 		uint32_t cellsWide, uint32_t decksHigh, CreateWindowOptions const& options)
 	{
 		string diagnostic;
 		if (!canAddSectorWindow(layerIndex, y, x, cellsWide, decksHigh, &diagnostic))
-			throw BuildingException(this, diagnostic);
+			throw WorldException(this, diagnostic);
 		if (options.traversable)
 		{
 			// A Window may look into a Background, but a traversable Window would admit
@@ -5065,7 +5065,7 @@ namespace core
 						auto const& backCell = mLayers[backLayer]->getCellDefinition(ix, iy);
 						if (backCell.sectorIndex != ~0u
 							&& mSectors[backCell.sectorIndex]->getType() == SectorType::Background)
-							throw BuildingException(this, format(
+							throw WorldException(this, format(
 								"A traversable Window cannot cross into the Background at {},{}: a Background can be looked into, but never entered",
 								ix, iy));
 					}
@@ -5108,7 +5108,7 @@ namespace core
 		return { { windowIndex, windowObjType, windowSector }, window, traversalResource };
 	}
 
-	bool Building::getSectorWindowOptions(uint32_t layerIndex, uint32_t y, uint32_t x,
+	bool World::getSectorWindowOptions(uint32_t layerIndex, uint32_t y, uint32_t x,
 		uint32_t cellsWide, uint32_t decksHigh, CreateWindowOptions& options) const
 	{
 		auto found = find_if(mConstructionRecords.rbegin(), mConstructionRecords.rend(),
@@ -5125,7 +5125,7 @@ namespace core
 		return true;
 	}
 
-	bool Building::canAddSectorBulkheadDoor(uint32_t layerIndex, uint32_t y, uint32_t x,
+	bool World::canAddSectorBulkheadDoor(uint32_t layerIndex, uint32_t y, uint32_t x,
 		int side, CreateBulkheadDoorOptions const& options, string* diagnostic) const
 	{
 		auto reject = [diagnostic](string reason)
@@ -5135,7 +5135,7 @@ namespace core
 		};
 		if (layerIndex >= mLayers.size() || y >= mDecksHigh
 			|| (side != CORE_SIDE_LEFT && side != CORE_SIDE_RIGHT))
-			return reject("Bulkhead Door position is outside the building");
+			return reject("Bulkhead Door position is outside the world");
 		uint32_t thresholdX;
 		if (side == CORE_SIDE_LEFT)
 		{
@@ -5180,9 +5180,9 @@ namespace core
 				|| right.sectorObjectType == SectorObjectType::Door
 				|| right.sectorObjectType == SectorObjectType::Window)
 				return reject("Another object blocks Bulkhead Door placement");
-			validateObjectAllowedInSector("Building::canAddSectorBulkheadDoor",
+			validateObjectAllowedInSector("World::canAddSectorBulkheadDoor",
 				SectorObjectType::BulkheadDoor, left.sectorIndex);
-			validateObjectAllowedInSector("Building::canAddSectorBulkheadDoor",
+			validateObjectAllowedInSector("World::canAddSectorBulkheadDoor",
 				SectorObjectType::BulkheadDoor, right.sectorIndex);
 		}
 		catch (Exception const& error) { return reject(error.getMessage()); }
@@ -5191,22 +5191,22 @@ namespace core
 		return true;
 	}
 
-	Building::CreateBulkheadDoorResult Building::addSectorBulkheadDoor(uint32_t layerIndex, uint32_t y,
+	World::CreateBulkheadDoorResult World::addSectorBulkheadDoor(uint32_t layerIndex, uint32_t y,
 		uint32_t x, int side)
 	{
 		return addSectorBulkheadDoor(layerIndex, y, x, side, CreateBulkheadDoorOptions{});
 	}
 
-	Building::CreateBulkheadDoorResult Building::addSectorBulkheadDoor(uint32_t layerIndex, uint32_t y, uint32_t x,
+	World::CreateBulkheadDoorResult World::addSectorBulkheadDoor(uint32_t layerIndex, uint32_t y, uint32_t x,
 		int side, CreateBulkheadDoorOptions const& options)
 	{
 		beginStructuralEdit("addSectorBulkheadDoor");
 		ASSERT_SIDE_OK(side);
 
-		string caller = format("Building::addSectorBulkheadDoor({}, {}, {}, {})", layerIndex, y, x, side);
+		string caller = format("World::addSectorBulkheadDoor({}, {}, {}, {})", layerIndex, y, x, side);
 		string diagnostic;
 		if (!canAddSectorBulkheadDoor(layerIndex, y, x, side, options, &diagnostic))
-			throw BuildingException(this, format("{} - {}", caller, diagnostic));
+			throw WorldException(this, format("{} - {}", caller, diagnostic));
 
 		// Get locations on either side.
 		auto layer = getLayer(layerIndex);
@@ -5231,11 +5231,11 @@ namespace core
 		// be space for them.
 		if (cellDef0.sectorObjectType == SectorObjectType::Door || cellDef0.sectorObjectType == SectorObjectType::Window)
 		{
-			throw BuildingException(this, format("{} - cell at {}, {} has an object blocking the Bulkhead door", caller, cx0, y));
+			throw WorldException(this, format("{} - cell at {}, {} has an object blocking the Bulkhead door", caller, cx0, y));
 		}
 		if (cellDef1.sectorObjectType == SectorObjectType::Door || cellDef1.sectorObjectType == SectorObjectType::Window)
 		{
-			throw BuildingException(this, format("{} - cell at {}, {} has an object blocking the Bulkhead door", caller, cx1, y));
+			throw WorldException(this, format("{} - cell at {}, {} has an object blocking the Bulkhead door", caller, cx1, y));
 		}
 
 		validateObjectAllowedInSector(caller, SectorObjectType::BulkheadDoor, cellDef0.sectorIndex);
@@ -5300,7 +5300,7 @@ namespace core
 		return { doorObject, { createdControls[0], createdControls[1] }, traversalResource };
 	}
 
-	Building::CreateObjectResult Building::addSectorLightSwitch(uint32_t sectorIndex, uint32_t xOffset)
+	World::CreateObjectResult World::addSectorLightSwitch(uint32_t sectorIndex, uint32_t xOffset)
 	{
 		beginStructuralEdit("addSectorLightSwitch");
 		auto sector = _getSector(sectorIndex);
@@ -5320,7 +5320,7 @@ namespace core
 		return ctrl;
 	}
 
-	bool Building::canAddSectorWalkway(uint32_t sectorIndex, uint32_t deckIndex,
+	bool World::canAddSectorWalkway(uint32_t sectorIndex, uint32_t deckIndex,
 		uint32_t xOffset, string* diagnostic) const
 	{
 		auto reject = [diagnostic](string reason)
@@ -5351,13 +5351,13 @@ namespace core
 		return true;
 	}
 
-	Building::CreateObjectResult Building::addSectorWalkway(uint32_t sectorIndex,
+	World::CreateObjectResult World::addSectorWalkway(uint32_t sectorIndex,
 		uint32_t deckIndex, uint32_t xOffset)
 	{
-		string caller = format("Building::addSectorWalkway({}, {}, {})", sectorIndex, deckIndex, xOffset);
+		string caller = format("World::addSectorWalkway({}, {}, {})", sectorIndex, deckIndex, xOffset);
 		string diagnostic;
 		if (!canAddSectorWalkway(sectorIndex, deckIndex, xOffset, &diagnostic))
-			throw BuildingException(this, format("{} - {}", caller, diagnostic));
+			throw WorldException(this, format("{} - {}", caller, diagnostic));
 
 		// Once editing an already-built document, replay the authored structure so
 		// every Ladder in this column can shorten to the newly nearest Walkway.
@@ -5374,12 +5374,12 @@ namespace core
 					auto base = ladderObject->getCellY() - room->getCellY();
 					auto top = base + ladder->getDecksHigh() - 1;
 					if (deckIndex > base && deckIndex < top && roomLadderIsActive(ladder))
-						throw BuildingException(this, "A Room Ladder cannot be resized while it is in use");
+						throw WorldException(this, "A Room Ladder cannot be resized while it is in use");
 				}
 				auto liftObject = dynamic_pointer_cast<LiftSectorObject>(room->getObject(i));
 				if (liftObject && liftObject->getCellX() == room->getCellX() + xOffset
 					&& platformLiftIsActive(liftObject->getLift()))
-					throw BuildingException(this, "The PlatformLift shaft cannot be changed while it is in use");
+					throw WorldException(this, "The PlatformLift shaft cannot be changed while it is in use");
 			}
 			auto records = mConstructionRecords;
 			ConstructionRecord record{ ConstructionType::Walkway };
@@ -5390,7 +5390,7 @@ namespace core
 				{ return candidate.type == ConstructionType::PlatformLift && candidate.a == sectorIndex; });
 			records.insert(beforeLift, record);
 			if (!normalizeRoomLadderRecords(records, diagnostic))
-				throw BuildingException(this, diagnostic);
+				throw WorldException(this, diagnostic);
 			rebuildFromConstructionRecords(std::move(records));
 			auto rebuilt = _getSector(sectorIndex);
 			for (uint32_t i = 0; i < rebuilt->getNumObjects(); ++i)
@@ -5401,7 +5401,7 @@ namespace core
 					&& object->getCellY() == rebuilt->getCellY() + deckIndex)
 					return { i, SectorObjectType::Walkway, rebuilt };
 			}
-			throw BuildingException(this, "Could not locate the added Walkway");
+			throw WorldException(this, "Could not locate the added Walkway");
 		}
 		beginStructuralEdit("addSectorWalkway");
 
@@ -5421,7 +5421,7 @@ namespace core
 		return createdWalkway;
 	}
 
-	bool Building::canAddSectorMarker(uint32_t sectorIndex, uint32_t deckIndex, float xOffset,
+	bool World::canAddSectorMarker(uint32_t sectorIndex, uint32_t deckIndex, float xOffset,
 		string* diagnostic) const
 	{
 		auto reject = [diagnostic](string reason)
@@ -5460,7 +5460,7 @@ namespace core
 		return true;
 	}
 
-	bool Building::markerNameTaken(string const& trimmed, MarkerId except) const
+	bool World::markerNameTaken(string const& trimmed, MarkerId except) const
 	{
 		for (auto const id : getMarkerIds())
 		{
@@ -5471,17 +5471,17 @@ namespace core
 		return false;
 	}
 
-	string Building::nextGeneratedMarkerName() const
+	string World::nextGeneratedMarkerName() const
 	{
 		for (uint64_t suffix = 1; suffix != 0; ++suffix)
 		{
 			auto candidate = format("Marker {}", suffix);
 			if (!markerNameTaken(candidate)) return candidate;
 		}
-		throw BuildingException(this, "No unique generated Marker name is available");
+		throw WorldException(this, "No unique generated Marker name is available");
 	}
 
-	shared_ptr<Marker> Building::mutableMarker(MarkerId id) const
+	shared_ptr<Marker> World::mutableMarker(MarkerId id) const
 	{
 		for (auto const& sector : mSectors)
 		{
@@ -5497,7 +5497,7 @@ namespace core
 		return nullptr;
 	}
 
-	vector<MarkerId> Building::getMarkerIds() const
+	vector<MarkerId> World::getMarkerIds() const
 	{
 		vector<MarkerId> result;
 		for (auto const& sector : mSectors)
@@ -5513,12 +5513,12 @@ namespace core
 		return result;
 	}
 
-	shared_ptr<const Marker> Building::lookupMarker(MarkerId id) const
+	shared_ptr<const Marker> World::lookupMarker(MarkerId id) const
 	{
 		return mutableMarker(id);
 	}
 
-	bool Building::canRenameMarker(MarkerId id, string const& name, string* diagnostic) const
+	bool World::canRenameMarker(MarkerId id, string const& name, string* diagnostic) const
 	{
 		auto reject = [diagnostic](string reason)
 		{
@@ -5534,7 +5534,7 @@ namespace core
 		return true;
 	}
 
-	bool Building::renameMarker(MarkerId id, string const& name, string* diagnostic)
+	bool World::renameMarker(MarkerId id, string const& name, string* diagnostic)
 	{
 		if (!canRenameMarker(id, name, diagnostic)) return false;
 		auto const trimmed = Marker::trimName(name);
@@ -5547,53 +5547,53 @@ namespace core
 					&& candidate.markerId == id;
 			});
 		if (record == mConstructionRecords.end())
-			throw BuildingException(this, "renameMarker - Marker has no authored record");
+			throw WorldException(this, "renameMarker - Marker has no authored record");
 		marker->setName(trimmed);
 		record->name = trimmed;
 		modify();
 		return true;
 	}
 
-	Building::CreateObjectResult Building::addSectorMarker(uint32_t sectorIndex,
+	World::CreateObjectResult World::addSectorMarker(uint32_t sectorIndex,
 		uint32_t deckIndex, float xOffset, uint32_t* vertexIdentifier)
 	{
 		return addSectorMarker(sectorIndex, deckIndex, xOffset,
 			nextGeneratedMarkerName(), vertexIdentifier);
 	}
 
-	Building::CreateObjectResult Building::addSectorMarker(uint32_t sectorIndex,
+	World::CreateObjectResult World::addSectorMarker(uint32_t sectorIndex,
 		uint32_t deckIndex, float xOffset, string const& name, uint32_t* vertexIdentifier)
 	{
 		string diagnostic;
 		if (!canAddSectorMarker(sectorIndex, deckIndex, xOffset, &diagnostic))
-			throw BuildingException(this, "Building::addSectorMarker - " + diagnostic);
+			throw WorldException(this, "World::addSectorMarker - " + diagnostic);
 		auto const trimmed = Marker::trimName(name);
 		if (!Marker::nameIsValid(trimmed, &diagnostic))
-			throw BuildingException(this, "Building::addSectorMarker - " + diagnostic);
+			throw WorldException(this, "World::addSectorMarker - " + diagnostic);
 		if (markerNameTaken(trimmed))
-			throw BuildingException(this, "Building::addSectorMarker - A Marker with this name already exists");
+			throw WorldException(this, "World::addSectorMarker - A Marker with this name already exists");
 		if (mNextMarkerId == 0)
-			throw BuildingException(this, "Building::addSectorMarker - Marker ID space is exhausted");
+			throw WorldException(this, "World::addSectorMarker - Marker ID space is exhausted");
 		auto const id = MarkerId{ mNextMarkerId };
 		mNextMarkerId = mNextMarkerId == numeric_limits<uint64_t>::max() ? 0 : mNextMarkerId + 1;
 		return addSectorMarkerRestored(sectorIndex, deckIndex, xOffset, id, trimmed,
 			vertexIdentifier);
 	}
 
-	Building::CreateObjectResult Building::addSectorMarkerRestored(uint32_t sectorIndex,
+	World::CreateObjectResult World::addSectorMarkerRestored(uint32_t sectorIndex,
 		uint32_t deckIndex, float xOffset, MarkerId id, string name,
 		uint32_t* vertexIdentifier)
 	{
 		string diagnostic;
-		if (!id) throw BuildingException(this, "Marker ID cannot be zero");
-		if (lookupMarker(id)) throw BuildingException(this, "Marker ID is already in use");
+		if (!id) throw WorldException(this, "Marker ID cannot be zero");
+		if (lookupMarker(id)) throw WorldException(this, "Marker ID is already in use");
 		if (!canAddSectorMarker(sectorIndex, deckIndex, xOffset, &diagnostic))
-			throw BuildingException(this, "Building::addSectorMarker - " + diagnostic);
+			throw WorldException(this, "World::addSectorMarker - " + diagnostic);
 		name = Marker::trimName(name);
 		if (!Marker::nameIsValid(name, &diagnostic))
-			throw BuildingException(this, "Building::addSectorMarker - " + diagnostic);
+			throw WorldException(this, "World::addSectorMarker - " + diagnostic);
 		if (markerNameTaken(name))
-			throw BuildingException(this, "Building::addSectorMarker - A Marker with this name already exists");
+			throw WorldException(this, "World::addSectorMarker - A Marker with this name already exists");
 		beginStructuralEdit("addSectorMarker");
 
 		auto sector = _getSector(sectorIndex);
@@ -5611,7 +5611,7 @@ namespace core
 		return createdMarker;
 	}
 
-	bool Building::canRemoveSectorMarker(uint32_t sectorIndex, uint32_t objectIndex,
+	bool World::canRemoveSectorMarker(uint32_t sectorIndex, uint32_t objectIndex,
 		string* diagnostic) const
 	{
 		if (diagnostic) diagnostic->clear();
@@ -5672,7 +5672,7 @@ namespace core
 		return true;
 	}
 
-	bool Building::removeSectorMarker(uint32_t sectorIndex, uint32_t objectIndex,
+	bool World::removeSectorMarker(uint32_t sectorIndex, uint32_t objectIndex,
 		string* diagnostic)
 	{
 		if (!canRemoveSectorMarker(sectorIndex, objectIndex, diagnostic)) return false;
@@ -5685,7 +5685,7 @@ namespace core
 			marker->getCellX(), marker->getCellY());
 		auto const found = find(cellDef.markers.begin(), cellDef.markers.end(), objectIndex);
 		if (found == cellDef.markers.end())
-			throw BuildingException(this, "removeSectorMarker - Marker is not registered in its cell");
+			throw WorldException(this, "removeSectorMarker - Marker is not registered in its cell");
 		cellDef.markers.erase(found);
 		if (!sector->removeSectorObject(objectIndex)) return false;
 
@@ -5697,13 +5697,13 @@ namespace core
 		return true;
 	}
 
-	Building::CreateForceBridgeResult Building::addSectorForceBridge(uint32_t sectorIndex,
+	World::CreateForceBridgeResult World::addSectorForceBridge(uint32_t sectorIndex,
 		uint32_t deckIndex, uint32_t xOffset)
 	{
 		return addSectorForceBridge(sectorIndex, deckIndex, xOffset, CreateForceBridgeOptions{});
 	}
 
-	bool Building::calculateSectorForceBridgeWidthToRight(uint32_t sectorIndex,
+	bool World::calculateSectorForceBridgeWidthToRight(uint32_t sectorIndex,
 		uint32_t deckIndex, uint32_t xOffset, uint32_t& width, string* diagnostic) const
 	{
 		width = 0;
@@ -5737,7 +5737,7 @@ namespace core
 		return reject("No Walkway exists to the right of this gap");
 	}
 
-	bool Building::canAddSectorForceBridge(uint32_t sectorIndex, uint32_t deckIndex,
+	bool World::canAddSectorForceBridge(uint32_t sectorIndex, uint32_t deckIndex,
 		uint32_t xOffset, CreateForceBridgeOptions const& options, string* diagnostic) const
 	{
 		auto reject = [&](string reason) { if (diagnostic) *diagnostic = std::move(reason); return false; };
@@ -5770,12 +5770,12 @@ namespace core
 		return true;
 	}
 
-	Building::CreateForceBridgeResult Building::addSectorForceBridge(uint32_t sectorIndex, uint32_t deckIndex, uint32_t xOffset, CreateForceBridgeOptions const& options)
+	World::CreateForceBridgeResult World::addSectorForceBridge(uint32_t sectorIndex, uint32_t deckIndex, uint32_t xOffset, CreateForceBridgeOptions const& options)
 	{
-		string caller = format("Building::addSectorForceBridge({}, {}, {}, {}, {}, {})", sectorIndex, deckIndex, xOffset, options.width, options.fromSide, options.startExtended);
+		string caller = format("World::addSectorForceBridge({}, {}, {}, {}, {}, {})", sectorIndex, deckIndex, xOffset, options.width, options.fromSide, options.startExtended);
 		string diagnostic;
 		if (!canAddSectorForceBridge(sectorIndex, deckIndex, xOffset, options, &diagnostic))
-			throw BuildingException(this, format("{} - {}", caller, diagnostic));
+			throw WorldException(this, format("{} - {}", caller, diagnostic));
 		beginStructuralEdit("addSectorForceBridge");
 		ASSERT_SIDE_OK(options.fromSide);
 		validateSectorForceBridgeOptions(caller, options);
@@ -5812,7 +5812,7 @@ namespace core
 		{
 			if (x == sector->getCellX0() && (x + options.width - 1) == sector->getCellX1())
 			{
-				throw BuildingException(this, format("{} - No space to place Force Bridge controls", caller));
+				throw WorldException(this, format("{} - No space to place Force Bridge controls", caller));
 			}
 
 			if (options.controlCount > 0)
@@ -5852,7 +5852,7 @@ namespace core
 		return result;
 	}
 
-	bool Building::canAddRoomLadder(uint32_t sectorIndex, uint32_t deckIndex,
+	bool World::canAddRoomLadder(uint32_t sectorIndex, uint32_t deckIndex,
 		uint32_t xOffset, uint32_t* decksHigh, string* diagnostic) const
 	{
 		auto reject = [&](string reason)
@@ -5906,23 +5906,23 @@ namespace core
 		return true;
 	}
 
-	Building::CreateLadderResult Building::addRoomLadder(uint32_t sectorIndex,
+	World::CreateLadderResult World::addRoomLadder(uint32_t sectorIndex,
 		uint32_t deckIndex, uint32_t xOffset)
 	{
 		return addRoomLadder(sectorIndex, deckIndex, xOffset, { 0, false, true });
 	}
 
-	Building::CreateLadderResult Building::addRoomLadder(uint32_t sectorIndex,
+	World::CreateLadderResult World::addRoomLadder(uint32_t sectorIndex,
 		uint32_t deckIndex, uint32_t xOffset, CreateLadderOptions options)
 	{
 		uint32_t height{}; string diagnostic;
 		if (!canAddRoomLadder(sectorIndex, deckIndex, xOffset, &height, &diagnostic))
-			throw BuildingException(this, format("Building::addRoomLadder - {}", diagnostic));
+			throw WorldException(this, format("World::addRoomLadder - {}", diagnostic));
 		options.decksHigh = height;
 		return addSectorLadder(sectorIndex, deckIndex, xOffset, options);
 	}
 
-	Building::CreateLadderResult Building::addSectorLadder(uint32_t sectorIndex, uint32_t deckIndex, uint32_t xOffset, CreateLadderOptions const& options)
+	World::CreateLadderResult World::addSectorLadder(uint32_t sectorIndex, uint32_t deckIndex, uint32_t xOffset, CreateLadderOptions const& options)
 	{
 		beginStructuralEdit("addSectorLadder");
 		auto sector = _getSector(sectorIndex);
@@ -5935,7 +5935,7 @@ namespace core
 		auto y1 = y + options.decksHigh - 1;
 
 		// Checks
-		string caller = format("Building::addSectorLadder({}, {}, {}, {})", sectorIndex, deckIndex, xOffset, options.startExtended);
+		string caller = format("World::addSectorLadder({}, {}, {}, {})", sectorIndex, deckIndex, xOffset, options.startExtended);
 
 		validateSectorLadderOptions(caller, options);
 		validateObjectAllowedInSector(caller, SectorObjectType::Ladder, sectorIndex);
@@ -5943,12 +5943,12 @@ namespace core
 
 		if (options.decksHigh < 2)
 		{
-			throw BuildingException(this, format("{} - Ladder at {},{} must be at least 2 decks high", caller, x, y));
+			throw WorldException(this, format("{} - Ladder at {},{} must be at least 2 decks high", caller, x, y));
 		}
 
 		if (deckIndex > sector->getDecksHigh())
 		{
-			throw BuildingException(this, format("{} - deckIndex={} out of bounds", caller, deckIndex));
+			throw WorldException(this, format("{} - deckIndex={} out of bounds", caller, deckIndex));
 		}
 
 		auto const& baseCell = mLayers[layerIndex]->getCellDefinition(x, y);
@@ -6005,7 +6005,7 @@ namespace core
 		{
 			if (x == sector->getCellX0() && x == sector->getCellX1())
 			{
-				throw BuildingException(this, format("{} - No space to place Buttons for Ladder", caller));
+				throw WorldException(this, format("{} - No space to place Buttons for Ladder", caller));
 			}
 
 			// Try and place on the right of the Ladder, unless it's at the end of the Location
@@ -6044,7 +6044,7 @@ namespace core
 		return result;
 	}
 
-	vector<Building::PlatformLiftStopCandidate> Building::getPlatformLiftStopCandidates(
+	vector<World::PlatformLiftStopCandidate> World::getPlatformLiftStopCandidates(
 		uint32_t sectorIndex, uint32_t xOffset) const
 	{
 		vector<PlatformLiftStopCandidate> result;
@@ -6073,7 +6073,7 @@ namespace core
 		return result;
 	}
 
-	bool Building::canAddPlatformLift(uint32_t sectorIndex, uint32_t xOffset,
+	bool World::canAddPlatformLift(uint32_t sectorIndex, uint32_t xOffset,
 		CreateLiftOptions const& requested, string* diagnostic) const
 	{
 		auto reject = [diagnostic](string reason)
@@ -6129,13 +6129,13 @@ namespace core
 		return true;
 	}
 
-	Building::CreatePlatformLiftResult Building::addSectorPlatformLift(uint32_t sectorIndex, uint32_t deckIndex, uint32_t xOffset, CreateLiftOptions const& options)
+	World::CreatePlatformLiftResult World::addSectorPlatformLift(uint32_t sectorIndex, uint32_t deckIndex, uint32_t xOffset, CreateLiftOptions const& options)
 	{
 		string placementDiagnostic;
 		if (deckIndex != 0)
-			throw BuildingException(this, "PlatformLifts must be placed on a Room's ground floor");
+			throw WorldException(this, "PlatformLifts must be placed on a Room's ground floor");
 		if (!canAddPlatformLift(sectorIndex, xOffset, options, &placementDiagnostic))
-			throw BuildingException(this, placementDiagnostic);
+			throw WorldException(this, placementDiagnostic);
 		beginStructuralEdit("addSectorPlatformLift");
 		auto sector = _getSector(sectorIndex);
 		auto layerIndex = sector->getLayerIndex();
@@ -6145,7 +6145,7 @@ namespace core
 		uint32_t y = sector->getCellY() + deckIndex;
 
 		// Checks
-		string caller = format("Building::addSectorPlatformLift({}, {}, {})", sectorIndex, deckIndex, xOffset);
+		string caller = format("World::addSectorPlatformLift({}, {}, {})", sectorIndex, deckIndex, xOffset);
 
 		validateLiftOptions(caller, options);
 		validateObjectAllowedInSector(caller, SectorObjectType::Lift, sectorIndex);
@@ -6153,12 +6153,12 @@ namespace core
 
 		if (options.stopOffsets.size() < 2)
 		{
-			throw BuildingException(this, format("{} - PlatformLift at {},{} must have at least 2 stops", caller, x, y));
+			throw WorldException(this, format("{} - PlatformLift at {},{} must have at least 2 stops", caller, x, y));
 		}
 
 		if (deckIndex > sector->getDecksHigh())
 		{
-			throw BuildingException(this, format("{} - deckIndex={} out of bounds", caller, deckIndex));
+			throw WorldException(this, format("{} - deckIndex={} out of bounds", caller, deckIndex));
 		}
 
 		bool buttonSidesOk[2] = { true, true };
@@ -6197,7 +6197,7 @@ namespace core
 		}
 		else
 		{
-			throw BuildingException(this, format("{} - No space to place Buttons for PlatformLift", caller));
+			throw WorldException(this, format("{} - No space to place Buttons for PlatformLift", caller));
 		}
 
 		// Create
@@ -6311,11 +6311,11 @@ namespace core
 		return liftRes;
 	}
 
-	void Building::beginStructuralEdit(string const& operation)
+	void World::beginStructuralEdit(string const& operation)
 	{
 		if (mBuildFinished && !mSimulationPaused)
 		{
-			throw BuildingException(this, format(
+			throw WorldException(this, format(
 				"{} is a structural edit and requires pauseSimulation() before it can run", operation));
 		}
 		modify();
@@ -6325,7 +6325,7 @@ namespace core
 	}
 
 	// Topology event publication and the teardown of live traversal for a topology
-	// rebuild live in SimulationCoordinator (ADR 0004 stage 5); Building's
+	// rebuild live in SimulationCoordinator (ADR 0004 stage 5); World's
 	// pause/resume protocol calls them.
 
 	// Pause and resume are the edit/simulation boundary and stay here, on the
@@ -6336,11 +6336,11 @@ namespace core
 	// simulation-side work they perform - tearing down every live traversal,
 	// remembering each Agent's route intent, restoring those routes onto the new
 	// graph and publishing the boundary events - lives in SimulationCoordinator.
-	void Building::pauseSimulation()
+	void World::pauseSimulation()
 	{
 		if (mSimulationPaused) return;
 		if (mCurrentPhase != SimulationPhase::None)
-			throw BuildingException(this, "Simulation cannot be paused from inside a simulation phase");
+			throw WorldException(this, "Simulation cannot be paused from inside a simulation phase");
 
 		mSimulationPaused = true;
 		mAccumulatedTime = 0.0;
@@ -6348,7 +6348,7 @@ namespace core
 		mSimulationCoordinator.publishTopologyEvent(SimulationEventType::SimulationPaused);
 	}
 
-	bool Building::getPausedPathIntent(Agent const& agent, TopologyPathIntent& intent) const
+	bool World::getPausedPathIntent(Agent const& agent, TopologyPathIntent& intent) const
 	{
 		for (auto const& [id, candidate] : mPausedPathIntents)
 		{
@@ -6361,12 +6361,12 @@ namespace core
 		return false;
 	}
 
-	void Building::validateTraversalTopology(Graph const& graph) const
+	void World::validateTraversalTopology(Graph const& graph) const
 	{
 		auto validSector = [&](SectorId id) { return id && id.value <= mSectors.size(); };
 		auto require = [&](bool condition, string const& diagnostic)
 		{
-			if (!condition) throw BuildingException(this, diagnostic);
+			if (!condition) throw WorldException(this, diagnostic);
 		};
 		require(mTraversalRequests.entries().empty() && mTraversalPermits.entries().empty(),
 			"Traversal requests and permits must be drained before topology replacement");
@@ -6579,14 +6579,14 @@ namespace core
 	}
 
 
-	void Building::buildGraph()
+	void World::buildGraph()
 	{
 		mGraph->build();
 		mGraph->validate();
 		validateTraversalTopology(*mGraph);
 	}
 
-	bool Building::rebuildTraversalTopology()
+	bool World::rebuildTraversalTopology()
 	{
 		if (!mBuildFinished)
 		{
@@ -6638,7 +6638,7 @@ namespace core
 		}
 	}
 
-	bool Building::resumeSimulation()
+	bool World::resumeSimulation()
 	{
 		if (!mAgentBehaviourDependencyDiagnostic.empty())
 		{
@@ -6659,13 +6659,13 @@ namespace core
 		return true;
 	}
 
-	void Building::finishBuild()
+	void World::finishBuild()
 	{
 		if (mBuildFinished)
 		{
 			if (!mSimulationPaused)
-				throw BuildingException(this, "A finished building must be paused before rebuilding topology");
-			if (!rebuildTraversalTopology()) throw BuildingException(this, mTopologyDiagnostic);
+				throw WorldException(this, "A finished world must be paused before rebuilding topology");
+			if (!rebuildTraversalTopology()) throw WorldException(this, mTopologyDiagnostic);
 			return;
 		}
 		try
@@ -6690,7 +6690,7 @@ namespace core
 		mBuildLog.insert(mBuildLog.end(), graphLog.begin(), graphLog.end());
 	}
 
-	shared_ptr<const Sector> Building::getSectorAtPosition(uint32_t layerIndex, float x, float y) const
+	shared_ptr<const Sector> World::getSectorAtPosition(uint32_t layerIndex, float x, float y) const
 	{
 		// Get cell
 		int cellX = (int)x;
@@ -6707,7 +6707,7 @@ namespace core
 		return cellDef.sectorIndex != ~0u ? getSector(cellDef.sectorIndex) : nullptr;
 	}
 
-	Agent* Building::getAgentAtPosition(uint32_t layerIndex, float x, float y) const
+	Agent* World::getAgentAtPosition(uint32_t layerIndex, float x, float y) const
 	{
 		// Get cell
 		int cellX = (int)x;
@@ -6732,7 +6732,7 @@ namespace core
 				}
 			}
 		}
-		catch (BuildingException&)
+		catch (WorldException&)
 		{
 			// This should just catch an out-of-bounds validation check, which we don't mind failing.
 			return nullptr;
@@ -6741,7 +6741,7 @@ namespace core
 		return nullptr;
 	}
 
-	shared_ptr<const Object> Building::getObjectAtPosition(uint32_t layerIndex, float x, float y,
+	shared_ptr<const Object> World::getObjectAtPosition(uint32_t layerIndex, float x, float y,
 		shared_ptr<const SectorObject>* sectorObject) const
 	{
 		// An open platform is deliberately rendered a little below its nominal
@@ -6774,47 +6774,47 @@ namespace core
 			if (sector->getType() == SectorType::Ladder)
 				return dynamic_pointer_cast<const LadderTransit>(sector)->getLadder();
 		}
-		catch (BuildingException const&) {}
+		catch (WorldException const&) {}
 		return nullptr;
 	}
 
 	// Agent creation, placement, and waking live in SimulationCoordinator
-	// (ADR 0004). Building owns the Agent registry (ADR 0001) and forwards, so
-	// no caller outside Building names the coordinator.
+	// (ADR 0004). World owns the Agent registry (ADR 0001) and forwards, so
+	// no caller outside World names the coordinator.
 
-	AgentId Building::addOwnedAgentToSector(unique_ptr<Agent> agent, uint32_t sectorId, uint32_t deckOffset, float xOffset)
+	AgentId World::addOwnedAgentToSector(unique_ptr<Agent> agent, uint32_t sectorId, uint32_t deckOffset, float xOffset)
 	{
 		return mSimulationCoordinator.addOwnedAgentToSector(std::move(agent), sectorId, deckOffset, xOffset);
 	}
 
-	AgentId Building::addOwnedAgentToSector(unique_ptr<Agent> agent, uint32_t sectorId)
+	AgentId World::addOwnedAgentToSector(unique_ptr<Agent> agent, uint32_t sectorId)
 	{
 		return mSimulationCoordinator.addOwnedAgentToSector(std::move(agent), sectorId);
 	}
 
-	AgentId Building::createAgent(string const& name, uint32_t sectorId, uint32_t deckOffset, float xOffset)
+	AgentId World::createAgent(string const& name, uint32_t sectorId, uint32_t deckOffset, float xOffset)
 	{
 		return mSimulationCoordinator.createAgent(name, sectorId, deckOffset, xOffset);
 	}
 
-	AgentId Building::createAgent(string const& name, uint32_t sectorId)
+	AgentId World::createAgent(string const& name, uint32_t sectorId)
 	{
 		return mSimulationCoordinator.createAgent(name, sectorId);
 	}
 
-	void Building::wakeAllAgents()
+	void World::wakeAllAgents()
 	{
 		mSimulationCoordinator.wakeAllAgents();
 	}
 
-	// Snapshot building - the per-entity projections and the whole-world
-	// snapshot - lives in SimulationCoordinator (ADR 0004 stage 5). Building
+	// Snapshot world - the per-entity projections and the whole-world
+	// snapshot - lives in SimulationCoordinator (ADR 0004 stage 5). World
 	// keeps the whole-world forward with the rest of the tick pipeline below,
 	// and this one private forward: creating and removing a traversal resource is
-	// entity ownership which stays with Building (ADR 0001), and the lifecycle
+	// entity ownership which stays with World (ADR 0001), and the lifecycle
 	// events those paths publish carry the resource snapshot the coordinator
 	// builds.
-	TraversalResourceSnapshot Building::makeTraversalResourceSnapshot(TraversalResourceId id,
+	TraversalResourceSnapshot World::makeTraversalResourceSnapshot(TraversalResourceId id,
 		TraversalResource const& resource) const
 	{
 		return mSimulationCoordinator.makeTraversalResourceSnapshot(id, resource);
@@ -6825,44 +6825,44 @@ namespace core
 	// ladder admission family with its entry-spacing rule, traversal progress and
 	// timeouts, permit expiry, and the grant / allocate / deny / commit / cancel /
 	// release transaction lifecycle - lives in SimulationCoordinator (ADR 0004).
-	// Building keeps the entity registries (ADR 0001) and forwards the entry
-	// points which still have a caller outside Building: Agent's request
+	// World keeps the entity registries (ADR 0001) and forwards the entry
+	// points which still have a caller outside World: Agent's request
 	// creation, queue-join query and transaction calls, and the deactivation and
 	// topology-rebuild paths which deny, cancel and release. The queue, door
 	// queue and ladder admission helpers are reached only from inside the
 	// coordinator now, so no forward is left for them.
 
-	TraversalRequestId Building::createTraversalRequest(Agent const& agent,
+	TraversalRequestId World::createTraversalRequest(Agent const& agent,
 		shared_ptr<const Edge> const& edge, shared_ptr<const Vertex> const& source,
 		shared_ptr<const Vertex> const& destination)
 	{
 		return mSimulationCoordinator.createTraversalRequest(agent, edge, source, destination);
 	}
 
-	bool Building::stopForAvailableQueuePosition(Agent& agent,
+	bool World::stopForAvailableQueuePosition(Agent& agent,
 		shared_ptr<const Edge> const& edge, Vector2 const& endpoint,
 		float movementDistance)
 	{
 		return mSimulationCoordinator.stopForAvailableQueuePosition(agent, edge, endpoint, movementDistance);
 	}
 
-	bool Building::isAtDoorCrossingArrival(Agent const& agent,
+	bool World::isAtDoorCrossingArrival(Agent const& agent,
 		shared_ptr<const Edge> const& edge, Vector2 const& threshold)
 	{
 		return mSimulationCoordinator.isAtDoorCrossingArrival(agent, edge, threshold);
 	}
 
-	void Building::refreshQueuePositions(TraversalResource& resource)
+	void World::refreshQueuePositions(TraversalResource& resource)
 	{
 		mSimulationCoordinator.refreshQueuePositions(resource);
 	}
 
-	void Building::updateTraversalProgressAndTimeouts()
+	void World::updateTraversalProgressAndTimeouts()
 	{
 		mSimulationCoordinator.updateTraversalProgressAndTimeouts();
 	}
 
-	void Building::allocateTraversalRequest(TraversalRequestId requestId,
+	void World::allocateTraversalRequest(TraversalRequestId requestId,
 		shared_ptr<const Edge> const& edge, shared_ptr<const Vertex> const& destination)
 	{
 		mSimulationCoordinator.allocateTraversalRequest(requestId, edge, destination);
@@ -6870,48 +6870,48 @@ namespace core
 
 	// Lift scheduling - stop lookup, destination finding, disembark demand, stop
 	// requests, next-stop choice, boarding-direction compatibility, and lift
-	// admission release - lives in SimulationCoordinator (ADR 0004). Building
-	// keeps these entry points and forwards, so no caller outside Building
+	// admission release - lives in SimulationCoordinator (ADR 0004). World
+	// keeps these entry points and forwards, so no caller outside World
 	// names the coordinator.
 
-	uint32_t Building::findLiftStop(TraversalResource const& resource, Vector2 const& endpoint) const
+	uint32_t World::findLiftStop(TraversalResource const& resource, Vector2 const& endpoint) const
 	{
 		return mSimulationCoordinator.findLiftStop(resource, endpoint);
 	}
 
-	uint32_t Building::findAgentLiftDestination(Agent const& agent,
+	uint32_t World::findAgentLiftDestination(Agent const& agent,
 		TraversalResource const& resource) const
 	{
 		return mSimulationCoordinator.findAgentLiftDestination(agent, resource);
 	}
 
-	bool Building::liftHasDisembarkDemand(TraversalResource const& resource, uint32_t stop) const
+	bool World::liftHasDisembarkDemand(TraversalResource const& resource, uint32_t stop) const
 	{
 		return mSimulationCoordinator.liftHasDisembarkDemand(resource, stop);
 	}
 
-	void Building::addLiftStopRequest(TraversalResource& resource, uint32_t stop, AgentId owner)
+	void World::addLiftStopRequest(TraversalResource& resource, uint32_t stop, AgentId owner)
 	{
 		mSimulationCoordinator.addLiftStopRequest(resource, stop, owner);
 	}
 
-	void Building::removeLiftStopRequest(TraversalResource& resource, uint32_t stop, AgentId owner)
+	void World::removeLiftStopRequest(TraversalResource& resource, uint32_t stop, AgentId owner)
 	{
 		mSimulationCoordinator.removeLiftStopRequest(resource, stop, owner);
 	}
 
-	uint32_t Building::chooseNextLiftStop(TraversalResource& resource) const
+	uint32_t World::chooseNextLiftStop(TraversalResource& resource) const
 	{
 		return mSimulationCoordinator.chooseNextLiftStop(resource);
 	}
 
-	bool Building::isLiftBoardingDirectionCompatible(TraversalResource& resource,
+	bool World::isLiftBoardingDirectionCompatible(TraversalResource& resource,
 		uint32_t originStop, uint32_t destinationStop)
 	{
 		return mSimulationCoordinator.isLiftBoardingDirectionCompatible(resource, originStop, destinationStop);
 	}
 
-	void Building::releaseLiftAdmission(TraversalRequestId requestId, TraversalResource& resource)
+	void World::releaseLiftAdmission(TraversalRequestId requestId, TraversalResource& resource)
 	{
 		mSimulationCoordinator.releaseLiftAdmission(requestId, resource);
 	}
@@ -6921,24 +6921,24 @@ namespace core
 	// door selection, and the door-traversal retargeting they share - lives in
 	// SimulationCoordinator (ADR 0004), together with the static door-offset helper
 	// which gives the carriage/door indexing its meaning. Both selections are reached
-	// only from inside the coordinator now, so no Building forward is left for them.
+	// only from inside the coordinator now, so no World forward is left for them.
 
 	// Passenger safe exits - the safe-exit request, the safe-exit path assignment,
 	// and the onboard destination replacement - live in SimulationCoordinator
-	// (ADR 0004). Building keeps these entry points and forwards, so no caller
-	// outside Building names the coordinator.
+	// (ADR 0004). World keeps these entry points and forwards, so no caller
+	// outside World names the coordinator.
 
-	void Building::requestLiftPassengerSafeExit(AgentId passenger, TraversalFailureReason reason)
+	void World::requestLiftPassengerSafeExit(AgentId passenger, TraversalFailureReason reason)
 	{
 		mSimulationCoordinator.requestLiftPassengerSafeExit(passenger, reason);
 	}
 
-	void Building::assignLiftSafeExitPaths(TraversalResource& resource)
+	void World::assignLiftSafeExitPaths(TraversalResource& resource)
 	{
 		mSimulationCoordinator.assignLiftSafeExitPaths(resource);
 	}
 
-	bool Building::replaceOnboardLiftDestination(Agent& agent, shared_ptr<Path> const& path,
+	bool World::replaceOnboardLiftDestination(Agent& agent, shared_ptr<Path> const& path,
 		uint32_t& sourceNode)
 	{
 		return mSimulationCoordinator.replaceOnboardLiftDestination(agent, path, sourceNode);
@@ -6948,119 +6948,119 @@ namespace core
 	// reserved queue position, onboard destination selection, and disembark through the
 	// virtual boundary - lives in SimulationCoordinator (ADR 0004), alongside the
 	// admission release which undoes it. It is reached only from the coordinator's own
-	// lift allocation dispatcher now, so no Building forward is left for it.
+	// lift allocation dispatcher now, so no World forward is left for it.
 
-	void Building::denyTraversalRequest(TraversalRequestId requestId, TraversalFailureReason reason)
+	void World::denyTraversalRequest(TraversalRequestId requestId, TraversalFailureReason reason)
 	{
 		mSimulationCoordinator.denyTraversalRequest(requestId, reason);
 	}
 
-	bool Building::commitTraversal(Agent& agent, TraversalRequestId requestId, TraversalPermitId permitId,
+	bool World::commitTraversal(Agent& agent, TraversalRequestId requestId, TraversalPermitId permitId,
 		shared_ptr<const Vertex> const& destination)
 	{
 		return mSimulationCoordinator.commitTraversal(agent, requestId, permitId, destination);
 	}
 
-	void Building::cancelTraversal(TraversalRequestId requestId, TraversalPermitId permitId,
+	void World::cancelTraversal(TraversalRequestId requestId, TraversalPermitId permitId,
 		bool requestSafeTransportExit)
 	{
 		mSimulationCoordinator.cancelTraversal(requestId, permitId, requestSafeTransportExit);
 	}
 
-	void Building::releaseTraversal(TraversalRequestId requestId, TraversalPermitId permitId)
+	void World::releaseTraversal(TraversalRequestId requestId, TraversalPermitId permitId)
 	{
 		mSimulationCoordinator.releaseTraversal(requestId, permitId);
 	}
 
 
 	// Agent lookup, id resolution, removal, and traversal-ownership release live
-	// in SimulationCoordinator (ADR 0004). Building owns the registries (ADR
-	// 0001) and forwards, so no caller outside Building names the coordinator.
+	// in SimulationCoordinator (ADR 0004). World owns the registries (ADR
+	// 0001) and forwards, so no caller outside World names the coordinator.
 
-	AgentId Building::getAgentId(Agent const* agent) const
+	AgentId World::getAgentId(Agent const* agent) const
 	{
 		return mSimulationCoordinator.getAgentId(agent);
 	}
 
-	MovementCommandResult Building::moveAgentToMarker(AgentId agent, MarkerId marker)
+	MovementCommandResult World::moveAgentToMarker(AgentId agent, MarkerId marker)
 	{
 		return mSimulationCoordinator.moveAgentToMarker(agent, marker);
 	}
 
-	MovementCommandResult Building::inspectBehaviourMoveToMarker(
+	MovementCommandResult World::inspectBehaviourMoveToMarker(
 		AgentId agent, MarkerId marker) const
 	{
 		return mSimulationCoordinator.inspectMoveAgentToMarker(agent, marker, true);
 	}
 
-	MovementCommandResult Building::moveBehaviourAgentToMarker(AgentId agent, MarkerId marker)
+	MovementCommandResult World::moveBehaviourAgentToMarker(AgentId agent, MarkerId marker)
 	{
 		return mSimulationCoordinator.moveAgentToMarker(agent, marker, true);
 	}
 
-	MovementCommandResult Building::cancelAgentMovement(AgentId agent)
+	MovementCommandResult World::cancelAgentMovement(AgentId agent)
 	{
 		return mSimulationCoordinator.cancelAgentMovement(agent);
 	}
 
-	MovementCommandResult Building::inspectBehaviourMovementCancellation(AgentId agent) const
+	MovementCommandResult World::inspectBehaviourMovementCancellation(AgentId agent) const
 	{
 		return mSimulationCoordinator.inspectCancelAgentMovement(agent, true);
 	}
 
-	MovementCommandResult Building::cancelBehaviourAgentMovement(AgentId agent)
+	MovementCommandResult World::cancelBehaviourAgentMovement(AgentId agent)
 	{
 		return mSimulationCoordinator.cancelAgentMovement(agent, true);
 	}
 
-	EntityLookup<Agent> Building::lookupAgent(AgentId id)
+	EntityLookup<Agent> World::lookupAgent(AgentId id)
 	{
 		return mSimulationCoordinator.lookupAgent(id);
 	}
 
-	EntityLookup<Agent const> Building::lookupAgent(AgentId id) const
+	EntityLookup<Agent const> World::lookupAgent(AgentId id) const
 	{
 		return mSimulationCoordinator.lookupAgent(id);
 	}
 
-	bool Building::holdsTraversalOwnership(AgentId id) const
+	bool World::holdsTraversalOwnership(AgentId id) const
 	{
 		return mSimulationCoordinator.holdsTraversalOwnership(id);
 	}
 
-	void Building::releaseAgentFromResource(TraversalResource& resource, AgentId id)
+	void World::releaseAgentFromResource(TraversalResource& resource, AgentId id)
 	{
 		mSimulationCoordinator.releaseAgentFromResource(resource, id);
 	}
 
-	void Building::releaseTraversalOwnership(AgentId id)
+	void World::releaseTraversalOwnership(AgentId id)
 	{
 		mSimulationCoordinator.releaseTraversalOwnership(id);
 	}
 
-	EntityRemovalResult Building::removeAgent(AgentId id)
+	EntityRemovalResult World::removeAgent(AgentId id)
 	{
 		return mSimulationCoordinator.removeAgent(id);
 	}
 
 	// Agent activation is judged and written in SimulationCoordinator, where the
 	// rest of the Agent lifecycle lives (ADR 0004); these forward.
-	bool Building::canSetAgentActive(AgentId id, bool active, string* diagnostic) const
+	bool World::canSetAgentActive(AgentId id, bool active, string* diagnostic) const
 	{
 		return mSimulationCoordinator.canSetAgentActive(id, active, diagnostic);
 	}
 
-	bool Building::setAgentActive(AgentId id, bool active, string* diagnostic)
+	bool World::setAgentActive(AgentId id, bool active, string* diagnostic)
 	{
 		return mSimulationCoordinator.setAgentActive(id, active, diagnostic);
 	}
 
-	// Agent groups are authored Building data, not simulation state (ADR 0006).
-	// They live in the Building's own registry and never reach the coordinator,
+	// Agent groups are authored World data, not simulation state (ADR 0006).
+	// They live in the World's own registry and never reach the coordinator,
 	// so creating and renaming need no pause, dirty no topology, and leave every
 	// runtime snapshot and simulation event exactly as it was.
 
-	bool Building::agentGroupNameTaken(std::string const& trimmed, AgentGroupId except) const
+	bool World::agentGroupNameTaken(std::string const& trimmed, AgentGroupId except) const
 	{
 		// Case-sensitive by design: names differing only by case are distinct
 		// groups, so "Night shift" and "night shift" may coexist.
@@ -7072,12 +7072,12 @@ namespace core
 		return false;
 	}
 
-	uint32_t Building::getAgentGroupCount() const
+	uint32_t World::getAgentGroupCount() const
 	{
 		return static_cast<uint32_t>(mAgentGroups.entries().size());
 	}
 
-	std::vector<AgentGroupId> Building::getAgentGroupIds() const
+	std::vector<AgentGroupId> World::getAgentGroupIds() const
 	{
 		// The registry is keyed by the monotonically allocated ID, so this is
 		// creation order and a rename cannot disturb it.
@@ -7091,27 +7091,27 @@ namespace core
 		return ids;
 	}
 
-	EntityLookup<AgentGroup const> Building::lookupAgentGroup(AgentGroupId id) const
+	EntityLookup<AgentGroup const> World::lookupAgentGroup(AgentGroupId id) const
 	{
 		EntityLookup<AgentGroup const> lookup;
 		auto const* group = mAgentGroups.find(id);
 		if (!group)
 		{
-			lookup.diagnostic = format("Agent group {} is not defined in this Building", id.value);
+			lookup.diagnostic = format("Agent group {} is not defined in this World", id.value);
 			return lookup;
 		}
 		lookup.entity = group;
 		return lookup;
 	}
 
-	std::string const& Building::getAgentGroupName(AgentGroupId id) const
+	std::string const& World::getAgentGroupName(AgentGroupId id) const
 	{
 		auto const lookup = lookupAgentGroup(id);
-		if (!lookup) throw BuildingException(this, lookup.diagnostic);
+		if (!lookup) throw WorldException(this, lookup.diagnostic);
 		return lookup.entity->getName();
 	}
 
-	bool Building::canAddAgentGroup(std::string const& name, std::string* diagnostic) const
+	bool World::canAddAgentGroup(std::string const& name, std::string* diagnostic) const
 	{
 		if (diagnostic) diagnostic->clear();
 
@@ -7129,41 +7129,41 @@ namespace core
 		if (mAgentGroups.exhausted())
 		{
 			if (diagnostic) *diagnostic =
-				"This Building has issued every Agent group ID and cannot create another";
+				"This World has issued every Agent group ID and cannot create another";
 			return false;
 		}
 		return true;
 	}
 
-	AgentGroupId Building::addAgentGroup(std::string const& name)
+	AgentGroupId World::addAgentGroup(std::string const& name)
 	{
 		string diagnostic;
 		if (!canAddAgentGroup(name, &diagnostic))
-			throw BuildingException(this, diagnostic);
+			throw WorldException(this, diagnostic);
 
 		// Nothing above mutates, so the group is created only once its name has
-		// passed: a refused add leaves the Building exactly as it was found.
+		// passed: a refused add leaves the World exactly as it was found.
 		// tryAdd rather than add, because a spent ID space is a refusal the
-		// Building can report rather than an identity it hands out blind: what
+		// World can report rather than an identity it hands out blind: what
 		// comes back from here is always a live, nonzero AgentGroupId.
 		auto const id = mAgentGroups.tryAdd(AgentGroup::create(AgentGroup::trimName(name)));
 		if (!id)
 		{
-			throw BuildingException(this,
-				"This Building has issued every Agent group ID and cannot create another");
+			throw WorldException(this,
+				"This World has issued every Agent group ID and cannot create another");
 		}
 		modify();
 		return *id;
 	}
 
-	bool Building::canRenameAgentGroup(AgentGroupId id, std::string const& name,
+	bool World::canRenameAgentGroup(AgentGroupId id, std::string const& name,
 		std::string* diagnostic) const
 	{
 		if (diagnostic) diagnostic->clear();
 
 		if (!lookupAgentGroup(id))
 		{
-			if (diagnostic) *diagnostic = format("Agent group {} is not defined in this Building", id.value);
+			if (diagnostic) *diagnostic = format("Agent group {} is not defined in this World", id.value);
 			return false;
 		}
 
@@ -7177,7 +7177,7 @@ namespace core
 		return true;
 	}
 
-	bool Building::renameAgentGroup(AgentGroupId id, std::string const& name,
+	bool World::renameAgentGroup(AgentGroupId id, std::string const& name,
 		std::string* diagnostic)
 	{
 		if (!canRenameAgentGroup(id, name, diagnostic)) return false;
@@ -7190,7 +7190,7 @@ namespace core
 		return true;
 	}
 
-	bool Building::canSetAgentGroup(AgentId agent, AgentGroupId group, std::string* diagnostic) const
+	bool World::canSetAgentGroup(AgentId agent, AgentGroupId group, std::string* diagnostic) const
 	{
 		if (diagnostic) diagnostic->clear();
 
@@ -7215,7 +7215,7 @@ namespace core
 		return true;
 	}
 
-	bool Building::setAgentGroup(AgentId agent, AgentGroupId group, std::string* diagnostic)
+	bool World::setAgentGroup(AgentId agent, AgentGroupId group, std::string* diagnostic)
 	{
 		// Both halves are judged before a single field is written, so a refusal
 		// leaves every Agent and every group exactly as it was found.
@@ -7230,17 +7230,17 @@ namespace core
 		return true;
 	}
 
-	AgentGroupId Building::getAgentGroup(AgentId agent) const
+	AgentGroupId World::getAgentGroup(AgentId agent) const
 	{
 		auto const lookup = lookupAgent(agent);
-		if (!lookup) throw BuildingException(this, lookup.diagnostic);
+		if (!lookup) throw WorldException(this, lookup.diagnostic);
 		return lookup.entity->getAgentGroupId();
 	}
 
-	bool Building::isAgentGroupActive(AgentGroupId group) const
+	bool World::isAgentGroupActive(AgentGroupId group) const
 	{
 		auto const lookup = lookupAgentGroup(group);
-		if (!lookup) throw BuildingException(this, lookup.diagnostic);
+		if (!lookup) throw WorldException(this, lookup.diagnostic);
 
 		// This is an aggregate view of the members' own flags, not state kept by
 		// the group. In a mixed group the open eye means that clicking it can
@@ -7254,7 +7254,7 @@ namespace core
 		return false;
 	}
 
-	bool Building::canSetAgentGroupActive(AgentGroupId group, bool /* active */,
+	bool World::canSetAgentGroupActive(AgentGroupId group, bool /* active */,
 		std::string* diagnostic) const
 	{
 		if (diagnostic) diagnostic->clear();
@@ -7274,7 +7274,7 @@ namespace core
 		return true;
 	}
 
-	bool Building::setAgentGroupActive(AgentGroupId group, bool active,
+	bool World::setAgentGroupActive(AgentGroupId group, bool active,
 		std::string* diagnostic)
 	{
 		// Judge the group and the pause gate before changing the first member, so
@@ -7294,7 +7294,7 @@ namespace core
 		return true;
 	}
 
-	bool Building::canAssignAgentTag(AgentId agent, AgentTagId tag,
+	bool World::canAssignAgentTag(AgentId agent, AgentTagId tag,
 		string* diagnostic) const
 	{
 		if (diagnostic) diagnostic->clear();
@@ -7309,7 +7309,7 @@ namespace core
 		if (!mSimulationPaused)
 			return reject("Pause the simulation before assigning an Agent tag");
 		if (!mAgentTagRegistry)
-			return reject("This Building has no attached Agent tag registry");
+			return reject("This World has no attached Agent tag registry");
 		if (!tag || !mAgentTagRegistry->lookupAgentTag(tag))
 			return reject(format("Agent tag {} is not defined in the attached registry", tag.value));
 		if (agentLookup.entity->hasAgentTag(tag))
@@ -7347,7 +7347,7 @@ namespace core
 		return true;
 	}
 
-	bool Building::assignAgentTag(AgentId agent, AgentTagId tag,
+	bool World::assignAgentTag(AgentId agent, AgentTagId tag,
 		string* diagnostic)
 	{
 		if (!canAssignAgentTag(agent, tag, diagnostic)) return false;
@@ -7374,7 +7374,7 @@ namespace core
 		return true;
 	}
 
-	bool Building::canRemoveAgentTag(AgentId agent, AgentTagId tag,
+	bool World::canRemoveAgentTag(AgentId agent, AgentTagId tag,
 		string* diagnostic) const
 	{
 		if (diagnostic) diagnostic->clear();
@@ -7389,7 +7389,7 @@ namespace core
 		if (!mSimulationPaused)
 			return reject("Pause the simulation before removing an Agent tag");
 		if (!mAgentTagRegistry)
-			return reject("This Building has no attached Agent tag registry");
+			return reject("This World has no attached Agent tag registry");
 		if (!tag || !mAgentTagRegistry->lookupAgentTag(tag))
 			return reject(format("Agent tag {} is not defined in the attached registry", tag.value));
 		if (!agentLookup.entity->hasAgentTag(tag))
@@ -7398,7 +7398,7 @@ namespace core
 		return true;
 	}
 
-	bool Building::removeAgentTag(AgentId agent, AgentTagId tag,
+	bool World::removeAgentTag(AgentId agent, AgentTagId tag,
 		string* diagnostic)
 	{
 		if (!canRemoveAgentTag(agent, tag, diagnostic)) return false;
@@ -7414,7 +7414,7 @@ namespace core
 		return true;
 	}
 
-	bool Building::validateAgentTagAssignments(set<AgentTagId> const& tags,
+	bool World::validateAgentTagAssignments(set<AgentTagId> const& tags,
 		optional<AgentPropertySample> const& walkSpeedSample,
 		optional<AgentPropertySample> const& heightSample,
 		string* diagnostic) const
@@ -7433,7 +7433,7 @@ namespace core
 			return true;
 		}
 		if (!mAgentTagRegistry)
-			return reject("This Building has no attached Agent tag registry");
+			return reject("This World has no attached Agent tag registry");
 
 		AgentTagId colourSource{};
 		AgentTagId walkSpeedSource{};
@@ -7508,7 +7508,7 @@ namespace core
 				heightProperty ? heightProperty->revision : 0, heightSample);
 	}
 
-	bool Building::restoreAgentTagAssignments(AgentId agent,
+	bool World::restoreAgentTagAssignments(AgentId agent,
 		set<AgentTagId> const& tags,
 		optional<AgentPropertySample> const& walkSpeedSample,
 		optional<AgentPropertySample> const& heightSample,
@@ -7544,27 +7544,27 @@ namespace core
 		return true;
 	}
 
-	set<AgentTagId> const& Building::getAgentTags(AgentId agent) const
+	set<AgentTagId> const& World::getAgentTags(AgentId agent) const
 	{
 		auto const lookup = lookupAgent(agent);
-		if (!lookup) throw BuildingException(this, lookup.diagnostic);
+		if (!lookup) throw WorldException(this, lookup.diagnostic);
 		return lookup.entity->getAgentTagIds();
 	}
 
-	uint32_t Building::getAgentGroupMemberCount(AgentGroupId id) const
+	uint32_t World::getAgentGroupMemberCount(AgentGroupId id) const
 	{
 		// Judged the way every other group query judges its ID: counting a
-		// group this Building never issued is an error, not a zero that could
+		// group this World never issued is an error, not a zero that could
 		// be mistaken for a group that happens to be empty.
 		auto const lookup = lookupAgentGroup(id);
-		if (!lookup) throw BuildingException(this, lookup.diagnostic);
+		if (!lookup) throw WorldException(this, lookup.diagnostic);
 
 		// The Agents are the membership record, so the count reads them off
 		// the Agent registry rather than off the group. Nothing is cached on
 		// the group and nothing is synchronised by hand: every assignment, and
 		// every removal, is reflected the next time this is asked.
 		//
-		// The scan is over the Building's whole Agent registry on purpose.
+		// The scan is over the World's whole Agent registry on purpose.
 		// Where an Agent sits - which Layer, which Sector, which path, whether
 		// it is idle, walking, waiting at a door or riding a lift - is not
 		// part of the question, and a count that walked the spatial index
@@ -7578,13 +7578,13 @@ namespace core
 		return count;
 	}
 
-	bool Building::canDeleteAgentGroup(AgentGroupId id, std::string* diagnostic) const
+	bool World::canDeleteAgentGroup(AgentGroupId id, std::string* diagnostic) const
 	{
 		if (diagnostic) diagnostic->clear();
 
 		// An empty AgentGroupId names no group at all, so there is nothing for
 		// the request to delete. Refusing it keeps "deleted" meaning something
-		// this Building actually did rather than a no-op that reports success.
+		// this World actually did rather than a no-op that reports success.
 		if (!id)
 		{
 			if (diagnostic) *diagnostic = "No Agent group was given to delete";
@@ -7592,7 +7592,7 @@ namespace core
 		}
 
 		// Judged the way every other group query judges its ID: deleting a
-		// group this Building never issued is an error, not a success that
+		// group this World never issued is an error, not a success that
 		// quietly matched nothing.
 		auto const lookup = lookupAgentGroup(id);
 		if (!lookup)
@@ -7603,17 +7603,17 @@ namespace core
 		return true;
 	}
 
-	bool Building::deleteAgentGroup(AgentGroupId id, std::string* diagnostic)
+	bool World::deleteAgentGroup(AgentGroupId id, std::string* diagnostic)
 	{
 		// The whole operation is judged before a single field is written, so a
-		// refusal leaves the Building exactly as it was found: no group gone,
+		// refusal leaves the World exactly as it was found: no group gone,
 		// no assignment cleared, no half-deletion for a save to write down.
 		if (!canDeleteAgentGroup(id, diagnostic)) return false;
 
 		// The assignments go first, through the same field setAgentGroup()
 		// writes, and they all go before the group does. That ordering is what
 		// makes the deletion atomic from an Agent's point of view: at no point
-		// does this Building hold an Agent carrying an AgentGroupId it cannot
+		// does this World hold an Agent carrying an AgentGroupId it cannot
 		// resolve, which is the dangling state the file format refuses.
 		//
 		// The scan covers the whole Agent registry for the same reason the
@@ -7640,93 +7640,93 @@ namespace core
 	// Interaction and device-operation orchestration - the InteractionPoint and
 	// InteractionRequest lifecycles, the DeviceOperation lifecycle, pressing
 	// physical controls, and the per-tick interaction phases - lives in
-	// SimulationCoordinator (ADR 0004). Building keeps the registries
-	// (ADR 0001) and forwards every entry point, so no caller outside Building
+	// SimulationCoordinator (ADR 0004). World keeps the registries
+	// (ADR 0001) and forwards every entry point, so no caller outside World
 	// names the coordinator.
 
-	InteractionPointId Building::createInteractionPoint(string const& name)
+	InteractionPointId World::createInteractionPoint(string const& name)
 	{
 		return mSimulationCoordinator.createInteractionPoint(name);
 	}
 
-	InteractionPointId Building::createInteractionPoint(string const& name, SectorId sector,
+	InteractionPointId World::createInteractionPoint(string const& name, SectorId sector,
 		Vector2 position, float reach, float durationSeconds, vector<InteractionBinding> bindings)
 	{
 		return mSimulationCoordinator.createInteractionPoint(name, sector, position, reach, durationSeconds, std::move(bindings));
 	}
 
-	EntityLookup<InteractionPoint> Building::lookupInteractionPoint(InteractionPointId id)
+	EntityLookup<InteractionPoint> World::lookupInteractionPoint(InteractionPointId id)
 	{
 		return mSimulationCoordinator.lookupInteractionPoint(id);
 	}
 
-	EntityLookup<InteractionPoint const> Building::lookupInteractionPoint(InteractionPointId id) const
+	EntityLookup<InteractionPoint const> World::lookupInteractionPoint(InteractionPointId id) const
 	{
 		return mSimulationCoordinator.lookupInteractionPoint(id);
 	}
 
-	EntityRemovalResult Building::removeInteractionPoint(InteractionPointId id)
+	EntityRemovalResult World::removeInteractionPoint(InteractionPointId id)
 	{
 		return mSimulationCoordinator.removeInteractionPoint(id);
 	}
 
-	DeviceOperationId Building::findOrCreateDeviceOperation(DeviceCommand const& command, AgentId requester)
+	DeviceOperationId World::findOrCreateDeviceOperation(DeviceCommand const& command, AgentId requester)
 	{
 		return mSimulationCoordinator.findOrCreateDeviceOperation(command, requester);
 	}
 
-	InteractionRequestId Building::requestInteraction(InteractionPointId pointId, AgentId actorId)
+	InteractionRequestId World::requestInteraction(InteractionPointId pointId, AgentId actorId)
 	{
 		return mSimulationCoordinator.requestInteraction(pointId, actorId);
 	}
 
-	InteractionRequestId Building::requestInteractionForTraversal(InteractionPointId point, AgentId actor)
+	InteractionRequestId World::requestInteractionForTraversal(InteractionPointId point, AgentId actor)
 	{
 		return mSimulationCoordinator.requestInteractionForTraversal(point, actor);
 	}
 
-	InteractionRequestId Building::requestInteractionWhilePassing(
+	InteractionRequestId World::requestInteractionWhilePassing(
 		InteractionPointId pointId, AgentId actorId)
 	{
 		return mSimulationCoordinator.requestInteractionWhilePassing(pointId, actorId);
 	}
 
-	EntityLookup<InteractionRequest const> Building::lookupInteractionRequest(InteractionRequestId id) const
+	EntityLookup<InteractionRequest const> World::lookupInteractionRequest(InteractionRequestId id) const
 	{
 		return mSimulationCoordinator.lookupInteractionRequest(id);
 	}
 
-	bool Building::cancelInteraction(InteractionRequestId id)
+	bool World::cancelInteraction(InteractionRequestId id)
 	{
 		return mSimulationCoordinator.cancelInteraction(id);
 	}
 
-	DeviceOperationId Building::createDeviceOperation(string const& name, AgentId requester)
+	DeviceOperationId World::createDeviceOperation(string const& name, AgentId requester)
 	{
 		return mSimulationCoordinator.createDeviceOperation(name, requester);
 	}
 
-	EntityLookup<DeviceOperation> Building::lookupDeviceOperation(DeviceOperationId id)
+	EntityLookup<DeviceOperation> World::lookupDeviceOperation(DeviceOperationId id)
 	{
 		return mSimulationCoordinator.lookupDeviceOperation(id);
 	}
 
-	EntityLookup<DeviceOperation const> Building::lookupDeviceOperation(DeviceOperationId id) const
+	EntityLookup<DeviceOperation const> World::lookupDeviceOperation(DeviceOperationId id) const
 	{
 		return mSimulationCoordinator.lookupDeviceOperation(id);
 	}
 
-	bool Building::cancelDeviceOperation(DeviceOperationId id, AgentId requester)
+	bool World::cancelDeviceOperation(DeviceOperationId id, AgentId requester)
 	{
 		return mSimulationCoordinator.cancelDeviceOperation(id, requester);
 	}
 
-	EntityRemovalResult Building::removeDeviceOperation(DeviceOperationId id)
+	EntityRemovalResult World::removeDeviceOperation(DeviceOperationId id)
 	{
 		return mSimulationCoordinator.removeDeviceOperation(id);
 	}
 
-	TraversalResourceId Building::createTraversalResource(string const& name)
+	TraversalResourceId World::createTraversalResource(string const& name)
 	{
 		auto id = mTraversalResources.add(unique_ptr<TraversalResource>(new TraversalResource(name)));
 		SimulationEvent event;
@@ -7738,7 +7738,7 @@ namespace core
 		return id;
 	}
 
-	TraversalResourceId Building::createDoorTraversalResource(string const& name,
+	TraversalResourceId World::createDoorTraversalResource(string const& name,
 		shared_ptr<Door> door, DoorActivationMode mode, float holdOpenSeconds)
 	{
 		beginStructuralEdit("createDoorTraversalResource");
@@ -7760,7 +7760,7 @@ namespace core
 		return id;
 	}
 
-	TraversalResourceId Building::createWindowTraversalResource(string const& name,
+	TraversalResourceId World::createWindowTraversalResource(string const& name,
 		shared_ptr<Window> window)
 	{
 		beginStructuralEdit("createWindowTraversalResource");
@@ -7776,7 +7776,7 @@ namespace core
 		return id;
 	}
 
-	TraversalResourceId Building::createLadderTraversalResource(string const& name,
+	TraversalResourceId World::createLadderTraversalResource(string const& name,
 		shared_ptr<Ladder> ladder, SectorId ladderSector, uint32_t directionalBatchLimit)
 	{
 		beginStructuralEdit("createLadderTraversalResource");
@@ -7813,7 +7813,7 @@ namespace core
 		return id;
 	}
 
-	TraversalResourceId Building::createLiftTraversalResource(string const& name,
+	TraversalResourceId World::createLiftTraversalResource(string const& name,
 		shared_ptr<Lift> lift, SectorId liftSector, vector<LiftStop> stops, uint32_t capacity,
 		float minimumDwellSeconds, float maximumBoardingSeconds)
 	{
@@ -7857,7 +7857,7 @@ namespace core
 		return id;
 	}
 
-	TraversalResourceId Building::createOpenPlatformLiftTraversalResource(string const& name,
+	TraversalResourceId World::createOpenPlatformLiftTraversalResource(string const& name,
 		shared_ptr<Lift> lift, SectorId locationSector, vector<LiftStop> stops, uint32_t capacity,
 		float stopDurationSeconds)
 	{
@@ -7895,7 +7895,7 @@ namespace core
 		return id;
 	}
 
-	TraversalResourceId Building::createShuttleTraversalResource(string const& name,
+	TraversalResourceId World::createShuttleTraversalResource(string const& name,
 		shared_ptr<Shuttle> shuttle, SectorId shuttleSector, vector<LiftStop> stops,
 		uint32_t capacity, float minimumDwellSeconds, float maximumBoardingSeconds)
 	{
@@ -7946,7 +7946,7 @@ namespace core
 		return id;
 	}
 
-	TraversalResourceId Building::createStairwellTraversalResource(string const& name,
+	TraversalResourceId World::createStairwellTraversalResource(string const& name,
 		shared_ptr<Stairwell> stairwell, SectorId stairwellSector, uint32_t capacity,
 		uint32_t directionalBatchLimit)
 	{
@@ -7975,7 +7975,7 @@ namespace core
 		return id;
 	}
 
-	TraversalResourceId Building::createForceBridgeTraversalResource(string const& name,
+	TraversalResourceId World::createForceBridgeTraversalResource(string const& name,
 		shared_ptr<ForceBridge> forceBridge)
 	{
 		beginStructuralEdit("createForceBridgeTraversalResource");
@@ -7992,7 +7992,7 @@ namespace core
 		return id;
 	}
 
-	void Building::configureForceBridgeQueueLanes(TraversalResourceId resourceId,
+	void World::configureForceBridgeQueueLanes(TraversalResourceId resourceId,
 		SectorId sectorId, array<Vector2, 2> const& endpoints)
 	{
 		auto resource = mTraversalResources.find(resourceId);
@@ -8031,7 +8031,7 @@ namespace core
 		resource->mCrossingOwners.assign(1, {});
 	}
 
-	void Building::configureLadderQueueLanes(TraversalResourceId resourceId,
+	void World::configureLadderQueueLanes(TraversalResourceId resourceId,
 		array<SectorId, 2> const& sectors, array<Vector2, 2> const& endpoints)
 	{
 		auto resource = mTraversalResources.find(resourceId);
@@ -8093,7 +8093,7 @@ namespace core
 		}
 	}
 
-	bool Building::configureDoorQueueLane(TraversalResourceId resourceId, SectorId sectorId,
+	bool World::configureDoorQueueLane(TraversalResourceId resourceId, SectorId sectorId,
 		Vector2 origin, Vector2 direction, float extent)
 	{
 		beginStructuralEdit("configureDoorQueueLane");
@@ -8165,7 +8165,7 @@ namespace core
 		return true;
 	}
 
-	bool Building::configureDoorCrossingLanes(TraversalResourceId resourceId, uint32_t laneCount)
+	bool World::configureDoorCrossingLanes(TraversalResourceId resourceId, uint32_t laneCount)
 	{
 		beginStructuralEdit("configureDoorCrossingLanes");
 		auto resource = mTraversalResources.find(resourceId);
@@ -8187,31 +8187,31 @@ namespace core
 	}
 
 	// Door open lease acquisition and release live in SimulationCoordinator
-	// (ADR 0004). Building forwards both the resource-reference form the
+	// (ADR 0004). World forwards both the resource-reference form the
 	// traversal machinery uses and the handle form external holders use.
 
-	DoorOpenLeaseId Building::acquireDoorOpenLease(TraversalResource& resource,
+	DoorOpenLeaseId World::acquireDoorOpenLease(TraversalResource& resource,
 		DoorOpenLeaseKind kind, TraversalRequestId request)
 	{
 		return mSimulationCoordinator.acquireDoorOpenLease(resource, kind, request);
 	}
 
-	bool Building::releaseDoorOpenLease(TraversalResource& resource, DoorOpenLeaseId lease)
+	bool World::releaseDoorOpenLease(TraversalResource& resource, DoorOpenLeaseId lease)
 	{
 		return mSimulationCoordinator.releaseDoorOpenLease(resource, lease);
 	}
 
-	DoorOpenLeaseId Building::acquireDoorOpenLease(TraversalResourceId resource, DoorOpenLeaseKind kind)
+	DoorOpenLeaseId World::acquireDoorOpenLease(TraversalResourceId resource, DoorOpenLeaseKind kind)
 	{
 		return mSimulationCoordinator.acquireDoorOpenLease(resource, kind);
 	}
 
-	bool Building::releaseDoorOpenLease(TraversalResourceId resource, DoorOpenLeaseId lease)
+	bool World::releaseDoorOpenLease(TraversalResourceId resource, DoorOpenLeaseId lease)
 	{
 		return mSimulationCoordinator.releaseDoorOpenLease(resource, lease);
 	}
 
-	bool Building::setDoorSensorObservation(TraversalResourceId resourceId, DoorSensorId sensor,
+	bool World::setDoorSensorObservation(TraversalResourceId resourceId, DoorSensorId sensor,
 		DoorSensorObservation observation)
 	{
 		auto resource = mTraversalResources.find(resourceId);
@@ -8221,7 +8221,7 @@ namespace core
 		return true;
 	}
 
-	bool Building::setTraversalResourceEnabled(TraversalResourceId resourceId, bool enabled)
+	bool World::setTraversalResourceEnabled(TraversalResourceId resourceId, bool enabled)
 	{
 		auto resource = mTraversalResources.find(resourceId);
 		if (!resource) return false;
@@ -8258,7 +8258,7 @@ namespace core
 		return true;
 	}
 
-	bool Building::addTraversalControl(TraversalResourceId resourceId, InteractionPointId controlId)
+	bool World::addTraversalControl(TraversalResourceId resourceId, InteractionPointId controlId)
 	{
 		beginStructuralEdit("addTraversalControl");
 		auto resource = mTraversalResources.find(resourceId);
@@ -8276,21 +8276,21 @@ namespace core
 		return true;
 	}
 
-	EntityLookup<TraversalResource> Building::lookupTraversalResource(TraversalResourceId id)
+	EntityLookup<TraversalResource> World::lookupTraversalResource(TraversalResourceId id)
 	{
 		auto entity = mTraversalResources.find(id);
 		return entity ? EntityLookup<TraversalResource>{ entity, {} }
 			: EntityLookup<TraversalResource>{ nullptr, format("TraversalResource handle {} is invalid or has been removed", id.value) };
 	}
 
-	EntityLookup<TraversalResource const> Building::lookupTraversalResource(TraversalResourceId id) const
+	EntityLookup<TraversalResource const> World::lookupTraversalResource(TraversalResourceId id) const
 	{
 		auto entity = mTraversalResources.find(id);
 		return entity ? EntityLookup<TraversalResource const>{ entity, {} }
 			: EntityLookup<TraversalResource const>{ nullptr, format("TraversalResource handle {} is invalid or has been removed", id.value) };
 	}
 
-	TraversalResourceId Building::getTraversalResourceId(Object const* object) const
+	TraversalResourceId World::getTraversalResourceId(Object const* object) const
 	{
 		if (!object) return {};
 		for (auto const& [id, resource] : mTraversalResources.entries())
@@ -8305,7 +8305,7 @@ namespace core
 		return {};
 	}
 
-	EntityRemovalResult Building::removeTraversalResource(TraversalResourceId id)
+	EntityRemovalResult World::removeTraversalResource(TraversalResourceId id)
 	{
 		auto found = lookupTraversalResource(id);
 		if (!found)
@@ -8346,19 +8346,19 @@ namespace core
 		return { true, {} };
 	}
 
-	EntityLookup<TraversalRequest const> Building::lookupTraversalRequest(TraversalRequestId id) const
+	EntityLookup<TraversalRequest const> World::lookupTraversalRequest(TraversalRequestId id) const
 	{
 		auto entity = mTraversalRequests.find(id);
 		return entity ? EntityLookup<TraversalRequest const>{ entity, {} }
 			: EntityLookup<TraversalRequest const>{ nullptr, format("TraversalRequest handle {} is invalid or has been released", id.value) };
 	}
 
-	TraversalWaitingPolicy const& Building::getTraversalWaitingPolicy() const
+	TraversalWaitingPolicy const& World::getTraversalWaitingPolicy() const
 	{
 		return mTraversalWaitingPolicy;
 	}
 
-	void Building::setTraversalWaitingPolicy(TraversalWaitingPolicy policy)
+	void World::setTraversalWaitingPolicy(TraversalWaitingPolicy policy)
 	{
 		if (policy.localGoalTimeoutTicks == 0 || policy.permitProgressTimeoutTicks == 0
 			|| policy.replanIntervalTicks == 0 || policy.queueDelayPerAgentSeconds < 0.0f
@@ -8369,7 +8369,7 @@ namespace core
 		mTraversalWaitingPolicy = policy;
 	}
 
-	float Building::estimateTraversalDelay(TraversalResourceId resourceId, SectorId sourceSector) const
+	float World::estimateTraversalDelay(TraversalResourceId resourceId, SectorId sourceSector) const
 	{
 		auto resource = mTraversalResources.find(resourceId);
 		if (!resource) return 0.0f;
@@ -8416,73 +8416,73 @@ namespace core
 	// The tick pipeline - lift and door resource advancement, the simulation
 	// phases, tick event publication, the simulation clock and event consumption -
 	// lives in SimulationCoordinator (ADR 0004 stage 5), as does every snapshot
-	// builder removed above. Building keeps the forwards which still have callers
+	// builder removed above. World keeps the forwards which still have callers
 	// outside itself.
 
 	// Per-tick interaction phases - device-operation advancement, allocation,
 	// movement and result resolution - run in SimulationCoordinator (ADR 0004).
-	void Building::advanceDeviceOperations()
+	void World::advanceDeviceOperations()
 	{
 		mSimulationCoordinator.advanceDeviceOperations();
 	}
 
-	void Building::pressPhysicalControl(InteractionPointId pointId)
+	void World::pressPhysicalControl(InteractionPointId pointId)
 	{
 		mSimulationCoordinator.pressPhysicalControl(pointId);
 	}
 
-	void Building::tryPressUpcomingDoorButton(Agent& agent,
+	void World::tryPressUpcomingDoorButton(Agent& agent,
 		Vector2 const& movementStart, Vector2 const& movementEnd)
 	{
 		mSimulationCoordinator.tryPressUpcomingDoorButton(agent, movementStart, movementEnd);
 	}
 
-	void Building::allocateInteractions()
+	void World::allocateInteractions()
 	{
 		mSimulationCoordinator.allocateInteractions();
 	}
 
-	void Building::moveInteractions(float frameTime)
+	void World::moveInteractions(float frameTime)
 	{
 		mSimulationCoordinator.moveInteractions(frameTime);
 	}
 
-	void Building::updateInteractionResults()
+	void World::updateInteractionResults()
 	{
 		mSimulationCoordinator.updateInteractionResults();
 	}
 
-	void Building::update(float elapsedSeconds)
+	void World::update(float elapsedSeconds)
 	{
 		mSimulationCoordinator.update(elapsedSeconds);
 	}
 
-	bool Building::advanceTick()
+	bool World::advanceTick()
 	{
 		return mSimulationCoordinator.advanceTick();
 	}
 
-	bool Building::advanceTicks(uint64_t count)
+	bool World::advanceTicks(uint64_t count)
 	{
 		return mSimulationCoordinator.advanceTicks(count);
 	}
 
-	uint64_t Building::getSimulationTick() const
+	uint64_t World::getSimulationTick() const
 	{
 		return mSimulationCoordinator.getSimulationTick();
 	}
 
-	SimulationPhase Building::getCurrentSimulationPhase() const
+	SimulationPhase World::getCurrentSimulationPhase() const
 	{
 		return mSimulationCoordinator.getCurrentSimulationPhase();
 	}
 
-	SimulationSnapshot Building::getSimulationSnapshot() const
+	SimulationSnapshot World::getSimulationSnapshot() const
 	{
 		return mSimulationCoordinator.getSimulationSnapshot();
 	}
 
-	vector<SimulationEvent> Building::consumeSimulationEvents()
+	vector<SimulationEvent> World::consumeSimulationEvents()
 	{
 		return mSimulationCoordinator.consumeSimulationEvents();
 	}

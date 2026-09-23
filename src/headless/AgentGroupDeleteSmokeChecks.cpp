@@ -1,26 +1,26 @@
 // Deleting Agent groups, for ticket #112.
 //
 // The hazard this whole file circles is a stale reference: a group removed
-// while Agents still carry its ID. Such a Building cannot even be saved and
+// while Agents still carry its ID. Such a World cannot even be saved and
 // read back - the file format refuses an assignment to a group the document
 // never defines - so the deletion has to take the assignments with it, in the
 // same step, and must be undoable as one step afterwards.
 //
 // What gets pinned down:
 //
-//   Building::deleteAgentGroup is the sole mutation boundary: every Agent
+//   World::deleteAgentGroup is the sole mutation boundary: every Agent
 //   carrying the deleted AgentGroupId is returned to no Agent group before
 //   the group itself is removed, and the whole thing is judged before a
 //   single field is written
 //   an unknown or empty AgentGroupId is refused with a diagnostic that names
-//   it, and the Building is left exactly as it was found
+//   it, and the World is left exactly as it was found
 //   a deleted AgentGroupId is never issued again, so an old reference can
 //   never come back pointing at a different group
 //   the saved document after a deletion carries neither the group nor any
 //   assignment to it, and a reload agrees
 //   an empty group deletes on the spot with no confirmation asked; an
 //   occupied group arms a confirmation whose text carries the authoritative
-//   member count read off the Building
+//   member count read off the World
 //   cancelling changes no group, no assignment, no count, no dirty state and
 //   no undo history - the underlying no-op contract, checked as a whole
 //   confirming performs the group removal and every assignment clearing as
@@ -46,7 +46,7 @@
 #include "imgui/imgui_internal.h"
 
 #include "core/Agent.h"
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/EntityId.h"
 #include "core/Exceptions.h"
 #include "core/Sector.h"
@@ -65,24 +65,24 @@ namespace
 		if (!condition) throw std::runtime_error(message);
 	}
 
-	std::string serializeBuilding(core::Building& building)
+	std::string serializeWorld(core::World& world)
 	{
 		core::SerializationWorkData workData;
 		auto writer = core::YamlSerializer::toString();
-		building.serialize(*writer, workData);
+		world.serialize(*writer, workData);
 		writer->serialize();
 		return writer->getSerializedString();
 	}
 
 	// A whole-document load, the way the editor opens a file.
-	std::shared_ptr<core::Building> loadBuilding(std::string const& yaml)
+	std::shared_ptr<core::World> loadWorld(std::string const& yaml)
 	{
-		auto loaded = std::make_shared<core::Building>("Loaded Building", 1, 1);
+		auto loaded = std::make_shared<core::World>("Loaded World", 1, 1);
 		core::SerializationWorkData workData;
 		auto reader = core::YamlSerializer::fromString(yaml);
 		reader->deserialize();
-		require(reader != nullptr, "The serialised Building could not be read back");
-		require(loaded->deserialize(*reader, workData), "The Building did not reload");
+		require(reader != nullptr, "The serialised World could not be read back");
+		require(loaded->deserialize(*reader, workData), "The World did not reload");
 		return loaded;
 	}
 
@@ -136,12 +136,12 @@ namespace
 		return found;
 	}
 
-	std::vector<core::Agent const*> allAgents(core::Building const& building)
+	std::vector<core::Agent const*> allAgents(core::World const& world)
 	{
 		std::vector<core::Agent const*> agents;
-		for (uint32_t layer = 0; layer < building.getLayerCount(); ++layer)
+		for (uint32_t layer = 0; layer < world.getLayerCount(); ++layer)
 		{
-			for (auto const& sector : building.getSectors(layer))
+			for (auto const& sector : world.getSectors(layer))
 			{
 				if (!sector) continue;
 				for (auto* agent : sector->getAgents())
@@ -153,27 +153,27 @@ namespace
 		return agents;
 	}
 
-	// Every group the Building reports, with its count, as one comparable
+	// Every group the World reports, with its count, as one comparable
 	// line. Used to ask whether anything other than the deletion moved.
-	std::string groupSummary(core::Building const& building)
+	std::string groupSummary(core::World const& world)
 	{
 		std::string out;
-		for (auto const id : building.getAgentGroupIds())
+		for (auto const id : world.getAgentGroupIds())
 		{
-			out += std::to_string(id.value) + ':' + building.getAgentGroupName(id) + '='
-				+ std::to_string(building.getAgentGroupMemberCount(id)) + ';';
+			out += std::to_string(id.value) + ':' + world.getAgentGroupName(id) + '='
+				+ std::to_string(world.getAgentGroupMemberCount(id)) + ';';
 		}
 		return out;
 	}
 
-	// Every Agent the Building owns, with the group it carries, as a sorted
+	// Every Agent the World owns, with the group it carries, as a sorted
 	// list of comparable entries. Sorted because the order Agents sit in a
 	// Sector is not part of what an assignment is, and a reload is free to
 	// put two Agents in the same room in a different order.
-	std::vector<std::string> assignmentEntries(core::Building const& building)
+	std::vector<std::string> assignmentEntries(core::World const& world)
 	{
 		std::vector<std::string> entries;
-		for (auto const* agent : allAgents(building))
+		for (auto const* agent : allAgents(world))
 		{
 			auto const group = agent->getAgentGroupId();
 			entries.push_back(std::string(agent->getName()) + "->"
@@ -183,25 +183,25 @@ namespace
 		return entries;
 	}
 
-	std::string assignmentSummary(core::Building const& building)
+	std::string assignmentSummary(core::World const& world)
 	{
 		std::string out;
-		for (auto const& entry : assignmentEntries(building)) out += entry + ";";
+		for (auto const& entry : assignmentEntries(world)) out += entry + ";";
 		return out;
 	}
 
-	// Nothing an Agent carries may name a group this Building does not own.
+	// Nothing an Agent carries may name a group this World does not own.
 	// The one state a save would refuse to read back, and the one state this
 	// ticket exists to make unreachable.
-	void requireNoDanglingAssignment(core::Building const& building,
+	void requireNoDanglingAssignment(core::World const& world,
 		std::string const& context)
 	{
-		for (auto const* agent : allAgents(building))
+		for (auto const* agent : allAgents(world))
 		{
 			auto const group = agent->getAgentGroupId();
 			if (!group) continue;
-			require(static_cast<bool>(building.lookupAgentGroup(group)),
-				("An Agent is left naming an Agent group this Building does not own: "
+			require(static_cast<bool>(world.lookupAgentGroup(group)),
+				("An Agent is left naming an Agent group this World does not own: "
 					+ std::string(agent->getName()) + " -> " + std::to_string(group.value)
 					+ " (" + context + ")").c_str());
 		}
@@ -231,14 +231,14 @@ namespace
 
 	void resetUndoHistory()
 	{
-		gBuildingDocumentHistory.clear();
+		gWorldDocumentHistory.clear();
 	}
 
 	// ---------------------------------------------------------------- world
 
 	// Two Layers, two Locations on the front one and two behind, so a group's
-	// members are spread across the Building rather than sitting side by side.
-	struct DeleteWorld
+	// members are spread across the World rather than sitting side by side.
+	struct DeleteWorldLayout
 	{
 		uint32_t frontCorridor{ 0 };
 		uint32_t frontRoom{ 0 };
@@ -246,21 +246,21 @@ namespace
 		uint32_t backCorridor{ 0 };
 	};
 
-	DeleteWorld buildDeleteWorld(core::Building& building)
+	DeleteWorldLayout buildDeleteWorldLayout(core::World& world)
 	{
-		DeleteWorld world;
-		world.frontCorridor = building.addCorridor(0, 0, 12);
-		world.frontRoom = building.addRoom("Front room", 0, 2, 0, 6, 1);
-		world.backRoom = building.addRoom("Back room", 1, 0, 0, 6, 1);
-		world.backCorridor = building.addCorridor(1u, 2u, 0u, 12u, 1u);
-		building.finishBuild();
-		return world;
+		DeleteWorldLayout layout;
+		layout.frontCorridor = world.addCorridor(0, 0, 12);
+		layout.frontRoom = world.addRoom("Front room", 0, 2, 0, 6, 1);
+		layout.backRoom = world.addRoom("Back room", 1, 0, 0, 6, 1);
+		layout.backCorridor = world.addCorridor(1u, 2u, 0u, 12u, 1u);
+		world.finishBuild();
+		return layout;
 	}
 
-	void assign(core::Building& building, core::AgentId agent, core::AgentGroupId group)
+	void assign(core::World& world, core::AgentId agent, core::AgentGroupId group)
 	{
 		std::string diagnostic;
-		require(building.setAgentGroup(agent, group, &diagnostic),
+		require(world.setAgentGroup(agent, group, &diagnostic),
 			("Assigning an Agent for a deletion check failed: " + diagnostic).c_str());
 	}
 
@@ -275,42 +275,42 @@ namespace
 		core::AgentId unassigned{};
 	};
 
-	DeleteFixture buildFixture(core::Building& building)
+	DeleteFixture buildFixture(core::World& world)
 	{
 		DeleteFixture fixture;
-		auto const world = buildDeleteWorld(building);
+		auto const layout = buildDeleteWorldLayout(world);
 
-		fixture.alpha = building.addAgentGroup("Alpha");
-		fixture.crew = building.addAgentGroup("Crew");
-		fixture.delta = building.addAgentGroup("Delta");
+		fixture.alpha = world.addAgentGroup("Alpha");
+		fixture.crew = world.addAgentGroup("Crew");
+		fixture.delta = world.addAgentGroup("Delta");
 
-		fixture.members.push_back(building.createAgent("Front corridor hand",
-			world.frontCorridor, 0, 1.5f));
-		fixture.members.push_back(building.createAgent("Front desk",
-			world.frontRoom, 0, 1.0f));
-		fixture.members.push_back(building.createAgent("Back office",
-			world.backRoom, 0, 2.0f));
-		fixture.members.push_back(building.createAgent("Back corridor hand",
-			world.backCorridor, 0, 3.0f));
-		fixture.unassigned = building.createAgent("Freelance", world.frontCorridor, 0, 5.0f);
+		fixture.members.push_back(world.createAgent("Front corridor hand",
+			layout.frontCorridor, 0, 1.5f));
+		fixture.members.push_back(world.createAgent("Front desk",
+			layout.frontRoom, 0, 1.0f));
+		fixture.members.push_back(world.createAgent("Back office",
+			layout.backRoom, 0, 2.0f));
+		fixture.members.push_back(world.createAgent("Back corridor hand",
+			layout.backCorridor, 0, 3.0f));
+		fixture.unassigned = world.createAgent("Freelance", layout.frontCorridor, 0, 5.0f);
 
-		for (auto const member : fixture.members) assign(building, member, fixture.crew);
+		for (auto const member : fixture.members) assign(world, member, fixture.crew);
 
 		return fixture;
 	}
 
 	// The editor's own undo and redo, the same shape as UI.cpp's
 	// restoreDocumentSnapshot(): the live state crosses to the other stack and
-	// the newest snapshot on the source stack becomes the live Building.
-	void restoreDocument(std::shared_ptr<core::Building>& building, bool redo)
+	// the newest snapshot on the source stack becomes the live World.
+	void restoreDocument(std::shared_ptr<core::World>& world, bool redo)
 	{
-		auto const current = captureDocumentSnapshot(building);
+		auto const current = captureDocumentSnapshot(world);
 		require(current.has_value(), "The live document could not be captured");
 
-		std::shared_ptr<core::Building> loaded;
+		std::shared_ptr<core::World> loaded;
 		auto restore = [&loaded](DocumentSnapshot const& target)
 		{
-			loaded = std::make_shared<core::Building>("Restored Building", 1, 1);
+			loaded = std::make_shared<core::World>("Restored World", 1, 1);
 			core::SerializationWorkData workData;
 			auto reader = core::YamlSerializer::fromString(target.yaml);
 			reader->deserialize();
@@ -319,11 +319,11 @@ namespace
 			return true;
 		};
 		auto const restored = redo
-			? gBuildingDocumentHistory.redo(current, restore)
-			: gBuildingDocumentHistory.undo(current, restore);
+			? gWorldDocumentHistory.redo(current, restore)
+			: gWorldDocumentHistory.undo(current, restore);
 		require(restored, redo ? "There is no redo entry to restore"
 			: "There is no undo entry to restore");
-		building = std::move(loaded);
+		world = std::move(loaded);
 		// The same reset the editor performs when the document underneath the
 		// panels is replaced.
 		resetAgentGroupsPanelState();
@@ -335,27 +335,27 @@ namespace
 	// goes, and nothing else moves.
 	void anEmptyGroupDeletesAndLeavesEveryOtherGroupAlone()
 	{
-		core::Building building("Empty delete", 12, 3);
-		auto const fixture = buildFixture(building);
-		auto const before = groupSummary(building);
+		core::World world("Empty delete", 12, 3);
+		auto const fixture = buildFixture(world);
+		auto const before = groupSummary(world);
 		require(before.find("Alpha") != std::string::npos
 			&& before.find("Delta") != std::string::npos,
 			"The fixture did not start with the two empty groups: " + before);
 
 		std::string diagnostic;
-		require(building.canDeleteAgentGroup(fixture.alpha, &diagnostic),
+		require(world.canDeleteAgentGroup(fixture.alpha, &diagnostic),
 			("Deleting an empty Agent group was refused: " + diagnostic).c_str());
-		require(building.deleteAgentGroup(fixture.alpha, &diagnostic),
+		require(world.deleteAgentGroup(fixture.alpha, &diagnostic),
 			("Deleting an empty Agent group failed: " + diagnostic).c_str());
 
-		require(building.getAgentGroupCount() == 2,
-			"The Building still reports three Agent groups after deleting one: "
-			+ groupSummary(building));
-		require(!building.lookupAgentGroup(fixture.alpha),
-			"The deleted Agent group is still resolvable through the Building");
-		require(groupSummary(building) == "2:Crew=4;3:Delta=0;",
-			"Deleting an empty Agent group disturbed the others: " + groupSummary(building));
-		requireNoDanglingAssignment(building, "after an empty group delete");
+		require(world.getAgentGroupCount() == 2,
+			"The World still reports three Agent groups after deleting one: "
+			+ groupSummary(world));
+		require(!world.lookupAgentGroup(fixture.alpha),
+			"The deleted Agent group is still resolvable through the World");
+		require(groupSummary(world) == "2:Crew=4;3:Delta=0;",
+			"Deleting an empty Agent group disturbed the others: " + groupSummary(world));
+		requireNoDanglingAssignment(world, "after an empty group delete");
 	}
 
 	// The occupied case, which is the one that can go wrong. Every member is
@@ -363,75 +363,75 @@ namespace
 	// every one of them is on no group afterwards, whichever Layer it sits on.
 	void deletingAnOccupiedGroupReturnsEveryMemberToNoGroup()
 	{
-		core::Building building("Occupied delete", 12, 3);
-		auto const fixture = buildFixture(building);
-		require(building.getAgentGroupMemberCount(fixture.crew) == 4,
+		core::World world("Occupied delete", 12, 3);
+		auto const fixture = buildFixture(world);
+		require(world.getAgentGroupMemberCount(fixture.crew) == 4,
 			"The fixture's occupied group does not start with four members");
 
 		std::string diagnostic;
-		require(building.deleteAgentGroup(fixture.crew, &diagnostic),
+		require(world.deleteAgentGroup(fixture.crew, &diagnostic),
 			("Deleting an occupied Agent group failed: " + diagnostic).c_str());
 
-		require(!building.lookupAgentGroup(fixture.crew),
+		require(!world.lookupAgentGroup(fixture.crew),
 			"The occupied Agent group was not removed");
-		require(building.getAgentGroupCount() == 2,
-			"The Building did not lose exactly the deleted Agent group: "
-			+ groupSummary(building));
+		require(world.getAgentGroupCount() == 2,
+			"The World did not lose exactly the deleted Agent group: "
+			+ groupSummary(world));
 
 		for (auto const member : fixture.members)
 		{
-			require(!building.getAgentGroup(member),
+			require(!world.getAgentGroup(member),
 				("A former member of the deleted Agent group is still assigned to a group: "
 					+ std::to_string(member.value)).c_str());
-			require(!building.lookupAgent(member).entity->getAgentGroupId(),
+			require(!world.lookupAgent(member).entity->getAgentGroupId(),
 				"The Agent itself still carries the deleted AgentGroupId");
-			require(agentGroupAssignmentLabel(building, member) == "<none>",
+			require(agentGroupAssignmentLabel(world, member) == "<none>",
 				"A former member's Group cell does not read <none> after the delete");
 		}
 
 		// The Agent that was never a member is untouched by all of this.
-		require(!building.getAgentGroup(fixture.unassigned),
+		require(!world.getAgentGroup(fixture.unassigned),
 			"An Agent that was never a member came out of the delete assigned");
-		require(groupSummary(building) == "1:Alpha=0;3:Delta=0;",
-			"The surviving groups are not the two empty ones: " + groupSummary(building));
-		requireNoDanglingAssignment(building, "after an occupied group delete");
+		require(groupSummary(world) == "1:Alpha=0;3:Delta=0;",
+			"The surviving groups are not the two empty ones: " + groupSummary(world));
+		requireNoDanglingAssignment(world, "after an occupied group delete");
 	}
 
-	// An ID this Building never issued is refused, and the refusal says which
+	// An ID this World never issued is refused, and the refusal says which
 	// ID. Nothing is written on the way out, so "atomically" has a concrete
 	// meaning here: the whole summary is what it was before the call.
 	void anUnknownGroupIdIsRefusedAtomicallyWithADiagnostic()
 	{
-		core::Building building("Unknown delete", 12, 3);
-		auto const fixture = buildFixture(building);
-		auto const before = groupSummary(building);
-		auto const beforeAssignments = assignmentSummary(building);
-		auto const beforeIds = building.getAgentGroupIds();
+		core::World world("Unknown delete", 12, 3);
+		auto const fixture = buildFixture(world);
+		auto const before = groupSummary(world);
+		auto const beforeAssignments = assignmentSummary(world);
+		auto const beforeIds = world.getAgentGroupIds();
 
 		std::string diagnostic;
-		require(!building.canDeleteAgentGroup(core::AgentGroupId{ 4242 }, &diagnostic),
-			"Deleting an Agent group this Building never issued succeeded");
+		require(!world.canDeleteAgentGroup(core::AgentGroupId{ 4242 }, &diagnostic),
+			"Deleting an Agent group this World never issued succeeded");
 		require(diagnostic.find("4242") != std::string::npos,
 			("The unknown-group refusal did not name the group: " + diagnostic).c_str());
-		require(!building.deleteAgentGroup(core::AgentGroupId{ 4242 }, &diagnostic),
-			"Building.deleteAgentGroup accepted a group it does not own");
+		require(!world.deleteAgentGroup(core::AgentGroupId{ 4242 }, &diagnostic),
+			"World.deleteAgentGroup accepted a group it does not own");
 		require(diagnostic.find("4242") != std::string::npos,
 			("The refused delete did not name the unknown group: " + diagnostic).c_str());
 
 		// The null handle names no group either, so there is nothing for it
 		// to delete; refusing it keeps a success meaning a deletion happened.
-		require(!building.canDeleteAgentGroup(core::AgentGroupId{}, &diagnostic),
+		require(!world.canDeleteAgentGroup(core::AgentGroupId{}, &diagnostic),
 			"Deleting the empty AgentGroupId was treated as a deletion");
-		require(!building.deleteAgentGroup(core::AgentGroupId{}, &diagnostic),
-			"Building.deleteAgentGroup accepted the empty AgentGroupId");
+		require(!world.deleteAgentGroup(core::AgentGroupId{}, &diagnostic),
+			"World.deleteAgentGroup accepted the empty AgentGroupId");
 		require(!diagnostic.empty(),
 			"The empty-AgentGroupId refusal came back without a reason");
 
-		require(groupSummary(building) == before,
-			"A refused delete changed the groups: " + groupSummary(building));
-		require(assignmentSummary(building) == beforeAssignments,
+		require(groupSummary(world) == before,
+			"A refused delete changed the groups: " + groupSummary(world));
+		require(assignmentSummary(world) == beforeAssignments,
 			"A refused delete cleared an assignment it had no business touching");
-		require(building.getAgentGroupIds() == beforeIds,
+		require(world.getAgentGroupIds() == beforeIds,
 			"A refused delete disturbed the Agent group list");
 	}
 
@@ -439,19 +439,19 @@ namespace
 	// somehow survived could never silently come to mean a different group.
 	void aDeletedAgentGroupIdIsNeverIssuedAgain()
 	{
-		core::Building building("Id reuse", 12, 3);
-		auto const fixture = buildFixture(building);
+		core::World world("Id reuse", 12, 3);
+		auto const fixture = buildFixture(world);
 
 		std::string diagnostic;
-		require(building.deleteAgentGroup(fixture.crew, &diagnostic),
+		require(world.deleteAgentGroup(fixture.crew, &diagnostic),
 			("Deleting the occupied Agent group failed: " + diagnostic).c_str());
 
-		auto const replacement = building.addAgentGroup("Replacement");
+		auto const replacement = world.addAgentGroup("Replacement");
 		require(replacement != fixture.crew,
 			"A new Agent group was issued the deleted group's AgentGroupId");
 		require(replacement.value > fixture.crew.value,
 			"The new Agent group's AgentGroupId did not come after the deleted one");
-		requireNoDanglingAssignment(building, "after reissuing Agent group IDs");
+		requireNoDanglingAssignment(world, "after reissuing Agent group IDs");
 	}
 
 	// Grouping is editor metadata, not topology: deleting a group marks the
@@ -459,40 +459,40 @@ namespace
 	// exactly as they were.
 	void aDeletionMarksTheDocumentAndLeavesTheTopologyAlone()
 	{
-		auto building = std::make_shared<core::Building>("Delete dirty state", 12, 3);
-		auto const fixture = buildFixture(*building);
-		building->advanceTick();
-		building->markSaved();
-		require(!building->isModified(), "The test Building did not come back clean");
+		auto world = std::make_shared<core::World>("Delete dirty state", 12, 3);
+		auto const fixture = buildFixture(*world);
+		world->advanceTick();
+		world->markSaved();
+		require(!world->isModified(), "The test World did not come back clean");
 
-		auto const topologyBefore = building->getTopologyGeneration();
+		auto const topologyBefore = world->getTopologyGeneration();
 		std::string diagnostic;
-		require(commitAgentGroupDelete(building, fixture.crew, diagnostic),
+		require(commitAgentGroupDelete(world, fixture.crew, diagnostic),
 			("Committing an Agent group delete failed: " + diagnostic).c_str());
 
-		require(building->isModified(),
+		require(world->isModified(),
 			"Deleting an Agent group did not mark the document modified");
-		require(building->getTopologyGeneration() == topologyBefore,
+		require(world->getTopologyGeneration() == topologyBefore,
 			"Deleting an Agent group rebuilt the traversal topology");
-		require(!building->isSimulationPaused(),
+		require(!world->isSimulationPaused(),
 			"Deleting an Agent group paused the simulation");
 	}
 
 	// The document after a deletion carries neither the group nor any
-	// assignment to it, and a reload agrees with the live Building about
+	// assignment to it, and a reload agrees with the live World about
 	// every Agent.
 	void aDeletedGroupStaysDeletedThroughASaveAndReopen()
 	{
-		core::Building building("Delete round trip", 12, 3);
-		auto const fixture = buildFixture(building);
+		core::World world("Delete round trip", 12, 3);
+		auto const fixture = buildFixture(world);
 
 		// The helper has to find the ID while it is really there, or the
 		// "still carries it" check below would pass on a helper that matched
 		// nothing at all: one definition line in agentGroups, one assignment
 		// line in agents per member.
-		auto const presentDefinitions = linesCarrying(serializeBuilding(building),
+		auto const presentDefinitions = linesCarrying(serializeWorld(world),
 			"agentGroups", "id:", fixture.crew.value);
-		auto const presentAssignments = linesCarrying(serializeBuilding(building),
+		auto const presentAssignments = linesCarrying(serializeWorld(world),
 			"agents", "group:", fixture.crew.value);
 		require(presentDefinitions.size() == 1,
 			("The stale-reference scan did not find the live Agent group definition: found "
@@ -502,10 +502,10 @@ namespace
 				+ std::to_string(presentAssignments.size())).c_str());
 
 		std::string diagnostic;
-		require(building.deleteAgentGroup(fixture.crew, &diagnostic),
+		require(world.deleteAgentGroup(fixture.crew, &diagnostic),
 			("Deleting the occupied Agent group failed: " + diagnostic).c_str());
 
-		auto const yaml = serializeBuilding(building);
+		auto const yaml = serializeWorld(world);
 		require(yaml.find("name: Crew") == std::string::npos,
 			"The saved document still defines the deleted Agent group");
 		auto const staleDefinitions = linesCarrying(yaml, "agentGroups", "id:",
@@ -523,14 +523,14 @@ namespace
 				+ (staleAssignments.empty() ? std::string("<none>")
 					: staleAssignments.front())).c_str());
 
-		auto const loaded = loadBuilding(yaml);
+		auto const loaded = loadWorld(yaml);
 		require(loaded->getAgentGroupCount() == 2,
-			"The reopened Building did not come back with two Agent groups: "
+			"The reopened World did not come back with two Agent groups: "
 			+ groupSummary(*loaded));
 		require(!loaded->lookupAgentGroup(fixture.crew),
-			"The reopened Building can still resolve the deleted AgentGroupId");
+			"The reopened World can still resolve the deleted AgentGroupId");
 		require(groupSummary(*loaded) == "1:Alpha=0;3:Delta=0;",
-			"The reopened Building's groups are not what was saved: "
+			"The reopened World's groups are not what was saved: "
 			+ groupSummary(*loaded));
 		for (auto const member : fixture.members)
 		{
@@ -544,25 +544,25 @@ namespace
 
 		// Re-saving what was just loaded produces the same document, so the
 		// deletion is canonical rather than a live-only correction.
-		require(serializeBuilding(*loaded) == yaml,
-			"Re-saving the reopened Building produced a different document");
+		require(serializeWorld(*loaded) == yaml,
+			"Re-saving the reopened World produced a different document");
 	}
 
-	// The confirmation split, read straight off the Building: what needs
+	// The confirmation split, read straight off the World: what needs
 	// asking about, and what the asking says.
 	void onlyAnOccupiedGroupNeedsConfirmingAndSaysHowMany()
 	{
-		core::Building building("Delete confirmation text", 12, 3);
-		auto const fixture = buildFixture(building);
+		core::World world("Delete confirmation text", 12, 3);
+		auto const fixture = buildFixture(world);
 
-		require(!agentGroupDeleteRequiresConfirmation(building, fixture.alpha),
+		require(!agentGroupDeleteRequiresConfirmation(world, fixture.alpha),
 			"An empty Agent group was judged to need a confirmation");
-		require(!agentGroupDeleteRequiresConfirmation(building, fixture.delta),
+		require(!agentGroupDeleteRequiresConfirmation(world, fixture.delta),
 			"A second empty Agent group was judged to need a confirmation");
-		require(agentGroupDeleteRequiresConfirmation(building, fixture.crew),
+		require(agentGroupDeleteRequiresConfirmation(world, fixture.crew),
 			"An occupied Agent group was judged not to need a confirmation");
 
-		auto const text = agentGroupDeleteConfirmationText(building, fixture.crew);
+		auto const text = agentGroupDeleteConfirmationText(world, fixture.crew);
 		require(text.find("Crew") != std::string::npos,
 			("The confirmation does not name the Agent group: " + text).c_str());
 		require(text.find("4") != std::string::npos,
@@ -572,23 +572,23 @@ namespace
 
 		// One member reads as one, not as some plural that quietly rounds the
 		// impact up or down.
-		auto const single = building.addAgentGroup("Single hand");
-		assign(building, building.createAgent("Lone worker", 0, 0, 2.5f), single);
-		require(agentGroupDeleteRequiresConfirmation(building, single),
+		auto const single = world.addAgentGroup("Single hand");
+		assign(world, world.createAgent("Lone worker", 0, 0, 2.5f), single);
+		require(agentGroupDeleteRequiresConfirmation(world, single),
 			"A one-member Agent group was judged not to need a confirmation");
-		auto const singleText = agentGroupDeleteConfirmationText(building, single);
+		auto const singleText = agentGroupDeleteConfirmationText(world, single);
 		require(singleText.find("1 Agent ") != std::string::npos,
 			("A one-member confirmation is not worded as one Agent: " + singleText).c_str());
 		require(singleText.find("2 Agent") == std::string::npos,
 			("A one-member confirmation overstates the impact: " + singleText).c_str());
 
-		// The count in the text is the Building's, not a remembered one: move
+		// The count in the text is the World's, not a remembered one: move
 		// a member in and the next text says more.
-		assign(building, building.createAgent("Late arrival", 0, 0, 3.5f), single);
-		require(agentGroupDeleteConfirmationText(building, single).find("2 Agent")
+		assign(world, world.createAgent("Late arrival", 0, 0, 3.5f), single);
+		require(agentGroupDeleteConfirmationText(world, single).find("2 Agent")
 			!= std::string::npos,
 			("The confirmation text did not follow a new assignment: "
-				+ agentGroupDeleteConfirmationText(building, single)).c_str());
+				+ agentGroupDeleteConfirmationText(world, single)).c_str());
 	}
 
 	// An empty group through the panel's own entry point: deleted on the spot,
@@ -600,27 +600,27 @@ namespace
 
 		ImGuiGuard guard;
 		ImGui::NewFrame();
-		ImGui::Begin("Building");
+		ImGui::Begin("World");
 
-		auto building = std::make_shared<core::Building>("Empty delete seam", 12, 3);
-		auto const fixture = buildFixture(*building);
+		auto world = std::make_shared<core::World>("Empty delete seam", 12, 3);
+		auto const fixture = buildFixture(*world);
 
-		requestAgentGroupDelete(building, fixture.alpha);
+		requestAgentGroupDelete(world, fixture.alpha);
 
-		require(!building->lookupAgentGroup(fixture.alpha),
+		require(!world->lookupAgentGroup(fixture.alpha),
 			"An empty Agent group asked for through the panel seam was not deleted");
 		require(!agentGroupDeletePending(),
 			"Deleting an empty Agent group left a confirmation armed");
-		require(gBuildingDocumentHistory.undoCount() == 1,
+		require(gWorldDocumentHistory.undoCount() == 1,
 			"Deleting an empty Agent group did not commit exactly one document edit");
-		require(!gBuildingDocumentHistory.canRedo(),
+		require(!gWorldDocumentHistory.canRedo(),
 			"Deleting an empty Agent group produced a redo entry");
-		require(groupSummary(*building) == "2:Crew=4;3:Delta=0;",
-			"Deleting an empty Agent group disturbed the others: " + groupSummary(*building));
+		require(groupSummary(*world) == "2:Crew=4;3:Delta=0;",
+			"Deleting an empty Agent group disturbed the others: " + groupSummary(*world));
 
 		// Rendered after the request: an empty group's delete raised no
 		// confirmation, so there is nothing on the screen to be answered.
-		renderAgentGroupsPanel(building);
+		renderAgentGroupsPanel(world);
 		require(!confirmationPopupOpen(),
 			"Deleting an empty Agent group put a confirmation on the screen");
 		ImGui::End();
@@ -634,15 +634,15 @@ namespace
 		resetUndoHistory();
 		resetAgentGroupsPanelState();
 
-		auto building = std::make_shared<core::Building>("Occupied delete pending", 12, 3);
-		auto const fixture = buildFixture(*building);
-		building->markSaved();
+		auto world = std::make_shared<core::World>("Occupied delete pending", 12, 3);
+		auto const fixture = buildFixture(*world);
+		world->markSaved();
 
-		auto const groupsBefore = groupSummary(*building);
-		auto const assignmentsBefore = assignmentSummary(*building);
-		auto const historyBefore = gBuildingDocumentHistory.undoCount();
+		auto const groupsBefore = groupSummary(*world);
+		auto const assignmentsBefore = assignmentSummary(*world);
+		auto const historyBefore = gWorldDocumentHistory.undoCount();
 
-		requestAgentGroupDelete(building, fixture.crew);
+		requestAgentGroupDelete(world, fixture.crew);
 
 		core::AgentGroupId pending{};
 		uint32_t armedCount{ 0 };
@@ -651,21 +651,21 @@ namespace
 		require(pending == fixture.crew,
 			"The armed confirmation is for a different Agent group than was asked for");
 		require(armedCount == 4,
-			"The armed confirmation does not carry the Building's member count: "
+			"The armed confirmation does not carry the World's member count: "
 			+ std::to_string(armedCount));
-		require(static_cast<bool>(building->lookupAgentGroup(fixture.crew)),
+		require(static_cast<bool>(world->lookupAgentGroup(fixture.crew)),
 			"An occupied Agent group was deleted before the user answered");
-		require(groupSummary(*building) == groupsBefore,
-			"Arming a confirmation changed the groups: " + groupSummary(*building));
-		require(assignmentSummary(*building) == assignmentsBefore,
+		require(groupSummary(*world) == groupsBefore,
+			"Arming a confirmation changed the groups: " + groupSummary(*world));
+		require(assignmentSummary(*world) == assignmentsBefore,
 			"Arming a confirmation changed an assignment");
-		require(building->getAgentGroupMemberCount(fixture.crew) == 4,
+		require(world->getAgentGroupMemberCount(fixture.crew) == 4,
 			"Arming a confirmation changed the member count");
-		require(!building->isModified(),
+		require(!world->isModified(),
 			"Arming a confirmation marked the document modified");
-		require(gBuildingDocumentHistory.undoCount() == historyBefore,
+		require(gWorldDocumentHistory.undoCount() == historyBefore,
 			"Arming a confirmation committed a document edit");
-		require(!gBuildingDocumentHistory.canRedo(),
+		require(!gWorldDocumentHistory.canRedo(),
 			"Arming a confirmation produced a redo entry");
 	}
 
@@ -677,46 +677,46 @@ namespace
 		resetUndoHistory();
 		resetAgentGroupsPanelState();
 
-		auto building = std::make_shared<core::Building>("Delete cancel", 12, 3);
-		auto const fixture = buildFixture(*building);
-		building->markSaved();
+		auto world = std::make_shared<core::World>("Delete cancel", 12, 3);
+		auto const fixture = buildFixture(*world);
+		world->markSaved();
 
-		requestAgentGroupDelete(building, fixture.crew);
+		requestAgentGroupDelete(world, fixture.crew);
 		require(agentGroupDeletePending(), "The confirmation was not armed to be cancelled");
 
 		cancelPendingAgentGroupDelete();
 
 		require(!agentGroupDeletePending(),
 			"A cancelled Agent group deletion is still awaiting an answer");
-		require(building->getAgentGroupCount() == 3,
-			"Cancelling changed the number of Agent groups: " + groupSummary(*building));
-		require(static_cast<bool>(building->lookupAgentGroup(fixture.crew)),
+		require(world->getAgentGroupCount() == 3,
+			"Cancelling changed the number of Agent groups: " + groupSummary(*world));
+		require(static_cast<bool>(world->lookupAgentGroup(fixture.crew)),
 			"Cancelling removed the Agent group that was only asked about");
-		require(building->getAgentGroupMemberCount(fixture.crew) == 4,
+		require(world->getAgentGroupMemberCount(fixture.crew) == 4,
 			"Cancelling changed the member count");
-		require(building->getAgentGroupName(fixture.crew) == "Crew",
+		require(world->getAgentGroupName(fixture.crew) == "Crew",
 			"Cancelling changed the Agent group's own identity");
 		for (auto const member : fixture.members)
 		{
-			require(building->getAgentGroup(member) == fixture.crew,
+			require(world->getAgentGroup(member) == fixture.crew,
 				("Cancelling cleared a member's assignment: "
 					+ std::to_string(member.value)).c_str());
 		}
-		require(!building->isModified(),
+		require(!world->isModified(),
 			"Cancelling an Agent group deletion marked the document modified");
-		require(!gBuildingDocumentHistory.canUndo(),
+		require(!gWorldDocumentHistory.canUndo(),
 			"Cancelling an Agent group deletion committed an undo entry");
-		require(!gBuildingDocumentHistory.canRedo(),
+		require(!gWorldDocumentHistory.canRedo(),
 			"Cancelling an Agent group deletion committed a redo entry");
-		require(gBuildingDocumentHistory.currentStateId() == 0,
+		require(gWorldDocumentHistory.currentStateId() == 0,
 			"Cancelling an Agent group deletion moved the document's state id");
 
 		// And the panel is clean enough to ask again, with the same answer.
-		requestAgentGroupDelete(building, fixture.crew);
+		requestAgentGroupDelete(world, fixture.crew);
 		require(agentGroupDeletePending(),
 			"A second Agent group delete could not be armed after a cancel");
 		cancelPendingAgentGroupDelete();
-		require(!gBuildingDocumentHistory.canUndo(),
+		require(!gWorldDocumentHistory.canUndo(),
 			"A second cancelled Agent group deletion committed an undo entry");
 	}
 
@@ -728,42 +728,42 @@ namespace
 		resetUndoHistory();
 		resetAgentGroupsPanelState();
 
-		auto building = std::make_shared<core::Building>("Delete confirm", 12, 3);
-		auto const fixture = buildFixture(*building);
-		building->markSaved();
+		auto world = std::make_shared<core::World>("Delete confirm", 12, 3);
+		auto const fixture = buildFixture(*world);
+		world->markSaved();
 
-		requestAgentGroupDelete(building, fixture.crew);
+		requestAgentGroupDelete(world, fixture.crew);
 
 		std::string diagnostic;
-		require(confirmPendingAgentGroupDelete(building, diagnostic),
+		require(confirmPendingAgentGroupDelete(world, diagnostic),
 			("Confirming an Agent group deletion failed: " + diagnostic).c_str());
 		require(!agentGroupDeletePending(),
 			"The confirmation stayed armed after it was answered with a delete");
-		require(!building->lookupAgentGroup(fixture.crew),
-			"The confirmed Agent group is still in the Building");
-		require(gBuildingDocumentHistory.undoCount() == 1,
+		require(!world->lookupAgentGroup(fixture.crew),
+			"The confirmed Agent group is still in the World");
+		require(gWorldDocumentHistory.undoCount() == 1,
 			"A confirmed Agent group deletion was not exactly one document edit");
-		require(!gBuildingDocumentHistory.canRedo(),
+		require(!gWorldDocumentHistory.canRedo(),
 			"A confirmed Agent group deletion produced a redo entry");
-		require(building->isModified(),
+		require(world->isModified(),
 			"A confirmed Agent group deletion did not mark the document modified");
 
 		for (auto const member : fixture.members)
 		{
-			require(!building->getAgentGroup(member),
+			require(!world->getAgentGroup(member),
 				("A former member is still assigned after a confirmed delete: "
 					+ std::to_string(member.value)).c_str());
-			require(agentGroupAssignmentLabel(*building, member) == "<none>",
+			require(agentGroupAssignmentLabel(*world, member) == "<none>",
 				"A former member's Group cell did not become <none>");
 		}
-		require(groupSummary(*building) == "1:Alpha=0;3:Delta=0;",
-			"The surviving groups are not the two empty ones: " + groupSummary(*building));
-		requireNoDanglingAssignment(*building, "after a confirmed delete");
+		require(groupSummary(*world) == "1:Alpha=0;3:Delta=0;",
+			"The surviving groups are not the two empty ones: " + groupSummary(*world));
+		requireNoDanglingAssignment(*world, "after a confirmed delete");
 
 		// The newest - and only - undo snapshot is the state with the group
 		// and its four members still in place, which is what makes the whole
 		// deletion one step to step back.
-		auto const before = loadBuilding(gBuildingDocumentHistory.undoEntries().back().yaml);
+		auto const before = loadWorld(gWorldDocumentHistory.undoEntries().back().yaml);
 		require(before->getAgentGroupCount() == 3,
 			"The undo snapshot did not hold the state before the deletion: "
 			+ groupSummary(*before));
@@ -778,19 +778,19 @@ namespace
 		resetUndoHistory();
 		resetAgentGroupsPanelState();
 
-		auto building = std::make_shared<core::Building>("Delete with nothing armed", 12, 3);
-		auto const fixture = buildFixture(*building);
-		auto const before = groupSummary(*building);
+		auto world = std::make_shared<core::World>("Delete with nothing armed", 12, 3);
+		auto const fixture = buildFixture(*world);
+		auto const before = groupSummary(*world);
 
 		std::string diagnostic;
-		require(!confirmPendingAgentGroupDelete(building, diagnostic),
+		require(!confirmPendingAgentGroupDelete(world, diagnostic),
 			"A confirmation with nothing armed reported a deletion");
 		require(!diagnostic.empty(),
 			"A confirmation with nothing armed failed without a reason");
-		require(groupSummary(*building) == before,
+		require(groupSummary(*world) == before,
 			"A confirmation with nothing armed changed the groups: "
-			+ groupSummary(*building));
-		require(!gBuildingDocumentHistory.canUndo(),
+			+ groupSummary(*world));
+		require(!gWorldDocumentHistory.canUndo(),
 			"A confirmation with nothing armed committed an undo entry");
 	}
 
@@ -801,39 +801,39 @@ namespace
 		resetUndoHistory();
 		resetAgentGroupsPanelState();
 
-		auto building = std::make_shared<core::Building>("Refused delete", 12, 3);
-		auto const fixture = buildFixture(*building);
-		building->markSaved();
-		auto const before = groupSummary(*building);
+		auto world = std::make_shared<core::World>("Refused delete", 12, 3);
+		auto const fixture = buildFixture(*world);
+		world->markSaved();
+		auto const before = groupSummary(*world);
 
 		std::string diagnostic;
-		require(!commitAgentGroupDelete(building, core::AgentGroupId{ 31337 }, diagnostic),
+		require(!commitAgentGroupDelete(world, core::AgentGroupId{ 31337 }, diagnostic),
 			"Committing a delete for an unknown Agent group succeeded");
 		require(diagnostic.find("31337") != std::string::npos,
 			("The refused delete did not name the unknown Agent group: " + diagnostic).c_str());
-		require(!commitAgentGroupDelete(building, core::AgentGroupId{}, diagnostic),
+		require(!commitAgentGroupDelete(world, core::AgentGroupId{}, diagnostic),
 			"Committing a delete for the empty AgentGroupId succeeded");
-		require(groupSummary(*building) == before,
-			"A refused delete changed the groups: " + groupSummary(*building));
-		require(!gBuildingDocumentHistory.canUndo(),
+		require(groupSummary(*world) == before,
+			"A refused delete changed the groups: " + groupSummary(*world));
+		require(!gWorldDocumentHistory.canUndo(),
 			"A refused delete committed an undo entry");
-		require(!building->isModified(),
+		require(!world->isModified(),
 			"A refused delete marked the document modified");
 
 		// The same refusal through the armed path: a confirmation for a group
 		// that is no longer there cannot delete anything.
-		requestAgentGroupDelete(building, fixture.crew);
+		requestAgentGroupDelete(world, fixture.crew);
 		require(agentGroupDeletePending(), "The confirmation was not armed");
 		// Take the group out from under the armed confirmation, the way a
 		// document replace would.
 		resetAgentGroupsPanelState();
 		require(!agentGroupDeletePending(),
 			"Replacing the document left a confirmation armed");
-		require(!confirmPendingAgentGroupDelete(building, diagnostic),
+		require(!confirmPendingAgentGroupDelete(world, diagnostic),
 			"Confirming after the request was dropped reported a deletion");
-		require(groupSummary(*building) == before,
-			"A dropped delete request changed the groups: " + groupSummary(*building));
-		require(!gBuildingDocumentHistory.canUndo(),
+		require(groupSummary(*world) == before,
+			"A dropped delete request changed the groups: " + groupSummary(*world));
+		require(!gWorldDocumentHistory.canUndo(),
 			"A dropped delete request committed an undo entry");
 	}
 
@@ -847,16 +847,16 @@ namespace
 
 		ImGuiGuard guard;
 
-		auto building = std::make_shared<core::Building>("Delete modal", 12, 3);
-		auto const fixture = buildFixture(*building);
+		auto world = std::make_shared<core::World>("Delete modal", 12, 3);
+		auto const fixture = buildFixture(*world);
 
 		// One real frame over the real panel, reporting whether the
 		// confirmation was still open at the end of it.
-		auto renderOneFrame = [&building]() -> bool
+		auto renderOneFrame = [&world]() -> bool
 		{
 			ImGui::NewFrame();
-			ImGui::Begin("Building");
-			renderAgentGroupsPanel(building);
+			ImGui::Begin("World");
+			renderAgentGroupsPanel(world);
 			bool const open = confirmationPopupOpen();
 			ImGui::End();
 			ImGui::Render();
@@ -867,25 +867,25 @@ namespace
 		require(!renderOneFrame(),
 			"A deletion confirmation was on the screen with nothing armed");
 
-		requestAgentGroupDelete(building, fixture.crew);
+		requestAgentGroupDelete(world, fixture.crew);
 
 		// The frame that opens it.
 		ImGui::NewFrame();
-		ImGui::Begin("Building");
+		ImGui::Begin("World");
 
 		auto const depthOnEntry = GImGui->DisabledStackSize;
 		auto const flagsOnEntry = GImGui->CurrentItemFlags;
 
-		renderAgentGroupsPanel(building);
+		renderAgentGroupsPanel(world);
 
 		require(GImGui->DisabledStackSize == depthOnEntry,
 			"The deletion confirmation left a disabled scope open");
 		require(GImGui->CurrentItemFlags == flagsOnEntry,
 			"The deletion confirmation changed the current item flags");
-		// The Building and its Agents are untouched while the question is up.
-		require(building->getAgentGroupCount() == 3,
+		// The World and its Agents are untouched while the question is up.
+		require(world->getAgentGroupCount() == 3,
 			"The confirmation being on screen changed the Agent groups");
-		require(building->getAgentGroupMemberCount(fixture.crew) == 4,
+		require(world->getAgentGroupMemberCount(fixture.crew) == 4,
 			"The confirmation being on screen changed the member count");
 		require(confirmationPopupOpen(),
 			"The confirmation is not reported as open while it is on the screen");
@@ -899,30 +899,30 @@ namespace
 		// A frame later it has really been drawn, with content in its draw
 		// buffer rather than an empty shell.
 		ImGui::NewFrame();
-		ImGui::Begin("Building");
-		renderAgentGroupsPanel(building);
+		ImGui::Begin("World");
+		renderAgentGroupsPanel(world);
 		ImGui::End();
 		ImGui::Render();
 
 		require(opened->WasActive, "The deletion confirmation was never drawn");
 		require(opened->DrawList->CmdBuffer.size() > 1,
 			"The deletion confirmation drew nothing but an empty window");
-		require(building->getAgentGroupCount() == 3,
+		require(world->getAgentGroupCount() == 3,
 			"A second frame of the confirmation changed the Agent groups");
 
 		// Answer it, and the modal goes with the answer.
 		std::string diagnostic;
-		require(confirmPendingAgentGroupDelete(building, diagnostic),
+		require(confirmPendingAgentGroupDelete(world, diagnostic),
 			("Confirming the on-screen deletion failed: " + diagnostic).c_str());
 
 		require(!renderOneFrame(),
 			"The confirmation stayed on the screen after it was answered with a delete");
 		require(!agentGroupDeletePending(),
 			"The confirmation stayed armed after the delete was answered");
-		require(building->getAgentGroupCount() == 2,
-			"The confirmed deletion did not reach the Building: "
-			+ groupSummary(*building));
-		requireNoDanglingAssignment(*building, "after answering the on-screen confirmation");
+		require(world->getAgentGroupCount() == 2,
+			"The confirmed deletion did not reach the World: "
+			+ groupSummary(*world));
+		requireNoDanglingAssignment(*world, "after answering the on-screen confirmation");
 	}
 
 	// Every group's row carries its own Delete control, rendered through the
@@ -931,11 +931,11 @@ namespace
 	{
 		ImGuiGuard guard;
 
-		auto building = std::make_shared<core::Building>("Delete column", 12, 3);
-		buildFixture(*building);
+		auto world = std::make_shared<core::World>("Delete column", 12, 3);
+		buildFixture(*world);
 
 		ImGui::NewFrame();
-		ImGui::Begin("Building");
+		ImGui::Begin("World");
 
 		ImGuiTableFlags const flags =
 			ImGuiTableFlags_SizingStretchSame |
@@ -950,7 +950,7 @@ namespace
 		ImGui::TableHeadersRow();
 
 		std::vector<ImGuiID> deleteControlIds;
-		for (auto const id : building->getAgentGroupIds())
+		for (auto const id : world->getAgentGroupIds())
 		{
 			ImGui::TableNextRow();
 			ImGui::PushID(id.value);
@@ -959,7 +959,7 @@ namespace
 			auto const depthOnEntry = GImGui->DisabledStackSize;
 			auto const flagsOnEntry = GImGui->CurrentItemFlags;
 
-			renderAgentGroupDeleteCell(building, id);
+			renderAgentGroupDeleteCell(world, id);
 
 			require(GImGui->LastItemData.ID != 0,
 				("A group row rendered no Delete control: "
@@ -987,8 +987,8 @@ namespace
 		}
 		// Rendering the controls asked for nothing: the groups are exactly
 		// what they were before the frame.
-		require(groupSummary(*building) == "1:Alpha=0;2:Crew=4;3:Delta=0;",
-			"Rendering the Delete controls changed the groups: " + groupSummary(*building));
+		require(groupSummary(*world) == "1:Alpha=0;2:Crew=4;3:Delta=0;",
+			"Rendering the Delete controls changed the groups: " + groupSummary(*world));
 	}
 
 	// The whole panel, with the Delete column in it, rendered for real with
@@ -997,7 +997,7 @@ namespace
 	{
 		ImGuiGuard guard;
 
-		auto const shared = std::make_shared<core::Building>("Delete panel", 12, 3);
+		auto const shared = std::make_shared<core::World>("Delete panel", 12, 3);
 		buildFixture(*shared);
 
 		for (bool const paused : { true, false })
@@ -1006,7 +1006,7 @@ namespace
 			else if (shared->isSimulationPaused()) shared->resumeSimulation();
 
 			ImGui::NewFrame();
-			ImGui::Begin("Building");
+			ImGui::Begin("World");
 
 			auto const depthOnEntry = GImGui->DisabledStackSize;
 			auto const flagsOnEntry = GImGui->CurrentItemFlags;
@@ -1034,44 +1034,44 @@ namespace
 	// not alter Agent movement or other simulation state" means concretely.
 	std::string walkWithOptionalMidRunDelete(bool deleteMidRun)
 	{
-		core::Building building("Delete walk", 12, 3);
-		auto const corridor = building.addCorridor(0, 0, 12);
+		core::World world("Delete walk", 12, 3);
+		auto const corridor = world.addCorridor(0, 0, 12);
 		uint32_t destinationIdentifier{ 0x44454c31u };
-		building.addSectorMarker(corridor, 0, 11.5f, &destinationIdentifier);
-		building.finishBuild();
+		world.addSectorMarker(corridor, 0, 11.5f, &destinationIdentifier);
+		world.finishBuild();
 
-		auto const crew = building.addAgentGroup("Crew");
-		auto const walker = building.createAgent("Walker", corridor, 0, 0.5f);
-		auto const companion = building.createAgent("Companion", corridor, 0, 1.5f);
-		assign(building, walker, crew);
-		assign(building, companion, crew);
+		auto const crew = world.addAgentGroup("Crew");
+		auto const walker = world.createAgent("Walker", corridor, 0, 0.5f);
+		auto const companion = world.createAgent("Companion", corridor, 0, 1.5f);
+		assign(world, walker, crew);
+		assign(world, companion, crew);
 
-		auto* agent = building.lookupAgent(walker).entity;
-		auto const destination = building.getGraph()->getVertexByIdentifier(destinationIdentifier);
+		auto* agent = world.lookupAgent(walker).entity;
+		auto const destination = world.getGraph()->getVertexByIdentifier(destinationIdentifier);
 		require(destination != nullptr, "The walk destination vertex is missing");
-		auto path = building.getGraph()->calculatePath(agent, destination);
+		auto path = world.getGraph()->calculatePath(agent, destination);
 		require(path && !path->nodes.empty(), "The walk route could not be calculated");
 		agent->setPath(std::move(path), true);
 
-		for (uint32_t tick = 0; tick < 30; ++tick) building.advanceTick();
+		for (uint32_t tick = 0; tick < 30; ++tick) world.advanceTick();
 
-		auto const* walkingAgent = building.lookupAgent(walker).entity;
+		auto const* walkingAgent = world.lookupAgent(walker).entity;
 		auto const positionBeforeDelete = walkingAgent->getGlobalPosition();
-		require(!building.isSimulationPaused(),
-			"The test Building was paused before the delete, so running was never tested");
+		require(!world.isSimulationPaused(),
+			"The test World was paused before the delete, so running was never tested");
 
 		if (deleteMidRun)
 		{
 			std::string diagnostic;
-			require(building.deleteAgentGroup(crew, &diagnostic),
+			require(world.deleteAgentGroup(crew, &diagnostic),
 				("Deleting an Agent group mid-run failed: " + diagnostic).c_str());
-			require(!building.isSimulationPaused(),
+			require(!world.isSimulationPaused(),
 				"Deleting an Agent group paused a running simulation");
 		}
 
-		for (uint32_t tick = 0; tick < 90; ++tick) building.advanceTick();
+		for (uint32_t tick = 0; tick < 90; ++tick) world.advanceTick();
 
-		require(building.lookupAgent(walker).entity->getGlobalPosition()
+		require(world.lookupAgent(walker).entity->getGlobalPosition()
 			.distanceTo(positionBeforeDelete) > 0.01f,
 			"The walking Agent did not move after the delete, so the comparison proved nothing");
 
@@ -1079,7 +1079,7 @@ namespace
 		out.precision(6);
 		out << std::fixed;
 
-		auto const snapshot = building.getSimulationSnapshot();
+		auto const snapshot = world.getSimulationSnapshot();
 		out << "tick=" << snapshot.tick
 			<< " paused=" << snapshot.paused
 			<< " topology=" << snapshot.topologyGeneration << "\n";
@@ -1097,7 +1097,7 @@ namespace
 				<< " permit=" << entry.traversalPermit.value
 				<< " interaction=" << entry.interactionRequest.value << "\n";
 		}
-		for (auto const& event : building.consumeSimulationEvents())
+		for (auto const& event : world.consumeSimulationEvents())
 		{
 			out << "event " << event.sequence << ':' << event.tick
 				<< ':' << static_cast<int>(event.type)
@@ -1127,9 +1127,9 @@ namespace
 	// runtime state it shares with the simulation.
 	void theRuntimeSnapshotIsTheSameAcrossTheDeletion()
 	{
-		core::Building building("Snapshot across delete", 12, 3);
-		auto const fixture = buildFixture(building);
-		for (uint32_t tick = 0; tick < 12; ++tick) building.advanceTick();
+		core::World world("Snapshot across delete", 12, 3);
+		auto const fixture = buildFixture(world);
+		for (uint32_t tick = 0; tick < 12; ++tick) world.advanceTick();
 
 		auto const render = [](core::SimulationSnapshot const& snapshot)
 		{
@@ -1149,13 +1149,13 @@ namespace
 			return out.str();
 		};
 
-		auto const before = render(building.getSimulationSnapshot());
+		auto const before = render(world.getSimulationSnapshot());
 
 		std::string diagnostic;
-		require(building.deleteAgentGroup(fixture.crew, &diagnostic),
+		require(world.deleteAgentGroup(fixture.crew, &diagnostic),
 			("Deleting the occupied Agent group failed: " + diagnostic).c_str());
 
-		auto const after = render(building.getSimulationSnapshot());
+		auto const after = render(world.getSimulationSnapshot());
 		require(before == after,
 			"The runtime snapshot changed across an Agent group deletion:\n"
 			+ before + "\nvs\n" + after);
@@ -1170,70 +1170,70 @@ namespace
 		resetUndoHistory();
 		resetAgentGroupsPanelState();
 
-		auto building = std::make_shared<core::Building>("Delete undo", 12, 3);
-		auto const fixture = buildFixture(*building);
-		auto const idsBefore = building->getAgentGroupIds();
-		auto const groupsBefore = groupSummary(*building);
-		auto const assignmentsBefore = assignmentSummary(*building);
+		auto world = std::make_shared<core::World>("Delete undo", 12, 3);
+		auto const fixture = buildFixture(*world);
+		auto const idsBefore = world->getAgentGroupIds();
+		auto const groupsBefore = groupSummary(*world);
+		auto const assignmentsBefore = assignmentSummary(*world);
 		require(idsBefore.size() == 3, "The fixture did not start with three Agent groups");
 
 		std::string diagnostic;
-		require(commitAgentGroupDelete(building, fixture.crew, diagnostic),
+		require(commitAgentGroupDelete(world, fixture.crew, diagnostic),
 			("Committing the Agent group delete to undo failed: " + diagnostic).c_str());
-		require(gBuildingDocumentHistory.undoCount() == 1,
+		require(gWorldDocumentHistory.undoCount() == 1,
 			"The delete is not one undo entry, so undo cannot restore one step");
-		auto const postDeleteYaml = serializeBuilding(*building);
+		auto const postDeleteYaml = serializeWorld(*world);
 
-		restoreDocument(building, false);
+		restoreDocument(world, false);
 
-		require(building->getAgentGroupIds() == idsBefore,
+		require(world->getAgentGroupIds() == idsBefore,
 			"Undo did not restore the Agent groups in their creation-order positions: "
-			+ groupSummary(*building));
-		require(static_cast<bool>(building->lookupAgentGroup(fixture.crew)),
+			+ groupSummary(*world));
+		require(static_cast<bool>(world->lookupAgentGroup(fixture.crew)),
 			"Undo did not bring back the deleted Agent group under its own AgentGroupId");
-		require(building->getAgentGroupName(fixture.crew) == "Crew",
+		require(world->getAgentGroupName(fixture.crew) == "Crew",
 			"Undo restored the Agent group under a different name");
-		require(groupSummary(*building) == groupsBefore,
-			"Undo did not restore the groups and their counts: " + groupSummary(*building));
-		require(assignmentSummary(*building) == assignmentsBefore,
+		require(groupSummary(*world) == groupsBefore,
+			"Undo did not restore the groups and their counts: " + groupSummary(*world));
+		require(assignmentSummary(*world) == assignmentsBefore,
 			"Undo did not restore the assignments the deletion cleared: "
-			+ assignmentSummary(*building) + " vs " + assignmentsBefore);
-		require(building->getAgentGroupMemberCount(fixture.crew) == 4,
+			+ assignmentSummary(*world) + " vs " + assignmentsBefore);
+		require(world->getAgentGroupMemberCount(fixture.crew) == 4,
 			"Undo did not restore the deleted group's count");
 		for (auto const member : fixture.members)
 		{
-			require(building->getAgentGroup(member) == fixture.crew,
+			require(world->getAgentGroup(member) == fixture.crew,
 				("A former member was not restored to the deleted Agent group: "
 					+ std::to_string(member.value)).c_str());
-			require(agentGroupAssignmentLabel(*building, member) == "Crew",
+			require(agentGroupAssignmentLabel(*world, member) == "Crew",
 				"A restored member's Group cell does not read the group's name again");
 		}
-		requireNoDanglingAssignment(*building, "after undoing a delete");
+		requireNoDanglingAssignment(*world, "after undoing a delete");
 
 		// Redo removes them again, as one step, with nothing left behind.
-		restoreDocument(building, true);
+		restoreDocument(world, true);
 
-		require(!building->lookupAgentGroup(fixture.crew),
+		require(!world->lookupAgentGroup(fixture.crew),
 			"Redo did not remove the Agent group again");
-		require(building->getAgentGroupIds().size() == 2,
-			"Redo left the wrong number of Agent groups: " + groupSummary(*building));
-		require(groupSummary(*building) == "1:Alpha=0;3:Delta=0;",
+		require(world->getAgentGroupIds().size() == 2,
+			"Redo left the wrong number of Agent groups: " + groupSummary(*world));
+		require(groupSummary(*world) == "1:Alpha=0;3:Delta=0;",
 			"Redo did not restore the surviving groups to their post-delete state: "
-			+ groupSummary(*building));
+			+ groupSummary(*world));
 		for (auto const member : fixture.members)
 		{
-			require(!building->getAgentGroup(member),
+			require(!world->getAgentGroup(member),
 				("Redo left a former member assigned: "
 					+ std::to_string(member.value)).c_str());
-			require(agentGroupAssignmentLabel(*building, member) == "<none>",
+			require(agentGroupAssignmentLabel(*world, member) == "<none>",
 				"A re-deleted member's Group cell does not read <none>");
 		}
-		requireNoDanglingAssignment(*building, "after redoing a delete");
+		requireNoDanglingAssignment(*world, "after redoing a delete");
 
 		// And the document the redo restored is byte for byte the document the
 		// deletion left behind, so the round trip is a round trip and not a
 		// near miss.
-		require(serializeBuilding(*building) == postDeleteYaml,
+		require(serializeWorld(*world) == postDeleteYaml,
 			"The document restored by redo is not the document the deletion left");
 	}
 }

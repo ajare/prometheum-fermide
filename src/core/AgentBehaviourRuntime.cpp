@@ -23,7 +23,7 @@
 
 #include "core/Agent.h"
 #include "core/AgentBehaviourRegistry.h"
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/Log.h"
 #include "core/Simulation.h"
 #include "core/Sector.h"
@@ -537,7 +537,7 @@ namespace core
 			}
 			// Registry package preflight validates the module/API contract only.
 			// Hot reload invokes this factory with every real authored
-			// configuration in fresh per-Building candidate runtimes.
+			// configuration in fresh per-World candidate runtimes.
 			if (!invokeFactory)
 			{
 				AgentBehaviourModulePreflight result;
@@ -785,7 +785,7 @@ namespace core
 			case AgentBehaviourTeardownReason::Unassignment: return "unassignment";
 			case AgentBehaviourTeardownReason::Reset: return "reset";
 			case AgentBehaviourTeardownReason::Reload: return "reload";
-			case AgentBehaviourTeardownReason::BuildingClose: return "building_close";
+			case AgentBehaviourTeardownReason::WorldClose: return "world_close";
 			case AgentBehaviourTeardownReason::InstanceFailure: return "instance_failure";
 			case AgentBehaviourTeardownReason::BehaviourDeletion:
 				return "behaviour_deletion";
@@ -1226,10 +1226,10 @@ namespace core
 			return value ^ (value >> 31);
 		}
 
-		uint64_t deriveRandomSeed(uint64_t buildingSeed, AgentId agent,
+		uint64_t deriveRandomSeed(uint64_t worldSeed, AgentId agent,
 			AgentBehaviourId behaviour)
 		{
-			auto state = mixRandomSeed(buildingSeed + 0x9e3779b97f4a7c15ull);
+			auto state = mixRandomSeed(worldSeed + 0x9e3779b97f4a7c15ull);
 			state ^= mixRandomSeed(agent.value + 0x243f6a8885a308d3ull);
 			state ^= mixRandomSeed(behaviour.value + 0x13198a2e03707344ull);
 			return mixRandomSeed(state);
@@ -1337,9 +1337,9 @@ namespace core
 			, logWindowTicks(limits.logWindowTicks)
 			, state(lua_newstate(budgetedAllocate, &budget))
 		{
-			if (!state) throw std::runtime_error("Could not create Building Lua runtime");
+			if (!state) throw std::runtime_error("Could not create World Lua runtime");
 			sol::state_view lua(state.get());
-			hostLoader.packageName = "Building Agent behaviours";
+			hostLoader.packageName = "World Agent behaviours";
 			openScratchLibraries(lua, hostLoader);
 			ensureOpaqueMetatables(state.get());
 		}
@@ -1506,7 +1506,7 @@ namespace core
 			return true;
 		}
 
-		void synchronize(Building& building,
+		void synchronize(World& world,
 			std::vector<Definition> const& definitions)
 		{
 			std::map<AgentId, Definition const*> desired;
@@ -1554,15 +1554,15 @@ namespace core
 						(void)otherAgent;
 						if (other.assignment.behaviour != definition.assignment.behaviour
 							|| other.disabled) continue;
-						teardownInstance(building, other,
+						teardownInstance(world, other,
 							AgentBehaviourTeardownReason::InstanceFailure, true);
-						(void)building.cancelBehaviourAgentMovement(otherAgent);
+						(void)world.cancelBehaviourAgentMovement(otherAgent);
 					}
 				}
 				if (instance.disabled)
 				{
 					release(instance);
-					(void)building.cancelBehaviourAgentMovement(definition.agent);
+					(void)world.cancelBehaviourAgentMovement(definition.agent);
 					(void)lua_gc(state.get(), LUA_GCCOLLECT);
 				}
 				if (auto pending = pendingLifecycleOutcomes.find(definition.agent);
@@ -1575,12 +1575,12 @@ namespace core
 			}
 		}
 
-		std::string_view semanticMovementState(Building const& building,
+		std::string_view semanticMovementState(World const& world,
 			AgentId agentId, Agent const& agent) const
 		{
 			if (!agent.isActive()) return "suspended";
-			auto const goal = building.mMovementGoals.find(agentId);
-			if (goal == building.mMovementGoals.end()) return "idle";
+			auto const goal = world.mMovementGoals.find(agentId);
+			if (goal == world.mMovementGoals.end()) return "idle";
 			if (goal->second.cancelling) return "cancelling";
 			switch (agent.getState())
 			{
@@ -1593,10 +1593,10 @@ namespace core
 			return "idle";
 		}
 
-		void pushAgentState(Building const& building, AgentId agentId)
+		void pushAgentState(World const& world, AgentId agentId)
 		{
 			auto* lua = state.get();
-			auto const* agent = building.mAgents.find(agentId);
+			auto const* agent = world.mAgents.find(agentId);
 			lua_newtable(lua);
 			auto const backing = lua_gettop(lua);
 			pushOpaqueHandle(lua, AgentHandle{ agentId }, AgentMetatable);
@@ -1611,13 +1611,13 @@ namespace core
 				? std::string_view("active") : std::string_view("suspended");
 			lua_pushlstring(lua, status.data(), status.size());
 			lua_setfield(lua, backing, "status");
-			auto const movement = semanticMovementState(building, agentId, *agent);
+			auto const movement = semanticMovementState(world, agentId, *agent);
 			lua_pushlstring(lua, movement.data(), movement.size());
 			lua_pushvalue(lua, -1);
 			lua_setfield(lua, backing, "movement");
 			lua_setfield(lua, backing, "movement_state");
-			auto const goal = building.mMovementGoals.find(agentId);
-			if (goal == building.mMovementGoals.end()) lua_pushnil(lua);
+			auto const goal = world.mMovementGoals.find(agentId);
+			if (goal == world.mMovementGoals.end()) lua_pushnil(lua);
 			else pushMarkerHandle(lua, goal->second.marker);
 			lua_pushvalue(lua, -1);
 			lua_setfield(lua, backing, "destination_marker");
@@ -1646,23 +1646,23 @@ namespace core
 			lua_pushvalue(lua, -1);
 			lua_setfield(lua, backing, "position");
 			lua_setfield(lua, backing, "global_position");
-			lua_pushinteger(lua, static_cast<lua_Integer>(building.mSimulationTick));
+			lua_pushinteger(lua, static_cast<lua_Integer>(world.mSimulationTick));
 			lua_pushvalue(lua, -1);
 			lua_setfield(lua, backing, "simulation_tick");
 			lua_setfield(lua, backing, "tick");
 			pushImmutableProxy(lua);
 		}
 
-		void pushReadOnlyContext(Building const& building, Instance& instance)
+		void pushReadOnlyContext(World const& world, Instance& instance)
 		{
 			auto* lua = state.get();
 			lua_newtable(lua);
 			auto const backing = lua_gettop(lua);
 			lua_rawgeti(lua, LUA_REGISTRYINDEX, instance.configurationReference);
 			lua_setfield(lua, backing, "configuration");
-			lua_pushinteger(lua, static_cast<lua_Integer>(building.mSimulationTick));
+			lua_pushinteger(lua, static_cast<lua_Integer>(world.mSimulationTick));
 			lua_setfield(lua, backing, "tick");
-			pushAgentState(building, instance.scope.agent);
+			pushAgentState(world, instance.scope.agent);
 			lua_pushvalue(lua, -1);
 			lua_setfield(lua, backing, "agent");
 			lua_setfield(lua, backing, "state");
@@ -1672,16 +1672,16 @@ namespace core
 			pushImmutableProxy(lua);
 		}
 
-		void pushContext(Building const& building, Instance& instance)
+		void pushContext(World const& world, Instance& instance)
 		{
 			auto* lua = state.get();
 			lua_newtable(lua);
 			auto const backing = lua_gettop(lua);
 			lua_rawgeti(lua, LUA_REGISTRYINDEX, instance.configurationReference);
 			lua_setfield(lua, backing, "configuration");
-			lua_pushinteger(lua, static_cast<lua_Integer>(building.mSimulationTick));
+			lua_pushinteger(lua, static_cast<lua_Integer>(world.mSimulationTick));
 			lua_setfield(lua, backing, "tick");
-			pushAgentState(building, instance.scope.agent);
+			pushAgentState(world, instance.scope.agent);
 			lua_pushvalue(lua, -1);
 			lua_setfield(lua, backing, "agent");
 			lua_setfield(lua, backing, "state");
@@ -1709,7 +1709,7 @@ namespace core
 			pushImmutableProxy(lua);
 		}
 
-		void prepareScope(Building& building, AgentId agentId, Instance& instance,
+		void prepareScope(World& world, AgentId agentId, Instance& instance,
 			std::vector<PendingMovementCommand> const& pendingCommands)
 		{
 			instance.scope.active = true;
@@ -1720,7 +1720,7 @@ namespace core
 			instance.scope.logs.clear();
 			instance.scope.stagedTimers = instance.timers;
 			instance.scope.stagedRandomState = instance.randomState;
-			instance.scope.inspectMove = [&building, agentId, &pendingCommands](MarkerId marker)
+			instance.scope.inspectMove = [&world, agentId, &pendingCommands](MarkerId marker)
 			{
 				auto pending = std::find_if(pendingCommands.rbegin(), pendingCommands.rend(),
 					[agentId](PendingMovementCommand const& command)
@@ -1729,9 +1729,9 @@ namespace core
 					return MovementCommandResult{ pending->type == PendingMovementCommandType::MoveTo
 						&& pending->marker == marker ? MovementCommandStatus::NoOp
 						: MovementCommandStatus::AgentBusy };
-				return building.inspectBehaviourMoveToMarker(agentId, marker);
+				return world.inspectBehaviourMoveToMarker(agentId, marker);
 			};
-			instance.scope.inspectCancel = [&building, agentId, &pendingCommands]
+			instance.scope.inspectCancel = [&world, agentId, &pendingCommands]
 			{
 				auto pending = std::find_if(pendingCommands.rbegin(), pendingCommands.rend(),
 					[agentId](PendingMovementCommand const& command)
@@ -1739,15 +1739,15 @@ namespace core
 				if (pending != pendingCommands.rend())
 					return MovementCommandResult{ pending->type == PendingMovementCommandType::Cancel
 						? MovementCommandStatus::NoOp : MovementCommandStatus::AgentBusy };
-				return building.inspectBehaviourMovementCancellation(agentId);
+				return world.inspectBehaviourMovementCancellation(agentId);
 			};
-			instance.scope.setTimer = [&building, &instance, this](std::string name,
+			instance.scope.setTimer = [&world, &instance, this](std::string name,
 				uint64_t duration, std::string& diagnostic)
 			{
 				auto& timers = instance.scope.stagedTimers;
 				if (!instance.suspended
 					&& duration > std::numeric_limits<uint64_t>::max()
-						- building.mSimulationTick)
+						- world.mSimulationTick)
 				{
 					diagnostic = "timer due tick exceeds the simulation tick range";
 					return false;
@@ -1760,7 +1760,7 @@ namespace core
 					return false;
 				}
 				timers[std::move(name)] = instance.suspended
-					? duration : building.mSimulationTick + duration;
+					? duration : world.mSimulationTick + duration;
 				return true;
 			};
 			instance.scope.cancelTimer = [&instance](std::string const& name)
@@ -1804,7 +1804,7 @@ namespace core
 				else if (!logSuppressionEmitted)
 				{
 					addLogMessage("Agent behaviours", 0, LogLevel::Warning,
-						std::format("Agent behaviour log limit of {} per Building per {} ticks exceeded; further messages suppressed",
+						std::format("Agent behaviour log limit of {} per World per {} ticks exceeded; further messages suppressed",
 							logLimit, logWindowTicks));
 					logSuppressionEmitted = true;
 				}
@@ -1823,7 +1823,7 @@ namespace core
 			ProtectedCallResult result;
 			result.failure = AgentBehaviourRuntimeFailure::ConversionError;
 			result.diagnostic = std::format(
-				"Agent behaviour callback limit of {} per Building boundary exceeded",
+				"Agent behaviour callback limit of {} per World boundary exceeded",
 				callbackLimit);
 			result.traceback = result.diagnostic;
 			return result;
@@ -1920,7 +1920,7 @@ namespace core
 			pushImmutableProxy(lua);
 		}
 
-		void teardownInstance(Building& building, Instance& instance,
+		void teardownInstance(World& world, Instance& instance,
 			AgentBehaviourTeardownReason reason, bool keepDisabled)
 		{
 			auto* lua = state.get();
@@ -1932,10 +1932,10 @@ namespace core
 				if (pushCallback(instance, "on_stop"))
 				{
 					std::vector<PendingMovementCommand> noCommands;
-					prepareScope(building, instance.scope.agent, instance, noCommands);
+					prepareScope(world, instance.scope.agent, instance, noCommands);
 					auto const reasonName = teardownReasonName(reason);
 					lua_pushlstring(lua, reasonName.data(), reasonName.size());
-					pushReadOnlyContext(building, instance);
+					pushReadOnlyContext(world, instance);
 					auto const result = protectedCall(lua, budget, 2, 0);
 					instance.scope.active = false;
 					if (result.succeeded) publishLogs(instance, instance.scope.logs);
@@ -1989,7 +1989,7 @@ namespace core
 			instance.lifecycleOutcomes.push_back(std::move(outcome));
 		}
 
-		void dispatchOutcome(Building& building, AgentId agentId, Instance& instance,
+		void dispatchOutcome(World& world, AgentId agentId, Instance& instance,
 			PendingOutcome const& outcome,
 			std::vector<PendingMovementCommand>& commands)
 		{
@@ -1999,11 +1999,11 @@ namespace core
 			{
 				if (pushCallback(instance, "on_route_lost"))
 				{
-					prepareScope(building, agentId, instance, commands);
+					prepareScope(world, agentId, instance, commands);
 					pushMarkerHandle(lua, outcome.destination);
 					auto const reason = routeLossReasonName(outcome.routeLossReason);
 					lua_pushlstring(lua, reason.data(), reason.size());
-					pushContext(building, instance);
+					pushContext(world, instance);
 					auto const admission = admitCallback();
 					auto const result = admission.succeeded
 						? protectedCall(lua, budget, 3, 0) : admission;
@@ -2012,9 +2012,9 @@ namespace core
 			}
 			else if (pushCallback(instance, "on_event"))
 			{
-				prepareScope(building, agentId, instance, commands);
+				prepareScope(world, agentId, instance, commands);
 				pushSemanticEvent(outcome);
-				pushContext(building, instance);
+				pushContext(world, instance);
 				auto const admission = admitCallback();
 				auto const result = admission.succeeded
 					? protectedCall(lua, budget, 2, 0) : admission;
@@ -2023,16 +2023,16 @@ namespace core
 			lua_settop(lua, base);
 		}
 
-		void runBoundaryCallbacks(Building& building)
+		void runBoundaryCallbacks(World& world)
 		{
 			callbackCount = 0;
-			currentTick = building.mSimulationTick;
+			currentTick = world.mSimulationTick;
 			std::vector<PendingMovementCommand> commands;
 			std::vector<AgentId> disabledAgents;
 			for (auto& [agentId, instance] : instances)
 			{
 				if (instance.disabled) continue;
-				auto agent = building.mAgents.find(agentId);
+				auto agent = world.mAgents.find(agentId);
 				if (!agent) continue;
 				auto* lua = state.get();
 
@@ -2042,7 +2042,7 @@ namespace core
 					{ return lhs.sequence < rhs.sequence; });
 				for (auto const& outcome : instance.lifecycleOutcomes)
 				{
-					dispatchOutcome(building, agentId, instance, outcome, commands);
+					dispatchOutcome(world, agentId, instance, outcome, commands);
 					if (instance.disabled) break;
 				}
 				instance.lifecycleOutcomes.clear();
@@ -2054,8 +2054,8 @@ namespace core
 					auto const base = lua_gettop(lua);
 					if (pushCallback(instance, "on_start"))
 					{
-						prepareScope(building, agentId, instance, commands);
-						pushContext(building, instance);
+						prepareScope(world, agentId, instance, commands);
+						pushContext(world, instance);
 						lua_rawgeti(lua, LUA_REGISTRYINDEX,
 							instance.configurationReference);
 						auto const admission = admitCallback();
@@ -2073,7 +2073,7 @@ namespace core
 						{ return lhs.sequence < rhs.sequence; });
 					for (auto const& outcome : instance.outcomes)
 					{
-						dispatchOutcome(building, agentId, instance, outcome, commands);
+						dispatchOutcome(world, agentId, instance, outcome, commands);
 						if (instance.disabled) break;
 					}
 					instance.outcomes.clear();
@@ -2083,7 +2083,7 @@ namespace core
 				{
 					std::vector<std::string> dueTimers;
 					for (auto const& [name, dueTick] : instance.timers)
-						if (dueTick <= building.mSimulationTick) dueTimers.push_back(name);
+						if (dueTick <= world.mSimulationTick) dueTimers.push_back(name);
 					// Due timers form this boundary's immutable callback batch. Erasing all
 					// before the first callback preserves one-shot semantics.
 					for (auto const& name : dueTimers) instance.timers.erase(name);
@@ -2092,9 +2092,9 @@ namespace core
 						auto const base = lua_gettop(lua);
 						if (pushCallback(instance, "on_timer"))
 						{
-							prepareScope(building, agentId, instance, commands);
+							prepareScope(world, agentId, instance, commands);
 							lua_pushlstring(lua, name.data(), name.size());
-							pushContext(building, instance);
+							pushContext(world, instance);
 							auto const admission = admitCallback();
 							auto const result = admission.succeeded
 								? protectedCall(lua, budget, 2, 0) : admission;
@@ -2106,7 +2106,7 @@ namespace core
 				}
 				if (instance.disabled)
 				{
-					teardownInstance(building, instance,
+					teardownInstance(world, instance,
 						AgentBehaviourTeardownReason::InstanceFailure, true);
 					disabledAgents.push_back(agentId);
 				}
@@ -2120,13 +2120,13 @@ namespace core
 				if (std::find(disabledAgents.begin(), disabledAgents.end(), command.agent)
 					!= disabledAgents.end()) continue;
 				if (command.type == PendingMovementCommandType::MoveTo)
-					(void)building.moveBehaviourAgentToMarker(
+					(void)world.moveBehaviourAgentToMarker(
 						command.agent, command.marker);
 				else
-					(void)building.cancelBehaviourAgentMovement(command.agent);
+					(void)world.cancelBehaviourAgentMovement(command.agent);
 			}
 			for (auto agentId : disabledAgents)
-				(void)building.cancelBehaviourAgentMovement(agentId);
+				(void)world.cancelBehaviourAgentMovement(agentId);
 		}
 	};
 
@@ -2140,7 +2140,7 @@ namespace core
 
 	AgentBehaviourRuntimeAdapter::~AgentBehaviourRuntimeAdapter() = default;
 
-	bool AgentBehaviourRuntimeAdapter::prepareReload(Building& building,
+	bool AgentBehaviourRuntimeAdapter::prepareReload(World& world,
 		AgentBehaviourRegistry const& registry,
 		std::unique_ptr<AgentBehaviourRuntimeAdapter>& candidate,
 		std::vector<AgentBehaviourRuntimeDiagnostic>& diagnostics,
@@ -2152,8 +2152,8 @@ namespace core
 		try
 		{
 			auto prepared = std::make_unique<AgentBehaviourRuntimeAdapter>(
-				building.mAgentBehaviourRuntime->getLimits());
-			prepared->mImpl->currentTick = building.mSimulationTick;
+				world.mAgentBehaviourRuntime->getLimits());
+			prepared->mImpl->currentTick = world.mSimulationTick;
 
 			std::vector<AgentBehaviourHelperSource> helpers;
 			helpers.reserve(registry.mHelperModules.size());
@@ -2165,7 +2165,7 @@ namespace core
 			}
 
 			std::vector<Impl::Definition> definitions;
-			for (auto const& [agentId, agent] : building.mAgents.entries())
+			for (auto const& [agentId, agent] : world.mAgents.entries())
 			{
 				if (!agent || !agent->getBehaviourAssignment()) continue;
 				auto const overrideAssignment = assignments
@@ -2184,11 +2184,11 @@ namespace core
 				if (source == registry.mSourceCache.end()) continue;
 				definitions.push_back({ agentId, agent->getName(), behaviour->getName(),
 					assignment, agent->isActive(),
-					deriveRandomSeed(building.mRandomSeed, agentId, assignment.behaviour),
+					deriveRandomSeed(world.mRandomSeed, agentId, assignment.behaviour),
 					registry.getUuid(), registry.getPackageRevision(),
 					registry.mPackageDirectory
 						? registry.mPackageDirectory->filename().string()
-						: building.getAgentBehaviourRegistryPackageName(),
+						: world.getAgentBehaviourRegistryPackageName(),
 					behaviour->getSourceModulePath(), source->second, helpers });
 			}
 
@@ -2226,18 +2226,18 @@ namespace core
 		catch (std::exception const& error)
 		{
 			diagnostics.push_back({ AgentBehaviourRuntimeFailure::ConversionError,
-				AgentBehaviourRuntimeStage::Factory, {}, {}, building.mSimulationTick,
-				{}, {}, building.hasAgentBehaviourRegistryReference()
-					? building.getAgentBehaviourRegistryPackageName() : std::string{},
+				AgentBehaviourRuntimeStage::Factory, {}, {}, world.mSimulationTick,
+				{}, {}, world.hasAgentBehaviourRegistryReference()
+					? world.getAgentBehaviourRegistryPackageName() : std::string{},
 				{}, {}, error.what(), error.what() });
 			return false;
 		}
 		catch (...)
 		{
 			diagnostics.push_back({ AgentBehaviourRuntimeFailure::ConversionError,
-				AgentBehaviourRuntimeStage::Factory, {}, {}, building.mSimulationTick,
-				{}, {}, building.hasAgentBehaviourRegistryReference()
-					? building.getAgentBehaviourRegistryPackageName() : std::string{},
+				AgentBehaviourRuntimeStage::Factory, {}, {}, world.mSimulationTick,
+				{}, {}, world.hasAgentBehaviourRegistryReference()
+					? world.getAgentBehaviourRegistryPackageName() : std::string{},
 				{}, {}, "Unknown Lua reload preflight failure",
 				"Unknown Lua reload preflight failure" });
 			return false;
@@ -2252,12 +2252,12 @@ namespace core
 			std::make_move_iterator(diagnostics.end()));
 	}
 
-	bool AgentBehaviourRuntimeAdapter::runBoundary(Building& building)
+	bool AgentBehaviourRuntimeAdapter::runBoundary(World& world)
 	{
-		if (building.mCurrentPhase != SimulationPhase::None) return true;
+		if (world.mCurrentPhase != SimulationPhase::None) return true;
 		auto const diagnosticsBefore = mImpl->diagnostics.size();
 		std::vector<Impl::Definition> definitions;
-		auto const registry = building.mAgentBehaviourRegistry;
+		auto const registry = world.mAgentBehaviourRegistry;
 		if (registry && registry->mPackageDirectory)
 		{
 			std::vector<AgentBehaviourHelperSource> helpers;
@@ -2268,7 +2268,7 @@ namespace core
 				if (source == registry->mSourceCache.end()) continue;
 				helpers.push_back({ name, helper->getSourceModulePath(), source->second });
 			}
-			for (auto const& [agentId, agent] : building.mAgents.entries())
+			for (auto const& [agentId, agent] : world.mAgents.entries())
 			{
 				if (!agent || !agent->getBehaviourAssignment()) continue;
 				auto const& assignment = *agent->getBehaviourAssignment();
@@ -2281,7 +2281,7 @@ namespace core
 				if (source == registry->mSourceCache.end()) continue;
 				definitions.push_back({ agentId, agent->getName(), behaviour->getName(),
 					assignment, agent->isActive(),
-					deriveRandomSeed(building.mRandomSeed, agentId, assignment.behaviour),
+					deriveRandomSeed(world.mRandomSeed, agentId, assignment.behaviour),
 					registry->getUuid(), registry->getPackageRevision(),
 					registry->mPackageDirectory->filename().string(),
 					behaviour->getSourceModulePath(), source->second, helpers });
@@ -2289,9 +2289,9 @@ namespace core
 		}
 		try
 		{
-			mImpl->currentTick = building.mSimulationTick;
-			mImpl->synchronize(building, definitions);
-			mImpl->runBoundaryCallbacks(building);
+			mImpl->currentTick = world.mSimulationTick;
+			mImpl->synchronize(world, definitions);
+			mImpl->runBoundaryCallbacks(world);
 		}
 		catch (std::exception const& error)
 		{
@@ -2300,7 +2300,7 @@ namespace core
 			// (pause/headless stop and module scope) is layered by ticket #159.
 			mImpl->diagnostics.push_back({
 				AgentBehaviourRuntimeFailure::ConversionError,
-				AgentBehaviourRuntimeStage::Callback, {}, {}, building.mSimulationTick,
+				AgentBehaviourRuntimeStage::Callback, {}, {}, world.mSimulationTick,
 				{}, {}, {}, {}, {}, error.what(), error.what() });
 			for (auto& [agent, instance] : mImpl->instances)
 			{
@@ -2315,7 +2315,7 @@ namespace core
 		{
 			mImpl->diagnostics.push_back({
 				AgentBehaviourRuntimeFailure::ConversionError,
-				AgentBehaviourRuntimeStage::Callback, {}, {}, building.mSimulationTick,
+				AgentBehaviourRuntimeStage::Callback, {}, {}, world.mSimulationTick,
 				{}, {}, {}, {}, {}, "Unknown Lua adapter conversion failure",
 				"Unknown Lua adapter conversion failure" });
 			for (auto& [agent, instance] : mImpl->instances)
@@ -2328,7 +2328,7 @@ namespace core
 			}
 		}
 		auto const succeeded = mImpl->diagnostics.size() == diagnosticsBefore;
-		if (!succeeded && !building.mSimulationPaused) building.pauseSimulation();
+		if (!succeeded && !world.mSimulationPaused) world.pauseSimulation();
 		return succeeded;
 	}
 
@@ -2389,7 +2389,7 @@ namespace core
 			std::move(outcome));
 	}
 
-	void AgentBehaviourRuntimeAdapter::removeInstance(Building& building,
+	void AgentBehaviourRuntimeAdapter::removeInstance(World& world,
 		AgentId agent, AgentBehaviourTeardownReason reason)
 	{
 		mImpl->pendingLifecycleOutcomes.erase(agent);
@@ -2397,7 +2397,7 @@ namespace core
 		if (found == mImpl->instances.end()) return;
 		try
 		{
-			mImpl->teardownInstance(building, found->second, reason, false);
+			mImpl->teardownInstance(world, found->second, reason, false);
 		}
 		catch (...)
 		{
@@ -2410,7 +2410,7 @@ namespace core
 		mImpl->instances.erase(found);
 	}
 
-	void AgentBehaviourRuntimeAdapter::teardownAll(Building& building,
+	void AgentBehaviourRuntimeAdapter::teardownAll(World& world,
 		AgentBehaviourTeardownReason reason)
 	{
 		for (auto& [agent, instance] : mImpl->instances)
@@ -2418,7 +2418,7 @@ namespace core
 			(void)agent;
 			try
 			{
-				mImpl->teardownInstance(building, instance, reason, false);
+				mImpl->teardownInstance(world, instance, reason, false);
 			}
 			catch (...)
 			{

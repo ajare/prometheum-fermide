@@ -26,7 +26,7 @@
 #include <string>
 
 #include "core/Background.h"
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/CellDefinition.h"
 #include "core/Defines.h"
 #include "core/Sector.h"
@@ -68,36 +68,36 @@ namespace
 		return {};
 	}
 
-	std::shared_ptr<const core::Sector> sectorByIndex(core::Building const& building, uint32_t index)
+	std::shared_ptr<const core::Sector> sectorByIndex(core::World const& world, uint32_t index)
 	{
-		auto sector = building.getSector(index);
-		require(sector != nullptr, "Building reported a null Sector");
+		auto sector = world.getSector(index);
+		require(sector != nullptr, "World reported a null Sector");
 		return sector;
 	}
 
-	uint32_t windowTraversalResources(core::Building const& building)
+	uint32_t windowTraversalResources(core::World const& world)
 	{
 		uint32_t count{ 0 };
-		for (auto const& resource : building.getSimulationSnapshot().traversalResources)
+		for (auto const& resource : world.getSimulationSnapshot().traversalResources)
 			if (resource.isWindow) ++count;
 		return count;
 	}
 
-	std::string serializeBuilding(core::Building const& building)
+	std::string serializeWorld(core::World const& world)
 	{
 		core::SerializationWorkData workData;
 		auto writer = core::YamlSerializer::toString();
-		building.serialize(*writer, workData);
+		world.serialize(*writer, workData);
 		writer->serialize();
 		return writer->getSerializedString();
 	}
 
-	void loadInto(core::Building& target, std::string const& yaml)
+	void loadInto(core::World& target, std::string const& yaml)
 	{
 		core::SerializationWorkData workData;
 		auto reader = core::YamlSerializer::fromString(yaml);
 		reader->deserialize();
-		require(target.deserialize(*reader, workData), "Building YAML did not load");
+		require(target.deserialize(*reader, workData), "World YAML did not load");
 	}
 
 	// The arrangement every span test starts from: one Room up front, Backgrounds
@@ -116,15 +116,15 @@ namespace
 		uint32_t skyRight{ 0 };
 	};
 
-	SkyLayout authorBackgroundRow(core::Building& building)
+	SkyLayout authorBackgroundRow(core::World& world)
 	{
 		SkyLayout layout;
-		while (building.getLayerCount() < 3) building.addLayer();
-		layout.front = building.addRoom("Front", 0, 0, 0, 12, 1);
-		layout.skyLeft = building.addBackground(1, 0, 0, 4, 1, { 200, 120, 40 });
-		layout.skyMid = building.addBackground(1, 0, 4, 4, 1, { 30, 90, 150 });
-		layout.skyRight = building.addBackground(1, 0, 8, 4, 1, { 90, 160, 90 });
-		building.addRoom("Deep", 2, 0, 0, 12, 1);
+		while (world.getLayerCount() < 3) world.addLayer();
+		layout.front = world.addRoom("Front", 0, 0, 0, 12, 1);
+		layout.skyLeft = world.addBackground(1, 0, 0, 4, 1, { 200, 120, 40 });
+		layout.skyMid = world.addBackground(1, 0, 4, 4, 1, { 30, 90, 150 });
+		layout.skyRight = world.addBackground(1, 0, 8, 4, 1, { 90, 160, 90 });
+		world.addRoom("Deep", 2, 0, 0, 12, 1);
 		return layout;
 	}
 
@@ -137,21 +137,21 @@ namespace
 		uint32_t behind{ 0 };
 	};
 
-	MixedLayout authorBackgroundAndRoom(core::Building& building)
+	MixedLayout authorBackgroundAndRoom(core::World& world)
 	{
 		MixedLayout layout;
-		while (building.getLayerCount() < 3) building.addLayer();
-		layout.front = building.addRoom("Front", 0, 0, 0, 12, 1);
-		layout.sky = building.addBackground(1, 0, 0, 6, 1, { 200, 120, 40 });
-		layout.behind = building.addRoom("Behind", 1, 0, 6, 6, 1);
+		while (world.getLayerCount() < 3) world.addLayer();
+		layout.front = world.addRoom("Front", 0, 0, 0, 12, 1);
+		layout.sky = world.addBackground(1, 0, 0, 6, 1, { 200, 120, 40 });
+		layout.behind = world.addRoom("Behind", 1, 0, 6, 6, 1);
 		return layout;
 	}
 
 	// Each Background keeps its own cells after a Window spans them: the span is
 	// tolerated, not merged.
-	void backgroundsStaySeparate(core::Building const& building, SkyLayout const& layout)
+	void backgroundsStaySeparate(core::World const& world, SkyLayout const& layout)
 	{
-		auto const layer = building.getLayer(1);
+		auto const layer = world.getLayer(1);
 		for (uint32_t x = 0; x < 4; ++x)
 			require(layer->getCellDefinition(x, 0).sectorIndex == layout.skyLeft,
 				std::format("Sky Left no longer owns cell {},0 on Layer 1", x).c_str());
@@ -167,26 +167,26 @@ namespace
 // Two Backgrounds side by side behind one wide Window: accepted, with no diagnostic.
 void aWindowSpanningSeveralBackgroundsIsAccepted()
 {
-	core::Building building("Wide Window, two Backgrounds", 12, 3);
-	auto const layout = authorBackgroundRow(building);
+	core::World world("Wide Window, two Backgrounds", 12, 3);
+	auto const layout = authorBackgroundRow(world);
 
 	// The seam the Window is asked to straddle really is a Sector boundary.
-	require(sectorByIndex(building, layout.skyLeft)->getCellX1() == 3
-		&& sectorByIndex(building, layout.skyMid)->getCellX0() == 4,
+	require(sectorByIndex(world, layout.skyLeft)->getCellX1() == 3
+		&& sectorByIndex(world, layout.skyMid)->getCellX0() == 4,
 		"The two Backgrounds do not meet at the expected seam");
 
 	std::string diagnostic;
-	require(building.canAddSectorWindow(0, 0, 2, 6, 1, &diagnostic),
+	require(world.canAddSectorWindow(0, 0, 2, 6, 1, &diagnostic),
 		("A Window spanning two Backgrounds was refused: " + diagnostic).c_str());
 	require(diagnostic.empty(),
 		("An accepted Window still carried a diagnostic: " + diagnostic).c_str());
 
 	// The seam itself, dead centre on the boundary between two Backgrounds.
-	require(building.canAddSectorWindow(0, 0, 2, 4, 1, &diagnostic),
+	require(world.canAddSectorWindow(0, 0, 2, 4, 1, &diagnostic),
 		("A Window straddling the Background seam was refused: " + diagnostic).c_str());
 
 	// Spanning three Backgrounds is no different from spanning two.
-	require(building.canAddSectorWindow(0, 0, 1, 10, 1, &diagnostic),
+	require(world.canAddSectorWindow(0, 0, 1, 10, 1, &diagnostic),
 		("A Window spanning three Backgrounds was refused: " + diagnostic).c_str());
 }
 
@@ -195,12 +195,12 @@ void aWindowSpanningSeveralBackgroundsIsAccepted()
 // about what lies behind the whole aperture.
 void theBackSectorIsTheFirstBackgroundInTheSpan()
 {
-	core::Building building("First Background wins", 12, 3);
-	auto const layout = authorBackgroundRow(building);
+	core::World world("First Background wins", 12, 3);
+	auto const layout = authorBackgroundRow(world);
 
-	auto created = building.addSectorWindow(0, 0, 2, 6, 1,
+	auto created = world.addSectorWindow(0, 0, 2, 6, 1,
 		{ false, core::Window::State::Closed, core::Window::Style::Clear });
-	building.finishBuild();
+	world.finishBuild();
 
 	require(created.object != nullptr, "The spanning Window has no Window");
 	auto const back = created.object->getBackSector();
@@ -214,22 +214,22 @@ void theBackSectorIsTheFirstBackgroundInTheSpan()
 		"A Window spanning Backgrounds reports its traversal as configured");
 	require(!created.traversalResource,
 		"A Window spanning Backgrounds was given a traversal resource");
-	require(windowTraversalResources(building) == 0,
+	require(windowTraversalResources(world) == 0,
 		"A Window spanning Backgrounds minted a traversal resource");
 
-	backgroundsStaySeparate(building, layout);
+	backgroundsStaySeparate(world, layout);
 }
 
 // A span that mixes a Background with a Location is refused, in both orders, and
 // the refusal says why rather than just reporting a multi-Sector crossing.
 void aMixedBackgroundAndLocationSpanIsRefused()
 {
-	core::Building building("Half room, half sky", 12, 3);
-	auto const layout = authorBackgroundAndRoom(building);
+	core::World world("Half room, half sky", 12, 3);
+	auto const layout = authorBackgroundAndRoom(world);
 
 	// Background first, Room behind the rest of the Window.
 	std::string diagnostic;
-	require(!building.canAddSectorWindow(0, 0, 4, 4, 1, &diagnostic),
+	require(!world.canAddSectorWindow(0, 0, 4, 4, 1, &diagnostic),
 		"A Window spanning a Background and a Room was accepted");
 	require(diagnostic.find("Background") != std::string::npos,
 		("The mixed-span refusal does not mention the Background: " + diagnostic).c_str());
@@ -237,7 +237,7 @@ void aMixedBackgroundAndLocationSpanIsRefused()
 		("The mixed-span refusal does not say why: " + diagnostic).c_str());
 
 	// Room first, Background behind the rest of the Window.
-	require(!building.canAddSectorWindow(0, 0, 2, 6, 1, &diagnostic),
+	require(!world.canAddSectorWindow(0, 0, 2, 6, 1, &diagnostic),
 		"A Window spanning a Room and a Background was accepted");
 	require(diagnostic.find("wall") != std::string::npos,
 		("The mixed-span refusal does not say why: " + diagnostic).c_str());
@@ -245,24 +245,24 @@ void aMixedBackgroundAndLocationSpanIsRefused()
 	// The refusal is a refusal to author, not a half-built Window.
 	require(throws([&]
 		{
-			building.addSectorWindow(0, 0, 4, 4, 1,
+			world.addSectorWindow(0, 0, 4, 4, 1,
 				{ false, core::Window::State::Closed, core::Window::Style::Clear });
 		}),
 		"addSectorWindow() accepted a mixed Background/Location span");
-	require(windowTraversalResources(building) == 0,
+	require(windowTraversalResources(world) == 0,
 		"The refused mixed span left a traversal resource behind");
 
 	// The same Window entirely over the Background half, and entirely over the
 	// Room half, are both still fine: the refusal is about the span, not the spot.
-	require(building.canAddSectorWindow(0, 0, 1, 4, 1, &diagnostic),
+	require(world.canAddSectorWindow(0, 0, 1, 4, 1, &diagnostic),
 		("A Window wholly over the Background was refused: " + diagnostic).c_str());
-	require(building.canAddSectorWindow(0, 0, 7, 4, 1, &diagnostic),
+	require(world.canAddSectorWindow(0, 0, 7, 4, 1, &diagnostic),
 		("A Window wholly over the Room was refused: " + diagnostic).c_str());
 
 	// And the Background the mixed span touched is untouched by the refusal.
-	require(sectorByIndex(building, layout.sky)->getType() == core::SectorType::Background,
+	require(sectorByIndex(world, layout.sky)->getType() == core::SectorType::Background,
 		"The Background changed after a mixed span was refused");
-	require(sectorByIndex(building, layout.behind)->getType() != core::SectorType::Background,
+	require(sectorByIndex(world, layout.behind)->getType() != core::SectorType::Background,
 		"The Room behind the mixed span became a Background");
 }
 
@@ -270,21 +270,21 @@ void aMixedBackgroundAndLocationSpanIsRefused()
 // relaxation is about looking, never about entering.
 void aTraversableWindowOverTwoBackgroundsIsStillRefused()
 {
-	core::Building building("Traversable over sky", 12, 3);
-	authorBackgroundRow(building);
+	core::World world("Traversable over sky", 12, 3);
+	authorBackgroundRow(world);
 
-	require(windowTraversalResources(building) == 0,
-		"The Building starts with a traversal resource already");
+	require(windowTraversalResources(world) == 0,
+		"The World starts with a traversal resource already");
 
 	auto const message = exceptionMessage([&]
 		{
-			building.addSectorWindow(0, 0, 2, 6, 1,
+			world.addSectorWindow(0, 0, 2, 6, 1,
 				{ true, core::Window::State::Open, core::Window::Style::Clear });
 		});
 	require(!message.empty(), "A traversable Window over Backgrounds was accepted");
 	require(message.find("Background") != std::string::npos,
 		("The traversable refusal does not mention the Background: " + message).c_str());
-	require(windowTraversalResources(building) == 0,
+	require(windowTraversalResources(world) == 0,
 		"A refused traversable Window minted a traversal resource");
 }
 
@@ -296,16 +296,16 @@ void theOneSectorRuleHoldsEverywhereElse()
 	// A Door's back Layer over two Backgrounds: refused, with the plain
 	// multi-Sector message rather than the Window's mixed-span wording.
 	{
-		core::Building building("Door over two Backgrounds", 12, 3);
-		while (building.getLayerCount() < 3) building.addLayer();
-		building.addCorridor(0, 0, 0, 12, 1);
-		building.addBackground(1, 0, 0, 6, 1, { 200, 120, 40 });
-		building.addBackground(1, 0, 6, 6, 1, { 30, 90, 150 });
+		core::World world("Door over two Backgrounds", 12, 3);
+		while (world.getLayerCount() < 3) world.addLayer();
+		world.addCorridor(0, 0, 0, 12, 1);
+		world.addBackground(1, 0, 0, 6, 1, { 200, 120, 40 });
+		world.addBackground(1, 0, 6, 6, 1, { 30, 90, 150 });
 
 		std::string diagnostic;
-		core::Building::CreateDoorOptions doorOptions;
+		core::World::CreateDoorOptions doorOptions;
 		doorOptions.width = 6;
-		require(!building.canAddCorridorDoor(0, 0, 2, doorOptions, &diagnostic),
+		require(!world.canAddCorridorDoor(0, 0, 2, doorOptions, &diagnostic),
 			"A Door spanning two Backgrounds was accepted");
 		require(diagnostic.find("cross multiple Sectors") != std::string::npos,
 			("The Door refusal changed shape: " + diagnostic).c_str());
@@ -315,16 +315,16 @@ void theOneSectorRuleHoldsEverywhereElse()
 
 	// A Door's back Layer over two Rooms: refused exactly as it always was.
 	{
-		core::Building building("Door over two Rooms", 12, 3);
-		while (building.getLayerCount() < 3) building.addLayer();
-		building.addCorridor(0, 0, 0, 12, 1);
-		building.addRoom("Left", 1, 0, 0, 6, 1);
-		building.addRoom("Right", 1, 0, 6, 6, 1);
+		core::World world("Door over two Rooms", 12, 3);
+		while (world.getLayerCount() < 3) world.addLayer();
+		world.addCorridor(0, 0, 0, 12, 1);
+		world.addRoom("Left", 1, 0, 0, 6, 1);
+		world.addRoom("Right", 1, 0, 6, 6, 1);
 
 		std::string diagnostic;
-		core::Building::CreateDoorOptions doorOptions;
+		core::World::CreateDoorOptions doorOptions;
 		doorOptions.width = 6;
-		require(!building.canAddCorridorDoor(0, 0, 2, doorOptions, &diagnostic),
+		require(!world.canAddCorridorDoor(0, 0, 2, doorOptions, &diagnostic),
 			"A Door spanning two Rooms was accepted");
 		require(diagnostic.find("cross multiple Sectors") != std::string::npos,
 			("The Door refusal changed shape: " + diagnostic).c_str());
@@ -333,14 +333,14 @@ void theOneSectorRuleHoldsEverywhereElse()
 	// A Window's own front Layer keeps the strict rule: only the Layer it looks
 	// into may span more than one Sector.
 	{
-		core::Building building("Wide front span", 12, 3);
-		while (building.getLayerCount() < 3) building.addLayer();
-		building.addRoom("Left", 0, 0, 0, 6, 1);
-		building.addRoom("Right", 0, 0, 6, 6, 1);
-		building.addBackground(1, 0, 0, 12, 1, { 200, 120, 40 });
+		core::World world("Wide front span", 12, 3);
+		while (world.getLayerCount() < 3) world.addLayer();
+		world.addRoom("Left", 0, 0, 0, 6, 1);
+		world.addRoom("Right", 0, 0, 6, 6, 1);
+		world.addBackground(1, 0, 0, 12, 1, { 200, 120, 40 });
 
 		std::string diagnostic;
-		require(!building.canAddSectorWindow(0, 0, 2, 6, 1, &diagnostic),
+		require(!world.canAddSectorWindow(0, 0, 2, 6, 1, &diagnostic),
 			"A Window whose front Layer spans two Rooms was accepted");
 		require(diagnostic.find("cross multiple Sectors") != std::string::npos,
 			("The front-Layer refusal changed shape: " + diagnostic).c_str());
@@ -348,15 +348,15 @@ void theOneSectorRuleHoldsEverywhereElse()
 
 	// A Ladder crossing Sectors on its own Layer is refused as it always was.
 	{
-		core::Building building("Ladder across rooms", 12, 4);
-		while (building.getLayerCount() < 3) building.addLayer();
-		auto const lower = building.addRoom("Lower", 1, 0, 0, 6, 2);
-		building.addRoom("Upper", 1, 2, 0, 6, 2);
-		building.addRoom("Fore", 0, 0, 0, 6, 4);
+		core::World world("Ladder across rooms", 12, 4);
+		while (world.getLayerCount() < 3) world.addLayer();
+		auto const lower = world.addRoom("Lower", 1, 0, 0, 6, 2);
+		world.addRoom("Upper", 1, 2, 0, 6, 2);
+		world.addRoom("Fore", 0, 0, 0, 6, 4);
 
 		require(throws([&]
 			{
-				building.addSectorLadder(lower, 0, 1, { 4, false, true });
+				world.addSectorLadder(lower, 0, 1, { 4, false, true });
 			}),
 			"A Ladder crossing two Sectors was accepted");
 	}
@@ -367,17 +367,17 @@ void theOneSectorRuleHoldsEverywhereElse()
 // still spanning the same two Backgrounds.
 void aMultiBackgroundSpanReplaysFromItsOwnRecords()
 {
-	core::Building building("Span replay", 12, 3);
-	auto const layout = authorBackgroundRow(building);
-	building.addSectorWindow(0, 0, 2, 6, 1,
+	core::World world("Span replay", 12, 3);
+	auto const layout = authorBackgroundRow(world);
+	world.addSectorWindow(0, 0, 2, 6, 1,
 		{ false, core::Window::State::Closed, core::Window::Style::Clear });
-	building.finishBuild();
+	world.finishBuild();
 
-	core::Building reloaded("Span replay reload", 12, 3);
-	loadInto(reloaded, serializeBuilding(building));
+	core::World reloaded("Span replay reload", 12, 3);
+	loadInto(reloaded, serializeWorld(world));
 
-	require(reloaded.getNumSectors() == building.getNumSectors(),
-		"The replayed Building has a different Sector count");
+	require(reloaded.getNumSectors() == world.getNumSectors(),
+		"The replayed World has a different Sector count");
 	auto const skyLeft = sectorByIndex(reloaded, layout.skyLeft);
 	require(skyLeft->getType() == core::SectorType::Background,
 		"The replayed left Background is not a Background");
@@ -407,9 +407,9 @@ void aMultiBackgroundSpanReplaysFromItsOwnRecords()
 			}
 		}
 	}
-	require(replayed != nullptr, "The replayed Building holds no Window");
+	require(replayed != nullptr, "The replayed World holds no Window");
 	require(distinctWindows == 1,
-		std::format("The replayed Building holds {} distinct Windows, expected 1", distinctWindows).c_str());
+		std::format("The replayed World holds {} distinct Windows, expected 1", distinctWindows).c_str());
 	require(replayedCellX == 2 && replayed->getCellsWide() == 6,
 		"The replayed Window is not the wide Window that was saved");
 	require(replayed->getBackSector() != nullptr

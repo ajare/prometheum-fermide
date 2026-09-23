@@ -18,7 +18,7 @@ Single-context repo:
 ├── CONTEXT.md
 ├── docs/adr/
 │   ├── 0001-separate-device-control-from-traversal-coordination.md
-│   └── 0002-generalise-building-layers.md
+│   └── 0002-generalise-world-layers.md
 └── src/
 ```
 

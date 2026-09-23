@@ -15,7 +15,7 @@
 #include <variant>
 
 #include "core/AgentBehaviourRuntime.h"
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/SerializationException.h"
 #include "core/YamlSerializer.h"
 
@@ -434,27 +434,27 @@ namespace core
 		return behaviour->getName();
 	}
 
-	void AgentBehaviourRegistry::registerBuilding(Building& building)
+	void AgentBehaviourRegistry::registerWorld(World& world)
 	{
-		if (std::find(mLoadedBuildings.begin(), mLoadedBuildings.end(), &building)
-			== mLoadedBuildings.end())
-			mLoadedBuildings.push_back(&building);
+		if (std::find(mLoadedWorlds.begin(), mLoadedWorlds.end(), &world)
+			== mLoadedWorlds.end())
+			mLoadedWorlds.push_back(&world);
 	}
 
-	void AgentBehaviourRegistry::unregisterBuilding(Building& building)
+	void AgentBehaviourRegistry::unregisterWorld(World& world)
 	{
-		std::erase(mLoadedBuildings, &building);
+		std::erase(mLoadedWorlds, &world);
 	}
 
-	bool AgentBehaviourRegistry::hasLoadedBuilding(Building const* building) const
+	bool AgentBehaviourRegistry::hasLoadedWorld(World const* world) const
 	{
-		return building && std::find(mLoadedBuildings.begin(), mLoadedBuildings.end(),
-			building) != mLoadedBuildings.end();
+		return world && std::find(mLoadedWorlds.begin(), mLoadedWorlds.end(),
+			world) != mLoadedWorlds.end();
 	}
 
-	bool AgentBehaviourRegistry::hasLoadedBuildings() const
+	bool AgentBehaviourRegistry::hasLoadedWorlds() const
 	{
-		return !mLoadedBuildings.empty();
+		return !mLoadedWorlds.empty();
 	}
 
 	std::vector<LoadedAgentBehaviourUsage>
@@ -464,12 +464,12 @@ namespace core
 			throw std::out_of_range(std::format(
 				"Agent behaviour {} is not defined in this registry", id.value));
 		std::vector<LoadedAgentBehaviourUsage> result;
-		for (auto const* building : mLoadedBuildings)
+		for (auto const* world : mLoadedWorlds)
 		{
-			if (!building) continue;
+			if (!world) continue;
 			LoadedAgentBehaviourUsage usage;
-			usage.building = building;
-			for (auto const& [agentId, agent] : building->mAgents.entries())
+			usage.world = world;
+			for (auto const& [agentId, agent] : world->mAgents.entries())
 			{
 				if (agent && agent->getBehaviourAssignment()
 					&& agent->getBehaviourAssignment()->behaviour == id)
@@ -479,9 +479,9 @@ namespace core
 		}
 		std::sort(result.begin(), result.end(), [](auto const& left, auto const& right)
 		{
-			if (left.building->getName() != right.building->getName())
-				return left.building->getName() < right.building->getName();
-			return left.building < right.building;
+			if (left.world->getName() != right.world->getName())
+				return left.world->getName() < right.world->getName();
+			return left.world < right.world;
 		});
 		return result;
 	}
@@ -602,17 +602,17 @@ namespace core
 			}
 		}
 
-		auto buildings = mLoadedBuildings;
-		std::stable_sort(buildings.begin(), buildings.end(),
-			[](Building const* left, Building const* right)
+		auto worlds = mLoadedWorlds;
+		std::stable_sort(worlds.begin(), worlds.end(),
+			[](World const* left, World const* right)
 			{
 				if (!left || !right) return left != nullptr;
 				return left->getName() < right->getName();
 			});
-		for (auto* building : buildings)
+		for (auto* world : worlds)
 		{
-			if (!building) continue;
-			for (auto const& [agentId, agent] : building->mAgents.entries())
+			if (!world) continue;
+			for (auto const& [agentId, agent] : world->mAgents.entries())
 			{
 				if (!agent || !agent->getBehaviourAssignment()) continue;
 				auto const& assignment = *agent->getBehaviourAssignment();
@@ -621,14 +621,14 @@ namespace core
 				if (next && assignment.revision == next->getRevision())
 				{
 					std::string validation;
-					if (building->validateAgentBehaviourAssignmentAgainst(replacement,
+					if (world->validateAgentBehaviourAssignmentAgainst(replacement,
 						assignment.behaviour, assignment.revision,
 						assignment.configuration, nullptr, &validation)) continue;
 				}
 
 				AgentBehaviourSchemaMigrationItem item;
-				item.building = building;
-				item.buildingName = building->getName();
+				item.world = world;
+				item.worldName = world->getName();
 				item.agent = agentId;
 				item.agentName = agent->getName();
 				item.behaviour = assignment.behaviour;
@@ -667,7 +667,7 @@ namespace core
 
 				AgentBehaviourConfiguration normalized;
 				std::string validation;
-				if (compatible && !building->validateAgentBehaviourAssignmentAgainst(
+				if (compatible && !world->validateAgentBehaviourAssignmentAgainst(
 					replacement, assignment.behaviour, next->getRevision(),
 					assignment.configuration, &normalized, &validation))
 				{
@@ -788,21 +788,21 @@ namespace core
 		if (!previewDefinitionsFrom(replacement, preview, &previewDiagnostic))
 			return reject(std::move(previewDiagnostic));
 
-		auto buildings = mLoadedBuildings;
-		std::stable_sort(buildings.begin(), buildings.end(),
-			[](Building const* left, Building const* right)
+		auto worlds = mLoadedWorlds;
+		std::stable_sort(worlds.begin(), worlds.end(),
+			[](World const* left, World const* right)
 			{
 				if (!left || !right) return left != nullptr;
 				return left->getName() < right->getName();
 			});
-		std::map<Building*, std::map<AgentId, AgentBehaviourAssignment>>
+		std::map<World*, std::map<AgentId, AgentBehaviourAssignment>>
 			assignmentPlans;
-		std::set<std::pair<Building*, AgentId>> usedMigrations;
+		std::set<std::pair<World*, AgentId>> usedMigrations;
 		for (auto const& item : preview.configurations)
 		{
-			auto* building = item.building;
-			if (!building) continue;
-			auto const* agent = building->mAgents.find(item.agent);
+			auto* world = item.world;
+			if (!world) continue;
+			auto const* agent = world->mAgents.find(item.agent);
 			if (!agent || !agent->getBehaviourAssignment())
 				return reject("An affected Agent closed during schema classification");
 			auto const* next = replacement.lookupAgentBehaviour(item.behaviour);
@@ -814,7 +814,7 @@ namespace core
 				auto migration = std::find_if(migrations.begin(), migrations.end(),
 					[&](auto const& candidate)
 					{
-						return candidate.building == building
+						return candidate.world == world
 							&& candidate.agent == item.agent;
 					});
 				if (migration == migrations.end())
@@ -824,42 +824,42 @@ namespace core
 						fields += (fields.empty() ? "" : ", ") + field.path
 							+ " (" + field.diagnostic + ")";
 					failures.push_back({ AgentBehaviourReloadDiagnosticScope::Agent,
-						item.buildingName, item.agentName, item.agent,
+						item.worldName, item.agentName, item.agent,
 						item.behaviourName, item.behaviour, {},
 						"Explicit coordinated migration required for " + fields, {} });
 					continue;
 				}
-				if (!usedMigrations.emplace(building, item.agent).second)
+				if (!usedMigrations.emplace(world, item.agent).second)
 					return reject("An Agent configuration migration appears more than once");
 				sourceConfiguration = migration->configuration;
 			}
 			if (!next)
 			{
 				failures.push_back({ AgentBehaviourReloadDiagnosticScope::Agent,
-					item.buildingName, item.agentName, item.agent,
+					item.worldName, item.agentName, item.agent,
 					item.behaviourName, item.behaviour, {},
 					"A removed behaviour cannot receive a configuration migration", {} });
 				continue;
 			}
 			AgentBehaviourConfiguration normalized;
 			std::string assignmentDiagnostic;
-			if (!building->validateAgentBehaviourAssignmentAgainst(replacement,
+			if (!world->validateAgentBehaviourAssignmentAgainst(replacement,
 				item.behaviour, next->getRevision(), sourceConfiguration,
 				&normalized, &assignmentDiagnostic))
 			{
 				failures.push_back({ AgentBehaviourReloadDiagnosticScope::Agent,
-					item.buildingName, item.agentName, item.agent,
+					item.worldName, item.agentName, item.agent,
 					item.behaviourName, item.behaviour, {},
 					std::move(assignmentDiagnostic), {} });
 				continue;
 			}
-			assignmentPlans[building][item.agent] = AgentBehaviourAssignment{
+			assignmentPlans[world][item.agent] = AgentBehaviourAssignment{
 				item.behaviour, next->getRevision(), std::move(normalized) };
 		}
 		for (auto const& migration : migrations)
 		{
-			if (!migration.building || !usedMigrations.contains(
-				{ migration.building, migration.agent }))
+			if (!migration.world || !usedMigrations.contains(
+				{ migration.world, migration.agent }))
 				return reject("A supplied Agent configuration migration is not required by the preview");
 		}
 		if (!failures.empty())
@@ -871,34 +871,34 @@ namespace core
 			return false;
 		}
 
-		struct PreparedBuilding
+		struct PreparedWorld
 		{
-			Building* building{ nullptr };
+			World* world{ nullptr };
 			std::unique_ptr<AgentBehaviourRuntimeAdapter> runtime;
 			std::map<AgentId, AgentBehaviourAssignment> assignments;
 		};
-		std::vector<PreparedBuilding> preparedBuildings;
-		preparedBuildings.reserve(buildings.size());
-		for (auto* building : buildings)
+		std::vector<PreparedWorld> preparedWorlds;
+		preparedWorlds.reserve(worlds.size());
+		for (auto* world : worlds)
 		{
-			if (!building) continue;
+			if (!world) continue;
 			std::unique_ptr<AgentBehaviourRuntimeAdapter> candidateRuntime;
 			std::vector<AgentBehaviourRuntimeDiagnostic> runtimeDiagnostics;
-			auto plan = assignmentPlans.find(building);
+			auto plan = assignmentPlans.find(world);
 			auto const* overrides = plan == assignmentPlans.end()
 				? nullptr : &plan->second;
-			if (!AgentBehaviourRuntimeAdapter::prepareReload(*building, replacement,
+			if (!AgentBehaviourRuntimeAdapter::prepareReload(*world, replacement,
 				candidateRuntime, runtimeDiagnostics, overrides))
 			{
 				for (auto const& runtimeDiagnostic : runtimeDiagnostics)
 					failures.push_back({ AgentBehaviourReloadDiagnosticScope::Agent,
-						building->getName(), runtimeDiagnostic.agentName,
+						world->getName(), runtimeDiagnostic.agentName,
 						runtimeDiagnostic.agent, runtimeDiagnostic.behaviourName,
 						runtimeDiagnostic.behaviour, runtimeDiagnostic.moduleName,
 						runtimeDiagnostic.diagnostic, runtimeDiagnostic.traceback });
 				continue;
 			}
-			preparedBuildings.push_back({ building, std::move(candidateRuntime),
+			preparedWorlds.push_back({ world, std::move(candidateRuntime),
 				plan == assignmentPlans.end()
 					? std::map<AgentId, AgentBehaviourAssignment>{}
 					: std::move(plan->second) });
@@ -922,25 +922,25 @@ namespace core
 		mPackageDirectory = std::move(replacement.mPackageDirectory);
 		mDocumentPath = std::move(replacement.mDocumentPath);
 		mSavedDocumentContents = std::move(replacement.mSavedDocumentContents);
-		for (auto& prepared : preparedBuildings)
+		for (auto& prepared : preparedWorlds)
 		{
-			auto* building = prepared.building;
-			building->mAgentBehaviourRuntime->teardownAll(*building,
+			auto* world = prepared.world;
+			world->mAgentBehaviourRuntime->teardownAll(*world,
 				AgentBehaviourTeardownReason::Reload);
-			auto teardownDiagnostics = building->mAgentBehaviourRuntime
+			auto teardownDiagnostics = world->mAgentBehaviourRuntime
 				->consumeDiagnostics();
 			prepared.runtime->appendDiagnostics(std::move(teardownDiagnostics));
-			building->mAgentBehaviourRuntime = std::move(prepared.runtime);
+			world->mAgentBehaviourRuntime = std::move(prepared.runtime);
 			for (auto& [agentId, assignment] : prepared.assignments)
 			{
-				auto* agent = building->mAgents.find(agentId);
+				auto* agent = world->mAgents.find(agentId);
 				if (agent) agent->setBehaviourAssignment(std::move(assignment));
 			}
-			if (!prepared.assignments.empty()) building->modify();
-			building->mAgentBehaviourDependencyDiagnostic.clear();
-			for (auto const& [agentId, agent] : building->mAgents.entries())
+			if (!prepared.assignments.empty()) world->modify();
+			world->mAgentBehaviourDependencyDiagnostic.clear();
+			for (auto const& [agentId, agent] : world->mAgents.entries())
 				if (agent && agent->getBehaviourAssignment())
-					building->mSimulationCoordinator
+					world->mSimulationCoordinator
 						.clearAgentMovementForBehaviourEdit(agentId);
 		}
 		if (schemaHistoryNeedsSave) modify();
@@ -952,15 +952,15 @@ namespace core
 
 	bool AgentBehaviourRegistry::definitionEditsAreAllowed(std::string* diagnostic) const
 	{
-		for (auto const* building : mLoadedBuildings)
+		for (auto const* world : mLoadedWorlds)
 		{
-			if (building && !building->isSimulationPaused())
+			if (world && !world->isSimulationPaused())
 			{
 				if (diagnostic)
 				{
 					*diagnostic = std::format(
-						"Pause Building '{}' before editing this Agent behaviour registry",
-						building->getName());
+						"Pause World '{}' before editing this Agent behaviour registry",
+						world->getName());
 				}
 				return false;
 			}
@@ -1130,16 +1130,16 @@ namespace core
 			return reject(std::format(
 				"Agent behaviour {} is not defined in this registry", id.value));
 		if (!definitionEditsAreAllowed(diagnostic)) return false;
-		for (auto const* building : mLoadedBuildings)
+		for (auto const* world : mLoadedWorlds)
 		{
-			if (!building) continue;
-			for (auto const& [agentId, agent] : building->mAgents.entries())
+			if (!world) continue;
+			for (auto const& [agentId, agent] : world->mAgents.entries())
 			{
 				if (agent && agent->getBehaviourAssignment()
 					&& agent->getBehaviourAssignment()->behaviour == id)
-					return reject(format("Agent behaviour '{}' is assigned to Agent '{}' ({}) in Building '{}'",
+					return reject(format("Agent behaviour '{}' is assigned to Agent '{}' ({}) in World '{}'",
 						behaviour->getName(), agent->getName(), agentId.value,
-						building->getName()));
+						world->getName()));
 			}
 		}
 		mBehaviours.remove(id);
@@ -1162,35 +1162,35 @@ namespace core
 				"Agent behaviour {} is not defined in this registry", id.value));
 		if (!definitionEditsAreAllowed(diagnostic)) return false;
 
-		struct PreparedBuilding
+		struct PreparedWorld
 		{
-			Building* building{ nullptr };
+			World* world{ nullptr };
 			std::vector<AgentId> agents;
 			std::unique_ptr<AgentBehaviourRuntimeAdapter> runtime;
 		};
-		std::vector<PreparedBuilding> prepared;
+		std::vector<PreparedWorld> prepared;
 		for (auto const& usage : getLoadedAgentBehaviourUsage(id))
 		{
-			auto* building = const_cast<Building*>(usage.building);
-			if (!building || building->mAgentBehaviourRegistry.get() != this)
-				return reject("An affected Building can no longer participate in Agent behaviour deletion");
-			if (!building->agentBehaviourConfigurationsAreValid())
+			auto* world = const_cast<World*>(usage.world);
+			if (!world || world->mAgentBehaviourRegistry.get() != this)
+				return reject("An affected World can no longer participate in Agent behaviour deletion");
+			if (!world->agentBehaviourConfigurationsAreValid())
 				return reject(std::format(
-					"Building '{}' cannot participate: {}", building->getName(),
-					building->getAgentBehaviourDependencyDiagnostic()));
-			PreparedBuilding item;
-			item.building = building;
+					"World '{}' cannot participate: {}", world->getName(),
+					world->getAgentBehaviourDependencyDiagnostic()));
+			PreparedWorld item;
+			item.world = world;
 			for (auto const& agent : usage.agents) item.agents.push_back(agent.id);
 			std::vector<AgentBehaviourRuntimeDiagnostic> failures;
-			if (!AgentBehaviourRuntimeAdapter::prepareReload(*building, *this,
+			if (!AgentBehaviourRuntimeAdapter::prepareReload(*world, *this,
 				item.runtime, failures, nullptr, id))
 			{
 				std::string details;
 				for (auto const& failure : failures)
 					details += (details.empty() ? "" : "\n") + failure.diagnostic;
 				return reject(std::format(
-					"Building '{}' cannot participate in Agent behaviour deletion{}{}",
-					building->getName(), details.empty() ? "" : ":\n", details));
+					"World '{}' cannot participate in Agent behaviour deletion{}{}",
+					world->getName(), details.empty() ? "" : ":\n", details));
 			}
 			prepared.push_back(std::move(item));
 		}
@@ -1201,19 +1201,19 @@ namespace core
 		modify();
 		for (auto& item : prepared)
 		{
-			auto& building = *item.building;
-			building.mAgentBehaviourRuntime->teardownAll(building,
+			auto& world = *item.world;
+			world.mAgentBehaviourRuntime->teardownAll(world,
 				AgentBehaviourTeardownReason::BehaviourDeletion);
 			item.runtime->appendDiagnostics(
-				building.mAgentBehaviourRuntime->consumeDiagnostics());
-			building.mAgentBehaviourRuntime = std::move(item.runtime);
+				world.mAgentBehaviourRuntime->consumeDiagnostics());
+			world.mAgentBehaviourRuntime = std::move(item.runtime);
 			for (auto agentId : item.agents)
 			{
-				building.mSimulationCoordinator.clearAgentMovementForBehaviourEdit(agentId);
-				if (auto* agent = building.mAgents.find(agentId))
+				world.mSimulationCoordinator.clearAgentMovementForBehaviourEdit(agentId);
+				if (auto* agent = world.mAgents.find(agentId))
 					agent->clearBehaviourAssignment();
 			}
-			building.modify();
+			world.modify();
 		}
 		if (diagnostic) diagnostic->clear();
 		return true;
@@ -1436,19 +1436,19 @@ namespace core
 
 	void AgentBehaviourRegistry::saveTo(std::string const& manifestFilepath)
 	{
-		for (auto const* building : mLoadedBuildings)
+		for (auto const* world : mLoadedWorlds)
 		{
-			if (!building) continue;
+			if (!world) continue;
 			std::string dependencyDiagnostic;
-			if (!building->agentBehaviourConfigurationsAreValid()
-				|| !building->inspectAgentBehaviourAssignments(*this,
+			if (!world->agentBehaviourConfigurationsAreValid()
+				|| !world->inspectAgentBehaviourAssignments(*this,
 					&dependencyDiagnostic))
 			{
 				if (dependencyDiagnostic.empty())
-					dependencyDiagnostic = building->getAgentBehaviourDependencyDiagnostic();
+					dependencyDiagnostic = world->getAgentBehaviourDependencyDiagnostic();
 				throw SerializationException(std::format(
-					"Cannot save Agent behaviour registry while Building '{}' has an invalid dependent configuration: {}",
-					building->getName(), dependencyDiagnostic));
+					"Cannot save Agent behaviour registry while World '{}' has an invalid dependent configuration: {}",
+					world->getName(), dependencyDiagnostic));
 			}
 		}
 		auto const path = normalizedDocumentPath(manifestFilepath);

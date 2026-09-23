@@ -11,7 +11,7 @@
 #include "core/Defines.h"
 #include "core/Background.h"
 #include "core/Facade.h"
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/Location.h"
 #include "core/LadderTransit.h"
 #include "core/LiftTransit.h"
@@ -47,18 +47,18 @@ extern std::shared_ptr<const core::Sector> gSelectedSector;
 extern std::shared_ptr<const core::SectorObject> gHoveredSectorObject, gSelectedSectorObject;
 
 //
-// The Building currently being rendered. A clear Window composites the
+// The World currently being rendered. A clear Window composites the
 // Backgrounds behind it from the back Layer's cell grid (#37, and #36 made
 // the Window's single back Sector non-authoritative for such a span), and
 // the renderSector -> renderSectorObjects -> renderWindow chain which
-// reaches renderWindowClear carries no Building pointer. renderBuilding()
+// reaches renderWindowClear carries no World pointer. renderWorld()
 // sets this on entry; every render entry point goes through it.
 //
-static std::shared_ptr<const core::Building> gRenderBuilding;
+static std::shared_ptr<const core::World> gRenderWorld;
 
-void setRenderBuilding(std::shared_ptr<const core::Building> building)
+void setRenderWorld(std::shared_ptr<const core::World> world)
 {
-	gRenderBuilding = std::move(building);
+	gRenderWorld = std::move(world);
 }
 
 extern ImFont* gAgentIconFont;
@@ -112,7 +112,7 @@ void transformPosition(float& x, float& y)
 }
 
 
-void renderSelectedQueues(shared_ptr<const core::Building> const& building, int layer,
+void renderSelectedQueues(shared_ptr<const core::World> const& world, int layer,
 	ImDrawList* drawList)
 {
 	shared_ptr<const core::Object> selectedObject;
@@ -145,11 +145,11 @@ void renderSelectedQueues(shared_ptr<const core::Building> const& building, int 
 	}
 
 	// Lift-owned landing Doors have their own threshold resource containing the
-	// physical queue geometry. Building::getTraversalResourceId() deliberately
+	// physical queue geometry. World::getTraversalResourceId() deliberately
 	// resolves them to the Lift coordinator for scheduling, so select the landing
 	// resource directly when rendering that Door's queue spots.
 	core::TraversalResourceId resourceId;
-	auto schedulingResourceId = building->getTraversalResourceId(selectedObject.get());
+	auto schedulingResourceId = world->getTraversalResourceId(selectedObject.get());
 	if (gSelectedSectorObject
 		&& gSelectedSectorObject->getObjectType() == core::SectorObjectType::Door)
 	{
@@ -158,7 +158,7 @@ void renderSelectedQueues(shared_ptr<const core::Building> const& building, int 
 	}
 	else resourceId = schedulingResourceId;
 	if (!resourceId) return;
-	auto snapshot = building->getSimulationSnapshot();
+	auto snapshot = world->getSimulationSnapshot();
 	auto resource = find_if(snapshot.traversalResources.begin(), snapshot.traversalResources.end(),
 		[resourceId](auto const& candidate) { return candidate.id == resourceId; });
 	if (resource == snapshot.traversalResources.end()) return;
@@ -181,7 +181,7 @@ void renderSelectedQueues(shared_ptr<const core::Building> const& building, int 
 	for (auto const& lane : resource->queueLanes)
 	{
 		if (!lane.sector) continue;
-		auto sector = building->getSector((uint32_t)lane.sector.value - 1);
+		auto sector = world->getSector((uint32_t)lane.sector.value - 1);
 		if (!sector || (!resource->isLadder
 			&& sector->getLayerIndex() != (uint32_t)layer)) continue;
 		if (sector->getType() == core::SectorType::Lift
@@ -255,7 +255,7 @@ void renderSelectedQueues(shared_ptr<const core::Building> const& building, int 
 		auto agent = find_if(snapshot.agents.begin(), snapshot.agents.end(),
 			[&](auto const& candidate) { return candidate.id == request->owner; });
 		if (agent == snapshot.agents.end() || !agent->sectorId) continue;
-		auto sector = building->getSector((uint32_t)agent->sectorId.value - 1);
+		auto sector = world->getSector((uint32_t)agent->sectorId.value - 1);
 		if (!sector || sector->getLayerIndex() != (uint32_t)layer) continue;
 		auto point = agent->globalPosition
 			+ core::Vector2{ CORE_AGENT_MAX_WIDTH * 0.5f, CORE_AGENT_MAX_HEIGHT * 0.5f };
@@ -266,24 +266,24 @@ void renderSelectedQueues(shared_ptr<const core::Building> const& building, int 
 	}
 }
 
-void renderGrid(shared_ptr<const core::Building> const& building, ImColor const& colour,
+void renderGrid(shared_ptr<const core::World> const& world, ImColor const& colour,
 	float width, ImDrawList* drawList)
 {
-	core::Vector2 topLeft{ 0.0f, (float)building->getDecksHigh() };
-	core::Vector2 bottomRight{ (float)building->getCellsWide(), 0.0f };
+	core::Vector2 topLeft{ 0.0f, (float)world->getDecksHigh() };
+	core::Vector2 bottomRight{ (float)world->getCellsWide(), 0.0f };
 	transformPosition(topLeft);
 	transformPosition(bottomRight);
 
 	// Include both outer edges, not just the cell separators. Building the grid
 	// from world coordinates also keeps its far-right and bottom lines present
 	// when the canvas is larger than the world.
-	for (uint32_t x = 0; x <= building->getCellsWide(); ++x)
+	for (uint32_t x = 0; x <= world->getCellsWide(); ++x)
 	{
 		float screenX = topLeft.x + x * CORE_CELL_WIDTH_PIXELS;
 		drawList->AddLine({ screenX, topLeft.y }, { screenX, bottomRight.y }, colour, width);
 	}
 
-	for (uint32_t y = 0; y <= building->getDecksHigh(); ++y)
+	for (uint32_t y = 0; y <= world->getDecksHigh(); ++y)
 	{
 		float screenY = bottomRight.y - y * CORE_DECK_HEIGHT_PIXELS;
 		drawList->AddLine({ topLeft.x, screenY }, { bottomRight.x, screenY }, colour, width);
@@ -291,7 +291,7 @@ void renderGrid(shared_ptr<const core::Building> const& building, ImColor const&
 }
 
 
-void renderGraph(shared_ptr<const core::Graph> graph, shared_ptr<const core::Building> building)
+void renderGraph(shared_ptr<const core::Graph> graph, shared_ptr<const core::World> world)
 {
 	if (!gUISettings.renderGraph)
 	{
@@ -312,7 +312,7 @@ void renderGraph(shared_ptr<const core::Graph> graph, shared_ptr<const core::Bui
 	if (gUISettings.highlightNearestVertex)
 	{
 		auto mousePos = getMouseWorldPosition();
-		auto sector = building->getSectorAtPosition(layer, mousePos.x, mousePos.y);
+		auto sector = world->getSectorAtPosition(layer, mousePos.x, mousePos.y);
 	
 		if (sector)
 		{
@@ -847,8 +847,8 @@ void renderWindowClear(shared_ptr<const core::Window> window, uint32_t layer, La
 	// rect, so the seam between two Backgrounds lands exactly on the cell
 	// boundary between them - no bleed past it, no seam line across it - and
 	// stays pinned to the world as the viewport scrolls.
-	auto const regions = gRenderBuilding
-		? backgroundApertureRegions(*gRenderBuilding, backLayer, worldMin, worldMax)
+	auto const regions = gRenderWorld
+		? backgroundApertureRegions(*gRenderWorld, backLayer, worldMin, worldMax)
 		: std::vector<BackgroundApertureRegion>{};
 
 	if (!regions.empty())
@@ -1678,7 +1678,7 @@ void renderSector(shared_ptr<const core::Sector> sector, uint32_t layer, LayerRe
 			{
 				auto const x = side == CORE_SIDE_LEFT ? wallBounds0.x : wallBounds1.x;
 
-				for (auto const& span : wallSpansToDraw(gRenderBuilding, *sector, y, side, viewLayer))
+				for (auto const& span : wallSpansToDraw(gRenderWorld, *sector, y, side, viewLayer))
 				{
 					core::Vector2 from{ x, span.y0 }, to{ x, span.y1 };
 
@@ -1799,9 +1799,9 @@ void renderTransitThroughApertures(shared_ptr<const core::Sector> const& transit
 // made high decks vanish when scrolled into view.
 //
 std::vector<std::shared_ptr<const core::Sector>> viewportSectors(
-	std::shared_ptr<const core::Building> const& building, uint32_t layer)
+	std::shared_ptr<const core::World> const& world, uint32_t layer)
 {
-	return building->getSectorsInBounds(layer, -gUISettings.xOffset, -gUISettings.yOffset,
+	return world->getSectorsInBounds(layer, -gUISettings.xOffset, -gUISettings.yOffset,
 		gUISettings.worldViewportWidth, gUISettings.worldViewportHeight);
 }
 
@@ -1809,7 +1809,7 @@ std::vector<std::shared_ptr<const core::Sector>> viewportSectors(
 //
 // Draws every Sector one Layer contributes, in the given style.
 //
-void renderSectors(shared_ptr<const core::Building> building, uint32_t layer, LayerRenderStyle style,
+void renderSectors(shared_ptr<const core::World> world, uint32_t layer, LayerRenderStyle style,
 	ImDrawList* drawList)
 {
 	if (style == LayerRenderStyle::Hidden)
@@ -1817,7 +1817,7 @@ void renderSectors(shared_ptr<const core::Building> building, uint32_t layer, La
 		return;
 	}
 
-	auto const sectors = viewportSectors(building, layer);
+	auto const sectors = viewportSectors(world, layer);
 
 	auto const colour = style == LayerRenderStyle::Solid ? ForeLocationColour : BackLocationColour;
 
@@ -1838,12 +1838,12 @@ void renderSectors(shared_ptr<const core::Building> building, uint32_t layer, La
 // This pass runs whether or not the wireframe overlay is on: the overlay adds the
 // Layer behind's outlines, it is not what makes that Layer visible.
 //
-void renderBehindLayerTransits(shared_ptr<const core::Building> building, uint32_t behindLayer,
+void renderBehindLayerTransits(shared_ptr<const core::World> world, uint32_t behindLayer,
 	std::vector<std::shared_ptr<const core::Sector>> const& viewSectors, ImDrawList* drawList)
 {
 	auto const viewLayer = core::layerInFront(behindLayer);
 
-	auto const transits = viewportSectors(building, behindLayer);
+	auto const transits = viewportSectors(world, behindLayer);
 
 	for (auto const& transit : transits)
 	{
@@ -1853,15 +1853,15 @@ void renderBehindLayerTransits(shared_ptr<const core::Building> building, uint32
 }
 
 
-void renderBuilding(shared_ptr<const core::Building> building)
+void renderWorld(shared_ptr<const core::World> world)
 {
 	// The cell-grid lookup a multi-Background aperture composites from (#37)
-	// needs the Building; the sector-rendering chain does not carry one.
-	setRenderBuilding(building);
+	// needs the World; the sector-rendering chain does not carry one.
+	setRenderWorld(world);
 
 	auto drawList = ImGui::GetWindowDrawList();
 
-	auto const layerCount = building->getLayerCount();
+	auto const layerCount = world->getLayerCount();
 	auto const viewLayer = static_cast<uint32_t>(clamp(gUISettings.visibleLayer, 0,
 		static_cast<int>(layerCount) - 1));
 
@@ -1871,7 +1871,7 @@ void renderBuilding(shared_ptr<const core::Building> building)
 
 	if (viewLayer + 1 < layerCount)
 	{
-		viewSectors = viewportSectors(building, viewLayer);
+		viewSectors = viewportSectors(world, viewLayer);
 	}
 
 	for (auto const& pass : renderPasses(viewLayer, layerCount, gUISettings.renderNextLayerWireframe))
@@ -1880,13 +1880,13 @@ void renderBuilding(shared_ptr<const core::Building> building)
 		{
 		case LayerRenderStyle::Solid:
 			// The selected Layer, drawn whole.
-			renderSectors(building, pass.layer, pass.style, drawList);
+			renderSectors(world, pass.layer, pass.style, drawList);
 			break;
 
 		case LayerRenderStyle::Aperture:
 			// The Layer directly behind, drawn solid through the apertures the
 			// selected Layer gives it.
-			renderBehindLayerTransits(building, pass.layer, viewSectors, drawList);
+			renderBehindLayerTransits(world, pass.layer, viewSectors, drawList);
 
 			// Clipped transits intentionally draw over the selected Layer's
 			// Locations. Redraw the selected Layer's thresholds, then its controls,
@@ -1898,7 +1898,7 @@ void renderBuilding(shared_ptr<const core::Building> building)
 			// The wireframe overlay x-rays the Layer directly behind: its whole
 			// footprint is outlined over the selection. Outlines only - never a
 			// fill, Transit geometry, or the Agents inside them.
-			renderSectors(building, pass.layer, pass.style, drawList);
+			renderSectors(world, pass.layer, pass.style, drawList);
 			break;
 
 		case LayerRenderStyle::Hidden:
@@ -1909,11 +1909,11 @@ void renderBuilding(shared_ptr<const core::Building> building)
 
 	// Queue diagnostics are selection overlays and should remain visible above
 	// the selected object and agents.
-	renderSelectedQueues(building, viewLayer, drawList);
+	renderSelectedQueues(world, viewLayer, drawList);
 
 	// Grid
 	if (gUISettings.renderGrid)
 	{
-		renderGrid(building, ImColor(128, 128, 127), 1.0f, drawList);
+		renderGrid(world, ImColor(128, 128, 127), 1.0f, drawList);
 	}
 }

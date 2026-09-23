@@ -2,7 +2,7 @@
 //
 // The widgets here are deliberately thin over a few commit functions. Every
 // add, rename and delete the user performs goes through
-// captureDocumentSnapshot() -> Building operation -> commitDocumentEdit(),
+// captureDocumentSnapshot() -> World operation -> commitDocumentEdit(),
 // so one accepted operation is one undoable document edit and one refused
 // operation is none. The headless smoke checks call those same functions,
 // which is what pins that rule down.
@@ -20,7 +20,7 @@
 #include "imgui/IconsFontAwesome5.h"
 
 #include "core/AgentGroup.h"
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/Log.h"
 
 #include "DocumentEdit.h"
@@ -70,9 +70,9 @@ namespace
 
 	// A deletion that has been asked for but not yet answered. Only an
 	// occupied group ever gets here: an empty one is deleted on the spot, so
-	// there is nothing to answer. Held by the panel rather than the Building,
+	// there is nothing to answer. Held by the panel rather than the World,
 	// because arming a dialog is editor state; the deletion itself is the
-	// Building's, and stays behind commitAgentGroupDelete().
+	// World's, and stays behind commitAgentGroupDelete().
 	struct PendingAgentGroupDelete
 	{
 		core::AgentGroupId id{};
@@ -93,13 +93,13 @@ namespace
 	// Inline rename for one group: committed on Enter or on focus loss, in the
 	// style the Layer name editor established. A refused value leaves the group
 	// untouched and reports why beside the field.
-	void renderAgentGroupNameEditor(shared_ptr<core::Building> const& building,
+	void renderAgentGroupNameEditor(shared_ptr<core::World> const& world,
 		core::AgentGroupId id)
 	{
 		auto& edit = gGroupNameEdits[id.value];
 
 		if (!edit.editing)
-			loadIntoBuffer(edit.text, building->getAgentGroupName(id));
+			loadIntoBuffer(edit.text, world->getAgentGroupName(id));
 
 		ImGui::SetNextItemWidth(-1.0f);
 		auto const submitted = ImGui::InputText("##agentGroupName", edit.text.data(),
@@ -110,7 +110,7 @@ namespace
 			if (submitted || ImGui::IsItemActivated())
 			{
 				edit.editing = true;
-				edit.previous = building->getAgentGroupName(id);
+				edit.previous = world->getAgentGroupName(id);
 				edit.diagnostic.clear();
 			}
 			return;
@@ -130,7 +130,7 @@ namespace
 		}
 
 		string diagnostic;
-		if (!commitAgentGroupRename(building, id, next, diagnostic))
+		if (!commitAgentGroupRename(world, id, next, diagnostic))
 		{
 			edit.diagnostic = diagnostic;
 			core::addLogMessage("Agent groups", 0, core::LogLevel::Warning, diagnostic);
@@ -141,7 +141,7 @@ namespace
 
 	// The blank row behind "Add Group". Nothing exists until a valid name is
 	// submitted: closing the row without one creates no group and no history.
-	void renderAgentGroupAddRow(shared_ptr<core::Building> const& building)
+	void renderAgentGroupAddRow(shared_ptr<core::World> const& world)
 	{
 		ImGui::TableNextRow();
 		ImGui::PushID("addRow");
@@ -165,7 +165,7 @@ namespace
 		if (submitted || confirmed)
 		{
 			string diagnostic;
-			auto const created = commitAgentGroupAdd(building, gNewGroupName.data(), diagnostic);
+			auto const created = commitAgentGroupAdd(world, gNewGroupName.data(), diagnostic);
 			if (created)
 			{
 				gAddDiagnostic.clear();
@@ -182,7 +182,7 @@ namespace
 		}
 
 		// Abandoning the row is not a half-created group: nothing was committed,
-		// so closing it leaves the Building and the undo stack untouched.
+		// so closing it leaves the World and the undo stack untouched.
 		if (cancelled)
 		{
 			gAddingGroup = false;
@@ -199,23 +199,23 @@ namespace
 	}
 }
 
-core::AgentGroupId commitAgentGroupAdd(shared_ptr<core::Building> const& building,
+core::AgentGroupId commitAgentGroupAdd(shared_ptr<core::World> const& world,
 	string const& rawName, string& diagnostic)
 {
 	diagnostic.clear();
-	if (!building)
+	if (!world)
 	{
-		diagnostic = "There is no Building to add an Agent group to";
+		diagnostic = "There is no World to add an Agent group to";
 		return {};
 	}
 
 	// Snapshot first: the history entry has to hold the state from before the
-	// group existed. If the Building refuses the name, the snapshot is dropped
+	// group existed. If the World refuses the name, the snapshot is dropped
 	// uncommitted and the undo stack never sees it.
-	auto const undo = captureDocumentSnapshot(building);
+	auto const undo = captureDocumentSnapshot(world);
 	try
 	{
-		auto const id = building->addAgentGroup(rawName);
+		auto const id = world->addAgentGroup(rawName);
 		commitDocumentEdit(std::move(undo));
 		return id;
 	}
@@ -226,70 +226,70 @@ core::AgentGroupId commitAgentGroupAdd(shared_ptr<core::Building> const& buildin
 	}
 }
 
-bool commitAgentGroupRename(shared_ptr<core::Building> const& building, core::AgentGroupId id,
+bool commitAgentGroupRename(shared_ptr<core::World> const& world, core::AgentGroupId id,
 	string const& rawName, string& diagnostic)
 {
 	diagnostic.clear();
-	if (!building)
+	if (!world)
 	{
-		diagnostic = "There is no Building to rename an Agent group in";
+		diagnostic = "There is no World to rename an Agent group in";
 		return false;
 	}
 
-	auto const undo = captureDocumentSnapshot(building);
-	if (!building->renameAgentGroup(id, rawName, &diagnostic)) return false;
+	auto const undo = captureDocumentSnapshot(world);
+	if (!world->renameAgentGroup(id, rawName, &diagnostic)) return false;
 
 	commitDocumentEdit(std::move(undo));
 	return true;
 }
 
-bool commitAgentGroupDelete(shared_ptr<core::Building> const& building, core::AgentGroupId id,
+bool commitAgentGroupDelete(shared_ptr<core::World> const& world, core::AgentGroupId id,
 	string& diagnostic)
 {
 	diagnostic.clear();
-	if (!building)
+	if (!world)
 	{
-		diagnostic = "There is no Building to delete an Agent group from";
+		diagnostic = "There is no World to delete an Agent group from";
 		return false;
 	}
 
-	// One snapshot, one Building operation, one commit: the group and every
+	// One snapshot, one World operation, one commit: the group and every
 	// assignment cleared on its way out are inside the same document edit, so
 	// no undo can ever land between them and leave Agents pointing at a group
 	// that is back but missing, or a group gone with its Agents still on it.
-	auto const undo = captureDocumentSnapshot(building);
-	if (!building->deleteAgentGroup(id, &diagnostic)) return false;
+	auto const undo = captureDocumentSnapshot(world);
+	if (!world->deleteAgentGroup(id, &diagnostic)) return false;
 
 	commitDocumentEdit(std::move(undo));
 	return true;
 }
 
-bool agentGroupDeleteRequiresConfirmation(core::Building const& building,
+bool agentGroupDeleteRequiresConfirmation(core::World const& world,
 	core::AgentGroupId id)
 {
-	// Straight through the Building, which counts the Agents that carry the
+	// Straight through the World, which counts the Agents that carry the
 	// group's ID. The panel keeps no tally of its own, so the number that
 	// decides whether to ask - and the number the confirmation then shows -
 	// is one number, read from one place.
-	return building.getAgentGroupMemberCount(id) > 0;
+	return world.getAgentGroupMemberCount(id) > 0;
 }
 
-std::string agentGroupDeleteConfirmationText(core::Building const& building,
+std::string agentGroupDeleteConfirmationText(core::World const& world,
 	core::AgentGroupId id)
 {
-	auto const count = building.getAgentGroupMemberCount(id);
+	auto const count = world.getAgentGroupMemberCount(id);
 	return std::format("Delete the Agent group \"{}\"? {} Agent{} assigned to it "
 		"will return to no Agent group.",
-		building.getAgentGroupName(id), count, count == 1 ? "" : "s");
+		world.getAgentGroupName(id), count, count == 1 ? "" : "s");
 }
 
-void requestAgentGroupDelete(shared_ptr<core::Building> const& building,
+void requestAgentGroupDelete(shared_ptr<core::World> const& world,
 	core::AgentGroupId id)
 {
-	if (!building) return;
+	if (!world) return;
 
 	string diagnostic;
-	if (!building->canDeleteAgentGroup(id, &diagnostic))
+	if (!world->canDeleteAgentGroup(id, &diagnostic))
 	{
 		core::addLogMessage("Agent groups", 0, core::LogLevel::Warning, diagnostic);
 		return;
@@ -298,20 +298,20 @@ void requestAgentGroupDelete(shared_ptr<core::Building> const& building,
 	// An empty group has nothing to warn about: deleting it is the whole of
 	// the operation, so it happens now rather than behind a dialog that can
 	// only ever be answered "yes".
-	if (!agentGroupDeleteRequiresConfirmation(*building, id))
+	if (!agentGroupDeleteRequiresConfirmation(*world, id))
 	{
-		if (!commitAgentGroupDelete(building, id, diagnostic))
+		if (!commitAgentGroupDelete(world, id, diagnostic))
 			core::addLogMessage("Agent groups", 0, core::LogLevel::Warning, diagnostic);
 		return;
 	}
 
 	// Occupied: the impact is put to the user before anything is written.
-	// The text is taken from the Building here, at the moment the request is
+	// The text is taken from the World here, at the moment the request is
 	// made, so the count the user reads is the authoritative one rather than
 	// one the panel guessed at some earlier time.
 	gPendingAgentGroupDelete.id = id;
-	gPendingAgentGroupDelete.memberCount = building->getAgentGroupMemberCount(id);
-	gPendingAgentGroupDelete.text = agentGroupDeleteConfirmationText(*building, id);
+	gPendingAgentGroupDelete.memberCount = world->getAgentGroupMemberCount(id);
+	gPendingAgentGroupDelete.text = agentGroupDeleteConfirmationText(*world, id);
 	gPendingAgentGroupDelete.active = true;
 	gPendingAgentGroupDelete.openRequested = true;
 }
@@ -325,7 +325,7 @@ bool agentGroupDeletePending(core::AgentGroupId* id, uint32_t* memberCount)
 	return gPendingAgentGroupDelete.active;
 }
 
-bool confirmPendingAgentGroupDelete(shared_ptr<core::Building> const& building,
+bool confirmPendingAgentGroupDelete(shared_ptr<core::World> const& world,
 	string& diagnostic)
 {
 	if (!gPendingAgentGroupDelete.active)
@@ -335,18 +335,18 @@ bool confirmPendingAgentGroupDelete(shared_ptr<core::Building> const& building,
 	}
 
 	// The request is spent the moment it is answered, whichever way the
-	// deletion turns out: a delete that the Building refused should not stay
+	// deletion turns out: a delete that the World refused should not stay
 	// armed behind a popup the user has already closed.
 	auto const id = gPendingAgentGroupDelete.id;
 	cancelPendingAgentGroupDelete();
 
-	return commitAgentGroupDelete(building, id, diagnostic);
+	return commitAgentGroupDelete(world, id, diagnostic);
 }
 
 void cancelPendingAgentGroupDelete()
 {
 	// Drops the request and nothing else. No snapshot was taken when the
-	// request was armed, so there is nothing here to unwind: the Building,
+	// request was armed, so there is nothing here to unwind: the World,
 	// its Agents, the dirty flag and the undo history were never touched.
 	gPendingAgentGroupDelete = PendingAgentGroupDelete{};
 }
@@ -370,14 +370,14 @@ std::vector<std::string> const& agentGroupsPanelColumns()
 	return kAgentGroupColumns;
 }
 
-void renderAgentGroupActivationCell(shared_ptr<core::Building> const& building,
+void renderAgentGroupActivationCell(shared_ptr<core::World> const& world,
 	core::AgentGroupId id)
 {
-	if (!building) return;
+	if (!world) return;
 
-	auto const memberCount = building->getAgentGroupMemberCount(id);
-	auto const active = building->isAgentGroupActive(id);
-	auto const editable = building->isSimulationPaused() && memberCount != 0;
+	auto const memberCount = world->getAgentGroupMemberCount(id);
+	auto const active = world->isAgentGroupActive(id);
+	auto const editable = world->isSimulationPaused() && memberCount != 0;
 
 	ImGui::BeginDisabled(!editable);
 	ImGui::PushID("active");
@@ -385,7 +385,7 @@ void renderAgentGroupActivationCell(shared_ptr<core::Building> const& building,
 		ImVec2(ImGui::GetFrameHeight(), 0.0f)))
 	{
 		string diagnostic;
-		if (!building->setAgentGroupActive(id, !active, &diagnostic))
+		if (!world->setAgentGroupActive(id, !active, &diagnostic))
 			core::addLogMessage("Agent groups", 0, core::LogLevel::Warning, diagnostic);
 	}
 	ImGui::PopID();
@@ -393,7 +393,7 @@ void renderAgentGroupActivationCell(shared_ptr<core::Building> const& building,
 
 	if (ImGui::IsItemHovered())
 	{
-		if (!building->isSimulationPaused())
+		if (!world->isSimulationPaused())
 		{
 			ImGui::SetTooltip("Pause the simulation to activate or deactivate this Agent group");
 		}
@@ -405,33 +405,33 @@ void renderAgentGroupActivationCell(shared_ptr<core::Building> const& building,
 		{
 			auto const tooltip = std::format("{} all {} Agent{} in the Agent group \"{}\"",
 				active ? "Deactivate" : "Activate", memberCount, memberCount == 1 ? "" : "s",
-				building->getAgentGroupName(id));
+				world->getAgentGroupName(id));
 			ImGui::SetTooltip("%s", tooltip.c_str());
 		}
 	}
 }
 
-std::string agentGroupMemberCountLabel(core::Building const& building, core::AgentGroupId id)
+std::string agentGroupMemberCountLabel(core::World const& world, core::AgentGroupId id)
 {
-	// Straight through the Building, which derives the count from the Agents
+	// Straight through the World, which derives the count from the Agents
 	// that carry the group's ID. No counter lives here, in the panel or on the
 	// group, so there is nothing to keep in step with an assignment.
-	return std::to_string(building.getAgentGroupMemberCount(id));
+	return std::to_string(world.getAgentGroupMemberCount(id));
 }
 
-void renderAgentGroupMemberCountCell(core::Building const& building, core::AgentGroupId id)
+void renderAgentGroupMemberCountCell(core::World const& world, core::AgentGroupId id)
 {
-	ImGui::TextUnformatted(agentGroupMemberCountLabel(building, id).c_str());
+	ImGui::TextUnformatted(agentGroupMemberCountLabel(world, id).c_str());
 }
 
-void renderAgentGroupDeleteCell(std::shared_ptr<core::Building> const& building,
+void renderAgentGroupDeleteCell(std::shared_ptr<core::World> const& world,
 	core::AgentGroupId id)
 {
-	if (!building) return;
+	if (!world) return;
 
 	ImGui::PushID("delete");
 	if (ImGui::Button(ICON_FA_TRASH, ImVec2(ImGui::GetFrameHeight(), 0.0f)))
-		requestAgentGroupDelete(building, id);
+		requestAgentGroupDelete(world, id);
 	ImGui::PopID();
 
 	// The tooltip says what the button would do before it is asked, in the
@@ -439,16 +439,16 @@ void renderAgentGroupDeleteCell(std::shared_ptr<core::Building> const& building,
 	// many Agents a delete would hand back.
 	if (ImGui::IsItemHovered())
 	{
-		auto const count = building->getAgentGroupMemberCount(id);
+		auto const count = world->getAgentGroupMemberCount(id);
 		auto const tooltip = count == 0
-			? std::format("Delete the Agent group \"{}\"", building->getAgentGroupName(id))
+			? std::format("Delete the Agent group \"{}\"", world->getAgentGroupName(id))
 			: std::format("Delete the Agent group \"{}\": {} Agent{} return to no Agent group",
-				building->getAgentGroupName(id), count, count == 1 ? "" : "s");
+				world->getAgentGroupName(id), count, count == 1 ? "" : "s");
 		ImGui::SetTooltip("%s", tooltip.c_str());
 	}
 }
 
-void renderAgentGroupDeleteConfirmation(std::shared_ptr<core::Building> const& building)
+void renderAgentGroupDeleteConfirmation(std::shared_ptr<core::World> const& world)
 {
 	// Asked for on this pass: open the modal now, in the same ID scope the
 	// rest of this function uses, so the popup's identity is stable however
@@ -491,7 +491,7 @@ void renderAgentGroupDeleteConfirmation(std::shared_ptr<core::Building> const& b
 	if (ImGui::Button(ICON_FA_TRASH " Delete"))
 	{
 		string diagnostic;
-		if (!confirmPendingAgentGroupDelete(building, diagnostic))
+		if (!confirmPendingAgentGroupDelete(world, diagnostic))
 			core::addLogMessage("Agent groups", 0, core::LogLevel::Warning, diagnostic);
 		ImGui::CloseCurrentPopup();
 	}
@@ -506,9 +506,9 @@ void renderAgentGroupDeleteConfirmation(std::shared_ptr<core::Building> const& b
 	ImGui::EndPopup();
 }
 
-void renderAgentGroupsPanel(shared_ptr<core::Building> const& building)
+void renderAgentGroupsPanel(shared_ptr<core::World> const& world)
 {
-	if (!building) return;
+	if (!world) return;
 
 	ImGuiTableFlags const flags =
 		ImGuiTableFlags_SizingStretchSame |
@@ -532,34 +532,34 @@ void renderAgentGroupsPanel(shared_ptr<core::Building> const& building)
 			ImGuiTableColumnFlags_WidthFixed, kIconColumnWidth);
 		ImGui::TableHeadersRow();
 
-		// Creation order, straight off the Building's registry key order.
-		for (auto const id : building->getAgentGroupIds())
+		// Creation order, straight off the World's registry key order.
+		for (auto const id : world->getAgentGroupIds())
 		{
 			ImGui::TableNextRow();
 			ImGui::PushID(id.value);
 			ImGui::TableSetColumnIndex(0);
-			renderAgentGroupNameEditor(building, id);
+			renderAgentGroupNameEditor(world, id);
 
 			// Bulk activation changes the members' own flags. In a mixed group the
 			// eye remains open so one press can deactivate every active member.
 			ImGui::TableSetColumnIndex(static_cast<int>(kActiveColumn));
-			renderAgentGroupActivationCell(building, id);
+			renderAgentGroupActivationCell(world, id);
 
-			// The group's live membership count: every Agent in the Building
+			// The group's live membership count: every Agent in the World
 			// that carries this group's ID, wherever it is and whatever it is
 			// doing. Recomputed each frame, which is what makes it live.
 			ImGui::TableSetColumnIndex(static_cast<int>(kMemberCountColumn));
-			renderAgentGroupMemberCountCell(*building, id);
+			renderAgentGroupMemberCountCell(*world, id);
 
 			// Every group can be deleted, running or paused: grouping is
 			// editor-only metadata, so nothing about a live simulation makes a
 			// group safer to keep than one it is not running.
 			ImGui::TableSetColumnIndex(static_cast<int>(kDeleteColumn));
-			renderAgentGroupDeleteCell(building, id);
+			renderAgentGroupDeleteCell(world, id);
 			ImGui::PopID();
 		}
 
-		if (gAddingGroup) renderAgentGroupAddRow(building);
+		if (gAddingGroup) renderAgentGroupAddRow(world);
 
 		ImGui::EndTable();
 	}
@@ -568,7 +568,7 @@ void renderAgentGroupsPanel(shared_ptr<core::Building> const& building)
 	// every pass rather than only the one that armed it: a modal that stopped
 	// being drawn would still block the editor, and one that was never drawn
 	// again could never be answered.
-	renderAgentGroupDeleteConfirmation(building);
+	renderAgentGroupDeleteConfirmation(world);
 
 	ImGui::Spacing();
 
@@ -585,6 +585,6 @@ void renderAgentGroupsPanel(shared_ptr<core::Building> const& building)
 		ImGui::SetTooltip("Finish the group being added first");
 
 	ImGui::SameLine();
-	auto const count = building->getAgentGroupCount();
+	auto const count = world->getAgentGroupCount();
 	ImGui::TextDisabled("%u group%s", count, count == 1 ? "" : "s");
 }

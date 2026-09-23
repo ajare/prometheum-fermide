@@ -37,7 +37,7 @@ namespace core
 	class AgentTagRegistry;
 	class AgentBehaviourRegistry;
 
-	class Building : public Serializable
+	class World : public Serializable
 	{
 		friend class Agent;
 		friend class AgentTagRegistry;
@@ -45,7 +45,7 @@ namespace core
 		friend class AgentBehaviourRuntimeAdapter;
 		friend class Graph;
 		// The coordinator owns no entities; it drives the registries below and
-		// the private machinery beside them on the Building's behalf (ADR 0004).
+		// the private machinery beside them on the World's behalf (ADR 0004).
 		friend class SimulationCoordinator;
 
 	public:
@@ -446,10 +446,10 @@ namespace core
 
 		std::shared_ptr<Graph> mGraph;
 
-		// Simulation behaviour belongs to the coordinator (ADR 0004). Building
+		// Simulation behaviour belongs to the coordinator (ADR 0004). World
 		// owns it and stays the facade (design pattern) through which every
 		// caller, Agent included, reaches it; the coordinator owns no entities
-		// and reaches the registries below through this Building.
+		// and reaches the registries below through this World.
 		SimulationCoordinator mSimulationCoordinator;
 
 		EntityRegistry<AgentId, Agent> mAgents;
@@ -485,13 +485,13 @@ namespace core
 		};
 
 		// Agent tag definitions are an independent external document (ADR 0007).
-		// The Building persists only this basename/UUID reference. The loaded
+		// The World persists only this basename/UUID reference. The loaded
 		// registry is deliberately not a child for dirty-state purposes.
 		std::optional<AgentTagRegistryReference> mAgentTagRegistryReference;
 		std::shared_ptr<AgentTagRegistry> mAgentTagRegistry;
 
 		// Agent behaviour definitions are an independent external package
-		// document. The Building persists only this package-directory basename
+		// document. The World persists only this package-directory basename
 		// and expected UUID reference. The loaded registry is deliberately not a
 		// child for dirty-state purposes.
 		struct AgentBehaviourRegistryReference
@@ -505,7 +505,7 @@ namespace core
 		// values stay attached to their recorded revision, while simulation and
 		// registry save remain blocked until a coordinated migration repairs them.
 		std::string mAgentBehaviourDependencyDiagnostic;
-		// Every Building owns its own live Lua state. The adapter's pimpl keeps all
+		// Every World owns its own live Lua state. The adapter's pimpl keeps all
 		// Lua/sol2 types out of this domain header and its per-Agent environments
 		// prevent mutable module or instance state crossing assignments.
 		std::unique_ptr<AgentBehaviourRuntimeAdapter> mAgentBehaviourRuntime;
@@ -525,8 +525,8 @@ namespace core
 		MovementCommandResult cancelBehaviourAgentMovement(AgentId agent);
 
 		// Coordinated external-document history keeps only a weak copy. It can
-		// therefore recognize that this exact Building closed without retaining it
-		// or mistaking a later Building allocated at the same address for it.
+		// therefore recognize that this exact World closed without retaining it
+		// or mistaking a later World allocated at the same address for it.
 		std::shared_ptr<void const> mLifetimeToken{ std::make_shared<uint8_t>(0) };
 
 		enum class AgentTagSampleRepairAction
@@ -549,7 +549,7 @@ namespace core
 
 		// Checks every assigned stable ID and inherited property against a
 		// prospective registry. Opening may additionally plan repairs for samples
-		// whose definitions legitimately changed while the Building was closed.
+		// whose definitions legitimately changed while the World was closed.
 		bool inspectAgentTagAssignments(AgentTagRegistry const& registry,
 			bool allowSampleReconciliation,
 			std::vector<AgentTagReconciliation>* repairs,
@@ -569,7 +569,7 @@ namespace core
 			AgentHeightModifierProperty const& property);
 		void clearAgentTagHeightModifierSamples(AgentTagId id);
 
-		// Case-sensitive name lookup across the groups this Building owns, with
+		// Case-sensitive name lookup across the groups this World owns, with
 		// one group optionally excluded so a group renaming itself to the name
 		// it already carries is not its own collision.
 		bool agentGroupNameTaken(std::string const& trimmed,
@@ -683,7 +683,7 @@ namespace core
 			// stop/carriage/door grid.  ~0u means "no override"; a record whose
 			// overrides are all defaults persists none of them.
 			std::vector<uint32_t> overrides{};
-			// Marker / RemoveMarker: stable Building-local identity. Marker also
+			// Marker / RemoveMarker: stable World-local identity. Marker also
 			// uses name above. Zero occurs only while migrating versions 1-10.
 			MarkerId markerId{};
 		};
@@ -813,14 +813,14 @@ namespace core
 		// hands the result to restoreCarriedAgents().
 		std::vector<CarriedAgent> captureAgentsForReplay() const;
 
-		// Puts carried Agents back into the rebuilt Building. One that no longer
+		// Puts carried Agents back into the rebuilt World. One that no longer
 		// has somewhere legal to stand is left behind - that is the edit's own
 		// casualty, and it stops counting towards its group - and one that comes
-		// back comes back assigned to the same Agent group, provided this Building
+		// back comes back assigned to the same Agent group, provided this World
 		// still owns that group, so no replay can leave a dangling assignment.
 		//
 		// `landingChecked` re-judges the floor under each Agent before it is put
-		// back. Edits that move or remove floor beneath the Building (Layer
+		// back. Edits that move or remove floor beneath the World (Layer
 		// deletion, Room and Background editing) ask for it; edits inside an
 		// unchanged footprint (Door/Window removal, object movement, plain
 		// record replay) do not, which is what each of those paths did before
@@ -847,7 +847,7 @@ namespace core
 		// cell.  A threshold is shared by the Sectors on both sides of it.
 		std::set<uint32_t> thresholdLayers(SectorObjectType type, uint32_t x, uint32_t y) const;
 
-		// Every distinct Window the Building holds, as it is registered in a Sector.
+		// Every distinct Window the World holds, as it is registered in a Sector.
 		// A Window carries no cell position of its own - the cell it sits on belongs
 		// to its SectorObject - so the two travel together.  A Window's SectorObject
 		// is registered in both of the Sectors it joins, so the same Window is seen
@@ -871,7 +871,7 @@ namespace core
 		// Authored construction records rewritten for a Background removal, move, or
 		// resize: the Background record follows the plan, the records of the Windows
 		// which lose it are dropped, and every remaining Sector index is re-pointed
-		// against the compacted Building.
+		// against the compacted World.
 		bool prepareBackgroundEdit(LocationEditPlan const& plan,
 			std::vector<ConstructionRecord>& records, uint32_t& newSectorIndex,
 			std::string& diagnostic) const;
@@ -884,8 +884,8 @@ namespace core
 		void resetForDeserialization(std::string name, uint32_t cellsWide, uint32_t decksHigh,
 			bool preserveBehaviourRuntime = false);
 
-		// Constructs a validation candidate with the same dimensions and layer count as this Building.
-		std::unique_ptr<Building> makeCandidateBuilding() const;
+		// Constructs a validation candidate with the same dimensions and layer count as this World.
+		std::unique_ptr<World> makeCandidateWorld() const;
 
 		// Shared body of planRemoveLocation and planRemoveFacade: the same
 		// occupiable-removal cascade, gated on the Sector type the caller
@@ -1029,11 +1029,11 @@ namespace core
 
 		AgentId addOwnedAgentToSector(std::unique_ptr<Agent> agent, uint32_t sectorId);
 
-		// Snapshot building - every per-entity projection and the whole-world
+		// Snapshot world - every per-entity projection and the whole-world
 		// SimulationSnapshot - lives in SimulationCoordinator (ADR 0004 stage 5).
-		// Building keeps the whole-world forward in the public section below, plus
+		// World keeps the whole-world forward in the public section below, plus
 		// one private forward: creating and removing a traversal resource is entity
-		// ownership which stays with Building (ADR 0001), and the lifecycle events
+		// ownership which stays with World (ADR 0001), and the lifecycle events
 		// those paths publish carry the resource snapshot the coordinator builds.
 		TraversalResourceSnapshot makeTraversalResourceSnapshot(TraversalResourceId id,
 			TraversalResource const& resource) const;
@@ -1066,10 +1066,10 @@ namespace core
 		// ladder admission family with its entry-spacing rule, traversal progress
 		// and timeouts, permit expiry, and the grant / allocate / deny / commit /
 		// cancel / release transaction lifecycle - all live in
-		// SimulationCoordinator (ADR 0004). Building keeps the entry points which
-		// still have a caller outside Building and forwards them; the helpers
+		// SimulationCoordinator (ADR 0004). World keeps the entry points which
+		// still have a caller outside World and forwards them; the helpers
 		// reached only from inside the coordinator keep no forward. Configuring a
-		// traversal resource's queue lanes stays with Building: that is entity
+		// traversal resource's queue lanes stays with World: that is entity
 		// ownership (ADR 0001), not coordination.
 		void refreshQueuePositions(TraversalResource& resource);
 
@@ -1166,10 +1166,10 @@ namespace core
 
 	public:
 
-		Building(std::string const& name, uint32_t cellsWide, uint32_t decksHigh,
+		World(std::string const& name, uint32_t cellsWide, uint32_t decksHigh,
 			AgentBehaviourRuntimeLimits behaviourRuntimeLimits = {});
 
-		virtual ~Building();
+		virtual ~World();
 
 		std::string const& getName() const;
 		std::weak_ptr<void const> getLifetimeToken() const { return mLifetimeToken; }
@@ -1178,10 +1178,10 @@ namespace core
 		// Seed edits replace all live streams and are therefore paused-only.
 		bool setRandomSeed(uint64_t seed, std::string* diagnostic = nullptr);
 
-		// A Building references zero or one adjacent Agent tag registry by
-		// basename and expected UUID. Attaching is an authored Building change.
+		// A World references zero or one adjacent Agent tag registry by
+		// basename and expected UUID. Attaching is an authored World change.
 		// Resolving during open reconciles repairable modifier evolution and dirties
-		// the Building only when persisted samples need repair.
+		// the World only when persisted samples need repair.
 		bool hasAgentTagRegistryReference() const;
 		bool hasAttachedAgentTagRegistry() const;
 		std::string const& getAgentTagRegistryFilename() const;
@@ -1202,13 +1202,13 @@ namespace core
 		void detachAgentTagRegistryAndClearAssignments();
 		void resolveAgentTagRegistry(std::shared_ptr<AgentTagRegistry> registry);
 
-		// Save As may move an intact Building into an equivalent, independent tag
+		// Save As may move an intact World into an equivalent, independent tag
 		// namespace. Unlike an ordinary switch, this preserves assignments and
 		// samples, and refuses any definition or allocator difference.
 		void replaceAgentTagRegistryWithIndependentCopy(std::string filename,
 			std::shared_ptr<AgentTagRegistry> registry);
 
-		// A Building references zero or one adjacent Agent behaviour registry
+		// A World references zero or one adjacent Agent behaviour registry
 		// package by directory basename and expected UUID. Attaching and detaching
 		// are paused-only; a detach or incompatible switch is refused while an
 		// Agent assignment depends on the namespace.
@@ -1235,12 +1235,12 @@ namespace core
 		void detachAgentBehaviourRegistryAndClearAssignments();
 		void resolveAgentBehaviourRegistry(
 			std::shared_ptr<AgentBehaviourRegistry> registry);
-		// A package load failure is dependency state, not malformed Building data.
+		// A package load failure is dependency state, not malformed World data.
 		// Recording it never dirties authored data; the persisted reference and
 		// unresolved assignments remain available for repair.
 		void markAgentBehaviourRegistryUnavailable(std::string diagnostic);
 
-		// Save As may move an intact Building into an equivalent, independent
+		// Save As may move an intact World into an equivalent, independent
 		// behaviour package. Assignments remain unchanged while the package UUID
 		// and basename are replaced atomically.
 		void replaceAgentBehaviourRegistryWithIndependentCopy(
@@ -1249,7 +1249,7 @@ namespace core
 
 		// One paused-only, schema-validated authored Agent behaviour assignment.
 		// Optional defaults are materialized before mutation. A failed validation
-		// changes neither Agent nor Building.
+		// changes neither Agent nor World.
 		bool validateAgentBehaviourAssignment(AgentBehaviourId behaviour,
 			uint64_t revision, AgentBehaviourConfiguration const& configuration,
 			AgentBehaviourConfiguration* normalized = nullptr,
@@ -1285,12 +1285,12 @@ namespace core
 		void setLayerName(uint32_t layerIndex, std::string name);
 
 		// Appends a new back-most Layer with the default name and returns its index.
-		// Throws if the Building already has CORE_MAX_LAYERS layers.
+		// Throws if the World already has CORE_MAX_LAYERS layers.
 		uint32_t addLayer();
 
 		// Plans the destructive deletion of a Layer.  The plan is side-effect free
-		// and validates that the compacted Building can be rebuilt before it is
-		// offered for confirmation.  A Building must keep at least two Layers.
+		// and validates that the compacted World can be rebuilt before it is
+		// offered for confirmation.  A World must keep at least two Layers.
 		LayerDeletePlan planDeleteLayer(uint32_t layerIndex) const;
 
 		// Applies a confirmed Layer deletion by rewriting and replaying the authored
@@ -1692,7 +1692,7 @@ namespace core
 		// A Facade is occupiable, so deleting it goes through the same cascade a
 		// Room deletion plays: the plan names the Agents inside and every hosted
 		// object which goes with it, and the apply rebuilds the rest of the
-		// Building around the removal (ticket #53).  Resizing stays out of
+		// World around the removal (ticket #53).  Resizing stays out of
 		// scope: planResizeLocation keeps refusing a Facade.
 		LocationEditPlan planRemoveFacade(uint32_t sectorIndex) const;
 
@@ -1713,7 +1713,7 @@ namespace core
 
 		// Recolour a Background in place. Colour is the only thing a Background owns,
 		// so the live Sector and its authored ConstructionType::Background record are
-		// patched together: no rebuild, no cascade, and nothing else in the Building
+		// patched together: no rebuild, no cascade, and nothing else in the World
 		// reads a Background's colour. Returns false, with a diagnostic when one is
 		// asked for, if the Sector is not a Background or has no authored record.
 		bool setBackgroundColour(uint32_t sectorIndex, BackgroundColour const& colour,
@@ -1843,7 +1843,7 @@ namespace core
 		std::shared_ptr<const Object> getObjectAtPosition(uint32_t layerIndex, float x, float y,
 			std::shared_ptr<const SectorObject>* sectorObject = nullptr) const;
 
-		// Building-owned replacement APIs. Callers retain typed IDs, not ownership.
+		// World-owned replacement APIs. Callers retain typed IDs, not ownership.
 		// Agent lifecycle - creation, placement, removal, lookup, id resolution,
 		// waking, and traversal-ownership release - lives in SimulationCoordinator
 		// (ADR 0004); every Agent entry point below forwards to it, as does every
@@ -1861,7 +1861,7 @@ namespace core
 		// Agent activation (#118). An activated Agent is simulated; a deactivated
 		// one keeps its authored position and route but no tick acts on it.
 		// Activation is judged before it is written: the only refusals are an
-		// Agent the Building does not own and a running simulation, since an
+		// Agent the World does not own and a running simulation, since an
 		// activation change mid-run would strand whatever traversal the Agent was
 		// in the middle of. Like the Agent group assignment this is authored
 		// state: it persists through save/load, reset, undo, and clipboard
@@ -1874,7 +1874,7 @@ namespace core
 		bool setAgentActive(AgentId agent, bool active,
 			std::string* diagnostic = nullptr);
 
-		// Agent groups - authored, Building-scoped classifications (ADR 0006).
+		// Agent groups - authored, World-scoped classifications (ADR 0006).
 		// These are the only way in: the registry itself is never handed out, so
 		// no caller can rename or drop a group around the validation below.
 		// Groups enumerate in creation order; renaming never disturbs it.
@@ -1889,14 +1889,14 @@ namespace core
 
 		EntityLookup<AgentGroup const> lookupAgentGroup(AgentGroupId id) const;
 
-		// Throws if the ID is not one this Building issued.
+		// Throws if the ID is not one this World issued.
 		std::string const& getAgentGroupName(AgentGroupId id) const;
 
 		bool canAddAgentGroup(std::string const& name, std::string* diagnostic = nullptr) const;
 
 		// Creates the group under the trimmed name and returns its new stable
 		// ID. Throws with the canAddAgentGroup() diagnostic if the name is
-		// blank, overlong, or already taken in this Building.
+		// blank, overlong, or already taken in this World.
 		AgentGroupId addAgentGroup(std::string const& name);
 
 		bool canRenameAgentGroup(AgentGroupId id, std::string const& name,
@@ -1912,7 +1912,7 @@ namespace core
 		// Assigning an Agent to an Agent group, or clearing the assignment.
 		// An empty `group` AgentGroupId means no Agent group, so clearing is
 		// the same operation as assigning rather than a second path through
-		// the API. Both the Agent and the group have to be ones this Building
+		// the API. Both the Agent and the group have to be ones this World
 		// issued; a refusal changes nothing and reports why.
 		//
 		// Like the group definitions themselves this is editor-only metadata:
@@ -1922,19 +1922,19 @@ namespace core
 			std::string* diagnostic = nullptr) const;
 
 		// Returns false and changes nothing when the Agent is unknown or the
-		// Agent group is one this Building never defined, reporting the reason
+		// Agent group is one this World never defined, reporting the reason
 		// through `diagnostic`.
 		bool setAgentGroup(AgentId agent, AgentGroupId group,
 			std::string* diagnostic = nullptr);
 
 		// The Agent group assigned to an Agent, or an empty AgentGroupId when
-		// it has none. Throws if the Agent is not one this Building owns.
+		// it has none. Throws if the Agent is not one this World owns.
 		AgentGroupId getAgentGroup(AgentId agent) const;
 
 		// Group activation is a bulk edit of the current members' own activation
 		// flags, not an inherited group property. A group is reported active while
 		// at least one member is active; an empty group is therefore inactive.
-		// Throws if the ID is not one this Building issued.
+		// Throws if the ID is not one this World issued.
 		bool isAgentGroupActive(AgentGroupId group) const;
 
 		// Activates or deactivates every Agent currently assigned to `group`.
@@ -1947,7 +1947,7 @@ namespace core
 		bool setAgentGroupActive(AgentGroupId group, bool active,
 			std::string* diagnostic = nullptr);
 
-		// Agent tag assignments reference stable IDs from this Building's one
+		// Agent tag assignments reference stable IDs from this World's one
 		// attached Agent tag registry. Assignment and removal are paused-only
 		// authored edits. Every refusal validates before mutation, so an unknown
 		// Agent, absent registry, unknown tag, duplicate assignment, or removal of
@@ -1962,7 +1962,7 @@ namespace core
 			std::string* diagnostic = nullptr);
 
 		// Validates a complete authored assignment/sample state against this
-		// Building's attached registry without changing either document. This is
+		// World's attached registry without changing either document. This is
 		// the preflight used by same-registry Agent paste: every referenced tag,
 		// inherited-property constraint, sample source, revision and value must
 		// already be valid, so paste never silently resamples or drops state.
@@ -1981,26 +1981,26 @@ namespace core
 			std::string* diagnostic = nullptr);
 
 		// The assigned tag set in stable numeric order. Throws when `agent` is
-		// not owned by this Building.
+		// not owned by this World.
 		std::set<AgentTagId> const& getAgentTags(AgentId agent) const;
 
-		// How many of this Building's Agents are assigned to the Agent group.
+		// How many of this World's Agents are assigned to the Agent group.
 		// The count is derived from the Agents themselves on every call rather
 		// than kept alongside the group: the group holds no counter of its own,
 		// so nothing can drift out of step with the assignments it reports.
-		// It covers the whole Building - every Layer, every Sector, and every
+		// It covers the whole World - every Layer, every Sector, and every
 		// movement state - and is current the moment an assignment is made.
-		// Throws if the ID is not one this Building issued.
+		// Throws if the ID is not one this World issued.
 		uint32_t getAgentGroupMemberCount(AgentGroupId id) const;
 
-		// Deleting an Agent group. The Building is the sole mutation boundary:
+		// Deleting an Agent group. The World is the sole mutation boundary:
 		// the group and every Agent reference to it can only go together, here.
 		bool canDeleteAgentGroup(AgentGroupId id,
 			std::string* diagnostic = nullptr) const;
 
 		// Removes the Agent group and, in the same operation, returns every
 		// Agent assigned to it to no Agent group. The assignments are cleared
-		// before the group is removed, so the Building is never left holding an
+		// before the group is removed, so the World is never left holding an
 		// Agent that names a group it does not own - the state a later save
 		// would refuse to load back.
 		//
@@ -2119,7 +2119,7 @@ namespace core
 		// Pure route-cost query: it creates no ticket, operation, reservation, or permit.
 		float estimateTraversalDelay(TraversalResourceId resource, SectorId sourceSector) const;
 
-		// Wakes every Agent the Building owns. Forwards to SimulationCoordinator,
+		// Wakes every Agent the World owns. Forwards to SimulationCoordinator,
 		// where the Agent lifecycle lives (ADR 0004).
 		void wakeAllAgents();
 
@@ -2127,14 +2127,14 @@ namespace core
 		// objects in their configured initial state.
 		void resetSimulation();
 
-		// Clear the modified state of the Building and every Agent it owns, so
+		// Clear the modified state of the World and every Agent it owns, so
 		// isModified() reports clean.  Only call this once a save has fully
 		// succeeded; a save that fails must leave the dirty state intact.
 		void markSaved();
 
-		// Persist the Building to filepath.  The clean-state transition happens
+		// Persist the World to filepath.  The clean-state transition happens
 		// only after the file write has completely succeeded; any open, write,
-		// flush, close, or replacement error throws and leaves the Building and
+		// flush, close, or replacement error throws and leaves the World and
 		// its Agents exactly as dirty as they were before the attempt.
 		void saveTo(std::string const& filepath);
 

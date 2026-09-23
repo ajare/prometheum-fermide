@@ -33,7 +33,7 @@
 #include <vector>
 
 #include "core/Background.h"
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/CellDefinition.h"
 #include "core/Defines.h"
 #include "core/Edge.h"
@@ -81,17 +81,17 @@ namespace
 		return {};
 	}
 
-	// Every distinct Window the Building holds.  A Window's SectorObject is
+	// Every distinct Window the World holds.  A Window's SectorObject is
 	// registered in both of its Sectors, so the same Window is seen twice while
 	// scanning and is reported once.
-	std::vector<std::shared_ptr<const core::Window>> windowsIn(core::Building const& building)
+	std::vector<std::shared_ptr<const core::Window>> windowsIn(core::World const& world)
 	{
 		std::vector<std::shared_ptr<const core::Window>> found;
 		std::set<core::Window const*> seen;
-		for (uint32_t sectorIndex = 0; sectorIndex < building.getNumSectors(); ++sectorIndex)
+		for (uint32_t sectorIndex = 0; sectorIndex < world.getNumSectors(); ++sectorIndex)
 		{
-			auto const sector = building.getSector(sectorIndex);
-			require(sector != nullptr, "Building reported a null Sector while finding Windows");
+			auto const sector = world.getSector(sectorIndex);
+			require(sector != nullptr, "World reported a null Sector while finding Windows");
 			for (uint32_t objectIndex = 0; objectIndex < sector->getNumObjects(); ++objectIndex)
 			{
 				auto windowObject = std::dynamic_pointer_cast<const core::WindowSectorObject>(
@@ -120,52 +120,52 @@ namespace
 		return nullptr;
 	}
 
-	std::shared_ptr<const core::Sector> sectorByIndex(core::Building const& building, uint32_t index)
+	std::shared_ptr<const core::Sector> sectorByIndex(core::World const& world, uint32_t index)
 	{
-		auto sector = building.getSector(index);
-		require(sector != nullptr, "Building reported a null Sector");
+		auto sector = world.getSector(index);
+		require(sector != nullptr, "World reported a null Sector");
 		return sector;
 	}
 
-	std::shared_ptr<const core::Background> backgroundByIndex(core::Building const& building,
+	std::shared_ptr<const core::Background> backgroundByIndex(core::World const& world,
 		uint32_t index)
 	{
 		auto background = std::dynamic_pointer_cast<const core::Background>(
-			sectorByIndex(building, index));
+			sectorByIndex(world, index));
 		require(background != nullptr,
 			std::format("Sector {} is not a Background", index).c_str());
 		return background;
 	}
 
-	std::string serializeBuilding(core::Building const& building)
+	std::string serializeWorld(core::World const& world)
 	{
 		core::SerializationWorkData workData;
 		auto writer = core::YamlSerializer::toString();
-		building.serialize(*writer, workData);
+		world.serialize(*writer, workData);
 		writer->serialize();
 		return writer->getSerializedString();
 	}
 
-	void loadInto(core::Building& target, std::string const& yaml)
+	void loadInto(core::World& target, std::string const& yaml)
 	{
 		core::SerializationWorkData workData;
 		auto reader = core::YamlSerializer::fromString(yaml);
 		reader->deserialize();
-		require(target.deserialize(*reader, workData), "Building YAML did not load");
+		require(target.deserialize(*reader, workData), "World YAML did not load");
 	}
 
-	uint32_t windowTraversalResources(core::Building const& building)
+	uint32_t windowTraversalResources(core::World const& world)
 	{
 		uint32_t count{ 0 };
-		for (auto const& resource : building.getSimulationSnapshot().traversalResources)
+		for (auto const& resource : world.getSimulationSnapshot().traversalResources)
 			if (resource.isWindow) ++count;
 		return count;
 	}
 
-	uint32_t edgesOfType(core::Building const& building, core::EdgeType type)
+	uint32_t edgesOfType(core::World const& world, core::EdgeType type)
 	{
 		uint32_t count{ 0 };
-		for (auto const& edge : building.getGraph()->getEdges())
+		for (auto const& edge : world.getGraph()->getEdges())
 			if (edge && edge->getType() == type) ++count;
 		return count;
 	}
@@ -188,14 +188,14 @@ namespace
 		uint32_t deep{ 0 };
 	};
 
-	BackdropLayout authorBackdrop(core::Building& building)
+	BackdropLayout authorBackdrop(core::World& world)
 	{
 		BackdropLayout layout;
-		while (building.getLayerCount() < 3) building.addLayer();
-		layout.front = building.addRoom("Front", 0, 0, 0, 12, 1);
-		layout.backdrop = building.addBackground(1, 0, 0, 6, 1, { 200, 120, 40 });
-		layout.behind = building.addRoom("Behind", 1, 0, 6, 6, 1);
-		layout.deep = building.addRoom("Deep", 2, 0, 0, 12, 1);
+		while (world.getLayerCount() < 3) world.addLayer();
+		layout.front = world.addRoom("Front", 0, 0, 0, 12, 1);
+		layout.backdrop = world.addBackground(1, 0, 0, 6, 1, { 200, 120, 40 });
+		layout.behind = world.addRoom("Behind", 1, 0, 6, 6, 1);
+		layout.deep = world.addRoom("Deep", 2, 0, 0, 12, 1);
 		return layout;
 	}
 
@@ -205,7 +205,7 @@ namespace
 	{
 		// Control: the same Window with an empty Layer behind it is still refused,
 		// and refused with the very message the Background makes disappear.
-		core::Building bare("Nothing behind", 12, 3);
+		core::World bare("Nothing behind", 12, 3);
 		while (bare.getLayerCount() < 3) bare.addLayer();
 		bare.addRoom("Front", 0, 0, 0, 12, 1);
 		std::string emptyDiagnostic;
@@ -215,15 +215,15 @@ namespace
 			("The empty-Layer refusal changed shape: " + emptyDiagnostic).c_str());
 
 		// With a Background behind, the same query passes cleanly.
-		core::Building building("Window into Background", 12, 3);
-		auto const layout = authorBackdrop(building);
+		core::World world("Window into Background", 12, 3);
+		auto const layout = authorBackdrop(world);
 		std::string diagnostic;
-		require(building.canAddSectorWindow(0, 0, 2, 2, 1, &diagnostic),
+		require(world.canAddSectorWindow(0, 0, 2, 2, 1, &diagnostic),
 			("A Window was refused looking into a Background: " + diagnostic).c_str());
 		require(diagnostic.empty(),
 			("An accepted Window still carried a diagnostic: " + diagnostic).c_str());
 
-		auto created = building.addSectorWindow(0, 0, 2, 2, 1,
+		auto created = world.addSectorWindow(0, 0, 2, 2, 1,
 			{ false, core::Window::State::Closed, core::Window::Style::Clear });
 		require(created.window.sector != nullptr, "The looking Window has no front Sector");
 		require(created.object != nullptr, "The looking Window has no Window");
@@ -251,13 +251,13 @@ namespace
 	// object, so the arrangement reads the same from both sides.
 	void theBackgroundHoldsTheWindowThatLooksIntoIt()
 	{
-		core::Building building("Both sides", 12, 3);
-		auto const layout = authorBackdrop(building);
-		auto created = building.addSectorWindow(0, 0, 1, 3, 1,
+		core::World world("Both sides", 12, 3);
+		auto const layout = authorBackdrop(world);
+		auto created = world.addSectorWindow(0, 0, 1, 3, 1,
 			{ false, core::Window::State::Closed, core::Window::Style::Clear });
-		building.finishBuild();
+		world.finishBuild();
 
-		auto const backdrop = backgroundByIndex(building, layout.backdrop);
+		auto const backdrop = backgroundByIndex(world, layout.backdrop);
 		require(backdrop->getLayerIndex() == 1, "The Background is not on Layer 1");
 		auto const inBackground = windowObjectIn(backdrop, created.object);
 		require(inBackground != nullptr,
@@ -270,7 +270,7 @@ namespace
 
 		// Being looked at costs the Background nothing: it still owns no floor, and
 		// the cells the Window faces stay untraversable.
-		core::Building const& asBuilt = building;
+		core::World const& asBuilt = world;
 		auto const layer = asBuilt.getLayer(1);
 		for (uint32_t x = 1; x < 4; ++x)
 		{
@@ -288,37 +288,37 @@ namespace
 	// the looking Window stays perfectly legal in the very same spot.
 	void aTraversableWindowIntoABackgroundMintsNothing()
 	{
-		core::Building building("Traversable refused", 12, 3);
-		authorBackdrop(building);
+		core::World world("Traversable refused", 12, 3);
+		authorBackdrop(world);
 
-		require(windowTraversalResources(building) == 0,
-			"The backdrop Building starts with a traversal resource already");
+		require(windowTraversalResources(world) == 0,
+			"The backdrop World starts with a traversal resource already");
 
 		auto const message = exceptionMessage([&]
 		{
-			building.addSectorWindow(0, 0, 1, 2, 1,
+			world.addSectorWindow(0, 0, 1, 2, 1,
 				{ true, core::Window::State::Open, core::Window::Style::Clear });
 		});
 		require(!message.empty(), "A traversable Window into a Background was accepted");
 		require(message.find("Background") != std::string::npos,
 			("The refusal does not name the Background: " + message).c_str());
 
-		require(windowsIn(building).empty(),
+		require(windowsIn(world).empty(),
 			"The refused traversable Window still left a Window behind");
-		require(windowTraversalResources(building) == 0,
+		require(windowTraversalResources(world) == 0,
 			"The refused traversable Window minted a traversal resource");
-		require(edgesOfType(building, core::EdgeType::Window) == 0,
+		require(edgesOfType(world, core::EdgeType::Window) == 0,
 			"The refused traversable Window put a Window edge in the Graph");
 
 		// The refusal is about crossing, not looking: the same placement without
 		// traversal is accepted straight after.
 		require(!throws([&]
 		{
-			building.addSectorWindow(0, 0, 1, 2, 1,
+			world.addSectorWindow(0, 0, 1, 2, 1,
 				{ false, core::Window::State::Closed, core::Window::Style::Clear });
 		}),
 			"A looking Window was refused after the traversable refusal");
-		require(windowTraversalResources(building) == 0,
+		require(windowTraversalResources(world) == 0,
 			"A looking Window into a Background minted a traversal resource");
 	}
 
@@ -327,26 +327,26 @@ namespace
 	// produce its edge, so that absence is measured, not assumed.
 	void theBackgroundIsWhollyAbsentFromTheGraph()
 	{
-		core::Building building("Graph absence", 12, 3);
-		auto const layout = authorBackdrop(building);
-		building.addSectorWindow(0, 0, 1, 2, 1,
+		core::World world("Graph absence", 12, 3);
+		auto const layout = authorBackdrop(world);
+		world.addSectorWindow(0, 0, 1, 2, 1,
 			{ false, core::Window::State::Closed, core::Window::Style::Clear });
-		auto const control = building.addSectorWindow(0, 0, 7, 2, 1,
+		auto const control = world.addSectorWindow(0, 0, 7, 2, 1,
 			{ true, core::Window::State::Open, core::Window::Style::Clear });
-		building.finishBuild();
+		world.finishBuild();
 
-		require(building.getGraph() != nullptr, "The Building has no Graph");
-		require(building.isTraversalTopologyValid(),
-			("The Building's topology is invalid: " + building.getTopologyDiagnostic()).c_str());
+		require(world.getGraph() != nullptr, "The World has no Graph");
+		require(world.isTraversalTopologyValid(),
+			("The World's topology is invalid: " + world.getTopologyDiagnostic()).c_str());
 
-		for (auto const& vertex : building.getGraph()->getVertices())
+		for (auto const& vertex : world.getGraph()->getVertices())
 		{
 			require(vertex == nullptr || vertex->getSector() == nullptr
 				|| vertex->getSector()->getType() != core::SectorType::Background,
 				"A Background contributed a vertex to the Graph");
 		}
 
-		for (auto const& edge : building.getGraph()->getEdges())
+		for (auto const& edge : world.getGraph()->getEdges())
 		{
 			if (!edge) continue;
 			for (uint32_t side = 0; side < 2; ++side)
@@ -362,23 +362,23 @@ namespace
 		// Graph's Sector -> Vertex lookup.
 		require(throws([&]
 		{
-			building.getGraph()->getClosestVertexInSector(
-				sectorByIndex(building, layout.backdrop).get(), { 3.0f, 0.5f });
+			world.getGraph()->getClosestVertexInSector(
+				sectorByIndex(world, layout.backdrop).get(), { 3.0f, 0.5f });
 		}),
 			"A Background is present in the Graph's Sector -> Vertex lookup");
 
 		// The control: the traversable Window into the Behind Room does have its
 		// edge and its resource, so the checks above are not vacuous.
-		require(edgesOfType(building, core::EdgeType::Window) == 1,
+		require(edgesOfType(world, core::EdgeType::Window) == 1,
 			"The traversable control Window did not contribute its edge");
-		require(windowTraversalResources(building) == 1,
+		require(windowTraversalResources(world) == 1,
 			"The traversable control Window did not mint its resource");
 		require(static_cast<bool>(control.traversalResource),
 			"The traversable control Window has no resource handle");
 
 		// And the looking Window is not secretly that edge either.
 		uint32_t lookingWindows{ 0 }, crossingWindows{ 0 };
-		for (auto const& window : windowsIn(building))
+		for (auto const& window : windowsIn(world))
 		{
 			if (window->isTraversalConfigured()) ++crossingWindows;
 			else ++lookingWindows;
@@ -393,17 +393,17 @@ namespace
 	// Background still holds the Window's SectorObject.
 	void theBackSectorReferenceSurvivesSerialisationReplay()
 	{
-		core::Building building("Replayed look", 12, 3);
-		auto const layout = authorBackdrop(building);
-		building.addSectorWindow(0, 0, 1, 2, 1,
+		core::World world("Replayed look", 12, 3);
+		auto const layout = authorBackdrop(world);
+		world.addSectorWindow(0, 0, 1, 2, 1,
 			{ false, core::Window::State::Closed, core::Window::Style::Clear });
-		building.finishBuild();
+		world.finishBuild();
 
-		auto const yaml = serializeBuilding(building);
+		auto const yaml = serializeWorld(world);
 		require(yaml.find("traversable: false") != std::string::npos,
 			"A looking Window was not written as non-traversable");
 
-		core::Building loaded("placeholder", 1, 1);
+		core::World loaded("placeholder", 1, 1);
 		loadInto(loaded, yaml);
 
 		auto const replayed = windowsIn(loaded);
@@ -428,7 +428,7 @@ namespace
 		require(windowObjectIn(backdrop, window) != nullptr,
 			"The Background does not hold the replayed Window's SectorObject");
 
-		// The replayed Building is just as absent from the Graph as the original.
+		// The replayed World is just as absent from the Graph as the original.
 		require(windowTraversalResources(loaded) == 0,
 			"The replay minted a Window traversal resource");
 		require(edgesOfType(loaded, core::EdgeType::Window) == 0,
@@ -440,7 +440,7 @@ namespace
 
 		// Re-saving the replay drifts nothing, so the arrangement is stable
 		// across repeated saves.
-		require(serializeBuilding(loaded) == yaml,
+		require(serializeWorld(loaded) == yaml,
 			"Re-saving the replayed arrangement changed it");
 	}
 
@@ -498,7 +498,7 @@ construction:
 agents: []
 )yaml";
 
-		core::Building loaded("placeholder", 1, 1);
+		core::World loaded("placeholder", 1, 1);
 		auto const message = exceptionMessage([&] { loadInto(loaded, yaml); });
 		require(!message.empty(),
 			"A hand-authored traversable Window into a Background loaded silently");
@@ -518,27 +518,27 @@ agents: []
 	// control Window across the Behind Room still carries an Agent.
 	void noRouteCanEverCrossIntoABackground()
 	{
-		core::Building building("Unroutable backdrop", 12, 3);
-		auto const layout = authorBackdrop(building);
-		building.addSectorWindow(0, 0, 1, 2, 1,
+		core::World world("Unroutable backdrop", 12, 3);
+		auto const layout = authorBackdrop(world);
+		world.addSectorWindow(0, 0, 1, 2, 1,
 			{ false, core::Window::State::Closed, core::Window::Style::Clear });
-		building.addSectorWindow(0, 0, 7, 2, 1,
+		world.addSectorWindow(0, 0, 7, 2, 1,
 			{ true, core::Window::State::Open, core::Window::Style::Clear });
 		// A Door further along the Behind Room gives the route a way on to Layer 2,
 		// so a successful path proves nothing about the Background beside it.
-		building.addSectorDoor(1, 0, 10);
-		building.addSectorMarker(layout.deep, 0, 8.5f, nullptr);
-		building.finishBuild();
+		world.addSectorDoor(1, 0, 10);
+		world.addSectorMarker(layout.deep, 0, 8.5f, nullptr);
+		world.finishBuild();
 
-		auto const agentId = building.createAgent("Front walker", layout.front, 0, 0.5f);
-		auto const agent = building.lookupAgent(agentId).entity;
+		auto const agentId = world.createAgent("Front walker", layout.front, 0, 0.5f);
+		auto const agent = world.lookupAgent(agentId).entity;
 		require(agent != nullptr, "The front Agent was not created");
 
-		auto const target = building.getGraph()->getClosestVertexInSector(
-			sectorByIndex(building, layout.deep).get(), { 8.5f, 0.0f });
+		auto const target = world.getGraph()->getClosestVertexInSector(
+			sectorByIndex(world, layout.deep).get(), { 8.5f, 0.0f });
 		require(target != nullptr, "The Deep Room destination has no vertex");
 
-		auto const path = building.getGraph()->calculatePath(agent, target);
+		auto const path = world.getGraph()->calculatePath(agent, target);
 		require(path != nullptr, "No route exists across the traversable control Window");
 		for (auto const& node : path->nodes)
 			require(node.targetVertex == nullptr || node.targetVertex->getSector() == nullptr

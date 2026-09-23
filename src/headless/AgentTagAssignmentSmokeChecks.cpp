@@ -23,7 +23,7 @@
 #include "core/Agent.h"
 #include "core/AgentTagRegistry.h"
 #include "core/AgentTagRegistryDocument.h"
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/YamlSerializer.h"
 
 namespace
@@ -50,24 +50,24 @@ namespace
 		}
 	};
 
-	std::string serializeBuilding(core::Building const& building)
+	std::string serializeWorld(core::World const& world)
 	{
 		auto writer = core::YamlSerializer::toString();
 		core::SerializationWorkData workData;
 		workData.markSerializedUnmodified = false;
-		building.serialize(*writer, workData);
+		world.serialize(*writer, workData);
 		writer->serialize();
 		return writer->getSerializedString();
 	}
 
-	std::shared_ptr<core::Building> deserializeBuilding(std::string const& yaml)
+	std::shared_ptr<core::World> deserializeWorld(std::string const& yaml)
 	{
-		auto building = std::make_shared<core::Building>("Loading", 1, 1);
+		auto world = std::make_shared<core::World>("Loading", 1, 1);
 		auto reader = core::YamlSerializer::fromString(yaml);
 		reader->deserialize();
 		core::SerializationWorkData workData;
-		require(building->deserialize(*reader, workData), "The Building did not deserialize");
-		return building;
+		require(world->deserialize(*reader, workData), "The World did not deserialize");
+		return world;
 	}
 
 	void writeText(std::filesystem::path const& path, std::string const& text)
@@ -79,7 +79,7 @@ namespace
 
 	struct Fixture
 	{
-		std::shared_ptr<core::Building> building;
+		std::shared_ptr<core::World> world;
 		std::shared_ptr<core::AgentTagRegistry> registry;
 		core::AgentTagId crew;
 		core::AgentTagId night;
@@ -87,15 +87,15 @@ namespace
 		uint32_t corridor;
 
 		Fixture()
-			: building(std::make_shared<core::Building>("Tag assignments", 10, 3))
+			: world(std::make_shared<core::World>("Tag assignments", 10, 3))
 			, registry(core::AgentTagRegistry::create())
 		{
 			crew = registry->addAgentTag("crew");
 			night = registry->addAgentTag("night-shift");
-			building->attachAgentTagRegistry("shared.tags.yaml", registry);
-			corridor = building->addCorridor(0, 0, 8);
-			building->finishBuild();
-			alice = building->createAgent("Alice", corridor, 0, 1.5f);
+			world->attachAgentTagRegistry("shared.tags.yaml", registry);
+			corridor = world->addCorridor(0, 0, 8);
+			world->finishBuild();
+			alice = world->createAgent("Alice", corridor, 0, 1.5f);
 		}
 	};
 
@@ -103,41 +103,41 @@ namespace
 	{
 		Fixture fixture;
 		std::string diagnostic;
-		require(fixture.building->getAgentTags(fixture.alice).empty(),
+		require(fixture.world->getAgentTags(fixture.alice).empty(),
 			"A newly created Agent did not start untagged");
 
-		require(!fixture.building->assignAgentTag(fixture.alice, fixture.crew, &diagnostic)
+		require(!fixture.world->assignAgentTag(fixture.alice, fixture.crew, &diagnostic)
 			&& !diagnostic.empty(),
 			"An Agent tag was assigned while the simulation was running");
-		require(fixture.building->getAgentTags(fixture.alice).empty(),
+		require(fixture.world->getAgentTags(fixture.alice).empty(),
 			"A running-simulation refusal partially assigned a tag");
 
-		fixture.building->pauseSimulation();
-		require(fixture.building->assignAgentTag(fixture.alice, fixture.night, &diagnostic)
-			&& fixture.building->assignAgentTag(fixture.alice, fixture.crew, &diagnostic),
+		fixture.world->pauseSimulation();
+		require(fixture.world->assignAgentTag(fixture.alice, fixture.night, &diagnostic)
+			&& fixture.world->assignAgentTag(fixture.alice, fixture.crew, &diagnostic),
 			"Two distinct property-free Agent tags could not be assigned");
 		auto const expected = std::set<core::AgentTagId>{ fixture.crew, fixture.night };
-		require(fixture.building->getAgentTags(fixture.alice) == expected,
+		require(fixture.world->getAgentTags(fixture.alice) == expected,
 			"Agent tag assignments are not exposed as one stable set");
 
-		auto const beforeRefusals = serializeBuilding(*fixture.building);
-		require(!fixture.building->assignAgentTag(fixture.alice, fixture.crew, &diagnostic),
+		auto const beforeRefusals = serializeWorld(*fixture.world);
+		require(!fixture.world->assignAgentTag(fixture.alice, fixture.crew, &diagnostic),
 			"A duplicate Agent tag assignment was accepted");
-		require(!fixture.building->assignAgentTag(core::AgentId{ 9999 }, fixture.crew, &diagnostic),
+		require(!fixture.world->assignAgentTag(core::AgentId{ 9999 }, fixture.crew, &diagnostic),
 			"An unknown Agent received a tag");
-		require(!fixture.building->assignAgentTag(fixture.alice, core::AgentTagId{ 9999 }, &diagnostic),
+		require(!fixture.world->assignAgentTag(fixture.alice, core::AgentTagId{ 9999 }, &diagnostic),
 			"An unknown Agent tag was assigned");
-		require(!fixture.building->removeAgentTag(fixture.alice, core::AgentTagId{ 9999 }, &diagnostic),
+		require(!fixture.world->removeAgentTag(fixture.alice, core::AgentTagId{ 9999 }, &diagnostic),
 			"An unknown Agent tag was removed");
-		require(serializeBuilding(*fixture.building) == beforeRefusals,
-			"A refused assignment operation partially mutated the Building");
+		require(serializeWorld(*fixture.world) == beforeRefusals,
+			"A refused assignment operation partially mutated the World");
 
-		require(fixture.building->removeAgentTag(fixture.alice, fixture.crew, &diagnostic)
-			&& !fixture.building->lookupAgent(fixture.alice).entity->hasAgentTag(fixture.crew)
-			&& fixture.building->lookupAgent(fixture.alice).entity->hasAgentTag(fixture.night),
+		require(fixture.world->removeAgentTag(fixture.alice, fixture.crew, &diagnostic)
+			&& !fixture.world->lookupAgent(fixture.alice).entity->hasAgentTag(fixture.crew)
+			&& fixture.world->lookupAgent(fixture.alice).entity->hasAgentTag(fixture.night),
 			"An assigned tag was not independently removable");
 
-		auto noRegistry = std::make_shared<core::Building>("No registry", 6, 2);
+		auto noRegistry = std::make_shared<core::World>("No registry", 6, 2);
 		auto const corridor = noRegistry->addCorridor(0, 0, 4);
 		noRegistry->finishBuild();
 		auto const agent = noRegistry->createAgent("No tags", corridor);
@@ -151,37 +151,37 @@ namespace
 	void newAndPalettePlacedAgentsRemainUntagged()
 	{
 		Fixture fixture;
-		fixture.building->pauseSimulation();
+		fixture.world->pauseSimulation();
 		std::string diagnostic;
-		require(fixture.building->assignAgentTag(fixture.alice, fixture.crew, &diagnostic),
+		require(fixture.world->assignAgentTag(fixture.alice, fixture.crew, &diagnostic),
 			"The fixture Agent could not be tagged");
 
-		auto const normal = fixture.building->createAgent("Bob", fixture.corridor, 0, 2.5f);
-		require(fixture.building->getAgentTags(normal).empty(),
+		auto const normal = fixture.world->createAgent("Bob", fixture.corridor, 0, 2.5f);
+		require(fixture.world->getAgentTags(normal).empty(),
 			"Normal Agent creation copied an existing Agent's tags");
 
-		gBuildingDocumentHistory.clear();
+		gWorldDocumentHistory.clear();
 		core::AgentId placed{};
-		auto const sector = fixture.building->getSector(fixture.corridor);
-		require(commitAgentPlacement(fixture.building,
+		auto const sector = fixture.world->getSector(fixture.corridor);
+		require(commitAgentPlacement(fixture.world,
 			AgentClipboardPayload{ "Palette Agent", 0, true, std::nullopt },
 			sector, 0, 3.5f, placed, diagnostic),
 			"The palette-equivalent Agent placement failed: " + diagnostic);
-		require(placed && fixture.building->getAgentTags(placed).empty(),
+		require(placed && fixture.world->getAgentTags(placed).empty(),
 			"A palette-placed Agent did not start untagged");
 	}
 
 	void assignmentsSerializeInNumericOrderAndRejectMalformedInput()
 	{
 		Fixture fixture;
-		fixture.building->pauseSimulation();
+		fixture.world->pauseSimulation();
 		std::string diagnostic;
 		// Deliberately assign in descending ID order.
-		require(fixture.building->assignAgentTag(fixture.alice, fixture.night, &diagnostic)
-			&& fixture.building->assignAgentTag(fixture.alice, fixture.crew, &diagnostic),
+		require(fixture.world->assignAgentTag(fixture.alice, fixture.night, &diagnostic)
+			&& fixture.world->assignAgentTag(fixture.alice, fixture.crew, &diagnostic),
 			"The serialization fixture could not assign its tags");
 
-		auto const yaml = serializeBuilding(*fixture.building);
+		auto const yaml = serializeWorld(*fixture.world);
 		auto document = YAML::Load(yaml);
 		auto tags = document["agents"][0]["agent"]["tags"];
 		require(tags && tags.IsSequence() && tags.size() == 2
@@ -191,7 +191,7 @@ namespace
 
 		document["agents"][0]["agent"]["tags"].push_back(fixture.crew.value);
 		bool duplicateRefused{ false };
-		try { (void)deserializeBuilding(YAML::Dump(document)); }
+		try { (void)deserializeWorld(YAML::Dump(document)); }
 		catch (std::exception const& error)
 		{
 			duplicateRefused = std::string(error.what()).find("unique") != std::string::npos;
@@ -201,7 +201,7 @@ namespace
 		auto withoutRegistry = YAML::Load(yaml);
 		withoutRegistry.remove("agentTagRegistry");
 		bool absentRegistryRefused{ false };
-		try { (void)deserializeBuilding(YAML::Dump(withoutRegistry)); }
+		try { (void)deserializeWorld(YAML::Dump(withoutRegistry)); }
 		catch (std::exception const& error)
 		{
 			absentRegistryRefused = std::string(error.what()).find("no Agent tag registry")
@@ -215,32 +215,32 @@ namespace
 	{
 		TemporaryDirectory temporary;
 		Fixture fixture;
-		fixture.building->pauseSimulation();
+		fixture.world->pauseSimulation();
 		std::string diagnostic;
-		require(fixture.building->assignAgentTag(fixture.alice, fixture.crew, &diagnostic)
-			&& fixture.building->assignAgentTag(fixture.alice, fixture.night, &diagnostic),
+		require(fixture.world->assignAgentTag(fixture.alice, fixture.crew, &diagnostic)
+			&& fixture.world->assignAgentTag(fixture.alice, fixture.night, &diagnostic),
 			"The reopen fixture could not assign its tags");
 
 		auto const registryPath = temporary.path / "shared.tags.yaml";
-		auto const buildingPath = temporary.path / "building.yaml";
+		auto const worldPath = temporary.path / "world.world.yaml";
 		fixture.registry->saveTo(registryPath.string());
-		fixture.building->saveTo(buildingPath.string());
+		fixture.world->saveTo(worldPath.string());
 
-		auto reopened = core::loadBuildingDocument(buildingPath);
+		auto reopened = core::loadWorldDocument(worldPath);
 		auto const reopenedAgent = reopened->lookupAgent(fixture.alice);
 		require(reopenedAgent
 			&& reopenedAgent.entity->getAgentTagIds()
 				== std::set<core::AgentTagId>{ fixture.crew, fixture.night },
 			"Agent tag stable IDs did not survive save and reopen");
 
-		auto malformed = YAML::Load(serializeBuilding(*fixture.building));
+		auto malformed = YAML::Load(serializeWorld(*fixture.world));
 		malformed["agents"][0]["agent"]["tags"][0] = 9999;
-		auto const malformedPath = temporary.path / "malformed.yaml";
+		auto const malformedPath = temporary.path / "malformed.world.yaml";
 		writeText(malformedPath, YAML::Dump(malformed));
 		// The registry basename in the fixture is shared.tags.yaml, so this file
 		// resolves the same adjacent registry before validating assignments.
 		bool unknownRefused{ false };
-		try { (void)core::loadBuildingDocument(malformedPath); }
+		try { (void)core::loadWorldDocument(malformedPath); }
 		catch (std::exception const& error)
 		{
 			unknownRefused = std::string(error.what()).find("does not define")
@@ -249,55 +249,55 @@ namespace
 		require(unknownRefused, "A serialized assignment to an unknown tag was accepted");
 	}
 
-	void editorCommitsOneBuildingUndoEntryPerAcceptedEdit()
+	void editorCommitsOneWorldUndoEntryPerAcceptedEdit()
 	{
 		Fixture fixture;
-		fixture.building->pauseSimulation();
-		gBuildingDocumentHistory.clear();
+		fixture.world->pauseSimulation();
+		gWorldDocumentHistory.clear();
 		std::string diagnostic;
 
-		require(commitAgentTagAssignment(fixture.building, fixture.alice,
+		require(commitAgentTagAssignment(fixture.world, fixture.alice,
 			fixture.crew, true, diagnostic), "The editor seam refused the first assignment");
-		require(commitAgentTagAssignment(fixture.building, fixture.alice,
+		require(commitAgentTagAssignment(fixture.world, fixture.alice,
 			fixture.night, true, diagnostic), "The editor seam refused the second assignment");
-		require(gBuildingDocumentHistory.undoCount() == 2,
-			"Two accepted assignment edits did not commit two Building undo entries");
-		require(!commitAgentTagAssignment(fixture.building, fixture.alice,
+		require(gWorldDocumentHistory.undoCount() == 2,
+			"Two accepted assignment edits did not commit two World undo entries");
+		require(!commitAgentTagAssignment(fixture.world, fixture.alice,
 			fixture.crew, true, diagnostic)
-			&& gBuildingDocumentHistory.undoCount() == 2,
-			"A duplicate assignment committed a Building undo entry");
+			&& gWorldDocumentHistory.undoCount() == 2,
+			"A duplicate assignment committed a World undo entry");
 
-		auto current = captureDocumentSnapshot(fixture.building);
-		std::shared_ptr<core::Building> restored;
+		auto current = captureDocumentSnapshot(fixture.world);
+		std::shared_ptr<core::World> restored;
 		auto restore = [&](DocumentSnapshot const& target)
 		{
-			restored = deserializeBuilding(target.yaml);
+			restored = deserializeWorld(target.yaml);
 			restored->resolveAgentTagRegistry(fixture.registry);
 			return true;
 		};
-		require(gBuildingDocumentHistory.undo(std::move(current), restore),
+		require(gWorldDocumentHistory.undo(std::move(current), restore),
 			"Undo refused the accepted Agent tag assignment");
-		fixture.building = restored;
-		require(fixture.building->getAgentTags(fixture.alice)
+		fixture.world = restored;
+		require(fixture.world->getAgentTags(fixture.alice)
 			== std::set<core::AgentTagId>{ fixture.crew },
 			"Undo did not remove exactly the last assigned tag");
 
-		current = captureDocumentSnapshot(fixture.building);
-		require(gBuildingDocumentHistory.redo(std::move(current), restore),
+		current = captureDocumentSnapshot(fixture.world);
+		require(gWorldDocumentHistory.redo(std::move(current), restore),
 			"Redo refused the Agent tag assignment");
-		fixture.building = restored;
-		require(fixture.building->getAgentTags(fixture.alice)
+		fixture.world = restored;
+		require(fixture.world->getAgentTags(fixture.alice)
 			== std::set<core::AgentTagId>{ fixture.crew, fixture.night },
 			"Redo did not restore the two-tag assignment set");
 
-		fixture.building->pauseSimulation();
-		auto const entriesBeforeRemoval = gBuildingDocumentHistory.undoCount();
-		require(commitAgentTagAssignment(fixture.building, fixture.alice,
+		fixture.world->pauseSimulation();
+		auto const entriesBeforeRemoval = gWorldDocumentHistory.undoCount();
+		require(commitAgentTagAssignment(fixture.world, fixture.alice,
 			fixture.crew, false, diagnostic)
-			&& gBuildingDocumentHistory.undoCount() == entriesBeforeRemoval + 1
-			&& fixture.building->getAgentTags(fixture.alice)
+			&& gWorldDocumentHistory.undoCount() == entriesBeforeRemoval + 1
+			&& fixture.world->getAgentTags(fixture.alice)
 				== std::set<core::AgentTagId>{ fixture.night },
-			"Removing an assigned tag did not commit exactly one Building undo entry");
+			"Removing an assigned tag did not commit exactly one World undo entry");
 	}
 
 	void captureClipboardText(void* userData, char const* text)
@@ -311,9 +311,9 @@ namespace
 	void selectionPanelRendersAssignedChipsWithoutLeakingDisabledState()
 	{
 		Fixture fixture;
-		fixture.building->pauseSimulation();
+		fixture.world->pauseSimulation();
 		std::string diagnostic;
-		require(fixture.building->assignAgentTag(fixture.alice, fixture.crew, &diagnostic),
+		require(fixture.world->assignAgentTag(fixture.alice, fixture.crew, &diagnostic),
 			"The checklist fixture could not assign its removable tag");
 
 		ImGui::CreateContext();
@@ -328,8 +328,8 @@ namespace
 
 		for (bool paused : { true, false })
 		{
-			if (paused) fixture.building->pauseSimulation();
-			else require(fixture.building->resumeSimulation(),
+			if (paused) fixture.world->pauseSimulation();
+			else require(fixture.world->resumeSimulation(),
 				"The checklist fixture could not resume simulation");
 
 			clipboardWrites.clear();
@@ -337,7 +337,7 @@ namespace
 			ImGui::Begin("Selection");
 			ImGui::LogToClipboard();
 			auto const disabledDepth = GImGui->DisabledStackSize;
-			renderAgentTagAssignmentChecklist(fixture.building, fixture.alice);
+			renderAgentTagAssignmentChecklist(fixture.world, fixture.alice);
 			require(GImGui->DisabledStackSize == disabledDepth,
 				"The Agent tag checklist leaked a disabled scope");
 			ImGui::End();
@@ -351,7 +351,7 @@ namespace
 				"The Selection panel did not present the assigned tag chip and add-tag combo");
 			require(visible.find("#night-shift") == std::string::npos,
 				"The Selection panel listed an unassigned tag outside the add-tag combo");
-			require(fixture.building->getAgentTags(fixture.alice)
+			require(fixture.world->getAgentTags(fixture.alice)
 				== std::set<core::AgentTagId>{ fixture.crew },
 				"Merely rendering the tag chips changed its assigned tag");
 		}
@@ -365,7 +365,7 @@ void runAgentTagAssignmentSmokeChecks()
 	newAndPalettePlacedAgentsRemainUntagged();
 	assignmentsSerializeInNumericOrderAndRejectMalformedInput();
 	saveReopenAndUnknownTagValidationUseStableIds();
-	editorCommitsOneBuildingUndoEntryPerAcceptedEdit();
+	editorCommitsOneWorldUndoEntryPerAcceptedEdit();
 	selectionPanelRendersAssignedChipsWithoutLeakingDisabledState();
-	gBuildingDocumentHistory.clear();
+	gWorldDocumentHistory.clear();
 }

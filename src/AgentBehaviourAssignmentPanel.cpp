@@ -8,7 +8,7 @@
 #include "DocumentEdit.h"
 #include "core/Agent.h"
 #include "core/AgentBehaviourRegistry.h"
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/Log.h"
 #include "core/Marker.h"
 #include "imgui/imgui.h"
@@ -18,7 +18,7 @@ using namespace std;
 namespace
 {
 	core::AgentBehaviourConfigurationValue initialValue(
-		core::Building const& building, core::AgentBehaviourSchemaField const& field)
+		core::World const& world, core::AgentBehaviourSchemaField const& field)
 	{
 		if (field.defaultValue) return *field.defaultValue;
 		switch (field.type)
@@ -31,7 +31,7 @@ namespace
 			return core::AgentBehaviourDuration{ 1 };
 		case core::AgentBehaviourSchemaType::Marker:
 		{
-			auto const ids = building.getMarkerIds();
+			auto const ids = world.getMarkerIds();
 			return ids.empty() ? core::MarkerId{} : ids.front();
 		}
 		case core::AgentBehaviourSchemaType::List:
@@ -40,7 +40,7 @@ namespace
 		{
 			core::AgentBehaviourConfigurationRecord record;
 			for (auto const& child : field.children)
-				record.emplace(child.name, initialValue(building, child));
+				record.emplace(child.name, initialValue(world, child));
 			return record;
 		}
 		}
@@ -48,11 +48,11 @@ namespace
 	}
 
 	core::AgentBehaviourConfiguration initialConfiguration(
-		core::Building const& building, core::AgentBehaviour const& behaviour)
+		core::World const& world, core::AgentBehaviour const& behaviour)
 	{
 		core::AgentBehaviourConfiguration result;
 		for (auto const& field : behaviour.getSchema())
-			result.emplace(field.name, initialValue(building, field));
+			result.emplace(field.name, initialValue(world, field));
 		return result;
 	}
 
@@ -89,15 +89,15 @@ namespace
 		return "runtime";
 	}
 
-	void renderRuntimeStatus(shared_ptr<core::Building> const& building,
+	void renderRuntimeStatus(shared_ptr<core::World> const& world,
 		core::AgentId agent)
 	{
 		auto const runtimeDiagnostics
-			= building->getAgentBehaviourRuntimeDiagnostics();
-		auto const lookup = building->lookupAgent(agent);
+			= world->getAgentBehaviourRuntimeDiagnostics();
+		auto const lookup = world->lookupAgent(agent);
 		char const* status = "Unavailable";
 		ImVec4 colour(0.65f, 0.65f, 0.65f, 1.0f);
-		if (!building->agentBehaviourConfigurationsAreValid())
+		if (!world->agentBehaviourConfigurationsAreValid())
 		{
 			status = "Dependency unavailable";
 			colour = ImVec4(1.0f, 0.35f, 0.3f, 1.0f);
@@ -107,12 +107,12 @@ namespace
 			status = "Suspended";
 			colour = ImVec4(1.0f, 0.65f, 0.2f, 1.0f);
 		}
-		else if (!building->agentBehaviourOwnsMovement(agent))
+		else if (!world->agentBehaviourOwnsMovement(agent))
 		{
 			status = "Disabled after failure";
 			colour = ImVec4(1.0f, 0.35f, 0.3f, 1.0f);
 		}
-		else if (building->isSimulationPaused())
+		else if (world->isSimulationPaused())
 		{
 			status = "Ready (paused)";
 			colour = ImVec4(0.35f, 0.75f, 0.95f, 1.0f);
@@ -125,7 +125,7 @@ namespace
 		ImGui::TextUnformatted("Runtime status:");
 		ImGui::SameLine();
 		ImGui::TextColored(colour, "%s", status);
-		if (building->agentBehaviourOwnsMovement(agent))
+		if (world->agentBehaviourOwnsMovement(agent))
 			ImGui::TextDisabled("Manual movement controls are disabled while this behaviour owns movement.");
 
 		if (runtimeDiagnostics.empty()) return;
@@ -133,7 +133,7 @@ namespace
 		ImGui::SameLine();
 		if (ImGui::SmallButton("Clear##AgentBehaviourDiagnostics"))
 		{
-			(void)building->consumeAgentBehaviourRuntimeDiagnostics();
+			(void)world->consumeAgentBehaviourRuntimeDiagnostics();
 			return;
 		}
 		for (size_t index = 0; index < runtimeDiagnostics.size(); ++index)
@@ -163,7 +163,7 @@ namespace
 		}
 	}
 
-	bool renderConfigurationValue(core::Building const& building,
+	bool renderConfigurationValue(core::World const& world,
 		core::AgentBehaviourSchemaField const& field,
 		core::AgentBehaviourConfigurationValue& value)
 	{
@@ -208,14 +208,14 @@ namespace
 		if (auto* markerValue =
 			core::agentBehaviourConfigurationGetIf<core::MarkerId>(&value))
 		{
-			auto marker = building.lookupMarker(*markerValue);
+			auto marker = world.lookupMarker(*markerValue);
 			auto const preview = marker ? marker->getName().c_str() : "Select Marker";
 			bool changed = false;
 			if (ImGui::BeginCombo("##marker", preview))
 			{
-				for (auto const id : building.getMarkerIds())
+				for (auto const id : world.getMarkerIds())
 				{
-					auto candidate = building.lookupMarker(id);
+					auto candidate = world.lookupMarker(id);
 					if (candidate && ImGui::Selectable(candidate->getName().c_str(),
 						id == *markerValue))
 					{
@@ -235,7 +235,7 @@ namespace
 			if (list->size() < core::MaxAgentBehaviourListElements
 				&& ImGui::SmallButton("Add entry"))
 			{
-				list->push_back(initialValue(building, field.children.front()));
+				list->push_back(initialValue(world, field.children.front()));
 				changed = true;
 			}
 			for (size_t index = 0; index < list->size(); ++index)
@@ -260,7 +260,7 @@ namespace
 					ImGui::PopID();
 					return true;
 				}
-				changed = renderConfigurationValue(building, field.children.front(),
+				changed = renderConfigurationValue(world, field.children.front(),
 					(*list)[index]) || changed;
 				ImGui::PopID();
 			}
@@ -278,7 +278,7 @@ namespace
 				ImGui::TextUnformatted(child.name.c_str());
 				ImGui::SameLine();
 				ImGui::SetNextItemWidth(-1.0f);
-				changed = renderConfigurationValue(building, child, found->second) || changed;
+				changed = renderConfigurationValue(world, child, found->second) || changed;
 				ImGui::PopID();
 			}
 			return changed;
@@ -288,71 +288,71 @@ namespace
 	}
 }
 
-bool commitAgentBehaviourAssignment(shared_ptr<core::Building> const& building,
+bool commitAgentBehaviourAssignment(shared_ptr<core::World> const& world,
 	core::AgentId agent, core::AgentBehaviourId behaviour, uint64_t revision,
 	core::AgentBehaviourConfiguration const& configuration, string& diagnostic)
 {
 	diagnostic.clear();
-	if (!building)
+	if (!world)
 	{
-		diagnostic = "There is no Building in which to edit an Agent behaviour";
+		diagnostic = "There is no World in which to edit an Agent behaviour";
 		return false;
 	}
-	auto undo = captureDocumentSnapshot(building);
+	auto undo = captureDocumentSnapshot(world);
 	if (!undo)
 	{
-		diagnostic = "Could not capture the Building before editing an Agent behaviour";
+		diagnostic = "Could not capture the World before editing an Agent behaviour";
 		return false;
 	}
-	if (!building->setAgentBehaviourAssignment(agent, behaviour, revision,
+	if (!world->setAgentBehaviourAssignment(agent, behaviour, revision,
 		configuration, &diagnostic)) return false;
 	commitDocumentEdit(std::move(undo));
 	return true;
 }
 
-bool commitAgentBehaviourClear(shared_ptr<core::Building> const& building,
+bool commitAgentBehaviourClear(shared_ptr<core::World> const& world,
 	core::AgentId agent, string& diagnostic)
 {
 	diagnostic.clear();
-	if (!building)
+	if (!world)
 	{
-		diagnostic = "There is no Building in which to clear an Agent behaviour";
+		diagnostic = "There is no World in which to clear an Agent behaviour";
 		return false;
 	}
-	auto undo = captureDocumentSnapshot(building);
+	auto undo = captureDocumentSnapshot(world);
 	if (!undo)
 	{
-		diagnostic = "Could not capture the Building before clearing an Agent behaviour";
+		diagnostic = "Could not capture the World before clearing an Agent behaviour";
 		return false;
 	}
-	if (!building->clearAgentBehaviourAssignment(agent, &diagnostic)) return false;
+	if (!world->clearAgentBehaviourAssignment(agent, &diagnostic)) return false;
 	commitDocumentEdit(std::move(undo));
 	return true;
 }
 
-void renderAgentBehaviourAssignmentCell(shared_ptr<core::Building> const& building,
+void renderAgentBehaviourAssignmentCell(shared_ptr<core::World> const& world,
 	core::AgentId agent)
 {
-	if (!building || !building->hasAttachedAgentBehaviourRegistry())
+	if (!world || !world->hasAttachedAgentBehaviourRegistry())
 	{
 		ImGui::TextDisabled("None");
 		return;
 	}
-	auto const& registry = building->getAgentBehaviourRegistry();
-	auto const& assignment = building->getAgentBehaviourAssignment(agent);
+	auto const& registry = world->getAgentBehaviourRegistry();
+	auto const& assignment = world->getAgentBehaviourAssignment(agent);
 	char const* preview = "None";
 	if (assignment)
 	{
 		auto const* definition = registry->lookupAgentBehaviour(assignment->behaviour);
 		preview = definition ? definition->getName().c_str() : "Invalid";
 	}
-	ImGui::BeginDisabled(!building->isSimulationPaused());
+	ImGui::BeginDisabled(!world->isSimulationPaused());
 	if (ImGui::BeginCombo("##agentBehaviour", preview))
 	{
 		if (ImGui::Selectable("None", !assignment))
 		{
 			string diagnostic;
-			if (assignment && !commitAgentBehaviourClear(building, agent, diagnostic))
+			if (assignment && !commitAgentBehaviourClear(world, agent, diagnostic))
 				logRefusal(diagnostic);
 		}
 		for (auto const id : registry->getBehaviourIdsAlphabetically())
@@ -363,8 +363,8 @@ void renderAgentBehaviourAssignmentCell(shared_ptr<core::Building> const& buildi
 			if (ImGui::Selectable(definition->getName().c_str(), selected))
 			{
 				string diagnostic;
-				auto configuration = initialConfiguration(*building, *definition);
-				if (!commitAgentBehaviourAssignment(building, agent, id,
+				auto configuration = initialConfiguration(*world, *definition);
+				if (!commitAgentBehaviourAssignment(world, agent, id,
 					definition->getRevision(), configuration, diagnostic)) logRefusal(diagnostic);
 			}
 		}
@@ -373,22 +373,22 @@ void renderAgentBehaviourAssignmentCell(shared_ptr<core::Building> const& buildi
 	ImGui::EndDisabled();
 }
 
-void renderAgentBehaviourConfigurationPanel(shared_ptr<core::Building> const& building,
+void renderAgentBehaviourConfigurationPanel(shared_ptr<core::World> const& world,
 	core::AgentId agent)
 {
 	ImGui::SeparatorText("Agent behaviour");
-	if (!building) return;
-	if (!building->hasAttachedAgentBehaviourRegistry())
+	if (!world) return;
+	if (!world->hasAttachedAgentBehaviourRegistry())
 	{
 		ImGui::TextDisabled("No Agent behaviour registry attached.");
 		return;
 	}
 
 	ImGui::SetNextItemWidth(-1.0f);
-	renderAgentBehaviourAssignmentCell(building, agent);
-	auto assignment = building->getAgentBehaviourAssignment(agent);
+	renderAgentBehaviourAssignmentCell(world, agent);
+	auto assignment = world->getAgentBehaviourAssignment(agent);
 	if (!assignment) return;
-	auto const& registry = building->getAgentBehaviourRegistry();
+	auto const& registry = world->getAgentBehaviourRegistry();
 	auto const* behaviour = registry->lookupAgentBehaviour(assignment->behaviour);
 	if (!behaviour)
 	{
@@ -396,8 +396,8 @@ void renderAgentBehaviourConfigurationPanel(shared_ptr<core::Building> const& bu
 		return;
 	}
 	ImGui::TextDisabled("Revision %llu", static_cast<unsigned long long>(assignment->revision));
-	renderRuntimeStatus(building, agent);
-	ImGui::BeginDisabled(!building->isSimulationPaused());
+	renderRuntimeStatus(world, agent);
+	ImGui::BeginDisabled(!world->isSimulationPaused());
 	auto edited = assignment->configuration;
 	bool changed = false;
 	for (auto const& field : behaviour->getSchema())
@@ -408,13 +408,13 @@ void renderAgentBehaviourConfigurationPanel(shared_ptr<core::Building> const& bu
 		ImGui::TextUnformatted(field.name.c_str());
 		ImGui::SameLine();
 		ImGui::SetNextItemWidth(-1.0f);
-		changed = renderConfigurationValue(*building, field, found->second) || changed;
+		changed = renderConfigurationValue(*world, field, found->second) || changed;
 		ImGui::PopID();
 	}
 	if (changed)
 	{
 		string diagnostic;
-		if (!commitAgentBehaviourAssignment(building, agent, assignment->behaviour,
+		if (!commitAgentBehaviourAssignment(world, agent, assignment->behaviour,
 			assignment->revision, edited, diagnostic)) logRefusal(diagnostic);
 	}
 	ImGui::EndDisabled();

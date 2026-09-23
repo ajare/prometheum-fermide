@@ -7,8 +7,8 @@ namespace core
 
 	using namespace std;
 
-	Layer::Layer(Building const* building, uint32_t cellsWide, uint32_t decksHigh, uint32_t z)
-		: mwBuilding(building)
+	Layer::Layer(World const* world, uint32_t cellsWide, uint32_t decksHigh, uint32_t z)
+		: mwWorld(world)
 		, mCellsWide(cellsWide)
 		, mDecksHigh(decksHigh)
 		, mZ(z)
@@ -36,12 +36,12 @@ namespace core
 		// Bounds checks
 		if (x >= mCellsWide)
 		{
-			throw BuildingException(mwBuilding, format("Layer::validateCellBounds({}, {}) - x={} is out of bounds", x, y, x));
+			throw WorldException(mwWorld, format("Layer::validateCellBounds({}, {}) - x={} is out of bounds", x, y, x));
 		}
 
 		if (y >= mDecksHigh)
 		{
-			throw BuildingException(mwBuilding, format("Layer::validateCellBounds({}, {}) - y={} is out of bounds", x, y, y));
+			throw WorldException(mwWorld, format("Layer::validateCellBounds({}, {}) - y={} is out of bounds", x, y, y));
 		}
 	}
 

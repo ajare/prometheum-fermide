@@ -4,7 +4,7 @@
 // with CORE_CELL_WIDTH_PIXELS instead of CORE_DECK_HEIGHT_PIXELS, and the
 // renderer passed a hard-coded Y origin of 0 instead of the scrollbar's
 // -yOffset. The over-wide initial window masked the missing origin for the
-// first few rows; scroll far enough up a tall Building and the Sectors that
+// first few rows; scroll far enough up a tall World and the Sectors that
 // moved into view were culled - grid and blank space where Rooms should be.
 //
 // The checks pin down:
@@ -13,7 +13,7 @@
 //     the ticket's probe, which the wrong divisor answered "2 sectors";
 //   * viewportSectors() tracks a non-zero vertical offset: the Sectors above
 //     the initial viewport come back, the scrolled-out ones below do not;
-//   * the full scrollbar range works - the topmost deck of a tall Building
+//   * the full scrollbar range works - the topmost deck of a tall World
 //     is visible when scrolled to the bottom of the scrollbar;
 //   * the real render pass paints the scrolled-in Sector and paints nothing
 //     of the culled Sector below the viewport.
@@ -33,7 +33,7 @@
 
 #include "Render.h"
 #include "UISettings.h"
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/Defines.h"
 #include "core/Sector.h"
 
@@ -51,10 +51,10 @@ namespace
 
 	// The scene: one Layer holding Rooms on the ground, on deck 2 (just above
 	// a three-deck viewport's initial range), and on the topmost deck of an
-	// eight-deck Building.
+	// eight-deck World.
 	struct CullingScene
 	{
-		std::shared_ptr<core::Building> building{ std::make_shared<core::Building>(
+		std::shared_ptr<core::World> world{ std::make_shared<core::World>(
 			"Viewport culling", 12, 8) };
 		uint32_t groundRoom{ 0 };
 		uint32_t upperRoom{ 0 };
@@ -62,14 +62,14 @@ namespace
 
 		CullingScene()
 		{
-			while (building->getLayerCount() < 2) building->addLayer();
+			while (world->getLayerCount() < 2) world->addLayer();
 
-			groundRoom = building->addRoom("Ground", 0, 0, 0, 4, 1);
-			upperRoom = building->addRoom("Upper", 0, 2, 0, 4, 1);
-			topRoom = building->addRoom("Top", 0, 7, 0, 4, 1);
+			groundRoom = world->addRoom("Ground", 0, 0, 0, 4, 1);
+			upperRoom = world->addRoom("Upper", 0, 2, 0, 4, 1);
+			topRoom = world->addRoom("Top", 0, 7, 0, 4, 1);
 
-			building->finishBuild();
-			building->pauseSimulation();
+			world->finishBuild();
+			world->pauseSimulation();
 		}
 	};
 
@@ -101,10 +101,10 @@ namespace
 		float minX, minY, maxX, maxY;
 	};
 
-	ScreenRect sectorScreenRect(core::Building const& building, uint32_t sectorIndex)
+	ScreenRect sectorScreenRect(core::World const& world, uint32_t sectorIndex)
 	{
 		core::Vector2 b0, b1;
-		building.getSector(sectorIndex)->getBounds(b0, b1);
+		world.getSector(sectorIndex)->getBounds(b0, b1);
 
 		auto const tx = [](float x)
 		{
@@ -147,13 +147,13 @@ void subDeckHeightViewportExcludesDeckTwo()
 {
 	CullingScene scene;
 
-	auto const sectors = scene.building->getSectorsInBounds(0, 0.0f, 0.0f,
+	auto const sectors = scene.world->getSectorsInBounds(0, 0.0f, 0.0f,
 		4 * CORE_CELL_WIDTH_PIXELS, CORE_DECK_HEIGHT_PIXELS - 1.0f);
 
 	require(sectors.size() == 1,
 		std::format("a sub-deck-height viewport at the origin returned {} sectors, expected 1",
 			sectors.size()));
-	require(sectors[0] == scene.building->getSector(scene.groundRoom),
+	require(sectors[0] == scene.world->getSector(scene.groundRoom),
 		"the sub-deck-height viewport did not return the deck-0 Room it covers");
 }
 
@@ -168,14 +168,14 @@ void verticalOffsetTracksTheVisibleOrigin()
 	// deck 2 is in, deck 0 is out.
 	setViewport(0.0f, 320.0f, 640.0f, 480.0f);
 
-	auto const sectors = viewportSectors(scene.building, 0);
+	auto const sectors = viewportSectors(scene.world, 0);
 
 	bool upperIn = false, groundIn = false, topIn = false;
 	for (auto const& sector : sectors)
 	{
-		if (sector == scene.building->getSector(scene.upperRoom)) upperIn = true;
-		if (sector == scene.building->getSector(scene.groundRoom)) groundIn = true;
-		if (sector == scene.building->getSector(scene.topRoom)) topIn = true;
+		if (sector == scene.world->getSector(scene.upperRoom)) upperIn = true;
+		if (sector == scene.world->getSector(scene.groundRoom)) groundIn = true;
+		if (sector == scene.world->getSector(scene.topRoom)) topIn = true;
 	}
 
 	require(upperIn, "the Room scrolled into view on deck 2 was culled (#58 regression)");
@@ -183,8 +183,8 @@ void verticalOffsetTracksTheVisibleOrigin()
 	require(!topIn, "the deck-7 Room far above the viewport was not culled");
 }
 
-// The full scrollbar range: at the bottom of an eight-deck Building's
-// scroll, the topmost deck must be visible. A Building "substantially
+// The full scrollbar range: at the bottom of an eight-deck World's
+// scroll, the topmost deck must be visible. A World "substantially
 // taller than the World panel" is exactly what the ticket reproduced with.
 void fullyScrolledTopDeckIsVisible()
 {
@@ -193,13 +193,13 @@ void fullyScrolledTopDeckIsVisible()
 	// scrollMax = 8 * 160 - 480 = 800: the band is [800, 1280], decks 5-7.
 	setViewport(0.0f, 8.0f * CORE_DECK_HEIGHT_PIXELS - 480.0f, 640.0f, 480.0f);
 
-	auto const sectors = viewportSectors(scene.building, 0);
+	auto const sectors = viewportSectors(scene.world, 0);
 
 	bool topIn = false, groundIn = false;
 	for (auto const& sector : sectors)
 	{
-		if (sector == scene.building->getSector(scene.topRoom)) topIn = true;
-		if (sector == scene.building->getSector(scene.groundRoom)) groundIn = true;
+		if (sector == scene.world->getSector(scene.topRoom)) topIn = true;
+		if (sector == scene.world->getSector(scene.groundRoom)) groundIn = true;
 	}
 
 	require(topIn, "the topmost deck was culled at the end of the scrollbar range");
@@ -218,10 +218,10 @@ void renderPassPaintsScrolledInSectorOnly()
 
 	setViewport(0.0f, 320.0f, 640.0f, 480.0f);
 
-	renderSectors(scene.building, 0, LayerRenderStyle::Solid, drawList);
+	renderSectors(scene.world, 0, LayerRenderStyle::Solid, drawList);
 
-	auto const upperRect = sectorScreenRect(*scene.building, scene.upperRoom);
-	auto const groundRect = sectorScreenRect(*scene.building, scene.groundRoom);
+	auto const upperRect = sectorScreenRect(*scene.world, scene.upperRoom);
+	auto const groundRect = sectorScreenRect(*scene.world, scene.groundRoom);
 
 	// The deck-2 Room fills as one quad (4 vertices) inside its on-screen rect.
 	require(verticesIn(drawList, kForeLocationFill, upperRect) == 4,

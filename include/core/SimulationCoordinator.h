@@ -12,15 +12,15 @@
 
 namespace core
 {
-	class Building;
+	class World;
 	class Agent;
 	class Edge;
 	class Vertex;
 	struct Path;
 
-	// Runs the simulation on behalf of the Building that owns it.
+	// Runs the simulation on behalf of the World that owns it.
 	//
-	// Building keeps the world structure and owns every entity registry
+	// World keeps the world structure and owns every entity registry
 	// (ADR 0001), and remains the facade (design pattern, not the Facade sector
 	// type of ADR 0003) through which every caller - Agent included - reaches
 	// simulation behaviour. The coordinator is where that behaviour lives:
@@ -29,9 +29,9 @@ namespace core
 	// device operations, agent lifecycle, and the tick pipeline.
 	//
 	// ADR 0004 moves that behaviour in staged, leaf-first increments so each
-	// stage builds green. The coordinator owns no state: it works on Building's
-	// registries through the Building it was given, and calls back through the
-	// Building facade for machinery which has not moved out of Building yet.
+	// stage builds green. The coordinator owns no state: it works on World's
+	// registries through the World it was given, and calls back through the
+	// World facade for machinery which has not moved out of World yet.
 	//
 	// The name deliberately avoids "controller", which CONTEXT.md bans, and
 	// echoes ADR 0001's traversal-coordination vocabulary while covering the
@@ -40,7 +40,7 @@ namespace core
 	{
 	public:
 
-		explicit SimulationCoordinator(Building& building);
+		explicit SimulationCoordinator(World& world);
 
 		SimulationCoordinator(SimulationCoordinator const&) = delete;
 		SimulationCoordinator& operator=(SimulationCoordinator const&) = delete;
@@ -52,8 +52,8 @@ namespace core
 		//
 		// Creating an Agent, placing it in a Sector, removing it, waking every
 		// Agent, resolving Agents between handles and pointers, and releasing an
-		// Agent's traversal ownership all live here. Building forwards each of
-		// these entry points; no caller outside Building names the coordinator.
+		// Agent's traversal ownership all live here. World forwards each of
+		// these entry points; no caller outside World names the coordinator.
 		// ------------------------------------------------------------------
 
 		// Creates an Agent named `name` and places it in the Sector `sectorId`,
@@ -62,9 +62,9 @@ namespace core
 
 		AgentId createAgent(std::string const& name, uint32_t sectorId);
 
-		// Takes an already-constructed Agent into the Building's ownership and
+		// Takes an already-constructed Agent into the World's ownership and
 		// places it in the Sector `sectorId`. The Agent is attached to the
-		// Building, never to the coordinator: the Building remains the owner the
+		// World, never to the coordinator: the World remains the owner the
 		// Agent reports to.
 		AgentId addOwnedAgentToSector(std::unique_ptr<Agent> agent, uint32_t sectorId, uint32_t deckOffset, float xOffset);
 
@@ -72,7 +72,7 @@ namespace core
 
 		// Handle resolution. A lookup reports the Agent behind a handle plus a
 		// diagnostic when the handle is dead; `getAgentId` is its inverse and
-		// yields an empty handle for an Agent this Building does not own.
+		// yields an empty handle for an Agent this World does not own.
 		EntityLookup<Agent> lookupAgent(AgentId id);
 
 		EntityLookup<Agent const> lookupAgent(AgentId id) const;
@@ -96,12 +96,12 @@ namespace core
 		void clearAgentMovementForBehaviourEdit(AgentId agent);
 		void updateMovementGoals();
 
-		// Wakes every activated Agent the Building owns. A deactivated Agent is
+		// Wakes every activated Agent the World owns. A deactivated Agent is
 		// not simulated (#118), so waking must not restart its locomotion.
 		void wakeAllAgents();
 
 		// Activation is judged before it is written (#118). The target state is
-		// always a legal value; the only refusals are an Agent the Building does
+		// always a legal value; the only refusals are an Agent the World does
 		// not own and a running simulation, since activating or deactivating an
 		// Agent mid-run would strand whatever traversal it was in the middle of.
 		bool canSetAgentActive(AgentId id, bool active, std::string* diagnostic = nullptr) const;
@@ -125,8 +125,8 @@ namespace core
 		//
 		// The InteractionPoint and InteractionRequest lifecycles, the
 		// DeviceOperation lifecycle, and the per-tick phases which allocate,
-		// move and resolve interactions all live here. Building forwards each of
-		// these entry points; no caller outside Building names the coordinator.
+		// move and resolve interactions all live here. World forwards each of
+		// these entry points; no caller outside World names the coordinator.
 		// ------------------------------------------------------------------
 
 		// Interaction point lifecycle. A point is created bare or fully bound to
@@ -198,8 +198,8 @@ namespace core
 		//
 		// Remote-door preparation, extensible preparation for force bridges and
 		// extensible ladders, and the door open lease protocol all live here.
-		// Building forwards each of these entry points; no caller outside
-		// Building names the coordinator.
+		// World forwards each of these entry points; no caller outside
+		// World names the coordinator.
 		// ------------------------------------------------------------------
 
 		// A RemoteControlled Door cannot be crossed until some Agent has reached
@@ -234,8 +234,8 @@ namespace core
 		//
 		// The lift scheduling queries which drive car dispatch, and the passenger
 		// safe-exit protocol which gets an Agent out of a car it can no longer
-		// ride, all live here. Building forwards each of these entry points; no
-		// caller outside Building names the coordinator.
+		// ride, all live here. World forwards each of these entry points; no
+		// caller outside World names the coordinator.
 		// ------------------------------------------------------------------
 
 		// Stop lookup. A stop is whichever declared stop sits nearest the endpoint
@@ -296,9 +296,9 @@ namespace core
 		// the enabled check, the boarding / riding / disembarking classification
 		// and the dispatch to the three branches above all live here, together
 		// with the open platform lift dispatch which bypasses the journey
-		// resource entirely. Building's traversal-request allocation forwards
+		// resource entirely. World's traversal-request allocation forwards
 		// lift and shuttle requests through this entry point; no caller outside
-		// Building names the coordinator.
+		// World names the coordinator.
 		// ------------------------------------------------------------------
 
 		// Allocate one pending request made against a lift, shuttle or landing
@@ -314,9 +314,9 @@ namespace core
 		// call preparation and its completion, the boarding eligibility gates, the
 		// FIFO admission-queue selection, the shuttle carriage capacity
 		// assignment, the queue-position arrival check, the door open lease and the
-		// crossing grant all live here. Building's lift allocation dispatcher
+		// crossing grant all live here. World's lift allocation dispatcher
 		// forwards boarding requests through this entry point; no caller outside
-		// Building names the coordinator.
+		// World names the coordinator.
 		// ------------------------------------------------------------------
 
 		// Allocate one pending boarding request. `edgeResource` is the landing the
@@ -336,8 +336,8 @@ namespace core
 		// shuttle contiguous-ride alignment), journey-stop resolution, the
 		// shared-destination shortcut, confirmation-queue serialisation at the
 		// interior selector control, and the retry-then-safe-exit policy all live
-		// here. Building's lift allocation dispatcher forwards riding requests
-		// through this entry point; no caller outside Building names the
+		// here. World's lift allocation dispatcher forwards riding requests
+		// through this entry point; no caller outside World names the
 		// coordinator.
 		// ------------------------------------------------------------------
 
@@ -353,9 +353,9 @@ namespace core
 		// standing at: the shuttle disembark-door assignment and the walk within
 		// the carriage to the shuttle-side node, the disembark stop phase, the
 		// door open lease which holds the landing door open, and the crossing
-		// lane grant all live here. Building's lift allocation dispatcher
+		// lane grant all live here. World's lift allocation dispatcher
 		// forwards disembarking requests through this entry point; no caller
-		// outside Building names the coordinator.
+		// outside World names the coordinator.
 		// ------------------------------------------------------------------
 
 		// Allocate one pending disembarking request. `edgeResource` is the
@@ -375,8 +375,8 @@ namespace core
 		// reserved queue position before the boarding cutoff, selecting an
 		// onboard destination, and disembarking through the platform's virtual
 		// crossing boundary. It sits with the lift admission release above,
-		// which undoes this allocation. Building forwards this entry point; no
-		// caller outside Building names the coordinator.
+		// which undoes this allocation. World forwards this entry point; no
+		// caller outside World names the coordinator.
 		// ------------------------------------------------------------------
 
 		// Allocate one pending request against the platform lift resource it was
@@ -390,14 +390,14 @@ namespace core
 		//
 		// Which carriage door a shuttle passenger boards and disembarks through,
 		// and the retargeting of the request and the Agent's traversal task onto
-		// that door's landing resource, all live here. Building forwards the
+		// that door's landing resource, all live here. World forwards the
 		// boarding and disembark entry points its lift allocation branches still
-		// call; no caller outside Building names the coordinator.
+		// call; no caller outside World names the coordinator.
 		// ------------------------------------------------------------------
 
 		// The cells a carriage's door mask opens onto, in carriage order. This is
 		// the indexing the shuttle's doors, carriages and capacity positions are
-		// built from, so it travels with the assignment family; Building's shuttle
+		// built from, so it travels with the assignment family; World's shuttle
 		// authoring path calls it through here.
 		static std::vector<uint32_t> shuttleDoorOffsets(uint32_t carriageWidth, uint32_t doorMask);
 
@@ -426,10 +426,10 @@ namespace core
 		// with its entry-spacing rule, traversal progress and timeouts, permit
 		// expiry, and the grant / allocate / deny / commit / cancel / release
 		// transaction lifecycle all live here. Creating and configuring a
-		// traversal resource stays with Building as entity ownership (ADR 0001);
-		// the coordinator operates on the resources it is given. Building forwards
+		// traversal resource stays with World as entity ownership (ADR 0001);
+		// the coordinator operates on the resources it is given. World forwards
 		// the entry points which still have a caller outside itself, and no caller
-		// outside Building names the coordinator.
+		// outside World names the coordinator.
 		// ------------------------------------------------------------------
 
 		// Opening a traversal transaction. The request records the edge, the two
@@ -570,12 +570,12 @@ namespace core
 		// operations), tick event publication, every snapshot builder, the
 		// simulation clock queries and event consumption all live here. The
 		// clock, the phase marker, the event queue and the registries themselves
-		// stay in Building (ADR 0001); the coordinator drives them and owns none
-		// of them. Building forwards each of these entry points; no caller
-		// outside Building names the coordinator.
+		// stay in World (ADR 0001); the coordinator drives them and owns none
+		// of them. World forwards each of these entry points; no caller
+		// outside World names the coordinator.
 		//
 		// Pause and resume around a topology rebuild are deliberately not
-		// coordinator entry points. That protocol is part of Building's
+		// coordinator entry points. That protocol is part of World's
 		// structural-edit contract - an edit refuses to run unless the
 		// simulation is paused, and a resume refuses over dirty topology - so it
 		// stays on the edit side of the boundary. What the coordinator supplies
@@ -592,14 +592,14 @@ namespace core
 		void update(float elapsedSeconds);
 
 		// Headless callers receive false as soon as a behaviour failure pauses the
-		// Building; no part of the next tick is executed.
+		// World; no part of the next tick is executed.
 		bool advanceTick();
 
 		bool advanceTicks(uint64_t count);
 
 		// One tick phase. The phase marker is set before the phase runs and
 		// cleared by advanceTick once the tick has published its events, so a
-		// paused or unwinding Building reports None.
+		// paused or unwinding World reports None.
 		void runSimulationPhase(SimulationPhase phase);
 
 		// Per-phase resource advancement. The lift and shuttle resources are
@@ -647,7 +647,7 @@ namespace core
 
 		SimulationSnapshot getSimulationSnapshot() const;
 
-		// The simulation-side half of Building's pause/resume protocol.
+		// The simulation-side half of World's pause/resume protocol.
 		void cancelAllTraversalForTopologyRebuild();
 
 		void restorePausedPathIntents();
@@ -674,8 +674,8 @@ namespace core
 		void detachInteractionRequester(InteractionRequest& request);
 
 		// The coordinator owns no state. It reaches the registries it drives
-		// through the Building that owns it.
-		Building& mBuilding;
+		// through the World that owns it.
+		World& mWorld;
 	};
 
 } // core

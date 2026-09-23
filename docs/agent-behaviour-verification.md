@@ -3,7 +3,7 @@
 Ticket #164 closes the Agent behaviour feature with one public-facade workflow and
 an explicit prerequisite coverage map. The automated workflow is
 `src/headless/AgentBehaviourWorkflowSmokeChecks.cpp`; it uses the real fixed-tick
-pipeline, Lua 5.4/sol2 adapter, registry package, Building persistence, document
+pipeline, Lua 5.4/sol2 adapter, registry package, World persistence, document
 history, and extracted ImGui panels. It does not inspect Lua stacks, command
 queues, callback containers, graph internals, or traversal coordination state.
 
@@ -27,10 +27,10 @@ instance-local failure isolation, reset, unchanged external-source reload, and
 resume. Public simulation events are consumed independently after Lua observes
 them. Reset and reload recreate instances from authored configuration.
 
-The same executable also verifies current Building round trips (including the
+The same executable also verifies current World round trips (including the
 version-11 Marker identity boundary), direct version-11 loading, deterministic
 version-10 unnamed Marker migration, version-1 registry round trips, unsupported
-version refusal, malformed Building/registry refusal, assignment undo/redo, and
+version refusal, malformed World/registry refusal, assignment undo/redo, and
 atomic whole-document replacement.
 
 CPU-side ImGui frames render the real registry/behaviour panel, assignment
@@ -94,7 +94,7 @@ Windows. The same CTest names and dependency pins apply.
 
 ## Manual GUI release checklist
 
-Perform this pass with a disposable saved Building; keep simulation paused for
+Perform this pass with a disposable saved World; keep simulation paused for
 authored edits. It is deliberately a manual presentation/usability check, not a
 second simulation implementation.
 
@@ -113,19 +113,19 @@ second simulation implementation.
    controls return; remove/disable the behaviour and confirm manual movement
    returns.
 5. Trigger one behaviour callback failure. Confirm simulation pauses, the Agent
-   status changes, the structured diagnostic identifies Building/behaviour/
+   status changes, the structured diagnostic identifies World/behaviour/
    Agent/callback/tick, traceback expansion works, and **Clear** removes the
    displayed diagnostic without changing authored data.
 6. Exercise used-behaviour deletion and used registry detach/switch. Read the
    complete consequence text, cancel once with no changes, then confirm once and
    verify assignments clear and manual controls return.
-7. Copy and paste an assigned Agent within the Building and into a compatible
-   Building. Confirm schedules/Marker names survive. Try an incompatible
+7. Copy and paste an assigned Agent within the World and into a compatible
+   World. Confirm schedules/Marker names survive. Try an incompatible
    registry or missing Marker and confirm the complete refusal; no Marker or
    stripped Agent is created.
-8. Use **Save As** to a fresh directory. Confirm the Building, manifest, behaviour
+8. Use **Save As** to a fresh directory. Confirm the World, manifest, behaviour
    source, and helper modules exist beside one another, then open the copied
-   Building and run it. Repeat toward an occupied package destination and confirm
+   World and run it. Repeat toward an occupied package destination and confirm
    no file is clobbered.
 
 Native file dialogs are used only in this manual pass. All automated CTest

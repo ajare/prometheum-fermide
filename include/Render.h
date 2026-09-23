@@ -10,7 +10,7 @@
 #include "imgui/imgui.h"
 
 #include "core/Background.h"
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/Facade.h"
 #include "core/Defines.h"
 #include "core/Door.h"
@@ -231,14 +231,14 @@ struct BackgroundApertureRegion
 // Backgrounds, never with the screen.
 //
 inline std::vector<BackgroundApertureRegion> backgroundApertureRegions(
-	core::Building const& building,
+	core::World const& world,
 	uint32_t backLayerIndex,
 	core::Vector2 const& apertureMin,
 	core::Vector2 const& apertureMax)
 {
 	std::vector<BackgroundApertureRegion> regions;
 
-	if (backLayerIndex >= building.getLayerCount())
+	if (backLayerIndex >= world.getLayerCount())
 	{
 		return regions;
 	}
@@ -246,15 +246,15 @@ inline std::vector<BackgroundApertureRegion> backgroundApertureRegions(
 	int const x0 = std::max(static_cast<int>(std::floor(apertureMin.x)), 0);
 	int const y0 = std::max(static_cast<int>(std::floor(apertureMin.y)), 0);
 	int const x1 = std::min(static_cast<int>(std::ceil(apertureMax.x)) - 1,
-		static_cast<int>(building.getCellsWide()) - 1);
+		static_cast<int>(world.getCellsWide()) - 1);
 	int const y1 = std::min(static_cast<int>(std::ceil(apertureMax.y)) - 1,
-		static_cast<int>(building.getDecksHigh()) - 1);
+		static_cast<int>(world.getDecksHigh()) - 1);
 
 	for (int y = y0; y <= y1; ++y)
 	{
 		for (int x = x0; x <= x1; ++x)
 		{
-			auto const sector = building.getSectorAtPosition(backLayerIndex,
+			auto const sector = world.getSectorAtPosition(backLayerIndex,
 				static_cast<float>(x) + 0.5f, static_cast<float>(y) + 0.5f);
 
 			if (!sector || sector->getType() != core::SectorType::Background)
@@ -391,7 +391,7 @@ inline float deckFloorY(core::Sector const& sector, uint32_t deckIndex)
 // stand in.
 //
 inline std::shared_ptr<const core::Sector> boundarySector(
-	core::Building const& building,
+	core::World const& world,
 	core::Sector const& sector,
 	uint32_t deckIndex,
 	int side)
@@ -401,13 +401,13 @@ inline std::shared_ptr<const core::Sector> boundarySector(
 		: static_cast<int>(sector.getCellX()) + static_cast<int>(sector.getCellsWide());
 	int const globalY = static_cast<int>(sector.getCellY()) + static_cast<int>(deckIndex);
 
-	if (boundaryX < 0 || boundaryX >= static_cast<int>(building.getCellsWide())
-		|| globalY < 0 || globalY >= static_cast<int>(building.getDecksHigh()))
+	if (boundaryX < 0 || boundaryX >= static_cast<int>(world.getCellsWide())
+		|| globalY < 0 || globalY >= static_cast<int>(world.getDecksHigh()))
 	{
 		return nullptr;
 	}
 
-	return building.getSectorAtPosition(sector.getLayerIndex(),
+	return world.getSectorAtPosition(sector.getLayerIndex(),
 		static_cast<float>(boundaryX) + 0.5f, static_cast<float>(globalY) + 0.5f);
 }
 
@@ -425,13 +425,13 @@ inline std::shared_ptr<const core::Sector> boundarySector(
 // in front has no Location pair straddling this boundary, or when that pair is
 // not open.
 //
-inline bool frontLayerOpening(std::shared_ptr<const core::Building> const& building,
+inline bool frontLayerOpening(std::shared_ptr<const core::World> const& world,
 	int viewLayer, core::Sector const& sector, uint32_t deckIndex, int side,
 	float& openFrom, float& openTo)
 {
 	openFrom = openTo = 0.0f;
 
-	if (!building || viewLayer < 0 || sector.getLayerIndex() <= static_cast<uint32_t>(viewLayer))
+	if (!world || viewLayer < 0 || sector.getLayerIndex() <= static_cast<uint32_t>(viewLayer))
 	{
 		return false;
 	}
@@ -443,15 +443,15 @@ inline bool frontLayerOpening(std::shared_ptr<const core::Building> const& build
 		: static_cast<int>(sector.getCellX()) + static_cast<int>(sector.getCellsWide());
 	int const globalY = static_cast<int>(sector.getCellY()) + static_cast<int>(deckIndex);
 
-	if (boundaryX <= 0 || boundaryX >= static_cast<int>(building->getCellsWide())
-		|| globalY < 0 || globalY >= static_cast<int>(building->getDecksHigh()))
+	if (boundaryX <= 0 || boundaryX >= static_cast<int>(world->getCellsWide())
+		|| globalY < 0 || globalY >= static_cast<int>(world->getDecksHigh()))
 	{
 		return false;
 	}
 
-	auto const left = building->getSectorAtPosition(static_cast<uint32_t>(viewLayer),
+	auto const left = world->getSectorAtPosition(static_cast<uint32_t>(viewLayer),
 		static_cast<float>(boundaryX) - 0.5f, static_cast<float>(globalY) + 0.5f);
-	auto const right = building->getSectorAtPosition(static_cast<uint32_t>(viewLayer),
+	auto const right = world->getSectorAtPosition(static_cast<uint32_t>(viewLayer),
 		static_cast<float>(boundaryX) + 0.5f, static_cast<float>(globalY) + 0.5f);
 
 	if (!left || !right)
@@ -524,7 +524,7 @@ inline std::vector<WallSpan> subtractSpan(WallSpan const& span, float from, floa
 // of equal height overlap completely, so their shared wall vanishes entirely
 // and the two Locations read as connected.
 //
-// With no Building to ask, or no Sector on the boundary, an open end removes
+// With no World to ask, or no Sector on the boundary, an open end removes
 // its whole deck: with nothing to intersect there is no shared boundary to
 // leave standing, and this is how an open end has always rendered.
 //
@@ -533,7 +533,7 @@ inline std::vector<WallSpan> subtractSpan(WallSpan const& span, float from, floa
 // own opening covers, so a behind-Layer wall cannot masquerade as the wall the
 // player just removed. Pass a negative viewLayer to skip that second cut.
 //
-inline std::vector<WallSpan> wallSpansToDraw(std::shared_ptr<const core::Building> const& building,
+inline std::vector<WallSpan> wallSpansToDraw(std::shared_ptr<const core::World> const& world,
 	core::Sector const& sector, uint32_t deckIndex, int side, int viewLayer = -1)
 {
 	std::vector<WallSpan> spans;
@@ -557,8 +557,8 @@ inline std::vector<WallSpan> wallSpansToDraw(std::shared_ptr<const core::Buildin
 	}
 	else
 	{
-		auto const neighbour = building
-			? boundarySector(*building, sector, deckIndex, side)
+		auto const neighbour = world
+			? boundarySector(*world, sector, deckIndex, side)
 			: nullptr;
 
 		if (!neighbour)
@@ -601,7 +601,7 @@ inline std::vector<WallSpan> wallSpansToDraw(std::shared_ptr<const core::Buildin
 	}
 
 	float openingFrom{ 0.0f }, openingTo{ 0.0f };
-	if (!frontLayerOpening(building, viewLayer, sector, deckIndex, side, openingFrom, openingTo))
+	if (!frontLayerOpening(world, viewLayer, sector, deckIndex, side, openingFrom, openingTo))
 	{
 		return spans;
 	}
@@ -853,25 +853,25 @@ inline bool shouldRenderSectorAgents(core::SectorType /* sectorType */, LayerRen
 	return isDrawnSolid(style);
 }
 
-void renderGraph(std::shared_ptr<const core::Graph> graph, std::shared_ptr<const core::Building> building);
+void renderGraph(std::shared_ptr<const core::Graph> graph, std::shared_ptr<const core::World> world);
 
 // Ordinary Agents use their effective inherited Colour (or the editor
 // fallback); selection always wins with its fixed gold highlight.
 ImU32 agentRenderColour(core::Agent const& agent, bool selected);
 void renderAgent(core::Agent const* agent, ImDrawList* drawList);
 
-void renderBuilding(std::shared_ptr<const core::Building> building);
+void renderWorld(std::shared_ptr<const core::World> world);
 
 //
-// Publishes the Building the viewport is rendering.
+// Publishes the World rendered by the viewport.
 //
-// renderBuilding() calls this on entry. The Sector-level passes read the
-// Building back from here because their call chain carries no Building pointer,
+// renderWorld() calls this on entry. The Sector-level passes read the
+// World back from here because their call chain carries no World pointer,
 // which is the same route #37 opened for the multi-Background aperture
 // composite. An open wall needs it too: the stretch of wall a removed end
 // takes away is the overlap with the Sector on the far side of that boundary.
 //
-void setRenderBuilding(std::shared_ptr<const core::Building> building);
+void setRenderWorld(std::shared_ptr<const core::World> world);
 
 //
 // The Sectors of one Layer that the current viewport sees: culled from the
@@ -880,14 +880,14 @@ void setRenderBuilding(std::shared_ptr<const core::Building> building);
 // here so the headless viewport-culling check can exercise the real bounds.
 //
 std::vector<std::shared_ptr<const core::Sector>> viewportSectors(
-	std::shared_ptr<const core::Building> const& building, uint32_t layer);
+	std::shared_ptr<const core::World> const& world, uint32_t layer);
 
 //
 // Draws every Sector one Layer contributes for a single viewport pass, culled
 // to the current viewport. Declared here so the headless viewport-culling
 // check (#58) can exercise the real pass against a live ImDrawList.
 //
-void renderSectors(std::shared_ptr<const core::Building> building, uint32_t layer,
+void renderSectors(std::shared_ptr<const core::World> world, uint32_t layer,
 	LayerRenderStyle style, ImDrawList* drawList);
 
 //

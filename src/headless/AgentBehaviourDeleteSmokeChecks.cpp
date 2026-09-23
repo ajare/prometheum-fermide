@@ -11,7 +11,7 @@
 
 #include "core/AgentBehaviourRegistry.h"
 #include "core/AgentBehaviourRegistryDocument.h"
-#include "core/Building.h"
+#include "core/World.h"
 #include "imgui/imgui.h"
 
 void runAgentBehaviourDeleteSmokeChecks();
@@ -49,8 +49,8 @@ namespace
 		TemporaryDirectory temporary;
 		std::filesystem::path package{ temporary.path / "shared.behaviours" };
 		std::shared_ptr<core::AgentBehaviourRegistry> registry;
-		std::shared_ptr<core::Building> first;
-		std::shared_ptr<core::Building> second;
+		std::shared_ptr<core::World> first;
+		std::shared_ptr<core::World> second;
 		core::AgentId firstAgent{};
 		core::AgentId secondAgent{};
 		core::AgentBehaviourId used{ 1 };
@@ -69,23 +69,23 @@ namespace
 				"behaviours:\n"
 				"  - id: 1\n    name: Schedule\n    revision: 1\n    source: simple.lua\n"
 				"  - id: 2\n    name: Unused\n    revision: 1\n    source: simple.lua\n");
-			auto makeBuilding = [&](std::string name, std::string filename,
+			auto makeWorld = [&](std::string name, std::string filename,
 				core::AgentId& agent)
 			{
-				auto building = std::make_shared<core::Building>(name, 8, 2);
-				auto room = building->addRoom("Room", 0, 0, 0, 8, 1);
-				building->finishBuild();
-				agent = building->createAgent(name + " Agent", room, 0, 1.5f);
-				building->pauseSimulation();
-				building->saveTo((temporary.path / filename).string());
-				return building;
+				auto world = std::make_shared<core::World>(name, 8, 2);
+				auto room = world->addRoom("Room", 0, 0, 0, 8, 1);
+				world->finishBuild();
+				agent = world->createAgent(name + " Agent", room, 0, 1.5f);
+				world->pauseSimulation();
+				world->saveTo((temporary.path / filename).string());
+				return world;
 			};
-			first = makeBuilding("Alpha", "alpha.yaml", firstAgent);
-			second = makeBuilding("Beta", "beta.yaml", secondAgent);
+			first = makeWorld("Alpha", "alpha.world.yaml", firstAgent);
+			second = makeWorld("Beta", "beta.world.yaml", secondAgent);
 			registry = core::selectAndAttachAgentBehaviourRegistry(
-				*first, temporary.path / "alpha.yaml", package);
+				*first, temporary.path / "alpha.world.yaml", package);
 			require(core::selectAndAttachAgentBehaviourRegistry(
-				*second, temporary.path / "beta.yaml", package) == registry,
+				*second, temporary.path / "beta.world.yaml", package) == registry,
 				"Deletion fixture did not share one registry");
 			std::string diagnostic;
 			require(first->setAgentBehaviourAssignment(firstAgent, used, 1, {}, &diagnostic)
@@ -95,8 +95,8 @@ namespace
 			second->markSaved();
 			registry->markUnmodified();
 			(void)agentBehaviourRegistryDocumentHistory(registry);
-			(void)agentBehaviourBuildingDocumentHistory(first);
-			(void)agentBehaviourBuildingDocumentHistory(second);
+			(void)agentBehaviourWorldDocumentHistory(first);
+			(void)agentBehaviourWorldDocumentHistory(second);
 		}
 
 		~Fixture()
@@ -135,7 +135,7 @@ namespace
 		ImGui::NewFrame();
 		ImGui::Begin("Behaviour deletion smoke");
 		require(!renderBehavioursPanel(fixture.first,
-			(fixture.temporary.path / "alpha.yaml").string()),
+			(fixture.temporary.path / "alpha.world.yaml").string()),
 			"Rendering deletion controls edited a document");
 		ImGui::End();
 		ImGui::Render();
@@ -147,7 +147,7 @@ namespace
 			&& text.find("Alpha Agent") != std::string::npos
 			&& text.find("Beta") != std::string::npos
 			&& text.find("Beta Agent") != std::string::npos,
-			"Confirmation did not list every affected Building and Agent");
+			"Confirmation did not list every affected World and Agent");
 		requestAgentBehaviourDelete(fixture.registry, fixture.used);
 		require(agentBehaviourDeletePending(), "Used deletion did not require confirmation");
 		cancelPendingAgentBehaviourDelete();
@@ -157,8 +157,8 @@ namespace
 			"Cancellation changed a participant");
 
 		auto& registryHistory = agentBehaviourRegistryDocumentHistory(fixture.registry);
-		auto& firstHistory = agentBehaviourBuildingDocumentHistory(fixture.first);
-		auto& secondHistory = agentBehaviourBuildingDocumentHistory(fixture.second);
+		auto& firstHistory = agentBehaviourWorldDocumentHistory(fixture.first);
+		auto& secondHistory = agentBehaviourWorldDocumentHistory(fixture.second);
 		auto const registryUndo = registryHistory.undoCount();
 		auto const firstUndo = firstHistory.undoCount();
 		auto const secondUndo = secondHistory.undoCount();
@@ -198,7 +198,7 @@ namespace
 		auto const registryUndo
 			= agentBehaviourRegistryDocumentHistory(fixture.registry).undoCount();
 		auto const firstUndo
-			= agentBehaviourBuildingDocumentHistory(fixture.first).undoCount();
+			= agentBehaviourWorldDocumentHistory(fixture.first).undoCount();
 		std::string diagnostic;
 		require(!commitAgentBehaviourDelete(fixture.registry, fixture.used, diagnostic)
 			&& diagnostic.find("Pause") != std::string::npos
@@ -207,7 +207,7 @@ namespace
 			&& fixture.second->getAgentBehaviourAssignment(fixture.secondAgent)
 			&& agentBehaviourRegistryDocumentHistory(fixture.registry).undoCount()
 				== registryUndo
-			&& agentBehaviourBuildingDocumentHistory(fixture.first).undoCount()
+			&& agentBehaviourWorldDocumentHistory(fixture.first).undoCount()
 				== firstUndo,
 			"A failed participant partially changed deletion state: " + diagnostic);
 	}

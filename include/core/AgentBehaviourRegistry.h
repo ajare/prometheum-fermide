@@ -15,7 +15,7 @@
 
 namespace core
 {
-	class Building;
+	class World;
 	class AgentBehaviourRuntimeAdapter;
 
 	enum class AgentBehaviourReloadDiagnosticScope
@@ -45,8 +45,8 @@ namespace core
 	// validation, so nested migration work is never hidden behind an aggregate.
 	struct AgentBehaviourSchemaMigrationItem
 	{
-		Building* building{ nullptr };
-		std::string buildingName;
+		World* world{ nullptr };
+		std::string worldName;
 		AgentId agent{};
 		std::string agentName;
 		AgentBehaviourId behaviour{};
@@ -68,7 +68,7 @@ namespace core
 	// candidate schema validates this ordinary C++ value; Lua is not involved.
 	struct AgentBehaviourConfigurationMigration
 	{
-		Building* building{ nullptr };
+		World* world{ nullptr };
 		AgentId agent{};
 		AgentBehaviourConfiguration configuration;
 	};
@@ -78,7 +78,7 @@ namespace core
 	// so reporting a candidate can never replace the previous working status.
 	struct LoadedAgentBehaviourUsage
 	{
-		Building const* building{ nullptr };
+		World const* world{ nullptr };
 		struct Agent
 		{
 			AgentId id{};
@@ -91,7 +91,7 @@ namespace core
 	{
 		AgentBehaviourReloadDiagnosticScope scope{
 			AgentBehaviourReloadDiagnosticScope::Package };
-		std::string buildingName;
+		std::string worldName;
 		std::string agentName;
 		AgentId agent{};
 		std::string behaviourName;
@@ -112,7 +112,7 @@ namespace core
 		std::string mUuid;
 		// Package revision covers the registry-local helper-module declarations.
 		// A declaration change must advance it even when no behaviour definition
-		// changed, so attached Buildings can report one deterministic dependency set.
+		// changed, so attached Worlds can report one deterministic dependency set.
 		uint64_t mPackageRevision{ 1 };
 		std::map<std::string, std::unique_ptr<AgentBehaviourHelperModule>> mHelperModules;
 		EntityRegistry<AgentBehaviourId, AgentBehaviour> mBehaviours;
@@ -127,11 +127,11 @@ namespace core
 		// The exact manifest bytes last loaded or saved provide optimistic
 		// concurrency for this independently persisted document.
 		std::string mSavedDocumentContents;
-		// Buildings register while this shared registry is attached. Raw pointers
-		// are safe here because Building unregisters before destruction.
+		// Worlds register while this shared registry is attached. Raw pointers
+		// are safe here because World unregisters before destruction.
 		// Registration order is retained as the deterministic tie-breaker for
-		// same-named Buildings during coordinated reload preflight.
-		std::vector<Building*> mLoadedBuildings;
+		// same-named Worlds during coordinated reload preflight.
+		std::vector<World*> mLoadedWorlds;
 
 		bool childrenModified() const override;
 		void serializeImpl(Serializer& serializer, SerializationWorkData& workData) const override;
@@ -144,10 +144,10 @@ namespace core
 		void requireModuleFile(std::string const& sourceModulePath,
 			std::filesystem::path const& packageDirectory) const;
 		void preflightPackage(std::filesystem::path const& packageDirectory);
-		void registerBuilding(Building& building);
-		void unregisterBuilding(Building& building);
+		void registerWorld(World& world);
+		void unregisterWorld(World& world);
 
-		friend class Building;
+		friend class World;
 		friend class AgentBehaviourRuntimeAdapter;
 
 	public:
@@ -170,8 +170,8 @@ namespace core
 		AgentBehaviour const* lookupAgentBehaviour(AgentBehaviourId id) const;
 		std::string const& getBehaviourName(AgentBehaviourId id) const;
 
-		bool hasLoadedBuilding(Building const* building) const;
-		bool hasLoadedBuildings() const;
+		bool hasLoadedWorld(World const* world) const;
+		bool hasLoadedWorlds() const;
 		std::vector<LoadedAgentBehaviourUsage> getLoadedAgentBehaviourUsage(
 			AgentBehaviourId id) const;
 		uint64_t getLoadedAgentBehaviourUsageCount(AgentBehaviourId id) const;
@@ -196,7 +196,7 @@ namespace core
 			std::vector<AgentBehaviourConfigurationMigration> const& migrations = {});
 
 		// Registry definitions are shared authored state. Editing them is safe
-		// only when every loaded dependent Building is paused.
+		// only when every loaded dependent World is paused.
 		bool definitionEditsAreAllowed(std::string* diagnostic = nullptr) const;
 
 		// Authored definition edits. The source module file must exist inside
@@ -209,7 +209,7 @@ namespace core
 			std::string* diagnostic = nullptr);
 		bool deleteAgentBehaviour(AgentBehaviourId id,
 			std::string* diagnostic = nullptr);
-		// Explicit coordinated deletion. Every affected Building and replacement
+		// Explicit coordinated deletion. Every affected World and replacement
 		// runtime is preflighted before the definition or any assignment changes.
 		bool deleteAgentBehaviourClearingAssignments(AgentBehaviourId id,
 			std::string* diagnostic = nullptr);

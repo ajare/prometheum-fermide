@@ -30,7 +30,7 @@
 #include <vector>
 
 #include "core/Background.h"
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/Sector.h"
 #include "core/SectorType.h"
 #include "core/Window.h"
@@ -44,16 +44,16 @@ namespace
 		if (!condition) throw std::runtime_error(message);
 	}
 
-	// Every distinct Window in the Building, keyed by the Layer it is authored on
+	// Every distinct Window in the World, keyed by the Layer it is authored on
 	// and the cell it sits on.  Sector indices shift under every edit, so the key
 	// is what survives to be compared before and after.
-	std::set<std::string> windowKeys(core::Building const& building)
+	std::set<std::string> windowKeys(core::World const& world)
 	{
 		std::set<std::string> keys;
-		for (uint32_t sector = 0; sector < building.getNumSectors(); ++sector)
+		for (uint32_t sector = 0; sector < world.getNumSectors(); ++sector)
 		{
-			auto const sectorPtr = building.getSector(sector);
-			require(sectorPtr != nullptr, "Building reported a null Sector while finding Windows");
+			auto const sectorPtr = world.getSector(sector);
+			require(sectorPtr != nullptr, "World reported a null Sector while finding Windows");
 			for (uint32_t object = 0; object < sectorPtr->getNumObjects(); ++object)
 			{
 				auto windowObject = std::dynamic_pointer_cast<const core::WindowSectorObject>(
@@ -68,7 +68,7 @@ namespace
 	}
 
 	// Whether the consequence list names the Window at this cell on this Layer.
-	// Both wordings the Building uses - "looking into this Background" for a
+	// Both wordings the World uses - "looking into this Background" for a
 	// Background edit and "which looks into <Layer>" for a Layer deletion - carry
 	// the same "Window at x,y on Layer n" prefix.
 	bool namesWindow(std::vector<std::string> const& consequences, uint32_t layer,
@@ -83,20 +83,20 @@ namespace
 
 	// The Windows the consequence list names, as keys.  Anything named which is
 	// not one of the expected Windows is as much a failure as a Window left out.
-	std::set<std::string> namedWindows(core::Building const& building,
+	std::set<std::string> namedWindows(core::World const& world,
 		std::vector<std::string> const& consequences)
 	{
 		std::set<std::string> named;
-		for (uint32_t layer = 0; layer < building.getLayerCount(); ++layer)
-			for (uint32_t x = 0; x < building.getCellsWide(); ++x)
-				for (uint32_t y = 0; y < building.getDecksHigh(); ++y)
+		for (uint32_t layer = 0; layer < world.getLayerCount(); ++layer)
+			for (uint32_t x = 0; x < world.getCellsWide(); ++x)
+				for (uint32_t y = 0; y < world.getDecksHigh(); ++y)
 					if (namesWindow(consequences, layer, x, y))
 						named.insert(std::format("Layer {}.cell {},{}", layer, x, y));
 		return named;
 	}
 
 	// The whole ticket in one arrangement: one Room up front, two Backgrounds and
-	// a real Room behind it, and a deep Layer to keep the Building three Layers
+	// a real Room behind it, and a deep Layer to keep the World three Layers
 	// wide no matter which of them goes.
 	//
 	//   Layer 0  Front Room                                  (Windows authored)
@@ -116,29 +116,29 @@ namespace
 		uint32_t deep{ 0 };
 	};
 
-	CascadeLayout authorCascade(core::Building& building)
+	CascadeLayout authorCascade(core::World& world)
 	{
 		CascadeLayout layout;
-		while (building.getLayerCount() < 3) building.addLayer();
-		layout.front = building.addRoom("Front", 0, 0, 0, 12, 1);
-		layout.backdropA = building.addBackground(1, 0, 0, 6, 1, { 200, 120, 40 });
-		layout.backdropB = building.addBackground(1, 0, 6, 3, 1, { 40, 160, 120 });
-		layout.behind = building.addRoom("Behind", 1, 0, 9, 3, 1);
-		layout.deep = building.addRoom("Deep", 2, 0, 0, 12, 1);
+		while (world.getLayerCount() < 3) world.addLayer();
+		layout.front = world.addRoom("Front", 0, 0, 0, 12, 1);
+		layout.backdropA = world.addBackground(1, 0, 0, 6, 1, { 200, 120, 40 });
+		layout.backdropB = world.addBackground(1, 0, 6, 3, 1, { 40, 160, 120 });
+		layout.behind = world.addRoom("Behind", 1, 0, 9, 3, 1);
+		layout.deep = world.addRoom("Deep", 2, 0, 0, 12, 1);
 		return layout;
 	}
 
 	// The four Windows, in authoring order: two looking into Backdrop A, one into
 	// Backdrop B, one into the Behind Room.
-	void authorLookingWindows(core::Building& building)
+	void authorLookingWindows(core::World& world)
 	{
-		building.addSectorWindow(0, 0, 1, 2, 1,
+		world.addSectorWindow(0, 0, 1, 2, 1,
 			{ false, core::Window::State::Closed, core::Window::Style::Clear });
-		building.addSectorWindow(0, 0, 4, 2, 1,
+		world.addSectorWindow(0, 0, 4, 2, 1,
 			{ false, core::Window::State::Closed, core::Window::Style::Clear });
-		building.addSectorWindow(0, 0, 6, 2, 1,
+		world.addSectorWindow(0, 0, 6, 2, 1,
 			{ false, core::Window::State::Closed, core::Window::Style::Clear });
-		building.addSectorWindow(0, 0, 9, 2, 1,
+		world.addSectorWindow(0, 0, 9, 2, 1,
 			{ false, core::Window::State::Closed, core::Window::Style::Clear });
 	}
 
@@ -166,8 +166,8 @@ namespace
 
 	// The edit deletes exactly the Windows the plan named: nothing more, nothing
 	// less.  Every path in the ticket is checked this way.
-	void requireExactlyAnnouncedAndDeleted(core::Building& building,
-		core::Building::LocationEditPlan const& plan,
+	void requireExactlyAnnouncedAndDeleted(core::World& world,
+		core::World::LocationEditPlan const& plan,
 		std::set<std::string> const& expectedDeleted,
 		std::set<std::string> const& before,
 		std::string const& path)
@@ -185,13 +185,13 @@ namespace
 
 		require(plan.requiresConfirmation(),
 			(path + ": a cascade which deletes Windows did not ask for confirmation").c_str());
-		auto const named = namedWindows(building, plan.consequences);
+		auto const named = namedWindows(world, plan.consequences);
 		require(named == expectedDeleted,
 			(path + ": the plan named " + keysToString(named)
 				+ ", expected " + keysToString(expectedDeleted)).c_str());
 
-		building.applyBackgroundEdit(plan);
-		auto const after = windowKeys(building);
+		world.applyBackgroundEdit(plan);
+		auto const after = windowKeys(world);
 		for (auto const& key : expectedDeleted)
 			require(before.count(key) != 0,
 				(path + ": expected to delete " + key + ", which was never there").c_str());
@@ -205,41 +205,41 @@ namespace
 		}
 		require(after.size() == before.size() - expectedDeleted.size(),
 			(path + ": Window count did not fall by the announced amount").c_str());
-		require(building.isTraversalTopologyValid(),
+		require(world.isTraversalTopologyValid(),
 			(path + ": the cascade left an invalid topology: "
-				+ building.getTopologyDiagnostic()).c_str());
+				+ world.getTopologyDiagnostic()).c_str());
 	}
 
 	// Path 1: deleting a Background names every Window looking into it, and only
 	// those, and the applied plan removes them with it.
 	void deletingABackgroundTakesTheWindowsLookingIntoIt()
 	{
-		core::Building building("Background delete", 12, 3);
-		auto const layout = authorCascade(building);
-		authorLookingWindows(building);
-		building.finishBuild();
+		core::World world("Background delete", 12, 3);
+		auto const layout = authorCascade(world);
+		authorLookingWindows(world);
+		world.finishBuild();
 
-		auto const before = windowKeys(building);
+		auto const before = windowKeys(world);
 		require(before.size() == 4,
 			("The cascade map did not author four Windows: " + keysToString(before)).c_str());
 
-		auto const plan = building.planRemoveBackground(layout.backdropA);
+		auto const plan = world.planRemoveBackground(layout.backdropA);
 		// Planning is a question, not an edit: nothing has moved yet.
-		require(windowKeys(building) == before,
-			"Planning a Background delete changed the Building");
-		require(building.getSector(layout.backdropA) != nullptr
-			&& building.getSector(layout.backdropA)->getType() == core::SectorType::Background,
+		require(windowKeys(world) == before,
+			"Planning a Background delete changed the World");
+		require(world.getSector(layout.backdropA) != nullptr
+			&& world.getSector(layout.backdropA)->getType() == core::SectorType::Background,
 			"Planning a Background delete removed the Background");
 
-		requireExactlyAnnouncedAndDeleted(building, plan,
+		requireExactlyAnnouncedAndDeleted(world, plan,
 			{ "Layer 0.cell 1,0", "Layer 0.cell 4,0" }, before, "delete Background");
 
 		// What is left reads the same from both sides: Backdrop B still stands, and
 		// the Windows looking into it and into the Behind Room still look into them.
-		require(building.getNumSectors() == 4,
+		require(world.getNumSectors() == 4,
 			("Deleting one Background left the wrong number of Sectors: ")
-			+ std::to_string(building.getNumSectors()));
-		auto const left = windowKeys(building);
+			+ std::to_string(world.getNumSectors()));
+		auto const left = windowKeys(world);
 		require(left == std::set<std::string>{ "Layer 0.cell 6,0", "Layer 0.cell 9,0" },
 			("The wrong Windows survived: " + keysToString(left)).c_str());
 	}
@@ -248,13 +248,13 @@ namespace
 	// consequences, and no confirmation asked for.
 	void deletingABackgroundNobodyLooksIntoNeedsNoConfirmation()
 	{
-		core::Building building("Unwatched Background", 12, 3);
-		auto const layout = authorCascade(building);
-		building.addSectorWindow(0, 0, 1, 2, 1,
+		core::World world("Unwatched Background", 12, 3);
+		auto const layout = authorCascade(world);
+		world.addSectorWindow(0, 0, 1, 2, 1,
 			{ false, core::Window::State::Closed, core::Window::Style::Clear });
-		building.finishBuild();
+		world.finishBuild();
 
-		auto const plan = building.planRemoveBackground(layout.backdropB);
+		auto const plan = world.planRemoveBackground(layout.backdropB);
 		require(plan.valid, ("Removing an unwatched Background was refused: " + plan.diagnostic).c_str());
 		require(plan.consequences.empty(),
 			("Removing a Background nobody looks into announced a cascade: "
@@ -262,9 +262,9 @@ namespace
 		require(!plan.requiresConfirmation(),
 			"An empty cascade still asked for confirmation");
 
-		auto const before = windowKeys(building);
-		building.applyBackgroundEdit(plan);
-		require(windowKeys(building) == before,
+		auto const before = windowKeys(world);
+		world.applyBackgroundEdit(plan);
+		require(windowKeys(world) == before,
 			"Removing an unwatched Background took a Window with it");
 	}
 
@@ -272,16 +272,16 @@ namespace
 	// looking into them.
 	void movingABackgroundAwayTakesTheWindowsItUncovers()
 	{
-		core::Building building("Background move", 12, 3);
-		auto const layout = authorCascade(building);
-		authorLookingWindows(building);
-		building.finishBuild();
+		core::World world("Background move", 12, 3);
+		auto const layout = authorCascade(world);
+		authorLookingWindows(world);
+		world.finishBuild();
 
-		auto const before = windowKeys(building);
+		auto const before = windowKeys(world);
 		// The Background slides one deck down, leaving every back cell it had.
-		auto const plan = building.planResizeBackground(layout.backdropA, 0, 1, 6, 1);
+		auto const plan = world.planResizeBackground(layout.backdropA, 0, 1, 6, 1);
 		require(plan.move, "A Background moved to a new cell was not planned as a move");
-		requireExactlyAnnouncedAndDeleted(building, plan,
+		requireExactlyAnnouncedAndDeleted(world, plan,
 			{ "Layer 0.cell 1,0", "Layer 0.cell 4,0" }, before, "move Background");
 	}
 
@@ -289,17 +289,17 @@ namespace
 	// Windows behind them.
 	void shrinkingABackgroundTakesOnlyTheWindowsItLetsGoOf()
 	{
-		core::Building building("Background shrink", 12, 3);
-		auto const layout = authorCascade(building);
-		authorLookingWindows(building);
-		building.finishBuild();
+		core::World world("Background shrink", 12, 3);
+		auto const layout = authorCascade(world);
+		authorLookingWindows(world);
+		world.finishBuild();
 
-		auto const before = windowKeys(building);
+		auto const before = windowKeys(world);
 		// Backdrop A keeps cells 0-4 and lets go of cell 5, which the Window at
 		// 4,0 straddles.  The Window at 1,0 is untouched.
-		auto const plan = building.planResizeBackground(layout.backdropA, 0, 0, 5, 1);
+		auto const plan = world.planResizeBackground(layout.backdropA, 0, 0, 5, 1);
 		require(!plan.move, "A resize which changed the width was planned as a pure move");
-		requireExactlyAnnouncedAndDeleted(building, plan,
+		requireExactlyAnnouncedAndDeleted(world, plan,
 			{ "Layer 0.cell 4,0" }, before, "shrink Background");
 	}
 
@@ -307,21 +307,21 @@ namespace
 	// every back cell it covered before deletes nothing and says nothing.
 	void aResizeWhichKeepsEveryBackCellCascadesNothing()
 	{
-		core::Building building("Background kept", 12, 3);
-		auto const layout = authorCascade(building);
-		authorLookingWindows(building);
-		building.finishBuild();
+		core::World world("Background kept", 12, 3);
+		auto const layout = authorCascade(world);
+		authorLookingWindows(world);
+		world.finishBuild();
 
-		auto const before = windowKeys(building);
-		auto const plan = building.planResizeBackground(layout.backdropA, 0, 0, 6, 1);
+		auto const before = windowKeys(world);
+		auto const plan = world.planResizeBackground(layout.backdropA, 0, 0, 6, 1);
 		require(plan.valid, ("The unchanged resize was refused: " + plan.diagnostic).c_str());
 		require(plan.consequences.empty(),
 			("An edit which uncovers nothing announced one: "
 				+ consequencesToString(plan.consequences)).c_str());
 		require(!plan.requiresConfirmation(),
 			"An edit which deletes nothing asked for confirmation");
-		building.applyBackgroundEdit(plan);
-		require(windowKeys(building) == before,
+		world.applyBackgroundEdit(plan);
+		require(windowKeys(world) == before,
 			"An unchanged resize changed the Windows");
 	}
 
@@ -355,25 +355,25 @@ namespace
 
 		for (auto const& edit : edits)
 		{
-			core::Building building("Control check", 12, 3);
-			auto const layout = authorCascade(building);
-			authorLookingWindows(building);
-			building.finishBuild();
+			core::World world("Control check", 12, 3);
+			auto const layout = authorCascade(world);
+			authorLookingWindows(world);
+			world.finishBuild();
 
-			auto const before = windowKeys(building);
+			auto const before = windowKeys(world);
 			require(before.count(control) != 0, "The control Window was not authored");
 
 			auto const sectorIndex = edit.editsBackdropA ? layout.backdropA : layout.backdropB;
 			auto const plan = edit.remove
-				? building.planRemoveBackground(sectorIndex)
-				: building.planResizeBackground(sectorIndex, edit.x, edit.y,
+				? world.planRemoveBackground(sectorIndex)
+				: world.planResizeBackground(sectorIndex, edit.x, edit.y,
 					edit.cellsWide, edit.decksHigh);
 			require(plan.valid, (std::string(edit.name) + ": refused: " + plan.diagnostic).c_str());
 			require(!namesWindow(plan.consequences, 0, 9, 0),
 				(std::string(edit.name) + ": named the Window looking into the Behind Room: "
 					+ consequencesToString(plan.consequences)).c_str());
-			requireExactlyAnnouncedAndDeleted(building, plan, edit.expectedDeleted, before, edit.name);
-			require(windowKeys(building).count(control) != 0,
+			requireExactlyAnnouncedAndDeleted(world, plan, edit.expectedDeleted, before, edit.name);
+			require(windowKeys(world).count(control) != 0,
 				(std::string(edit.name) + ": the control Window did not survive").c_str());
 		}
 	}
@@ -382,15 +382,15 @@ namespace
 	// front which looked into it, and names each of them.
 	void deletingTheBackgroundsLayerNamesTheWindowsLookingIntoIt()
 	{
-		core::Building building("Layer delete", 12, 3);
-		authorCascade(building);
-		authorLookingWindows(building);
-		building.finishBuild();
+		core::World world("Layer delete", 12, 3);
+		authorCascade(world);
+		authorLookingWindows(world);
+		world.finishBuild();
 
-		auto const before = windowKeys(building);
+		auto const before = windowKeys(world);
 		require(before.size() == 4, "The cascade map did not author four Windows");
 
-		auto const plan = building.planDeleteLayer(1);
+		auto const plan = world.planDeleteLayer(1);
 		require(plan.valid, ("Deleting the Background's Layer was refused: " + plan.diagnostic).c_str());
 		require(plan.backgroundsRemoved == 2,
 			("The Layer deletion did not report both Backgrounds: ")
@@ -398,20 +398,20 @@ namespace
 
 		// Every Window on the Layer in front looks into Layer 1, so every one of
 		// them is named: the Background lookers and the Location looker alike.
-		auto const named = namedWindows(building, plan.consequences);
+		auto const named = namedWindows(world, plan.consequences);
 		require(named == std::set<std::string>{ "Layer 0.cell 1,0", "Layer 0.cell 4,0",
 			"Layer 0.cell 6,0", "Layer 0.cell 9,0" },
 			("The Layer deletion named " + keysToString(named)
 				+ ", expected all four looking Windows").c_str());
 
-		building.applyDeleteLayer(plan);
-		require(building.getLayerCount() == 2, "The Layers were not compacted");
-		require(windowKeys(building).empty(),
+		world.applyDeleteLayer(plan);
+		require(world.getLayerCount() == 2, "The Layers were not compacted");
+		require(windowKeys(world).empty(),
 			("A Window survived the deletion of what it looked into: "
-				+ keysToString(windowKeys(building))).c_str());
-		require(building.isTraversalTopologyValid(),
+				+ keysToString(windowKeys(world))).c_str());
+		require(world.isTraversalTopologyValid(),
 			("The Layer deletion left an invalid topology: "
-				+ building.getTopologyDiagnostic()).c_str());
+				+ world.getTopologyDiagnostic()).c_str());
 	}
 
 	// The looking-in list belongs to the Layer which is going.  Deleting the Layer
@@ -419,12 +419,12 @@ namespace
 	// no "looks into" consequence is added.
 	void deletingTheFrontLayerAddsNoLookingInConsequences()
 	{
-		core::Building building("Front layer delete", 12, 3);
-		authorCascade(building);
-		authorLookingWindows(building);
-		building.finishBuild();
+		core::World world("Front layer delete", 12, 3);
+		authorCascade(world);
+		authorLookingWindows(world);
+		world.finishBuild();
 
-		auto const plan = building.planDeleteLayer(0);
+		auto const plan = world.planDeleteLayer(0);
 		require(plan.valid, ("Deleting the front Layer was refused: " + plan.diagnostic).c_str());
 		for (auto const& consequence : plan.consequences)
 			require(consequence.find("looks into") == std::string::npos,
@@ -436,32 +436,32 @@ namespace
 	// looking into what it looks into.
 	void theCascadeSurvivesSerialisationReplay()
 	{
-		core::Building building("Cascade replay", 12, 3);
-		auto const layout = authorCascade(building);
-		authorLookingWindows(building);
-		building.finishBuild();
+		core::World world("Cascade replay", 12, 3);
+		auto const layout = authorCascade(world);
+		authorLookingWindows(world);
+		world.finishBuild();
 
-		auto const plan = building.planRemoveBackground(layout.backdropA);
+		auto const plan = world.planRemoveBackground(layout.backdropA);
 		require(plan.valid, ("The cascade plan was refused: " + plan.diagnostic).c_str());
-		building.applyBackgroundEdit(plan);
+		world.applyBackgroundEdit(plan);
 
 		core::SerializationWorkData workData;
 		auto writer = core::YamlSerializer::toString();
-		building.serialize(*writer, workData);
+		world.serialize(*writer, workData);
 		writer->serialize();
 
-		core::Building reloaded("Cascade replay", 1, 1);
+		core::World reloaded("Cascade replay", 1, 1);
 		auto reader = core::YamlSerializer::fromString(writer->getSerializedString());
 		reader->deserialize();
 		require(reloaded.deserialize(*reader, workData),
-			"The post-cascade Building did not reload");
+			"The post-cascade World did not reload");
 
-		auto const before = windowKeys(building);
+		auto const before = windowKeys(world);
 		auto const after = windowKeys(reloaded);
 		require(before == after,
 			("The cascade did not round-trip: saved " + keysToString(before)
 				+ ", reloaded " + keysToString(after)).c_str());
-		require(after.size() == 2, "The reloaded Building holds the wrong Windows");
+		require(after.size() == 2, "The reloaded World holds the wrong Windows");
 
 		// And the survivor really is still looking into Backdrop B rather than
 		// into a hole left by its neighbour.

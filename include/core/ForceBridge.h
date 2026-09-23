@@ -12,7 +12,7 @@ namespace core
 
 	class ForceBridge : public ExtensibleObject
 	{
-		friend class Building;
+		friend class World;
 
 	private:
 

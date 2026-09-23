@@ -3,7 +3,7 @@
 #include <filesystem>
 #include <memory>
 
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/Graph.h"
 #include "core/Agent.h"
 
@@ -36,17 +36,17 @@ MouseButtonStatus getMouseButtonStatus();
 // Loads the recent-file list, creating its storage file when needed.
 void initializeRecentFiles(std::filesystem::path const& filepath);
 
-void handleShortcuts(std::shared_ptr<core::Building>& building);
+void handleShortcuts(std::shared_ptr<core::World>& world);
 
 // Returns true when the application may close immediately. A modified document
 // instead opens the existing save/discard/cancel confirmation and returns false.
-bool requestApplicationClose(std::shared_ptr<core::Building>& building);
+bool requestApplicationClose(std::shared_ptr<core::World>& world);
 
-void handleWorldInteraction(std::shared_ptr<core::Building> building,
+void handleWorldInteraction(std::shared_ptr<core::World> world,
 	std::shared_ptr<const core::Graph> graph, MouseButtonStatus const& mouseStatus);
 
-void handleContinuousKeyboardInput(std::shared_ptr<core::Building> building, uint64_t updateTimeMicros);
+void handleContinuousKeyboardInput(std::shared_ptr<core::World> world, uint64_t updateTimeMicros);
 
-void renderUI(std::shared_ptr<core::Building>& building, std::shared_ptr<core::Agent> pathingAgent);
+void renderUI(std::shared_ptr<core::World>& world, std::shared_ptr<core::Agent> pathingAgent);
 
 

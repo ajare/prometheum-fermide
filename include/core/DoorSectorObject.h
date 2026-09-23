@@ -12,7 +12,7 @@ namespace core
 
 	class DoorSectorObject : public SectorObject
 	{
-		std::vector<float> calculateDoorQueueStopOffsets(Building const* building, std::shared_ptr<Vertex> vertex, uint32_t x, uint32_t y, uint32_t doorWidth) const;
+		std::vector<float> calculateDoorQueueStopOffsets(World const* world, std::shared_ptr<Vertex> vertex, uint32_t x, uint32_t y, uint32_t doorWidth) const;
 
 	public:
 

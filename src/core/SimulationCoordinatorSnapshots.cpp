@@ -5,7 +5,7 @@
 #include "core/SimulationCoordinator.h"
 
 #include "core/Agent.h"
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/Coordination.h"
 #include "core/ExtensibleObject.h"
 #include "core/OpenableObject.h"
@@ -17,23 +17,23 @@ namespace core
 
 	using namespace std;
 
-	// Snapshot building moved out of Building (ADR 0004 stage 5). Every
+	// Snapshot world moved out of World (ADR 0004 stage 5). Every
 	// snapshot - the per-entity builders and the whole-world
-	// getSimulationSnapshot - is a read-only projection of Building's
+	// getSimulationSnapshot - is a read-only projection of World's
 	// registries: agents, interaction points and requests, device operations,
 	// traversal resources with their lift, shuttle, queue-lane and crossing-lane
 	// detail, traversal requests and traversal permits.
 	//
-	// The behaviour is unchanged: the bodies are the ones Building held, with
-	// the registries and the simulation clock reached through the Building this
+	// The behaviour is unchanged: the bodies are the ones World held, with
+	// the registries and the simulation clock reached through the World this
 	// coordinator was given. Nothing here mutates the world; the coordinator is
 	// a friend of the coordination types (ADR 0004) rather than these types
 	// gaining a public read surface for it.
 	//
 	// The other coordinator seams call these builders directly instead of
-	// calling back through the Building facade (design pattern, not the Facade
-	// sector type) when they fill an event payload; callers outside Building
-	// still reach the whole-world snapshot through Building::getSimulationSnapshot.
+	// calling back through the World facade (design pattern, not the Facade
+	// sector type) when they fill an event payload; callers outside World
+	// still reach the whole-world snapshot through World::getSimulationSnapshot.
 
 	AgentSnapshot SimulationCoordinator::makeAgentSnapshot(Agent const* agent) const
 	{
@@ -50,7 +50,7 @@ namespace core
 		result.hasLocomotionTask = agent->hasActiveLocomotionTask();
 		result.traversalRequest = agent->getTraversalRequestId();
 		result.traversalPermit = agent->getTraversalPermitId();
-		for (auto const& [requestId, request] : mBuilding.mInteractionRequests.entries())
+		for (auto const& [requestId, request] : mWorld.mInteractionRequests.entries())
 		{
 			if (request->getActor() == result.id && request->getResult() == InteractionResult::Pending)
 			{
@@ -144,7 +144,7 @@ namespace core
 		result.liftBoardingCutoffTick = resource.mLiftBoardingCutoffTick;
 		result.liftAcceptingBoarders = (resource.mLift || resource.mShuttle) && resource.mEnabled && !resource.mLiftMoving
 			&& resource.mLiftStopPhase == LiftStopPhase::Boarding
-			&& mBuilding.mSimulationTick <= resource.mLiftBoardingCutoffTick;
+			&& mWorld.mSimulationTick <= resource.mLiftBoardingCutoffTick;
 		result.liftDraining = resource.mLiftDraining;
 		result.liftPendingSafeExits = (uint32_t)resource.mLiftExitAtSafeStop.size();
 		result.liftCurrentStop = resource.mLiftCurrentStop;
@@ -170,13 +170,13 @@ namespace core
 		}
 		if (resource.mLift || resource.mShuttle)
 		{
-			for (auto const& [agentId, agent] : mBuilding.mAgents.entries())
+			for (auto const& [agentId, agent] : mWorld.mAgents.entries())
 			{
-				auto request = mBuilding.mTraversalRequests.find(agent->getTraversalRequestId());
+				auto request = mWorld.mTraversalRequests.find(agent->getTraversalRequestId());
 				bool associatedRequest = false;
 				if (request)
 				{
-					auto requestResource = mBuilding.mTraversalResources.find(request->mResource);
+					auto requestResource = mWorld.mTraversalResources.find(request->mResource);
 					associatedRequest = request->mResource == id
 						|| (requestResource && requestResource->mLiftCoordinator == id);
 				}
@@ -226,7 +226,7 @@ namespace core
 		result.directionalBatchLimit = resource.mDirectionalBatchLimit;
 		for (auto requestId : resource.mAdmissionQueue)
 		{
-			if (auto request = mBuilding.mTraversalRequests.find(requestId))
+			if (auto request = mWorld.mTraversalRequests.find(requestId))
 			{
 				if (request->mDirection == TraversalDirection::Ascending) ++result.ascendingWaitingCount;
 				else if (request->mDirection == TraversalDirection::Descending) ++result.descendingWaitingCount;
@@ -266,11 +266,11 @@ namespace core
 							&& value.direction == direction; }) == result.shuttleAccessZones.end())
 						result.shuttleAccessZones.push_back({ door.stopIndex, door.accessZoneIndex,
 							door.locationSector, direction, {} });
-			for (auto const& [requestId, request] : mBuilding.mTraversalRequests.entries())
+			for (auto const& [requestId, request] : mWorld.mTraversalRequests.entries())
 			{
 				if (!request->mQueueTicket || request->mSourceSector == resource.mLiftSector
 					|| request->mState != TraversalRequestState::Pending) continue;
-				auto authority = mBuilding.mTraversalResources.find(request->mResource);
+				auto authority = mWorld.mTraversalResources.find(request->mResource);
 				if (!authority || authority->mLiftCoordinator != id) continue;
 				auto intent = resource.mLiftTripIntents.find(request->mOwner);
 				if (intent == resource.mLiftTripIntents.end()) continue;
@@ -297,8 +297,8 @@ namespace core
 			for (auto& zone : result.shuttleAccessZones)
 				sort(zone.queue.begin(), zone.queue.end(), [&](auto left, auto right)
 				{
-					auto lhs = mBuilding.mTraversalRequests.find(left);
-					auto rhs = mBuilding.mTraversalRequests.find(right);
+					auto lhs = mWorld.mTraversalRequests.find(left);
+					auto rhs = mWorld.mTraversalRequests.find(right);
 					return lhs && rhs ? lhs->mQueueTicket < rhs->mQueueTicket : left < right;
 				});
 		}
@@ -420,7 +420,7 @@ namespace core
 			break;
 		case TraversalRequestState::Pending:
 		{
-			auto resource = mBuilding.mTraversalResources.find(request.mResource);
+			auto resource = mWorld.mTraversalResources.find(request.mResource);
 			if (!request.mResource)
 				result.diagnostic = "Waiting: immediate traversal allocation is pending";
 			else if (!resource)
@@ -448,7 +448,7 @@ namespace core
 		}
 		if (result.hasQueuePosition)
 		{
-			if (auto resource = mBuilding.mTraversalResources.find(request.mResource);
+			if (auto resource = mWorld.mTraversalResources.find(request.mResource);
 				resource && request.mQueueApproach < resource->mQueueLanes.size()
 				&& request.mQueuePosition < resource->mQueueLanes[request.mQueueApproach].positions.size())
 			{
@@ -466,46 +466,46 @@ namespace core
 	SimulationSnapshot SimulationCoordinator::getSimulationSnapshot() const
 	{
 		SimulationSnapshot result;
-		result.tick = mBuilding.mSimulationTick;
-		result.paused = mBuilding.mSimulationPaused;
-		result.topologyDirty = mBuilding.mTopologyDirty;
-		result.topologyValid = mBuilding.mTopologyValid;
-		result.topologyGeneration = mBuilding.mTopologyGeneration;
-		result.topologyDiagnostic = mBuilding.mTopologyDiagnostic;
-		result.agents.reserve(mBuilding.mAgents.entries().size());
-		result.interactionPoints.reserve(mBuilding.mInteractionPoints.entries().size());
-		result.interactionRequests.reserve(mBuilding.mInteractionRequests.entries().size());
-		result.deviceOperations.reserve(mBuilding.mDeviceOperations.entries().size());
-		result.traversalResources.reserve(mBuilding.mTraversalResources.entries().size());
-		result.traversalRequests.reserve(mBuilding.mTraversalRequests.entries().size());
-		result.traversalPermits.reserve(mBuilding.mTraversalPermits.entries().size());
+		result.tick = mWorld.mSimulationTick;
+		result.paused = mWorld.mSimulationPaused;
+		result.topologyDirty = mWorld.mTopologyDirty;
+		result.topologyValid = mWorld.mTopologyValid;
+		result.topologyGeneration = mWorld.mTopologyGeneration;
+		result.topologyDiagnostic = mWorld.mTopologyDiagnostic;
+		result.agents.reserve(mWorld.mAgents.entries().size());
+		result.interactionPoints.reserve(mWorld.mInteractionPoints.entries().size());
+		result.interactionRequests.reserve(mWorld.mInteractionRequests.entries().size());
+		result.deviceOperations.reserve(mWorld.mDeviceOperations.entries().size());
+		result.traversalResources.reserve(mWorld.mTraversalResources.entries().size());
+		result.traversalRequests.reserve(mWorld.mTraversalRequests.entries().size());
+		result.traversalPermits.reserve(mWorld.mTraversalPermits.entries().size());
 
-		for (auto const& [id, agent] : mBuilding.mAgents.entries())
+		for (auto const& [id, agent] : mWorld.mAgents.entries())
 		{
 			(void)id;
 			result.agents.push_back(makeAgentSnapshot(agent.get()));
 		}
-		for (auto const& [id, point] : mBuilding.mInteractionPoints.entries())
+		for (auto const& [id, point] : mWorld.mInteractionPoints.entries())
 		{
 			result.interactionPoints.push_back(makeInteractionPointSnapshot(id, *point));
 		}
-		for (auto const& [id, request] : mBuilding.mInteractionRequests.entries())
+		for (auto const& [id, request] : mWorld.mInteractionRequests.entries())
 		{
 			result.interactionRequests.push_back(makeInteractionRequestSnapshot(id, *request));
 		}
-		for (auto const& [id, operation] : mBuilding.mDeviceOperations.entries())
+		for (auto const& [id, operation] : mWorld.mDeviceOperations.entries())
 		{
 			result.deviceOperations.push_back(makeDeviceOperationSnapshot(id, *operation));
 		}
-		for (auto const& [id, resource] : mBuilding.mTraversalResources.entries())
+		for (auto const& [id, resource] : mWorld.mTraversalResources.entries())
 		{
 			result.traversalResources.push_back(makeTraversalResourceSnapshot(id, *resource));
 		}
-		for (auto const& [id, request] : mBuilding.mTraversalRequests.entries())
+		for (auto const& [id, request] : mWorld.mTraversalRequests.entries())
 		{
 			result.traversalRequests.push_back(makeTraversalRequestSnapshot(id, *request));
 		}
-		for (auto const& [id, permit] : mBuilding.mTraversalPermits.entries())
+		for (auto const& [id, permit] : mWorld.mTraversalPermits.entries())
 		{
 			result.traversalPermits.push_back(makeTraversalPermitSnapshot(id, *permit));
 		}

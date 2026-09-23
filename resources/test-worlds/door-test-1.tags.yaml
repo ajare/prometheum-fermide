@@ -1,0 +1,37 @@
+version: 1
+uuid: 5e9a3a89-0519-4813-ae6d-3ca7362028de
+nextAgentTagId: 3
+nextPropertyRevision: 11
+tags:
+  - id: 1
+    name: male
+    displayColour:
+      r: 226
+      g: 213
+      b: 198
+    properties:
+      - type: colour
+        revision: 5
+        r: 71
+        g: 62
+        b: 221
+      - type: heightModifier
+        revision: 10
+        min: 0.77
+        max: 1
+  - id: 2
+    name: female
+    displayColour:
+      r: 255
+      g: 239
+      b: 186
+    properties:
+      - type: colour
+        revision: 2
+        r: 224
+        g: 116
+        b: 116
+      - type: heightModifier
+        revision: 8
+        min: 0.7
+        max: 0.82

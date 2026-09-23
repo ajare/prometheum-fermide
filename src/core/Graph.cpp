@@ -5,7 +5,7 @@
 #include "core/Defines.h"
 #include "core/Graph.h"
 #include "core/SectorType.h"
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/Pathing.h"
 #include "core/Exceptions.h"
 #include "core/Vector2.h"
@@ -72,8 +72,8 @@ namespace core
 		};
 	}
 
-	Graph::Graph(Building* building)
-		: mwBuilding(building)
+	Graph::Graph(World* world)
+		: mwWorld(world)
 	{
 	}
 
@@ -190,7 +190,7 @@ namespace core
 			string errMsg = format("Z-connected Edge Vertices not aligned: {} -> {}", vertex0->getDescription(), vertex1->getDescription());
 
 			mBuildLog.push_back({ "Graph", ~0u, LogLevel::Error, errMsg});
-			throw BuildingException(mwBuilding, errMsg);
+			throw WorldException(mwWorld, errMsg);
 		}
 
 		edge->_setVertex(0, vertex0);
@@ -471,7 +471,7 @@ namespace core
 				string errMsg = format("A Door was already set on the front Layer of the pair at {},{}", obj.x, obj.y);
 
 				mBuildLog.push_back({ "Graph", ~0u, LogLevel::Error, errMsg });
-				throw BuildingException(mwBuilding, errMsg);
+				throw WorldException(mwWorld, errMsg);
 			}
 
 			interLayerVertexLookup[cellPos] = vertex;
@@ -483,7 +483,7 @@ namespace core
 			string errMsg = format("A Door was found on the back Layer of the pair at {},{} but not on the Layer in front", obj.x, obj.y);
 
 			mBuildLog.push_back({ "Graph", ~0u, LogLevel::Error, errMsg });
-			throw BuildingException(mwBuilding, errMsg);
+			throw WorldException(mwWorld, errMsg);
 		}
 
 		auto frontVertex = it->second;
@@ -671,7 +671,7 @@ namespace core
 
 	void Graph::processLadderTransit(LayerPairRole role, uint32_t curSectorIndex, uint32_t x, uint32_t y, int level, PositionVertexMap& interLayerVertexLookup, RowVertices& row, CrossDeckVertexMap& crossDeckVertices)
 	{
-		auto sector = mwBuilding->_getSector(curSectorIndex);
+		auto sector = mwWorld->_getSector(curSectorIndex);
 		float xOffset = (float)(x - sector->getCellX()) + 0.5f;
 		float yOffset = (float)(y - sector->getCellY());
 
@@ -689,7 +689,7 @@ namespace core
 				string errMsg = format("A LadderTransit was already set on the front Layer of the pair at {},{}", x, y);
 
 				mBuildLog.push_back({ "Graph", ~0u, LogLevel::Error, errMsg });
-				throw BuildingException(mwBuilding, errMsg);
+				throw WorldException(mwWorld, errMsg);
 			}
 
 			interLayerVertexLookup[cellPos] = locLadderVert;
@@ -710,7 +710,7 @@ namespace core
 			string errMsg = format("A LadderTransit was not set on the Layer in front at {},{}", x, y);
 
 			mBuildLog.push_back({ "Graph", ~0u, LogLevel::Error, errMsg });
-			throw BuildingException(mwBuilding, errMsg);
+			throw WorldException(mwWorld, errMsg);
 		}
 
 		addEdge(make_shared<LadderMountEdge>(ladder), it->second, ladderVert,
@@ -755,11 +755,11 @@ namespace core
 		
 		// There are 16 square steps horizontally.  This makes 20 vertically, given it's 2 cells wide.
 		// First flight has 5 steps, middle has 10, and top-most has 5 again.
-		auto sector = mwBuilding->_getSector(curSectorIndex);
+		auto sector = mwWorld->_getSector(curSectorIndex);
 		float xOffset = (float)(x - sector->getCellX()) + 1;
 		float yOffset = (float)(y - sector->getCellY());
 
-		auto backSector = mwBuilding->_getSector(backSectorIndex);
+		auto backSector = mwWorld->_getSector(backSectorIndex);
 		auto stairwellTransit = dynamic_pointer_cast<StairwellTransit>(backSector);
 
 		auto xOffset0 = xOffset;
@@ -777,7 +777,7 @@ namespace core
 				string errMsg = format("A StairwellTransit was already set on the front Layer of the pair at {},{}", x, y);
 
 				mBuildLog.push_back({ "Graph", ~0u, LogLevel::Error, errMsg });
-				throw BuildingException(mwBuilding, errMsg);
+				throw WorldException(mwWorld, errMsg);
 			}
 
 			interLayerVertexLookup[cellPos] = locStairwellVert;
@@ -799,7 +799,7 @@ namespace core
 			string errMsg = format("A StairwellTransit was not set on the Layer in front at {},{}", x, y);
 
 			mBuildLog.push_back({ "Graph", ~0u, LogLevel::Error, errMsg });
-			throw BuildingException(mwBuilding, errMsg);
+			throw WorldException(mwWorld, errMsg);
 		}
 
 		addEdge(make_shared<StairwellMountEdge>(stairwell), it->second, stairwellVert0,
@@ -832,7 +832,7 @@ namespace core
 		PositionVertexMap& interLayerVertexLookup, RowVertices& row,
 		CrossDeckVertexMap& crossDeckVertices)
 	{
-		auto transit = dynamic_pointer_cast<StaircaseTransit>(mwBuilding->_getSector(backSectorIndex));
+		auto transit = dynamic_pointer_cast<StaircaseTransit>(mwWorld->_getSector(backSectorIndex));
 		auto staircase = transit->getStaircase();
 		auto path = staircase->getPath();
 		bool const lower = y == transit->getCellY();
@@ -841,7 +841,7 @@ namespace core
 
 		if (role == LayerPairRole::Front)
 		{
-			auto sector = mwBuilding->_getSector(curSectorIndex);
+			auto sector = mwWorld->_getSector(curSectorIndex);
 			// Mount at the Staircase path endpoint rather than the endpoint cell's
 			// centre. Z-connected mount vertices must occupy the same global point.
 			auto const endpointX = (float)transit->getCellX() + point.x;
@@ -849,16 +849,16 @@ namespace core
 				endpointX - (float)sector->getCellX(), (float)(y - sector->getCellY()));
 			appendRowVertex(row, x, SlotTransit, locationVertex);
 			if (!interLayerVertexLookup.emplace(cellPos, locationVertex).second)
-				throw BuildingException(mwBuilding, format("A Transit was already set at {},{}", x, y));
+				throw WorldException(mwWorld, format("A Transit was already set at {},{}", x, y));
 		}
 		else
 		{
-			auto sector = mwBuilding->_getSector(curSectorIndex);
+			auto sector = mwWorld->_getSector(curSectorIndex);
 			auto staircaseVertex = make_shared<StaircaseVertex>(sector, staircase, point.x, point.y);
 			appendRowVertex(row, x, SlotTransit, staircaseVertex);
 			auto found = interLayerVertexLookup.find(cellPos);
 			if (found == interLayerVertexLookup.end())
-				throw BuildingException(mwBuilding, format("A Staircase endpoint has no Location at {},{}", x, y));
+				throw WorldException(mwWorld, format("A Staircase endpoint has no Location at {},{}", x, y));
 			addEdge(make_shared<StaircaseMountEdge>(staircase), found->second, staircaseVertex, true);
 			addCrossDeckVertex(transit, staircaseVertex, crossDeckVertices);
 		}
@@ -886,8 +886,8 @@ namespace core
 
 		if (cellDef.sectorIndex != neighbourDef.sectorIndex)
 		{
-			auto sector0 = mwBuilding->getSector(toSide == CORE_SIDE_LEFT ? neighbourDef.sectorIndex : cellDef.sectorIndex);
-			auto sector1 = mwBuilding->getSector(toSide == CORE_SIDE_LEFT ? cellDef.sectorIndex : neighbourDef.sectorIndex);
+			auto sector0 = mwWorld->getSector(toSide == CORE_SIDE_LEFT ? neighbourDef.sectorIndex : cellDef.sectorIndex);
+			auto sector1 = mwWorld->getSector(toSide == CORE_SIDE_LEFT ? cellDef.sectorIndex : neighbourDef.sectorIndex);
 		
 			if (sector0->getEndType(y - sector0->getCellY(), CORE_SIDE_RIGHT) == SectorEndType::Wall)
 			{
@@ -909,8 +909,8 @@ namespace core
 			return prevIndex != ~0u;
 		}
 
-		auto prevSector = prevIndex != ~0u ? mwBuilding->getSector(prevIndex) : nullptr;
-		auto nextSector = nextIndex != ~0u ? mwBuilding->getSector(nextIndex) : nullptr;
+		auto prevSector = prevIndex != ~0u ? mwWorld->getSector(prevIndex) : nullptr;
+		auto nextSector = nextIndex != ~0u ? mwWorld->getSector(nextIndex) : nullptr;
 
 		// We need to process the current vertices if we reach the end of a Location and there is a wall, or
 		// a void.  We also want to do this if the end is free, but the next Location's floor is not at the
@@ -936,7 +936,7 @@ namespace core
 
 	bool Graph::cellIsProcessable(uint32_t layerIndex, uint32_t x, uint32_t y) const
 	{
-		auto const& cellDef = mwBuilding->getLayer(layerIndex)->getCellDefinition(x, y);
+		auto const& cellDef = mwWorld->getLayer(layerIndex)->getCellDefinition(x, y);
 
 		if (!cellDef.occupied())
 		{
@@ -951,19 +951,19 @@ namespace core
 		// A Staircase may terminate at an upper Room boundary where the Room itself
 		// has no floor; the open adjacent Location is the landing, so that cell is
 		// still processed so its mount Vertex can be created.
-		if (layerIndex + 1 >= mwBuilding->getLayerCount())
+		if (layerIndex + 1 >= mwWorld->getLayerCount())
 		{
 			return false;
 		}
 
-		auto const& backCell = mwBuilding->getLayer(layerBehind(layerIndex))->getCellDefinition(x, y);
+		auto const& backCell = mwWorld->getLayer(layerBehind(layerIndex))->getCellDefinition(x, y);
 
 		if (!backCell.occupied())
 		{
 			return false;
 		}
 
-		auto staircase = dynamic_pointer_cast<StaircaseTransit>(mwBuilding->_getSector(backCell.sectorIndex));
+		auto staircase = dynamic_pointer_cast<StaircaseTransit>(mwWorld->_getSector(backCell.sectorIndex));
 
 		if (!staircase)
 		{
@@ -981,7 +981,7 @@ namespace core
 	{
 		if (x == 0) return true;
 
-		auto const& left = mwBuilding->getLayer(layerIndex)->getCellDefinition(x - 1, y);
+		auto const& left = mwWorld->getLayer(layerIndex)->getCellDefinition(x - 1, y);
 
 		// Object indices are per-Sector, so the neighbouring cell only suppresses this
 		// one when it is the same object in the same Sector.  Comparing the index alone
@@ -993,14 +993,14 @@ namespace core
 
 	Graph::LayerRows Graph::buildLayerRows() const
 	{
-		auto const layerCount = mwBuilding->getLayerCount();
-		auto const decksHigh = mwBuilding->getDecksHigh();
+		auto const layerCount = mwWorld->getLayerCount();
+		auto const decksHigh = mwWorld->getDecksHigh();
 
 		LayerRows rows(layerCount);
 
 		for (uint32_t layerIndex = 0; layerIndex < layerCount; ++layerIndex)
 		{
-			auto const layer = mwBuilding->getLayer(layerIndex);
+			auto const layer = mwWorld->getLayer(layerIndex);
 			auto const cellsWide = layer->getCellsWide();
 
 			rows[layerIndex].reserve(decksHigh);
@@ -1079,7 +1079,7 @@ namespace core
 					representedSectors.insert(entry.vertex->getSector()->getIndex());
 			vector<uint32_t> locationSectors;
 			for (auto const sectorIndex : row.sectors[segment])
-				if (isLocationLike(mwBuilding->getSector(sectorIndex)->getType()))
+				if (isLocationLike(mwWorld->getSector(sectorIndex)->getType()))
 					locationSectors.push_back(sectorIndex);
 			if (locationSectors.size() > 1)
 			{
@@ -1087,7 +1087,7 @@ namespace core
 				{
 					auto const sectorIndex = locationSectors[i];
 					if (representedSectors.contains(sectorIndex)) continue;
-					auto sector = mwBuilding->_getSector(sectorIndex);
+					auto sector = mwWorld->_getSector(sectorIndex);
 					// Prefer the left shared boundary; the left-most Sector instead
 					// uses its right boundary, which is the side joining the run.
 					float const xOffset = i == 0 ? (float)sector->getCellsWide() : 0.0f;
@@ -1120,7 +1120,7 @@ namespace core
 			}
 
 			auto const flushSector = row.flushSector[segment];
-			auto prevSector = flushSector != ~0u ? mwBuilding->getSector(flushSector) : nullptr;
+			auto prevSector = flushSector != ~0u ? mwWorld->getSector(flushSector) : nullptr;
 
 			processSectorVertices(vertices, prevSector, row.layerIndex, row.y);
 		}
@@ -1128,7 +1128,7 @@ namespace core
 
 	void Graph::processLayerRow(uint32_t layerIndex, uint32_t y, RowVertices& row, CrossDeckVertexMap& crossDeckVertices)
 	{
-		auto const layer = mwBuilding->getLayer(layerIndex);
+		auto const layer = mwWorld->getLayer(layerIndex);
 		auto const cellsWide = layer->getCellsWide();
 
 		for (uint32_t x = 0; x < cellsWide; ++x)
@@ -1149,7 +1149,7 @@ namespace core
 
 				if (neighbourCellInAir(cellDef, leftCellDef, y, CORE_SIDE_LEFT))
 				{
-					auto sector = mwBuilding->_getSector(cellDef.sectorIndex);
+					auto sector = mwWorld->_getSector(cellDef.sectorIndex);
 
 					// SectorObjectVertex takes an offset within the Sector
 					float xOffset = (float)(x - sector->getCellX()) + CORE_AGENT_MAX_WIDTH * 0.5f;
@@ -1164,7 +1164,7 @@ namespace core
 			//
 			for (auto markerIndex : cellDef.markers)
 			{
-				ObjectData obj = { markerIndex, layerIndex, x, y, mwBuilding->_getSector(cellDef.sectorIndex), {} };
+				ObjectData obj = { markerIndex, layerIndex, x, y, mwWorld->_getSector(cellDef.sectorIndex), {} };
 
 				processMarker(obj, row);
 			}
@@ -1174,7 +1174,7 @@ namespace core
 				if (cellDef.controls[side] != ~0u)
 				{
 					ObjectData obj = { cellDef.controls[side], layerIndex, x, y,
-						mwBuilding->_getSector(cellDef.sectorIndex), {} };
+						mwWorld->_getSector(cellDef.sectorIndex), {} };
 
 					processInteractionPoint(obj, row);
 				}
@@ -1189,8 +1189,8 @@ namespace core
 					cellDef.bulkheadIndices[CORE_SIDE_RIGHT],
 					layerIndex,
 					x, y,
-					mwBuilding->_getSector(cellDef.sectorIndex),
-					{ mwBuilding->_getSector(cellDef.sectorIndex), mwBuilding->_getSector(rightCellDef.sectorIndex) }
+					mwWorld->_getSector(cellDef.sectorIndex),
+					{ mwWorld->_getSector(cellDef.sectorIndex), mwWorld->_getSector(rightCellDef.sectorIndex) }
 				};
 
 				processBulkheadDoor(obj, row);
@@ -1204,12 +1204,12 @@ namespace core
 
 				// Check to see if we want to add a Vertex on either the lowest or highest floor
 				bool lowest = y == 0 || layer->getCellDefinition(x, y - 1).sectorObjectIndex != thisLadderIndex;
-				bool highest = y == (mwBuilding->getDecksHigh() - 1) || layer->getCellDefinition(x, y + 1).sectorObjectIndex != thisLadderIndex;
+				bool highest = y == (mwWorld->getDecksHigh() - 1) || layer->getCellDefinition(x, y + 1).sectorObjectIndex != thisLadderIndex;
 
 				if (lowest || highest)
 				{
 					ObjectData obj = { thisLadderIndex, layerIndex, x, y,
-						mwBuilding->_getSector(cellDef.sectorIndex), {} };
+						mwWorld->_getSector(cellDef.sectorIndex), {} };
 
 					processLadderObject(obj, row, crossDeckVertices, lowest ? CORE_LEVEL_LOW : CORE_LEVEL_HIGH);
 				}
@@ -1219,7 +1219,7 @@ namespace core
 				// Only add if there's a stop here
 				auto thisLiftIndex = cellDef.sectorObjectIndex;
 
-				auto sector = mwBuilding->_getSector(cellDef.sectorIndex);
+				auto sector = mwWorld->_getSector(cellDef.sectorIndex);
 				auto liftObject = dynamic_pointer_cast<LiftSectorObject>(sector->_getObject(thisLiftIndex));
 				auto lift = liftObject->getLift();
 
@@ -1238,13 +1238,13 @@ namespace core
 			if (cellDef.floorType == CellFloorType::Walkway)
 			{
 				ObjectData obj = { cellDef.floorIndex, layerIndex, x, y,
-					mwBuilding->_getSector(cellDef.sectorIndex), {} };
+					mwWorld->_getSector(cellDef.sectorIndex), {} };
 
 				processWalkway(obj, row);
 			}
 			else if (cellDef.floorType == CellFloorType::ForceBridge)
 			{
-				auto sector = mwBuilding->_getSector(cellDef.sectorIndex);
+				auto sector = mwWorld->_getSector(cellDef.sectorIndex);
 				auto floorObject = sector->_getObject(cellDef.floorIndex);
 				// A multi-cell bridge is referenced by every cell in its span, but
 				// contributes one pair of vertices and one traversal edge.
@@ -1262,7 +1262,7 @@ namespace core
 
 				if (neighbourCellInAir(cellDef, rightCellDef, y, CORE_SIDE_RIGHT))
 				{
-					auto sector = mwBuilding->_getSector(cellDef.sectorIndex);
+					auto sector = mwWorld->_getSector(cellDef.sectorIndex);
 
 					// SectorObjectVertex takes an offset within the Sector
 					float xOffset = (float)(x - sector->getCellX()) + (1.0f - CORE_AGENT_MAX_WIDTH * 0.5f);
@@ -1280,9 +1280,9 @@ namespace core
 		// belonging to one pair can never be joined with a Vertex of another.
 		PositionVertexMap interLayerVertexLookup;
 
-		for (uint32_t y = 0; y < mwBuilding->getDecksHigh(); ++y)
+		for (uint32_t y = 0; y < mwWorld->getDecksHigh(); ++y)
 		{
-			for (uint32_t x = 0; x < mwBuilding->getCellsWide(); ++x)
+			for (uint32_t x = 0; x < mwWorld->getCellsWide(); ++x)
 			{
 				processPairCell(frontLayer, backLayer, x, y, interLayerVertexLookup, rows, crossDeckVertices);
 			}
@@ -1325,8 +1325,8 @@ namespace core
 		PositionVertexMap& interLayerVertexLookup, LayerRows& rows,
 		CrossDeckVertexMap& crossDeckVertices)
 	{
-		auto const frontLayerPtr = mwBuilding->getLayer(frontLayer);
-		auto const backLayerPtr = mwBuilding->getLayer(backLayer);
+		auto const frontLayerPtr = mwWorld->getLayer(frontLayer);
+		auto const backLayerPtr = mwWorld->getLayer(backLayer);
 
 		auto const& frontCell = frontLayerPtr->getCellDefinition(x, y);
 		auto const& backCell = backLayerPtr->getCellDefinition(x, y);
@@ -1350,10 +1350,10 @@ namespace core
 
 		if (frontProcessable && frontCell.sectorObjectType == SectorObjectType::Door
 			&& isLeftMostObjectCell(frontLayer, x, y, frontCell)
-			&& thresholdBelongsToPair(mwBuilding->_getSector(frontCell.sectorIndex),
+			&& thresholdBelongsToPair(mwWorld->_getSector(frontCell.sectorIndex),
 				frontCell.sectorObjectIndex, SectorObjectType::Door, frontLayer, backLayer))
 		{
-			auto const frontSector = mwBuilding->_getSector(frontCell.sectorIndex);
+			auto const frontSector = mwWorld->_getSector(frontCell.sectorIndex);
 			auto const sharedObject = frontSector->_getObject(frontCell.sectorObjectIndex);
 			ObjectData front = { frontCell.sectorObjectIndex, frontLayer, x, y, frontSector, {} };
 			processDoor(front, LayerPairRole::Front, interLayerVertexLookup,
@@ -1361,10 +1361,10 @@ namespace core
 
 			if (backProcessable)
 			{
-				auto const backSector = mwBuilding->_getSector(backCell.sectorIndex);
+				auto const backSector = mwWorld->_getSector(backCell.sectorIndex);
 				auto const backIndex = indexOfSharedObject(backSector, sharedObject);
 				if (backIndex == ~0u)
-					throw BuildingException(mwBuilding,
+					throw WorldException(mwWorld,
 						format("A Door at {},{} is missing from its back-layer Sector", x, y));
 				ObjectData back = { backIndex, backLayer, x, y, backSector, {} };
 				processDoor(back, LayerPairRole::Back, interLayerVertexLookup,
@@ -1374,10 +1374,10 @@ namespace core
 
 		if (frontProcessable && frontCell.sectorObjectType == SectorObjectType::Window
 			&& isLeftMostObjectCell(frontLayer, x, y, frontCell)
-			&& thresholdBelongsToPair(mwBuilding->_getSector(frontCell.sectorIndex),
+			&& thresholdBelongsToPair(mwWorld->_getSector(frontCell.sectorIndex),
 				frontCell.sectorObjectIndex, SectorObjectType::Window, frontLayer, backLayer))
 		{
-			auto const frontSector = mwBuilding->_getSector(frontCell.sectorIndex);
+			auto const frontSector = mwWorld->_getSector(frontCell.sectorIndex);
 			auto const sharedObject = frontSector->_getObject(frontCell.sectorObjectIndex);
 			ObjectData front = { frontCell.sectorObjectIndex, frontLayer, x, y, frontSector, {} };
 			processWindow(front, interLayerVertexLookup, rows[frontLayer][y]);
@@ -1385,10 +1385,10 @@ namespace core
 			auto const windowObject = dynamic_pointer_cast<WindowSectorObject>(sharedObject);
 			if (backProcessable && windowObject && windowObject->getWindow()->isTraversalConfigured())
 			{
-				auto const backSector = mwBuilding->_getSector(backCell.sectorIndex);
+				auto const backSector = mwWorld->_getSector(backCell.sectorIndex);
 				auto const backIndex = indexOfSharedObject(backSector, sharedObject);
 				if (backIndex == ~0u)
-					throw BuildingException(mwBuilding,
+					throw WorldException(mwWorld,
 						format("A traversable Window at {},{} is missing from its back-layer Sector", x, y));
 				ObjectData back = { backIndex, backLayer, x, y, backSector, {} };
 				processWindow(back, interLayerVertexLookup, rows[backLayer][y]);
@@ -1401,13 +1401,13 @@ namespace core
 			return;
 		}
 
-		auto backSector = mwBuilding->_getSector(backCell.sectorIndex);
+		auto backSector = mwWorld->_getSector(backCell.sectorIndex);
 
 		if (backSector->getType() == SectorType::Ladder)
 		{
 			// Want to make sure we only process the lowest and highest cells of the Ladder.
 			bool lowest = y == 0 || backLayerPtr->getCellDefinition(x, y - 1).sectorIndex != backCell.sectorIndex;
-			bool highest = y == (mwBuilding->getDecksHigh() - 1) || backLayerPtr->getCellDefinition(x, y + 1).sectorIndex != backCell.sectorIndex;
+			bool highest = y == (mwWorld->getDecksHigh() - 1) || backLayerPtr->getCellDefinition(x, y + 1).sectorIndex != backCell.sectorIndex;
 
 			if (lowest || highest)
 			{
@@ -1482,19 +1482,19 @@ namespace core
 		mSectorVertexLookup.clear();
 		mSectorObjectVertexLookup.clear();
 
-		auto const layerCount = mwBuilding->getLayerCount();
+		auto const layerCount = mwWorld->getLayerCount();
 
 		if (layerCount < 2)
 		{
-			string errMsg = format("A Building needs at least 2 Layers to build a Graph, but has {}", layerCount);
+			string errMsg = format("A World needs at least 2 Layers to build a Graph, but has {}", layerCount);
 
 			mBuildLog.push_back({ "Graph", ~0u, LogLevel::Error, errMsg });
-			throw BuildingException(mwBuilding, errMsg);
+			throw WorldException(mwWorld, errMsg);
 		}
 
 		// Every Vertex is held in the row Segment that owns it until all passes have
 		// contributed, so each run of Vertices is connected exactly once no matter
-		// how many Layers the Building has.
+		// how many Layers the World has.
 		auto rows = buildLayerRows();
 
 		// To connect Vertices between Decks, we store each object with its Vertices, for instance
@@ -1512,7 +1512,7 @@ namespace core
 		// A Layer's own content is scanned once, independently of the pairs it forms.
 		for (uint32_t layerIndex = 0; layerIndex < layerCount; ++layerIndex)
 		{
-			for (uint32_t y = 0; y < mwBuilding->getDecksHigh(); ++y)
+			for (uint32_t y = 0; y < mwWorld->getDecksHigh(); ++y)
 			{
 				processLayerRow(layerIndex, y, rows[layerIndex][y], crossDeckVertexLists);
 			}
@@ -1521,7 +1521,7 @@ namespace core
 		// Connect each row, in the Layer and deck order it was scanned in.
 		for (uint32_t layerIndex = 0; layerIndex < layerCount; ++layerIndex)
 		{
-			for (uint32_t y = 0; y < mwBuilding->getDecksHigh(); ++y)
+			for (uint32_t y = 0; y < mwWorld->getDecksHigh(); ++y)
 			{
 				flushRowVertices(rows[layerIndex][y]);
 			}
@@ -1533,7 +1533,7 @@ namespace core
 	void Graph::validate()
 	{
 		// Resource/edge authority and control-binding validation is performed by
-		// Building::validateTraversalTopology against stable IDs.
+		// World::validateTraversalTopology against stable IDs.
 	}
 
 } // core

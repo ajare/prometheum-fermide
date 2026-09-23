@@ -1,14 +1,14 @@
-# Building Movement Simulation
+# World Movement Simulation
 
-A simulation of people moving through a two-dimensional building while doors, lifts, shuttles, ladders, and other shared resources constrain when transitions may occur.
+A simulation of people moving through a two-dimensional world while doors, lifts, shuttles, ladders, and other shared resources constrain when transitions may occur.
 
 ## World and routes
 
-**Building**:
-The complete simulated world, including its spatial structure, movement network, devices, and agents.
+**World**:
+The complete simulation aggregate, including its spatial structure, movement network, devices, and agents.
 
 **Layer**:
-One of the ordered spatial planes used to represent depth in the two-dimensional world. Layers are numbered from front (0) to back. A Building may have between 2 and 256 layers.
+One of the ordered spatial planes used to represent depth in the two-dimensional world. Layers are numbered from front (0) to back. A World may have between 2 and 256 layers.
 
 **Sector**:
 A region of a Layer in the world's spatial structure. A sector is either a Location, a Transit, or a Background; an agent belongs to a Location or a Transit, never to a Background.
@@ -55,7 +55,7 @@ An agent's planned sequence of vertices and edges. A path expresses route intent
 _Avoid_: Reservation, traversal permit
 
 **Marker**:
-A named, Building-owned authored point in a Location with stable identity. A Marker may be selected as an Agent behaviour's destination, and its identity survives rename. Agent behaviours cannot choose arbitrary Vertices as destinations.
+A named, World-owned authored point in a Location with stable identity. A Marker may be selected as an Agent behaviour's destination, and its identity survives rename. Agent behaviours cannot choose arbitrary Vertices as destinations.
 _Avoid_: Vertex, destination vertex
 
 **Route loss**:
@@ -118,7 +118,7 @@ The named, typed fields an Agent behaviour requires in each Agent behaviour conf
 _Avoid_: Behaviour configuration, behaviour state
 
 **Agent behaviour registry**:
-A collection of reusable Agent behaviours that forms one shared behaviour namespace for the Buildings that reference it.
+A collection of reusable Agent behaviours that forms one shared behaviour namespace for the Worlds that reference it.
 _Avoid_: Agent tag registry, script directory
 
 **Agent tag**:
@@ -130,7 +130,7 @@ One typed appearance or behaviour value supplied by an Agent tag.
 _Avoid_: Agent attribute, when referring to a value supplied by a tag
 
 **Agent tag registry**:
-A collection of Agent tags that forms one shared tag namespace for the Buildings that reference it.
+A collection of Agent tags that forms one shared tag namespace for the Worlds that reference it.
 _Avoid_: Tag list, Agent group registry
 
 **Agent tag assignment**:
@@ -138,7 +138,7 @@ An association between one Agent and one Agent tag.
 _Avoid_: Agent group membership
 
 **Agent group**:
-A named, Building-scoped classification that may be assigned to an Agent for administrative organisation. An Agent group retains its identity when renamed; deleting it leaves its Agents with no Agent group. It does not confer inherited simulation behaviour, but may be used to activate or deactivate all its current Agents at once; each Agent retains its own activation and may be changed individually afterwards.
+A named, World-scoped classification that may be assigned to an Agent for administrative organisation. An Agent group retains its identity when renamed; deleting it leaves its Agents with no Agent group. It does not confer inherited simulation behaviour, but may be used to activate or deactivate all its current Agents at once; each Agent retains its own activation and may be changed individually afterwards.
 _Avoid_: Group, when the broader term could be ambiguous
 
 **Shared resource**:

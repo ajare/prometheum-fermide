@@ -1,5 +1,5 @@
 // Sampled Walk speed modifiers, ticket #134. These checks stay CPU-side while
-// exercising registry/Building persistence, per-Agent draws, movement and route
+// exercising registry/World persistence, per-Agent draws, movement and route
 // timing, inheritance conflicts, and the real Selection-panel text.
 
 #include "AgentTagAssignmentPanel.h"
@@ -20,7 +20,7 @@
 #include "core/Agent.h"
 #include "core/AgentTag.h"
 #include "core/AgentTagRegistry.h"
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/Defines.h"
 #include "core/Graph.h"
 #include "core/SerializationWorkData.h"
@@ -47,12 +47,12 @@ namespace
 		return writer->getSerializedString();
 	}
 
-	std::string serializeBuilding(core::Building const& building)
+	std::string serializeWorld(core::World const& world)
 	{
 		auto writer = core::YamlSerializer::toString();
 		core::SerializationWorkData work;
 		work.markSerializedUnmodified = false;
-		building.serialize(*writer, work);
+		world.serialize(*writer, work);
 		writer->serialize();
 		return writer->getSerializedString();
 	}
@@ -68,15 +68,15 @@ namespace
 		return registry;
 	}
 
-	std::shared_ptr<core::Building> deserializeBuilding(std::string const& yaml)
+	std::shared_ptr<core::World> deserializeWorld(std::string const& yaml)
 	{
-		auto building = std::make_shared<core::Building>("Loading", 1, 1);
+		auto world = std::make_shared<core::World>("Loading", 1, 1);
 		auto reader = core::YamlSerializer::fromString(yaml);
 		reader->deserialize();
 		core::SerializationWorkData work;
-		require(building->deserialize(*reader, work),
-			"The Walk speed Building did not deserialize");
-		return building;
+		require(world->deserialize(*reader, work),
+			"The Walk speed World did not deserialize");
+		return world;
 	}
 
 	void rangesAreBoundedRevisionedAndPersisted()
@@ -142,20 +142,20 @@ namespace
 		require(registry->setAgentTagWalkSpeedModifier(fixed, { 0.9f, 0.9f }, &diagnostic),
 			diagnostic);
 
-		auto building = std::make_shared<core::Building>("Samples", 8, 2);
-		building->attachAgentTagRegistry("samples.tags.yaml", registry);
-		auto const corridor = building->addCorridor(0, 0, 7);
-		building->finishBuild();
-		building->pauseSimulation();
+		auto world = std::make_shared<core::World>("Samples", 8, 2);
+		world->attachAgentTagRegistry("samples.tags.yaml", registry);
+		auto const corridor = world->addCorridor(0, 0, 7);
+		world->finishBuild();
+		world->pauseSimulation();
 
 		std::set<float> variedValues;
 		core::AgentId retained{};
 		for (int index = 0; index < 32; ++index)
 		{
-			auto const id = building->createAgent(
+			auto const id = world->createAgent(
 				"Varied " + std::to_string(index), corridor, 0, 1.0f);
-			require(building->assignAgentTag(id, varied, &diagnostic), diagnostic);
-			auto const& sample = building->lookupAgent(id).entity->getWalkSpeedModifierSample();
+			require(world->assignAgentTag(id, varied, &diagnostic), diagnostic);
+			auto const& sample = world->lookupAgent(id).entity->getWalkSpeedModifierSample();
 			require(sample && sample->type == core::SampledAgentPropertyType::WalkSpeedModifier
 				&& sample->sourceTag == varied
 				&& sample->propertyRevision
@@ -168,21 +168,21 @@ namespace
 		require(variedValues.size() > 1,
 			"Independent non-degenerate Agent samples all received one shared value");
 
-		auto const fixedAgent = building->createAgent("Fixed", corridor, 0, 2.0f);
-		require(building->assignAgentTag(fixedAgent, fixed, &diagnostic), diagnostic);
-		auto const fixedSample = building->lookupAgent(fixedAgent).entity
+		auto const fixedAgent = world->createAgent("Fixed", corridor, 0, 2.0f);
+		require(world->assignAgentTag(fixedAgent, fixed, &diagnostic), diagnostic);
+		auto const fixedSample = world->lookupAgent(fixedAgent).entity
 			->getWalkSpeedModifierSample();
 		require(fixedSample && std::abs(fixedSample->value - 0.9f) < 0.000001f,
 			"A degenerate Walk speed range did not return its exact endpoint");
 
-		auto const retainedSample = *building->lookupAgent(retained).entity
+		auto const retainedSample = *world->lookupAgent(retained).entity
 			->getWalkSpeedModifierSample();
-		auto const buildingYaml = serializeBuilding(*building);
-		require(buildingYaml.find("type: walkSpeedModifier") != std::string::npos
-			&& buildingYaml.find("sourceTag:") != std::string::npos
-			&& buildingYaml.find("propertyRevision:") != std::string::npos,
-			"Building persistence omitted Walk speed sample provenance");
-		auto reopened = deserializeBuilding(buildingYaml);
+		auto const worldYaml = serializeWorld(*world);
+		require(worldYaml.find("type: walkSpeedModifier") != std::string::npos
+			&& worldYaml.find("sourceTag:") != std::string::npos
+			&& worldYaml.find("propertyRevision:") != std::string::npos,
+			"World persistence omitted Walk speed sample provenance");
+		auto reopened = deserializeWorld(worldYaml);
 		reopened->resolveAgentTagRegistry(registry);
 		require(reopened->lookupAgent(retained).entity->getWalkSpeedModifierSample()
 			== std::optional<core::AgentPropertySample>{ retainedSample },
@@ -203,18 +203,18 @@ namespace
 		require(registry->setAgentTagWalkSpeedModifier(tag, { 0.85f, 0.85f },
 			&diagnostic), diagnostic);
 
-		auto building = std::make_shared<core::Building>("Revisioned", 8, 2);
-		building->attachAgentTagRegistry("revisioned.tags.yaml", registry);
-		auto const corridor = building->addCorridor(0, 0, 7);
-		building->finishBuild();
-		building->pauseSimulation();
+		auto world = std::make_shared<core::World>("Revisioned", 8, 2);
+		world->attachAgentTagRegistry("revisioned.tags.yaml", registry);
+		auto const corridor = world->addCorridor(0, 0, 7);
+		world->finishBuild();
+		world->pauseSimulation();
 		std::vector<core::AgentId> agents;
 		for (int index = 0; index < 4; ++index)
 		{
-			auto const agent = building->createAgent(
+			auto const agent = world->createAgent(
 				"Revisioned " + std::to_string(index), corridor, 0,
 				static_cast<float>(index) + 0.5f);
-			require(building->assignAgentTag(agent, tag, &diagnostic), diagnostic);
+			require(world->assignAgentTag(agent, tag, &diagnostic), diagnostic);
 			agents.push_back(agent);
 		}
 		auto samples = [&]()
@@ -222,7 +222,7 @@ namespace
 			std::vector<core::AgentPropertySample> values;
 			for (auto const agent : agents)
 			{
-				auto const& sample = building->lookupAgent(agent).entity
+				auto const& sample = world->lookupAgent(agent).entity
 					->getWalkSpeedModifierSample();
 				require(sample.has_value(), "A revisioned Agent lost its sample");
 				values.push_back(*sample);
@@ -231,13 +231,13 @@ namespace
 		};
 
 		registry->markUnmodified();
-		building->markSaved();
+		world->markSaved();
 		forgetAgentTagRegistryDocument(registry);
 		auto& history = agentTagRegistryDocumentHistory(registry);
 		auto const originalProperty = *registry->getAgentTagWalkSpeedModifier(tag);
 		auto const originalSamples = samples();
 		auto const originalRegistry = serializeRegistry(*registry);
-		auto const originalBuilding = serializeBuilding(*building);
+		auto const originalWorld = serializeWorld(*world);
 
 		// Submitting the currently authored range is a complete no-op: even clean
 		// document state and the allocator remain untouched.
@@ -247,8 +247,8 @@ namespace
 			&& history.undoCount() == 0
 			&& registry->getNextPropertyRevision() == 3
 			&& serializeRegistry(*registry) == originalRegistry
-			&& serializeBuilding(*building) == originalBuilding
-			&& !agentTagRegistryIsModified(registry) && !building->isModified(),
+			&& serializeWorld(*world) == originalWorld
+			&& !agentTagRegistryIsModified(registry) && !world->isModified(),
 			"An unchanged Walk speed range consumed state, history, or samples");
 
 		require(commitAgentTagWalkSpeedModifierEdit(
@@ -257,7 +257,7 @@ namespace
 		auto const editedSamples = samples();
 		require(editedProperty.revision == 3
 			&& registry->getNextPropertyRevision() == 4
-			&& history.undoCount() == 1 && building->isModified(),
+			&& history.undoCount() == 1 && world->isModified(),
 			"A real range edit did not allocate one revision and one transaction");
 		for (auto const& sample : editedSamples)
 		{
@@ -272,13 +272,13 @@ namespace
 		require(*registry->getAgentTagWalkSpeedModifier(tag) == originalProperty
 			&& samples() == originalSamples
 			&& registry->getNextPropertyRevision() == 4
-			&& agentTagRegistryIsModified(registry) && !building->isModified(),
-			"Undo did not restore the exact old range, revision, samples, and Building dirty state");
+			&& agentTagRegistryIsModified(registry) && !world->isModified(),
+			"Undo did not restore the exact old range, revision, samples, and World dirty state");
 		require(restoreAgentTagRegistrySnapshot(registry, true, &diagnostic), diagnostic);
 		require(*registry->getAgentTagWalkSpeedModifier(tag) == editedProperty
 			&& samples() == editedSamples
 			&& registry->getNextPropertyRevision() == 4
-			&& agentTagRegistryIsModified(registry) && building->isModified(),
+			&& agentTagRegistryIsModified(registry) && world->isModified(),
 			"Redo rerolled instead of restoring the original replacement samples");
 
 		// Removing and adding creates a new property instance. If that add is
@@ -295,7 +295,7 @@ namespace
 			&& registry->getNextPropertyRevision() == 5,
 			"Undoing a modifier add made its issued revision reusable");
 		for (auto const agent : agents)
-			require(!building->lookupAgent(agent).entity->getWalkSpeedModifierSample(),
+			require(!world->lookupAgent(agent).entity->getWalkSpeedModifierSample(),
 				"Undoing a modifier add retained an Agent sample");
 		require(commitAgentTagWalkSpeedModifierAdd(registry, tag, diagnostic), diagnostic);
 		auto const secondReaddedRevision
@@ -317,22 +317,22 @@ namespace
 		require(registry->addAgentTagWalkSpeedModifier(first, &diagnostic), diagnostic);
 		require(registry->addAgentTagWalkSpeedModifier(second, &diagnostic), diagnostic);
 
-		auto building = std::make_shared<core::Building>("Conflicts", 6, 2);
-		building->attachAgentTagRegistry("conflicts.tags.yaml", registry);
-		auto const corridor = building->addCorridor(0, 0, 5);
-		building->finishBuild();
-		auto const agent = building->createAgent("Tagged", corridor);
-		building->pauseSimulation();
-		require(building->assignAgentTag(agent, first, &diagnostic), diagnostic);
-		auto const buildingBefore = serializeBuilding(*building);
-		require(!building->assignAgentTag(agent, second, &diagnostic)
+		auto world = std::make_shared<core::World>("Conflicts", 6, 2);
+		world->attachAgentTagRegistry("conflicts.tags.yaml", registry);
+		auto const corridor = world->addCorridor(0, 0, 5);
+		world->finishBuild();
+		auto const agent = world->createAgent("Tagged", corridor);
+		world->pauseSimulation();
+		require(world->assignAgentTag(agent, first, &diagnostic), diagnostic);
+		auto const worldBefore = serializeWorld(*world);
+		require(!world->assignAgentTag(agent, second, &diagnostic)
 			&& diagnostic.find("Walk speed modifier") != std::string::npos
 			&& diagnostic.find("#first") != std::string::npos
 			&& diagnostic.find("#second") != std::string::npos
-			&& serializeBuilding(*building) == buildingBefore,
+			&& serializeWorld(*world) == worldBefore,
 			"A duplicate inherited Walk speed assignment was not refused atomically");
 
-		require(building->assignAgentTag(agent, pending, &diagnostic), diagnostic);
+		require(world->assignAgentTag(agent, pending, &diagnostic), diagnostic);
 		auto const registryBefore = serializeRegistry(*registry);
 		auto const revisionBefore = registry->getNextPropertyRevision();
 		require(!registry->addAgentTagWalkSpeedModifier(pending, &diagnostic)
@@ -345,10 +345,10 @@ namespace
 		// Adding the property to an otherwise non-conflicting assigned tag samples
 		// every assigned Agent at the property's exact default endpoint.
 		auto const clean = registry->addAgentTag("clean");
-		auto const cleanAgent = building->createAgent("Clean", corridor);
-		require(building->assignAgentTag(cleanAgent, clean, &diagnostic), diagnostic);
+		auto const cleanAgent = world->createAgent("Clean", corridor);
+		require(world->assignAgentTag(cleanAgent, clean, &diagnostic), diagnostic);
 		require(registry->addAgentTagWalkSpeedModifier(clean, &diagnostic), diagnostic);
-		auto const generated = building->lookupAgent(cleanAgent).entity
+		auto const generated = world->lookupAgent(cleanAgent).entity
 			->getWalkSpeedModifierSample();
 		require(generated && generated->sourceTag == clean
 			&& std::abs(generated->value - 1.0f) < 0.000001f,
@@ -368,21 +368,21 @@ namespace
 		require(registry->setAgentTagWalkSpeedModifier(fastTag, { 1.2f, 1.2f }, &diagnostic),
 			diagnostic);
 
-		auto building = std::make_shared<core::Building>("Walking", 12, 2);
-		building->attachAgentTagRegistry("walking.tags.yaml", registry);
-		auto const corridor = building->addCorridor(0, 0, 11);
+		auto world = std::make_shared<core::World>("Walking", 12, 2);
+		world->attachAgentTagRegistry("walking.tags.yaml", registry);
+		auto const corridor = world->addCorridor(0, 0, 11);
 		uint32_t sourceIdentifier{ 0x57313334u };
 		uint32_t targetIdentifier{ 0x57313335u };
-		building->addSectorMarker(corridor, 0, 1.5f, &sourceIdentifier);
-		building->addSectorMarker(corridor, 0, 10.5f, &targetIdentifier);
-		building->finishBuild();
-		auto const slowId = building->createAgent("Slow", corridor, 0, 0.5f);
-		auto const fastId = building->createAgent("Fast", corridor, 0, 0.5f);
-		building->pauseSimulation();
-		require(building->assignAgentTag(slowId, slowTag, &diagnostic), diagnostic);
-		require(building->assignAgentTag(fastId, fastTag, &diagnostic), diagnostic);
-		auto* slow = building->lookupAgent(slowId).entity;
-		auto* fast = building->lookupAgent(fastId).entity;
+		world->addSectorMarker(corridor, 0, 1.5f, &sourceIdentifier);
+		world->addSectorMarker(corridor, 0, 10.5f, &targetIdentifier);
+		world->finishBuild();
+		auto const slowId = world->createAgent("Slow", corridor, 0, 0.5f);
+		auto const fastId = world->createAgent("Fast", corridor, 0, 0.5f);
+		world->pauseSimulation();
+		require(world->assignAgentTag(slowId, slowTag, &diagnostic), diagnostic);
+		require(world->assignAgentTag(fastId, fastTag, &diagnostic), diagnostic);
+		auto* slow = world->lookupAgent(slowId).entity;
+		auto* fast = world->lookupAgent(fastId).entity;
 		require(std::abs(slow->getWalkSpeed()
 			- static_cast<float>(CORE_AGENT_BASE_WALK_SPEED) * 0.8f) < 0.00001f
 			&& std::abs(fast->getWalkSpeed()
@@ -393,9 +393,9 @@ namespace
 				- static_cast<float>(CORE_AGENT_BASE_CLIMB_SPEED)) < 0.000001f,
 			"Walk speed modifiers changed climb speed");
 
-		auto const target = building->getGraph()->getVertexByIdentifier(targetIdentifier);
-		auto slowPath = building->getGraph()->calculatePath(slow, target);
-		auto fastPath = building->getGraph()->calculatePath(fast, target);
+		auto const target = world->getGraph()->getVertexByIdentifier(targetIdentifier);
+		auto slowPath = world->getGraph()->calculatePath(slow, target);
+		auto fastPath = world->getGraph()->calculatePath(fast, target);
 		require(slowPath && fastPath && slowPath->nodes.size() == fastPath->nodes.size()
 			&& slowPath->nodes.back().edgeWeight > fastPath->nodes.back().edgeWeight,
 			"Equal routes did not report a lower route time for the faster Agent");
@@ -436,14 +436,14 @@ namespace
 		require(registry->addAgentTagWalkSpeedModifier(tag, &diagnostic), diagnostic);
 		require(registry->setAgentTagWalkSpeedModifier(tag, { 1.125f, 1.125f }, &diagnostic),
 			diagnostic);
-		auto building = std::make_shared<core::Building>("Inspection", 5, 2);
-		building->attachAgentTagRegistry("inspection.tags.yaml", registry);
-		auto const corridor = building->addCorridor(0, 0, 4);
-		building->finishBuild();
-		auto const sampled = building->createAgent("Sampled", corridor);
-		auto const plain = building->createAgent("Plain", corridor);
-		building->pauseSimulation();
-		require(building->assignAgentTag(sampled, tag, &diagnostic), diagnostic);
+		auto world = std::make_shared<core::World>("Inspection", 5, 2);
+		world->attachAgentTagRegistry("inspection.tags.yaml", registry);
+		auto const corridor = world->addCorridor(0, 0, 4);
+		world->finishBuild();
+		auto const sampled = world->createAgent("Sampled", corridor);
+		auto const plain = world->createAgent("Plain", corridor);
+		world->pauseSimulation();
+		require(world->assignAgentTag(sampled, tag, &diagnostic), diagnostic);
 
 		ImGui::CreateContext();
 		auto& io = ImGui::GetIO();
@@ -457,8 +457,8 @@ namespace
 		ImGui::NewFrame();
 		ImGui::Begin("Selection");
 		ImGui::LogToClipboard();
-		renderAgentEffectiveProperties(building, sampled);
-		renderAgentEffectiveProperties(building, plain);
+		renderAgentEffectiveProperties(world, sampled);
+		renderAgentEffectiveProperties(world, plain);
 		ImGui::End();
 		ImGui::Render();
 		std::string visible;

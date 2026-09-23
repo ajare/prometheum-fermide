@@ -14,7 +14,7 @@
 #include "core/Agent.h"
 #include "core/AgentTagRegistry.h"
 #include "core/AgentTagRegistryDocument.h"
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/SerializationWorkData.h"
 #include "core/YamlSerializer.h"
 
@@ -57,12 +57,12 @@ namespace
 		return writer->getSerializedString();
 	}
 
-	std::string serializeBuilding(core::Building const& building)
+	std::string serializeWorld(core::World const& world)
 	{
 		auto writer = core::YamlSerializer::toString();
 		core::SerializationWorkData work;
 		work.markSerializedUnmodified = false;
-		building.serialize(*writer, work);
+		world.serialize(*writer, work);
 		writer->serialize();
 		return writer->getSerializedString();
 	}
@@ -87,8 +87,8 @@ namespace
 		std::filesystem::path firstPath;
 		std::filesystem::path secondPath;
 		std::filesystem::path registryPath;
-		std::shared_ptr<core::Building> first;
-		std::shared_ptr<core::Building> second;
+		std::shared_ptr<core::World> first;
+		std::shared_ptr<core::World> second;
 		std::shared_ptr<core::AgentTagRegistry> registry;
 		core::AgentTagId tag{};
 		core::AgentId firstAgent{};
@@ -96,11 +96,11 @@ namespace
 
 		explicit SharedFixture(std::string const& purpose)
 			: temporary(purpose)
-			, firstPath(temporary.path / "first.yaml")
-			, secondPath(temporary.path / "second.yaml")
+			, firstPath(temporary.path / "first.world.yaml")
+			, secondPath(temporary.path / "second.world.yaml")
 			, registryPath(temporary.path / "first.tags.yaml")
-			, first(std::make_shared<core::Building>("First", 8, 2))
-			, second(std::make_shared<core::Building>("Second", 8, 2))
+			, first(std::make_shared<core::World>("First", 8, 2))
+			, second(std::make_shared<core::World>("Second", 8, 2))
 		{
 			auto const firstCorridor = first->addCorridor(0, 0, 7);
 			auto const secondCorridor = second->addCorridor(0, 0, 7);
@@ -171,16 +171,16 @@ namespace
 			"A refused save or dirty reload changed state or history");
 	}
 
-	void successfulReloadReconcilesAllBuildingsAndClearsRegistryHistory()
+	void successfulReloadReconcilesAllWorldsAndClearsRegistryHistory()
 	{
 		SharedFixture fixture("success");
 		auto& registryHistory = agentTagRegistryDocumentHistory(fixture.registry);
 		require(registryHistory.undoCount() > 0 && !registryHistory.isModified(),
 			"The successful reload fixture needs saved but non-empty history");
-		gBuildingDocumentHistory.clear();
-		gBuildingDocumentHistory.commit(
-			gBuildingDocumentHistory.capture("unrelated Building history"));
-		auto const buildingUndoBefore = gBuildingDocumentHistory.undoCount();
+		gWorldDocumentHistory.clear();
+		gWorldDocumentHistory.commit(
+			gWorldDocumentHistory.capture("unrelated World history"));
+		auto const worldUndoBefore = gWorldDocumentHistory.undoCount();
 
 		fixture.writeExternalRange(1.15f);
 		std::string diagnostic;
@@ -200,13 +200,13 @@ namespace
 			&& std::abs(secondSample->value - 1.15f) < 0.000001f,
 			"Reload did not update definitions and reconcile every loaded Agent");
 		require(fixture.first->isModified() && fixture.second->isModified(),
-			"Reload reconciliation did not dirty dependent Buildings");
+			"Reload reconciliation did not dirty dependent Worlds");
 		require(!agentTagRegistryIsModified(fixture.registry)
 			&& registryHistory.undoCount() == 0 && registryHistory.redoCount() == 0,
 			"Successful reload did not establish a clean history baseline");
-		require(gBuildingDocumentHistory.undoCount() == buildingUndoBefore,
-			"Successful registry reload changed Building history");
-		gBuildingDocumentHistory.clear();
+		require(gWorldDocumentHistory.undoCount() == worldUndoBefore,
+			"Successful registry reload changed World history");
+		gWorldDocumentHistory.clear();
 	}
 
 	void reloadFailuresAreAtomic()
@@ -215,29 +215,29 @@ namespace
 			SharedFixture fixture("running");
 			fixture.writeExternalRange(1.1f);
 			require(fixture.second->resumeSimulation(),
-				"Could not run a dependent Building for the refusal check");
+				"Could not run a dependent World for the refusal check");
 			auto const registryBefore = serializeRegistry(*fixture.registry);
-			auto const firstBefore = serializeBuilding(*fixture.first);
-			auto const secondBefore = serializeBuilding(*fixture.second);
+			auto const firstBefore = serializeWorld(*fixture.first);
+			auto const secondBefore = serializeWorld(*fixture.second);
 			auto const historyBefore
 				= agentTagRegistryDocumentHistory(fixture.registry).undoCount();
 			std::string diagnostic;
 			require(!reloadAgentTagRegistry(fixture.registry,
 				fixture.registryPath.string(), &diagnostic)
-				&& diagnostic.find("Pause Building 'Second'") != std::string::npos,
-				"Reload did not require every dependent Building to be paused");
+				&& diagnostic.find("Pause World 'Second'") != std::string::npos,
+				"Reload did not require every dependent World to be paused");
 			require(serializeRegistry(*fixture.registry) == registryBefore
-				&& serializeBuilding(*fixture.first) == firstBefore
-				&& serializeBuilding(*fixture.second) == secondBefore
+				&& serializeWorld(*fixture.first) == firstBefore
+				&& serializeWorld(*fixture.second) == secondBefore
 				&& agentTagRegistryDocumentHistory(fixture.registry).undoCount()
 					== historyBefore,
-				"A pause refusal changed registry, Building, or history state");
+				"A pause refusal changed registry, World, or history state");
 		}
 		{
 			SharedFixture fixture("malformed");
 			auto const registryBefore = serializeRegistry(*fixture.registry);
-			auto const firstBefore = serializeBuilding(*fixture.first);
-			auto const secondBefore = serializeBuilding(*fixture.second);
+			auto const firstBefore = serializeWorld(*fixture.first);
+			auto const secondBefore = serializeWorld(*fixture.second);
 			auto const firstModified = fixture.first->isModified();
 			auto const secondModified = fixture.second->isModified();
 			auto const historyBefore
@@ -248,13 +248,13 @@ namespace
 				fixture.registryPath.string(), &diagnostic),
 				"Malformed external YAML was accepted");
 			require(serializeRegistry(*fixture.registry) == registryBefore
-				&& serializeBuilding(*fixture.first) == firstBefore
-				&& serializeBuilding(*fixture.second) == secondBefore
+				&& serializeWorld(*fixture.first) == firstBefore
+				&& serializeWorld(*fixture.second) == secondBefore
 				&& fixture.first->isModified() == firstModified
 				&& fixture.second->isModified() == secondModified
 				&& agentTagRegistryDocumentHistory(fixture.registry).undoCount()
 					== historyBefore,
-				"Malformed reload changed registry, Buildings, dirtiness, or history");
+				"Malformed reload changed registry, Worlds, dirtiness, or history");
 		}
 		{
 			SharedFixture fixture("invalid-agent");
@@ -265,20 +265,20 @@ namespace
 			external->saveTo(fixture.registryPath.string());
 			require(!core::AgentTagRegistry::loadFrom(fixture.registryPath.string())
 				->lookupAgentTag(fixture.tag)
-				&& fixture.registry->hasLoadedBuilding(fixture.first.get())
-				&& fixture.registry->hasLoadedBuilding(fixture.second.get())
+				&& fixture.registry->hasLoadedWorld(fixture.first.get())
+				&& fixture.registry->hasLoadedWorld(fixture.second.get())
 				&& fixture.first->getAgentTagAssignmentCount() == 1
 				&& fixture.second->getAgentTagAssignmentCount() == 1,
 				"The invalid-Agent reload fixture did not retain its intended state");
 			auto const registryBefore = serializeRegistry(*fixture.registry);
-			auto const firstBefore = serializeBuilding(*fixture.first);
+			auto const firstBefore = serializeWorld(*fixture.first);
 			auto const reloaded = reloadAgentTagRegistry(fixture.registry,
 				fixture.registryPath.string(), &diagnostic);
 			require(!reloaded && diagnostic.find("Agent '") != std::string::npos,
 				"Reload accepted an Agent assignment missing from the replacement registry: "
 					+ diagnostic);
 			require(serializeRegistry(*fixture.registry) == registryBefore
-				&& serializeBuilding(*fixture.first) == firstBefore,
+				&& serializeWorld(*fixture.first) == firstBefore,
 				"Agent validation failure was not transactional");
 		}
 	}
@@ -286,20 +286,20 @@ namespace
 	void unreferencedRegistryLifetimeFollowsDirtyState()
 	{
 		TemporaryDirectory temporary("unload");
-		auto const buildingPath = temporary.path / "building.yaml";
-		auto const registryPath = temporary.path / "building.tags.yaml";
-		auto building = std::make_shared<core::Building>("Lifecycle", 6, 2);
-		building->addCorridor(0, 0, 5);
-		building->finishBuild();
-		building->saveTo(buildingPath.string());
-		auto registry = core::createAndAttachAgentTagRegistry(*building, buildingPath);
-		building->pauseSimulation();
+		auto const worldPath = temporary.path / "world.world.yaml";
+		auto const registryPath = temporary.path / "world.tags.yaml";
+		auto world = std::make_shared<core::World>("Lifecycle", 6, 2);
+		world->addCorridor(0, 0, 5);
+		world->finishBuild();
+		world->saveTo(worldPath.string());
+		auto registry = core::createAndAttachAgentTagRegistry(*world, worldPath);
+		world->pauseSimulation();
 		(void)agentTagRegistryDocumentHistory(registry);
 
 		std::string diagnostic;
-		require(commitAgentTagRegistryDetach(building, diagnostic), diagnostic);
+		require(commitAgentTagRegistryDetach(world, diagnostic), diagnostic);
 		auto reloaded = core::selectAndAttachAgentTagRegistry(
-			*building, buildingPath, registryPath);
+			*world, worldPath, registryPath);
 		require(reloaded != registry,
 			"A clean unreferenced registry remained loaded");
 		registry = reloaded;
@@ -307,26 +307,26 @@ namespace
 
 		auto const savedTag = commitAgentTagAdd(registry, "saved-later", diagnostic);
 		require(static_cast<bool>(savedTag), diagnostic);
-		require(commitAgentTagRegistryDetach(building, diagnostic), diagnostic);
+		require(commitAgentTagRegistryDetach(world, diagnostic), diagnostic);
 		auto retained = core::selectAndAttachAgentTagRegistry(
-			*building, buildingPath, registryPath);
+			*world, worldPath, registryPath);
 		require(retained == registry && retained->lookupAgentTag(savedTag),
 			"A dirty unreferenced registry did not retain unsaved work");
-		require(commitAgentTagRegistryDetach(building, diagnostic), diagnostic);
+		require(commitAgentTagRegistryDetach(world, diagnostic), diagnostic);
 		require(saveAgentTagRegistry(retained, registryPath.string(), &diagnostic),
 			diagnostic);
 		auto afterSave = core::selectAndAttachAgentTagRegistry(
-			*building, buildingPath, registryPath);
+			*world, worldPath, registryPath);
 		require(afterSave != retained && afterSave->lookupAgentTag(savedTag),
 			"Saving an unreferenced registry did not unload it or persist its work");
 
 		auto const discardedTag = commitAgentTagAdd(
 			afterSave, "discarded", diagnostic);
 		require(static_cast<bool>(discardedTag), diagnostic);
-		require(commitAgentTagRegistryDetach(building, diagnostic), diagnostic);
+		require(commitAgentTagRegistryDetach(world, diagnostic), diagnostic);
 		forgetAgentTagRegistryDocument(afterSave);
 		auto afterDiscard = core::selectAndAttachAgentTagRegistry(
-			*building, buildingPath, registryPath);
+			*world, worldPath, registryPath);
 		require(afterDiscard != afterSave
 			&& afterDiscard->lookupAgentTag(savedTag)
 			&& !afterDiscard->lookupAgentTag(discardedTag),
@@ -338,7 +338,7 @@ namespace
 void runAgentTagReloadSmokeChecks()
 {
 	externalSaveConflictAndDirtyReloadAreRefused();
-	successfulReloadReconcilesAllBuildingsAndClearsRegistryHistory();
+	successfulReloadReconcilesAllWorldsAndClearsRegistryHistory();
 	reloadFailuresAreAtomic();
 	unreferencedRegistryLifetimeFollowsDirtyState();
 }

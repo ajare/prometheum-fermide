@@ -9,7 +9,7 @@
 
 #include "imgui/imgui.h"
 
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/Door.h"
 #include "core/DoorSectorObject.h"
 #include "core/Exceptions.h"
@@ -45,7 +45,7 @@ namespace
 // opening-style selector's disabled scope is closed immediately after the
 // selector, before the Buttons checkbox opens its own scope. The two scopes
 // must nest as siblings, never as an unbalanced outer pair.
-void renderDoorPanel(shared_ptr<core::Building> const& building,
+void renderDoorPanel(shared_ptr<core::World> const& world,
 	shared_ptr<const core::SectorObject> object)
 {
 	auto doorObject = static_pointer_cast<const core::DoorSectorObject>(object);
@@ -89,8 +89,8 @@ void renderDoorPanel(shared_ptr<core::Building> const& building,
 	ImGui::Text("To: %s", door->getBackSector()->getDescription().c_str());
 
 	uint32_t liftSector, stopIndex, carriageIndex, doorIndex;
-	bool const liftOwned = building->isLiftOwnedDoor(object, &liftSector, &stopIndex);
-	bool const shuttleOwned = building->isShuttleOwnedDoor(object, &liftSector, &stopIndex,
+	bool const liftOwned = world->isLiftOwnedDoor(object, &liftSector, &stopIndex);
+	bool const shuttleOwned = world->isShuttleOwnedDoor(object, &liftSector, &stopIndex,
 		&carriageIndex, &doorIndex);
 	if (liftOwned || shuttleOwned)
 	{
@@ -109,19 +109,19 @@ void renderDoorPanel(shared_ptr<core::Building> const& building,
 	bool const roomDoor = !liftOwned && !shuttleOwned && frontLocation
 		&& frontLocation->getType() == core::SectorType::Location && !frontLocation->isCorridor();
 
-	ImGui::BeginDisabled(!building->isSimulationPaused());
+	ImGui::BeginDisabled(!world->isSimulationPaused());
 	if (roomDoor)
 	{
 		char const* const heightItems[] = { "Regular", "Tall" };
 		int heightIndex = door->getHeight() == core::Door::Height::Tall ? 1 : 0;
 		if (ImGui::Combo("Height", &heightIndex, heightItems, 2))
 		{
-			auto undo = captureDocumentSnapshot(building);
+			auto undo = captureDocumentSnapshot(world);
 			try
 			{
 				gUISettings.worldPaused = true;
 				std::string diagnostic;
-				if (!building->setSectorDoorHeight(door->getFrontLayer(), object->getCellY(),
+				if (!world->setSectorDoorHeight(door->getFrontLayer(), object->getCellY(),
 					object->getCellX(), door->getCellsWide(), heightIndex == 1
 						? core::Door::Height::Tall : core::Door::Height::Regular, &diagnostic))
 					throw runtime_error(diagnostic.empty()
@@ -161,7 +161,7 @@ void renderDoorPanel(shared_ptr<core::Building> const& building,
 	if (ImGui::Combo("Opening", &openStyleIndex, openStyleItems,
 		static_cast<int>(sizeof(openStyleItems) / sizeof(openStyleItems[0]))))
 	{
-		auto undo = captureDocumentSnapshot(building);
+		auto undo = captureDocumentSnapshot(world);
 		try
 		{
 			gUISettings.worldPaused = true;
@@ -170,12 +170,12 @@ void renderDoorPanel(shared_ptr<core::Building> const& building,
 			// edit lands as an override in the transport's own record, leaving
 			// sibling Doors alone.
 			bool changed = liftOwned
-				? building->setLiftStopDoorOpenStyle(liftSector, stopIndex,
+				? world->setLiftStopDoorOpenStyle(liftSector, stopIndex,
 						openStyleChoices[openStyleIndex], &diagnostic)
 				: shuttleOwned
-					? building->setShuttleDoorOpenStyle(liftSector, stopIndex, carriageIndex,
+					? world->setShuttleDoorOpenStyle(liftSector, stopIndex, carriageIndex,
 							doorIndex, openStyleChoices[openStyleIndex], &diagnostic)
-					: building->setSectorDoorOpenStyle(door->getFrontSector()->getLayerIndex(),
+					: world->setSectorDoorOpenStyle(door->getFrontSector()->getLayerIndex(),
 							object->getCellY(), object->getCellX(), door->getCellsWide(),
 							openStyleChoices[openStyleIndex], &diagnostic);
 			if (!changed)
@@ -192,7 +192,7 @@ void renderDoorPanel(shared_ptr<core::Building> const& building,
 			core::addLogMessage("Door editor", 0, core::LogLevel::Error, error.what());
 		}
 	}
-	if (!building->isSimulationPaused())
+	if (!world->isSimulationPaused())
 		ImGui::TextDisabled("Pause simulation to change the opening style.");
 	ImGui::EndDisabled();
 
@@ -211,32 +211,32 @@ void renderDoorPanel(shared_ptr<core::Building> const& building,
 	}
 	bool const canEditButtons = ownerObjectIndex != ~0u;
 	bool const canAddButtons = canEditButtons
-		&& building->canAddSectorDoorButton(owner->getIndex(), ownerObjectIndex);
+		&& world->canAddSectorDoorButton(owner->getIndex(), ownerObjectIndex);
 	bool const canRemoveButtons = canEditButtons
-		&& building->canRemoveSectorDoorButton(owner->getIndex(), ownerObjectIndex);
+		&& world->canRemoveSectorDoorButton(owner->getIndex(), ownerObjectIndex);
 	// A checked box means that both sides carry a Button. A legacy one-sided
 	// Door is shown unchecked so selecting it completes the pair.
 	bool buttons = !canAddButtons;
 	bool const canChangeButtons = buttons ? canRemoveButtons : canAddButtons;
-	ImGui::BeginDisabled(!building->isSimulationPaused() || liftOwned || shuttleOwned
+	ImGui::BeginDisabled(!world->isSimulationPaused() || liftOwned || shuttleOwned
 		|| !canChangeButtons);
 	if (ImGui::Checkbox("Buttons", &buttons))
 	{
-		auto undo = captureDocumentSnapshot(building);
+		auto undo = captureDocumentSnapshot(world);
 		try
 		{
 			gUISettings.worldPaused = true;
 			if (buttons)
 			{
-				building->addSectorDoorButton(owner->getIndex(), ownerObjectIndex);
-				building->finishBuild();
+				world->addSectorDoorButton(owner->getIndex(), ownerObjectIndex);
+				world->finishBuild();
 			}
 			else
 			{
 				// Removal replays the construction records, so every object - this
 				// Door included - is rebuilt and the caller's selection handle goes
 				// stale. Re-select the rebuilt Door the action returns.
-				auto rebuilt = building->removeSectorDoorButton(owner->getIndex(),
+				auto rebuilt = world->removeSectorDoorButton(owner->getIndex(),
 					ownerObjectIndex);
 				if (rebuilt) gSelectedSectorObject = rebuilt;
 			}

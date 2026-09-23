@@ -50,7 +50,7 @@ namespace core
 	// hosts no objects, owns no walkable floor, and is wholly absent from the
 	// Graph.
 	//
-	// Building::addBackground() is the creation path: a Background is placed on
+	// World::addBackground() is the creation path: a Background is placed on
 	// any one Layer over a block of free cells, and is persisted as a
 	// ConstructionType::Background record carrying its packed colour.
 	class Background : public Sector

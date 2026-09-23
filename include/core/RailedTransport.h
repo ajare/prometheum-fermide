@@ -9,7 +9,7 @@
 namespace core
 {
 	// Shared render geometry for lift and shuttle vehicles. Scheduling and motion
-	// are authoritative in the building-owned traversal coordinator.
+	// are authoritative in the world-owned traversal coordinator.
 	class RailedTransport : public Object
 	{
 	protected:

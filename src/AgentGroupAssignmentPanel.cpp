@@ -2,7 +2,7 @@
 //
 // The widget is thin over one commit function, exactly as the Groups table is.
 // Every assignment and clearing the user performs goes through
-// captureDocumentSnapshot() -> Building operation -> commitDocumentEdit(),
+// captureDocumentSnapshot() -> World operation -> commitDocumentEdit(),
 // so one accepted assignment is one undoable document edit and one refused
 // assignment is none. The headless smoke checks call that same function,
 // which is what pins the rule down.
@@ -17,7 +17,7 @@
 #include "imgui/imgui.h"
 #include "imgui/imgui_internal.h"
 
-#include "core/Building.h"
+#include "core/World.h"
 #include "core/Log.h"
 
 #include "DocumentEdit.h"
@@ -81,47 +81,47 @@ namespace
 	}
 }
 
-bool commitAgentGroupAssignment(shared_ptr<core::Building> const& building,
+bool commitAgentGroupAssignment(shared_ptr<core::World> const& world,
 	core::AgentId agent, core::AgentGroupId group, string& diagnostic)
 {
 	diagnostic.clear();
-	if (!building)
+	if (!world)
 	{
-		diagnostic = "There is no Building to assign an Agent group in";
+		diagnostic = "There is no World to assign an Agent group in";
 		return false;
 	}
 
 	// Snapshot first: the history entry has to hold the state from before the
-	// assignment moved. If the Building refuses the Agent or the group, the
+	// assignment moved. If the World refuses the Agent or the group, the
 	// snapshot is dropped uncommitted and the undo stack never sees it.
-	auto const undo = captureDocumentSnapshot(building);
-	if (!building->setAgentGroup(agent, group, &diagnostic)) return false;
+	auto const undo = captureDocumentSnapshot(world);
+	if (!world->setAgentGroup(agent, group, &diagnostic)) return false;
 
 	commitDocumentEdit(std::move(undo));
 	return true;
 }
 
-std::string agentGroupAssignmentLabel(core::Building const& building, core::AgentId agent)
+std::string agentGroupAssignmentLabel(core::World const& world, core::AgentId agent)
 {
-	auto const lookup = building.lookupAgent(agent);
+	auto const lookup = world.lookupAgent(agent);
 	if (!lookup) return std::string{ NoGroupLabel };
 
 	auto const assigned = lookup.entity->getAgentGroupId();
 	if (!assigned) return std::string{ NoGroupLabel };
 
-	// The name is read from the Building on every call rather than cached with
+	// The name is read from the World on every call rather than cached with
 	// the Agent, which is what makes a rename show up in every assigned row
-	// immediately: the Agent holds the ID, the Building holds the name.
-	auto const groupLookup = building.lookupAgentGroup(assigned);
+	// immediately: the Agent holds the ID, the World holds the name.
+	auto const groupLookup = world.lookupAgentGroup(assigned);
 	return groupLookup ? groupLookup.entity->getName() : std::string{ NoGroupLabel };
 }
 
-void renderAgentGroupAssignmentCell(shared_ptr<core::Building> const& building,
+void renderAgentGroupAssignmentCell(shared_ptr<core::World> const& world,
 	core::AgentId agent)
 {
-	if (!building) return;
+	if (!world) return;
 
-	auto const agentLookup = building->lookupAgent(agent);
+	auto const agentLookup = world->lookupAgent(agent);
 	if (!agentLookup)
 	{
 		ImGui::TextDisabled("-");
@@ -129,7 +129,7 @@ void renderAgentGroupAssignmentCell(shared_ptr<core::Building> const& building,
 	}
 
 	auto const current = agentLookup.entity->getAgentGroupId();
-	auto const preview = agentGroupAssignmentLabel(*building, agent);
+	auto const preview = agentGroupAssignmentLabel(*world, agent);
 
 	ImGui::SetNextItemWidth(-1.0f);
 	auto const& style = ImGui::GetStyle();
@@ -154,7 +154,7 @@ void renderAgentGroupAssignmentCell(shared_ptr<core::Building> const& building,
 			if (group == current) return;
 
 			string diagnostic;
-			if (!commitAgentGroupAssignment(building, agent, group, diagnostic))
+			if (!commitAgentGroupAssignment(world, agent, group, diagnostic))
 				core::addLogMessage("Agent groups", 0, core::LogLevel::Warning, diagnostic);
 		};
 
@@ -163,9 +163,9 @@ void renderAgentGroupAssignmentCell(shared_ptr<core::Building> const& building,
 		// and every row is laid out to it - or to the popup's own width, when
 		// that is roomier, which is how the rows spanned the list before.
 		float widest{ literalTextWidth(NoGroupLabel) };
-		for (auto const id : building->getAgentGroupIds())
+		for (auto const id : world->getAgentGroupIds())
 		{
-			auto const groupLookup = building->lookupAgentGroup(id);
+			auto const groupLookup = world->lookupAgentGroup(id);
 			if (!groupLookup) continue;
 			widest = std::max(widest, literalTextWidth(groupLookup.entity->getName()));
 		}
@@ -176,11 +176,11 @@ void renderAgentGroupAssignmentCell(shared_ptr<core::Building> const& building,
 		if (renderGroupChoice("##agentGroupNone", NoGroupLabel, !current, rowWidth))
 			apply({});
 
-		// Creation order, straight off the Building's registry key order, so
+		// Creation order, straight off the World's registry key order, so
 		// the list a user picks from matches the list they typed.
-		for (auto const id : building->getAgentGroupIds())
+		for (auto const id : world->getAgentGroupIds())
 		{
-			auto const groupLookup = building->lookupAgentGroup(id);
+			auto const groupLookup = world->lookupAgentGroup(id);
 			if (!groupLookup) continue;
 
 			// The ID is pushed rather than trusted to the label: a group named

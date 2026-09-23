@@ -12,7 +12,7 @@ namespace core
 
 	class Shuttle : public RailedTransport
 	{
-		friend class Building;
+		friend class World;
 		TraversalResourceId mTraversalResource;
 		uint32_t mNumCars;
 
