@@ -5,6 +5,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "DocumentHistory.h"
@@ -157,6 +158,18 @@ struct BuildingDocumentSaveTarget
 	std::string buildingFilepath;
 	std::string registryFilepath;
 	DocumentHistory* buildingHistory{ nullptr };
+	// Source package path for the separately persisted Agent behaviour registry.
+	std::string behaviourPackagePath;
+
+	BuildingDocumentSaveTarget() = default;
+	BuildingDocumentSaveTarget(std::shared_ptr<core::Building> value,
+		std::string buildingPath, std::string tagRegistryPath,
+		DocumentHistory* history, std::string behaviourPath = {})
+		: building(std::move(value)), buildingFilepath(std::move(buildingPath)),
+		  registryFilepath(std::move(tagRegistryPath)), buildingHistory(history),
+		  behaviourPackagePath(std::move(behaviourPath))
+	{
+	}
 };
 
 // Save always writes a dirty attached registry before the requested Building.

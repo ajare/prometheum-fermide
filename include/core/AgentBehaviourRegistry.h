@@ -180,6 +180,11 @@ namespace core
 		// or saved by this document. Untracked new registries report no conflict.
 		bool fileHasExternalChanges(std::string const& manifestFilepath) const;
 
+		// Save As uses an independent UUID while preserving the complete behaviour
+		// namespace, revisions, schema history, helper declarations, and allocators.
+		std::shared_ptr<AgentBehaviourRegistry> makeIndependentCopy() const;
+		bool hasEquivalentDefinitions(AgentBehaviourRegistry const& other) const;
+
 		// Internal document-manager seam. The complete replacement is validated
 		// before this shared instance changes; UUID identity must match.
 		bool previewDefinitionsFrom(AgentBehaviourRegistry& replacement,

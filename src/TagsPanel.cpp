@@ -12,9 +12,12 @@
 #include <vector>
 
 #include "DocumentEdit.h"
+#include "BehavioursPanel.h"
 #include "core/AgentTag.h"
 #include "core/AgentTagRegistry.h"
 #include "core/AgentTagRegistryDocument.h"
+#include "core/AgentBehaviourRegistry.h"
+#include "core/AgentBehaviourRegistryDocument.h"
 #include "core/Building.h"
 #include "core/Log.h"
 #include "core/YamlSerializer.h"
@@ -1860,6 +1863,16 @@ namespace
 			/ target.building->getAgentTagRegistryFilename();
 	}
 
+	filesystem::path behaviourPackageSavePath(
+		BuildingDocumentSaveTarget const& target)
+	{
+		if (!target.behaviourPackagePath.empty()) return target.behaviourPackagePath;
+		if (!target.building || target.buildingFilepath.empty()
+			|| !target.building->hasAgentBehaviourRegistryReference()) return {};
+		return filesystem::path(target.buildingFilepath).parent_path()
+			/ target.building->getAgentBehaviourRegistryPackageName();
+	}
+
 	filesystem::path normalizedSavePath(filesystem::path path)
 	{
 		error_code error;
@@ -1888,9 +1901,27 @@ namespace
 			bool buildingWasModified{ false };
 			bool committed{ false };
 		};
+		struct BehaviourRegistrySave
+		{
+			shared_ptr<core::AgentBehaviourRegistry> registry;
+			filesystem::path package;
+		};
+		struct BehaviourRegistryCopy
+		{
+			BuildingDocumentSaveTarget const* target{ nullptr };
+			shared_ptr<core::AgentBehaviourRegistry> source;
+			shared_ptr<core::AgentBehaviourRegistry> copy;
+			filesystem::path sourcePackage;
+			filesystem::path destination;
+			bool buildingWasModified{ false };
+			bool committed{ false };
+		};
 		vector<RegistrySave> registries;
 		map<core::AgentTagRegistry const*, size_t> registryIndices;
 		vector<RegistryCopy> copies;
+		vector<BehaviourRegistrySave> behaviourRegistries;
+		map<core::AgentBehaviourRegistry const*, size_t> behaviourRegistryIndices;
+		vector<BehaviourRegistryCopy> behaviourCopies;
 		map<filesystem::path, BuildingDocumentSaveTarget const*> copyDestinations;
 		vector<BuildingDocumentSaveTarget const*> buildings;
 		map<core::Building const*, filesystem::path> buildingPaths;
@@ -1916,7 +1947,7 @@ namespace
 				occupied = false;
 				return true;
 			}
-			return refuse("Could not inspect Agent tag registry copy destination: "
+			return refuse("Could not inspect dependency copy destination: "
 				+ error.message());
 		};
 
@@ -1958,28 +1989,67 @@ namespace
 							return refuse("Agent tag registry copy already exists: "
 								+ destination.string());
 						if (!copyDestinations.emplace(destination, &target).second)
-							return refuse("More than one Agent tag registry copy targets "
+							return refuse("More than one dependency copy targets "
 								+ destination.string());
 						copies.push_back({ &target,
 							target.building->getAgentTagRegistry(), {}, destination,
 							target.building->isModified(), false });
 					}
 				}
+				if (target.building->hasAttachedAgentBehaviourRegistry())
+				{
+					auto const sourcePackage = behaviourPackageSavePath(target);
+					if (sourcePackage.empty())
+						return refuse("The attached Agent behaviour registry has no package path");
+					auto const normalizedSource = normalizedSavePath(sourcePackage);
+					auto const destination = path.parent_path()
+						/ target.building->getAgentBehaviourRegistryPackageName();
+					if (normalizedSource.parent_path() != destination.parent_path())
+					{
+						bool occupied{ false };
+						if (!pathIsOccupied(destination, occupied)) return false;
+						if (occupied)
+							return refuse("Agent behaviour registry package copy already exists: "
+								+ destination.string());
+						if (!copyDestinations.emplace(destination, &target).second)
+							return refuse("More than one dependency copy targets "
+								+ destination.string());
+						behaviourCopies.push_back({ &target,
+							target.building->getAgentBehaviourRegistry(), {},
+							normalizedSource, destination,
+							target.building->isModified(), false });
+					}
+				}
 			}
 
-			if (!target.building->hasAttachedAgentTagRegistry()
-				|| !attachedAgentTagRegistryIsModified(target.building)) continue;
-			auto const path = registrySavePath(target);
-			if (path.empty())
-				return refuse("The attached Agent tag registry has no file path");
-			auto const normalized = normalizedSavePath(path);
-			auto const& registry = target.building->getAgentTagRegistry();
-			auto const [entry, inserted] = registryIndices.emplace(
-				registry.get(), registries.size());
-			if (inserted)
-				registries.push_back({ registry, normalized });
-			else if (registries[entry->second].path != normalized)
-				return refuse("The same Agent tag registry was given more than one save path");
+			if (target.building->hasAttachedAgentTagRegistry()
+				&& attachedAgentTagRegistryIsModified(target.building))
+			{
+				auto const registryPath = registrySavePath(target);
+				if (registryPath.empty())
+					return refuse("The attached Agent tag registry has no file path");
+				auto const normalized = normalizedSavePath(registryPath);
+				auto const& registry = target.building->getAgentTagRegistry();
+				auto const [entry, inserted] = registryIndices.emplace(
+					registry.get(), registries.size());
+				if (inserted) registries.push_back({ registry, normalized });
+				else if (registries[entry->second].path != normalized)
+					return refuse("The same Agent tag registry was given more than one save path");
+			}
+			if (target.building->hasAttachedAgentBehaviourRegistry()
+				&& attachedAgentBehaviourRegistryIsModified(target.building))
+			{
+				auto const package = behaviourPackageSavePath(target);
+				if (package.empty())
+					return refuse("The attached Agent behaviour registry has no package path");
+				auto const normalized = normalizedSavePath(package);
+				auto const& registry = target.building->getAgentBehaviourRegistry();
+				auto const [entry, inserted] = behaviourRegistryIndices.emplace(
+					registry.get(), behaviourRegistries.size());
+				if (inserted) behaviourRegistries.push_back({ registry, normalized });
+				else if (behaviourRegistries[entry->second].package != normalized)
+					return refuse("The same Agent behaviour registry was given more than one package path");
+			}
 		}
 
 		// Save All is deliberately phased: no Building is written until every
@@ -1994,9 +2064,18 @@ namespace
 			filesystem::remove(entry.destination, ignored);
 			entry.copy.reset();
 		};
-		auto discardUncommittedCopies = [&copies, &discardCopy]()
+		auto discardBehaviourCopy = [](BehaviourRegistryCopy& entry)
+		{
+			if (!entry.copy || entry.committed) return;
+			(void)core::unloadAgentBehaviourRegistryDocumentIfUnused(entry.copy, true);
+			error_code ignored;
+			filesystem::remove_all(entry.destination, ignored);
+			entry.copy.reset();
+		};
+		auto discardUncommittedCopies = [&]()
 		{
 			for (auto& entry : copies) discardCopy(entry);
+			for (auto& entry : behaviourCopies) discardBehaviourCopy(entry);
 		};
 
 		for (auto& entry : copies)
@@ -2014,6 +2093,21 @@ namespace
 			}
 		}
 
+		for (auto& entry : behaviourCopies)
+		{
+			try
+			{
+				entry.copy = core::copyAgentBehaviourRegistryDocument(
+					*entry.source, entry.sourcePackage, entry.destination);
+			}
+			catch (std::exception const& error)
+			{
+				discardUncommittedCopies();
+				return refuse("Could not copy Agent behaviour registry package: "
+					+ string(error.what()));
+			}
+		}
+
 		// Shared dirty source registries are written once, after all no-clobber
 		// copy installations have succeeded and before any dependent Building.
 		for (auto const& entry : registries)
@@ -2027,11 +2121,25 @@ namespace
 			}
 		}
 
+		for (auto const& entry : behaviourRegistries)
+		{
+			string registryDiagnostic;
+			if (!saveAgentBehaviourRegistry(entry.registry, entry.package.string(),
+				&registryDiagnostic))
+			{
+				discardUncommittedCopies();
+				return refuse(std::move(registryDiagnostic));
+			}
+		}
+
 		for (auto const* target : buildings)
 		{
 			auto copy = find_if(copies.begin(), copies.end(),
 				[target](RegistryCopy const& entry) { return entry.target == target; });
+			auto behaviourCopy = find_if(behaviourCopies.begin(), behaviourCopies.end(),
+				[target](BehaviourRegistryCopy const& entry) { return entry.target == target; });
 			bool attachedCopy{ false };
+			bool attachedBehaviourCopy{ false };
 			try
 			{
 				if (copy != copies.end())
@@ -2040,36 +2148,43 @@ namespace
 						copy->destination.filename().string(), copy->copy);
 					attachedCopy = true;
 				}
+				if (behaviourCopy != behaviourCopies.end())
+				{
+					target->building->replaceAgentBehaviourRegistryWithIndependentCopy(
+						behaviourCopy->destination.filename().string(), behaviourCopy->copy);
+					attachedBehaviourCopy = true;
+				}
 				target->building->saveTo(target->buildingFilepath);
 			}
 			catch (std::exception const& error)
 			{
-				if (attachedCopy)
+				try
 				{
-					try
-					{
+					if (attachedBehaviourCopy)
+						target->building->replaceAgentBehaviourRegistryWithIndependentCopy(
+							behaviourCopy->sourcePackage.filename().string(),
+							behaviourCopy->source);
+					if (attachedCopy)
 						target->building->replaceAgentTagRegistryWithIndependentCopy(
-							target->building->getAgentTagRegistryFilename(), copy->source);
-						if (!copy->buildingWasModified) target->building->markSaved();
-					}
-					catch (...)
-					{
-						// Both registries were validated as equivalent before attachment;
-						// rollback is therefore non-refusing unless invariants are broken.
-					}
+							copy->destination.filename().string(), copy->source);
+					bool const wasModified = attachedBehaviourCopy
+						? behaviourCopy->buildingWasModified
+						: (attachedCopy ? copy->buildingWasModified : true);
+					if (!wasModified) target->building->markSaved();
 				}
+				catch (...) {}
 				discardUncommittedCopies();
 				return refuse("Could not save Building: " + string(error.what()));
 			}
 
-			// Once the Building reaches disk, its adjacent copy is committed and
+			// Once the Building reaches disk, its adjacent copies are committed and
 			// must not be removed by cleanup for a later independent save failure.
 			if (copy != copies.end()) copy->committed = true;
+			if (behaviourCopy != behaviourCopies.end()) behaviourCopy->committed = true;
 			if (target->buildingHistory)
 			{
-				// Earlier snapshots name the source registry UUID and cannot be
-				// restored beside the independent copy.
-				if (copy != copies.end()) target->buildingHistory->clear();
+				if (copy != copies.end() || behaviourCopy != behaviourCopies.end())
+					target->buildingHistory->clear();
 				target->buildingHistory->markSaved();
 			}
 			if (copy != copies.end())
@@ -2078,10 +2193,19 @@ namespace
 				core::addLogMessage("Tags", 0, core::LogLevel::Info,
 					"Copied Agent tag registry to " + copy->destination.string());
 			}
+			if (behaviourCopy != behaviourCopies.end())
+			{
+				(void)core::unloadAgentBehaviourRegistryDocumentIfUnused(
+					behaviourCopy->source);
+				core::addLogMessage("Behaviours", 0, core::LogLevel::Info,
+					"Copied Agent behaviour registry package to "
+					+ behaviourCopy->destination.string());
+			}
 			core::addLogMessage("File", 0, core::LogLevel::Info,
 				"Saved Building to " + target->buildingFilepath);
 		}
 		if (!copies.empty()) resetTagsPanelState();
+		if (!behaviourCopies.empty()) resetBehavioursPanelState();
 		return true;
 	}
 }
@@ -2112,6 +2236,9 @@ string unsavedDocumentPromptText(BuildingDocumentSaveTarget const& target)
 	if (attachedAgentTagRegistryIsModified(target.building))
 		text << "\n- Agent tag registry: "
 			<< target.building->getAgentTagRegistryFilename();
+	if (attachedAgentBehaviourRegistryIsModified(target.building))
+		text << "\n- Agent behaviour registry: "
+			<< target.building->getAgentBehaviourRegistryPackageName();
 	return text.str();
 }
 

@@ -2340,7 +2340,8 @@ namespace
 		shared_ptr<core::Building> const& building, string buildingFilepath)
 	{
 		return { building, std::move(buildingFilepath),
-			currentAgentTagRegistryFilepath(building), &gBuildingDocumentHistory };
+			currentAgentTagRegistryFilepath(building), &gBuildingDocumentHistory,
+			currentAgentBehaviourRegistryPackagePath(building) };
 	}
 
 	bool saveBuilding(shared_ptr<core::Building> const& building, bool saveAs)
@@ -2374,13 +2375,6 @@ namespace
 		}
 
 		string diagnostic;
-		if (attachedAgentBehaviourRegistryIsModified(building)
-			&& !saveAgentBehaviourRegistry(building->getAgentBehaviourRegistry(),
-				currentAgentBehaviourRegistryPackagePath(building), &diagnostic))
-		{
-			reportFileError(std::move(diagnostic));
-			return false;
-		}
 		if (!saveBuildingDocument(currentDocumentSaveTarget(building, filepath),
 			&diagnostic))
 		{
@@ -2397,13 +2391,6 @@ namespace
 		// An untitled Building still needs the ordinary Save location chooser.
 		if (gBuildingFilepath.empty()) return saveBuilding(building, false);
 		string diagnostic;
-		if (attachedAgentBehaviourRegistryIsModified(building)
-			&& !saveAgentBehaviourRegistry(building->getAgentBehaviourRegistry(),
-				currentAgentBehaviourRegistryPackagePath(building), &diagnostic))
-		{
-			reportFileError(std::move(diagnostic));
-			return false;
-		}
 		if (!saveAllDocuments(
 			{ currentDocumentSaveTarget(building, gBuildingFilepath) }, &diagnostic))
 		{

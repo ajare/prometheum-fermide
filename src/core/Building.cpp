@@ -806,6 +806,50 @@ namespace core
 		mSimulationPaused = true;
 	}
 
+	void Building::replaceAgentBehaviourRegistryWithIndependentCopy(
+		string packageName, shared_ptr<AgentBehaviourRegistry> registry)
+	{
+		if (!isSimulationPaused())
+			throw invalid_argument("Pause the Building before replacing its Agent behaviour registry with a Save As copy");
+		filesystem::path const path(packageName);
+		if (packageName.empty() || path.is_absolute() || path.has_parent_path()
+			|| path.filename().string() != packageName
+			|| !packageName.ends_with(".behaviours"))
+			throw invalid_argument(
+				"An Agent behaviour registry reference must be a .behaviours package directory basename");
+		if (!mAgentBehaviourRegistry || !registry)
+			throw invalid_argument("Save As requires attached source and copied Agent behaviour registries");
+		if (registry == mAgentBehaviourRegistry
+			|| registry->getUuid() == mAgentBehaviourRegistry->getUuid())
+			throw invalid_argument("An Agent behaviour registry copy must have a new UUID");
+		if (!mAgentBehaviourRegistry->hasEquivalentDefinitions(*registry))
+			throw invalid_argument(
+				"An Agent behaviour registry copy must preserve every definition, revision, and allocator");
+		string assignmentDiagnostic;
+		if (!inspectAgentBehaviourAssignments(*registry, &assignmentDiagnostic))
+			throw invalid_argument(assignmentDiagnostic);
+
+		unique_ptr<AgentBehaviourRuntimeAdapter> candidateRuntime;
+		vector<AgentBehaviourRuntimeDiagnostic> runtimeDiagnostics;
+		if (!AgentBehaviourRuntimeAdapter::prepareReload(*this, *registry,
+			candidateRuntime, runtimeDiagnostics))
+			throw invalid_argument("Copied Agent behaviour package runtime preflight failed");
+
+		registry->registerBuilding(*this);
+		auto previous = mAgentBehaviourRegistry;
+		mAgentBehaviourRuntime->teardownAll(*this,
+			AgentBehaviourTeardownReason::Reload);
+		candidateRuntime->appendDiagnostics(
+			mAgentBehaviourRuntime->consumeDiagnostics());
+		mAgentBehaviourRuntime = std::move(candidateRuntime);
+		previous->unregisterBuilding(*this);
+		mAgentBehaviourRegistryReference = AgentBehaviourRegistryReference{
+			std::move(packageName), registry->getUuid() };
+		mAgentBehaviourRegistry = std::move(registry);
+		mAgentBehaviourDependencyDiagnostic.clear();
+		modify();
+	}
+
 	bool Building::validateAgentBehaviourAssignment(AgentBehaviourId behaviour,
 		uint64_t revision, AgentBehaviourConfiguration const& configuration,
 		AgentBehaviourConfiguration* normalized, string* diagnostic) const

@@ -73,6 +73,7 @@ void runDocumentHistorySmokeChecks();
 void runAgentTagRegistrySmokeChecks();
 void runAgentBehaviourRegistrySmokeChecks();
 void runAgentBehaviourAssignmentSmokeChecks();
+void runAgentBehaviourPortabilitySmokeChecks();
 void runAgentBehaviourDeleteSmokeChecks();
 void runAgentBehaviourSchemaReconciliationSmokeChecks();
 void runAgentBehaviourRuntimeSmokeChecks();
@@ -5027,6 +5028,7 @@ int main(int argc, char** argv)
 		runAgentTagRegistrySmokeChecks();
 		runAgentBehaviourRegistrySmokeChecks();
 		runAgentBehaviourAssignmentSmokeChecks();
+		runAgentBehaviourPortabilitySmokeChecks();
 		runAgentBehaviourDeleteSmokeChecks();
 		runAgentBehaviourSchemaReconciliationSmokeChecks();
 		runAgentBehaviourRuntimeSmokeChecks();

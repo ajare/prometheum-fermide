@@ -1240,6 +1240,13 @@ namespace core
 		// unresolved assignments remain available for repair.
 		void markAgentBehaviourRegistryUnavailable(std::string diagnostic);
 
+		// Save As may move an intact Building into an equivalent, independent
+		// behaviour package. Assignments remain unchanged while the package UUID
+		// and basename are replaced atomically.
+		void replaceAgentBehaviourRegistryWithIndependentCopy(
+			std::string packageName,
+			std::shared_ptr<AgentBehaviourRegistry> registry);
+
 		// One paused-only, schema-validated authored Agent behaviour assignment.
 		// Optional defaults are materialized before mutation. A failed validation
 		// changes neither Agent nor Building.

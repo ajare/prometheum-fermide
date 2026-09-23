@@ -23,14 +23,19 @@
 #include <cmath>
 #include <exception>
 #include <format>
+#include <limits>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <utility>
+#include <variant>
 
 #include "core/Agent.h"
 #include "core/AgentGroup.h"
 #include "core/AgentTagRegistry.h"
+#include "core/AgentBehaviourRegistry.h"
 #include "core/Building.h"
+#include "core/Marker.h"
 #include "core/Exceptions.h"
 #include "core/Sector.h"
 
@@ -126,6 +131,259 @@ namespace
 		return building.validateAgentTagAssignments(payload.agentTags,
 			payload.walkSpeedModifierSample, payload.heightModifierSample, &diagnostic);
 	}
+
+	AgentClipboardConfigurationValue portableValue(core::Building const& building,
+		core::AgentBehaviourConfigurationValue const& source)
+	{
+		AgentClipboardConfigurationValue result;
+		visit([&](auto const& typed)
+		{
+			using T = decay_t<decltype(typed)>;
+			if constexpr (is_same_v<T, core::MarkerId>)
+			{
+				auto marker = building.lookupMarker(typed);
+				if (!marker) throw runtime_error(format(
+					"Agent behaviour configuration references unknown Marker {}", typed.value));
+				result.value = AgentClipboardMarker{ marker->getName() };
+			}
+			else if constexpr (is_same_v<T, core::AgentBehaviourConfigurationList>)
+			{
+				AgentClipboardConfigurationList list;
+				for (auto const& item : typed) list.push_back(portableValue(building, item));
+				result.value = std::move(list);
+			}
+			else if constexpr (is_same_v<T, core::AgentBehaviourConfigurationRecord>)
+			{
+				AgentClipboardConfigurationRecord record;
+				for (auto const& [name, item] : typed)
+					record.emplace(name, portableValue(building, item));
+				result.value = std::move(record);
+			}
+			else result.value = typed;
+		}, source.value);
+		return result;
+	}
+
+	void writePortableValue(YAML::Emitter& output,
+		AgentClipboardConfigurationValue const& value)
+	{
+		output << YAML::BeginMap;
+		visit([&](auto const& typed)
+		{
+			using T = decay_t<decltype(typed)>;
+			if constexpr (is_same_v<T, bool>)
+				output << YAML::Key << "type" << YAML::Value << "boolean"
+					<< YAML::Key << "value" << YAML::Value << typed;
+			else if constexpr (is_same_v<T, int64_t>)
+				output << YAML::Key << "type" << YAML::Value << "integer"
+					<< YAML::Key << "value" << YAML::Value << typed;
+			else if constexpr (is_same_v<T, double>)
+				output << YAML::Key << "type" << YAML::Value << "number"
+					<< YAML::Key << "value" << YAML::Value << typed;
+			else if constexpr (is_same_v<T, string>)
+				output << YAML::Key << "type" << YAML::Value << "string"
+					<< YAML::Key << "value" << YAML::Value << typed;
+			else if constexpr (is_same_v<T, core::AgentBehaviourDuration>)
+				output << YAML::Key << "type" << YAML::Value << "duration"
+					<< YAML::Key << "value" << YAML::Value << typed.ticks;
+			else if constexpr (is_same_v<T, AgentClipboardMarker>)
+				output << YAML::Key << "type" << YAML::Value << "marker"
+					<< YAML::Key << "value" << YAML::Value << typed.name;
+			else if constexpr (is_same_v<T, AgentClipboardConfigurationList>)
+			{
+				output << YAML::Key << "type" << YAML::Value << "list"
+					<< YAML::Key << "value" << YAML::Value << YAML::BeginSeq;
+				for (auto const& item : typed) writePortableValue(output, item);
+				output << YAML::EndSeq;
+			}
+			else
+			{
+				output << YAML::Key << "type" << YAML::Value << "record"
+					<< YAML::Key << "value" << YAML::Value << YAML::BeginSeq;
+				for (auto const& [name, item] : typed)
+				{
+					output << YAML::BeginMap << YAML::Key << "field" << YAML::Value << name
+						<< YAML::Key << "typedValue" << YAML::Value;
+					writePortableValue(output, item);
+					output << YAML::EndMap;
+				}
+				output << YAML::EndSeq;
+			}
+		}, value.value);
+		output << YAML::EndMap;
+	}
+
+	bool readPortableValue(YAML::Node const& node,
+		AgentClipboardConfigurationValue& result, string const& path,
+		size_t depth, string& diagnostic)
+	{
+		auto reject = [&](string message)
+		{
+			diagnostic = "Clipboard behaviour configuration '" + path + "': " + message;
+			return false;
+		};
+		if (depth > core::MaxAgentBehaviourConfigurationDepth)
+			return reject("maximum nesting depth 16 exceeded");
+		if (!node || !node.IsMap() || !node["type"] || !node["value"])
+			return reject("requires a typed value map");
+		string type;
+		try { type = node["type"].as<string>(); }
+		catch (exception const&) { return reject("type must be text"); }
+		auto const value = node["value"];
+		try
+		{
+			if (type == "boolean") result.value = value.as<bool>();
+			else if (type == "integer") result.value = value.as<int64_t>();
+			else if (type == "number")
+			{
+				auto number = value.as<double>();
+				if (!isfinite(number)) return reject("Number must be finite");
+				result.value = number;
+			}
+			else if (type == "string") result.value = value.as<string>();
+			else if (type == "duration")
+				result.value = core::AgentBehaviourDuration{ value.as<uint64_t>() };
+			else if (type == "marker")
+			{
+				auto name = value.as<string>();
+				if (name.empty()) return reject("Marker name cannot be empty");
+				result.value = AgentClipboardMarker{ std::move(name) };
+			}
+			else if (type == "list")
+			{
+				if (!value.IsSequence()) return reject("List value must be a sequence");
+				if (value.size() > core::MaxAgentBehaviourListElements)
+					return reject("contains more than 4096 elements");
+				AgentClipboardConfigurationList list;
+				for (size_t index = 0; index < value.size(); ++index)
+				{
+					AgentClipboardConfigurationValue item;
+					if (!readPortableValue(value[index], item,
+						path + "[" + to_string(index) + "]", depth + 1,
+						diagnostic)) return false;
+					list.push_back(std::move(item));
+				}
+				result.value = std::move(list);
+			}
+			else if (type == "record")
+			{
+				if (!value.IsSequence()) return reject("Record value must be a sequence");
+				AgentClipboardConfigurationRecord record;
+				for (auto const& entry : value)
+				{
+					if (!entry.IsMap() || !entry["field"] || !entry["typedValue"])
+						return reject("Record entries require field and typedValue");
+					auto name = entry["field"].as<string>();
+					if (name.empty()) return reject("Record field name cannot be empty");
+					AgentClipboardConfigurationValue item;
+					if (!readPortableValue(entry["typedValue"], item,
+						path.empty() ? name : path + "." + name, depth + 1,
+						diagnostic)) return false;
+					if (!record.emplace(name, std::move(item)).second)
+						return reject("Record field '" + name + "' appears twice");
+				}
+				result.value = std::move(record);
+			}
+			else return reject("type '" + type + "' is not supported");
+		}
+		catch (exception const&) { return reject("value does not match type '" + type + "'"); }
+		return true;
+	}
+
+	bool resolvePortableValue(core::Building const& building,
+		AgentClipboardConfigurationValue const& source,
+		core::AgentBehaviourConfigurationValue& result, string const& path,
+		vector<string>& failures)
+	{
+		visit([&](auto const& typed)
+		{
+			using T = decay_t<decltype(typed)>;
+			if constexpr (is_same_v<T, AgentClipboardMarker>)
+			{
+				vector<core::MarkerId> matches;
+				for (auto id : building.getMarkerIds())
+				{
+					auto marker = building.lookupMarker(id);
+					if (marker && marker->getName() == typed.name) matches.push_back(id);
+				}
+				if (matches.size() != 1)
+					failures.push_back(format("Configuration field '{}': Marker '{}' has {} matches in the destination Building (expected exactly one)",
+						path, typed.name, matches.size()));
+				else result.value = matches.front();
+			}
+			else if constexpr (is_same_v<T, AgentClipboardConfigurationList>)
+			{
+				core::AgentBehaviourConfigurationList list;
+				for (size_t index = 0; index < typed.size(); ++index)
+				{
+					core::AgentBehaviourConfigurationValue item;
+					resolvePortableValue(building, typed[index], item,
+						path + "[" + to_string(index) + "]", failures);
+					list.push_back(std::move(item));
+				}
+				result.value = std::move(list);
+			}
+			else if constexpr (is_same_v<T, AgentClipboardConfigurationRecord>)
+			{
+				core::AgentBehaviourConfigurationRecord record;
+				for (auto const& [name, item] : typed)
+				{
+					core::AgentBehaviourConfigurationValue converted;
+					resolvePortableValue(building, item, converted,
+						path.empty() ? name : path + "." + name, failures);
+					record.emplace(name, std::move(converted));
+				}
+				result.value = std::move(record);
+			}
+			else result.value = typed;
+		}, source.value);
+		return failures.empty();
+	}
+
+	bool clipboardBehaviourFitsBuilding(core::Building const& building,
+		AgentClipboardPayload const& payload,
+		core::AgentBehaviourConfiguration* configuration, string& diagnostic)
+	{
+		if (!payload.behaviour) return true;
+		auto const& assignment = *payload.behaviour;
+		vector<string> failures;
+		if (!core::AgentBehaviourRegistry::uuidIsValid(assignment.registryUuid))
+			failures.push_back("Clipboard Agent behaviour registry UUID is invalid");
+		if (!assignment.behaviour)
+			failures.push_back("Clipboard Agent behaviour identity cannot be zero");
+		if (!assignment.revision)
+			failures.push_back("Clipboard Agent behaviour revision cannot be zero");
+		if (!building.hasAttachedAgentBehaviourRegistry())
+			failures.push_back("The destination Building has no attached Agent behaviour registry");
+		else if (building.getAgentBehaviourRegistry()->getUuid() != assignment.registryUuid)
+			failures.push_back(format("Agent behaviour registry identity mismatch: clipboard has {}, destination has {}",
+				assignment.registryUuid, building.getAgentBehaviourRegistry()->getUuid()));
+
+		core::AgentBehaviourConfiguration converted;
+		for (auto const& [name, value] : assignment.configuration)
+		{
+			core::AgentBehaviourConfigurationValue item;
+			resolvePortableValue(building, value, item, name, failures);
+			converted.emplace(name, std::move(item));
+		}
+		if (building.hasAttachedAgentBehaviourRegistry()
+			&& building.getAgentBehaviourRegistry()->getUuid() == assignment.registryUuid)
+		{
+			string schemaDiagnostic;
+			if (!building.validateAgentBehaviourAssignment(assignment.behaviour,
+				assignment.revision, converted, nullptr, &schemaDiagnostic))
+				failures.push_back(std::move(schemaDiagnostic));
+		}
+		if (!failures.empty())
+		{
+			diagnostic = format("Agent behaviour paste has {} dependency diagnostic(s):",
+				failures.size());
+			for (auto const& failure : failures) diagnostic += "\n- " + failure;
+			return false;
+		}
+		if (configuration) *configuration = std::move(converted);
+		return true;
+	}
 }
 
 AgentClipboardPayload makeAgentClipboardPayload(core::Building const& building,
@@ -149,6 +407,19 @@ AgentClipboardPayload makeAgentClipboardPayload(core::Building const& building,
 				"A tagged Agent's Building has no Agent tag registry identity");
 		payload.agentTagRegistryUuid = building.getExpectedAgentTagRegistryUuid();
 	}
+	if (auto const& assignment = lookup.entity->getBehaviourAssignment())
+	{
+		if (!building.hasAgentBehaviourRegistryReference())
+			throw runtime_error(
+				"An assigned Agent's Building has no Agent behaviour registry identity");
+		AgentClipboardBehaviourAssignment portable;
+		portable.registryUuid = building.getExpectedAgentBehaviourRegistryUuid();
+		portable.behaviour = assignment->behaviour;
+		portable.revision = assignment->revision;
+		for (auto const& [field, value] : assignment->configuration)
+			portable.configuration.emplace(field, portableValue(building, value));
+		payload.behaviour = std::move(portable);
+	}
 
 	// The group's name crosses; its ID stays home. An Agent holding an ID the
 	// Building cannot resolve reads back as ungrouped rather than inventing a
@@ -170,6 +441,10 @@ string makeAgentClipboardText(AgentClipboardPayload const& payload, bool cut)
 	string diagnostic;
 	if (!clipboardTagStateIsWellFormed(payload, diagnostic))
 		throw invalid_argument(diagnostic);
+	if (payload.behaviour
+		&& (!core::AgentBehaviourRegistry::uuidIsValid(payload.behaviour->registryUuid)
+			|| !payload.behaviour->behaviour || !payload.behaviour->revision))
+		throw invalid_argument("Agent behaviour clipboard identity is invalid");
 
 	YAML::Emitter output;
 	output << YAML::BeginMap
@@ -187,6 +462,25 @@ string makeAgentClipboardText(AgentClipboardPayload const& payload, bool cut)
 	// so a payload written before activation existed reads back activated
 	// (#118).
 	if (!payload.active) output << YAML::Key << "active" << YAML::Value << false;
+	if (payload.behaviour)
+	{
+		output << YAML::Key << "behaviour" << YAML::Value << YAML::BeginMap
+			<< YAML::Key << "registryUuid" << YAML::Value
+			<< payload.behaviour->registryUuid
+			<< YAML::Key << "identity" << YAML::Value
+			<< payload.behaviour->behaviour.value
+			<< YAML::Key << "revision" << YAML::Value
+			<< payload.behaviour->revision
+			<< YAML::Key << "configuration" << YAML::Value << YAML::BeginSeq;
+		for (auto const& [field, value] : payload.behaviour->configuration)
+		{
+			output << YAML::BeginMap << YAML::Key << "field" << YAML::Value << field
+				<< YAML::Key << "typedValue" << YAML::Value;
+			writePortableValue(output, value);
+			output << YAML::EndMap;
+		}
+		output << YAML::EndSeq << YAML::EndMap;
+	}
 	if (!payload.agentTags.empty())
 	{
 		output << YAML::Key << "agentTagRegistryUuid" << YAML::Value
@@ -292,6 +586,71 @@ bool readAgentClipboardObject(YAML::Node const& object,
 			return false;
 		}
 		payload.group = value;
+	}
+
+	if (object["behaviour"])
+	{
+		auto const behaviour = object["behaviour"];
+		if (!behaviour.IsMap())
+		{
+			diagnostic = "Clipboard field 'behaviour' must be a map";
+			return false;
+		}
+		AgentClipboardBehaviourAssignment assignment;
+		try
+		{
+			assignment.registryUuid = behaviour["registryUuid"].as<string>();
+			assignment.behaviour = core::AgentBehaviourId{
+				behaviour["identity"].as<uint64_t>() };
+			assignment.revision = behaviour["revision"].as<uint64_t>();
+		}
+		catch (exception const&)
+		{
+			diagnostic = "Clipboard Agent behaviour has an invalid or missing identity field";
+			return false;
+		}
+		if (!core::AgentBehaviourRegistry::uuidIsValid(assignment.registryUuid)
+			|| !assignment.behaviour || !assignment.revision)
+		{
+			diagnostic = "Clipboard Agent behaviour identity, revision, or registry UUID is invalid";
+			return false;
+		}
+		auto const configuration = behaviour["configuration"];
+		if (!configuration || !configuration.IsSequence())
+		{
+			diagnostic = "Clipboard Agent behaviour configuration must be a sequence";
+			return false;
+		}
+		for (auto const& entry : configuration)
+		{
+			if (!entry.IsMap() || !entry["field"] || !entry["typedValue"])
+			{
+				diagnostic = "Clipboard Agent behaviour configuration entries require field and typedValue";
+				return false;
+			}
+			string field;
+			try { field = entry["field"].as<string>(); }
+			catch (exception const&)
+			{
+				diagnostic = "Clipboard Agent behaviour configuration field must be text";
+				return false;
+			}
+			if (field.empty())
+			{
+				diagnostic = "Clipboard Agent behaviour configuration field cannot be empty";
+				return false;
+			}
+			AgentClipboardConfigurationValue value;
+			if (!readPortableValue(entry["typedValue"], value, field, 1,
+				diagnostic)) return false;
+			if (!assignment.configuration.emplace(field, std::move(value)).second)
+			{
+				diagnostic = "Clipboard Agent behaviour configuration field '"
+					+ field + "' appears twice";
+				return false;
+			}
+		}
+		payload.behaviour = std::move(assignment);
 	}
 
 	if (object["agentTagRegistryUuid"])
@@ -436,6 +795,12 @@ bool armAgentPlacement(PendingAgentPlacement& pending,
 		if (!groupNameUsable(*payload.group, trimmed, diagnostic)) return false;
 	}
 	if (!clipboardTagStateFitsBuilding(building, payload, diagnostic)) return false;
+	if (!clipboardBehaviourFitsBuilding(building, payload, nullptr, diagnostic)) return false;
+	if (payload.behaviour && !building.isSimulationPaused())
+	{
+		diagnostic = "Pause the simulation before pasting an Agent with a behaviour";
+		return false;
+	}
 
 	pending.payload = payload;
 	pending.sector = sector;
@@ -480,9 +845,15 @@ bool commitAgentPlacement(shared_ptr<core::Building> const& building,
 		groupName = trimmed;
 	}
 	if (!clipboardTagStateFitsBuilding(*building, payload, diagnostic)) return false;
-	if (!payload.agentTags.empty() && !building->isSimulationPaused())
+	core::AgentBehaviourConfiguration behaviourConfiguration;
+	if (!clipboardBehaviourFitsBuilding(*building, payload,
+		&behaviourConfiguration, diagnostic)) return false;
+	if ((!payload.agentTags.empty() || payload.behaviour)
+		&& !building->isSimulationPaused())
 	{
-		diagnostic = "Pause the simulation before pasting a tagged Agent";
+		diagnostic = payload.behaviour
+			? "Pause the simulation before pasting an Agent with a behaviour"
+			: "Pause the simulation before pasting a tagged Agent";
 		return false;
 	}
 
@@ -565,6 +936,18 @@ bool commitAgentPlacement(shared_ptr<core::Building> const& building,
 				&assignDiagnostic))
 			{
 				diagnostic = "The pasted Agent's tag assignments could not be restored: "
+					+ assignDiagnostic + rollBack();
+				return false;
+			}
+		}
+		if (payload.behaviour)
+		{
+			string assignDiagnostic;
+			if (!building->setAgentBehaviourAssignment(agentId,
+				payload.behaviour->behaviour, payload.behaviour->revision,
+				behaviourConfiguration, &assignDiagnostic))
+			{
+				diagnostic = "The pasted Agent's behaviour could not be restored: "
 					+ assignDiagnostic + rollBack();
 				return false;
 			}

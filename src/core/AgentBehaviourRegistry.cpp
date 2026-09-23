@@ -516,6 +516,57 @@ namespace core
 		}
 	}
 
+	std::shared_ptr<AgentBehaviourRegistry>
+	AgentBehaviourRegistry::makeIndependentCopy() const
+	{
+		auto copy = std::shared_ptr<AgentBehaviourRegistry>(
+			new AgentBehaviourRegistry(generateUuid()));
+		copy->mPackageRevision = mPackageRevision;
+		for (auto const& [name, helper] : mHelperModules)
+			copy->mHelperModules.emplace(name, AgentBehaviourHelperModule::create(
+				helper->getName(), helper->getSourceModulePath()));
+		for (auto const& [id, behaviour] : mBehaviours.entries())
+		{
+			auto cloned = AgentBehaviour::create(behaviour->getName(),
+				behaviour->getSourceModulePath(), behaviour->getSchema(),
+				behaviour->getRevision());
+			for (auto const& [revision, schema] : behaviour->getSchemaHistory())
+				if (revision != behaviour->getRevision())
+					cloned->rememberSchema(revision, schema);
+			if (!copy->mBehaviours.restore(id, std::move(cloned)))
+				throw std::logic_error("Could not clone Agent behaviour identity");
+		}
+		if (!copy->mBehaviours.restoreNextId(mBehaviours.nextId()))
+			throw std::logic_error("Could not clone Agent behaviour allocator");
+		return copy;
+	}
+
+	bool AgentBehaviourRegistry::hasEquivalentDefinitions(
+		AgentBehaviourRegistry const& other) const
+	{
+		if (mPackageRevision != other.mPackageRevision
+			|| mBehaviours.nextId() != other.mBehaviours.nextId()
+			|| mHelperModules.size() != other.mHelperModules.size()
+			|| mBehaviours.entries().size() != other.mBehaviours.entries().size())
+			return false;
+		for (auto const& [name, helper] : mHelperModules)
+		{
+			auto found = other.mHelperModules.find(name);
+			if (found == other.mHelperModules.end()
+				|| !helper->definitionEquals(*found->second)) return false;
+		}
+		for (auto const& [id, behaviour] : mBehaviours.entries())
+		{
+			auto const* candidate = other.mBehaviours.find(id);
+			if (!candidate || behaviour->getName() != candidate->getName()
+				|| behaviour->getRevision() != candidate->getRevision()
+				|| behaviour->getSourceModulePath() != candidate->getSourceModulePath()
+				|| behaviour->getSchemaHistory() != candidate->getSchemaHistory())
+				return false;
+		}
+		return true;
+	}
+
 	bool AgentBehaviourRegistry::previewDefinitionsFrom(
 		AgentBehaviourRegistry& replacement,
 		AgentBehaviourSchemaMigrationPreview& preview,

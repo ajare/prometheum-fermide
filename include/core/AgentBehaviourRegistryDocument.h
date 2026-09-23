@@ -29,6 +29,14 @@ namespace core
 	std::shared_ptr<AgentBehaviourRegistry> createAndAttachAgentBehaviourRegistry(
 		Building& building, std::filesystem::path const& buildingFilepath);
 
+	// Installs an independent no-clobber package copy. Only manifest-declared
+	// behaviour and helper Lua modules are copied; failure removes the whole
+	// destination package.
+	std::shared_ptr<AgentBehaviourRegistry> copyAgentBehaviourRegistryDocument(
+		AgentBehaviourRegistry const& source,
+		std::filesystem::path const& sourcePackageDirectory,
+		std::filesystem::path const& destinationPackageDirectory);
+
 	// Selects an existing package. Both documents must resolve to a directory
 	// and regular manifest in the same canonical directory, and only the
 	// package directory name is stored in the Building.

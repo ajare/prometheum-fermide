@@ -29,14 +29,18 @@
 
 #include <cstdint>
 #include <memory>
+#include <map>
 #include <optional>
 #include <set>
 #include <string>
 #include <utility>
+#include <variant>
+#include <vector>
 
 #include <yaml-cpp/yaml.h>
 
 #include "core/Agent.h"
+#include "core/AgentBehaviour.h"
 #include "core/EntityId.h"
 
 namespace core
@@ -44,6 +48,34 @@ namespace core
 	class Building;
 	class Sector;
 }
+
+// Clipboard configuration is explicitly typed. Marker values carry names,
+// never Building-local Marker IDs, so a destination must resolve them.
+struct AgentClipboardMarker
+{
+	std::string name;
+	bool operator==(AgentClipboardMarker const&) const = default;
+};
+struct AgentClipboardConfigurationValue;
+using AgentClipboardConfigurationList = std::vector<AgentClipboardConfigurationValue>;
+using AgentClipboardConfigurationRecord =
+	std::map<std::string, AgentClipboardConfigurationValue>;
+struct AgentClipboardConfigurationValue
+{
+	using Storage = std::variant<bool, int64_t, double, std::string,
+		core::AgentBehaviourDuration, AgentClipboardMarker,
+		AgentClipboardConfigurationList, AgentClipboardConfigurationRecord>;
+	Storage value{ false };
+	bool operator==(AgentClipboardConfigurationValue const&) const = default;
+};
+struct AgentClipboardBehaviourAssignment
+{
+	std::string registryUuid;
+	core::AgentBehaviourId behaviour;
+	uint64_t revision{ 0 };
+	AgentClipboardConfigurationRecord configuration;
+	bool operator==(AgentClipboardBehaviourAssignment const&) const = default;
+};
 
 // What an Agent clipboard payload carries.
 struct AgentClipboardPayload
@@ -80,6 +112,10 @@ struct AgentClipboardPayload
 	std::set<core::AgentTagId> agentTags;
 	std::optional<core::AgentPropertySample> walkSpeedModifierSample;
 	std::optional<core::AgentPropertySample> heightModifierSample;
+
+	// Behaviour IDs are meaningful only under this assignment's registry UUID.
+	// Marker configuration values have already been replaced by names.
+	std::optional<AgentClipboardBehaviourAssignment> behaviour;
 };
 
 // The payload a copy of `agent` carries. `name` is the name the copy will

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <format>
 #include <optional>
+#include <set>
 #include <system_error>
 #include <utility>
 #include <vector>
@@ -286,6 +287,73 @@ namespace core
 		}
 		building.attachAgentBehaviourRegistry(packageDirectory.filename().string(), registry);
 		return registry;
+	}
+
+	std::shared_ptr<AgentBehaviourRegistry> copyAgentBehaviourRegistryDocument(
+		AgentBehaviourRegistry const& source,
+		std::filesystem::path const& sourcePackageDirectory,
+		std::filesystem::path const& destinationPackageDirectory)
+	{
+		auto const canonicalSource = requireCanonicalPackageDirectory(
+			sourcePackageDirectory);
+		requireManifest(canonicalSource);
+		if (destinationPackageDirectory.empty()
+			|| !destinationPackageDirectory.filename().string().ends_with(".behaviours"))
+			throw SerializationException(
+				"An Agent behaviour registry copy destination must end with .behaviours");
+		std::error_code error;
+		auto const status = std::filesystem::symlink_status(
+			destinationPackageDirectory, error);
+		if (!error && status.type() != std::filesystem::file_type::not_found)
+			throw SerializationException(std::format(
+				"Agent behaviour registry package copy already exists: {}",
+				destinationPackageDirectory.string()));
+		if (error && error != std::errc::no_such_file_or_directory)
+			throw SerializationException(std::format(
+				"Could not inspect Agent behaviour registry package copy destination: {}",
+				error.message()));
+
+		auto copy = source.makeIndependentCopy();
+		if (!std::filesystem::create_directory(destinationPackageDirectory, error)
+			|| error)
+			throw SerializationException(std::format(
+				"Could not create Agent behaviour registry package copy {}: {}",
+				destinationPackageDirectory.string(), error.message()));
+		try
+		{
+			std::set<std::string> modules;
+			for (auto const& name : source.getHelperModuleNames())
+				modules.insert(source.lookupHelperModule(name)->getSourceModulePath());
+			for (auto const id : source.getBehaviourIds())
+				modules.insert(source.lookupAgentBehaviour(id)->getSourceModulePath());
+			for (auto const& module : modules)
+			{
+				auto const sourcePath = std::filesystem::weakly_canonical(
+					canonicalSource / module, error);
+				if (error || !std::filesystem::is_regular_file(sourcePath, error) || error
+					|| sourcePath.lexically_relative(canonicalSource).empty()
+					|| *sourcePath.lexically_relative(canonicalSource).begin() == "..")
+					throw SerializationException(
+						"Managed Agent behaviour module is missing or escapes its package: " + module);
+				auto const destination = destinationPackageDirectory / module;
+				std::filesystem::create_directories(destination.parent_path());
+				if (!std::filesystem::copy_file(sourcePath, destination,
+					std::filesystem::copy_options::none, error) || error)
+					throw SerializationException(std::format(
+						"Could not copy managed Agent behaviour module '{}': {}",
+						module, error.message()));
+			}
+			copy->saveTo(agentBehaviourRegistryManifestPath(
+				destinationPackageDirectory).string());
+			registerCreatedRegistry(destinationPackageDirectory, copy);
+			return copy;
+		}
+		catch (...)
+		{
+			std::error_code ignored;
+			std::filesystem::remove_all(destinationPackageDirectory, ignored);
+			throw;
+		}
 	}
 
 	std::shared_ptr<AgentBehaviourRegistry> selectAndAttachAgentBehaviourRegistry(
