@@ -5,6 +5,7 @@
 #include "core/SimulationCoordinator.h"
 
 #include "core/Agent.h"
+#include "core/AgentBehaviourRuntime.h"
 #include "core/Building.h"
 #include "core/Coordination.h"
 #include "core/Defines.h"
@@ -552,6 +553,10 @@ namespace core
 	void SimulationCoordinator::advanceTick()
 	{
 		if (mBuilding.mSimulationPaused) return;
+		// The boundary runs with no active phase. All instances are constructed
+		// before deterministic on_start callbacks enqueue commands; those commands
+		// are applied here before this tick can collect traversal intent.
+		mBuilding.mAgentBehaviourRuntime->runStartupBoundary(mBuilding);
 		auto before = getSimulationSnapshot();
 		++mBuilding.mSimulationTick;
 		updateMovementGoals();

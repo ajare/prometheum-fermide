@@ -6,6 +6,7 @@
 #include "core/SimulationCoordinator.h"
 
 #include "core/Agent.h"
+#include "core/AgentBehaviourRuntime.h"
 #include "core/Graph.h"
 #include "core/MarkerSectorObject.h"
 #include "core/Path.h"
@@ -361,6 +362,9 @@ namespace core
 				event.routeLossReason = !mBuilding.lookupMarker(goal.marker) ? RouteLossReason::DestinationRemoved
 					: goal.unreachable ? RouteLossReason::Unreachable : RouteLossReason::TopologyChanged;
 			it = mBuilding.mMovementGoals.erase(it);
+			// Runtime observation is a separate subscription: it never drains or
+			// mutates the public simulation event queue.
+			mBuilding.mAgentBehaviourRuntime->observeOutcome(event);
 			mBuilding.mEvents.push_back(std::move(event));
 		}
 	}

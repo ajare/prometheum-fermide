@@ -4,11 +4,22 @@
 #include <cstdlib>
 #include <exception>
 #include <format>
+#include <fstream>
+#include <map>
 #include <memory>
 #include <string>
 #include <string_view>
+#include <type_traits>
+#include <utility>
+#include <variant>
+#include <vector>
 
 #include <sol/sol.hpp>
+
+#include "core/Agent.h"
+#include "core/AgentBehaviourRegistry.h"
+#include "core/Building.h"
+#include "core/Simulation.h"
 
 namespace core
 {
@@ -99,7 +110,7 @@ namespace core
 
 		int immutableNewIndex(lua_State* state)
 		{
-			return luaL_error(state, "prometheum.v1 is immutable");
+			return luaL_error(state, "Agent behaviour host value is immutable");
 		}
 
 		int requireHostModule(lua_State* state)
@@ -127,7 +138,7 @@ namespace core
 				lua_setfield(state, backing, "api_version");
 			}
 
-			lua_newtable(state);
+			(void)lua_newuserdatauv(state, 1, 0);
 			auto const proxy = lua_gettop(state);
 			lua_newtable(state);
 			lua_pushvalue(state, backing);
@@ -350,5 +361,463 @@ namespace core
 			return failure(normalizedPackage, normalizedModule,
 				chunkName + ":1: " + error.what(), error.what());
 		}
+	}
+
+	namespace
+	{
+		constexpr char MarkerMetatable[] = "prometheum.v1.marker";
+
+		struct MarkerHandle
+		{
+			MarkerId marker;
+		};
+
+		struct PendingMovementCommand
+		{
+			AgentId agent;
+			MarkerId marker;
+		};
+
+		struct CallbackScope
+		{
+			bool active{ false };
+			AgentId agent;
+			std::vector<PendingMovementCommand> commands;
+		};
+
+		void pushImmutableProxy(lua_State* state)
+		{
+			// The caller leaves a backing table on top. A userdata proxy cannot be
+			// altered through raw table operations; reads resolve against the hidden
+			// backing table and every assignment reaches __newindex.
+			auto const backing = lua_gettop(state);
+			(void)lua_newuserdatauv(state, 1, 0);
+			auto const proxy = lua_gettop(state);
+			lua_newtable(state);
+			lua_pushvalue(state, backing);
+			lua_setfield(state, -2, "__index");
+			lua_pushcfunction(state, immutableNewIndex);
+			lua_setfield(state, -2, "__newindex");
+			lua_pushliteral(state, "immutable");
+			lua_setfield(state, -2, "__metatable");
+			lua_setmetatable(state, proxy);
+			lua_remove(state, backing);
+		}
+
+		void pushCommandResult(lua_State* state, bool accepted, char const* status)
+		{
+			lua_newtable(state);
+			lua_pushboolean(state, accepted);
+			lua_setfield(state, -2, "accepted");
+			lua_pushstring(state, status);
+			lua_setfield(state, -2, "status");
+			pushImmutableProxy(state);
+		}
+
+		int markerToString(lua_State* state)
+		{
+			(void)luaL_checkudata(state, 1, MarkerMetatable);
+			lua_pushliteral(state, "Marker");
+			return 1;
+		}
+
+		void ensureMarkerMetatable(lua_State* state)
+		{
+			if (luaL_newmetatable(state, MarkerMetatable))
+			{
+				lua_pushliteral(state, "opaque Marker handle");
+				lua_setfield(state, -2, "__metatable");
+				lua_pushcfunction(state, markerToString);
+				lua_setfield(state, -2, "__tostring");
+			}
+			lua_pop(state, 1);
+		}
+
+		void pushMarkerHandle(lua_State* state, MarkerId marker)
+		{
+			auto* handle = static_cast<MarkerHandle*>(
+				lua_newuserdatauv(state, sizeof(MarkerHandle), 0));
+			*handle = MarkerHandle{ marker };
+			luaL_setmetatable(state, MarkerMetatable);
+		}
+
+		int queueMoveTo(lua_State* state)
+		{
+			auto* scope = static_cast<CallbackScope*>(
+				lua_touserdata(state, lua_upvalueindex(1)));
+			if (!scope || !scope->active)
+				return luaL_error(state,
+					"Agent behaviour callback context is no longer active");
+
+			MarkerHandle* handle = nullptr;
+			for (int index = 1; index <= lua_gettop(state) && !handle; ++index)
+				handle = static_cast<MarkerHandle*>(
+					luaL_testudata(state, index, MarkerMetatable));
+			if (!handle)
+			{
+				pushCommandResult(state, false, "invalid_marker");
+				return 1;
+			}
+
+			scope->commands.push_back({ scope->agent, handle->marker });
+			pushCommandResult(state, true, "accepted");
+			return 1;
+		}
+
+		bool protectedCall(lua_State* state, int argumentCount, int resultCount,
+			std::string* diagnostic = nullptr)
+		{
+			auto const functionIndex = lua_gettop(state) - argumentCount;
+			lua_getglobal(state, "__prometheum_traceback");
+			lua_insert(state, functionIndex);
+			auto const status = lua_pcall(state, argumentCount, resultCount,
+				functionIndex);
+			if (status != LUA_OK)
+			{
+				if (diagnostic)
+				{
+					auto const* message = lua_tostring(state, -1);
+					*diagnostic = message ? message : "Lua callback failed";
+				}
+				lua_pop(state, 1);
+				lua_remove(state, functionIndex);
+				return false;
+			}
+			lua_remove(state, functionIndex);
+			return true;
+		}
+
+		void copyGlobal(lua_State* state, int environment, char const* name)
+		{
+			lua_getglobal(state, name);
+			lua_setfield(state, environment, name);
+		}
+
+		void copyLibrary(lua_State* state, int environment, char const* name)
+		{
+			lua_getglobal(state, name);
+			if (!lua_istable(state, -1))
+			{
+				lua_pop(state, 1);
+				return;
+			}
+			lua_newtable(state);
+			auto const copy = lua_gettop(state);
+			lua_pushnil(state);
+			while (lua_next(state, -3) != 0)
+			{
+				lua_pushvalue(state, -2);
+				lua_pushvalue(state, -2);
+				lua_settable(state, copy);
+				lua_pop(state, 1);
+			}
+			lua_remove(state, copy - 1);
+			lua_setfield(state, environment, name);
+		}
+
+		void pushPrivateEnvironment(lua_State* state)
+		{
+			lua_newtable(state);
+			auto const environment = lua_gettop(state);
+			for (auto const* name : { "assert", "error", "ipairs", "next", "pairs",
+				"pcall", "rawequal", "rawget", "select", "tonumber", "tostring",
+				"type", "xpcall", "_VERSION", "require" })
+				copyGlobal(state, environment, name);
+			for (auto const* name : { "table", "string", "math", "utf8" })
+				copyLibrary(state, environment, name);
+			lua_pushvalue(state, environment);
+			lua_setfield(state, environment, "_G");
+		}
+
+		void pushConfiguration(lua_State* state,
+			AgentBehaviourConfiguration const& configuration)
+		{
+			lua_newtable(state);
+			for (auto const& [name, value] : configuration)
+			{
+				std::visit([&](auto const& typed)
+				{
+					using T = std::decay_t<decltype(typed)>;
+					if constexpr (std::is_same_v<T, bool>)
+						lua_pushboolean(state, typed);
+					else if constexpr (std::is_same_v<T, int64_t>)
+						lua_pushinteger(state, static_cast<lua_Integer>(typed));
+					else if constexpr (std::is_same_v<T, double>)
+						lua_pushnumber(state, typed);
+					else if constexpr (std::is_same_v<T, std::string>)
+						lua_pushlstring(state, typed.data(), typed.size());
+					else if constexpr (std::is_same_v<T, AgentBehaviourDuration>)
+						lua_pushinteger(state, static_cast<lua_Integer>(typed.ticks));
+					else
+						pushMarkerHandle(state, typed);
+				}, value);
+				lua_setfield(state, -2, name.c_str());
+			}
+			pushImmutableProxy(state);
+		}
+	}
+
+	struct AgentBehaviourRuntimeAdapter::Impl
+	{
+		struct Definition
+		{
+			AgentId agent;
+			AgentBehaviourAssignment assignment;
+			std::string registryUuid;
+			std::string packageName;
+			std::string moduleName;
+			std::string source;
+		};
+
+		struct Instance
+		{
+			AgentBehaviourAssignment assignment;
+			std::string registryUuid;
+			int environmentReference{ LUA_NOREF };
+			int configurationReference{ LUA_NOREF };
+			int instanceReference{ LUA_NOREF };
+			bool started{ false };
+			CallbackScope scope;
+		};
+
+		ScratchBudget budget;
+		std::unique_ptr<lua_State, StateCloser> state;
+		HostLoader loader;
+		std::map<AgentId, Instance> instances;
+		uint64_t observedOutcomeCount{ 0 };
+		uint64_t lastObservedSequence{ 0 };
+
+		Impl()
+			: state(lua_newstate(budgetedAllocate, &budget))
+		{
+			if (!state) throw std::runtime_error("Could not create Building Lua runtime");
+			sol::state_view lua(state.get());
+			loader.packageName = "Building Agent behaviours";
+			openScratchLibraries(lua, loader);
+			ensureMarkerMetatable(state.get());
+		}
+
+		void release(Instance const& instance)
+		{
+			luaL_unref(state.get(), LUA_REGISTRYINDEX, instance.instanceReference);
+			luaL_unref(state.get(), LUA_REGISTRYINDEX, instance.configurationReference);
+			luaL_unref(state.get(), LUA_REGISTRYINDEX, instance.environmentReference);
+		}
+
+		void clear()
+		{
+			for (auto const& [agent, instance] : instances)
+			{
+				(void)agent;
+				release(instance);
+			}
+			instances.clear();
+			observedOutcomeCount = 0;
+			lastObservedSequence = 0;
+		}
+
+		bool construct(Definition const& definition, Instance& instance)
+		{
+			auto* lua = state.get();
+			auto const base = lua_gettop(lua);
+			auto const chunkName = "@" + definition.packageName + "/"
+				+ definition.moduleName;
+			if (luaL_loadbufferx(lua, definition.source.data(), definition.source.size(),
+				chunkName.c_str(), "t") != LUA_OK)
+			{
+				lua_settop(lua, base);
+				return false;
+			}
+			auto const chunk = lua_gettop(lua);
+
+			pushPrivateEnvironment(lua);
+			auto const environment = lua_gettop(lua);
+			lua_pushvalue(lua, environment);
+			if (!lua_setupvalue(lua, chunk, 1))
+			{
+				lua_settop(lua, base);
+				return false;
+			}
+			lua_pushvalue(lua, environment);
+			instance.environmentReference = luaL_ref(lua, LUA_REGISTRYINDEX);
+			lua_remove(lua, environment);
+
+			if (!protectedCall(lua, 0, 1) || !lua_istable(lua, -1))
+			{
+				lua_settop(lua, base);
+				return false;
+			}
+			auto const contract = lua_gettop(lua);
+			lua_getfield(lua, contract, "api_version");
+			auto const apiVersion = lua_isinteger(lua, -1) ? lua_tointeger(lua, -1) : 0;
+			lua_pop(lua, 1);
+			if (apiVersion != HostApiVersion)
+			{
+				lua_settop(lua, base);
+				return false;
+			}
+			lua_getfield(lua, contract, "factory");
+			if (!lua_isfunction(lua, -1))
+			{
+				lua_settop(lua, base);
+				return false;
+			}
+
+			pushConfiguration(lua, definition.assignment.configuration);
+			lua_pushvalue(lua, -1);
+			instance.configurationReference = luaL_ref(lua, LUA_REGISTRYINDEX);
+			if (!protectedCall(lua, 1, 1) || !lua_istable(lua, -1))
+			{
+				lua_settop(lua, base);
+				return false;
+			}
+			instance.instanceReference = luaL_ref(lua, LUA_REGISTRYINDEX);
+			lua_settop(lua, base);
+			return true;
+		}
+
+		void synchronize(std::vector<Definition> const& definitions)
+		{
+			std::map<AgentId, Definition const*> desired;
+			for (auto const& definition : definitions)
+				desired.emplace(definition.agent, &definition);
+
+			for (auto iterator = instances.begin(); iterator != instances.end();)
+			{
+				auto found = desired.find(iterator->first);
+				if (found != desired.end()
+					&& iterator->second.assignment == found->second->assignment
+					&& iterator->second.registryUuid == found->second->registryUuid)
+				{
+					++iterator;
+					continue;
+				}
+				release(iterator->second);
+				iterator = instances.erase(iterator);
+			}
+
+			for (auto const& definition : definitions)
+			{
+				if (instances.contains(definition.agent)) continue;
+				Instance instance;
+				instance.assignment = definition.assignment;
+				instance.registryUuid = definition.registryUuid;
+				instance.scope.agent = definition.agent;
+				if (construct(definition, instance))
+					instances.emplace(definition.agent, std::move(instance));
+				else release(instance);
+			}
+		}
+
+		void pushContext(Instance& instance)
+		{
+			auto* lua = state.get();
+			lua_newtable(lua);
+			lua_rawgeti(lua, LUA_REGISTRYINDEX, instance.configurationReference);
+			lua_setfield(lua, -2, "configuration");
+			lua_pushlightuserdata(lua, &instance.scope);
+			lua_pushcclosure(lua, queueMoveTo, 1);
+			lua_setfield(lua, -2, "move_to");
+			pushImmutableProxy(lua);
+		}
+
+		void startPending(Building& building)
+		{
+			std::vector<PendingMovementCommand> commands;
+			for (auto& [agentId, instance] : instances)
+			{
+				if (instance.started) continue;
+				auto agent = building.mAgents.find(agentId);
+				if (!agent || !agent->isActive()) continue;
+				instance.started = true;
+
+				auto* lua = state.get();
+				auto const base = lua_gettop(lua);
+				lua_rawgeti(lua, LUA_REGISTRYINDEX, instance.instanceReference);
+				lua_getfield(lua, -1, "on_start");
+				if (lua_isnil(lua, -1))
+				{
+					lua_settop(lua, base);
+					continue;
+				}
+				if (!lua_isfunction(lua, -1))
+				{
+					lua_settop(lua, base);
+					continue;
+				}
+				lua_remove(lua, -2);
+
+				instance.scope.active = true;
+				instance.scope.commands.clear();
+				pushContext(instance);
+				lua_rawgeti(lua, LUA_REGISTRYINDEX,
+					instance.configurationReference);
+				auto const succeeded = protectedCall(lua, 2, 0);
+				instance.scope.active = false;
+				if (succeeded)
+					commands.insert(commands.end(), instance.scope.commands.begin(),
+						instance.scope.commands.end());
+				instance.scope.commands.clear();
+				lua_settop(lua, base);
+			}
+
+			// Every callback above has returned and the phase marker is still None.
+			// Applying through the public facade here cannot recursively enter a
+			// callback or mutate an active simulation phase.
+			for (auto const& command : commands)
+				(void)building.moveAgentToMarker(command.agent, command.marker);
+		}
+	};
+
+	AgentBehaviourRuntimeAdapter::AgentBehaviourRuntimeAdapter()
+		: mImpl(std::make_unique<Impl>())
+	{
+	}
+
+	AgentBehaviourRuntimeAdapter::~AgentBehaviourRuntimeAdapter() = default;
+
+	void AgentBehaviourRuntimeAdapter::runStartupBoundary(Building& building)
+	{
+		if (building.mCurrentPhase != SimulationPhase::None) return;
+		std::vector<Impl::Definition> definitions;
+		auto const registry = building.mAgentBehaviourRegistry;
+		if (registry && registry->mPackageDirectory)
+		{
+			for (auto const& [agentId, agent] : building.mAgents.entries())
+			{
+				if (!agent || !agent->getBehaviourAssignment()) continue;
+				auto const& assignment = *agent->getBehaviourAssignment();
+				auto const* behaviour = registry->lookupAgentBehaviour(
+					assignment.behaviour);
+				if (!behaviour || behaviour->getModuleStatus()
+					!= AgentBehaviourModuleStatus::Loaded) continue;
+				auto const modulePath = *registry->mPackageDirectory
+					/ behaviour->getSourceModulePath();
+				std::ifstream input(modulePath, std::ios::binary);
+				if (!input) continue;
+				definitions.push_back({ agentId, assignment, registry->getUuid(),
+					registry->mPackageDirectory->filename().string(),
+					behaviour->getSourceModulePath(),
+					std::string(std::istreambuf_iterator<char>(input),
+						std::istreambuf_iterator<char>()) });
+			}
+		}
+		mImpl->synchronize(definitions);
+		mImpl->startPending(building);
+	}
+
+	void AgentBehaviourRuntimeAdapter::observeOutcome(SimulationEvent const& event)
+	{
+		if (event.type != SimulationEventType::DestinationReached
+			&& event.type != SimulationEventType::MovementCancelled
+			&& event.type != SimulationEventType::RouteLost) return;
+		if (!mImpl->instances.contains(event.agent.id)) return;
+		++mImpl->observedOutcomeCount;
+		mImpl->lastObservedSequence = event.sequence;
+	}
+
+	void AgentBehaviourRuntimeAdapter::reset()
+	{
+		mImpl->clear();
 	}
 }

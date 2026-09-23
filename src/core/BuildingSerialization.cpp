@@ -1,5 +1,6 @@
 #include "core/Building.h"
 #include "core/AgentBehaviourRegistry.h"
+#include "core/AgentBehaviourRuntime.h"
 #include "core/AgentGroup.h"
 #include "core/AgentTagRegistry.h"
 #include "core/SerializationException.h"
@@ -1329,6 +1330,7 @@ namespace core
 		}
 		mGraph = std::make_shared<Graph>(this);
 		mMovementGoals.clear();
+		mAgentBehaviourRuntime->reset();
 		mSimulationTick = 0;
 		mNextEventSequence = 1;
 		mNextQueueTicketValue = 1;

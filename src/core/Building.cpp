@@ -10,6 +10,7 @@
 #include "core/Defines.h"
 #include "core/Building.h"
 #include "core/AgentBehaviourRegistry.h"
+#include "core/AgentBehaviourRuntime.h"
 #include "core/AgentTagRegistry.h"
 #include "core/Background.h"
 #include "core/Location.h"
@@ -101,6 +102,7 @@ namespace core
 		, mLayers(2)
 		, mLayerNames{ defaultLayerName(0), defaultLayerName(1) }
 		, mSimulationCoordinator(*this)
+		, mAgentBehaviourRuntime(std::make_unique<AgentBehaviourRuntimeAdapter>())
 	{
 		for (uint32_t i = 0; i < mLayers.size(); ++i)
 		{

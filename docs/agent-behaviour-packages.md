@@ -78,7 +78,12 @@ return {
   factory = function(configuration)
     return {
       -- All callbacks are optional. Preflight validates but does not call them.
-      on_start = function(context) end,
+      -- Live instances receive the same immutable configuration as a second
+      -- argument; it is also available as context.configuration.
+      on_start = function(context, configuration)
+        local result = context.move_to(configuration.destination)
+        if not result.accepted then error(result.status) end
+      end,
       on_event = function(event, context) end,
       on_timer = function(name, context) end,
       on_route_lost = function(reason, context) end,
@@ -90,8 +95,13 @@ return {
 
 Preflight reports Loaded or Error per behaviour in the registry panel, including
 package/module/line diagnostics and protected-call tracebacks. Configuration
-assignment is authored separately; live instance execution begins in subsequent
-tickets.
+assignment is authored separately. At the first simulation boundary, every
+assigned Agent receives a private module environment and instance; `on_start`
+runs once in Agent-ID order. `context.move_to` accepts only an opaque Marker
+handle from validated configuration and returns an immutable semantic result
+with `accepted` and `status` fields. Context capabilities expire when the
+callback returns, and queued startup movement is applied before first-tick
+intent collection.
 
 ## Building persistence
 

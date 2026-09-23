@@ -35,12 +35,14 @@ namespace core
 
 	class AgentTagRegistry;
 	class AgentBehaviourRegistry;
+	class AgentBehaviourRuntimeAdapter;
 
 	class Building : public Serializable
 	{
 		friend class Agent;
 		friend class AgentTagRegistry;
 		friend class AgentBehaviourRegistry;
+		friend class AgentBehaviourRuntimeAdapter;
 		friend class Graph;
 		// The coordinator owns no entities; it drives the registries below and
 		// the private machinery beside them on the Building's behalf (ADR 0004).
@@ -493,6 +495,10 @@ namespace core
 		};
 		std::optional<AgentBehaviourRegistryReference> mAgentBehaviourRegistryReference;
 		std::shared_ptr<AgentBehaviourRegistry> mAgentBehaviourRegistry;
+		// Every Building owns its own live Lua state. The adapter's pimpl keeps all
+		// Lua/sol2 types out of this domain header and its per-Agent environments
+		// prevent mutable module or instance state crossing assignments.
+		std::unique_ptr<AgentBehaviourRuntimeAdapter> mAgentBehaviourRuntime;
 
 		bool inspectAgentBehaviourAssignments(AgentBehaviourRegistry const& registry,
 			std::string* diagnostic = nullptr) const;

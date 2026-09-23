@@ -16,6 +16,7 @@
 namespace core
 {
 	class Building;
+	class AgentBehaviourRuntimeAdapter;
 
 	// A separately persisted package namespace for reusable Agent behaviour
 	// definitions. IDs belong to this registry, remain stable across rename,
@@ -55,6 +56,7 @@ namespace core
 		void unregisterBuilding(Building& building);
 
 		friend class Building;
+		friend class AgentBehaviourRuntimeAdapter;
 
 	public:
 		static std::shared_ptr<AgentBehaviourRegistry> create();

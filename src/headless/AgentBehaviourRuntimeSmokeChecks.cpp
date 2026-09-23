@@ -1,12 +1,16 @@
 // Real Lua 5.4/sol2 module preflight checks for #150.
 
+#include <bit>
 #include <chrono>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 
 #include "core/AgentBehaviourRegistry.h"
+#include "core/Building.h"
 #include "core/AgentBehaviourRuntime.h"
 
 void runAgentBehaviourRuntimeSmokeChecks();
@@ -153,6 +157,133 @@ return { api_version = 1, factory = function() return {} end }
 			"A module escaped the scratch-state memory budget");
 	}
 
+	std::string runStartupMovement(
+		std::shared_ptr<core::AgentBehaviourRegistry> const& registry,
+		core::AgentBehaviourId behaviour)
+	{
+		core::Building building("Lua startup", 14, 2);
+		auto const room = building.addRoom("Room", 0, 0, 0, 14, 1);
+		building.addSectorMarker(room, 0, 4.5f, "Near");
+		building.addSectorMarker(room, 0, 11.5f, "Far");
+		building.finishBuild();
+		auto const first = building.createAgent("First", room, 0, 0.5f);
+		auto const second = building.createAgent("Second", room, 0, 1.5f);
+		auto const markers = building.getMarkerIds();
+
+		building.pauseSimulation();
+		building.consumeSimulationEvents();
+		building.attachAgentBehaviourRegistry("startup.behaviours", registry);
+		auto const revision = registry->lookupAgentBehaviour(behaviour)->getRevision();
+		require(building.setAgentBehaviourAssignment(first, behaviour, revision,
+			{ { "destination", markers[0] } }),
+			"Could not assign the first startup behaviour");
+		require(building.setAgentBehaviourAssignment(second, behaviour, revision,
+			{ { "destination", markers[1] } }),
+			"Could not assign the second startup behaviour");
+		require(building.resumeSimulation(), "Could not resume the Lua startup fixture");
+		building.consumeSimulationEvents();
+
+		building.advanceTick();
+		auto firstTick = building.getSimulationSnapshot();
+		require(firstTick.tick == 1 && firstTick.agents.size() == 2
+			&& firstTick.agents[0].hasPath && firstTick.agents[1].hasPath
+			&& firstTick.agents[0].globalPosition.x > 0.5f
+			&& firstTick.agents[1].globalPosition.x > 1.5f,
+			"on_start movement was not applied before first-tick intent and movement");
+
+		std::ostringstream digest;
+		unsigned reached = 0;
+		auto observePublicEvents = [&]
+		{
+			for (auto const& event : building.consumeSimulationEvents())
+			{
+				if (event.type != core::SimulationEventType::DestinationReached) continue;
+				++reached;
+				digest << event.tick << ':' << event.agent.id.value << ':'
+					<< event.destinationMarker.value << '|';
+			}
+		};
+		observePublicEvents();
+		for (unsigned tick = 0; tick < 1500 && reached < 2; ++tick)
+		{
+			building.advanceTick();
+			observePublicEvents();
+		}
+		require(reached == 2,
+			"Independently configured Lua Agents did not reach both Markers");
+
+		auto const completed = building.getSimulationSnapshot();
+		require(std::fabs(completed.agents[0].globalPosition.x - 4.5f) < 0.001f
+			&& std::fabs(completed.agents[1].globalPosition.x - 11.5f) < 0.001f,
+			"Shared behaviour instances did not retain distinct Marker configuration");
+		building.advanceTicks(5);
+		observePublicEvents();
+		require(reached == 2, "on_start ran more than once for one instance lifetime");
+		digest << completed.tick << ':'
+			<< std::bit_cast<uint32_t>(completed.agents[0].globalPosition.x) << ':'
+			<< std::bit_cast<uint32_t>(completed.agents[1].globalPosition.x);
+		return digest.str();
+	}
+
+	void independentStartupInstancesMoveDeterministically()
+	{
+		TemporaryDirectory temporary;
+		auto const package = temporary.path / "startup.behaviours";
+		std::filesystem::create_directories(package);
+		auto const manifest = package / "behaviours.yaml";
+		auto registry = core::AgentBehaviourRegistry::create();
+		registry->saveTo(manifest.string());
+		writeText(package / "startup.lua", R"lua(
+local host = require("prometheum.v1")
+local factories_in_this_environment = 0
+return {
+  api_version = host.api_version,
+  factory = function(configuration)
+    factories_in_this_environment = factories_in_this_environment + 1
+    if factories_in_this_environment ~= 1 then
+      error("module environment was shared between Agents")
+    end
+    local instance = { starts = 0 }
+    return {
+      on_start = function(context, callback_configuration)
+        instance.starts = instance.starts + 1
+        if instance.starts ~= 1 then error("instance state was shared or restarted") end
+        if callback_configuration ~= configuration
+            or context.configuration ~= configuration then
+          error("callback did not receive its immutable configuration")
+        end
+        if type(configuration.destination) ~= "userdata"
+            or tonumber(configuration.destination) ~= nil then
+          error("Marker was not an opaque handle")
+        end
+        if pcall(function() configuration.destination = false end) then
+          error("configuration was mutable")
+        end
+        local result = context.move_to(configuration.destination)
+        if not result.accepted or result.status ~= "accepted" then
+          error("move_to did not return a semantic accepted result")
+        end
+        if pcall(function() result.status = "changed" end) then
+          error("command result was mutable")
+        end
+        instance.retained_context = context
+      end
+    }
+  end
+}
+)lua");
+		auto const behaviour = registry->addAgentBehaviour("Startup", "startup.lua",
+			{ { "destination", core::AgentBehaviourSchemaType::Marker } });
+		require(registry->lookupAgentBehaviour(behaviour)->getModuleStatus()
+				== core::AgentBehaviourModuleStatus::Loaded,
+			"The real startup Lua fixture did not preflight");
+
+		auto const first = runStartupMovement(registry, behaviour);
+		auto const second = runStartupMovement(registry, behaviour);
+		require(first == second,
+			"Per-Building Lua startup and movement were not deterministic");
+	}
+
 	void registryRetainsLoadedAndErrorStatus()
 	{
 		TemporaryDirectory temporary;
@@ -189,5 +320,6 @@ void runAgentBehaviourRuntimeSmokeChecks()
 	textAndContractFailuresCarryLocationAndTraceback();
 	customLoaderIsReservedAndImmutable();
 	scratchExecutionIsBudgeted();
+	independentStartupInstancesMoveDeterministically();
 	registryRetainsLoadedAndErrorStatus();
 }
