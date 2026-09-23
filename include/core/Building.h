@@ -494,6 +494,10 @@ namespace core
 		std::optional<AgentBehaviourRegistryReference> mAgentBehaviourRegistryReference;
 		std::shared_ptr<AgentBehaviourRegistry> mAgentBehaviourRegistry;
 
+		bool inspectAgentBehaviourAssignments(AgentBehaviourRegistry const& registry,
+			std::string* diagnostic = nullptr) const;
+		uint32_t countAgentBehaviourAssignments() const;
+
 		// Coordinated external-document history keeps only a weak copy. It can
 		// therefore recognize that this exact Building closed without retaining it
 		// or mistaking a later Building allocated at the same address for it.
@@ -1171,9 +1175,9 @@ namespace core
 			std::shared_ptr<AgentTagRegistry> registry);
 
 		// A Building references zero or one adjacent Agent behaviour registry
-		// package by directory basename and expected UUID. Attaching is an
-		// authored Building change. No Agent assignment of behaviour exists yet;
-		// detach is therefore always non-destructive in this schema generation.
+		// package by directory basename and expected UUID. Attaching and detaching
+		// are paused-only; a detach or incompatible switch is refused while an
+		// Agent assignment depends on the namespace.
 		bool hasAgentBehaviourRegistryReference() const;
 		bool hasAttachedAgentBehaviourRegistry() const;
 		std::string const& getAgentBehaviourRegistryPackageName() const;
@@ -1184,6 +1188,22 @@ namespace core
 		void detachAgentBehaviourRegistry();
 		void resolveAgentBehaviourRegistry(
 			std::shared_ptr<AgentBehaviourRegistry> registry);
+
+		// One paused-only, schema-validated authored Agent behaviour assignment.
+		// Optional defaults are materialized before mutation. A failed validation
+		// changes neither Agent nor Building.
+		bool validateAgentBehaviourAssignment(AgentBehaviourId behaviour,
+			uint64_t revision, AgentBehaviourConfiguration const& configuration,
+			AgentBehaviourConfiguration* normalized = nullptr,
+			std::string* diagnostic = nullptr) const;
+		bool setAgentBehaviourAssignment(AgentId agent, AgentBehaviourId behaviour,
+			uint64_t revision, AgentBehaviourConfiguration const& configuration,
+			std::string* diagnostic = nullptr);
+		bool clearAgentBehaviourAssignment(AgentId agent,
+			std::string* diagnostic = nullptr);
+		std::optional<AgentBehaviourAssignment> const& getAgentBehaviourAssignment(
+			AgentId agent) const;
+		uint32_t getAgentBehaviourAssignmentCount() const;
 
 		uint32_t getCellsWide() const;
 
@@ -1587,7 +1607,10 @@ namespace core
 		bool renameMarker(MarkerId id, std::string const& name,
 			std::string* diagnostic = nullptr);
 
-		bool removeSectorMarker(uint32_t sectorIndex, uint32_t objectIndex);
+		bool canRemoveSectorMarker(uint32_t sectorIndex, uint32_t objectIndex,
+			std::string* diagnostic = nullptr) const;
+		bool removeSectorMarker(uint32_t sectorIndex, uint32_t objectIndex,
+			std::string* diagnostic = nullptr);
 
 		// Plans are side-effect free. Applying a plan reconstructs the authored
 		// structure atomically and leaves the simulation paused.

@@ -361,6 +361,72 @@ namespace core
 		return mAgentBehaviourRegistry;
 	}
 
+	namespace
+	{
+		bool validateBehaviourConfiguration(Building const& building,
+			AgentBehaviourRegistry const& registry, AgentBehaviourId behaviourId,
+			uint64_t revision, AgentBehaviourConfiguration const& configuration,
+			AgentBehaviourConfiguration* normalized, string* diagnostic)
+		{
+			if (diagnostic) diagnostic->clear();
+			auto reject = [diagnostic](string message)
+			{
+				if (diagnostic) *diagnostic = std::move(message);
+				return false;
+			};
+			auto const* behaviour = registry.lookupAgentBehaviour(behaviourId);
+			if (!behaviour)
+				return reject(format("Agent behaviour {} is not defined in the attached registry",
+					behaviourId.value));
+			if (revision == 0 || revision != behaviour->getRevision())
+				return reject(format("Agent behaviour '{}' revision is {}, expected {}",
+					behaviour->getName(), revision, behaviour->getRevision()));
+
+			AgentBehaviourConfiguration candidate = configuration;
+			for (auto const& [name, value] : configuration)
+			{
+				auto const found = find_if(behaviour->getSchema().begin(), behaviour->getSchema().end(),
+					[&](AgentBehaviourSchemaField const& field) { return field.name == name; });
+				if (found == behaviour->getSchema().end())
+					return reject(format("Configuration field '{}' is not declared by Agent behaviour '{}'",
+						name, behaviour->getName()));
+				(void)value;
+			}
+			for (auto const& field : behaviour->getSchema())
+			{
+				if (field.type == AgentBehaviourSchemaType::List
+					|| field.type == AgentBehaviourSchemaType::Record)
+					return reject(format("Configuration field '{}' uses unsupported type {}",
+						field.name, agentBehaviourSchemaTypeName(field.type)));
+				auto found = candidate.find(field.name);
+				if (found == candidate.end())
+				{
+					if (field.required)
+						return reject(format("Required configuration field '{}' is missing", field.name));
+					if (!field.defaultValue)
+						return reject(format("Optional configuration field '{}' has no default", field.name));
+					found = candidate.emplace(field.name, *field.defaultValue).first;
+				}
+				auto const actual = string(agentBehaviourConfigurationValueTypeName(found->second));
+				if (actual != agentBehaviourSchemaTypeName(field.type))
+					return reject(format("Configuration field '{}' has type {}, expected {}",
+						field.name, actual, agentBehaviourSchemaTypeName(field.type)));
+				if (auto const* number = get_if<double>(&found->second); number && !isfinite(*number))
+					return reject(format("Configuration field '{}' must be a finite Number", field.name));
+				if (auto const* duration = get_if<AgentBehaviourDuration>(&found->second);
+					duration && duration->ticks == 0)
+					return reject(format("Configuration field '{}' Duration must be at least one tick",
+						field.name));
+				if (auto const* marker = get_if<MarkerId>(&found->second);
+					marker && (!*marker || !building.lookupMarker(*marker)))
+					return reject(format("Configuration field '{}' references unknown Marker {}",
+						field.name, marker->value));
+			}
+			if (normalized) *normalized = std::move(candidate);
+			return true;
+		}
+	}
+
 	void Building::attachAgentBehaviourRegistry(string packageName,
 		shared_ptr<AgentBehaviourRegistry> registry)
 	{
@@ -376,6 +442,9 @@ namespace core
 		}
 		if (!registry || !AgentBehaviourRegistry::uuidIsValid(registry->getUuid()))
 			throw invalid_argument("Cannot attach an invalid Agent behaviour registry");
+		string assignmentDiagnostic;
+		if (!inspectAgentBehaviourAssignments(*registry, &assignmentDiagnostic))
+			throw invalid_argument(assignmentDiagnostic);
 		if (mAgentBehaviourRegistryReference
 			&& mAgentBehaviourRegistryReference->packageName == packageName
 			&& mAgentBehaviourRegistryReference->expectedUuid == registry->getUuid()
@@ -396,9 +465,9 @@ namespace core
 		if (!mAgentBehaviourRegistryReference) return;
 		if (!isSimulationPaused())
 			throw invalid_argument("Pause the Building before detaching its Agent behaviour registry");
-		// Behaviour assignments do not exist in this schema generation, so no
-		// dependent state can block a detach. Later generations must refuse here
-		// while any assignment references this namespace, like Agent tags do.
+		if (countAgentBehaviourAssignments() != 0)
+			throw invalid_argument(
+				"Clear every Agent behaviour assignment before detaching its registry");
 		if (mAgentBehaviourRegistry) mAgentBehaviourRegistry->unregisterBuilding(*this);
 		mAgentBehaviourRegistry.reset();
 		mAgentBehaviourRegistryReference.reset();
@@ -417,13 +486,126 @@ namespace core
 				"Agent behaviour registry UUID mismatch: Building expects {}, file contains {}",
 				mAgentBehaviourRegistryReference->expectedUuid, registry->getUuid()));
 		}
-
-		// No reconciliation exists yet: no Agent carries behaviour assignments or
-		// configurations in this schema generation, so resolving only points the
-		// Building at the shared validated registry.
+		string diagnostic;
+		if (!inspectAgentBehaviourAssignments(*registry, &diagnostic))
+			throw invalid_argument(diagnostic);
 		if (mAgentBehaviourRegistry) mAgentBehaviourRegistry->unregisterBuilding(*this);
 		mAgentBehaviourRegistry = std::move(registry);
 		mAgentBehaviourRegistry->registerBuilding(*this);
+	}
+
+	bool Building::validateAgentBehaviourAssignment(AgentBehaviourId behaviour,
+		uint64_t revision, AgentBehaviourConfiguration const& configuration,
+		AgentBehaviourConfiguration* normalized, string* diagnostic) const
+	{
+		if (!mAgentBehaviourRegistry)
+		{
+			if (diagnostic) *diagnostic =
+				"This Building has no attached Agent behaviour registry";
+			return false;
+		}
+		return validateBehaviourConfiguration(*this, *mAgentBehaviourRegistry,
+			behaviour, revision, configuration, normalized, diagnostic);
+	}
+
+	bool Building::setAgentBehaviourAssignment(AgentId agentId,
+		AgentBehaviourId behaviour, uint64_t revision,
+		AgentBehaviourConfiguration const& configuration, string* diagnostic)
+	{
+		if (diagnostic) diagnostic->clear();
+		auto const lookup = lookupAgent(agentId);
+		if (!lookup)
+		{
+			if (diagnostic) *diagnostic = lookup.diagnostic;
+			return false;
+		}
+		if (!mSimulationPaused)
+		{
+			if (diagnostic) *diagnostic =
+				"Pause the simulation before assigning an Agent behaviour";
+			return false;
+		}
+		AgentBehaviourConfiguration normalized;
+		if (!validateAgentBehaviourAssignment(behaviour, revision, configuration,
+			&normalized, diagnostic)) return false;
+		AgentBehaviourAssignment assignment{ behaviour, revision, std::move(normalized) };
+		if (lookup.entity->getBehaviourAssignment() == optional<AgentBehaviourAssignment>{ assignment })
+		{
+			if (diagnostic) *diagnostic = "The Agent behaviour assignment is unchanged";
+			return false;
+		}
+		mAgents.find(agentId)->setBehaviourAssignment(std::move(assignment));
+		modify();
+		return true;
+	}
+
+	bool Building::clearAgentBehaviourAssignment(AgentId agentId, string* diagnostic)
+	{
+		if (diagnostic) diagnostic->clear();
+		auto const lookup = lookupAgent(agentId);
+		if (!lookup)
+		{
+			if (diagnostic) *diagnostic = lookup.diagnostic;
+			return false;
+		}
+		if (!mSimulationPaused)
+		{
+			if (diagnostic) *diagnostic =
+				"Pause the simulation before clearing an Agent behaviour";
+			return false;
+		}
+		if (!lookup.entity->getBehaviourAssignment())
+		{
+			if (diagnostic) *diagnostic = "The Agent has no behaviour assignment to clear";
+			return false;
+		}
+		mAgents.find(agentId)->clearBehaviourAssignment();
+		modify();
+		return true;
+	}
+
+	optional<AgentBehaviourAssignment> const& Building::getAgentBehaviourAssignment(
+		AgentId agent) const
+	{
+		auto const lookup = lookupAgent(agent);
+		if (!lookup) throw BuildingException(this, lookup.diagnostic);
+		return lookup.entity->getBehaviourAssignment();
+	}
+
+	uint32_t Building::countAgentBehaviourAssignments() const
+	{
+		uint32_t count = 0;
+		for (auto const& [id, agent] : mAgents.entries())
+		{
+			(void)id;
+			if (agent && agent->getBehaviourAssignment()) ++count;
+		}
+		return count;
+	}
+
+	uint32_t Building::getAgentBehaviourAssignmentCount() const
+	{
+		return countAgentBehaviourAssignments();
+	}
+
+	bool Building::inspectAgentBehaviourAssignments(
+		AgentBehaviourRegistry const& registry, string* diagnostic) const
+	{
+		for (auto const& [id, agent] : mAgents.entries())
+		{
+			if (!agent || !agent->getBehaviourAssignment()) continue;
+			auto const& assignment = *agent->getBehaviourAssignment();
+			string fieldDiagnostic;
+			if (!validateBehaviourConfiguration(*this, registry, assignment.behaviour,
+				assignment.revision, assignment.configuration, nullptr, &fieldDiagnostic))
+			{
+				if (diagnostic) *diagnostic = format("Agent '{}' ({}): {}",
+					agent->getName(), id.value, fieldDiagnostic);
+				return false;
+			}
+		}
+		if (diagnostic) diagnostic->clear();
+		return true;
 	}
 
 	bool Building::inspectAgentTagAssignments(AgentTagRegistry const& registry,
@@ -5015,13 +5197,51 @@ namespace core
 		return createdMarker;
 	}
 
-	bool Building::removeSectorMarker(uint32_t sectorIndex, uint32_t objectIndex)
+	bool Building::canRemoveSectorMarker(uint32_t sectorIndex, uint32_t objectIndex,
+		string* diagnostic) const
 	{
-		if (sectorIndex >= mSectors.size()) return false;
-		auto sector = _getSector(sectorIndex);
-		if (objectIndex >= sector->getNumObjects()) return false;
+		if (diagnostic) diagnostic->clear();
+		auto reject = [diagnostic](string message)
+		{
+			if (diagnostic) *diagnostic = std::move(message);
+			return false;
+		};
+		if (sectorIndex >= mSectors.size()) return reject("The Marker Sector does not exist");
+		auto const sector = mSectors[sectorIndex];
+		if (!sector || objectIndex >= sector->getNumObjects())
+			return reject("The Marker object does not exist");
 		auto markerObject = dynamic_pointer_cast<MarkerSectorObject>(sector->getObject(objectIndex));
-		if (!markerObject) return false;
+		if (!markerObject) return reject("The selected object is not a Marker");
+		auto const marker = markerObject->getMarker()->getId();
+		vector<string> references;
+		for (auto const& [agentId, agent] : mAgents.entries())
+		{
+			if (!agent || !agent->getBehaviourAssignment()) continue;
+			for (auto const& [field, value] :
+				agent->getBehaviourAssignment()->configuration)
+			{
+				auto const* referenced = get_if<MarkerId>(&value);
+				if (referenced && *referenced == marker)
+					references.push_back(format("Agent '{}' ({}) configuration field '{}'",
+						agent->getName(), agentId.value, field));
+			}
+		}
+		if (!references.empty())
+		{
+			string message = format("Marker '{}' is referenced by:",
+				markerObject->getMarker()->getName());
+			for (auto const& reference : references) message += "\n- " + reference;
+			return reject(std::move(message));
+		}
+		return true;
+	}
+
+	bool Building::removeSectorMarker(uint32_t sectorIndex, uint32_t objectIndex,
+		string* diagnostic)
+	{
+		if (!canRemoveSectorMarker(sectorIndex, objectIndex, diagnostic)) return false;
+		auto sector = _getSector(sectorIndex);
+		auto markerObject = dynamic_pointer_cast<MarkerSectorObject>(sector->getObject(objectIndex));
 
 		beginStructuralEdit("removeSectorMarker");
 		auto const marker = markerObject->getMarker();

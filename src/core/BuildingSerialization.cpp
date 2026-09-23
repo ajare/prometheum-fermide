@@ -372,8 +372,9 @@ namespace core
 	void Building::serializeImpl(Serializer& serializer, SerializationWorkData& workData) const
 	{
 		serializer.beginMap("building");
-		// Version 12 adds the optional external Agent behaviour registry package
-		// reference. Version 11 gives every Marker stable identity and a
+		// Version 13 adds typed per-Agent behaviour assignments. Version 12 adds
+		// the optional external Agent behaviour registry package reference.
+		// Version 11 gives every Marker stable identity and a
 		// Building-unique name.
 		// Version 10 adds the optional external Agent tag registry reference.
 		// Version 9 is the first schema that persists Agent groups, and with
@@ -391,7 +392,7 @@ namespace core
 		// allocator's high-water mark (#123). It is an added field rather than a
 		// new version: a reader that predates it still opens these files and
 		// falls back to deriving the next ID from the groups that survive.
-		serializer.writeUint32("version", 12);
+		serializer.writeUint32("version", 13);
 		serializer.writeString("name", mName);
 		serializer.writeUint32("cellsWide", mCellsWide);
 		serializer.writeUint32("decksHigh", mDecksHigh);
@@ -757,9 +758,9 @@ namespace core
 		// them; versions 1 through 8 load with neither. Version 10 adds the
 		// optional Agent tag registry reference and Agent tag assignments.
 		// Version 12 adds the optional Agent behaviour registry package
-		// reference. Readers that predate it cap out at version 11 and refuse
-		// these files instead of silently dropping the reference they carry.
-		if (version < 1 || version > 12)
+		// reference; version 13 adds typed per-Agent assignments. Older versions
+		// load with no assignment.
+		if (version < 1 || version > 13)
 		{
 			throw SerializationException("Unsupported Building serialization version");
 		}
@@ -1147,6 +1148,16 @@ namespace core
 				throw SerializationException(format(
 					"Serialized Agent '{}' has Agent tag assignments but the Building has no Agent tag registry",
 					agent->getName()));
+			}
+			if (agent->getBehaviourAssignment())
+			{
+				if (version < 13)
+					throw SerializationException(
+						"Agent behaviour assignments require Building serialization version 13");
+				if (!mAgentBehaviourRegistryReference)
+					throw SerializationException(format(
+						"Serialized Agent '{}' has a behaviour assignment but the Building has no Agent behaviour registry",
+						agent->getName()));
 			}
 
 			auto sector = _getSector(sectorIndex);

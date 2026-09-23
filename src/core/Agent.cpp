@@ -9,11 +9,48 @@
 #include "core/Exceptions.h"
 #include "core/SerializationException.h"
 
+#include <type_traits>
+#include <variant>
 
 namespace core
 {
 
 	using namespace std;
+
+	namespace
+	{
+		void serializeBehaviourValue(Serializer& serializer,
+			AgentBehaviourConfigurationValue const& value)
+		{
+			serializer.writeString("type", agentBehaviourConfigurationValueTypeName(value));
+			visit([&](auto const& typed)
+			{
+				using T = decay_t<decltype(typed)>;
+				if constexpr (is_same_v<T, bool>) serializer.writeBool("value", typed);
+				else if constexpr (is_same_v<T, int64_t>) serializer.writeInt64("value", typed);
+				else if constexpr (is_same_v<T, double>) serializer.writeDouble("value", typed);
+				else if constexpr (is_same_v<T, string>) serializer.writeString("value", typed);
+				else if constexpr (is_same_v<T, AgentBehaviourDuration>)
+					serializer.writeUint64("value", typed.ticks);
+				else serializer.writeUint64("value", typed.value);
+			}, value);
+		}
+
+		AgentBehaviourConfigurationValue deserializeBehaviourValue(
+			Serializer& serializer, string const& field)
+		{
+			auto const type = serializer.readString("type");
+			if (type == "boolean") return serializer.readBool("value");
+			if (type == "integer") return serializer.readInt64("value");
+			if (type == "number") return serializer.readDouble("value");
+			if (type == "string") return serializer.readString("value");
+			if (type == "duration")
+				return AgentBehaviourDuration{ serializer.readUint64("value") };
+			if (type == "marker") return MarkerId{ serializer.readUint64("value") };
+			throw SerializationException(format(
+				"Agent behaviour configuration field '{}' has unknown type '{}'", field, type));
+		}
+	}
 
 	Agent::Agent(string const& name)
 		: mName(name)
@@ -69,6 +106,22 @@ namespace core
 		// as an Agent with no path writing no `path` map - so a document written
 		// before activation existed reads back with every Agent activated (#118).
 		if (!mActive) serializer.writeBool("active", false);
+		if (mBehaviourAssignment)
+		{
+			serializer.beginMap("behaviour");
+			serializer.writeUint64("id", mBehaviourAssignment->behaviour.value);
+			serializer.writeUint64("revision", mBehaviourAssignment->revision);
+			serializer.beginArray("configuration");
+			for (auto const& [field, value] : mBehaviourAssignment->configuration)
+			{
+				serializer.beginMap("");
+				serializer.writeString("field", field);
+				serializeBehaviourValue(serializer, value);
+				serializer.endMap();
+			}
+			serializer.endArray();
+			serializer.endMap();
+		}
 		serializer.endMap();
 	}
 
@@ -149,6 +202,35 @@ namespace core
 		// Absent means activated: the default for every newly created Agent and
 		// for every Agent loaded from a document that predates activation (#118).
 		mActive = serializer.readBool("active", true, true);
+		mBehaviourAssignment.reset();
+		if (serializer.hasField("behaviour"))
+		{
+			serializer.beginMap("behaviour");
+			AgentBehaviourAssignment assignment;
+			assignment.behaviour = AgentBehaviourId{ serializer.readUint64("id") };
+			assignment.revision = serializer.readUint64("revision");
+			if (!assignment.behaviour)
+				throw SerializationException("Serialized Agent behaviour ID cannot be zero");
+			if (assignment.revision == 0)
+				throw SerializationException("Serialized Agent behaviour revision cannot be zero");
+			serializer.beginArray("configuration");
+			while (serializer.nextArrayItem())
+			{
+				serializer.beginMap("");
+				auto field = serializer.readString("field");
+				auto value = deserializeBehaviourValue(serializer, field);
+				serializer.endMap();
+				if (field.empty())
+					throw SerializationException(
+						"Serialized Agent behaviour configuration field cannot be blank");
+				if (!assignment.configuration.emplace(field, std::move(value)).second)
+					throw SerializationException(format(
+						"Agent behaviour configuration field '{}' appears twice", field));
+			}
+			serializer.endArray();
+			serializer.endMap();
+			mBehaviourAssignment = std::move(assignment);
+		}
 		serializer.endMap();
 
 		mState = State::Idle;

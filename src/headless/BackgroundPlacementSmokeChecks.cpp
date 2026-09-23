@@ -312,7 +312,7 @@ namespace
 		building.finishBuild();
 
 		auto const yaml = serializeBuilding(building);
-		require(yaml.find("version: 12") != std::string::npos,
+		require(yaml.find("version: 13") != std::string::npos,
 			"The Building writer did not emit the current schema version");
 		require(yaml.find("type: background") != std::string::npos,
 			"The Background record was not written");

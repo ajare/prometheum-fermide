@@ -3,6 +3,7 @@
 #include "core/AgentBehaviour.h"
 
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <string>
 #include <utility>
@@ -10,9 +11,29 @@
 
 namespace core
 {
+	using namespace std;
+
 	namespace
 	{
 		constexpr size_t MaxSchemaDepth{ 16 };
+
+		bool valueMatchesType(AgentBehaviourConfigurationValue const& value,
+			AgentBehaviourSchemaType type)
+		{
+			switch (type)
+			{
+			case AgentBehaviourSchemaType::Boolean: return holds_alternative<bool>(value);
+			case AgentBehaviourSchemaType::Integer: return holds_alternative<int64_t>(value);
+			case AgentBehaviourSchemaType::Number: return holds_alternative<double>(value);
+			case AgentBehaviourSchemaType::String: return holds_alternative<string>(value);
+			case AgentBehaviourSchemaType::Duration:
+				return holds_alternative<AgentBehaviourDuration>(value);
+			case AgentBehaviourSchemaType::Marker: return holds_alternative<MarkerId>(value);
+			case AgentBehaviourSchemaType::List:
+			case AgentBehaviourSchemaType::Record: return false;
+			}
+			return false;
+		}
 
 		// Field names and behaviour names share the Marker naming rule set:
 		// trimmed, non-empty, valid UTF-8, at most 63 bytes.
@@ -76,6 +97,27 @@ namespace core
 					return reject("Agent behaviour schema field #" + field.name
 						+ " appears twice in one Record");
 				names.push_back(field.name);
+				if (field.required && field.defaultValue)
+					return reject("Required Agent behaviour schema field #" + field.name
+						+ " cannot declare a default");
+				if (!field.required && !field.defaultValue)
+					return reject("Optional Agent behaviour schema field #" + field.name
+						+ " must declare a default");
+				if (field.defaultValue && !valueMatchesType(*field.defaultValue, field.type))
+					return reject("Default for Agent behaviour schema field #" + field.name
+						+ " has type " + agentBehaviourConfigurationValueTypeName(*field.defaultValue)
+						+ ", expected " + agentBehaviourSchemaTypeName(field.type));
+				if (field.defaultValue)
+				{
+					if (auto const* number = get_if<double>(&*field.defaultValue);
+						number && !isfinite(*number))
+						return reject("Default for Agent behaviour schema field #" + field.name
+							+ " must be a finite Number");
+					if (auto const* duration = get_if<AgentBehaviourDuration>(&*field.defaultValue);
+						duration && duration->ticks == 0)
+						return reject("Default for Agent behaviour schema field #" + field.name
+							+ " Duration must be at least one tick");
+				}
 				switch (field.type)
 				{
 				case AgentBehaviourSchemaType::List:
@@ -101,6 +143,21 @@ namespace core
 			}
 			return true;
 		}
+	}
+
+	char const* agentBehaviourConfigurationValueTypeName(
+		AgentBehaviourConfigurationValue const& value)
+	{
+		return visit([](auto const& typed) -> char const*
+		{
+			using T = decay_t<decltype(typed)>;
+			if constexpr (is_same_v<T, bool>) return "boolean";
+			else if constexpr (is_same_v<T, int64_t>) return "integer";
+			else if constexpr (is_same_v<T, double>) return "number";
+			else if constexpr (is_same_v<T, string>) return "string";
+			else if constexpr (is_same_v<T, AgentBehaviourDuration>) return "duration";
+			else return "marker";
+		}, value);
 	}
 
 	char const* agentBehaviourSchemaTypeName(AgentBehaviourSchemaType type)

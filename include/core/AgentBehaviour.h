@@ -2,10 +2,15 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
+
+#include "core/EntityId.h"
 
 namespace core
 {
@@ -28,17 +33,57 @@ namespace core
 		Record
 	};
 
+	struct AgentBehaviourDuration
+	{
+		uint64_t ticks{ 0 };
+		bool operator==(AgentBehaviourDuration const&) const = default;
+	};
+
+	// Ordinary authored values only. List and Record configuration are reserved
+	// for the later nested-schema ticket; their definitions may already exist in
+	// a registry, but this generation refuses to assign them.
+	using AgentBehaviourConfigurationValue = std::variant<bool, int64_t, double,
+		std::string, AgentBehaviourDuration, MarkerId>;
+	using AgentBehaviourConfiguration =
+		std::map<std::string, AgentBehaviourConfigurationValue>;
+
 	// One typed configuration field declared by an Agent behaviour schema.
-	// List uses children as its single element type; Record uses them as its
-	// ordered fields. Scalar types leave children empty.
+	// An optional field must provide a default. Required fields deliberately do
+	// not have one, keeping omissions visible to authors.
 	struct AgentBehaviourSchemaField
 	{
 		std::string name;
 		AgentBehaviourSchemaType type{ AgentBehaviourSchemaType::Boolean };
 		std::vector<AgentBehaviourSchemaField> children;
+		bool required{ true };
+		std::optional<AgentBehaviourConfigurationValue> defaultValue;
+
+		AgentBehaviourSchemaField() = default;
+		AgentBehaviourSchemaField(std::string fieldName,
+			AgentBehaviourSchemaType fieldType,
+			std::vector<AgentBehaviourSchemaField> fieldChildren = {},
+			bool fieldRequired = true,
+			std::optional<AgentBehaviourConfigurationValue> fieldDefault = std::nullopt)
+			: name(std::move(fieldName)), type(fieldType),
+			  children(std::move(fieldChildren)), required(fieldRequired),
+			  defaultValue(std::move(fieldDefault))
+		{
+		}
 
 		bool operator==(AgentBehaviourSchemaField const& other) const = default;
 	};
+
+	struct AgentBehaviourAssignment
+	{
+		AgentBehaviourId behaviour;
+		uint64_t revision{ 0 };
+		AgentBehaviourConfiguration configuration;
+
+		bool operator==(AgentBehaviourAssignment const&) const = default;
+	};
+
+	char const* agentBehaviourConfigurationValueTypeName(
+		AgentBehaviourConfigurationValue const& value);
 
 	char const* agentBehaviourSchemaTypeName(AgentBehaviourSchemaType type);
 	bool agentBehaviourSchemaTypeFromName(std::string const& name,

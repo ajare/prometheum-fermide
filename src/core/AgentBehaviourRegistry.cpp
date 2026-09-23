@@ -11,6 +11,8 @@
 #include <set>
 #include <stdexcept>
 #include <utility>
+#include <type_traits>
+#include <variant>
 
 #include "core/Building.h"
 #include "core/SerializationException.h"
@@ -18,6 +20,8 @@
 
 namespace core
 {
+	using namespace std;
+
 	namespace
 	{
 		std::filesystem::path normalizedDocumentPath(
@@ -57,12 +61,49 @@ namespace core
 				bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]);
 		}
 
+		void serializeConfigurationValue(Serializer& serializer,
+			AgentBehaviourConfigurationValue const& value)
+		{
+			visit([&](auto const& typed)
+			{
+				using T = decay_t<decltype(typed)>;
+				if constexpr (is_same_v<T, bool>) serializer.writeBool("default", typed);
+				else if constexpr (is_same_v<T, int64_t>) serializer.writeInt64("default", typed);
+				else if constexpr (is_same_v<T, double>) serializer.writeDouble("default", typed);
+				else if constexpr (is_same_v<T, string>) serializer.writeString("default", typed);
+				else if constexpr (is_same_v<T, AgentBehaviourDuration>)
+					serializer.writeUint64("default", typed.ticks);
+				else serializer.writeUint64("default", typed.value);
+			}, value);
+		}
+
+		AgentBehaviourConfigurationValue deserializeConfigurationValue(
+			Serializer& serializer, AgentBehaviourSchemaType type)
+		{
+			switch (type)
+			{
+			case AgentBehaviourSchemaType::Boolean: return serializer.readBool("default");
+			case AgentBehaviourSchemaType::Integer: return serializer.readInt64("default");
+			case AgentBehaviourSchemaType::Number: return serializer.readDouble("default");
+			case AgentBehaviourSchemaType::String: return serializer.readString("default");
+			case AgentBehaviourSchemaType::Duration:
+				return AgentBehaviourDuration{ serializer.readUint64("default") };
+			case AgentBehaviourSchemaType::Marker:
+				return MarkerId{ serializer.readUint64("default") };
+			default:
+				throw SerializationException(
+					"List and Record schema fields cannot declare scalar defaults");
+			}
+		}
+
 		void serializeSchemaField(Serializer& serializer,
 			AgentBehaviourSchemaField const& field)
 		{
 			serializer.beginMap("");
 			serializer.writeString("name", field.name);
 			serializer.writeString("type", agentBehaviourSchemaTypeName(field.type));
+			if (!field.required) serializer.writeBool("required", false);
+			if (field.defaultValue) serializeConfigurationValue(serializer, *field.defaultValue);
 			if (!field.children.empty())
 			{
 				serializer.beginArray("children");
@@ -84,6 +125,9 @@ namespace core
 				throw SerializationException(std::format(
 					"Unsupported Agent behaviour schema type '{}'", typeName));
 			}
+			field.required = serializer.readBool("required", true, true);
+			if (serializer.hasField("default"))
+				field.defaultValue = deserializeConfigurationValue(serializer, field.type);
 			if (serializer.hasField("children"))
 			{
 				serializer.beginArray("children");
@@ -274,10 +318,12 @@ namespace core
 				return reject("Changed behaviour definitions require an increasing revision");
 		}
 
-		// No live configuration references behaviour definitions yet, so the
-		// swap itself cannot invalidate an Agent. The complete replacement has
-		// already been validated by the document seam, including every managed
-		// source module's existence inside the package directory.
+		for (auto const* building : mLoadedBuildings)
+		{
+			if (building && !building->inspectAgentBehaviourAssignments(replacement,
+				diagnostic)) return false;
+		}
+
 		mBehaviours = std::move(replacement.mBehaviours);
 		mPackageDirectory = std::move(replacement.mPackageDirectory);
 		mDocumentPath = std::move(replacement.mDocumentPath);
@@ -404,10 +450,19 @@ namespace core
 		if (!behaviour)
 			return reject(std::format(
 				"Agent behaviour {} is not defined in this registry", id.value));
-		// Behaviour assignments do not exist yet; once they do, deletion must
-		// clear every loaded dependent Building's assignment first, exactly as
-		// used Agent tag deletion does today.
 		if (!definitionEditsAreAllowed(diagnostic)) return false;
+		for (auto const* building : mLoadedBuildings)
+		{
+			if (!building) continue;
+			for (auto const& [agentId, agent] : building->mAgents.entries())
+			{
+				if (agent && agent->getBehaviourAssignment()
+					&& agent->getBehaviourAssignment()->behaviour == id)
+					return reject(format("Agent behaviour '{}' is assigned to Agent '{}' ({}) in Building '{}'",
+						behaviour->getName(), agent->getName(), agentId.value,
+						building->getName()));
+			}
+		}
 		mBehaviours.remove(id);
 		modify();
 		if (diagnostic) diagnostic->clear();

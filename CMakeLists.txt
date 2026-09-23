@@ -187,6 +187,7 @@ add_executable(prometheum-fermide-headless
     src/AgentGroupsPanel.cpp
     src/AgentGroupAssignmentPanel.cpp
     src/AgentTagAssignmentPanel.cpp
+    src/AgentBehaviourAssignmentPanel.cpp
     src/TagsPanel.cpp
     src/BehavioursPanel.cpp
     src/AgentClipboard.cpp
@@ -222,6 +223,7 @@ add_executable(prometheum-fermide-headless
     src/headless/AgentWalkSpeedSmokeChecks.cpp
     src/headless/AgentHeightSmokeChecks.cpp
     src/headless/AgentBehaviourRegistrySmokeChecks.cpp
+    src/headless/AgentBehaviourAssignmentSmokeChecks.cpp
     src/headless/BackgroundSectorSmokeChecks.cpp
     src/headless/EditorLayerSmokeChecks.cpp
     src/headless/DoorOpenApartRenderSmokeChecks.cpp
@@ -283,6 +285,7 @@ if(PF_BUILD_GUI)
         src/AgentGroupsPanel.cpp
         src/AgentGroupAssignmentPanel.cpp
         src/AgentTagAssignmentPanel.cpp
+        src/AgentBehaviourAssignmentPanel.cpp
         src/TagsPanel.cpp
         src/BehavioursPanel.cpp
         src/AgentClipboard.cpp

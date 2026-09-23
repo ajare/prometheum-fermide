@@ -31,6 +31,7 @@
 #include "AgentGroupsPanel.h"
 #include "AgentGroupAssignmentPanel.h"
 #include "AgentTagAssignmentPanel.h"
+#include "AgentBehaviourAssignmentPanel.h"
 #include "TagsPanel.h"
 #include "BehavioursPanel.h"
 #include "AgentClipboard.h"
@@ -3650,9 +3651,13 @@ namespace
 				building->applyPlatformLiftEdit(building->planRemovePlatformLift(sector->getIndex(), i));
 				removed = true;
 			}
-			else removed = type == core::SectorObjectType::Marker
-				? building->removeSectorMarker(sector->getIndex(), i)
-				: type == core::SectorObjectType::Door
+			else if (type == core::SectorObjectType::Marker)
+			{
+				string diagnostic;
+				removed = building->removeSectorMarker(sector->getIndex(), i, &diagnostic);
+				if (!removed && !diagnostic.empty()) reportEditorError("Marker editor", diagnostic);
+			}
+			else removed = type == core::SectorObjectType::Door
 					? building->removeSectorDoor(sector->getIndex(), i)
 					: type == core::SectorObjectType::BulkheadDoor
 						? building->removeSectorBulkheadDoor(sector->getIndex(), i)
@@ -4215,9 +4220,15 @@ void handleShortcuts(shared_ptr<core::Building>& building)
 						if (!building->isSimulationPaused()) building->pauseSimulation();
 						gUISettings.worldPaused = true;
 						auto type = selected->getObjectType();
-						bool removed = type == core::SectorObjectType::Marker
-							? building->removeSectorMarker(sector->getIndex(), i)
-							: type == core::SectorObjectType::Door
+						bool removed{ false };
+						if (type == core::SectorObjectType::Marker)
+						{
+							string diagnostic;
+							removed = building->removeSectorMarker(sector->getIndex(), i, &diagnostic);
+							if (!removed && !diagnostic.empty())
+								reportEditorError("Marker editor", diagnostic);
+						}
+						else removed = type == core::SectorObjectType::Door
 								? building->removeSectorDoor(sector->getIndex(), i)
 								: type == core::SectorObjectType::BulkheadDoor
 									? building->removeSectorBulkheadDoor(sector->getIndex(), i)
@@ -5975,11 +5986,12 @@ void renderAgentView(shared_ptr<core::Building> building)
 		ImGuiTableFlags_BordersV |
 		ImGuiTableFlags_ContextMenuInBody;
 
-	if (ImGui::BeginTable("Agents", 6, flags))
+	if (ImGui::BeginTable("Agents", 7, flags))
 	{
 		ImGui::TableSetupColumn("Name");
 		ImGui::TableSetupColumn("Active");
 		ImGui::TableSetupColumn("Group");
+		ImGui::TableSetupColumn("Behaviour");
 		ImGui::TableSetupColumn("Sector");
 		ImGui::TableSetupColumn("State");
 		ImGui::TableSetupColumn("Path");
@@ -6059,12 +6071,16 @@ void renderAgentView(shared_ptr<core::Building> building)
 					ImGui::TableSetColumnIndex(2);
 					renderAgentGroupAssignmentCell(building, building->getAgentId(agent));
 
-					// Sector
+					// Behaviour: named picker, never a numeric registry ID.
 					ImGui::TableSetColumnIndex(3);
+					renderAgentBehaviourAssignmentCell(building, building->getAgentId(agent));
+
+					// Sector
+					ImGui::TableSetColumnIndex(4);
 					ImGui::TextUnformatted(sector->getDescription().c_str());
 
 					// State
-					ImGui::TableSetColumnIndex(4);
+					ImGui::TableSetColumnIndex(5);
 
 					if (!agent->isActive())
 					{
@@ -6098,7 +6114,7 @@ void renderAgentView(shared_ptr<core::Building> building)
 					}
 
 					// Path
-					ImGui::TableSetColumnIndex(5);
+					ImGui::TableSetColumnIndex(6);
 					
 					auto const& path = agent->getPath();
 					
@@ -6681,6 +6697,7 @@ void renderSelectedAgentPanel(shared_ptr<core::Building> building)
 
 	renderAgentEffectiveProperties(building, id);
 	renderAgentTagAssignmentChecklist(building, id);
+	renderAgentBehaviourConfigurationPanel(building, id);
 
 	if (gSelectingAgentPathDestination)
 	{

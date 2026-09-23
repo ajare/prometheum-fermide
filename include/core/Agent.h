@@ -11,6 +11,7 @@
 #include "core/Shape.h"
 #include "core/Path.h"
 #include "core/AgentTag.h"
+#include "core/AgentBehaviour.h"
 #include "core/EntityId.h"
 #include "core/Serializable.h"
 
@@ -139,6 +140,10 @@ namespace core
 		// mutation is the unchecked editor seam setFlags already uses.
 		bool mActive{ true };
 
+		// Authored configuration only. Runtime Lua instance state never enters the
+		// Agent or a Building document.
+		std::optional<AgentBehaviourAssignment> mBehaviourAssignment;
+
 		Building* mBuilding{ nullptr };
 
 		SectorPosition mPosition;
@@ -204,6 +209,16 @@ namespace core
 			mHeightModifierSample = sample;
 		}
 		void clearHeightModifierSample() { mHeightModifierSample.reset(); }
+		void setBehaviourAssignment(AgentBehaviourAssignment assignment)
+		{
+			mBehaviourAssignment = std::move(assignment);
+			modify();
+		}
+		void clearBehaviourAssignment()
+		{
+			mBehaviourAssignment.reset();
+			modify();
+		}
 
 		void setPosition(SectorPosition pos, bool authored = true);
 
@@ -292,6 +307,11 @@ namespace core
 		// state: position and route stay as they are until an activated tick
 		// or a reset works on them.
 		bool isActive() const { return mActive; }
+
+		std::optional<AgentBehaviourAssignment> const& getBehaviourAssignment() const
+		{
+			return mBehaviourAssignment;
+		}
 
 		void setActive(bool active);
 
