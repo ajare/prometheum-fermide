@@ -4,7 +4,6 @@
 #include <cstdlib>
 #include <exception>
 #include <format>
-#include <fstream>
 #include <functional>
 #include <map>
 #include <memory>
@@ -42,10 +41,27 @@ namespace core
 			}
 		};
 
-		struct HostLoader
+		void pushPrivateEnvironment(lua_State* state);
+
+		struct ModuleLoader
 		{
 			std::string packageName;
 			int hostModuleReference{ LUA_NOREF };
+			int environmentReference{ LUA_NOREF };
+			std::map<std::string, AgentBehaviourHelperSource> modules;
+			std::map<std::string, int> loadedModules;
+			std::vector<std::string> dependencyChain;
+
+			void release(lua_State* state)
+			{
+				for (auto const& [name, reference] : loadedModules)
+				{
+					(void)name;
+					luaL_unref(state, LUA_REGISTRYINDEX, reference);
+				}
+				loadedModules.clear();
+				dependencyChain.clear();
+			}
 		};
 
 		void* budgetedAllocate(void* userData, void* pointer, size_t oldSize,
@@ -111,21 +127,129 @@ namespace core
 
 		int immutableNewIndex(lua_State* state)
 		{
-			return luaL_error(state, "Agent behaviour host value is immutable");
+			return luaL_error(state, "Agent behaviour exported value is immutable");
 		}
 
-		int requireHostModule(lua_State* state)
+		void pushImmutableValue(lua_State* state, int value,
+			std::map<void const*, int>& visited)
 		{
-			auto& loader = *static_cast<HostLoader*>(
-			lua_touserdata(state, lua_upvalueindex(1)));
-			auto const* requested = luaL_checkstring(state, 1);
-			if (std::string_view(requested) != "prometheum.v1")
+			value = lua_absindex(state, value);
+			if (!lua_istable(state, value))
+			{
+				lua_pushvalue(state, value);
+				return;
+			}
+
+			auto const identity = lua_topointer(state, value);
+			if (auto found = visited.find(identity); found != visited.end())
+			{
+				lua_rawgeti(state, LUA_REGISTRYINDEX, found->second);
+				return;
+			}
+
+			lua_newtable(state);
+			auto const backing = lua_gettop(state);
+			(void)lua_newuserdatauv(state, 1, 0);
+			auto const proxy = lua_gettop(state);
+			lua_newtable(state);
+			lua_pushvalue(state, backing);
+			lua_setfield(state, -2, "__index");
+			lua_pushcfunction(state, immutableNewIndex);
+			lua_setfield(state, -2, "__newindex");
+			lua_pushliteral(state, "immutable");
+			lua_setfield(state, -2, "__metatable");
+			lua_setmetatable(state, proxy);
+			lua_pushvalue(state, proxy);
+			visited.emplace(identity, luaL_ref(state, LUA_REGISTRYINDEX));
+
+			lua_pushnil(state);
+			while (lua_next(state, value) != 0)
+			{
+				pushImmutableValue(state, -2, visited);
+				pushImmutableValue(state, -2, visited);
+				lua_rawset(state, backing);
+				lua_pop(state, 1);
+			}
+			lua_pushvalue(state, proxy);
+			lua_remove(state, backing);
+			lua_remove(state, backing);
+		}
+
+		void makeTopImmutable(lua_State* state)
+		{
+			std::map<void const*, int> visited;
+			pushImmutableValue(state, -1, visited);
+			lua_remove(state, -2);
+			for (auto const& [identity, reference] : visited)
+			{
+				(void)identity;
+				luaL_unref(state, LUA_REGISTRYINDEX, reference);
+			}
+		}
+
+		int requireDeclaredModule(lua_State* state)
+		{
+			auto& loader = *static_cast<ModuleLoader*>(
+				lua_touserdata(state, lua_upvalueindex(1)));
+			auto const* requestedText = luaL_checkstring(state, 1);
+			std::string const requested(requestedText);
+			if (requested == "prometheum.v1")
+			{
+				lua_rawgeti(state, LUA_REGISTRYINDEX, loader.hostModuleReference);
+				return 1;
+			}
+			if (auto loaded = loader.loadedModules.find(requested);
+				loaded != loader.loadedModules.end())
+			{
+				lua_rawgeti(state, LUA_REGISTRYINDEX, loaded->second);
+				return 1;
+			}
+			auto module = loader.modules.find(requested);
+			if (module == loader.modules.end())
 			{
 				return luaL_error(state,
-					"module '%s' is not available in Agent behaviour package '%s'",
-					requested, loader.packageName.c_str());
+					"module '%s' is not available: it is not declared in Agent behaviour package '%s'",
+					requestedText, loader.packageName.c_str());
 			}
-			lua_rawgeti(state, LUA_REGISTRYINDEX, loader.hostModuleReference);
+			auto cycle = std::find(loader.dependencyChain.begin(),
+				loader.dependencyChain.end(), requested);
+			if (cycle != loader.dependencyChain.end())
+			{
+				std::string chain;
+				for (auto current = loader.dependencyChain.begin();
+					current != loader.dependencyChain.end(); ++current)
+				{
+					if (!chain.empty()) chain += " -> ";
+					chain += *current;
+				}
+				chain += " -> " + requested;
+				return luaL_error(state, "Agent behaviour import cycle: %s", chain.c_str());
+			}
+
+			auto const& source = module->second.source;
+			auto const chunkName = "@" + loader.packageName + "/"
+				+ module->second.sourceModulePath;
+			if (luaL_loadbufferx(state, source.data(), source.size(),
+				chunkName.c_str(), "t") != LUA_OK) return lua_error(state);
+			if (loader.environmentReference == LUA_NOREF)
+				return luaL_error(state, "Agent behaviour module environment is unavailable");
+			lua_rawgeti(state, LUA_REGISTRYINDEX, loader.environmentReference);
+			if (!lua_setupvalue(state, -2, 1))
+				return luaL_error(state, "Agent behaviour helper module has no environment");
+
+			loader.dependencyChain.push_back(requested);
+			auto const status = lua_pcall(state, 0, 1, 0);
+			loader.dependencyChain.pop_back();
+			if (status != LUA_OK) return lua_error(state);
+			if (lua_isnil(state, -1))
+			{
+				lua_pop(state, 1);
+				lua_pushboolean(state, 1);
+			}
+			makeTopImmutable(state);
+			lua_pushvalue(state, -1);
+			loader.loadedModules.emplace(requested,
+				luaL_ref(state, LUA_REGISTRYINDEX));
 			return 1;
 		}
 
@@ -159,7 +283,7 @@ namespace core
 			lua_setglobal(state, name);
 		}
 
-		void openScratchLibraries(sol::state_view lua, HostLoader& loader)
+		void openScratchLibraries(sol::state_view lua, ModuleLoader& loader)
 		{
 			lua.open_libraries(sol::lib::base, sol::lib::table, sol::lib::string,
 				sol::lib::math, sol::lib::utf8);
@@ -193,7 +317,7 @@ namespace core
 
 			loader.hostModuleReference = createImmutableProxy(state, true);
 			lua_pushlightuserdata(state, &loader);
-			lua_pushcclosure(state, requireHostModule, 1);
+			lua_pushcclosure(state, requireDeclaredModule, 1);
 			lua_setglobal(state, "require");
 			lua_pushcfunction(state, tracebackHandler);
 			lua_setglobal(state, "__prometheum_traceback");
@@ -241,7 +365,8 @@ namespace core
 
 	AgentBehaviourModulePreflight AgentBehaviourRuntimeAdapter::preflightModule(
 		std::string_view packageName, std::string_view moduleName,
-		std::string_view source)
+		std::string_view source,
+		std::vector<AgentBehaviourHelperSource> const& helpers)
 	{
 		auto const normalizedPackage = packageName.empty()
 			? std::string("<unknown package>") : std::string(packageName);
@@ -268,8 +393,20 @@ namespace core
 		{
 			auto* state = ownedState.get();
 			sol::state_view lua(state);
-			HostLoader loader{ normalizedPackage };
+			ModuleLoader loader;
+			loader.packageName = normalizedPackage;
+			for (auto const& helper : helpers)
+				loader.modules.emplace(helper.name, helper);
 			openScratchLibraries(lua, loader);
+			pushPrivateEnvironment(state);
+			auto const environment = lua_gettop(state);
+			lua_pushlightuserdata(state, &loader);
+			lua_pushcclosure(state, requireDeclaredModule, 1);
+			lua_setfield(state, environment, "require");
+			lua_pushvalue(state, environment);
+			loader.environmentReference = luaL_ref(state, LUA_REGISTRYINDEX);
+			lua_pop(state, 1);
+			loader.dependencyChain.push_back(normalizedModule);
 			auto errorHandler = lua["__prometheum_traceback"];
 
 			auto loaded = lua.load_buffer(source.data(), source.size(), "@" + chunkName,
@@ -281,10 +418,20 @@ namespace core
 			}
 
 			sol::protected_function moduleChunk = loaded;
+			moduleChunk.push();
+			lua_rawgeti(state, LUA_REGISTRYINDEX, loader.environmentReference);
+			if (!lua_setupvalue(state, -2, 1))
+			{
+				lua_pop(state, 1);
+				return failure(normalizedPackage, normalizedModule,
+					chunkName + ":1: module has no isolated environment");
+			}
+			lua_pop(state, 1);
 			moduleChunk.set_error_handler(errorHandler);
 			beginInstructionBudget(state, budget);
 			auto moduleResult = moduleChunk();
 			endInstructionBudget(state);
+			loader.dependencyChain.clear();
 			if (!moduleResult.valid())
 			{
 				sol::error error = moduleResult;
@@ -362,6 +509,34 @@ namespace core
 			return failure(normalizedPackage, normalizedModule,
 				chunkName + ":1: " + error.what(), error.what());
 		}
+	}
+
+	AgentBehaviourModulePreflight AgentBehaviourRuntimeAdapter::preflightHelperModule(
+		std::string_view packageName, std::string_view helperName,
+		std::string_view moduleName, std::string_view source,
+		std::vector<AgentBehaviourHelperSource> const& helpers)
+	{
+		std::vector<AgentBehaviourHelperSource> graph = helpers;
+		auto found = std::find_if(graph.begin(), graph.end(),
+			[helperName](AgentBehaviourHelperSource const& candidate)
+			{ return candidate.name == helperName; });
+		if (found == graph.end())
+			graph.push_back({ std::string(helperName), std::string(moduleName),
+				std::string(source) });
+		else
+		{
+			found->sourceModulePath = moduleName;
+			found->source = source;
+		}
+		// Helper roots have no behaviour contract. A tiny text root imports the
+		// declared module through exactly the same loader and budget used by a
+		// behaviour, so syntax, nested imports, cycles, and module execution are
+		// validated without inventing a second loading path.
+		auto wrapper = std::format(
+			"local helper = require(\"{}\")\n"
+			"return {{ api_version = 1, factory = function() return {{}} end }}\n",
+			helperName);
+		return preflightModule(packageName, moduleName, wrapper, graph);
 	}
 
 	namespace
@@ -595,6 +770,7 @@ namespace core
 				lua_pop(state, 1);
 			}
 			lua_remove(state, copy - 1);
+			makeTopImmutable(state);
 			lua_setfield(state, environment, name);
 		}
 
@@ -658,18 +834,22 @@ namespace core
 			AgentId agent;
 			AgentBehaviourAssignment assignment;
 			std::string registryUuid;
+			uint64_t packageRevision{ 0 };
 			std::string packageName;
 			std::string moduleName;
 			std::string source;
+			std::vector<AgentBehaviourHelperSource> helpers;
 		};
 
 		struct Instance
 		{
 			AgentBehaviourAssignment assignment;
 			std::string registryUuid;
+			uint64_t packageRevision{ 0 };
 			int environmentReference{ LUA_NOREF };
 			int configurationReference{ LUA_NOREF };
 			int instanceReference{ LUA_NOREF };
+			std::unique_ptr<ModuleLoader> moduleLoader;
 			bool started{ false };
 			bool disabled{ false };
 			CallbackScope scope;
@@ -678,7 +858,7 @@ namespace core
 
 		ScratchBudget budget;
 		std::unique_ptr<lua_State, StateCloser> state;
-		HostLoader loader;
+		ModuleLoader hostLoader;
 		std::map<AgentId, Instance> instances;
 		uint64_t observedOutcomeCount{ 0 };
 		uint64_t lastObservedSequence{ 0 };
@@ -688,13 +868,14 @@ namespace core
 		{
 			if (!state) throw std::runtime_error("Could not create Building Lua runtime");
 			sol::state_view lua(state.get());
-			loader.packageName = "Building Agent behaviours";
-			openScratchLibraries(lua, loader);
+			hostLoader.packageName = "Building Agent behaviours";
+			openScratchLibraries(lua, hostLoader);
 			ensureMarkerMetatable(state.get());
 		}
 
-		void release(Instance const& instance)
+		void release(Instance& instance)
 		{
+			if (instance.moduleLoader) instance.moduleLoader->release(state.get());
 			luaL_unref(state.get(), LUA_REGISTRYINDEX, instance.instanceReference);
 			luaL_unref(state.get(), LUA_REGISTRYINDEX, instance.configurationReference);
 			luaL_unref(state.get(), LUA_REGISTRYINDEX, instance.environmentReference);
@@ -702,7 +883,7 @@ namespace core
 
 		void clear()
 		{
-			for (auto const& [agent, instance] : instances)
+			for (auto& [agent, instance] : instances)
 			{
 				(void)agent;
 				release(instance);
@@ -729,16 +910,28 @@ namespace core
 			pushPrivateEnvironment(lua);
 			auto const environment = lua_gettop(lua);
 			lua_pushvalue(lua, environment);
+			instance.environmentReference = luaL_ref(lua, LUA_REGISTRYINDEX);
+			instance.moduleLoader = std::make_unique<ModuleLoader>();
+			instance.moduleLoader->packageName = definition.packageName;
+			instance.moduleLoader->hostModuleReference = hostLoader.hostModuleReference;
+			instance.moduleLoader->environmentReference = instance.environmentReference;
+			for (auto const& helper : definition.helpers)
+				instance.moduleLoader->modules.emplace(helper.name, helper);
+			lua_pushlightuserdata(lua, instance.moduleLoader.get());
+			lua_pushcclosure(lua, requireDeclaredModule, 1);
+			lua_setfield(lua, environment, "require");
+			lua_pushvalue(lua, environment);
 			if (!lua_setupvalue(lua, chunk, 1))
 			{
 				lua_settop(lua, base);
 				return false;
 			}
-			lua_pushvalue(lua, environment);
-			instance.environmentReference = luaL_ref(lua, LUA_REGISTRYINDEX);
 			lua_remove(lua, environment);
 
-			if (!protectedCall(lua, 0, 1) || !lua_istable(lua, -1))
+			instance.moduleLoader->dependencyChain.push_back(definition.moduleName);
+			auto const moduleLoaded = protectedCall(lua, 0, 1);
+			instance.moduleLoader->dependencyChain.clear();
+			if (!moduleLoaded || !lua_istable(lua, -1))
 			{
 				lua_settop(lua, base);
 				return false;
@@ -783,7 +976,8 @@ namespace core
 				auto found = desired.find(iterator->first);
 				if (found != desired.end()
 					&& iterator->second.assignment == found->second->assignment
-					&& iterator->second.registryUuid == found->second->registryUuid)
+					&& iterator->second.registryUuid == found->second->registryUuid
+					&& iterator->second.packageRevision == found->second->packageRevision)
 				{
 					++iterator;
 					continue;
@@ -798,6 +992,7 @@ namespace core
 				Instance instance;
 				instance.assignment = definition.assignment;
 				instance.registryUuid = definition.registryUuid;
+				instance.packageRevision = definition.packageRevision;
 				instance.scope.agent = definition.agent;
 				if (construct(definition, instance))
 					instances.emplace(definition.agent, std::move(instance));
@@ -997,6 +1192,14 @@ namespace core
 		auto const registry = building.mAgentBehaviourRegistry;
 		if (registry && registry->mPackageDirectory)
 		{
+			std::vector<AgentBehaviourHelperSource> helpers;
+			helpers.reserve(registry->mHelperModules.size());
+			for (auto const& [name, helper] : registry->mHelperModules)
+			{
+				auto source = registry->mSourceCache.find(helper->getSourceModulePath());
+				if (source == registry->mSourceCache.end()) continue;
+				helpers.push_back({ name, helper->getSourceModulePath(), source->second });
+			}
 			for (auto const& [agentId, agent] : building.mAgents.entries())
 			{
 				if (!agent || !agent->getBehaviourAssignment()) continue;
@@ -1005,15 +1208,13 @@ namespace core
 					assignment.behaviour);
 				if (!behaviour || behaviour->getModuleStatus()
 					!= AgentBehaviourModuleStatus::Loaded) continue;
-				auto const modulePath = *registry->mPackageDirectory
-					/ behaviour->getSourceModulePath();
-				std::ifstream input(modulePath, std::ios::binary);
-				if (!input) continue;
+				auto source = registry->mSourceCache.find(
+					behaviour->getSourceModulePath());
+				if (source == registry->mSourceCache.end()) continue;
 				definitions.push_back({ agentId, assignment, registry->getUuid(),
+					registry->getPackageRevision(),
 					registry->mPackageDirectory->filename().string(),
-					behaviour->getSourceModulePath(),
-					std::string(std::istreambuf_iterator<char>(input),
-						std::istreambuf_iterator<char>()) });
+					behaviour->getSourceModulePath(), source->second, helpers });
 			}
 		}
 		mImpl->synchronize(definitions);

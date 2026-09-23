@@ -210,6 +210,59 @@ namespace core
 		return true;
 	}
 
+	std::unique_ptr<AgentBehaviourHelperModule> AgentBehaviourHelperModule::create(
+		std::string name, std::string sourceModulePath)
+	{
+		return std::unique_ptr<AgentBehaviourHelperModule>(
+			new AgentBehaviourHelperModule(std::move(name), std::move(sourceModulePath)));
+	}
+
+	bool AgentBehaviourHelperModule::nameIsValid(std::string const& name,
+		std::string* diagnostic)
+	{
+		auto reject = [diagnostic](std::string reason)
+		{
+			if (diagnostic) *diagnostic = std::move(reason);
+			return false;
+		};
+		if (name.empty()) return reject("An Agent behaviour helper module name cannot be blank");
+		if (name == "prometheum.v1")
+			return reject("The built-in module name 'prometheum.v1' is reserved");
+		if (name.size() > 255)
+			return reject("An Agent behaviour helper module name cannot exceed 255 bytes");
+
+		bool atSegmentStart = true;
+		for (unsigned char character : name)
+		{
+			if (character == '.')
+			{
+				if (atSegmentStart)
+					return reject("An Agent behaviour helper module name must use dotted identifiers");
+				atSegmentStart = true;
+				continue;
+			}
+			auto const letter = (character >= 'a' && character <= 'z')
+				|| (character >= 'A' && character <= 'Z');
+			auto const valid = atSegmentStart
+				? (letter || character == '_')
+				: (letter || (character >= '0' && character <= '9')
+					|| character == '_');
+			if (!valid)
+				return reject("An Agent behaviour helper module name must use dotted identifiers");
+			atSegmentStart = false;
+		}
+		if (atSegmentStart)
+			return reject("An Agent behaviour helper module name must use dotted identifiers");
+		auto const lastSeparator = name.find_last_of('.');
+		auto const finalSegment = lastSeparator == std::string::npos
+			? name : name.substr(lastSeparator + 1);
+		if (finalSegment == "lua" || finalSegment == "so"
+			|| finalSegment == "dll" || finalSegment == "dylib")
+			return reject("An Agent behaviour helper module name cannot be a file or native-module name");
+		if (diagnostic) diagnostic->clear();
+		return true;
+	}
+
 	std::unique_ptr<AgentBehaviour> AgentBehaviour::create(std::string name,
 		std::string sourceModulePath, std::vector<AgentBehaviourSchemaField> schema,
 		uint64_t revision)

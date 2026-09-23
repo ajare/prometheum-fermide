@@ -20,6 +20,10 @@ key):
 ```yaml
 version: 1
 uuid: 123e4567-e89b-42d3-a456-426614174000
+revision: 1
+modules:
+  - name: schedule.clock
+    source: modules/clock.lua
 nextBehaviourId: 2
 behaviours:
   - id: 1
@@ -50,14 +54,20 @@ Same-named definitions in different packages remain independent.
 
 IDs are nonzero and never reused. `nextBehaviourId` must exceed every issued ID,
 including deleted IDs; zero denotes exhaustion. Rename preserves the ID.
-Names are case-sensitive unique, trimmed UTF-8 strings of 1–63 bytes. Revisions
-are nonzero; source-path or schema changes require a higher revision. Reload
-refuses allocator/revision regression and reuse of deleted IDs known to the
-loaded registry. Keep the allocator high-water mark when editing externally.
+Names are case-sensitive unique, trimmed UTF-8 strings of 1–63 bytes. Behaviour
+revisions are nonzero; source-path or schema changes require a higher revision.
+The package `revision` is also nonzero and must increase when the declared helper
+module set, import name, or source path changes. Manifests written before helper
+modules default to package revision 1 with an empty `modules` list. Reload refuses
+allocator/revision regression and reuse of deleted IDs known to the loaded
+registry. Keep both high-water marks when editing externally.
 
 Source paths use `/` separators and are relative to the package. Absolute paths,
 traversal, missing files, and symlinks escaping the package are refused. The
 manifest itself must also resolve inside the package. Sources must end in `.lua`.
+Helper import names are case-sensitive dotted Lua identifiers such as
+`schedule.clock`; path separators, `..`, extensions, and the reserved
+`prometheum.v1` name are invalid.
 
 Schema types are `boolean`, `integer`, `number`, `string`, `duration` (simulation
 ticks), `marker`, `list`, and `record`. Lists have exactly one child; records
@@ -67,8 +77,17 @@ Nesting is limited to 16 levels. Omit `schema` for no configuration fields.
 ## Lua module contract
 
 Only text Lua source is accepted; precompiled bytecode is refused. The standard
-`package` library is not enabled. Modules obtain the immutable versioned host
-boundary only through `require("prometheum.v1")` and must return this shape:
+`package` library is not enabled. The custom `require` resolves exactly the
+immutable built-in `prometheum.v1` module and logical helper names declared in
+this manifest; it never derives a filesystem path and cannot load native modules.
+Undeclared, absolute, traversal, and path-like imports are refused. Import cycles
+are rejected during deterministic preflight with the complete dependency chain.
+A helper may return any Lua value; table exports (including nested tables) are
+immutable, and repeated imports within one Agent resolve through that Agent's
+private cache.
+
+Behaviour modules obtain the immutable versioned host boundary through
+`require("prometheum.v1")` and must return this shape:
 
 ```lua
 local prometheum = require("prometheum.v1")
@@ -96,9 +115,10 @@ return {
 Preflight reports Loaded or Error per behaviour in the registry panel, including
 package/module/line diagnostics and protected-call tracebacks. Configuration
 assignment is authored separately. At the first simulation boundary, every
-assigned Agent receives a private module environment and instance; `on_start`
-runs once in Agent-ID order. `context.move_to` accepts only an opaque Marker
-handle from validated configuration; `context.cancel_movement` requests
+assigned Agent executes the complete behaviour/helper graph in a private module
+environment with private closures, upvalues, exports, and import cache;
+`on_start` runs once in Agent-ID order. `context.move_to` accepts only an opaque
+Marker handle from validated configuration; `context.cancel_movement` requests
 cancellation at the next safe boundary. Both return an immutable semantic result
 with `accepted` and `status` fields. A different destination while busy reports
 `agent_busy`, and issuing more than one movement command in one callback disables

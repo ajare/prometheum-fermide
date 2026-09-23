@@ -5,6 +5,7 @@
 #include <string>
 #include <memory>
 #include <string_view>
+#include <vector>
 
 namespace core
 {
@@ -19,6 +20,15 @@ namespace core
 		bool loaded{ false };
 		std::string diagnostic;
 		std::string traceback;
+	};
+
+	// Immutable C++ source representation supplied to a scratch or private
+	// per-Agent loader. The logical import name never derives a filesystem path.
+	struct AgentBehaviourHelperSource
+	{
+		std::string name;
+		std::string sourceModulePath;
+		std::string source;
 	};
 
 	// One live adapter is owned by each Building. Its implementation owns that
@@ -54,6 +64,11 @@ namespace core
 
 		static AgentBehaviourModulePreflight preflightModule(
 			std::string_view packageName, std::string_view moduleName,
-			std::string_view source);
+			std::string_view source,
+			std::vector<AgentBehaviourHelperSource> const& helpers = {});
+		static AgentBehaviourModulePreflight preflightHelperModule(
+			std::string_view packageName, std::string_view helperName,
+			std::string_view moduleName, std::string_view source,
+			std::vector<AgentBehaviourHelperSource> const& helpers);
 	};
 }

@@ -106,6 +106,51 @@ namespace core
 
 	char const* agentBehaviourModuleStatusName(AgentBehaviourModuleStatus status);
 
+	// One registry-local Lua module admitted by the package manifest. Import
+	// names are logical dotted identifiers rather than filesystem paths; source
+	// paths remain separately validated package-relative .lua paths.
+	class AgentBehaviourHelperModule
+	{
+		friend class AgentBehaviourRegistry;
+
+		std::string mName;
+		std::string mSourceModulePath;
+		AgentBehaviourModuleStatus mModuleStatus{ AgentBehaviourModuleStatus::NotLoaded };
+		std::string mModuleDiagnostic;
+		std::string mModuleTraceback;
+
+		AgentBehaviourHelperModule(std::string name, std::string sourceModulePath)
+			: mName(std::move(name)), mSourceModulePath(std::move(sourceModulePath))
+		{
+		}
+
+		void setModulePreflight(AgentBehaviourModuleStatus status,
+			std::string diagnostic, std::string traceback)
+		{
+			mModuleStatus = status;
+			mModuleDiagnostic = std::move(diagnostic);
+			mModuleTraceback = std::move(traceback);
+		}
+
+	public:
+		static std::unique_ptr<AgentBehaviourHelperModule> create(std::string name,
+			std::string sourceModulePath);
+		static bool nameIsValid(std::string const& name,
+			std::string* diagnostic = nullptr);
+
+		std::string const& getName() const { return mName; }
+		std::string const& getSourceModulePath() const { return mSourceModulePath; }
+		AgentBehaviourModuleStatus getModuleStatus() const { return mModuleStatus; }
+		std::string const& getModuleDiagnostic() const { return mModuleDiagnostic; }
+		std::string const& getModuleTraceback() const { return mModuleTraceback; }
+
+		bool definitionEquals(AgentBehaviourHelperModule const& other) const
+		{
+			return mName == other.mName
+				&& mSourceModulePath == other.mSourceModulePath;
+		}
+	};
+
 	// A durable, reusable Agent behaviour definition owned by an Agent
 	// behaviour registry. Its ID is registry-local, stable across rename, and
 	// never reused. The revision increases monotonically whenever the authored

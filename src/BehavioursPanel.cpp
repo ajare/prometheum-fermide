@@ -74,6 +74,8 @@ namespace
 		ImGui::SameLine();
 		ImGui::Text("%s", building->getAgentBehaviourRegistryPackageName().c_str());
 		ImGui::TextDisabled("UUID %s", registry->getUuid().c_str());
+		ImGui::TextDisabled("Package revision %llu",
+			static_cast<unsigned long long>(registry->getPackageRevision()));
 
 		string switchDiagnostic;
 		auto canSwitch = canSelectAgentBehaviourRegistry(
@@ -143,6 +145,31 @@ namespace
 			else if (!definitionEditsAllowed)
 				ImGui::SetTooltip("%s", editDiagnostic.c_str());
 			else ImGui::SetTooltip("Reload definitions and preflight Lua modules without running Agent callbacks");
+		}
+
+		auto const helperNames = registry->getHelperModuleNames();
+		if (!helperNames.empty())
+		{
+			ImGui::SeparatorText("Helper modules");
+			for (auto const& name : helperNames)
+			{
+				auto const* helper = registry->lookupHelperModule(name);
+				if (!helper) continue;
+				auto const status = helper->getModuleStatus();
+				auto const statusColour = status == core::AgentBehaviourModuleStatus::Loaded
+					? ImVec4(0.35f, 0.85f, 0.45f, 1.0f)
+					: status == core::AgentBehaviourModuleStatus::Error
+						? ImVec4(1.0f, 0.35f, 0.3f, 1.0f)
+						: ImVec4(0.65f, 0.65f, 0.65f, 1.0f);
+				ImGui::BulletText("%s (%s)", name.c_str(),
+					helper->getSourceModulePath().c_str());
+				ImGui::SameLine();
+				ImGui::TextColored(statusColour, "%s",
+					core::agentBehaviourModuleStatusName(status));
+				if (!helper->getModuleDiagnostic().empty()
+					&& ImGui::IsItemHovered())
+					ImGui::SetTooltip("%s", helper->getModuleDiagnostic().c_str());
+			}
 		}
 
 		ImGui::SeparatorText("Behaviours");

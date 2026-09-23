@@ -8,6 +8,8 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "core/AgentBehaviourRegistry.h"
 #include "core/Building.h"
@@ -125,20 +127,76 @@ return {
 local host = require("prometheum.v1")
 local changed = pcall(function() host.api_version = 2 end)
 if changed or host.api_version ~= 1 then error("mutable host module") end
+if pcall(function() math.pi = 0 end)
+    or pcall(function() string.byte = false end)
+    or pcall(function() table.insert = false end)
+    or pcall(function() utf8.char = false end) then
+  error("mutable built-in library")
+end
 if package ~= nil then error("standard package library is enabled") end
 return { api_version = 1, factory = function() return {} end }
 )lua");
 		require(immutable.loaded,
 			"The reserved immutable host module was unavailable: " + immutable.diagnostic);
+		std::string nameDiagnostic;
+		require(core::AgentBehaviourHelperModule::nameIsValid(
+			"helpers.values", &nameDiagnostic),
+			"A dotted helper import name was refused");
+		for (auto const& invalidName : { "", "prometheum.v1", "/absolute",
+			"../traversal", "helpers/file", "native.dll", "helpers..value" })
+			require(!core::AgentBehaviourHelperModule::nameIsValid(
+				invalidName, &nameDiagnostic),
+				"A path-like, reserved, or malformed helper import name was accepted");
 
-		auto undeclared = preflight(R"lua(
-require("os")
+		for (auto const& name : { "os", "/tmp/evil", "../evil", "native.dll",
+			"helpers/../../evil" })
+		{
+			auto undeclared = core::AgentBehaviourRuntimeAdapter::preflightModule(
+				"headless.behaviours", "schedule.lua",
+				"require(\"" + std::string(name) + "\")\n"
+				"return { api_version = 1, factory = function() return {} end }\n");
+			require(!undeclared.loaded
+				&& undeclared.traceback.find("not available") != std::string::npos,
+				"The custom loader admitted an undeclared, path-based, or native module");
+		}
+
+		std::vector<core::AgentBehaviourHelperSource> helpers{
+			{ "helpers.values", "modules/values.lua", R"lua(
+local loads = 0
+loads = loads + 1
+return { loads = loads, nested = { answer = 42 } }
+)lua" }
+		};
+		auto declared = core::AgentBehaviourRuntimeAdapter::preflightModule(
+			"headless.behaviours", "schedule.lua", R"lua(
+local first = require("helpers.values")
+local second = require("helpers.values")
+if first ~= second or first.loads ~= 1 or first.nested.answer ~= 42 then
+  error("helper cache or exports were incorrect")
+end
+if pcall(function() first.loads = 2 end)
+    or pcall(function() first.nested.answer = 0 end) then
+  error("helper exports were mutable")
+end
 return { api_version = 1, factory = function() return {} end }
-)lua");
-		require(!undeclared.loaded
-			&& undeclared.diagnostic.find("line 2") != std::string::npos
-			&& undeclared.traceback.find("not available") != std::string::npos,
-			"The custom loader admitted a non-host module or omitted its traceback");
+)lua", helpers);
+		require(declared.loaded,
+			"A declared helper graph was unavailable or mutable: " + declared.diagnostic);
+
+		std::vector<core::AgentBehaviourHelperSource> cycle{
+			{ "helpers.a", "modules/a.lua", "return require('helpers.b')\n" },
+			{ "helpers.b", "modules/b.lua", "return require('helpers.a')\n" }
+		};
+		auto cyclic = core::AgentBehaviourRuntimeAdapter::preflightModule(
+			"headless.behaviours", "schedule.lua", R"lua(
+require("helpers.a")
+return { api_version = 1, factory = function() return {} end }
+)lua", cycle);
+		require(!cyclic.loaded
+			&& cyclic.traceback.find(
+				"schedule.lua -> helpers.a -> helpers.b -> helpers.a")
+				!= std::string::npos,
+			"An import cycle was accepted or omitted its complete dependency chain");
 	}
 
 	void scratchExecutionIsBudgeted()
@@ -316,6 +374,103 @@ return {
 		auto const second = runStartupMovement(registry, behaviour);
 		require(first == second,
 			"Per-Building Lua startup and movement were not deterministic");
+	}
+
+	void manifestHelpersHavePrivatePerAgentGraphs()
+	{
+		TemporaryDirectory temporary;
+		auto const package = temporary.path / "helpers.behaviours";
+		std::filesystem::create_directories(package);
+		auto const manifest = package / "behaviours.yaml";
+		auto const uuid = std::string("123e4567-e89b-42d3-a456-426614174156");
+		auto const helperSource = R"lua(
+local calls = 0
+return {
+  nested = { value = 7 },
+  increment = function()
+    calls = calls + 1
+    return calls
+  end
+}
+)lua";
+		writeText(package / "counter.lua", helperSource);
+		writeText(package / "private.lua", R"lua(
+local host = require("prometheum.v1")
+local counter = require("helpers.counter")
+local cached = require("helpers.counter")
+if counter ~= cached then error("helper cache was not instance-local") end
+if pcall(function() counter.increment = false end)
+    or pcall(function() counter.nested.value = 0 end) then
+  error("helper exports were mutable")
+end
+return {
+  api_version = host.api_version,
+  factory = function(configuration)
+    if counter.increment() ~= 1 then
+      error("helper upvalues leaked between Agent instances")
+    end
+    return {
+      on_start = function(context)
+        local result = context.move_to(configuration.destination)
+        if not result.accepted then error(result.status) end
+      end
+    }
+  end
+}
+)lua");
+		auto manifestText = [&](uint64_t revision, std::string const& helperPath)
+		{
+			return ""
+				"  version: 1\n"
+				"  uuid: " + uuid + "\n"
+				"  revision: " + std::to_string(revision) + "\n"
+				"  modules:\n"
+				"    - name: helpers.counter\n"
+				"      source: " + helperPath + "\n"
+				"  nextBehaviourId: 2\n"
+				"  behaviours:\n"
+				"    - id: 1\n"
+				"      name: Private helpers\n"
+				"      revision: 1\n"
+				"      source: private.lua\n"
+				"      schema:\n"
+				"        - name: destination\n"
+				"          type: marker\n";
+		};
+		writeText(manifest, manifestText(1, "counter.lua"));
+		auto registry = core::AgentBehaviourRegistry::loadFrom(manifest.string());
+		auto const behaviour = core::AgentBehaviourId{ 1 };
+		auto const* helper = registry->lookupHelperModule("helpers.counter");
+		require(registry->getPackageRevision() == 1 && helper
+			&& helper->getModuleStatus() == core::AgentBehaviourModuleStatus::Loaded
+			&& registry->lookupAgentBehaviour(behaviour)->getModuleStatus()
+				== core::AgentBehaviourModuleStatus::Loaded,
+			"Manifest helper declarations did not participate in package status");
+
+		// Runtime construction consumes the text admitted by preflight, never an
+		// un-reloaded filesystem edit. Every Agent still executes that cached graph.
+		writeText(package / "counter.lua", "error('unpreflighted edit executed')\n");
+		auto const first = runStartupMovement(registry, behaviour);
+		auto const second = runStartupMovement(registry, behaviour);
+		require(first == second,
+			"Private helper graphs were not deterministic across Building runtimes");
+
+		// Changing the declared dependency set is a registry revision change, not
+		// an invisible path substitution.
+		writeText(package / "counter-v2.lua", helperSource);
+		writeText(manifest, manifestText(1, "counter-v2.lua"));
+		auto sameRevision = core::AgentBehaviourRegistry::loadFrom(manifest.string());
+		std::string diagnostic;
+		require(!registry->replaceDefinitionsFrom(std::move(*sameRevision), &diagnostic)
+			&& diagnostic.find("package revision") != std::string::npos,
+			"A helper dependency changed without advancing the package revision");
+		writeText(manifest, manifestText(2, "counter-v2.lua"));
+		auto advanced = core::AgentBehaviourRegistry::loadFrom(manifest.string());
+		require(registry->replaceDefinitionsFrom(std::move(*advanced), &diagnostic)
+			&& registry->getPackageRevision() == 2
+			&& registry->lookupHelperModule("helpers.counter")->getSourceModulePath()
+				== "counter-v2.lua",
+			"An advanced helper dependency revision was not adopted deterministically");
 	}
 
 	void routeLossAndTopologyLifecycle()
@@ -583,6 +738,7 @@ void runAgentBehaviourRuntimeSmokeChecks()
 	customLoaderIsReservedAndImmutable();
 	scratchExecutionIsBudgeted();
 	independentStartupInstancesMoveDeterministically();
+	manifestHelpersHavePrivatePerAgentGraphs();
 	routeLossAndTopologyLifecycle();
 	programmingErrorDisablesMovementOwnership();
 	registryRetainsLoadedAndErrorStatus();

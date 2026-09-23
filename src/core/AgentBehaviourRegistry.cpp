@@ -167,14 +167,10 @@ namespace core
 		}
 		// Refuse a manifest whose managed source modules are missing or have
 		// escaped the package. Paths were already validated lexically during
-		// deserialization; here they must also exist beside the manifest.
+		// deserialization; here they must also exist beside the manifest. One
+		// deterministic pass caches and preflights the complete declared graph.
 		registry->mPackageDirectory = packageDirectory;
-		for (auto const& [id, behaviour] : registry->mBehaviours.entries())
-		{
-			(void)id;
-			registry->requireModuleFile(behaviour->getSourceModulePath(), packageDirectory);
-			registry->preflightModule(*behaviour, packageDirectory);
-		}
+		registry->preflightPackage(packageDirectory);
 		registry->mDocumentPath = path;
 		registry->mSavedDocumentContents = std::move(contents);
 		return registry;
@@ -197,6 +193,30 @@ namespace core
 	std::string const& AgentBehaviourRegistry::getUuid() const
 	{
 		return mUuid;
+	}
+
+	uint64_t AgentBehaviourRegistry::getPackageRevision() const
+	{
+		return mPackageRevision;
+	}
+
+	std::vector<std::string> AgentBehaviourRegistry::getHelperModuleNames() const
+	{
+		std::vector<std::string> names;
+		names.reserve(mHelperModules.size());
+		for (auto const& [name, module] : mHelperModules)
+		{
+			(void)module;
+			names.push_back(name);
+		}
+		return names;
+	}
+
+	AgentBehaviourHelperModule const* AgentBehaviourRegistry::lookupHelperModule(
+		std::string const& name) const
+	{
+		auto found = mHelperModules.find(name);
+		return found == mHelperModules.end() ? nullptr : found->second.get();
 	}
 
 	uint64_t AgentBehaviourRegistry::getNextBehaviourId() const
@@ -304,6 +324,24 @@ namespace core
 		}
 		if (!definitionEditsAreAllowed(diagnostic)) return false;
 
+		if (replacement.mPackageRevision < mPackageRevision)
+			return reject("Agent behaviour registry package revision cannot move backwards on reload");
+		auto helperDefinitionsEqual = [&]
+		{
+			if (mHelperModules.size() != replacement.mHelperModules.size()) return false;
+			auto left = mHelperModules.begin();
+			auto right = replacement.mHelperModules.begin();
+			for (; left != mHelperModules.end(); ++left, ++right)
+			{
+				if (left->first != right->first
+					|| !left->second->definitionEquals(*right->second)) return false;
+			}
+			return true;
+		};
+		if (!helperDefinitionsEqual()
+			&& replacement.mPackageRevision == mPackageRevision)
+			return reject("Changed helper-module dependencies require an increasing package revision");
+
 		if (mBehaviours.nextId() == 0 ? replacement.mBehaviours.nextId() != 0
 			: replacement.mBehaviours.nextId() != 0
 				&& replacement.mBehaviours.nextId() < mBehaviours.nextId())
@@ -326,7 +364,10 @@ namespace core
 				diagnostic)) return false;
 		}
 
+		mPackageRevision = replacement.mPackageRevision;
+		mHelperModules = std::move(replacement.mHelperModules);
 		mBehaviours = std::move(replacement.mBehaviours);
+		mSourceCache = std::move(replacement.mSourceCache);
 		mPackageDirectory = std::move(replacement.mPackageDirectory);
 		mDocumentPath = std::move(replacement.mDocumentPath);
 		mSavedDocumentContents = std::move(replacement.mSavedDocumentContents);
@@ -386,26 +427,61 @@ namespace core
 		}
 	}
 
-	void AgentBehaviourRegistry::preflightModule(AgentBehaviour& behaviour,
-		std::filesystem::path const& packageDirectory) const
+	void AgentBehaviourRegistry::preflightPackage(
+		std::filesystem::path const& packageDirectory)
 	{
-		auto const modulePath = packageDirectory / behaviour.getSourceModulePath();
-		std::ifstream input(modulePath, std::ios::binary);
-		if (!input)
+		mSourceCache.clear();
+		auto cacheSource = [&](std::string const& path)
 		{
-			behaviour.setModulePreflight(AgentBehaviourModuleStatus::Error,
-				std::format("Agent behaviour package '{}', module '{}', line 1: source could not be read",
-					packageDirectory.filename().string(), behaviour.getSourceModulePath()), {});
-			return;
+			if (mSourceCache.contains(path)) return;
+			requireModuleFile(path, packageDirectory);
+			std::ifstream input(packageDirectory / path, std::ios::binary);
+			if (!input)
+				throw SerializationException(std::format(
+					"Could not read Agent behaviour package module {}", path));
+			mSourceCache.emplace(path, std::string(
+				std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()));
+		};
+
+		for (auto const& [name, helper] : mHelperModules)
+		{
+			(void)name;
+			cacheSource(helper->getSourceModulePath());
 		}
-		std::string source{ std::istreambuf_iterator<char>(input),
-			std::istreambuf_iterator<char>() };
-		auto result = AgentBehaviourRuntimeAdapter::preflightModule(
-			packageDirectory.filename().string(), behaviour.getSourceModulePath(), source);
-		behaviour.setModulePreflight(
-			result.loaded ? AgentBehaviourModuleStatus::Loaded
-				: AgentBehaviourModuleStatus::Error,
-			std::move(result.diagnostic), std::move(result.traceback));
+		for (auto const& [id, behaviour] : mBehaviours.entries())
+		{
+			(void)id;
+			cacheSource(behaviour->getSourceModulePath());
+		}
+
+		std::vector<AgentBehaviourHelperSource> helpers;
+		helpers.reserve(mHelperModules.size());
+		for (auto const& [name, helper] : mHelperModules)
+			helpers.push_back({ name, helper->getSourceModulePath(),
+				mSourceCache.at(helper->getSourceModulePath()) });
+
+		auto const packageName = packageDirectory.filename().string();
+		for (auto& [name, helper] : mHelperModules)
+		{
+			auto result = AgentBehaviourRuntimeAdapter::preflightHelperModule(
+				packageName, name, helper->getSourceModulePath(),
+				mSourceCache.at(helper->getSourceModulePath()), helpers);
+			helper->setModulePreflight(
+				result.loaded ? AgentBehaviourModuleStatus::Loaded
+					: AgentBehaviourModuleStatus::Error,
+				std::move(result.diagnostic), std::move(result.traceback));
+		}
+		for (auto const& [id, behaviour] : mBehaviours.entries())
+		{
+			(void)id;
+			auto result = AgentBehaviourRuntimeAdapter::preflightModule(
+				packageName, behaviour->getSourceModulePath(),
+				mSourceCache.at(behaviour->getSourceModulePath()), helpers);
+			behaviour->setModulePreflight(
+				result.loaded ? AgentBehaviourModuleStatus::Loaded
+					: AgentBehaviourModuleStatus::Error,
+				std::move(result.diagnostic), std::move(result.traceback));
+		}
 	}
 
 	AgentBehaviourId AgentBehaviourRegistry::addAgentBehaviour(std::string const& rawName,
@@ -432,8 +508,7 @@ namespace core
 		auto const id = mBehaviours.tryAdd(AgentBehaviour::create(
 			name, sourceModulePath, std::move(schema)));
 		if (!id) throw std::overflow_error("This registry has issued every Agent behaviour ID");
-		if (mPackageDirectory)
-			preflightModule(*mBehaviours.find(*id), *mPackageDirectory);
+		if (mPackageDirectory) preflightPackage(*mPackageDirectory);
 		modify();
 		return *id;
 	}
@@ -511,6 +586,16 @@ namespace core
 		serializer.beginMap("agentBehaviourRegistry");
 		serializer.writeUint32("version", 1);
 		serializer.writeString("uuid", mUuid);
+		serializer.writeUint64("revision", mPackageRevision);
+		serializer.beginArray("modules");
+		for (auto const& [name, module] : mHelperModules)
+		{
+			serializer.beginMap("");
+			serializer.writeString("name", name);
+			serializer.writeString("source", module->getSourceModulePath());
+			serializer.endMap();
+		}
+		serializer.endArray();
 		serializer.writeUint64("nextBehaviourId", mBehaviours.nextId());
 		serializer.beginArray("behaviours");
 		// Identity order is deliberately independent of the alphabetical order
@@ -549,6 +634,34 @@ namespace core
 		if (!uuidIsValid(uuid))
 		{
 			throw SerializationException("Agent behaviour registry UUID is invalid");
+		}
+		auto const packageRevision = serializer.readUint64("revision", true, 1);
+		if (packageRevision == 0)
+			throw SerializationException("Agent behaviour registry package revision cannot be zero");
+
+		std::map<std::string, std::unique_ptr<AgentBehaviourHelperModule>> helperModules;
+		if (serializer.hasField("modules"))
+		{
+			serializer.beginArray("modules");
+			while (serializer.nextArrayItem())
+			{
+				serializer.beginMap("");
+				auto name = serializer.readString("name");
+				auto source = serializer.readString("source");
+				serializer.endMap();
+				std::string diagnostic;
+				if (!AgentBehaviourHelperModule::nameIsValid(name, &diagnostic))
+					throw SerializationException(
+						"Serialized helper module name is invalid: " + diagnostic);
+				if (!AgentBehaviour::sourceModulePathIsValid(source, &diagnostic))
+					throw SerializationException(
+						"Serialized helper module source path is invalid: " + diagnostic);
+				if (!helperModules.emplace(name,
+					AgentBehaviourHelperModule::create(name, std::move(source))).second)
+					throw SerializationException(std::format(
+						"Serialized helper module names must be unique ('{}' appears twice)", name));
+			}
+			serializer.endArray();
 		}
 		auto const nextBehaviourId = serializer.readUint64("nextBehaviourId");
 
@@ -610,6 +723,8 @@ namespace core
 		// Commit only after the complete manifest has passed validation, making
 		// load and any future snapshot restore transactional.
 		mUuid = std::move(uuid);
+		mPackageRevision = packageRevision;
+		mHelperModules = std::move(helperModules);
 		mBehaviours = std::move(behaviours);
 		return true;
 	}
@@ -633,6 +748,11 @@ namespace core
 			}
 		}
 
+		for (auto const& [name, helper] : mHelperModules)
+		{
+			(void)name;
+			requireModuleFile(helper->getSourceModulePath(), path.parent_path());
+		}
 		for (auto const& [id, behaviour] : mBehaviours.entries())
 		{
 			(void)id;

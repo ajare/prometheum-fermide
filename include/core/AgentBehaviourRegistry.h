@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <map>
 #include <memory>
 #include <optional>
 #include <set>
@@ -27,7 +28,15 @@ namespace core
 	class AgentBehaviourRegistry : public Serializable
 	{
 		std::string mUuid;
+		// Package revision covers the registry-local helper-module declarations.
+		// A declaration change must advance it even when no behaviour definition
+		// changed, so attached Buildings can report one deterministic dependency set.
+		uint64_t mPackageRevision{ 1 };
+		std::map<std::string, std::unique_ptr<AgentBehaviourHelperModule>> mHelperModules;
 		EntityRegistry<AgentBehaviourId, AgentBehaviour> mBehaviours;
+		// Exact text admitted by the last deterministic package preflight. Live
+		// instances consume this cache rather than observing un-reloaded file edits.
+		std::map<std::string, std::string> mSourceCache;
 		// The package directory that owns the manifest and every managed source
 		// module. Known once the registry has been loaded from or saved to a
 		// package; a freshly created registry has no directory until first save.
@@ -50,8 +59,7 @@ namespace core
 		// directory and refuses anything that escapes it or is missing.
 		void requireModuleFile(std::string const& sourceModulePath,
 			std::filesystem::path const& packageDirectory) const;
-		void preflightModule(AgentBehaviour& behaviour,
-			std::filesystem::path const& packageDirectory) const;
+		void preflightPackage(std::filesystem::path const& packageDirectory);
 		void registerBuilding(Building& building);
 		void unregisterBuilding(Building& building);
 
@@ -67,6 +75,10 @@ namespace core
 		static bool uuidIsValid(std::string const& uuid);
 
 		std::string const& getUuid() const;
+		uint64_t getPackageRevision() const;
+		std::vector<std::string> getHelperModuleNames() const;
+		AgentBehaviourHelperModule const* lookupHelperModule(
+			std::string const& name) const;
 		uint64_t getNextBehaviourId() const;
 		uint32_t getBehaviourCount() const;
 		std::vector<AgentBehaviourId> getBehaviourIds() const;
