@@ -250,6 +250,12 @@ namespace core
 		uint32_t firstCapacityPosition{ 0 };
 		uint32_t capacity{ 0 };
 		std::vector<std::vector<TraversalResourceId>> stopDoors;
+		// Boarding order is stable while passengers come and go. It determines
+		// their order from the leading to the trailing end when the occupied space
+		// is redistributed across the carriage.
+		std::vector<AgentId> passengerOrder;
+		std::map<AgentId, Vector2> passengerTargets;
+		TraversalDirection packingDirection{ TraversalDirection::None };
 	};
 
 	struct ShuttleDoor

@@ -232,9 +232,25 @@ namespace core
 				else if (request->mDirection == TraversalDirection::Descending) ++result.descendingWaitingCount;
 			}
 		}
+		auto capacityPosition = [&](uint32_t position)
+		{
+			auto target = resource.mCapacityPositions[position];
+			if (resource.mShuttle && resource.mOccupants[position]
+				&& resource.mShuttleCapacityPerCarriage)
+			{
+				auto const carriageIndex = position / resource.mShuttleCapacityPerCarriage;
+				if (carriageIndex < resource.mShuttleCarriages.size())
+				{
+					auto const& targets = resource.mShuttleCarriages[carriageIndex].passengerTargets;
+					if (auto found = targets.find(resource.mOccupants[position]); found != targets.end())
+						target = found->second;
+				}
+			}
+			return target;
+		};
 		for (uint32_t i = 0; i < resource.mCapacityPositions.size(); ++i)
 		{
-			result.capacityPositions.push_back({ i, resource.mCapacityPositions[i],
+			result.capacityPositions.push_back({ i, capacityPosition(i),
 				resource.mOccupants[i], resource.mAdmissionReservations[i] });
 			if (resource.mOccupants[i]) ++result.occupantCount;
 			if (resource.mAdmissionReservations[i]) ++result.admissionReservationCount;
@@ -249,7 +265,7 @@ namespace core
 			{
 				auto position = carriage.firstCapacityPosition + i;
 				if (position >= resource.mCapacityPositions.size()) break;
-				snapshot.positions.push_back({ i, resource.mCapacityPositions[position],
+				snapshot.positions.push_back({ i, capacityPosition(position),
 					resource.mOccupants[position], resource.mAdmissionReservations[position] });
 				if (resource.mOccupants[position]) ++snapshot.occupantCount;
 				if (resource.mAdmissionReservations[position]) ++snapshot.admissionReservationCount;

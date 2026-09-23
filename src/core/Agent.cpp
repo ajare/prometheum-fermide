@@ -1070,17 +1070,19 @@ namespace core
 			}
 			if (mTraversalTask)
 			{
-				// A Door crossing is a scripted layer change executed in place at
-				// the Agent's current position. An enclosed Lift ride likewise ends
-				// wherever the passenger stood in the car; disembark allocation then
-				// walks it into its reserved crossing lane at ordinary speed.
+				// Door crossings and enclosed transport rides commit in place. Lift
+				// and Shuttle allocation first walks the passenger into the selected
+				// exit's crossing band, preserving a buffered standing position when
+				// it is already valid.
 				auto resource = mWorld
 					? mWorld->lookupTraversalResource(mTraversalTask->edge->getTraversalResourceId())
 					: EntityLookup<TraversalResource>{};
 				auto const commitsInPlace = mTraversalTask->edge->getType() == EdgeType::Door
 					|| (mTraversalTask->edge->getType() == EdgeType::Lift
 						&& resource && resource.entity->isLift()
-						&& !resource.entity->isOpenPlatformLift());
+						&& !resource.entity->isOpenPlatformLift())
+					|| (mTraversalTask->edge->getType() == EdgeType::Shuttle
+						&& resource && resource.entity->isShuttle());
 				if (commitsInPlace)
 				{
 					mState = State::AwaitingTraversalCommit;

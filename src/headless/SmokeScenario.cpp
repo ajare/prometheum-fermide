@@ -16,6 +16,8 @@
 #include <cstdint>
 #include <exception>
 #include <iostream>
+#include <iterator>
+#include <map>
 #include <sstream>
 #include <string>
 #include <type_traits>
@@ -55,6 +57,7 @@ void runAgentActivationSmokeChecks();
 void runMarkerIdentitySmokeChecks();
 void runMovementCommandSmokeChecks();
 void runShuttleDoorQuerySmokeChecks();
+void runShuttleDoorRenderSmokeChecks();
 void runRenderOrderSmokeChecks();
 void runWallRenderSmokeChecks();
 void runDoorOpenApartRenderSmokeChecks();
@@ -3797,6 +3800,228 @@ namespace
 			&& passenger->getSector() == world.getSector(right).get();
 	}
 
+	bool shuttlePassengersSpreadAcrossCarriageAtWalkingSpeed()
+	{
+		core::World world("Shuttle passenger spacing", 16, 2);
+		auto left = world.addRoom("Left platform", 0, 0, 0, 4, 1);
+		auto right = world.addRoom("Right platform", 0, 0, 10, 4, 1);
+		core::World::CreateShuttleOptions options{ 1, 4, { 0, 10 }, 0 };
+		options.capacity = 3;
+		options.doorMask = 0b0001;
+		options.minimumDwellSeconds = 20.0f;
+		options.maximumBoardingSeconds = 30.0f;
+		auto created = world.addShuttle(1, 0, 0, 15, options);
+		world.finishBuild();
+
+		auto target = world.getGraph()->getClosestVertexInSector(
+			world.getSector(right).get(), { 11.5f, 0.0f });
+		if (!target) return false;
+		std::vector<core::AgentId> passengers;
+		for (uint32_t i = 0; i < 3; ++i)
+		{
+			auto id = world.createAgent("Spacing passenger", left, 0, 0.4f + i * 0.7f);
+			auto agent = world.lookupAgent(id).entity;
+			if (i < 2)
+			{
+				auto path = world.getGraph()->calculatePath(agent, target);
+				if (!path) return false;
+				agent->setPath(path, true);
+			}
+			passengers.push_back(id);
+		}
+
+		std::map<core::AgentId, float> previousCarriageX;
+		std::map<core::AgentId, float> twoPassengerTargets;
+		bool sawTwoPassengers = false;
+		bool retargetedExistingPassenger = false;
+		bool reachedSpacedPositions = false;
+		bool teleportedInside = false;
+		bool violatedPassengerBuffer = false;
+		bool thirdJourneyStarted = false;
+		for (uint32_t tick = 0; tick < MaximumSimulationTicks * 8; ++tick)
+		{
+			world.advanceTick();
+			auto snapshot = world.getSimulationSnapshot();
+			auto shuttle = std::find_if(snapshot.traversalResources.begin(),
+				snapshot.traversalResources.end(), [&](auto const& resource)
+					{ return resource.id == created.traversalResource; });
+			if (shuttle == snapshot.traversalResources.end()
+				|| shuttle->shuttleCarriages.size() != 1) return false;
+			auto const& carriage = shuttle->shuttleCarriages.front();
+
+			std::map<core::AgentId, float> currentCarriageX;
+			for (auto id : passengers)
+			{
+				auto agent = world.lookupAgent(id).entity;
+				if (agent->getSector() != world.getSector(created.shuttle.sector->getIndex()).get())
+					continue;
+				auto relativeX = agent->getGlobalPosition().x - shuttle->liftPosition;
+				currentCarriageX[id] = relativeX;
+				if (auto previous = previousCarriageX.find(id); previous != previousCarriageX.end())
+					teleportedInside = teleportedInside
+						|| std::abs(relativeX - previous->second)
+							> agent->getWalkSpeed() * world.getFixedTimestep() + 0.001f;
+			}
+			previousCarriageX = currentCarriageX;
+			for (auto left = currentCarriageX.begin(); left != currentCarriageX.end(); ++left)
+				for (auto right = std::next(left); right != currentCarriageX.end(); ++right)
+					violatedPassengerBuffer = violatedPassengerBuffer
+						|| std::abs(left->second - right->second) + 0.001f
+							< CORE_AGENT_MAX_WIDTH + CORE_SHUTTLE_AGENT_BUFFER;
+
+			if (carriage.occupantCount == 2 && !thirdJourneyStarted
+				&& currentCarriageX.size() == 2)
+			{
+				std::vector<float> positions;
+				for (auto const& [id, x] : currentCarriageX) positions.push_back(x);
+				std::sort(positions.begin(), positions.end());
+				auto const halfWidth = CORE_AGENT_MAX_WIDTH * 0.5f;
+				auto const first = CORE_SHUTTLE_AGENT_BUFFER + halfWidth;
+				auto const last = options.carWidth - CORE_SHUTTLE_AGENT_BUFFER - halfWidth;
+				if (std::abs(positions.front() - first) < 0.02f
+					&& std::abs(positions.back() - last) < 0.02f)
+				{
+					sawTwoPassengers = true;
+					for (auto const& position : carriage.positions)
+						if (position.occupant)
+							twoPassengerTargets[position.occupant] = position.position.x;
+					auto third = world.lookupAgent(passengers.back()).entity;
+					auto path = world.getGraph()->calculatePath(third, target);
+					if (!path) return false;
+					third->setPath(path, true);
+					thirdJourneyStarted = true;
+				}
+			}
+			if (carriage.occupantCount == 3)
+			{
+				for (auto const& position : carriage.positions)
+					if (auto previous = twoPassengerTargets.find(position.occupant);
+						previous != twoPassengerTargets.end()
+						&& std::abs(previous->second - position.position.x) > 0.1f)
+						retargetedExistingPassenger = true;
+
+				std::vector<float> positions;
+				for (auto const& [id, x] : currentCarriageX) positions.push_back(x);
+				std::sort(positions.begin(), positions.end());
+				if (positions.size() == 3)
+				{
+					auto const halfWidth = CORE_AGENT_MAX_WIDTH * 0.5f;
+					auto const first = CORE_SHUTTLE_AGENT_BUFFER + halfWidth;
+					auto const last = options.carWidth - CORE_SHUTTLE_AGENT_BUFFER - halfWidth;
+					reachedSpacedPositions = reachedSpacedPositions
+						|| (std::abs(positions.front() - first) < 0.02f
+							&& std::abs(positions[1] - options.carWidth * 0.5f) < 0.02f
+							&& std::abs(positions.back() - last) < 0.02f);
+				}
+			}
+			if (reachedSpacedPositions && retargetedExistingPassenger) break;
+		}
+		return sawTwoPassengers && retargetedExistingPassenger
+			&& reachedSpacedPositions && !teleportedInside && !violatedPassengerBuffer;
+	}
+
+	bool shuttleBoardingRequiresDoorAlignment()
+	{
+		core::World world("Shuttle boarding alignment", 16, 2);
+		auto left = world.addRoom("Left", 0, 0, 0, 3, 1);
+		auto right = world.addRoom("Right", 0, 0, 10, 3, 1);
+		core::World::CreateShuttleOptions options{ 1, 3, { 0, 10 }, 0 };
+		options.capacity = 3;
+		options.doorMask = 0b101;
+		auto created = world.addShuttle(1, 0, 0, 13, options);
+		world.finishBuild();
+		auto target = world.getGraph()->getClosestVertexInSector(
+			world.getSector(right).get(), { 11.5f, 0.0f });
+		std::vector<core::AgentId> passengers;
+		for (float x : { 0.4f, 1.5f, 2.6f })
+		{
+			auto id = world.createAgent("Passenger", left, 0, x);
+			auto agent = world.lookupAgent(id).entity;
+			auto path = world.getGraph()->calculatePath(agent, target);
+			if (!path) return false;
+			agent->setPath(path, true);
+			passengers.push_back(id);
+		}
+		bool sawGrant = false;
+		for (unsigned tick = 0; tick < 12000; ++tick)
+		{
+			std::map<core::AgentId, float> approaching;
+			for (auto id : passengers)
+			{
+				auto agent = world.lookupAgent(id).entity;
+				if (agent->getSector() == world.getSector(left).get())
+					approaching[id] = agent->getGlobalPosition().x;
+			}
+			world.advanceTick();
+			for (auto const& [id, previousX] : approaching)
+			{
+				auto agent = world.lookupAgent(id).entity;
+				if (std::abs(agent->getGlobalPosition().x - previousX)
+					> agent->getWalkSpeed() * world.getFixedTimestep() + 0.001f) return false;
+			}
+			for (auto const& request : world.getSimulationSnapshot().traversalRequests)
+			{
+				if (request.edgeType != core::EdgeType::Door
+					|| request.sourceSector != core::SectorId{ (uint64_t)left + 1 }
+					|| request.state != core::TraversalRequestState::Granted) continue;
+				sawGrant = true;
+				auto agent = world.lookupAgent(request.owner).entity;
+				if (!core::isWithinDoorCrossingBand(agent->getGlobalPosition(),
+					request.sourceEndpoint, CORE_DOOR_CROSSING_HALF_WIDTH(1))) return false;
+			}
+			if (std::all_of(passengers.begin(), passengers.end(), [&](auto id)
+				{ return world.lookupAgent(id).entity->getSector() == world.getSector(right).get(); }))
+				return sawGrant;
+		}
+		return false;
+	}
+
+	bool shuttlePassengerUsesNearestDisembarkDoor()
+	{
+		core::World world("Nearest Shuttle exit", 16, 2);
+		auto left = world.addRoom("Left platform", 0, 0, 0, 4, 1);
+		auto right = world.addRoom("Right platform", 0, 0, 10, 4, 1);
+		core::World::CreateShuttleOptions options{ 1, 4, { 0, 10 }, 0 };
+		options.capacity = 1;
+		options.doorMask = 0b1001;
+		auto created = world.addShuttle(1, 0, 0, 15, options);
+		world.finishBuild();
+		if (created.doors.size() != 4) return false;
+
+		auto target = world.getGraph()->getClosestVertexInSector(
+			world.getSector(right).get(), { 10.5f, 0.0f });
+		if (!target) return false;
+		auto passengerId = world.createAgent("Nearest-exit passenger", left, 0, 0.5f);
+		auto passenger = world.lookupAgent(passengerId).entity;
+		auto path = world.getGraph()->calculatePath(passenger, target);
+		if (!path) return false;
+		auto const plannedDoor = created.doors[2].traversalResource;
+		auto const nearestDoor = created.doors[3].traversalResource;
+		bool plannedLeftDoor = std::any_of(path->nodes.begin(), path->nodes.end(),
+			[&](auto const& node)
+				{ return node.edge && node.edge->getTraversalResourceId() == plannedDoor; });
+		if (!plannedLeftDoor) return false;
+		passenger->setPath(path, true);
+
+		auto const shuttleSector = core::SectorId{
+			(uint64_t)created.shuttle.sector->getIndex() + 1 };
+		for (uint32_t tick = 0; tick < MaximumSimulationTicks * 8; ++tick)
+		{
+			world.advanceTick();
+			auto snapshot = world.getSimulationSnapshot();
+			for (auto const& request : snapshot.traversalRequests)
+				if (request.owner == passengerId && request.edgeType == core::EdgeType::Door
+					&& request.sourceSector == shuttleSector && request.shuttleDoor)
+				{
+					auto const x = passenger->getGlobalPosition().x;
+					auto const nearestDoorIsPhysicallyNearest = std::abs(x - 13.5f)
+						< std::abs(x - 10.5f);
+					return nearestDoorIsPhysicallyNearest && request.shuttleDoor == nearestDoor;
+				}
+		}
+		return false;
+	}
+
 	bool singleCarriageShuttleUsesTransportJourneyProtocol()
 	{
 		core::World world("Single carriage shuttle", 12, 2);
@@ -3951,7 +4176,7 @@ namespace
 
 		std::optional<float> previousStoppedX;
 		std::optional<uint64_t> lastOccupiedAtDestination;
-		bool sawForwardAlignment = false;
+		bool reachedFinalDoorBand = false;
 		bool sawAllDestinationDoorsOpen = false;
 		bool sawBoardingWindowAfterDisembark = false;
 		for (uint32_t tick = 0; tick < MaximumSimulationTicks * 14; ++tick)
@@ -3998,17 +4223,15 @@ namespace
 				&& !shuttle->liftMoving && shuttle->liftCurrentStop == 1)
 			{
 				auto x = passenger->getGlobalPosition().x;
-				if (previousStoppedX)
-				{
-					if (x < *previousStoppedX - 0.001f) return false;
-					sawForwardAlignment = sawForwardAlignment || x > *previousStoppedX + 0.001f;
-				}
+				if (previousStoppedX && x < *previousStoppedX - 0.001f) return false;
+				reachedFinalDoorBand = reachedFinalDoorBand
+					|| std::abs(x - finalShuttleX) <= CORE_DOOR_CROSSING_HALF_WIDTH(1) + 0.001f;
 				previousStoppedX = x;
 			}
 			if (sawBoardingWindowAfterDisembark && passenger->getState() == core::Agent::State::Idle
 				&& passenger->getSector() == world.getSector(right).get()) break;
 		}
-		return sawForwardAlignment && sawAllDestinationDoorsOpen && sawBoardingWindowAfterDisembark
+		return reachedFinalDoorBand && sawAllDestinationDoorsOpen && sawBoardingWindowAfterDisembark
 			&& passenger->getState() == core::Agent::State::Idle
 			&& passenger->getSector() == world.getSector(right).get();
 	}
@@ -5013,6 +5236,7 @@ int main(int argc, char** argv)
 		runMarkerIdentitySmokeChecks();
 		runMovementCommandSmokeChecks();
 		runRenderOrderSmokeChecks();
+		runShuttleDoorRenderSmokeChecks();
 		runDoorOpenApartRenderSmokeChecks();
 		runDoorOpenLeftRenderSmokeChecks();
 		runDoorOpenRightRenderSmokeChecks();
@@ -5378,6 +5602,21 @@ int main(int argc, char** argv)
 		if (!shuttlePassengerWalksToForwardInteriorSpot())
 		{
 			std::cerr << "FAIL: Shuttle passenger teleported or did not walk to the forward interior spot\n";
+			return 1;
+		}
+		if (!shuttlePassengersSpreadAcrossCarriageAtWalkingSpeed())
+		{
+			std::cerr << "FAIL: Shuttle passengers did not spread through the carriage at walking speed\n";
+			return 1;
+		}
+		if (!shuttleBoardingRequiresDoorAlignment())
+		{
+			std::cerr << "FAIL: Shuttle boarding granted outside the Door crossing band\n";
+			return 1;
+		}
+		if (!shuttlePassengerUsesNearestDisembarkDoor())
+		{
+			std::cerr << "FAIL: Shuttle passenger did not select the nearest carriage Door to exit\n";
 			return 1;
 		}
 		if (!singleCarriageShuttleUsesTransportJourneyProtocol())

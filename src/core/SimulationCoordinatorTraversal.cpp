@@ -290,13 +290,15 @@ namespace core
 			&& agent.mTraversalTask->request == requestId
 			&& agent.mTraversalTask->pathNodesConsumed > 1
 			&& agent.getGlobalPosition().distanceTo(destination->getPosition()) <= 0.001f;
-		// Door crossings and enclosed Lift rides commit at the Agent's current
+		// Door crossings and enclosed transport rides commit at the Agent's current
 		// position. The Door preserves horizontal crossing-lane placement across a
-		// layer change; the Lift preserves the passenger's standing position until
-		// disembark allocation walks it into a crossing lane.
+		// layer change; Lift and Shuttle rides preserve the passenger's buffered
+		// standing position after allocation has brought it into the exit band.
 		auto const commitsInPlace = request && (request->mEdgeType == EdgeType::Door
 			|| (request->mEdgeType == EdgeType::Lift && traversalResource
-				&& traversalResource->mLift && !traversalResource->mOpenPlatformLift));
+				&& traversalResource->mLift && !traversalResource->mOpenPlatformLift)
+			|| (request->mEdgeType == EdgeType::Shuttle && traversalResource
+				&& traversalResource->mShuttle));
 		if (!request || !permit || !destination || request->mOwner != owner || permit->mOwner != owner
 			|| permit->mRequest != requestId || request->mPermit != permitId
 			|| request->mState != TraversalRequestState::Granted
@@ -379,11 +381,19 @@ namespace core
 				lift->mLiftAdmissionReservation = {};
 				lift->mLiftPassenger = lift->mOccupants.front();
 				request->mCapacityPosition = ~0u;
+				if (lift->mShuttle) refreshShuttlePassengerTargets(*lift);
 				auto local = lift->mCapacityPositions[position];
 				if (lift->mShuttle)
 				{
 					// Crossing commits occupancy at the carriage threshold. Walking to
-					// the reserved interior spot remains ordinary Agent locomotion.
+					// the redistributed interior target remains ordinary Agent locomotion.
+					auto const carriageIndex = position / lift->mShuttleCapacityPerCarriage;
+					if (carriageIndex < lift->mShuttleCarriages.size())
+					{
+						auto const& targets = lift->mShuttleCarriages[carriageIndex].passengerTargets;
+						if (auto target = targets.find(owner); target != targets.end())
+							local = target->second;
+					}
 					auto target = destinationSector->getPosition() + local;
 					target.x += lift->mLiftPosition - destinationSector->getPosition().x;
 					agent.mTraversalLocalGoal = target;
@@ -410,6 +420,7 @@ namespace core
 				lift->mLiftExitFailures.erase(owner);
 				lift->mLiftPassenger = {};
 				for (auto occupant : lift->mOccupants) if (occupant) { lift->mLiftPassenger = occupant; break; }
+				if (lift->mShuttle) refreshShuttlePassengerTargets(*lift);
 				lift->mLiftDestinationStop = ~0u;
 			}
 		}

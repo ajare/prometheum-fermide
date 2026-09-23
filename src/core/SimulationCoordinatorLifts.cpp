@@ -490,9 +490,10 @@ namespace core
 	// free of disembark demand, and compatible with the run direction, the passenger
 	// is admitted only when it is the earliest of the requests eligible at this stop
 	// and direction in the admission queue. A shuttle passenger is assigned its
-	// boarding door first, then fills the furthest free capacity slot of its
-	// carriage in the direction of travel; a lift passenger takes the first free
-	// slot. The passenger must have arrived at its queue position before the landing
+	// boarding door and a free capacity slot first; once entry commits, carriage
+	// boarding order redistributes every passenger's walking target across the
+	// buffered usable width. A lift passenger takes the first free slot. The
+	// passenger must have arrived at its queue position before the landing
 	// door lease is taken, and the grant releases the queue position and claims the
 	// first free crossing lane on the landing.
 	void SimulationCoordinator::allocateLiftBoarding(TraversalRequestId requestId,
@@ -602,9 +603,9 @@ namespace core
 			uint32_t position = ~0u;
 			if (coordinator.mShuttle)
 			{
-				// Fill the carriage from its leading end. A boarding passenger
-				// chooses the furthest available spot in the direction of travel,
-				// then walks there after crossing the threshold.
+				// Reserve deterministic slots from the leading end. Slot identity owns
+				// capacity only; after the crossing commits, the carriage's boarding
+				// order determines each passenger's buffered walking target.
 				float direction = coordinator.mLiftDirection == TraversalDirection::Descending
 					? -1.0f : 1.0f;
 				float bestProgress = -numeric_limits<float>::infinity();
@@ -628,7 +629,12 @@ namespace core
 			coordinator.mAdmissionReservations[position] = requestId;
 			request->mCapacityPosition = position;
 			coordinator.mAdmissionQueue.erase(selected);
+			if (coordinator.mShuttle) refreshShuttlePassengerTargets(coordinator);
 		}
+		// Door assignment can differ from the edge that originally queued this
+		// request. Always use the assigned landing, including on subsequent ticks.
+		boardingLanding = mWorld.mTraversalResources.find(request->mResource);
+		if (!boardingLanding) return;
 		if (coordinator.mLift)
 		{
 			boardingLanding = mWorld.mTraversalResources.find(request->mResource);
@@ -653,6 +659,22 @@ namespace core
 			if (actor) actor->mTraversalLocalGoal.reset();
 			refreshQueuePositions(*boardingLanding);
 		}
+		if (coordinator.mShuttle)
+		{
+			// Reaching a waiting position does not mean reaching the Door. After
+			// releasing that position, walk to the assigned threshold before allowing
+			// the in-place layer crossing; never board from a queue spot or Button.
+			if (!actor) return;
+			auto const crossingWidth = CORE_DOOR_CROSSING_HALF_WIDTH(
+				boardingLanding->mDoor->getCellsWide());
+			if (!isWithinDoorCrossingBand(actor->getGlobalPosition(),
+				request->mSourceEndpoint, crossingWidth))
+			{
+				actor->mTraversalLocalGoal = request->mSourceEndpoint;
+				return;
+			}
+			actor->mTraversalLocalGoal.reset();
+		}
 		if (!request->mPreparationLease)
 			request->mPreparationLease = acquireDoorOpenLease(*boardingLanding,
 				DoorOpenLeaseKind::Preparation, requestId);
@@ -660,6 +682,25 @@ namespace core
 		{
 			if (!boardingLanding->mDoor->isOpening()) boardingLanding->mDoor->requestOpen();
 			return;
+		}
+		if (coordinator.mShuttle)
+		{
+			// Reservations project the carriage's post-boarding layout before a
+			// crossing is granted. Existing passengers walk to those targets first,
+			// leaving the newcomer a buffered route in from the threshold.
+			refreshShuttlePassengerTargets(coordinator);
+			if (request->mShuttleCarriage >= coordinator.mShuttleCarriages.size()) return;
+			auto const& carriage = coordinator.mShuttleCarriages[request->mShuttleCarriage];
+			auto transit = mWorld.mSectors[(size_t)coordinator.mLiftSector.value - 1].get();
+			for (auto passengerId : carriage.passengerOrder)
+			{
+				auto passenger = mWorld.mAgents.find(passengerId);
+				auto target = carriage.passengerTargets.find(passengerId);
+				if (!passenger || target == carriage.passengerTargets.end()) return;
+				auto globalTarget = transit->getPosition() + target->second;
+				globalTarget.x += coordinator.mLiftPosition - transit->getPosition().x;
+				if (passenger->getGlobalPosition().distanceTo(globalTarget) > 0.001f) return;
+			}
 		}
 		auto lane = find(boardingLanding->mCrossingOwners.begin(), boardingLanding->mCrossingOwners.end(), TraversalRequestId{});
 		if (lane == boardingLanding->mCrossingOwners.end()) return;
@@ -680,10 +721,11 @@ namespace core
 
 	// Riding allocation. The Agent is already an occupant of the car and asks to
 	// travel to another stop inside it. A destination already scheduled for the
-	// passenger is granted straight away - for a shuttle, after the passenger has
-	// walked within the carriage to the final node of the contiguous ride so the
-	// whole chain commits as one journey. Otherwise the journey stop is read from
-	// the ride edge ahead on the path: a stop some other passenger has already
+	// passenger is granted straight away. A Shuttle's contiguous ride commits as
+	// one journey at the passenger's current buffered carriage position; the nearest
+	// destination Door is selected by the following disembark request. Otherwise the
+	// journey stop is read from the ride edge ahead on the path: a stop some other
+	// passenger has already
 	// requested is shared without further ceremony, and a fresh stop is confirmed
 	// one passenger at a time through the confirmation queue at the interior
 	// selector control. A failed confirmation is retried on the waiting policy's
@@ -706,8 +748,8 @@ namespace core
 					{
 						// Multiple Door cells create a contiguous chain of Shuttle
 						// edges. Intermediate nodes may still belong to the origin
-						// stop, so align with the final node in this journey rather
-						// than the current edge's endpoint.
+						// stop, so commit through the final node in this journey while
+						// preserving the passenger's buffered carriage position.
 						auto destinationVertex = actor->mTraversalTask
 							? actor->mTraversalTask->destinationVertex : shared_ptr<const Vertex>{};
 						auto destinationNode = actor->mPath.targetNode + 1;
@@ -728,13 +770,6 @@ namespace core
 						if (!destinationVertex) return;
 
 						auto destinationEndpoint = destinationVertex->getPosition();
-						auto alignmentTarget = actor->getGlobalPosition();
-						alignmentTarget.x = destinationEndpoint.x;
-						if (abs(actor->getGlobalPosition().x - alignmentTarget.x) > 0.001f)
-						{
-							actor->mTraversalLocalGoal = alignmentTarget;
-							return;
-						}
 						actor->mTraversalLocalGoal.reset();
 
 						// Commit the contiguous ride as one journey so Agent does not
@@ -848,13 +883,18 @@ namespace core
 			disembarkLanding = mWorld.mTraversalResources.find(request->mResource);
 			if (!disembarkLanding) return;
 
-			// Once the Shuttle has stopped, walk within the carriage to the
-			// shuttle-side node selected by the remaining path before granting the
-			// Door crossing. Preserve the passenger's standing Y coordinate.
+			// Once the Shuttle has stopped, walk within the carriage into the
+			// selected Door's crossing band before granting the crossing. Staying at
+			// the nearest valid point avoids pulling a passenger off a buffered
+			// carriage-side position merely to touch the Door's centre vertex.
 			auto actor = mWorld.mAgents.find(request->mOwner);
 			if (!actor) return;
+			auto const crossingWidth = CORE_DOOR_CROSSING_HALF_WIDTH(
+				disembarkLanding->mDoor->getCellsWide());
 			auto alignmentTarget = actor->getGlobalPosition();
-			alignmentTarget.x = request->mSourceEndpoint.x;
+			alignmentTarget.x = clamp(alignmentTarget.x,
+				request->mSourceEndpoint.x - crossingWidth,
+				request->mSourceEndpoint.x + crossingWidth);
 			if (abs(actor->getGlobalPosition().x - alignmentTarget.x) > 0.001f)
 			{
 				actor->mTraversalLocalGoal = alignmentTarget;

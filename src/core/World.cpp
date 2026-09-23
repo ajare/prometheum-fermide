@@ -1671,9 +1671,9 @@ namespace core
 		for (size_t i = 1; i < options.stopOffsets.size(); ++i)
 			if (options.stopOffsets[i] <= options.stopOffsets[i - 1])
 				throw WorldException(this, format("{} - Shuttle stop offsets must be strictly increasing.", caller));
-		if (options.capacity == 0
-			|| options.capacity > (uint32_t)floor((float)options.carWidth / CORE_AGENT_MAX_WIDTH))
-			throw WorldException(this, format("{} - Shuttle capacity cannot be represented by carriage standing positions.", caller));
+		auto const representablePositions = maximumShuttleCarriageCapacity(options.carWidth);
+		if (options.capacity == 0 || options.capacity > representablePositions)
+			throw WorldException(this, format("{} - Shuttle capacity cannot be represented by buffered carriage standing positions.", caller));
 		if (options.minimumDwellSeconds < 0.0f
 			|| options.maximumBoardingSeconds < options.minimumDwellSeconds)
 			throw WorldException(this, format("{} - Shuttle timing requires 0 <= minimum dwell <= maximum boarding time.", caller));
@@ -7915,16 +7915,22 @@ namespace core
 				throw invalid_argument(format("Shuttle stop {} has invalid linear geometry", i));
 		}
 		auto usableWidth = (float)shuttle->getCarWidth();
-		if (capacity > (uint32_t)floor(usableWidth / CORE_AGENT_MAX_WIDTH))
-			throw invalid_argument("Declared shuttle capacity cannot be represented by separated carriage positions");
+		auto const representablePositions = maximumShuttleCarriageCapacity(
+			shuttle->getCarWidth());
+		if (capacity > representablePositions)
+			throw invalid_argument("Declared shuttle capacity cannot be represented by buffered carriage standing positions");
 		vector<Vector2> positions;
 		positions.reserve(capacity * shuttle->getNumCars());
-		auto start = (usableWidth - capacity * CORE_AGENT_MAX_WIDTH) * 0.5f
-			+ CORE_AGENT_MAX_WIDTH * 0.5f;
+		auto const first = CORE_AGENT_MAX_WIDTH * 0.5f + CORE_SHUTTLE_AGENT_BUFFER;
+		auto const last = usableWidth - CORE_AGENT_MAX_WIDTH * 0.5f
+			- CORE_SHUTTLE_AGENT_BUFFER;
 		for (uint32_t carriage = 0; carriage < shuttle->getNumCars(); ++carriage)
 			for (uint32_t i = 0; i < capacity; ++i)
+			{
+				auto const progress = capacity == 1 ? 0.5f : (float)i / (float)(capacity - 1);
 				positions.push_back({ carriage * (shuttle->getCarWidth() + 1.0f)
-					+ start + i * CORE_AGENT_MAX_WIDTH, 0.0f });
+					+ first + (last - first) * progress, 0.0f });
+			}
 		auto minimumDwellTicks = (uint64_t)ceil(minimumDwellSeconds / getFixedTimestep());
 		auto maximumBoardingTicks = (uint64_t)ceil(maximumBoardingSeconds / getFixedTimestep());
 		auto shuttlePtr = shuttle;
@@ -7936,7 +7942,8 @@ namespace core
 		resource->mShuttleCarriages.reserve(shuttlePtr->getNumCars());
 		for (uint32_t carriage = 0; carriage < shuttlePtr->getNumCars(); ++carriage)
 			resource->mShuttleCarriages.push_back({ carriage, carriage * capacity, capacity,
-				std::vector<std::vector<TraversalResourceId>>(stopCount) });
+				std::vector<std::vector<TraversalResourceId>>(stopCount), {}, {},
+				TraversalDirection::None });
 		SimulationEvent event;
 		event.sequence = mNextEventSequence++;
 		event.tick = mSimulationTick;

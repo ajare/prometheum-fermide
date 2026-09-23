@@ -124,6 +124,17 @@ namespace core
 #define CORE_SHUTTLE_CAR_WIDTH						2.0f
 #define CORE_SHUTTLE_CAR_HEIGHT						(CORE_SHUTTLE_DOORWAY_HEIGHT + 0.05f)
 #define CORE_SHUTTLE_SPEED							0.5f
+#define CORE_SHUTTLE_AGENT_BUFFER					0.1f
+
+namespace core
+{
+	inline constexpr uint32_t maximumShuttleCarriageCapacity(uint32_t cellsWide)
+	{
+		return cellsWide == 0 ? 0 : static_cast<uint32_t>(
+			((float)cellsWide - CORE_SHUTTLE_AGENT_BUFFER)
+			/ (CORE_AGENT_MAX_WIDTH + CORE_SHUTTLE_AGENT_BUFFER));
+	}
+}
 
 //
 // Stairwells

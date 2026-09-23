@@ -1570,10 +1570,15 @@ void renderSector(shared_ptr<const core::Sector> sector, uint32_t layer, LayerRe
 		drawList->AddRectFilled({ bounds0.x, bounds0.y }, { bounds1.x, bounds1.y }, colour);
 	}
 
-	// Thresholds are drawn before the sector-specific stuff so their apertures are
-	// not painted over. They are never drawn for an Aperture pass, which is itself
-	// the view through one, and would otherwise recurse into the same threshold.
-	if (style != LayerRenderStyle::Aperture)
+	// Thresholds are normally drawn before the sector-specific geometry so their
+	// apertures are not painted over. On a Shuttle's own Layer its Doors are seen
+	// from the back and contribute wireframes rather than apertures; defer those
+	// outlines until after the filled carriage so the carriage cannot hide them.
+	// An Aperture pass is itself the view through a threshold and must not recurse
+	// into that same threshold.
+	auto const backObjectsFollowGeometry = sectorType == core::SectorType::Shuttle
+		&& style == LayerRenderStyle::Solid;
+	if (style != LayerRenderStyle::Aperture && !backObjectsFollowGeometry)
 	{
 		renderSectorObjects(sector, layer, style, RENDER_SECTOR_OBJECTS_BEHIND, drawList);
 	}
@@ -1621,6 +1626,11 @@ void renderSector(shared_ptr<const core::Sector> sector, uint32_t layer, LayerRe
 	// paint over an aperture (#49).
 	default:
 		break;
+	}
+
+	if (backObjectsFollowGeometry)
+	{
+		renderSectorObjects(sector, layer, style, RENDER_SECTOR_OBJECTS_BEHIND, drawList);
 	}
 
 	// Objects

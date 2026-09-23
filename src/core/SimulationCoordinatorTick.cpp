@@ -311,6 +311,7 @@ namespace core
 					|| resource.mLiftStopPhase == LiftStopPhase::Boarding);
 			if (resource.mLift) resource.mLift->setCoordinatedPosition(resource.mLiftPosition);
 			else resource.mShuttle->setCoordinatedPosition(resource.mLiftPosition);
+			if (resource.mShuttle) refreshShuttlePassengerTargets(resource);
 			for (uint32_t i = 0; i < resource.mOccupants.size(); ++i)
 				if (auto passenger = mWorld.mAgents.find(resource.mOccupants[i]))
 				{
@@ -320,11 +321,18 @@ namespace core
 					{
 						// Carry the passenger by the vehicle's translation without changing
 						// their position within the carriage, then let Agent locomotion close
-						// the remaining distance to the reserved standing position.
+						// the remaining distance to the carriage's current spacing target.
 						auto vehicleDelta = resource.mLiftPosition - previousVehiclePosition;
 						if (abs(vehicleDelta) > 0.0f)
 							passenger->setPosition({ transit,
 								passenger->getLocalPosition() + Vector2{ vehicleDelta, 0.0f } }, false);
+						auto const carriageIndex = i / resource.mShuttleCapacityPerCarriage;
+						if (carriageIndex < resource.mShuttleCarriages.size())
+						{
+							auto const& targets = resource.mShuttleCarriages[carriageIndex].passengerTargets;
+							if (auto target = targets.find(resource.mOccupants[i]); target != targets.end())
+								local = target->second;
+						}
 						auto target = transit->getPosition() + local;
 						target.x += resource.mLiftPosition - transit->getPosition().x;
 						passenger->mTraversalLocalGoal = target;

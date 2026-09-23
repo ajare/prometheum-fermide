@@ -79,6 +79,8 @@ Cancellation, disablement, and device failure drain ownership and direct passeng
 
 A shuttle is one scheduled vehicle that may contain multiple capacity-owning carriages. Carriages move together but maintain independent occupancy and door state. Access zones separate disconnected waiting approaches, and a boarding assignment binds an agent to a specific carriage.
 
+Within each carriage, passengers retain boarding order from the leading to the trailing end of the current run. One passenger walks as far toward the leading end as the side buffer allows; two or more passengers spread evenly across the buffered usable width. A pending boarder projects the post-boarding layout first, and its crossing waits while existing passengers walk to any adjusted targets needed to leave buffered entry space. Targets never teleport passengers, and vehicle translation remains independent from their carriage-relative locomotion. Capacity validation reserves 0.1 units between an Agent's maximum-width bounds and both carriage sides and neighbouring Agents. At the destination, the ride completes at the passenger's current buffered position and disembarkation selects the nearest Door serving that carriage and destination access sector.
+
 Stop demand is coalesced physically while requester ownership remains independent. Cancelling one requester does not cancel another requester's valid demand.
 
 ## Interaction and device operations

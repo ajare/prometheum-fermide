@@ -977,8 +977,9 @@ namespace
 		else if (draft.carWidth < 3 || draft.carWidth > 5) draft.diagnostic = "Carriage width must be between 3 and 5 cells";
 		else if (draft.doorMask == 0 || (draft.doorMask >> draft.carWidth) != 0)
 			draft.diagnostic = "Select at least one door cell within the carriage";
-		else if (draft.capacity <= 0 || draft.capacity > (int)floor((float)draft.carWidth / CORE_AGENT_MAX_WIDTH))
-			draft.diagnostic = "Capacity cannot be represented by separated carriage positions";
+		else if (draft.capacity <= 0 || draft.capacity
+			> (int)core::maximumShuttleCarriageCapacity((uint32_t)draft.carWidth))
+			draft.diagnostic = "Capacity cannot be represented by buffered carriage positions";
 		else if (draft.minimumDwellSeconds < 0.0f
 			|| draft.maximumBoardingSeconds < draft.minimumDwellSeconds)
 			draft.diagnostic = "Maximum boarding time must be at least the non-negative minimum dwell";
