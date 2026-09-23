@@ -1293,7 +1293,8 @@ namespace core
 		markSaved();
 	}
 
-	void Building::resetForDeserialization(std::string name, uint32_t cellsWide, uint32_t decksHigh)
+	void Building::resetForDeserialization(std::string name, uint32_t cellsWide, uint32_t decksHigh,
+		bool preserveBehaviourRuntime)
 	{
 		for (auto const& [id, agent] : mAgents.entries())
 		{
@@ -1329,15 +1330,18 @@ namespace core
 			mLayers[layer] = std::make_shared<Layer>(this, cellsWide, decksHigh, layer);
 		}
 		mGraph = std::make_shared<Graph>(this);
-		mMovementGoals.clear();
-		mAgentBehaviourRuntime->reset();
-		mSimulationTick = 0;
-		mNextEventSequence = 1;
+		if (!preserveBehaviourRuntime)
+		{
+			mMovementGoals.clear();
+			mAgentBehaviourRuntime->reset();
+			mSimulationTick = 0;
+			mNextEventSequence = 1;
+		}
 		mNextQueueTicketValue = 1;
 		mNextDoorOpenLeaseValue = 1;
 		mAccumulatedTime = 0.0;
 		mCurrentPhase = SimulationPhase::None;
-		mEvents.clear();
+		if (!preserveBehaviourRuntime) mEvents.clear();
 		mTraversalWaitingPolicy = {};
 		mBuildFinished = false;
 		mSimulationPaused = false;
@@ -1345,7 +1349,7 @@ namespace core
 		mTopologyValid = false;
 		mTopologyGeneration = 0;
 		mTopologyDiagnostic.clear();
-		mPausedPathIntents.clear();
+		if (!preserveBehaviourRuntime) mPausedPathIntents.clear();
 		mBuildLog.clear();
 	}
 
@@ -1623,7 +1627,7 @@ namespace core
 				sector->getIndex(), sector->getLayerIndex(), agent->getGlobalPosition(),
 				agent->getAgentGroupId(), agent->getAgentTagIds(),
 				agent->getWalkSpeedModifierSample(), agent->getHeightModifierSample(),
-				agent->isActive() });
+				agent->getBehaviourAssignment(), agent->isActive() });
 		}
 		return carried;
 	}
@@ -1660,6 +1664,8 @@ namespace core
 				raw->setWalkSpeedModifierSample(*saved.walkSpeedModifierSample);
 			if (saved.heightModifierSample)
 				raw->setHeightModifierSample(*saved.heightModifierSample);
+			if (saved.behaviourAssignment)
+				raw->mBehaviourAssignment = *saved.behaviourAssignment;
 			_getSector(sector->getIndex())->mAgents.insert(raw);
 			mAgents.restore(saved.id, std::move(agent));
 			mAgentIds.emplace(raw, saved.id);
@@ -1715,7 +1721,7 @@ namespace core
 			if (carried.sectorIndex == movedSectorIndex)
 				carried.position += Vector2{ (float)deltaX, (float)deltaY };
 		}
-		resetForDeserialization(mName, mCellsWide, mDecksHigh);
+		resetForDeserialization(mName, mCellsWide, mDecksHigh, true);
 		mDeserializingConstruction = true;
 		try
 		{
@@ -2069,7 +2075,7 @@ namespace core
 		mLayers.erase(mLayers.begin() + plan.layerIndex);
 		mLayerNames.erase(mLayerNames.begin() + plan.layerIndex);
 
-		resetForDeserialization(mName, mCellsWide, mDecksHigh);
+		resetForDeserialization(mName, mCellsWide, mDecksHigh, true);
 		mDeserializingConstruction = true;
 		try
 		{
@@ -4218,7 +4224,7 @@ namespace core
 
 		auto const agents = captureAgentsForReplay();
 
-		resetForDeserialization(mName, mCellsWide, mDecksHigh);
+		resetForDeserialization(mName, mCellsWide, mDecksHigh, true);
 		mDeserializingConstruction = true;
 		try
 		{
@@ -5001,7 +5007,7 @@ namespace core
 
 		auto const agents = captureAgentsForReplay();
 
-		resetForDeserialization(mName, mCellsWide, mDecksHigh);
+		resetForDeserialization(mName, mCellsWide, mDecksHigh, true);
 		mDeserializingConstruction = true;
 		try
 		{
@@ -5153,7 +5159,7 @@ namespace core
 
 		auto const agents = captureAgentsForReplay();
 
-		resetForDeserialization(mName, mCellsWide, mDecksHigh);
+		resetForDeserialization(mName, mCellsWide, mDecksHigh, true);
 		mDeserializingConstruction = true;
 		try
 		{
@@ -5502,7 +5508,7 @@ namespace core
 			}
 		}
 
-		resetForDeserialization(mName, mCellsWide, mDecksHigh);
+		resetForDeserialization(mName, mCellsWide, mDecksHigh, true);
 		mDeserializingConstruction = true;
 		try
 		{
@@ -5706,7 +5712,7 @@ namespace core
 		// Agent group (#122).
 		auto const agents = captureAgentsForReplay();
 
-		resetForDeserialization(mName, mCellsWide, mDecksHigh);
+		resetForDeserialization(mName, mCellsWide, mDecksHigh, true);
 		mDeserializingConstruction = true;
 		try
 		{

@@ -9,6 +9,7 @@
 namespace core
 {
 	class Building;
+	struct AgentId;
 	struct SimulationEvent;
 	// Ordinary C++ result returned by the Lua runtime boundary. Lua, sol2, and
 	// their implementation types are deliberately confined to the adapter's
@@ -41,10 +42,14 @@ namespace core
 		AgentBehaviourRuntimeAdapter& operator=(AgentBehaviourRuntimeAdapter const&) = delete;
 
 		// Called only with no active simulation phase. Missing instances are all
-		// constructed first, then on_start runs once in ascending Agent ID, and
-		// queued movement commands are applied before intent collection.
-		void runStartupBoundary(Building& building);
+		// constructed first; startup and queued semantic outcomes run in stable
+		// Agent/event order, then commands are applied before intent collection.
+		void runBoundary(Building& building);
 		void observeOutcome(SimulationEvent const& event);
+		// Assignment edits are paused-only. Removing the private instance here
+		// prevents a later boundary from delivering stale outcomes to a replacement.
+		void removeInstance(AgentId agent);
+		bool isInstanceDisabled(AgentId agent) const;
 		void reset();
 
 		static AgentBehaviourModulePreflight preflightModule(

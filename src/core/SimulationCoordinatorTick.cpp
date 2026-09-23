@@ -13,6 +13,7 @@
 #include "core/Exceptions.h"
 #include "core/Graph.h"
 #include "core/Lift.h"
+#include "core/MarkerSectorObject.h"
 #include "core/Sector.h"
 #include "core/Shuttle.h"
 #include "core/Simulation.h"
@@ -553,10 +554,10 @@ namespace core
 	void SimulationCoordinator::advanceTick()
 	{
 		if (mBuilding.mSimulationPaused) return;
-		// The boundary runs with no active phase. All instances are constructed
-		// before deterministic on_start callbacks enqueue commands; those commands
+		// The boundary runs with no active phase. Instances are synchronized before
+		// deterministic startup/outcome callbacks enqueue commands; those commands
 		// are applied here before this tick can collect traversal intent.
-		mBuilding.mAgentBehaviourRuntime->runStartupBoundary(mBuilding);
+		mBuilding.mAgentBehaviourRuntime->runBoundary(mBuilding);
 		auto before = getSimulationSnapshot();
 		++mBuilding.mSimulationTick;
 		updateMovementGoals();
@@ -670,22 +671,56 @@ namespace core
 			// not be replayed onto the graph. The intent still drops with the map,
 			// so reactivation later does not resurrect a route the pause had
 			// already torn down.
-			if (!agent || !agent->isActive() || !agent->getSector() || !intent.destinationSector
-				|| intent.destinationSector.value > mBuilding.mSectors.size()) continue;
+			if (!agent || !agent->isActive() || !agent->getSector()) continue;
+			auto goal = mBuilding.mMovementGoals.find(id);
 			try
 			{
-				auto source = mBuilding.mGraph->getClosestVertexInSector(agent->getSector(), agent->getGlobalPosition());
-				auto destinationSector = mBuilding.mSectors[(size_t)intent.destinationSector.value - 1];
-				auto destination = mBuilding.mGraph->getClosestVertexInSector(
-					destinationSector.get(), intent.destinationPosition);
+				auto source = mBuilding.mGraph->getClosestVertexInSector(
+					agent->getSector(), agent->getGlobalPosition());
+				shared_ptr<const Vertex> destination;
+				if (goal != mBuilding.mMovementGoals.end())
+				{
+					// Marker identity survives structural replay. Re-resolve its new graph
+					// vertex rather than restoring a stale Sector/position pair.
+					for (auto const& sector : mBuilding.mSectors)
+						for (uint32_t i = 0; i < sector->getNumObjects(); ++i)
+							if (auto object = dynamic_pointer_cast<MarkerSectorObject>(sector->getObject(i));
+								object && object->getMarker()->getId() == goal->second.marker)
+								destination = mBuilding.mGraph->getVertexForObject(object);
+					if (!destination)
+					{
+						goal->second.routeLossReason = RouteLossReason::DestinationRemoved;
+						continue;
+					}
+					goal->second.position = destination->getPosition();
+					goal->second.sector = SectorId{
+						(uint64_t)destination->getSector()->getIndex() + 1 };
+				}
+				else
+				{
+					if (!intent.destinationSector
+						|| intent.destinationSector.value > mBuilding.mSectors.size()) continue;
+					auto destinationSector = mBuilding.mSectors[
+						(size_t)intent.destinationSector.value - 1];
+					destination = mBuilding.mGraph->getClosestVertexInSector(
+						destinationSector.get(), intent.destinationPosition);
+				}
 				auto path = mBuilding.mGraph->calculatePath(agent, source, destination);
 				if (path && !path->nodes.empty())
+				{
 					agent->assignPath(std::move(path), intent.wasPathing, false);
+					if (goal != mBuilding.mMovementGoals.end())
+						goal->second.routeLossReason = RouteLossReason::None;
+				}
+				else if (goal != mBuilding.mMovementGoals.end())
+					goal->second.routeLossReason = RouteLossReason::TopologyChanged;
 			}
 			catch (Exception const&)
 			{
 				// The destination was structurally removed or disconnected. The Agent
 				// remains safely idle; this does not invalidate otherwise usable topology.
+				if (goal != mBuilding.mMovementGoals.end())
+					goal->second.routeLossReason = RouteLossReason::TopologyChanged;
 			}
 		}
 		mBuilding.mPausedPathIntents.clear();

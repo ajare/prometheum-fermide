@@ -5,6 +5,7 @@
 #include <exception>
 #include <format>
 #include <fstream>
+#include <functional>
 #include <map>
 #include <memory>
 #include <string>
@@ -372,8 +373,11 @@ namespace core
 			MarkerId marker;
 		};
 
+		enum class PendingMovementCommandType { MoveTo, Cancel };
+
 		struct PendingMovementCommand
 		{
+			PendingMovementCommandType type{ PendingMovementCommandType::MoveTo };
 			AgentId agent;
 			MarkerId marker;
 		};
@@ -381,7 +385,10 @@ namespace core
 		struct CallbackScope
 		{
 			bool active{ false };
+			bool movementCommandIssued{ false };
 			AgentId agent;
+			std::function<MovementCommandResult(MarkerId)> inspectMove;
+			std::function<MovementCommandResult()> inspectCancel;
 			std::vector<PendingMovementCommand> commands;
 		};
 
@@ -404,20 +411,63 @@ namespace core
 			lua_remove(state, backing);
 		}
 
-		void pushCommandResult(lua_State* state, bool accepted, char const* status)
+		void pushCommandResult(lua_State* state, bool accepted, std::string_view status)
 		{
 			lua_newtable(state);
 			lua_pushboolean(state, accepted);
 			lua_setfield(state, -2, "accepted");
-			lua_pushstring(state, status);
+			lua_pushlstring(state, status.data(), status.size());
 			lua_setfield(state, -2, "status");
 			pushImmutableProxy(state);
+		}
+
+		std::string_view movementStatusName(MovementCommandStatus status)
+		{
+			switch (status)
+			{
+			case MovementCommandStatus::Accepted: return "accepted";
+			case MovementCommandStatus::NoOp: return "no_op";
+			case MovementCommandStatus::UnknownAgent: return "unknown_agent";
+			case MovementCommandStatus::InactiveAgent: return "inactive_agent";
+			case MovementCommandStatus::UnknownMarker: return "unknown_marker";
+			case MovementCommandStatus::AgentBusy: return "agent_busy";
+			case MovementCommandStatus::TopologyUnavailable: return "topology_unavailable";
+			case MovementCommandStatus::BehaviourOwned: return "behaviour_owned";
+			}
+			return "unknown";
+		}
+
+		std::string_view routeLossReasonName(RouteLossReason reason)
+		{
+			switch (reason)
+			{
+			case RouteLossReason::Unreachable: return "unreachable";
+			case RouteLossReason::TopologyChanged: return "topology_changed";
+			case RouteLossReason::DestinationRemoved: return "destination_removed";
+			case RouteLossReason::None: break;
+			}
+			return "unknown";
+		}
+
+		std::string_view cancellationReasonName(MovementCancellationReason reason)
+		{
+			return reason == MovementCancellationReason::Explicit ? "explicit" : "unknown";
 		}
 
 		int markerToString(lua_State* state)
 		{
 			(void)luaL_checkudata(state, 1, MarkerMetatable);
 			lua_pushliteral(state, "Marker");
+			return 1;
+		}
+
+		int markerEqual(lua_State* state)
+		{
+			auto* lhs = static_cast<MarkerHandle*>(
+				luaL_testudata(state, 1, MarkerMetatable));
+			auto* rhs = static_cast<MarkerHandle*>(
+				luaL_testudata(state, 2, MarkerMetatable));
+			lua_pushboolean(state, lhs && rhs && lhs->marker == rhs->marker);
 			return 1;
 		}
 
@@ -429,6 +479,8 @@ namespace core
 				lua_setfield(state, -2, "__metatable");
 				lua_pushcfunction(state, markerToString);
 				lua_setfield(state, -2, "__tostring");
+				lua_pushcfunction(state, markerEqual);
+				lua_setfield(state, -2, "__eq");
 			}
 			lua_pop(state, 1);
 		}
@@ -441,13 +493,29 @@ namespace core
 			luaL_setmetatable(state, MarkerMetatable);
 		}
 
-		int queueMoveTo(lua_State* state)
+		CallbackScope* activeScope(lua_State* state)
 		{
 			auto* scope = static_cast<CallbackScope*>(
 				lua_touserdata(state, lua_upvalueindex(1)));
 			if (!scope || !scope->active)
-				return luaL_error(state,
-					"Agent behaviour callback context is no longer active");
+			{
+				luaL_error(state, "Agent behaviour callback context is no longer active");
+				return nullptr;
+			}
+			if (scope->movementCommandIssued)
+			{
+				luaL_error(state,
+					"multiple movement commands in one Agent behaviour callback are a programming error");
+				return nullptr;
+			}
+			scope->movementCommandIssued = true;
+			return scope;
+		}
+
+		int queueMoveTo(lua_State* state)
+		{
+			auto* scope = activeScope(state);
+			if (!scope) return 0;
 
 			MarkerHandle* handle = nullptr;
 			for (int index = 1; index <= lua_gettop(state) && !handle; ++index)
@@ -459,8 +527,23 @@ namespace core
 				return 1;
 			}
 
-			scope->commands.push_back({ scope->agent, handle->marker });
-			pushCommandResult(state, true, "accepted");
+			auto const result = scope->inspectMove(handle->marker);
+			if (result.status == MovementCommandStatus::Accepted)
+				scope->commands.push_back({ PendingMovementCommandType::MoveTo,
+					scope->agent, handle->marker });
+			pushCommandResult(state, result.accepted(), movementStatusName(result.status));
+			return 1;
+		}
+
+		int queueCancelMovement(lua_State* state)
+		{
+			auto* scope = activeScope(state);
+			if (!scope) return 0;
+			auto const result = scope->inspectCancel();
+			if (result.status == MovementCommandStatus::Accepted)
+				scope->commands.push_back({ PendingMovementCommandType::Cancel,
+					scope->agent, {} });
+			pushCommandResult(state, result.accepted(), movementStatusName(result.status));
 			return 1;
 		}
 
@@ -559,6 +642,17 @@ namespace core
 
 	struct AgentBehaviourRuntimeAdapter::Impl
 	{
+		struct PendingOutcome
+		{
+			uint64_t sequence{ 0 };
+			uint64_t tick{ 0 };
+			SimulationEventType type{ SimulationEventType::DestinationReached };
+			MarkerId destination;
+			RouteLossReason routeLossReason{ RouteLossReason::None };
+			MovementCancellationReason cancellationReason{
+				MovementCancellationReason::None };
+		};
+
 		struct Definition
 		{
 			AgentId agent;
@@ -577,7 +671,9 @@ namespace core
 			int configurationReference{ LUA_NOREF };
 			int instanceReference{ LUA_NOREF };
 			bool started{ false };
+			bool disabled{ false };
 			CallbackScope scope;
+			std::vector<PendingOutcome> outcomes;
 		};
 
 		ScratchBudget budget;
@@ -718,54 +814,172 @@ namespace core
 			lua_pushlightuserdata(lua, &instance.scope);
 			lua_pushcclosure(lua, queueMoveTo, 1);
 			lua_setfield(lua, -2, "move_to");
+			lua_pushlightuserdata(lua, &instance.scope);
+			lua_pushcclosure(lua, queueCancelMovement, 1);
+			lua_setfield(lua, -2, "cancel_movement");
 			pushImmutableProxy(lua);
 		}
 
-		void startPending(Building& building)
+		void prepareScope(Building& building, AgentId agentId, Instance& instance,
+			std::vector<PendingMovementCommand> const& pendingCommands)
+		{
+			instance.scope.active = true;
+			instance.scope.movementCommandIssued = false;
+			instance.scope.commands.clear();
+			instance.scope.inspectMove = [&building, agentId, &pendingCommands](MarkerId marker)
+			{
+				auto pending = std::find_if(pendingCommands.rbegin(), pendingCommands.rend(),
+					[agentId](PendingMovementCommand const& command)
+					{ return command.agent == agentId; });
+				if (pending != pendingCommands.rend())
+					return MovementCommandResult{ pending->type == PendingMovementCommandType::MoveTo
+						&& pending->marker == marker ? MovementCommandStatus::NoOp
+						: MovementCommandStatus::AgentBusy };
+				return building.inspectBehaviourMoveToMarker(agentId, marker);
+			};
+			instance.scope.inspectCancel = [&building, agentId, &pendingCommands]
+			{
+				auto pending = std::find_if(pendingCommands.rbegin(), pendingCommands.rend(),
+					[agentId](PendingMovementCommand const& command)
+					{ return command.agent == agentId; });
+				if (pending != pendingCommands.rend())
+					return MovementCommandResult{ pending->type == PendingMovementCommandType::Cancel
+						? MovementCommandStatus::NoOp : MovementCommandStatus::AgentBusy };
+				return building.inspectBehaviourMovementCancellation(agentId);
+			};
+		}
+
+		bool finishCallback(Instance& instance, bool succeeded,
+			std::vector<PendingMovementCommand>& commands)
+		{
+			instance.scope.active = false;
+			if (succeeded)
+				commands.insert(commands.end(), instance.scope.commands.begin(),
+					instance.scope.commands.end());
+			else instance.disabled = true;
+			instance.scope.commands.clear();
+			return succeeded;
+		}
+
+		bool pushCallback(Instance& instance, char const* callback)
+		{
+			auto* lua = state.get();
+			lua_rawgeti(lua, LUA_REGISTRYINDEX, instance.instanceReference);
+			lua_getfield(lua, -1, callback);
+			lua_remove(lua, -2);
+			if (lua_isnil(lua, -1))
+			{
+				lua_pop(lua, 1);
+				return false;
+			}
+			return lua_isfunction(lua, -1);
+		}
+
+		void pushSemanticEvent(PendingOutcome const& outcome)
+		{
+			auto* lua = state.get();
+			lua_newtable(lua);
+			auto const backing = lua_gettop(lua);
+			auto const type = outcome.type == SimulationEventType::DestinationReached
+				? std::string_view("destination_reached")
+				: std::string_view("movement_cancelled");
+			lua_pushlstring(lua, type.data(), type.size());
+			lua_setfield(lua, backing, "type");
+			lua_pushinteger(lua, static_cast<lua_Integer>(outcome.tick));
+			lua_setfield(lua, backing, "tick");
+			lua_pushinteger(lua, static_cast<lua_Integer>(outcome.sequence));
+			lua_setfield(lua, backing, "sequence");
+			pushMarkerHandle(lua, outcome.destination);
+			lua_setfield(lua, backing, "destination");
+			if (outcome.type == SimulationEventType::MovementCancelled)
+			{
+				auto const reason = cancellationReasonName(outcome.cancellationReason);
+				lua_pushlstring(lua, reason.data(), reason.size());
+				lua_setfield(lua, backing, "reason");
+			}
+			pushImmutableProxy(lua);
+		}
+
+		void runBoundaryCallbacks(Building& building)
 		{
 			std::vector<PendingMovementCommand> commands;
+			std::vector<AgentId> disabledAgents;
 			for (auto& [agentId, instance] : instances)
 			{
-				if (instance.started) continue;
+				if (instance.disabled) continue;
 				auto agent = building.mAgents.find(agentId);
 				if (!agent || !agent->isActive()) continue;
-				instance.started = true;
-
 				auto* lua = state.get();
-				auto const base = lua_gettop(lua);
-				lua_rawgeti(lua, LUA_REGISTRYINDEX, instance.instanceReference);
-				lua_getfield(lua, -1, "on_start");
-				if (lua_isnil(lua, -1))
-				{
-					lua_settop(lua, base);
-					continue;
-				}
-				if (!lua_isfunction(lua, -1))
-				{
-					lua_settop(lua, base);
-					continue;
-				}
-				lua_remove(lua, -2);
 
-				instance.scope.active = true;
-				instance.scope.commands.clear();
-				pushContext(instance);
-				lua_rawgeti(lua, LUA_REGISTRYINDEX,
-					instance.configurationReference);
-				auto const succeeded = protectedCall(lua, 2, 0);
-				instance.scope.active = false;
-				if (succeeded)
-					commands.insert(commands.end(), instance.scope.commands.begin(),
-						instance.scope.commands.end());
-				instance.scope.commands.clear();
-				lua_settop(lua, base);
+				if (!instance.started)
+				{
+					instance.started = true;
+					auto const base = lua_gettop(lua);
+					if (pushCallback(instance, "on_start"))
+					{
+						prepareScope(building, agentId, instance, commands);
+						pushContext(instance);
+						lua_rawgeti(lua, LUA_REGISTRYINDEX,
+							instance.configurationReference);
+						finishCallback(instance, protectedCall(lua, 2, 0), commands);
+					}
+					lua_settop(lua, base);
+				}
+
+				if (instance.disabled)
+				{
+					instance.outcomes.clear();
+					disabledAgents.push_back(agentId);
+					continue;
+				}
+
+				std::sort(instance.outcomes.begin(), instance.outcomes.end(),
+					[](PendingOutcome const& lhs, PendingOutcome const& rhs)
+					{ return lhs.sequence < rhs.sequence; });
+				for (auto const& outcome : instance.outcomes)
+				{
+					auto const base = lua_gettop(lua);
+					if (outcome.type == SimulationEventType::RouteLost)
+					{
+						if (pushCallback(instance, "on_route_lost"))
+						{
+							prepareScope(building, agentId, instance, commands);
+							pushMarkerHandle(lua, outcome.destination);
+							auto const reason = routeLossReasonName(outcome.routeLossReason);
+							lua_pushlstring(lua, reason.data(), reason.size());
+							pushContext(instance);
+							finishCallback(instance, protectedCall(lua, 3, 0), commands);
+						}
+					}
+					else if (pushCallback(instance, "on_event"))
+					{
+						prepareScope(building, agentId, instance, commands);
+						pushSemanticEvent(outcome);
+						pushContext(instance);
+						finishCallback(instance, protectedCall(lua, 2, 0), commands);
+					}
+					lua_settop(lua, base);
+					if (instance.disabled) break;
+				}
+				instance.outcomes.clear();
+				if (instance.disabled) disabledAgents.push_back(agentId);
 			}
 
 			// Every callback above has returned and the phase marker is still None.
-			// Applying through the public facade here cannot recursively enter a
-			// callback or mutate an active simulation phase.
+			// Apply only complete successful callback batches, in stable Agent/event
+			// order, through the same validated movement seam as the C++ facade.
 			for (auto const& command : commands)
-				(void)building.moveAgentToMarker(command.agent, command.marker);
+			{
+				if (std::find(disabledAgents.begin(), disabledAgents.end(), command.agent)
+					!= disabledAgents.end()) continue;
+				if (command.type == PendingMovementCommandType::MoveTo)
+					(void)building.moveBehaviourAgentToMarker(
+						command.agent, command.marker);
+				else
+					(void)building.cancelBehaviourAgentMovement(command.agent);
+			}
+			for (auto agent : disabledAgents)
+				(void)building.cancelBehaviourAgentMovement(agent);
 		}
 	};
 
@@ -776,7 +990,7 @@ namespace core
 
 	AgentBehaviourRuntimeAdapter::~AgentBehaviourRuntimeAdapter() = default;
 
-	void AgentBehaviourRuntimeAdapter::runStartupBoundary(Building& building)
+	void AgentBehaviourRuntimeAdapter::runBoundary(Building& building)
 	{
 		if (building.mCurrentPhase != SimulationPhase::None) return;
 		std::vector<Impl::Definition> definitions;
@@ -803,7 +1017,7 @@ namespace core
 			}
 		}
 		mImpl->synchronize(definitions);
-		mImpl->startPending(building);
+		mImpl->runBoundaryCallbacks(building);
 	}
 
 	void AgentBehaviourRuntimeAdapter::observeOutcome(SimulationEvent const& event)
@@ -811,9 +1025,27 @@ namespace core
 		if (event.type != SimulationEventType::DestinationReached
 			&& event.type != SimulationEventType::MovementCancelled
 			&& event.type != SimulationEventType::RouteLost) return;
-		if (!mImpl->instances.contains(event.agent.id)) return;
+		auto found = mImpl->instances.find(event.agent.id);
+		if (found == mImpl->instances.end() || found->second.disabled) return;
+		found->second.outcomes.push_back({ event.sequence, event.tick, event.type,
+			event.destinationMarker, event.routeLossReason,
+			event.movementCancellationReason });
 		++mImpl->observedOutcomeCount;
 		mImpl->lastObservedSequence = event.sequence;
+	}
+
+	void AgentBehaviourRuntimeAdapter::removeInstance(AgentId agent)
+	{
+		auto found = mImpl->instances.find(agent);
+		if (found == mImpl->instances.end()) return;
+		mImpl->release(found->second);
+		mImpl->instances.erase(found);
+	}
+
+	bool AgentBehaviourRuntimeAdapter::isInstanceDisabled(AgentId agent) const
+	{
+		auto found = mImpl->instances.find(agent);
+		return found != mImpl->instances.end() && found->second.disabled;
 	}
 
 	void AgentBehaviourRuntimeAdapter::reset()

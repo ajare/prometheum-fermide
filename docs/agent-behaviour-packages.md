@@ -86,7 +86,7 @@ return {
       end,
       on_event = function(event, context) end,
       on_timer = function(name, context) end,
-      on_route_lost = function(reason, context) end,
+      on_route_lost = function(destination, reason, context) end,
       on_stop = function(reason, context) end,
     }
   end,
@@ -98,10 +98,21 @@ package/module/line diagnostics and protected-call tracebacks. Configuration
 assignment is authored separately. At the first simulation boundary, every
 assigned Agent receives a private module environment and instance; `on_start`
 runs once in Agent-ID order. `context.move_to` accepts only an opaque Marker
-handle from validated configuration and returns an immutable semantic result
-with `accepted` and `status` fields. Context capabilities expire when the
-callback returns, and queued startup movement is applied before first-tick
-intent collection.
+handle from validated configuration; `context.cancel_movement` requests
+cancellation at the next safe boundary. Both return an immutable semantic result
+with `accepted` and `status` fields. A different destination while busy reports
+`agent_busy`, and issuing more than one movement command in one callback disables
+that instance as a programming error without applying the callback's commands.
+Context capabilities expire when the callback returns, and queued movement is
+applied only after callbacks return.
+
+`on_event` receives immutable `destination_reached` and `movement_cancelled`
+values in stable event-sequence order. Both carry `tick`, `sequence`, and an
+opaque `destination`; cancellation also carries the semantic reason `explicit`.
+`on_route_lost` receives the opaque destination and one of `unreachable`,
+`topology_changed`, or `destination_removed` after the engine has cleared the old
+goal. Successful automatic same-destination replanning remains internal and does
+not call Lua.
 
 ## Building persistence
 

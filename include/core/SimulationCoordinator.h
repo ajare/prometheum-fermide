@@ -83,8 +83,17 @@ namespace core
 		// resource, interaction request, and device operation that names it
 		// before the entity itself goes. A refusal leaves the Agent untouched.
 		EntityRemovalResult removeAgent(AgentId id);
-		MovementCommandResult moveAgentToMarker(AgentId agent, MarkerId marker);
-		MovementCommandResult cancelAgentMovement(AgentId agent);
+		MovementCommandResult inspectMoveAgentToMarker(AgentId agent, MarkerId marker,
+			bool behaviourCommand) const;
+		MovementCommandResult moveAgentToMarker(AgentId agent, MarkerId marker,
+			bool behaviourCommand = false);
+		MovementCommandResult inspectCancelAgentMovement(AgentId agent,
+			bool behaviourCommand) const;
+		MovementCommandResult cancelAgentMovement(AgentId agent,
+			bool behaviourCommand = false);
+		// Assignment replacement/removal is paused-only, so it can discard both
+		// authored/manual and runtime route intent without publishing an outcome.
+		void clearAgentMovementForBehaviourEdit(AgentId agent);
 		void updateMovementGoals();
 
 		// Wakes every activated Agent the Building owns. A deactivated Agent is

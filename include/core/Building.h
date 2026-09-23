@@ -468,7 +468,8 @@ namespace core
 			Vector2 position;
 			bool cancelling{ false };
 			SectorId sector{};
-			bool unreachable{ false };
+			RouteLossReason routeLossReason{ RouteLossReason::None };
+			bool behaviourOwned{ false };
 		};
 		std::map<AgentId, MovementGoal> mMovementGoals;
 
@@ -503,6 +504,11 @@ namespace core
 		bool inspectAgentBehaviourAssignments(AgentBehaviourRegistry const& registry,
 			std::string* diagnostic = nullptr) const;
 		uint32_t countAgentBehaviourAssignments() const;
+		MovementCommandResult inspectBehaviourMoveToMarker(AgentId agent,
+			MarkerId marker) const;
+		MovementCommandResult moveBehaviourAgentToMarker(AgentId agent, MarkerId marker);
+		MovementCommandResult inspectBehaviourMovementCancellation(AgentId agent) const;
+		MovementCommandResult cancelBehaviourAgentMovement(AgentId agent);
 
 		// Coordinated external-document history keeps only a weak copy. It can
 		// therefore recognize that this exact Building closed without retaining it
@@ -766,8 +772,9 @@ namespace core
 		// What a reset/replay path keeps of a live Agent so the Agent can be put
 		// back once the replay is done. The Agent group assignment belongs to what
 		// is kept: an edit that keeps an Agent keeps how it is classified (#122).
-		// Activation belongs to what is kept for the same reason: an edit that
-		// keeps an Agent keeps whether it is simulated (#118). The Sector the
+		// Activation and Agent behaviour assignment belong to what is kept for the
+		// same reason: an edit that keeps an Agent keeps its simulation and movement
+		// authority. The Sector the
 		// Agent was standing in travels with it because the edits decide which
 		// Agents they shift or drop by where those Agents were, not by where they
 		// land afterwards.
@@ -783,6 +790,7 @@ namespace core
 			std::set<AgentTagId> agentTags;
 			std::optional<AgentPropertySample> walkSpeedModifierSample;
 			std::optional<AgentPropertySample> heightModifierSample;
+			std::optional<AgentBehaviourAssignment> behaviourAssignment;
 			bool active{ true };
 		};
 
@@ -859,7 +867,8 @@ namespace core
 		std::vector<ConstructionRecord> recordsWithoutLayer(uint32_t layerIndex,
 			LayerDeleteImpact& impact) const;
 
-		void resetForDeserialization(std::string name, uint32_t cellsWide, uint32_t decksHigh);
+		void resetForDeserialization(std::string name, uint32_t cellsWide, uint32_t decksHigh,
+			bool preserveBehaviourRuntime = false);
 
 		// Constructs a validation candidate with the same dimensions and layer count as this Building.
 		std::unique_ptr<Building> makeCandidateBuilding() const;
@@ -1210,6 +1219,9 @@ namespace core
 		std::optional<AgentBehaviourAssignment> const& getAgentBehaviourAssignment(
 			AgentId agent) const;
 		uint32_t getAgentBehaviourAssignmentCount() const;
+		// True while an enabled instance, or its safe movement teardown, owns the
+		// Agent's movement intent. Editor/manual path controls use this one gate.
+		bool agentBehaviourOwnsMovement(AgentId agent) const;
 
 		uint32_t getCellsWide() const;
 

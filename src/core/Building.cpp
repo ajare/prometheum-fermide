@@ -536,6 +536,11 @@ namespace core
 			if (diagnostic) *diagnostic = "The Agent behaviour assignment is unchanged";
 			return false;
 		}
+		// Assignment hands movement authority to a fresh instance. A manual route,
+		// or runtime intent from the assignment being replaced, must not survive
+		// into that instance.
+		mAgentBehaviourRuntime->removeInstance(agentId);
+		mSimulationCoordinator.clearAgentMovementForBehaviourEdit(agentId);
 		mAgents.find(agentId)->setBehaviourAssignment(std::move(assignment));
 		modify();
 		return true;
@@ -561,6 +566,8 @@ namespace core
 			if (diagnostic) *diagnostic = "The Agent has no behaviour assignment to clear";
 			return false;
 		}
+		mAgentBehaviourRuntime->removeInstance(agentId);
+		mSimulationCoordinator.clearAgentMovementForBehaviourEdit(agentId);
 		mAgents.find(agentId)->clearBehaviourAssignment();
 		modify();
 		return true;
@@ -588,6 +595,18 @@ namespace core
 	uint32_t Building::getAgentBehaviourAssignmentCount() const
 	{
 		return countAgentBehaviourAssignments();
+	}
+
+	bool Building::agentBehaviourOwnsMovement(AgentId id) const
+	{
+		auto agent = mAgents.find(id);
+		if (!agent || !agent->getBehaviourAssignment()) return false;
+		if (!mAgentBehaviourRuntime->isInstanceDisabled(id)) return true;
+		// A failed instance stops issuing commands immediately, but an already
+		// committed crossing still drains through the ordinary safe-cancellation
+		// protocol before manual controls return.
+		auto goal = mMovementGoals.find(id);
+		return goal != mMovementGoals.end() && goal->second.behaviourOwned;
 	}
 
 	bool Building::inspectAgentBehaviourAssignments(
@@ -6548,9 +6567,30 @@ namespace core
 		return mSimulationCoordinator.moveAgentToMarker(agent, marker);
 	}
 
+	MovementCommandResult Building::inspectBehaviourMoveToMarker(
+		AgentId agent, MarkerId marker) const
+	{
+		return mSimulationCoordinator.inspectMoveAgentToMarker(agent, marker, true);
+	}
+
+	MovementCommandResult Building::moveBehaviourAgentToMarker(AgentId agent, MarkerId marker)
+	{
+		return mSimulationCoordinator.moveAgentToMarker(agent, marker, true);
+	}
+
 	MovementCommandResult Building::cancelAgentMovement(AgentId agent)
 	{
 		return mSimulationCoordinator.cancelAgentMovement(agent);
+	}
+
+	MovementCommandResult Building::inspectBehaviourMovementCancellation(AgentId agent) const
+	{
+		return mSimulationCoordinator.inspectCancelAgentMovement(agent, true);
+	}
+
+	MovementCommandResult Building::cancelBehaviourAgentMovement(AgentId agent)
+	{
+		return mSimulationCoordinator.cancelAgentMovement(agent, true);
 	}
 
 	EntityLookup<Agent> Building::lookupAgent(AgentId id)

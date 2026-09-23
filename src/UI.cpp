@@ -123,6 +123,8 @@ namespace
 		shared_ptr<core::Path> path, bool startPathing, bool replaceCurrentPath)
 	{
 		if (!building || !agent || !path) return false;
+		auto const agentId = building->getAgentId(agent);
+		if (agentId && building->agentBehaviourOwnsMovement(agentId)) return false;
 		auto undo = captureDocumentSnapshot(building);
 		if (!undo) return false;
 
@@ -201,9 +203,11 @@ namespace
 	UISettings::SelectionMode gPathSelectionPreviousMode{ UISettings::SelectionMode::Object };
 	bool gPathSelectionPreviouslyRenderedGraph{ false };
 
-	void beginAgentPathSelection()
+	void beginAgentPathSelection(shared_ptr<core::Building> const& building)
 	{
 		if (!gSelectedAgent || gSelectingAgentPathDestination) return;
+		auto const id = building ? building->getAgentId(gSelectedAgent) : core::AgentId{};
+		if (building && id && building->agentBehaviourOwnsMovement(id)) return;
 		gSelectingAgentPathDestination = true;
 		gPathSelectionPreviousMode = gUISettings.selectionMode;
 		gPathSelectionPreviouslyRenderedGraph = gUISettings.renderGraph;
@@ -4043,7 +4047,7 @@ void handleShortcuts(shared_ptr<core::Building>& building)
 	if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_P, 0, ImGuiInputFlags_RouteGlobalLow)
 		&& gSelectedAgent && !ImGui::IsAnyItemActive() && !ImGui::IsAnyItemFocused())
 	{
-		beginAgentPathSelection();
+		beginAgentPathSelection(building);
 	}
 
 	// Start or stop the simulation
@@ -6705,9 +6709,15 @@ void renderSelectedAgentPanel(shared_ptr<core::Building> building)
 			"Select a destination vertex (Escape to cancel)");
 		if (ImGui::Button("Cancel path selection")) endAgentPathSelection();
 	}
-	else if (ImGui::Button("Select path destination (Ctrl+P)"))
+	else
 	{
-		beginAgentPathSelection();
+		auto const behaviourOwnsMovement = building->agentBehaviourOwnsMovement(id);
+		ImGui::BeginDisabled(behaviourOwnsMovement);
+		if (ImGui::Button("Select path destination (Ctrl+P)"))
+			beginAgentPathSelection(building);
+		ImGui::EndDisabled();
+		if (behaviourOwnsMovement && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+			ImGui::SetTooltip("The enabled Agent behaviour owns movement");
 	}
 
 	const char* state = "Unknown";
@@ -6743,6 +6753,8 @@ void renderSelectedAgentPanel(shared_ptr<core::Building> building)
 	if (gSelectedVertex)
 	{
 		ImGui::Text("Selected vertex: %s", gSelectedVertex->getDescription().c_str());
+		auto const behaviourOwnsMovement = building->agentBehaviourOwnsMovement(id);
+		ImGui::BeginDisabled(behaviourOwnsMovement);
 		if (ImGui::Button("Path to selected vertex"))
 		{
 			auto newPath = building->getGraph()->calculatePath(gSelectedAgent, gSelectedVertex);
@@ -6753,6 +6765,7 @@ void renderSelectedAgentPanel(shared_ptr<core::Building> building)
 				applyAgentPathEdit(building, gSelectedAgent, std::move(newPath), true, true);
 			}
 		}
+		ImGui::EndDisabled();
 	}
 }
 
@@ -6996,7 +7009,8 @@ void renderGraphPanel(shared_ptr<const core::Graph> graph)
 }
 
 
-void renderPathingPanel(shared_ptr<const core::Agent> /* agent */)
+void renderPathingPanel(shared_ptr<core::Building> const& building,
+	shared_ptr<const core::Agent> /* agent */)
 {
 		string selectedVertexText = format("Selected vertex: {}", gSelectedVertex ? gSelectedVertex->getDescription() : "<none>");
 		string hoveredVertexText = format("Hovered vertex: {}", gHoveredVertex ? gHoveredVertex->getDescription() : "<none>");
@@ -7009,6 +7023,10 @@ void renderPathingPanel(shared_ptr<const core::Agent> /* agent */)
 		if (path)
 		{
 			auto agentIsIdle = gSelectedAgent->getState() == core::Agent::State::Idle;
+			auto const id = building ? building->getAgentId(gSelectedAgent) : core::AgentId{};
+			auto const behaviourOwnsMovement = building && id
+				&& building->agentBehaviourOwnsMovement(id);
+			ImGui::BeginDisabled(behaviourOwnsMovement);
 
 			if (!agentIsIdle)
 			{
@@ -7045,6 +7063,7 @@ void renderPathingPanel(shared_ptr<const core::Agent> /* agent */)
 			{
 				imgui::PopDisabled();
 			}
+			ImGui::EndDisabled();
 
 			ImGuiTableFlags flags = 
 				ImGuiTableFlags_SizingStretchSame | 
@@ -7271,7 +7290,7 @@ void renderControlsWindow(shared_ptr<core::Building> building, shared_ptr<const 
 	if (ImGui::CollapsingHeader("Building", ImGuiTreeNodeFlags_DefaultOpen))
 		renderBuildingPanel(building);
 	if (ImGui::CollapsingHeader("Path finding"))
-		renderPathingPanel(pathingAgent);
+		renderPathingPanel(building, pathingAgent);
 	if (ImGui::CollapsingHeader("Graph"))
 		renderGraphPanel(graph);
 	if (ImGui::CollapsingHeader("Log"))

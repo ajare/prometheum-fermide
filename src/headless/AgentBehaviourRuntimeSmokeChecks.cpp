@@ -180,6 +180,20 @@ return { api_version = 1, factory = function() return {} end }
 		require(building.setAgentBehaviourAssignment(second, behaviour, revision,
 			{ { "destination", markers[1] } }),
 			"Could not assign the second startup behaviour");
+		require(building.agentBehaviourOwnsMovement(first)
+			&& building.agentBehaviourOwnsMovement(second),
+			"Assigned enabled behaviours did not acquire movement ownership");
+		require(building.moveAgentToMarker(first, markers[0]).status
+				== core::MovementCommandStatus::BehaviourOwned
+			&& building.cancelAgentMovement(first).status
+				== core::MovementCommandStatus::BehaviourOwned,
+			"Manual movement commands bypassed behaviour ownership");
+		auto firstAgent = building.lookupAgent(first).entity;
+		auto manualTarget = building.getGraph()->getClosestVertexInSector(
+			firstAgent->getSector(), { 3.5f, 0.0f });
+		firstAgent->setPath(building.getGraph()->calculatePath(firstAgent, manualTarget), true);
+		require(!firstAgent->getPath(),
+			"Direct manual Path assignment bypassed behaviour ownership");
 		require(building.resumeSimulation(), "Could not resume the Lua startup fixture");
 		building.consumeSimulationEvents();
 
@@ -199,8 +213,8 @@ return { api_version = 1, factory = function() return {} end }
 			{
 				if (event.type != core::SimulationEventType::DestinationReached) continue;
 				++reached;
-				digest << event.tick << ':' << event.agent.id.value << ':'
-					<< event.destinationMarker.value << '|';
+				digest << event.tick << ':' << event.sequence << ':'
+					<< event.agent.id.value << ':' << event.destinationMarker.value << '|';
 			}
 		};
 		observePublicEvents();
@@ -218,7 +232,10 @@ return { api_version = 1, factory = function() return {} end }
 			"Shared behaviour instances did not retain distinct Marker configuration");
 		building.advanceTicks(5);
 		observePublicEvents();
-		require(reached == 2, "on_start ran more than once for one instance lifetime");
+		require(reached == 2, "on_start or destination_reached delivery ran more than once");
+		require(building.agentBehaviourOwnsMovement(first)
+			&& building.agentBehaviourOwnsMovement(second),
+			"A valid immutable destination_reached callback disabled its instance");
 		digest << completed.tick << ':'
 			<< std::bit_cast<uint32_t>(completed.agents[0].globalPosition.x) << ':'
 			<< std::bit_cast<uint32_t>(completed.agents[1].globalPosition.x);
@@ -267,6 +284,23 @@ return {
           error("command result was mutable")
         end
         instance.retained_context = context
+      end,
+      on_event = function(event, context)
+        instance.events = (instance.events or 0) + 1
+        if instance.events ~= 1
+            or event.type ~= "destination_reached"
+            or type(event.tick) ~= "number"
+            or type(event.sequence) ~= "number"
+            or event.destination ~= configuration.destination then
+          error("destination_reached payload was missing, mutable, or duplicated")
+        end
+        if pcall(function() event.type = "changed" end) then
+          error("semantic movement event was mutable")
+        end
+        local cancellation = context.cancel_movement()
+        if not cancellation.accepted or cancellation.status ~= "no_op" then
+          error("idle cancellation did not return semantic no_op")
+        end
       end
     }
   end
@@ -282,6 +316,234 @@ return {
 		auto const second = runStartupMovement(registry, behaviour);
 		require(first == second,
 			"Per-Building Lua startup and movement were not deterministic");
+	}
+
+	void routeLossAndTopologyLifecycle()
+	{
+		TemporaryDirectory temporary;
+		auto const package = temporary.path / "lifecycle.behaviours";
+		std::filesystem::create_directories(package);
+		auto registry = core::AgentBehaviourRegistry::create();
+		registry->saveTo((package / "behaviours.yaml").string());
+		writeText(package / "lifecycle.lua", R"lua(
+local host = require("prometheum.v1")
+return {
+  api_version = host.api_version,
+  factory = function(configuration)
+    local losses = 0
+    return {
+      on_start = function(context)
+        local result = context.move_to(configuration.destination)
+        if not result.accepted or result.status ~= "accepted" then error(result.status) end
+      end,
+      on_route_lost = function(destination, reason, context)
+        losses = losses + 1
+        if losses ~= 1 or destination ~= configuration.destination
+            or reason ~= configuration.expected_reason then
+          error("incorrect or duplicate route-loss callback")
+        end
+        local result = context.move_to(configuration.fallback)
+        if not result.accepted or result.status ~= "accepted" then error(result.status) end
+      end
+    }
+  end
+}
+)lua");
+		auto const behaviour = registry->addAgentBehaviour("Lifecycle", "lifecycle.lua", {
+			{ "destination", core::AgentBehaviourSchemaType::Marker },
+			{ "fallback", core::AgentBehaviourSchemaType::Marker },
+			{ "expected_reason", core::AgentBehaviourSchemaType::String }
+		});
+		require(registry->lookupAgentBehaviour(behaviour)->getModuleStatus()
+				== core::AgentBehaviourModuleStatus::Loaded,
+			"The route-loss lifecycle fixture did not preflight");
+
+		auto runTopology = [&](bool disconnect)
+		{
+			core::Building building(disconnect ? "Lost route" : "Replacement route", 8, 2);
+			auto const front = building.addRoom("Front", 0, 0, 0, 8, 1);
+			auto const back = building.addRoom("Back", 1, 0, 0, 8, 1);
+			auto const door = building.addSectorDoor(front, 0, 2, {});
+			building.addSectorMarker(back, 0, 6.5f, "Destination");
+			building.addSectorMarker(front, 0, 0.5f, "Fallback");
+			building.finishBuild();
+			auto const markers = building.getMarkerIds();
+			auto const id = building.createAgent("Walker", front, 0, 0.5f);
+			building.pauseSimulation();
+			building.attachAgentBehaviourRegistry("lifecycle.behaviours", registry);
+			auto const revision = registry->lookupAgentBehaviour(behaviour)->getRevision();
+			require(building.setAgentBehaviourAssignment(id, behaviour, revision, {
+				{ "destination", markers[0] }, { "fallback", markers[1] },
+				{ "expected_reason", std::string("topology_changed") }
+			}), "Could not assign topology lifecycle behaviour");
+			require(building.resumeSimulation(), "Could not start topology lifecycle fixture");
+			building.consumeSimulationEvents();
+			building.advanceTicks(5);
+			building.consumeSimulationEvents();
+			building.pauseSimulation();
+			if (disconnect)
+				require(building.removeSectorDoor(front, door.door.index),
+					"Could not remove the topology fixture Door");
+			building.finishBuild();
+			require(building.resumeSimulation(), "Could not resume rebuilt topology fixture");
+			building.consumeSimulationEvents();
+
+			unsigned losses = 0, reached = 0;
+			core::MarkerId reachedMarker;
+			for (unsigned tick = 0; tick < 3000 && reached == 0; ++tick)
+			{
+				building.advanceTick();
+				for (auto const& event : building.consumeSimulationEvents())
+				{
+					if (event.type == core::SimulationEventType::RouteLost)
+					{
+						++losses;
+						require(event.destinationMarker == markers[0]
+							&& event.routeLossReason == core::RouteLossReason::TopologyChanged,
+							"Topology route loss lacked its destination or semantic reason");
+					}
+					if (event.type == core::SimulationEventType::DestinationReached)
+					{
+						++reached;
+						reachedMarker = event.destinationMarker;
+					}
+				}
+			}
+			require(reached == 1 && losses == (disconnect ? 1u : 0u)
+				&& reachedMarker == markers[disconnect ? 1u : 0u],
+				std::string(disconnect
+					? "Failed topology restoration did not call on_route_lost exactly once"
+					: "Valid same-destination topology replanning called Lua or lost its goal")
+					+ " (losses=" + std::to_string(losses)
+					+ ", reached=" + std::to_string(reached)
+					+ ", marker=" + std::to_string(reachedMarker.value) + ")");
+		};
+		runTopology(false);
+		runTopology(true);
+
+		core::Building unreachable("Initial route loss", 12, 2);
+		auto const origin = unreachable.addRoom("Origin", 0, 0, 0, 6, 1);
+		auto const isolated = unreachable.addRoom("Isolated", 1, 0, 6, 6, 1);
+		unreachable.addSectorMarker(isolated, 0, 3.5f, "Destination");
+		unreachable.addSectorMarker(origin, 0, 4.5f, "Fallback");
+		unreachable.finishBuild();
+		auto const markers = unreachable.getMarkerIds();
+		auto const id = unreachable.createAgent("Walker", origin, 0, 0.5f);
+		unreachable.pauseSimulation();
+		unreachable.attachAgentBehaviourRegistry("lifecycle.behaviours", registry);
+		auto const revision = registry->lookupAgentBehaviour(behaviour)->getRevision();
+		require(unreachable.setAgentBehaviourAssignment(id, behaviour, revision, {
+			{ "destination", markers[0] }, { "fallback", markers[1] },
+			{ "expected_reason", std::string("unreachable") }
+		}), "Could not assign initial route-loss behaviour");
+		require(unreachable.resumeSimulation(), "Could not start initial route-loss fixture");
+		unreachable.consumeSimulationEvents();
+		unsigned losses = 0, reached = 0;
+		for (unsigned tick = 0; tick < 1500 && reached == 0; ++tick)
+		{
+			unreachable.advanceTick();
+			for (auto const& event : unreachable.consumeSimulationEvents())
+			{
+				if (event.type == core::SimulationEventType::RouteLost)
+				{
+					++losses;
+					require(event.destinationMarker == markers[0]
+						&& event.routeLossReason == core::RouteLossReason::Unreachable,
+						"Initial route loss lacked its destination or unreachable reason");
+				}
+				if (event.type == core::SimulationEventType::DestinationReached) ++reached;
+			}
+		}
+		require(losses == 1 && reached == 1,
+			"Initial unreachability did not clear the goal before one fallback command");
+	}
+
+	void programmingErrorDisablesMovementOwnership()
+	{
+		TemporaryDirectory temporary;
+		auto const package = temporary.path / "programming-error.behaviours";
+		std::filesystem::create_directories(package);
+		auto registry = core::AgentBehaviourRegistry::create();
+		registry->saveTo((package / "behaviours.yaml").string());
+		writeText(package / "duplicate.lua", R"lua(
+local host = require("prometheum.v1")
+return {
+  api_version = host.api_version,
+  factory = function(configuration)
+    return { on_start = function(context)
+      context.move_to(configuration.destination)
+      context.cancel_movement()
+    end }
+  end
+}
+)lua");
+		auto const behaviour = registry->addAgentBehaviour("Duplicate", "duplicate.lua",
+			{ { "destination", core::AgentBehaviourSchemaType::Marker } });
+		writeText(package / "moving.lua", R"lua(
+local host = require("prometheum.v1")
+return {
+  api_version = host.api_version,
+  factory = function(configuration)
+    return { on_start = function(context)
+      local result = context.move_to(configuration.destination)
+      if not result.accepted then error(result.status) end
+    end }
+  end
+}
+)lua");
+		auto const movingBehaviour = registry->addAgentBehaviour("Moving", "moving.lua",
+			{ { "destination", core::AgentBehaviourSchemaType::Marker } });
+		core::Building building("Programming error", 8, 2);
+		auto const room = building.addRoom("Room", 0, 0, 0, 8, 1);
+		building.addSectorMarker(room, 0, 6.5f, "Destination");
+		building.addSectorMarker(room, 0, 0.5f, "Return");
+		building.finishBuild();
+		auto const markers = building.getMarkerIds();
+		auto const marker = markers[0];
+		auto const id = building.createAgent("Walker", room, 0, 0.5f);
+		building.pauseSimulation();
+		building.attachAgentBehaviourRegistry("programming-error.behaviours", registry);
+		require(building.setAgentBehaviourAssignment(id, behaviour,
+			registry->lookupAgentBehaviour(behaviour)->getRevision(),
+			{ { "destination", marker } }), "Could not assign duplicate-command fixture");
+		require(building.resumeSimulation(), "Could not start duplicate-command fixture");
+		building.consumeSimulationEvents();
+		building.advanceTick();
+		require(!building.agentBehaviourOwnsMovement(id)
+			&& !building.lookupAgent(id).entity->getPath(),
+			"A multiple-movement-command callback partially applied or retained ownership");
+		require(building.moveAgentToMarker(id, marker).accepted(),
+			"Disabling the failed instance did not restore manual movement controls");
+		building.advanceTicks(1000);
+		unsigned reached = 0;
+		for (auto const& event : building.consumeSimulationEvents())
+			if (event.type == core::SimulationEventType::DestinationReached) ++reached;
+		require(reached == 1, "Manual movement did not work after instance disablement");
+
+		building.pauseSimulation();
+		require(building.clearAgentBehaviourAssignment(id),
+			"Could not unassign the disabled behaviour");
+		require(!building.agentBehaviourOwnsMovement(id),
+			"Unassignment left runtime movement ownership behind");
+
+		require(building.setAgentBehaviourAssignment(id, movingBehaviour,
+			registry->lookupAgentBehaviour(movingBehaviour)->getRevision(),
+			{ { "destination", markers[1] } }),
+			"Could not assign the active-unassignment fixture");
+		require(building.resumeSimulation(), "Could not start active-unassignment fixture");
+		building.advanceTick();
+		require(building.lookupAgent(id).entity->getPath()
+			&& building.agentBehaviourOwnsMovement(id),
+			"The active-unassignment fixture did not acquire a route");
+		building.pauseSimulation();
+		require(building.clearAgentBehaviourAssignment(id),
+			"Could not unassign an actively moving behaviour");
+		require(!building.agentBehaviourOwnsMovement(id)
+			&& !building.lookupAgent(id).entity->getPath(),
+			"Active unassignment retained runtime movement ownership");
+		require(building.resumeSimulation(), "Could not resume after active unassignment");
+		require(building.moveAgentToMarker(id, markers[1]).accepted(),
+			"Active unassignment did not restore manual movement commands");
 	}
 
 	void registryRetainsLoadedAndErrorStatus()
@@ -321,5 +583,7 @@ void runAgentBehaviourRuntimeSmokeChecks()
 	customLoaderIsReservedAndImmutable();
 	scratchExecutionIsBudgeted();
 	independentStartupInstancesMoveDeterministically();
+	routeLossAndTopologyLifecycle();
+	programmingErrorDisablesMovementOwnership();
 	registryRetainsLoadedAndErrorStatus();
 }

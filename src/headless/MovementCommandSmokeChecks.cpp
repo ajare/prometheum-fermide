@@ -40,7 +40,16 @@ namespace
 		building.advanceTick();
 		auto events = building.consumeSimulationEvents();
 		unsigned cancelled = 0;
-		for (auto const& event : events) cancelled += event.type == core::SimulationEventType::MovementCancelled;
+		for (auto const& event : events)
+			if (event.type == core::SimulationEventType::MovementCancelled)
+			{
+				++cancelled;
+				require(event.destinationMarker == markers[0]
+					&& event.movementCancellationReason
+						== core::MovementCancellationReason::Explicit
+					&& event.tick != 0 && event.sequence != 0,
+					"Cancellation event lacked immutable semantic payload");
+			}
 		require(cancelled == 1, "Cancellation outcome missing or duplicated");
 		require(building.cancelAgentMovement(id).status == Status::NoOp, "Idle cancellation not idempotent");
 		require(building.moveAgentToMarker(id, markers[1]).accepted(), "Replacement after cancellation refused");

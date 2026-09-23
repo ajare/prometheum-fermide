@@ -239,6 +239,8 @@ namespace core
 
 		void startIdling();
 
+		void startPathingInternal();
+
 		bool nextPathNode();
 
 		void moveToVertex(float frameTime);

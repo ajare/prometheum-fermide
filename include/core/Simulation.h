@@ -288,9 +288,11 @@ namespace core
 
 	enum struct MovementCommandStatus
 	{
-		Accepted, NoOp, UnknownAgent, InactiveAgent, UnknownMarker, AgentBusy, TopologyUnavailable
+		Accepted, NoOp, UnknownAgent, InactiveAgent, UnknownMarker, AgentBusy,
+		TopologyUnavailable, BehaviourOwned
 	};
 	enum struct RouteLossReason { None, Unreachable, TopologyChanged, DestinationRemoved };
+	enum struct MovementCancellationReason { None, Explicit };
 	struct MovementCommandResult
 	{
 		MovementCommandStatus status;
@@ -348,6 +350,8 @@ namespace core
 		// Semantic movement payload; consumers need not inspect traversal snapshots.
 		MarkerId destinationMarker{};
 		RouteLossReason routeLossReason{ RouteLossReason::None };
+		MovementCancellationReason movementCancellationReason{
+			MovementCancellationReason::None };
 		std::string diagnostic;
 	};
 

@@ -461,6 +461,8 @@ namespace core
 
 	void Agent::setPath(shared_ptr<Path> path, bool startPathing)
 	{
+		if (mBuilding
+			&& mBuilding->agentBehaviourOwnsMovement(mBuilding->getAgentId(this))) return;
 		mResetPosition = mPosition;
 		mResetPath = path;
 		mResetPathActive = startPathing;
@@ -535,7 +537,7 @@ namespace core
 
 		if (startPathing)
 		{
-			this->startPathing();
+			startPathingInternal();
 		}
 	}
 
@@ -552,6 +554,8 @@ namespace core
 
 	void Agent::clearPath()
 	{
+		if (mBuilding
+			&& mBuilding->agentBehaviourOwnsMovement(mBuilding->getAgentId(this))) return;
 		clearRuntimePath();
 		mResetPosition = mPosition;
 		mResetPath.reset();
@@ -559,7 +563,7 @@ namespace core
 		modify();
 	}
 
-	void Agent::startPathing()
+	void Agent::startPathingInternal()
 	{
 		if (!mPath.path || mPath.path->nodes.empty())
 		{
@@ -574,8 +578,17 @@ namespace core
 		addLogMessage(getDescription(), 0, LogLevel::Debug, format("Started pathing"));
 	}
 
+	void Agent::startPathing()
+	{
+		if (mBuilding
+			&& mBuilding->agentBehaviourOwnsMovement(mBuilding->getAgentId(this))) return;
+		startPathingInternal();
+	}
+
 	void Agent::pausePathing()
 	{
+		if (mBuilding
+			&& mBuilding->agentBehaviourOwnsMovement(mBuilding->getAgentId(this))) return;
 		cancelTraversal();
 		mState = State::Idle;
 
@@ -940,7 +953,7 @@ namespace core
 
 		if (mPath.path)
 		{
-			startPathing();
+			startPathingInternal();
 		}
 	}
 
