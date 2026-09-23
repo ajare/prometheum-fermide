@@ -4,6 +4,10 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
+
+#include "DocumentHistory.h"
+#include "core/EntityId.h"
 
 namespace core
 {
@@ -67,6 +71,32 @@ bool saveAgentBehaviourRegistry(
 
 bool attachedAgentBehaviourRegistryIsModified(
 	std::shared_ptr<const core::Building> const& building);
+
+// Definition and dependent-Building documents keep separate history entries.
+DocumentHistory& agentBehaviourRegistryDocumentHistory(
+	std::shared_ptr<core::AgentBehaviourRegistry> const& registry);
+DocumentHistory& agentBehaviourBuildingDocumentHistory(
+	std::shared_ptr<core::Building> const& building);
+uint64_t loadedAgentBehaviourUsageCount(
+	core::AgentBehaviourRegistry const& registry, core::AgentBehaviourId id);
+std::string agentBehaviourDeleteConfirmationText(
+	core::AgentBehaviourRegistry const& registry, core::AgentBehaviourId id);
+bool commitAgentBehaviourDelete(
+	std::shared_ptr<core::AgentBehaviourRegistry> const& registry,
+	core::AgentBehaviourId id, std::string& diagnostic);
+void requestAgentBehaviourDelete(
+	std::shared_ptr<core::AgentBehaviourRegistry> const& registry,
+	core::AgentBehaviourId id);
+bool agentBehaviourDeletePending(core::AgentBehaviourId* id = nullptr,
+	uint64_t* loadedAgentCount = nullptr,
+	std::string* consequence = nullptr);
+bool confirmPendingAgentBehaviourDelete(
+	std::shared_ptr<core::AgentBehaviourRegistry> const& registry,
+	std::string& diagnostic);
+void cancelPendingAgentBehaviourDelete();
+bool restoreAgentBehaviourRegistrySnapshot(
+	std::shared_ptr<core::AgentBehaviourRegistry> const& registry, bool redo,
+	std::string* diagnostic = nullptr);
 
 void resetBehavioursPanelState();
 void forgetAgentBehaviourRegistryDocument(

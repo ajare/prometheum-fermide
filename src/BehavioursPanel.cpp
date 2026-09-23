@@ -1,6 +1,8 @@
 #include "BehavioursPanel.h"
 
 #include <filesystem>
+#include <map>
+#include <sstream>
 #include <string>
 #include <stdexcept>
 #include <utility>
@@ -11,6 +13,8 @@
 #include "core/AgentBehaviourRegistryDocument.h"
 #include "core/Building.h"
 #include "core/Log.h"
+#include "core/SerializationWorkData.h"
+#include "core/YamlSerializer.h"
 #include "imgui/IconsFontAwesome5.h"
 #include "imgui/imgui.h"
 
@@ -19,6 +23,87 @@ using namespace std;
 namespace
 {
 	vector<core::AgentBehaviourReloadDiagnostic> gReloadDiagnostics;
+	map<string, DocumentHistory> gBehaviourRegistryHistories;
+	map<weak_ptr<void const>, DocumentHistory,
+		owner_less<weak_ptr<void const>>> gBehaviourBuildingHistories;
+
+	struct PendingAgentBehaviourDelete
+	{
+		weak_ptr<core::AgentBehaviourRegistry> registry;
+		core::AgentBehaviourId id{};
+		string consequence;
+		uint64_t loadedAgentCount{ 0 };
+		bool active{ false };
+		bool openRequested{ false };
+	};
+	PendingAgentBehaviourDelete gPendingBehaviourDelete;
+
+	struct BehaviourBuildingSnapshot
+	{
+		core::Building* building{ nullptr };
+		weak_ptr<void const> lifetime;
+		string yaml;
+		bool modified{ false };
+		bool paused{ false };
+	};
+
+	struct BehaviourRegistrySnapshotContext : DocumentSnapshotContext
+	{
+		weak_ptr<core::AgentBehaviourRegistry> registry;
+		core::AgentBehaviourId affectedBehaviour{};
+		vector<BehaviourBuildingSnapshot> buildings;
+
+		bool isRestorable() const override
+		{
+			auto loaded = registry.lock();
+			if (!loaded) return false;
+			for (auto const& item : buildings)
+				if (item.lifetime.expired()
+					|| !loaded->hasLoadedBuilding(item.building)) return false;
+			return true;
+		}
+	};
+
+	string serializeBuilding(core::Building const& building)
+	{
+		auto writer = core::YamlSerializer::toString();
+		core::SerializationWorkData work;
+		work.markSerializedUnmodified = false;
+		building.serialize(*writer, work);
+		writer->serialize();
+		return writer->getSerializedString();
+	}
+
+	optional<DocumentSnapshot> captureBehaviourRegistrySnapshot(
+		shared_ptr<core::AgentBehaviourRegistry> const& registry,
+		vector<shared_ptr<core::Building>> const& participants = {},
+		core::AgentBehaviourId affectedBehaviour = {})
+	{
+		if (!registry) return nullopt;
+		try
+		{
+			auto writer = core::YamlSerializer::toString();
+			core::SerializationWorkData work;
+			work.markSerializedUnmodified = false;
+			registry->serialize(*writer, work);
+			writer->serialize();
+			auto snapshot = agentBehaviourRegistryDocumentHistory(registry).capture(
+				writer->getSerializedString());
+			if (!participants.empty())
+			{
+				auto context = make_shared<BehaviourRegistrySnapshotContext>();
+				context->registry = registry;
+				context->affectedBehaviour = affectedBehaviour;
+				for (auto const& building : participants)
+					context->buildings.push_back({ building.get(),
+						building->getLifetimeToken(), serializeBuilding(*building),
+						building->isModified(), building->isSimulationPaused() });
+				snapshot.context = std::move(context);
+			}
+			return snapshot;
+		}
+		catch (...) { return nullopt; }
+	}
 
 	struct PendingAgentBehaviourRegistryChange
 	{
@@ -231,6 +316,27 @@ namespace
 			ImGui::TextColored(ImVec4(1.0f, 0.65f, 0.2f, 1.0f), "Modified");
 		}
 
+		auto& registryHistory = agentBehaviourRegistryDocumentHistory(registry);
+		ImGui::BeginDisabled(!registryHistory.canUndo());
+		if (ImGui::Button(ICON_FA_UNDO "##BehaviourRegistryUndo"))
+		{
+			string diagnostic;
+			if (!restoreAgentBehaviourRegistrySnapshot(registry, false, &diagnostic)
+				&& !diagnostic.empty())
+				core::addLogMessage("Behaviours", 0, core::LogLevel::Error, diagnostic);
+		}
+		ImGui::EndDisabled();
+		ImGui::SameLine();
+		ImGui::BeginDisabled(!registryHistory.canRedo());
+		if (ImGui::Button(ICON_FA_REDO "##BehaviourRegistryRedo"))
+		{
+			string diagnostic;
+			if (!restoreAgentBehaviourRegistrySnapshot(registry, true, &diagnostic)
+				&& !diagnostic.empty())
+				core::addLogMessage("Behaviours", 0, core::LogLevel::Error, diagnostic);
+		}
+		ImGui::EndDisabled();
+		ImGui::SameLine();
 		ImGui::BeginDisabled(!registry->isModified());
 		if (ImGui::Button(ICON_FA_SAVE " Save registry"))
 		{
@@ -342,6 +448,11 @@ namespace
 					: ImVec4(0.65f, 0.65f, 0.65f, 1.0f);
 			ImGui::TextColored(statusColour, "%s",
 				core::agentBehaviourModuleStatusName(status));
+			ImGui::SameLine();
+			ImGui::BeginDisabled(!definitionEditsAllowed);
+			auto const deleteClicked = ImGui::SmallButton(ICON_FA_TRASH " Delete");
+			ImGui::EndDisabled();
+			if (deleteClicked) requestAgentBehaviourDelete(registry, id);
 			if (open)
 			{
 				ImGui::BulletText("Revision %llu", (unsigned long long)behaviour->getRevision());
@@ -379,8 +490,38 @@ namespace
 			ImGui::TextColored(ImVec4(1.0f, 0.65f, 0.2f, 1.0f), "%s",
 				editDiagnostic.c_str());
 		ImGui::TextDisabled(
-			"Definitions and Lua source are edited externally; Reload re-runs protected preflight.");
+			"Definitions and Lua source are authored externally; deletion is coordinated here and Reload re-runs protected preflight.");
 		return false;
+	}
+
+	bool renderBehaviourDeleteConfirmation(
+		shared_ptr<core::AgentBehaviourRegistry> const& registry)
+	{
+		if (gPendingBehaviourDelete.openRequested)
+		{
+			ImGui::OpenPopup("Delete used Agent behaviour?");
+			gPendingBehaviourDelete.openRequested = false;
+		}
+		if (!ImGui::BeginPopupModal("Delete used Agent behaviour?", nullptr,
+			ImGuiWindowFlags_AlwaysAutoResize)) return false;
+		ImGui::TextWrapped("%s", gPendingBehaviourDelete.consequence.c_str());
+		bool changed{ false };
+		if (ImGui::Button("Clear assignments and delete"))
+		{
+			string diagnostic;
+			changed = confirmPendingAgentBehaviourDelete(registry, diagnostic);
+			if (!changed && !diagnostic.empty())
+				core::addLogMessage("Behaviours", 0, core::LogLevel::Error, diagnostic);
+			ImGui::CloseCurrentPopup();
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("Cancel"))
+		{
+			cancelPendingAgentBehaviourDelete();
+			ImGui::CloseCurrentPopup();
+		}
+		ImGui::EndPopup();
+		return changed;
 	}
 
 	bool renderRegistryChangeConfirmation()
@@ -648,6 +789,9 @@ bool reloadAgentBehaviourRegistry(
 	if (!core::reloadAgentBehaviourRegistryDocument(registry, packageDirectory,
 		diagnostic, &gReloadDiagnostics))
 		return false;
+	auto& history = agentBehaviourRegistryDocumentHistory(registry);
+	history.clear();
+	history.markSaved();
 	resetBehavioursPanelState();
 	core::addLogMessage("Behaviours", 0, core::LogLevel::Info,
 		"Reloaded Agent behaviour registry package " + packageDirectory);
@@ -668,6 +812,7 @@ bool saveAgentBehaviourRegistry(
 	{
 		registry->saveTo(core::agentBehaviourRegistryManifestPath(
 			packageDirectory).string());
+		agentBehaviourRegistryDocumentHistory(registry).markSaved();
 		core::addLogMessage("Behaviours", 0, core::LogLevel::Info,
 			"Saved Agent behaviour registry package " + packageDirectory);
 		return true;
@@ -687,9 +832,311 @@ bool attachedAgentBehaviourRegistryIsModified(
 		&& building->getAgentBehaviourRegistry()->isModified();
 }
 
+DocumentHistory& agentBehaviourRegistryDocumentHistory(
+	shared_ptr<core::AgentBehaviourRegistry> const& registry)
+{
+	if (!registry) throw invalid_argument(
+		"There is no Agent behaviour registry document");
+	auto const [entry, inserted]
+		= gBehaviourRegistryHistories.try_emplace(registry->getUuid());
+	if (inserted && !registry->isModified()) entry->second.markSaved();
+	return entry->second;
+}
+
+DocumentHistory& agentBehaviourBuildingDocumentHistory(
+	shared_ptr<core::Building> const& building)
+{
+	if (!building) throw invalid_argument("There is no Building document");
+	for (auto item = gBehaviourBuildingHistories.begin();
+		item != gBehaviourBuildingHistories.end();)
+	{
+		if (item->first.expired()) item = gBehaviourBuildingHistories.erase(item);
+		else ++item;
+	}
+	auto const [entry, inserted]
+		= gBehaviourBuildingHistories.try_emplace(building->getLifetimeToken());
+	if (inserted && !building->isModified()) entry->second.markSaved();
+	return entry->second;
+}
+
+uint64_t loadedAgentBehaviourUsageCount(
+	core::AgentBehaviourRegistry const& registry, core::AgentBehaviourId id)
+{
+	return registry.getLoadedAgentBehaviourUsageCount(id);
+}
+
+string agentBehaviourDeleteConfirmationText(
+	core::AgentBehaviourRegistry const& registry, core::AgentBehaviourId id)
+{
+	auto const usage = registry.getLoadedAgentBehaviourUsage(id);
+	uint64_t total{ 0 };
+	for (auto const& item : usage) total += item.agents.size();
+	ostringstream text;
+	text << "Delete Agent behaviour '" << registry.getBehaviourName(id) << "'?\n"
+		<< total << " loaded Agent" << (total == 1 ? " uses" : "s use")
+		<< " this behaviour.";
+	for (auto const& item : usage)
+	{
+		text << "\n- " << item.building->getName();
+		for (auto const& agent : item.agents)
+			text << "\n  - " << agent.name << " (" << agent.id.value << ")";
+	}
+	text << "\nEvery listed assignment and configuration will be cleared, its runtime instance will be stopped, and manual movement controls will be restored.";
+	return text.str();
+}
+
+bool commitAgentBehaviourDelete(
+	shared_ptr<core::AgentBehaviourRegistry> const& registry,
+	core::AgentBehaviourId id, string& diagnostic)
+{
+	diagnostic.clear();
+	if (!registry)
+	{
+		diagnostic = "There is no Agent behaviour registry from which to delete a behaviour";
+		return false;
+	}
+	vector<shared_ptr<core::Building>> participants;
+	vector<optional<DocumentSnapshot>> buildingSnapshots;
+	try
+	{
+		for (auto const& usage : registry->getLoadedAgentBehaviourUsage(id))
+		{
+			if (!usage.building) continue;
+			// Loaded Buildings are owned by the editor/caller. The no-op deleter
+			// provides the existing snapshot API with shared lifetime for this call.
+			auto building = shared_ptr<core::Building>(
+				const_cast<core::Building*>(usage.building), [](core::Building*) {});
+			auto& history = agentBehaviourBuildingDocumentHistory(building);
+			auto snapshot = captureDocumentSnapshot(building, history);
+			if (!snapshot)
+			{
+				diagnostic = "Could not capture every affected Building before deleting the Agent behaviour";
+				return false;
+			}
+			participants.push_back(std::move(building));
+			buildingSnapshots.push_back(std::move(snapshot));
+		}
+	}
+	catch (exception const& error)
+	{
+		diagnostic = error.what();
+		return false;
+	}
+	auto registrySnapshot = captureBehaviourRegistrySnapshot(
+		registry, participants, id);
+	if (!registrySnapshot)
+	{
+		diagnostic = "Could not capture the Agent behaviour registry before deletion";
+		return false;
+	}
+
+	auto const clearedCount = registry->getLoadedAgentBehaviourUsageCount(id);
+	auto const used = !participants.empty();
+	bool deleted = used
+		? registry->deleteAgentBehaviourClearingAssignments(id, &diagnostic)
+		: registry->deleteAgentBehaviour(id, &diagnostic);
+	if (!deleted) return false;
+
+	agentBehaviourRegistryDocumentHistory(registry).commit(
+		std::move(registrySnapshot));
+	for (size_t index = 0; index < participants.size(); ++index)
+		agentBehaviourBuildingDocumentHistory(participants[index]).commit(
+			std::move(buildingSnapshots[index]));
+	core::addLogMessage("Behaviours", 0, core::LogLevel::Info,
+		"Deleted Agent behaviour and cleared " + to_string(clearedCount)
+			+ " dependent assignment" + (clearedCount == 1 ? "" : "s"));
+	return true;
+}
+
+void requestAgentBehaviourDelete(
+	shared_ptr<core::AgentBehaviourRegistry> const& registry,
+	core::AgentBehaviourId id)
+{
+	if (!registry) return;
+	try
+	{
+		auto const count = loadedAgentBehaviourUsageCount(*registry, id);
+		if (count == 0)
+		{
+			string diagnostic;
+			if (!commitAgentBehaviourDelete(registry, id, diagnostic))
+				core::addLogMessage("Behaviours", 0, core::LogLevel::Warning, diagnostic);
+			return;
+		}
+		gPendingBehaviourDelete.registry = registry;
+		gPendingBehaviourDelete.id = id;
+		gPendingBehaviourDelete.loadedAgentCount = count;
+		gPendingBehaviourDelete.consequence
+			= agentBehaviourDeleteConfirmationText(*registry, id);
+		gPendingBehaviourDelete.active = true;
+		gPendingBehaviourDelete.openRequested = true;
+	}
+	catch (exception const& error)
+	{
+		core::addLogMessage("Behaviours", 0, core::LogLevel::Warning, error.what());
+	}
+}
+
+bool agentBehaviourDeletePending(core::AgentBehaviourId* id,
+	uint64_t* loadedAgentCount, string* consequence)
+{
+	if (id) *id = gPendingBehaviourDelete.active
+		? gPendingBehaviourDelete.id : core::AgentBehaviourId{};
+	if (loadedAgentCount) *loadedAgentCount = gPendingBehaviourDelete.active
+		? gPendingBehaviourDelete.loadedAgentCount : 0;
+	if (consequence) *consequence = gPendingBehaviourDelete.active
+		? gPendingBehaviourDelete.consequence : string{};
+	return gPendingBehaviourDelete.active;
+}
+
+bool confirmPendingAgentBehaviourDelete(
+	shared_ptr<core::AgentBehaviourRegistry> const& registry, string& diagnostic)
+{
+	if (!gPendingBehaviourDelete.active)
+	{
+		diagnostic = "No Agent behaviour deletion is awaiting confirmation";
+		return false;
+	}
+	auto expected = gPendingBehaviourDelete.registry.lock();
+	auto const id = gPendingBehaviourDelete.id;
+	cancelPendingAgentBehaviourDelete();
+	if (!registry || registry != expected)
+	{
+		diagnostic = "The pending Agent behaviour deletion belongs to another registry";
+		return false;
+	}
+	return commitAgentBehaviourDelete(registry, id, diagnostic);
+}
+
+void cancelPendingAgentBehaviourDelete()
+{
+	gPendingBehaviourDelete = PendingAgentBehaviourDelete{};
+}
+
+bool restoreAgentBehaviourRegistrySnapshot(
+	shared_ptr<core::AgentBehaviourRegistry> const& registry, bool redo,
+	string* diagnostic)
+{
+	if (diagnostic) diagnostic->clear();
+	if (!registry)
+	{
+		if (diagnostic) *diagnostic = "There is no Agent behaviour registry to restore";
+		return false;
+	}
+	string pauseDiagnostic;
+	if (!registry->definitionEditsAreAllowed(&pauseDiagnostic))
+	{
+		if (diagnostic) *diagnostic = pauseDiagnostic;
+		return false;
+	}
+	auto& history = agentBehaviourRegistryDocumentHistory(registry);
+	auto const& entries = redo ? history.redoEntries() : history.undoEntries();
+	if (entries.empty()) return false;
+	auto targetContext = dynamic_pointer_cast<BehaviourRegistrySnapshotContext>(
+		entries.back().context);
+	vector<shared_ptr<core::Building>> participants;
+	if (targetContext)
+	{
+		for (auto const& item : targetContext->buildings)
+		{
+			if (item.lifetime.expired() || !registry->hasLoadedBuilding(item.building))
+			{
+				if (diagnostic) *diagnostic
+					= "An affected Building is no longer available for coordinated undo";
+				return false;
+			}
+			participants.emplace_back(item.building, [](core::Building*) {});
+		}
+	}
+	auto current = captureBehaviourRegistrySnapshot(registry, participants,
+		targetContext ? targetContext->affectedBehaviour
+			: core::AgentBehaviourId{});
+	if (!current) return false;
+	vector<optional<DocumentSnapshot>> buildingCurrents;
+	for (auto const& building : participants)
+		buildingCurrents.push_back(captureDocumentSnapshot(building,
+			agentBehaviourBuildingDocumentHistory(building)));
+	if (any_of(buildingCurrents.begin(), buildingCurrents.end(),
+		[](auto const& snapshot) { return !snapshot; })) return false;
+
+	try
+	{
+		auto restore = [&registry](DocumentSnapshot const& target)
+		{
+			// Parse every target first. Candidate resolution validates every restored
+			// assignment before any live document changes.
+			auto replacement = core::AgentBehaviourRegistry::create();
+			auto registryReader = core::YamlSerializer::fromString(target.yaml);
+			registryReader->deserialize();
+			core::SerializationWorkData registryWork;
+			if (!replacement->deserialize(*registryReader, registryWork)) return false;
+			auto context = dynamic_pointer_cast<BehaviourRegistrySnapshotContext>(
+				target.context);
+			vector<shared_ptr<core::Building>> candidates;
+			if (context)
+			{
+				for (auto const& item : context->buildings)
+				{
+					auto candidate = make_shared<core::Building>("Loading", 1, 1);
+					auto reader = core::YamlSerializer::fromString(item.yaml);
+					reader->deserialize();
+					core::SerializationWorkData work;
+					if (!candidate->deserialize(*reader, work)) return false;
+					candidate->resolveAgentBehaviourRegistry(replacement);
+					candidates.push_back(std::move(candidate));
+				}
+			}
+
+			auto liveReader = core::YamlSerializer::fromString(target.yaml);
+			liveReader->deserialize();
+			core::SerializationWorkData liveRegistryWork;
+			if (!registry->deserialize(*liveReader, liveRegistryWork)) return false;
+			if (context)
+			{
+				for (auto const& item : context->buildings)
+				{
+					auto reader = core::YamlSerializer::fromString(item.yaml);
+					reader->deserialize();
+					core::SerializationWorkData work;
+					if (!item.building->deserialize(*reader, work)) return false;
+					item.building->resolveAgentBehaviourRegistry(registry);
+					if (item.modified) item.building->markModified();
+					if (item.paused) item.building->pauseSimulation();
+				}
+			}
+			return true;
+		};
+		auto const restored = redo
+			? history.redo(std::move(current), restore)
+			: history.undo(std::move(current), restore);
+		if (!restored) return false;
+		for (size_t index = 0; index < participants.size(); ++index)
+		{
+			auto& buildingHistory
+				= agentBehaviourBuildingDocumentHistory(participants[index]);
+			auto shiftOnly = [](DocumentSnapshot const&) { return true; };
+			auto shifted = redo
+				? buildingHistory.redo(std::move(buildingCurrents[index]), shiftOnly)
+				: buildingHistory.undo(std::move(buildingCurrents[index]), shiftOnly);
+			if (!shifted) throw runtime_error(
+				"Could not synchronize an affected Building history");
+		}
+		if (history.isModified()) registry->markModified();
+		else registry->markUnmodified();
+		return true;
+	}
+	catch (exception const& error)
+	{
+		if (diagnostic) *diagnostic
+			= "Could not restore Agent behaviour deletion: " + string(error.what());
+		return false;
+	}
+}
+
 void resetBehavioursPanelState()
 {
 	gReloadDiagnostics.clear();
+	cancelPendingAgentBehaviourDelete();
 	cancelPendingAgentBehaviourRegistryChange();
 }
 
@@ -700,7 +1147,10 @@ void forgetAgentBehaviourRegistryDocument(
 	// registries remain manager-owned through their Building; an unreferenced
 	// dirty registry may therefore be released here without pretending it saved.
 	if (registry)
+	{
+		gBehaviourRegistryHistories.erase(registry->getUuid());
 		(void)core::unloadAgentBehaviourRegistryDocumentIfUnused(registry, true);
+	}
 	resetBehavioursPanelState();
 }
 
@@ -762,7 +1212,9 @@ bool renderBehavioursPanel(shared_ptr<core::Building> const& building,
 	{
 		auto const changed = renderAttachedRegistry(
 			building, buildingFilepath, selectPackageDirectory);
-		return renderRegistryChangeConfirmation() || changed;
+		return renderBehaviourDeleteConfirmation(
+			building->getAgentBehaviourRegistry())
+			|| renderRegistryChangeConfirmation() || changed;
 	}
 
 	ImGui::TextDisabled("No Agent behaviour registry attached.");

@@ -118,7 +118,8 @@ namespace core
 			AgentBehaviourRegistry const& registry,
 			std::unique_ptr<AgentBehaviourRuntimeAdapter>& candidate,
 			std::vector<AgentBehaviourRuntimeDiagnostic>& diagnostics,
-			std::map<AgentId, AgentBehaviourAssignment> const* assignments = nullptr);
+			std::map<AgentId, AgentBehaviourAssignment> const* assignments = nullptr,
+			AgentBehaviourId excludedBehaviour = {});
 		void appendDiagnostics(
 			std::vector<AgentBehaviourRuntimeDiagnostic> diagnostics);
 		static AgentBehaviourModulePreflight preflightModule(

@@ -2144,7 +2144,8 @@ namespace core
 		AgentBehaviourRegistry const& registry,
 		std::unique_ptr<AgentBehaviourRuntimeAdapter>& candidate,
 		std::vector<AgentBehaviourRuntimeDiagnostic>& diagnostics,
-		std::map<AgentId, AgentBehaviourAssignment> const* assignments)
+		std::map<AgentId, AgentBehaviourAssignment> const* assignments,
+		AgentBehaviourId excludedBehaviour)
 	{
 		candidate.reset();
 		diagnostics.clear();
@@ -2173,6 +2174,8 @@ namespace core
 				auto const& assignment = assignments
 					&& overrideAssignment != assignments->end()
 					? overrideAssignment->second : *agent->getBehaviourAssignment();
+				if (excludedBehaviour && assignment.behaviour == excludedBehaviour)
+					continue;
 				auto const* behaviour = registry.lookupAgentBehaviour(
 					assignment.behaviour);
 				if (!behaviour) continue;

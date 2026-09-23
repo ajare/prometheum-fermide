@@ -76,6 +76,17 @@ namespace core
 	// One item from an explicit reload preflight. Failed reload diagnostics are
 	// returned to the editor rather than written into the still-live registry,
 	// so reporting a candidate can never replace the previous working status.
+	struct LoadedAgentBehaviourUsage
+	{
+		Building const* building{ nullptr };
+		struct Agent
+		{
+			AgentId id{};
+			std::string name;
+		};
+		std::vector<Agent> agents;
+	};
+
 	struct AgentBehaviourReloadDiagnostic
 	{
 		AgentBehaviourReloadDiagnosticScope scope{
@@ -161,6 +172,9 @@ namespace core
 
 		bool hasLoadedBuilding(Building const* building) const;
 		bool hasLoadedBuildings() const;
+		std::vector<LoadedAgentBehaviourUsage> getLoadedAgentBehaviourUsage(
+			AgentBehaviourId id) const;
+		uint64_t getLoadedAgentBehaviourUsageCount(AgentBehaviourId id) const;
 
 		// Reports whether the manifest's bytes differ from the revision loaded
 		// or saved by this document. Untracked new registries report no conflict.
@@ -189,6 +203,10 @@ namespace core
 		bool renameAgentBehaviour(AgentBehaviourId id, std::string const& name,
 			std::string* diagnostic = nullptr);
 		bool deleteAgentBehaviour(AgentBehaviourId id,
+			std::string* diagnostic = nullptr);
+		// Explicit coordinated deletion. Every affected Building and replacement
+		// runtime is preflighted before the definition or any assignment changes.
+		bool deleteAgentBehaviourClearingAssignments(AgentBehaviourId id,
 			std::string* diagnostic = nullptr);
 
 		void saveTo(std::string const& manifestFilepath);

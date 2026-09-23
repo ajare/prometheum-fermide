@@ -457,6 +457,44 @@ namespace core
 		return !mLoadedBuildings.empty();
 	}
 
+	std::vector<LoadedAgentBehaviourUsage>
+	AgentBehaviourRegistry::getLoadedAgentBehaviourUsage(AgentBehaviourId id) const
+	{
+		if (!mBehaviours.find(id))
+			throw std::out_of_range(std::format(
+				"Agent behaviour {} is not defined in this registry", id.value));
+		std::vector<LoadedAgentBehaviourUsage> result;
+		for (auto const* building : mLoadedBuildings)
+		{
+			if (!building) continue;
+			LoadedAgentBehaviourUsage usage;
+			usage.building = building;
+			for (auto const& [agentId, agent] : building->mAgents.entries())
+			{
+				if (agent && agent->getBehaviourAssignment()
+					&& agent->getBehaviourAssignment()->behaviour == id)
+					usage.agents.push_back({ agentId, agent->getName() });
+			}
+			if (!usage.agents.empty()) result.push_back(std::move(usage));
+		}
+		std::sort(result.begin(), result.end(), [](auto const& left, auto const& right)
+		{
+			if (left.building->getName() != right.building->getName())
+				return left.building->getName() < right.building->getName();
+			return left.building < right.building;
+		});
+		return result;
+	}
+
+	uint64_t AgentBehaviourRegistry::getLoadedAgentBehaviourUsageCount(
+		AgentBehaviourId id) const
+	{
+		uint64_t count{ 0 };
+		for (auto const& usage : getLoadedAgentBehaviourUsage(id))
+			count += usage.agents.size();
+		return count;
+	}
+
 	bool AgentBehaviourRegistry::fileHasExternalChanges(
 		std::string const& manifestFilepath) const
 	{
@@ -1055,6 +1093,77 @@ namespace core
 		}
 		mBehaviours.remove(id);
 		modify();
+		if (diagnostic) diagnostic->clear();
+		return true;
+	}
+
+	bool AgentBehaviourRegistry::deleteAgentBehaviourClearingAssignments(
+		AgentBehaviourId id, std::string* diagnostic)
+	{
+		auto reject = [diagnostic](std::string reason)
+		{
+			if (diagnostic) *diagnostic = std::move(reason);
+			return false;
+		};
+		auto const* behaviour = mBehaviours.find(id);
+		if (!behaviour)
+			return reject(std::format(
+				"Agent behaviour {} is not defined in this registry", id.value));
+		if (!definitionEditsAreAllowed(diagnostic)) return false;
+
+		struct PreparedBuilding
+		{
+			Building* building{ nullptr };
+			std::vector<AgentId> agents;
+			std::unique_ptr<AgentBehaviourRuntimeAdapter> runtime;
+		};
+		std::vector<PreparedBuilding> prepared;
+		for (auto const& usage : getLoadedAgentBehaviourUsage(id))
+		{
+			auto* building = const_cast<Building*>(usage.building);
+			if (!building || building->mAgentBehaviourRegistry.get() != this)
+				return reject("An affected Building can no longer participate in Agent behaviour deletion");
+			if (!building->agentBehaviourConfigurationsAreValid())
+				return reject(std::format(
+					"Building '{}' cannot participate: {}", building->getName(),
+					building->getAgentBehaviourDependencyDiagnostic()));
+			PreparedBuilding item;
+			item.building = building;
+			for (auto const& agent : usage.agents) item.agents.push_back(agent.id);
+			std::vector<AgentBehaviourRuntimeDiagnostic> failures;
+			if (!AgentBehaviourRuntimeAdapter::prepareReload(*building, *this,
+				item.runtime, failures, nullptr, id))
+			{
+				std::string details;
+				for (auto const& failure : failures)
+					details += (details.empty() ? "" : "\n") + failure.diagnostic;
+				return reject(std::format(
+					"Building '{}' cannot participate in Agent behaviour deletion{}{}",
+					building->getName(), details.empty() ? "" : ":\n", details));
+			}
+			prepared.push_back(std::move(item));
+		}
+
+		// All refusing and allocating work is complete. Teardown callbacks are
+		// best-effort and cannot veto this commit.
+		mBehaviours.remove(id);
+		modify();
+		for (auto& item : prepared)
+		{
+			auto& building = *item.building;
+			building.mAgentBehaviourRuntime->teardownAll(building,
+				AgentBehaviourTeardownReason::BehaviourDeletion);
+			item.runtime->appendDiagnostics(
+				building.mAgentBehaviourRuntime->consumeDiagnostics());
+			building.mAgentBehaviourRuntime = std::move(item.runtime);
+			for (auto agentId : item.agents)
+			{
+				building.mSimulationCoordinator.clearAgentMovementForBehaviourEdit(agentId);
+				if (auto* agent = building.mAgents.find(agentId))
+					agent->clearBehaviourAssignment();
+			}
+			building.modify();
+		}
 		if (diagnostic) diagnostic->clear();
 		return true;
 	}
