@@ -5,6 +5,7 @@
 #include <exception>
 #include <format>
 #include <functional>
+#include <limits>
 #include <map>
 #include <memory>
 #include <stdexcept>
@@ -21,6 +22,7 @@
 #include "core/AgentBehaviourRegistry.h"
 #include "core/Building.h"
 #include "core/Simulation.h"
+#include "core/Sector.h"
 
 namespace core
 {
@@ -48,7 +50,8 @@ namespace core
 
 		bool limitsAreValid(AgentBehaviourRuntimeLimits limits)
 		{
-			return limits.memoryBytes != 0 && limits.instructionsPerCall != 0;
+			return limits.memoryBytes != 0 && limits.instructionsPerCall != 0
+				&& limits.timersPerInstance != 0;
 		}
 
 		struct StateCloser
@@ -600,10 +603,22 @@ namespace core
 	namespace
 	{
 		constexpr char MarkerMetatable[] = "prometheum.v1.marker";
+		constexpr char AgentMetatable[] = "prometheum.v1.agent";
+		constexpr char SectorMetatable[] = "prometheum.v1.sector";
 
 		struct MarkerHandle
 		{
 			MarkerId marker;
+		};
+
+		struct AgentHandle
+		{
+			AgentId agent;
+		};
+
+		struct SectorHandle
+		{
+			SectorId sector;
 		};
 
 		enum class PendingMovementCommandType { MoveTo, Cancel };
@@ -622,6 +637,8 @@ namespace core
 			AgentId agent;
 			std::function<MovementCommandResult(MarkerId)> inspectMove;
 			std::function<MovementCommandResult()> inspectCancel;
+			std::function<bool(std::string, uint64_t, std::string&)> setTimer;
+			std::function<bool(std::string const&)> cancelTimer;
 			std::vector<PendingMovementCommand> commands;
 		};
 
@@ -694,36 +711,84 @@ namespace core
 			return 1;
 		}
 
-		int markerEqual(lua_State* state)
+		int agentToString(lua_State* state)
 		{
-			auto* lhs = static_cast<MarkerHandle*>(
-				luaL_testudata(state, 1, MarkerMetatable));
-			auto* rhs = static_cast<MarkerHandle*>(
-				luaL_testudata(state, 2, MarkerMetatable));
-			lua_pushboolean(state, lhs && rhs && lhs->marker == rhs->marker);
+			(void)luaL_checkudata(state, 1, AgentMetatable);
+			lua_pushliteral(state, "Agent");
 			return 1;
 		}
 
-		void ensureMarkerMetatable(lua_State* state)
+		int sectorToString(lua_State* state)
 		{
-			if (luaL_newmetatable(state, MarkerMetatable))
+			(void)luaL_checkudata(state, 1, SectorMetatable);
+			lua_pushliteral(state, "Sector");
+			return 1;
+		}
+
+		template<typename Handle, typename Id, Id Handle::* member>
+		int opaqueHandleEqual(lua_State* state, char const* metatable)
+		{
+			auto* lhs = static_cast<Handle*>(luaL_testudata(state, 1, metatable));
+			auto* rhs = static_cast<Handle*>(luaL_testudata(state, 2, metatable));
+			lua_pushboolean(state, lhs && rhs && lhs->*member == rhs->*member);
+			return 1;
+		}
+
+		int markerEqual(lua_State* state)
+		{
+			return opaqueHandleEqual<MarkerHandle, MarkerId, &MarkerHandle::marker>(
+				state, MarkerMetatable);
+		}
+
+		int agentEqual(lua_State* state)
+		{
+			return opaqueHandleEqual<AgentHandle, AgentId, &AgentHandle::agent>(
+				state, AgentMetatable);
+		}
+
+		int sectorEqual(lua_State* state)
+		{
+			return opaqueHandleEqual<SectorHandle, SectorId, &SectorHandle::sector>(
+				state, SectorMetatable);
+		}
+
+		void ensureOpaqueMetatable(lua_State* state, char const* metatable,
+			char const* description, lua_CFunction toString, lua_CFunction equal)
+		{
+			if (luaL_newmetatable(state, metatable))
 			{
-				lua_pushliteral(state, "opaque Marker handle");
+				lua_pushstring(state, description);
 				lua_setfield(state, -2, "__metatable");
-				lua_pushcfunction(state, markerToString);
+				lua_pushcfunction(state, toString);
 				lua_setfield(state, -2, "__tostring");
-				lua_pushcfunction(state, markerEqual);
+				lua_pushcfunction(state, equal);
 				lua_setfield(state, -2, "__eq");
 			}
 			lua_pop(state, 1);
 		}
 
+		void ensureOpaqueMetatables(lua_State* state)
+		{
+			ensureOpaqueMetatable(state, MarkerMetatable, "opaque Marker handle",
+				markerToString, markerEqual);
+			ensureOpaqueMetatable(state, AgentMetatable, "opaque Agent handle",
+				agentToString, agentEqual);
+			ensureOpaqueMetatable(state, SectorMetatable, "opaque Sector handle",
+				sectorToString, sectorEqual);
+		}
+
+		template<typename Handle>
+		void pushOpaqueHandle(lua_State* state, Handle handle, char const* metatable)
+		{
+			auto* value = static_cast<Handle*>(
+				lua_newuserdatauv(state, sizeof(Handle), 0));
+			*value = handle;
+			luaL_setmetatable(state, metatable);
+		}
+
 		void pushMarkerHandle(lua_State* state, MarkerId marker)
 		{
-			auto* handle = static_cast<MarkerHandle*>(
-				lua_newuserdatauv(state, sizeof(MarkerHandle), 0));
-			*handle = MarkerHandle{ marker };
-			luaL_setmetatable(state, MarkerMetatable);
+			pushOpaqueHandle(state, MarkerHandle{ marker }, MarkerMetatable);
 		}
 
 		CallbackScope* activeScope(lua_State* state)
@@ -778,6 +843,60 @@ namespace core
 					scope->agent, {} });
 			pushCommandResult(state, result.accepted(), movementStatusName(result.status));
 			return 1;
+		}
+
+		CallbackScope* activeTimerScope(lua_State* state)
+		{
+			auto* scope = static_cast<CallbackScope*>(
+				lua_touserdata(state, lua_upvalueindex(1)));
+			if (!scope || !scope->active)
+			{
+				luaL_error(state, "Agent behaviour callback context is no longer active");
+				return nullptr;
+			}
+			return scope;
+		}
+
+		int setTimer(lua_State* state)
+		{
+			auto* scope = activeTimerScope(state);
+			if (!scope) return 0;
+			int nameIndex = 0;
+			for (int index = 1; index <= lua_gettop(state); ++index)
+				if (lua_type(state, index) == LUA_TSTRING) { nameIndex = index; break; }
+			if (nameIndex == 0 || nameIndex == lua_gettop(state)
+				|| !lua_isinteger(state, nameIndex + 1))
+				return luaL_error(state, "set_timer requires a name and whole-tick duration");
+			size_t nameLength = 0;
+			auto const* nameText = lua_tolstring(state, nameIndex, &nameLength);
+			auto const duration = lua_tointeger(state, nameIndex + 1);
+			if (nameLength == 0)
+				return luaL_error(state, "timer name must not be empty");
+			if (duration < 1)
+				return luaL_error(state, "timer duration must be at least one simulation tick");
+			std::string diagnostic;
+			if (!scope->setTimer(std::string(nameText, nameLength),
+				static_cast<uint64_t>(duration), diagnostic))
+				return luaL_error(state, "%s", diagnostic.c_str());
+			pushCommandResult(state, true, "accepted");
+			return 1;
+		}
+
+		int cancelTimer(lua_State* state)
+		{
+			auto* scope = activeTimerScope(state);
+			if (!scope) return 0;
+			for (int index = 1; index <= lua_gettop(state); ++index)
+			{
+				if (lua_type(state, index) != LUA_TSTRING) continue;
+				size_t length = 0;
+				auto const* text = lua_tolstring(state, index, &length);
+				if (length == 0) return luaL_error(state, "timer name must not be empty");
+				auto const removed = scope->cancelTimer(std::string(text, length));
+				pushCommandResult(state, true, removed ? "accepted" : "no_op");
+				return 1;
+			}
+			return luaL_error(state, "cancel_timer requires a name");
 		}
 
 		struct ProtectedCallResult
@@ -927,10 +1046,12 @@ namespace core
 			bool started{ false };
 			bool disabled{ false };
 			CallbackScope scope;
+			std::map<std::string, uint64_t> timers;
 			std::vector<PendingOutcome> outcomes;
 		};
 
 		ScratchBudget budget;
+		uint32_t timerLimit{ AgentBehaviourRuntimeAdapter::DefaultTimersPerInstance };
 		std::unique_ptr<lua_State, StateCloser> state;
 		ModuleLoader hostLoader;
 		std::map<AgentId, Instance> instances;
@@ -940,13 +1061,14 @@ namespace core
 
 		explicit Impl(AgentBehaviourRuntimeLimits limits)
 			: budget(limits)
+			, timerLimit(limits.timersPerInstance)
 			, state(lua_newstate(budgetedAllocate, &budget))
 		{
 			if (!state) throw std::runtime_error("Could not create Building Lua runtime");
 			sol::state_view lua(state.get());
 			hostLoader.packageName = "Building Agent behaviours";
 			openScratchLibraries(lua, hostLoader);
-			ensureMarkerMetatable(state.get());
+			ensureOpaqueMetatables(state.get());
 		}
 
 		void release(Instance& instance)
@@ -1130,18 +1252,109 @@ namespace core
 			}
 		}
 
-		void pushContext(Instance& instance)
+		std::string_view semanticMovementState(Building const& building,
+			AgentId agentId, Agent const& agent) const
+		{
+			if (!agent.isActive()) return "suspended";
+			auto const goal = building.mMovementGoals.find(agentId);
+			if (goal == building.mMovementGoals.end()) return "idle";
+			if (goal->second.cancelling) return "cancelling";
+			switch (agent.getState())
+			{
+			case Agent::State::WaitingForTraversal: return "waiting";
+			case Agent::State::TraversingEdge:
+			case Agent::State::AwaitingTraversalCommit: return "traversing";
+			case Agent::State::Idle:
+			case Agent::State::MovingToVertex: return "moving";
+			}
+			return "idle";
+		}
+
+		void pushAgentState(Building const& building, AgentId agentId)
+		{
+			auto* lua = state.get();
+			auto const* agent = building.mAgents.find(agentId);
+			lua_newtable(lua);
+			auto const backing = lua_gettop(lua);
+			pushOpaqueHandle(lua, AgentHandle{ agentId }, AgentMetatable);
+			lua_setfield(lua, backing, "identity");
+			lua_pushlstring(lua, agent->getName().data(), agent->getName().size());
+			lua_setfield(lua, backing, "name");
+			lua_pushboolean(lua, agent->isActive());
+			lua_setfield(lua, backing, "active");
+			lua_pushboolean(lua, !agent->isActive());
+			lua_setfield(lua, backing, "suspended");
+			auto const status = agent->isActive()
+				? std::string_view("active") : std::string_view("suspended");
+			lua_pushlstring(lua, status.data(), status.size());
+			lua_setfield(lua, backing, "status");
+			auto const movement = semanticMovementState(building, agentId, *agent);
+			lua_pushlstring(lua, movement.data(), movement.size());
+			lua_pushvalue(lua, -1);
+			lua_setfield(lua, backing, "movement");
+			lua_setfield(lua, backing, "movement_state");
+			auto const goal = building.mMovementGoals.find(agentId);
+			if (goal == building.mMovementGoals.end()) lua_pushnil(lua);
+			else pushMarkerHandle(lua, goal->second.marker);
+			lua_pushvalue(lua, -1);
+			lua_setfield(lua, backing, "destination_marker");
+			lua_setfield(lua, backing, "destination");
+			auto const* sector = agent->getSector();
+			if (sector)
+				pushOpaqueHandle(lua, SectorHandle{ SectorId{
+					static_cast<uint64_t>(sector->getIndex()) + 1 } }, SectorMetatable);
+			else lua_pushnil(lua);
+			lua_pushvalue(lua, -1);
+			lua_setfield(lua, backing, "sector_identity");
+			lua_setfield(lua, backing, "sector");
+			if (sector)
+				lua_pushlstring(lua, sector->getName().data(), sector->getName().size());
+			else lua_pushliteral(lua, "");
+			lua_pushvalue(lua, -1);
+			lua_setfield(lua, backing, "sector_display_name");
+			lua_setfield(lua, backing, "sector_name");
+			auto const position = agent->getGlobalPosition();
+			lua_newtable(lua);
+			lua_pushnumber(lua, position.x);
+			lua_setfield(lua, -2, "x");
+			lua_pushnumber(lua, position.y);
+			lua_setfield(lua, -2, "y");
+			pushImmutableProxy(lua);
+			lua_pushvalue(lua, -1);
+			lua_setfield(lua, backing, "position");
+			lua_setfield(lua, backing, "global_position");
+			lua_pushinteger(lua, static_cast<lua_Integer>(building.mSimulationTick));
+			lua_pushvalue(lua, -1);
+			lua_setfield(lua, backing, "simulation_tick");
+			lua_setfield(lua, backing, "tick");
+			pushImmutableProxy(lua);
+		}
+
+		void pushContext(Building const& building, Instance& instance)
 		{
 			auto* lua = state.get();
 			lua_newtable(lua);
+			auto const backing = lua_gettop(lua);
 			lua_rawgeti(lua, LUA_REGISTRYINDEX, instance.configurationReference);
-			lua_setfield(lua, -2, "configuration");
+			lua_setfield(lua, backing, "configuration");
+			lua_pushinteger(lua, static_cast<lua_Integer>(building.mSimulationTick));
+			lua_setfield(lua, backing, "tick");
+			pushAgentState(building, instance.scope.agent);
+			lua_pushvalue(lua, -1);
+			lua_setfield(lua, backing, "agent");
+			lua_setfield(lua, backing, "state");
 			lua_pushlightuserdata(lua, &instance.scope);
 			lua_pushcclosure(lua, queueMoveTo, 1);
-			lua_setfield(lua, -2, "move_to");
+			lua_setfield(lua, backing, "move_to");
 			lua_pushlightuserdata(lua, &instance.scope);
 			lua_pushcclosure(lua, queueCancelMovement, 1);
-			lua_setfield(lua, -2, "cancel_movement");
+			lua_setfield(lua, backing, "cancel_movement");
+			lua_pushlightuserdata(lua, &instance.scope);
+			lua_pushcclosure(lua, setTimer, 1);
+			lua_setfield(lua, backing, "set_timer");
+			lua_pushlightuserdata(lua, &instance.scope);
+			lua_pushcclosure(lua, cancelTimer, 1);
+			lua_setfield(lua, backing, "cancel_timer");
 			pushImmutableProxy(lua);
 		}
 
@@ -1171,6 +1384,28 @@ namespace core
 					return MovementCommandResult{ pending->type == PendingMovementCommandType::Cancel
 						? MovementCommandStatus::NoOp : MovementCommandStatus::AgentBusy };
 				return building.inspectBehaviourMovementCancellation(agentId);
+			};
+			instance.scope.setTimer = [&building, &instance, this](std::string name,
+				uint64_t duration, std::string& diagnostic)
+			{
+				if (duration > std::numeric_limits<uint64_t>::max() - building.mSimulationTick)
+				{
+					diagnostic = "timer due tick exceeds the simulation tick range";
+					return false;
+				}
+				if (!instance.timers.contains(name)
+					&& instance.timers.size() >= timerLimit)
+				{
+					diagnostic = std::format(
+						"Agent behaviour timer limit of {} per instance exceeded", timerLimit);
+					return false;
+				}
+				instance.timers[std::move(name)] = building.mSimulationTick + duration;
+				return true;
+			};
+			instance.scope.cancelTimer = [&instance](std::string const& name)
+			{
+				return instance.timers.erase(name) != 0;
 			};
 		}
 
@@ -1249,7 +1484,7 @@ namespace core
 					if (pushCallback(instance, "on_start"))
 					{
 						prepareScope(building, agentId, instance, commands);
-						pushContext(instance);
+						pushContext(building, instance);
 						lua_rawgeti(lua, LUA_REGISTRYINDEX,
 							instance.configurationReference);
 						auto const result = protectedCall(lua, budget, 2, 0);
@@ -1281,7 +1516,7 @@ namespace core
 							pushMarkerHandle(lua, outcome.destination);
 							auto const reason = routeLossReasonName(outcome.routeLossReason);
 							lua_pushlstring(lua, reason.data(), reason.size());
-							pushContext(instance);
+							pushContext(building, instance);
 							auto const result = protectedCall(lua, budget, 3, 0);
 							finishCallback(instance, "on_route_lost", result, commands);
 						}
@@ -1290,7 +1525,7 @@ namespace core
 					{
 						prepareScope(building, agentId, instance, commands);
 						pushSemanticEvent(outcome);
-						pushContext(instance);
+						pushContext(building, instance);
 						auto const result = protectedCall(lua, budget, 2, 0);
 						finishCallback(instance, "on_event", result, commands);
 					}
@@ -1298,8 +1533,34 @@ namespace core
 					if (instance.disabled) break;
 				}
 				instance.outcomes.clear();
+
+				if (!instance.disabled)
+				{
+					std::vector<std::string> dueTimers;
+					for (auto const& [name, dueTick] : instance.timers)
+						if (dueTick <= building.mSimulationTick) dueTimers.push_back(name);
+					// Due timers form this boundary's immutable callback batch. Erasing all
+					// of them before the first callback preserves one-shot semantics even
+					// when a callback schedules or cancels one of the same names.
+					for (auto const& name : dueTimers) instance.timers.erase(name);
+					for (auto const& name : dueTimers)
+					{
+						auto const base = lua_gettop(lua);
+						if (pushCallback(instance, "on_timer"))
+						{
+							prepareScope(building, agentId, instance, commands);
+							lua_pushlstring(lua, name.data(), name.size());
+							pushContext(building, instance);
+							auto const result = protectedCall(lua, budget, 2, 0);
+							finishCallback(instance, "on_timer", result, commands);
+						}
+						lua_settop(lua, base);
+						if (instance.disabled) break;
+					}
+				}
 				if (instance.disabled)
 				{
+					instance.timers.clear();
 					release(instance);
 					(void)lua_gc(state.get(), LUA_GCCOLLECT);
 					disabledAgents.push_back(agentId);
@@ -1445,7 +1706,8 @@ namespace core
 
 	AgentBehaviourRuntimeLimits AgentBehaviourRuntimeAdapter::getLimits() const
 	{
-		return { mImpl->budget.byteLimit, mImpl->budget.instructionLimit };
+		return { mImpl->budget.byteLimit, mImpl->budget.instructionLimit,
+			mImpl->timerLimit };
 	}
 
 	void AgentBehaviourRuntimeAdapter::reset()

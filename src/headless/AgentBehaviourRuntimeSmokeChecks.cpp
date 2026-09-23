@@ -918,6 +918,237 @@ return {
 			"Active unassignment did not restore manual movement commands");
 	}
 
+	std::string runDeterministicTimersAndSemanticState()
+	{
+		TemporaryDirectory temporary;
+		auto const package = temporary.path / "timers.behaviours";
+		std::filesystem::create_directories(package);
+		auto registry = core::AgentBehaviourRegistry::create();
+		registry->saveTo((package / "behaviours.yaml").string());
+		writeText(package / "timers.lua", R"lua(
+local host = require("prometheum.v1")
+return {
+  api_version = host.api_version,
+  factory = function(configuration)
+    local fired = {}
+    local function check_state(context, moving)
+      local state = context.agent
+      if state ~= context.state or type(state.identity) ~= "userdata"
+          or state.name ~= configuration.expected_name
+          or state.active ~= true or state.suspended ~= false
+          or state.status ~= "active" or state.sector_name ~= "Room"
+          or type(state.sector) ~= "userdata"
+          or state.sector_identity ~= state.sector
+          or state.sector_display_name ~= state.sector_name
+          or type(state.global_position.x) ~= "number"
+          or type(state.global_position.y) ~= "number"
+          or state.position ~= state.global_position
+          or state.tick ~= context.tick or state.simulation_tick ~= context.tick then
+        error("semantic Agent state is incomplete")
+      end
+      if moving then
+        if state.movement_state ~= "moving" or state.movement ~= "moving"
+            or state.destination ~= configuration.destination
+            or state.destination_marker ~= configuration.destination then
+          error("semantic movement state or destination is incorrect")
+        end
+      elseif state.movement_state ~= "idle" or state.destination ~= nil then
+        error("initial semantic movement state is incorrect")
+      end
+      for _, prohibited in ipairs({ "path", "vertex", "traversal_resource",
+          "request", "permit", "queue", "snapshot", "userdata" }) do
+        if state[prohibited] ~= nil then error("exposed " .. prohibited) end
+      end
+      if pcall(function() state.name = "changed" end)
+          or pcall(function() state.global_position.x = 0 end)
+          or pcall(function() state.sector.value = 1 end) then
+        error("semantic Agent state was mutable")
+      end
+    end
+    return {
+      on_start = function(context)
+        check_state(context, false)
+        if configuration.overflow then
+          context.set_timer("one", 1)
+          context.set_timer("two", 1)
+          context.set_timer("three", 1)
+          return
+        end
+        context.set_timer("cancelled", 1)
+        local cancelled = context.cancel_timer("cancelled")
+        local replaced = context.set_timer("z", 3)
+        local first = context.set_timer("a", 1)
+        local replacement = context.set_timer("z", 1)
+        local missing = context.cancel_timer("missing")
+        if replaced.status ~= "accepted" or first.status ~= "accepted"
+            or replacement.status ~= "accepted" or missing.status ~= "no_op"
+            or cancelled.status ~= "accepted" then
+          error("timer command result was incorrect")
+        end
+      end,
+      on_timer = function(name, context)
+        fired[#fired + 1] = name .. ":" .. context.tick
+        if #fired == 1 then
+          if fired[1] ~= "a:1" then error("first timer was not lexical a:1") end
+        elseif #fired == 2 then
+          if fired[2] ~= "z:1" then error("replacement or lexical order failed") end
+          context.set_timer("finish", 1)
+        elseif #fired == 3 then
+          if fired[3] ~= "finish:2" then error("one-tick timer did not fire after tick N+1") end
+          local moved = context.move_to(configuration.destination)
+          if moved.status ~= "accepted" then error(moved.status) end
+          context.set_timer("inspect", 1)
+        elseif #fired == 4 then
+          if fired[4] ~= "inspect:3" then error("timer callback sequence changed") end
+          check_state(context, true)
+        else
+          error("one-shot timer fired more than once")
+        end
+      end
+    }
+  end
+}
+)lua");
+		auto const behaviour = registry->addAgentBehaviour("Timers", "timers.lua", {
+			{ "expected_name", core::AgentBehaviourSchemaType::String },
+			{ "destination", core::AgentBehaviourSchemaType::Marker },
+			{ "overflow", core::AgentBehaviourSchemaType::Boolean }
+		});
+		writeText(package / "timer-order.lua", R"lua(
+local host = require("prometheum.v1")
+return {
+  api_version = host.api_version,
+  factory = function()
+    local trace = ""
+    return {
+      on_start = function(context)
+        context.set_timer("b", 1)
+        context.set_timer("a", 1)
+      end,
+      on_timer = function(name)
+        trace = trace .. name
+        if name == "b" then
+          if trace ~= "ab" then error("nonlexical:" .. trace) end
+          error("ordered:" .. trace)
+        end
+      end
+    }
+  end
+}
+)lua");
+		auto const orderingBehaviour = registry->addAgentBehaviour(
+			"Timer order", "timer-order.lua", {});
+		require(registry->lookupAgentBehaviour(behaviour)->getModuleStatus()
+				== core::AgentBehaviourModuleStatus::Loaded
+			&& registry->lookupAgentBehaviour(orderingBehaviour)->getModuleStatus()
+				== core::AgentBehaviourModuleStatus::Loaded,
+			"The deterministic timer fixtures did not preflight");
+
+		core::Building building("Timers", 16, 2,
+			{ 64u * 1024u * 1024u, 100'000u, 2u });
+		auto const room = building.addRoom("Room", 0, 0, 0, 16, 1);
+		building.addSectorMarker(room, 0, 13.5f, "Destination");
+		building.finishBuild();
+		auto const overflow = building.createAgent("Overflow", room, 0, 0.5f);
+		auto const first = building.createAgent("First", room, 0, 1.5f);
+		auto const second = building.createAgent("Second", room, 0, 2.5f);
+		auto const orderFirst = building.createAgent("Order first", room, 0, 3.5f);
+		auto const orderSecond = building.createAgent("Order second", room, 0, 4.5f);
+		auto const destination = building.getMarkerIds().front();
+		building.pauseSimulation();
+		building.consumeSimulationEvents();
+		building.attachAgentBehaviourRegistry("timers.behaviours", registry);
+		auto const revision = registry->lookupAgentBehaviour(behaviour)->getRevision();
+		auto assign = [&](core::AgentId id, std::string name, bool exceedsLimit)
+		{
+			require(building.setAgentBehaviourAssignment(id, behaviour, revision, {
+				{ "expected_name", std::move(name) }, { "destination", destination },
+				{ "overflow", exceedsLimit }
+			}), "Could not assign deterministic timer fixture");
+		};
+		assign(overflow, "Overflow", true);
+		assign(first, "First", false);
+		assign(second, "Second", false);
+		auto const orderingRevision = registry->lookupAgentBehaviour(
+			orderingBehaviour)->getRevision();
+		require(building.setAgentBehaviourAssignment(orderFirst, orderingBehaviour,
+				orderingRevision, {})
+			&& building.setAgentBehaviourAssignment(orderSecond, orderingBehaviour,
+				orderingRevision, {}),
+			"Could not assign callback-order timer fixtures");
+		require(building.getAgentBehaviourRuntimeLimits().timersPerInstance == 2,
+			"The configured per-instance timer limit was not retained");
+		require(building.resumeSimulation(), "Could not resume timer fixture");
+		building.consumeSimulationEvents();
+
+		std::ostringstream digest;
+		unsigned phaseEvents = 0;
+		auto consume = [&]
+		{
+			for (auto const& event : building.consumeSimulationEvents())
+			{
+				if (event.type == core::SimulationEventType::PhaseCompleted) ++phaseEvents;
+				if (event.type == core::SimulationEventType::AgentChanged
+					|| event.type == core::SimulationEventType::DestinationReached)
+					digest << event.tick << ':' << event.sequence << ':'
+						<< static_cast<unsigned>(event.type) << ':'
+						<< event.agent.id.value << '|';
+			}
+		};
+		for (unsigned tick = 0; tick < 4; ++tick)
+		{
+			building.advanceTick();
+			consume();
+		}
+		auto diagnostics = building.consumeAgentBehaviourRuntimeDiagnostics();
+		require(diagnostics.size() == 3 && diagnostics[0].agent == overflow
+			&& diagnostics[0].callback == "on_start"
+			&& diagnostics[0].diagnostic.find("timer limit of 2") != std::string::npos
+			&& diagnostics[1].agent == orderFirst
+			&& diagnostics[1].callback == "on_timer"
+			&& diagnostics[1].diagnostic.find("ordered:ab") != std::string::npos
+			&& diagnostics[2].agent == orderSecond
+			&& diagnostics[2].callback == "on_timer"
+			&& diagnostics[2].diagnostic.find("ordered:ab") != std::string::npos,
+			"Timer names were not lexical, callbacks were not in Agent-ID order, or the timer limit had the wrong scope");
+		require(!building.agentBehaviourOwnsMovement(overflow)
+			&& building.agentBehaviourOwnsMovement(first)
+			&& building.agentBehaviourOwnsMovement(second),
+			"One instance's timer limit affected another instance");
+		require(building.lookupAgent(first).entity->getPath()
+			&& building.lookupAgent(second).entity->getPath(),
+			"Lexically ordered one-shot timers did not apply their movement commands");
+
+		unsigned reached = 0;
+		for (unsigned tick = 0; tick < 2000 && reached < 2; ++tick)
+		{
+			building.advanceTick();
+			for (auto const& event : building.consumeSimulationEvents())
+			{
+				if (event.type == core::SimulationEventType::PhaseCompleted) ++phaseEvents;
+				if (event.type != core::SimulationEventType::DestinationReached) continue;
+				++reached;
+				digest << event.tick << ':' << event.sequence << ":reached:"
+					<< event.agent.id.value << '|';
+			}
+		}
+		require(reached == 2 && phaseEvents != 0,
+			"Timer-driven Agents did not finish, or Lua consumed the public event queue");
+		building.advanceTicks(5);
+		consume();
+		require(building.consumeAgentBehaviourRuntimeDiagnostics().empty(),
+			"A one-shot timer repeated or semantic state changed unexpectedly");
+		return digest.str();
+	}
+
+	void deterministicTimersExposeOnlySemanticState()
+	{
+		auto const first = runDeterministicTimersAndSemanticState();
+		auto const second = runDeterministicTimersAndSemanticState();
+		require(first == second,
+			"Timer callbacks or independently consumable public events were nondeterministic");
+	}
+
 	void registryRetainsLoadedAndErrorStatus()
 	{
 		TemporaryDirectory temporary;
@@ -960,5 +1191,6 @@ void runAgentBehaviourRuntimeSmokeChecks()
 	manifestHelpersHavePrivatePerAgentGraphs();
 	routeLossAndTopologyLifecycle();
 	programmingErrorDisablesMovementOwnership();
+	deterministicTimersExposeOnlySemanticState();
 	registryRetainsLoadedAndErrorStatus();
 }

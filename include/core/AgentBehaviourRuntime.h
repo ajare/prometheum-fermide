@@ -21,6 +21,7 @@ namespace core
 	{
 		size_t memoryBytes{ 64u * 1024u * 1024u };
 		uint32_t instructionsPerCall{ 100'000u };
+		uint32_t timersPerInstance{ 256u };
 	};
 
 	enum class AgentBehaviourRuntimeFailure
@@ -88,6 +89,7 @@ namespace core
 		static constexpr uint32_t HostApiVersion{ 1 };
 		static constexpr size_t DefaultMemoryBudgetBytes{ 64u * 1024u * 1024u };
 		static constexpr uint32_t DefaultInstructionBudget{ 100'000u };
+		static constexpr uint32_t DefaultTimersPerInstance{ 256u };
 		// Compatibility names for the scratch preflight API; scratch and live
 		// runtimes intentionally use the same defaults.
 		static constexpr size_t PreflightMemoryBudgetBytes{ DefaultMemoryBudgetBytes };
