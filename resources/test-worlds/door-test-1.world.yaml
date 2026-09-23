@@ -105,7 +105,7 @@ construction:
     activationMode: manual
     holdOpenSeconds: 5
     crossingLanes: 0
-    openStyle: openUp
+    openStyle: openRight
   - type: objectTombstone
     sectorIndex: 1
   - type: objectTombstone
@@ -121,7 +121,7 @@ construction:
     activationMode: manual
     holdOpenSeconds: 5
     crossingLanes: 0
-    openStyle: openUp
+    openStyle: openApart
   - type: marker
     sectorIndex: 3
     levelIndex: 0
@@ -207,7 +207,7 @@ construction:
     activationMode: remoteControlled
     holdOpenSeconds: 5
     crossingLanes: 0
-    openStyle: openUp
+    openStyle: openLeft
   - type: objectTombstone
     sectorIndex: 4
   - type: objectTombstone
