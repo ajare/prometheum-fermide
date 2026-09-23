@@ -8158,14 +8158,14 @@ namespace core
 		mSimulationCoordinator.update(elapsedSeconds);
 	}
 
-	void Building::advanceTick()
+	bool Building::advanceTick()
 	{
-		mSimulationCoordinator.advanceTick();
+		return mSimulationCoordinator.advanceTick();
 	}
 
-	void Building::advanceTicks(uint64_t count)
+	bool Building::advanceTicks(uint64_t count)
 	{
-		mSimulationCoordinator.advanceTicks(count);
+		return mSimulationCoordinator.advanceTicks(count);
 	}
 
 	uint64_t Building::getSimulationTick() const

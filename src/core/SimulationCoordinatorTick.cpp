@@ -551,13 +551,13 @@ namespace core
 		}
 	}
 
-	void SimulationCoordinator::advanceTick()
+	bool SimulationCoordinator::advanceTick()
 	{
-		if (mBuilding.mSimulationPaused) return;
+		if (mBuilding.mSimulationPaused) return false;
 		// The boundary runs with no active phase. Instances are synchronized before
 		// deterministic startup/outcome callbacks enqueue commands; those commands
 		// are applied here before this tick can collect traversal intent.
-		mBuilding.mAgentBehaviourRuntime->runBoundary(mBuilding);
+		if (!mBuilding.mAgentBehaviourRuntime->runBoundary(mBuilding)) return false;
 		auto before = getSimulationSnapshot();
 		++mBuilding.mSimulationTick;
 		updateMovementGoals();
@@ -570,14 +570,14 @@ namespace core
 		runSimulationPhase(SimulationPhase::CleanupAndEventPublication);
 		publishTickEvents(before);
 		mBuilding.mCurrentPhase = SimulationPhase::None;
+		return true;
 	}
 
-	void SimulationCoordinator::advanceTicks(uint64_t count)
+	bool SimulationCoordinator::advanceTicks(uint64_t count)
 	{
 		for (uint64_t i = 0; i < count; ++i)
-		{
-			advanceTick();
-		}
+			if (!advanceTick()) return false;
+		return true;
 	}
 
 	void SimulationCoordinator::update(float elapsedSeconds)
@@ -592,7 +592,7 @@ namespace core
 		auto const timestep = (double)Building::getFixedTimestep();
 		while (mBuilding.mAccumulatedTime + timestep * 1e-9 >= timestep)
 		{
-			advanceTick();
+			if (!advanceTick()) break;
 			mBuilding.mAccumulatedTime -= timestep;
 		}
 

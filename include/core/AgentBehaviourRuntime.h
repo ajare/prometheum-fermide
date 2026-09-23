@@ -22,6 +22,10 @@ namespace core
 		size_t memoryBytes{ 64u * 1024u * 1024u };
 		uint32_t instructionsPerCall{ 100'000u };
 		uint32_t timersPerInstance{ 256u };
+		uint32_t callbacksPerBoundary{ 10'000u };
+		uint32_t commandsPerCallback{ 32u };
+		uint32_t logMessagesPerWindow{ 100u };
+		uint64_t logWindowTicks{ 600u };
 	};
 
 	enum class AgentBehaviourRuntimeFailure
@@ -60,6 +64,10 @@ namespace core
 		AgentBehaviourRuntimeFailure failure{ AgentBehaviourRuntimeFailure::None };
 		AgentBehaviourRuntimeStage stage{ AgentBehaviourRuntimeStage::Callback };
 		AgentId agent{};
+		AgentBehaviourId behaviour{};
+		uint64_t tick{ 0 };
+		std::string agentName;
+		std::string behaviourName;
 		std::string packageName;
 		std::string moduleName;
 		std::string callback;
@@ -102,6 +110,10 @@ namespace core
 		static constexpr size_t DefaultMemoryBudgetBytes{ 64u * 1024u * 1024u };
 		static constexpr uint32_t DefaultInstructionBudget{ 100'000u };
 		static constexpr uint32_t DefaultTimersPerInstance{ 256u };
+		static constexpr uint32_t DefaultCallbacksPerBoundary{ 10'000u };
+		static constexpr uint32_t DefaultCommandsPerCallback{ 32u };
+		static constexpr uint32_t DefaultLogMessagesPerWindow{ 100u };
+		static constexpr uint64_t DefaultLogWindowTicks{ 600u };
 		// Compatibility names for the scratch preflight API; scratch and live
 		// runtimes intentionally use the same defaults.
 		static constexpr size_t PreflightMemoryBudgetBytes{ DefaultMemoryBudgetBytes };
@@ -116,7 +128,9 @@ namespace core
 		// Called only with no active simulation phase. Missing instances are all
 		// constructed first; startup and queued semantic outcomes run in stable
 		// Agent/event order, then commands are applied before intent collection.
-		void runBoundary(Building& building);
+		// Returns false when this boundary diagnosed a failure. The Building is
+		// paused before the caller can enter the next simulation tick.
+		bool runBoundary(Building& building);
 		void observeOutcome(SimulationEvent const& event);
 		// Activation edits are paused-only. The transition is retained even when
 		// the private instance will not be constructed until the next boundary.

@@ -2111,10 +2111,11 @@ namespace core
 		// every entry point below forwards to it.
 		void update(float elapsedSeconds);
 
-		// Headless deterministic seam.  These methods never use render timing.
-		void advanceTick();
+		// Headless deterministic seam. These methods never use render timing and
+		// report false when a behaviour failure stops the run before the next tick.
+		bool advanceTick();
 
-		void advanceTicks(uint64_t count);
+		bool advanceTicks(uint64_t count);
 
 		static constexpr float getFixedTimestep()
 		{

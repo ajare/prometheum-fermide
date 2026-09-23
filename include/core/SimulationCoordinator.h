@@ -591,9 +591,11 @@ namespace core
 		// timing. Both are no-ops while the simulation is paused.
 		void update(float elapsedSeconds);
 
-		void advanceTick();
+		// Headless callers receive false as soon as a behaviour failure pauses the
+		// Building; no part of the next tick is executed.
+		bool advanceTick();
 
-		void advanceTicks(uint64_t count);
+		bool advanceTicks(uint64_t count);
 
 		// One tick phase. The phase marker is set before the phase runs and
 		// cleared by advanceTick once the tick has published its events, so a

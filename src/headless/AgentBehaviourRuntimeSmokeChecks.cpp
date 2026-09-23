@@ -14,6 +14,7 @@
 #include "core/AgentBehaviourRegistry.h"
 #include "core/Building.h"
 #include "core/AgentBehaviourRuntime.h"
+#include "core/Log.h"
 #include "core/YamlSerializer.h"
 
 void runAgentBehaviourRuntimeSmokeChecks();
@@ -885,8 +886,12 @@ return {
 		require(!building.agentBehaviourOwnsMovement(id)
 			&& !building.lookupAgent(id).entity->getPath(),
 			"A multiple-movement-command callback partially applied or retained ownership");
+		require(building.isSimulationPaused(),
+			"A callback failure did not pause before the next tick");
 		require(building.moveAgentToMarker(id, marker).accepted(),
 			"Disabling the failed instance did not restore manual movement controls");
+		require(building.resumeSimulation(),
+			"Could not resume after acknowledging the callback failure");
 		building.advanceTicks(1000);
 		unsigned reached = 0;
 		for (auto const& event : building.consumeSimulationEvents())
@@ -1096,9 +1101,28 @@ return {
 						<< event.agent.id.value << '|';
 			}
 		};
+		// The overflowing startup batch is reported headlessly and pauses before
+		// tick 1. Healthy instances retain their complete startup batches.
+		require(!building.advanceTick() && building.isSimulationPaused(),
+			"A timer storm did not stop the headless boundary visibly");
+		require(building.resumeSimulation(),
+			"Could not resume after acknowledging the timer storm");
+		consume();
+		// Tick 1 first completes; its due timers run at the following boundary.
+		require(building.advanceTick(),
+			"Healthy startup batches did not permit tick 1 to complete");
+		consume();
+		// Both ordered timer failures occur at that boundary in Agent-ID order,
+		// after healthy timer callbacks have completed atomically.
+		require(!building.advanceTick() && building.isSimulationPaused(),
+			"Ordered callback failures did not stop the headless boundary");
+		require(building.resumeSimulation(),
+			"Could not resume after acknowledging ordered callback failures");
+		consume();
 		for (unsigned tick = 0; tick < 4; ++tick)
 		{
-			building.advanceTick();
+			require(building.advanceTick(),
+				"A healthy timer callback unexpectedly stopped the run");
 			consume();
 		}
 		auto diagnostics = building.consumeAgentBehaviourRuntimeDiagnostics();
@@ -1700,6 +1724,199 @@ return {
 			"The authored Building seed did not affect deterministic random streams");
 	}
 
+	std::string runBoundedStormAndFailureFixture()
+	{
+		(void)core::consumeLogMessages();
+		TemporaryDirectory temporary;
+		auto const package = temporary.path / "storms.behaviours";
+		std::filesystem::create_directories(package);
+		auto registry = core::AgentBehaviourRegistry::create();
+		registry->saveTo((package / "behaviours.yaml").string());
+		auto add = [&](std::string const& name, std::string const& file,
+			std::string const& source)
+		{
+			writeText(package / file, source);
+			return registry->addAgentBehaviour(name, file, {});
+		};
+		auto const callbackStorm = add("Callback storm", "callbacks.lua", R"lua(
+return { api_version = 1, factory = function()
+  return {
+    on_start = function(context)
+      for i = 1, 4 do context.set_timer(string.format("%02d", i), 1) end
+    end,
+    on_timer = function() end
+  }
+end }
+)lua");
+		auto const commandStorm = add("Command storm", "commands.lua", R"lua(
+return { api_version = 1, factory = function()
+  return { on_start = function(context)
+    for i = 1, 33 do context.set_timer("timer-" .. i, 10) end
+  end }
+end }
+)lua");
+		auto const safe = add("Safe", "safe-storm.lua", R"lua(
+return { api_version = 1, factory = function()
+  return { on_start = function(context) context.set_timer("safe", 20) end }
+end }
+)lua");
+		auto const loadFailure = add("Load failure", "load-storm.lua", R"lua(
+local total = 0
+for i = 1, 5000 do total = total + i end
+return { api_version = 1, factory = function() return {} end }
+)lua");
+		auto const logging = add("Logging", "logging.lua", R"lua(
+return { api_version = 1, factory = function()
+  return {
+    on_start = function(context)
+      for i = 1, 105 do context.log("message-" .. i, "info") end
+      context.set_timer("next-window", 600)
+    end,
+    on_timer = function(_, context) context.log("new-window", "warning") end
+  }
+end }
+)lua");
+
+		std::ostringstream digest;
+		{
+			core::Building building("Callback storm", 8, 2,
+				{ 64u * 1024u * 1024u, 100'000u, 256u, 3u, 32u, 100u, 600u });
+			auto const room = building.addRoom("Room", 0, 0, 0, 8, 1);
+			building.finishBuild();
+			auto const storm = building.createAgent("Storm", room, 0, 0.5f);
+			auto const unaffected = building.createAgent("Unaffected", room, 0, 1.5f);
+			building.pauseSimulation();
+			building.attachAgentBehaviourRegistry("storms.behaviours", registry);
+			require(building.setAgentBehaviourAssignment(storm, callbackStorm,
+				registry->lookupAgentBehaviour(callbackStorm)->getRevision(), {})
+				&& building.setAgentBehaviourAssignment(unaffected, safe,
+					registry->lookupAgentBehaviour(safe)->getRevision(), {}),
+				"Could not assign callback-storm fixtures");
+			require(building.resumeSimulation() && building.advanceTick(),
+				"Callback-storm startup did not complete");
+			require(!building.advanceTick() && building.isSimulationPaused()
+				&& building.getSimulationTick() == 1,
+				"Callback storm did not stop before the overflowing tick");
+			auto diagnostics = building.consumeAgentBehaviourRuntimeDiagnostics();
+			require(diagnostics.size() == 1 && diagnostics[0].agent == storm
+				&& diagnostics[0].behaviour == callbackStorm
+				&& diagnostics[0].agentName == "Storm"
+				&& diagnostics[0].behaviourName == "Callback storm"
+				&& diagnostics[0].callback == "on_timer" && diagnostics[0].tick == 1
+				&& diagnostics[0].diagnostic.find("limit of 3") != std::string::npos
+				&& !diagnostics[0].traceback.empty()
+				&& !building.agentBehaviourOwnsMovement(storm)
+				&& building.agentBehaviourOwnsMovement(unaffected),
+				"Callback-storm diagnostic, isolation, or ordering changed");
+			digest << diagnostics[0].agent.value << ':' << diagnostics[0].tick << ':'
+				<< diagnostics[0].diagnostic << '|';
+		}
+
+		{
+			core::Building building("Command storm", 8, 2);
+			auto const defaults = building.getAgentBehaviourRuntimeLimits();
+			require(defaults.callbacksPerBoundary == 10'000u
+				&& defaults.commandsPerCallback == 32u
+				&& defaults.timersPerInstance == 256u
+				&& defaults.logMessagesPerWindow == 100u
+				&& defaults.logWindowTicks == 600u,
+				"Agent behaviour storm defaults changed");
+			auto const room = building.addRoom("Room", 0, 0, 0, 8, 1);
+			building.finishBuild();
+			auto const storm = building.createAgent("Commands", room, 0, 0.5f);
+			auto const unaffected = building.createAgent("Safe", room, 0, 1.5f);
+			building.pauseSimulation();
+			building.attachAgentBehaviourRegistry("storms.behaviours", registry);
+			require(building.setAgentBehaviourAssignment(storm, commandStorm,
+				registry->lookupAgentBehaviour(commandStorm)->getRevision(), {})
+				&& building.setAgentBehaviourAssignment(unaffected, safe,
+					registry->lookupAgentBehaviour(safe)->getRevision(), {}),
+				"Could not assign command-storm fixtures");
+			require(building.resumeSimulation() && !building.advanceTick()
+				&& building.isSimulationPaused() && building.getSimulationTick() == 0,
+				"Command storm partially entered the overflowing tick");
+			auto diagnostics = building.consumeAgentBehaviourRuntimeDiagnostics();
+			auto const commandDetail = diagnostics.empty() ? std::string("no diagnostic")
+				: diagnostics[0].diagnostic;
+			require(diagnostics.size() == 1 && diagnostics[0].agent == storm
+				&& diagnostics[0].callback == "on_start"
+				&& diagnostics[0].diagnostic.find("limit of 32") != std::string::npos
+				&& !building.agentBehaviourOwnsMovement(storm)
+				&& building.agentBehaviourOwnsMovement(unaffected),
+				"Command storm partially applied or affected an unrelated Agent: "
+					+ commandDetail + " (count=" + std::to_string(diagnostics.size())
+					+ ", stormOwns=" + std::to_string(building.agentBehaviourOwnsMovement(storm))
+					+ ", safeOwns=" + std::to_string(building.agentBehaviourOwnsMovement(unaffected)) + ")");
+			digest << diagnostics[0].agent.value << ':' << diagnostics[0].tick << ':'
+				<< diagnostics[0].diagnostic << '|';
+		}
+
+		{
+			core::Building building("Module failure", 8, 2,
+				{ 64u * 1024u * 1024u, 1'000u });
+			auto const room = building.addRoom("Room", 0, 0, 0, 8, 1);
+			building.finishBuild();
+			auto const first = building.createAgent("First affected", room, 0, 0.5f);
+			auto const second = building.createAgent("Second affected", room, 0, 1.5f);
+			auto const unaffected = building.createAgent("Other module", room, 0, 2.5f);
+			building.pauseSimulation();
+			building.attachAgentBehaviourRegistry("storms.behaviours", registry);
+			require(building.setAgentBehaviourAssignment(first, loadFailure,
+				registry->lookupAgentBehaviour(loadFailure)->getRevision(), {})
+				&& building.setAgentBehaviourAssignment(second, loadFailure,
+					registry->lookupAgentBehaviour(loadFailure)->getRevision(), {})
+				&& building.setAgentBehaviourAssignment(unaffected, safe,
+					registry->lookupAgentBehaviour(safe)->getRevision(), {}),
+				"Could not assign module-scope fixtures");
+			require(building.resumeSimulation() && !building.advanceTick()
+				&& building.isSimulationPaused(),
+				"Module failure did not stop the headless run");
+			auto diagnostics = building.consumeAgentBehaviourRuntimeDiagnostics();
+			require(diagnostics.size() == 1 && diagnostics[0].agent == first
+				&& diagnostics[0].behaviour == loadFailure
+				&& diagnostics[0].stage == core::AgentBehaviourRuntimeStage::ModuleLoad
+				&& !building.agentBehaviourOwnsMovement(first)
+				&& !building.agentBehaviourOwnsMovement(second)
+				&& building.agentBehaviourOwnsMovement(unaffected),
+				"Module failure did not disable exactly its affected instances");
+			digest << diagnostics[0].agent.value << ':'
+				<< static_cast<unsigned>(diagnostics[0].stage) << '|';
+		}
+
+		{
+			core::Building building("Log suppression", 8, 2);
+			auto const room = building.addRoom("Room", 0, 0, 0, 8, 1);
+			building.finishBuild();
+			auto const agent = building.createAgent("Logger", room, 0, 0.5f);
+			building.pauseSimulation();
+			building.attachAgentBehaviourRegistry("storms.behaviours", registry);
+			require(building.setAgentBehaviourAssignment(agent, logging,
+				registry->lookupAgentBehaviour(logging)->getRevision(), {})
+				&& building.resumeSimulation() && building.advanceTick(),
+				"Could not run log-suppression fixture");
+			auto messages = core::consumeLogMessages();
+			require(messages.size() == 101
+				&& messages.back().msg.find("further messages suppressed")
+					!= std::string::npos,
+				"Log storm did not produce exactly one suppression summary");
+			require(building.advanceTicks(600) && building.advanceTick(),
+				"Log-window fixture did not reach its next window");
+			messages = core::consumeLogMessages();
+			require(messages.size() == 1 && messages[0].msg == "new-window",
+				"Building log allowance did not reset after 600 ticks");
+			digest << "logs:101:1|";
+		}
+		return digest.str();
+	}
+
+	void boundedStormsAndFailuresReplayDeterministically()
+	{
+		auto const first = runBoundedStormAndFailureFixture();
+		auto const second = runBoundedStormAndFailureFixture();
+		require(first == second,
+			"Repeated headless storm/failure fixtures changed ordering or diagnostics");
+	}
+
 	void registryRetainsLoadedAndErrorStatus()
 	{
 		TemporaryDirectory temporary;
@@ -1747,5 +1964,6 @@ void runAgentBehaviourRuntimeSmokeChecks()
 	interactionOutcomesAreImmutableSemanticValues();
 	teardownIsReadOnlyAndBestEffort();
 	configuredSchedulesAndRandomStreamsReplay();
+	boundedStormsAndFailuresReplayDeterministically();
 	registryRetainsLoadedAndErrorStatus();
 }
