@@ -1,14 +1,9 @@
 // Palette tray layout and placement checks, for tickets #54 and #41.
 //
-// The palette tray was previously sized for exactly nine slots while the
-// bottom row - anchored to the Ladder column so that Door sits under
-// Ladder - carried its tail (RoomLadder, PlatformLift) past the tray's
-// right edge, so those buttons drew outside the tray background. The
-// tray geometry now lives in PaletteLayout.h and is derived from the
-// slot grid itself. These checks pin the grid down: every slot must fit
-// inside the tray with the tray's own padding to spare, the bottom row
-// must keep its column alignment under the top row, and no two slots
-// may overlap.
+// The tray geometry lives in PaletteLayout.h and is derived from the slot
+// grid itself. These checks pin the compact two-row grid down: every slot
+// must fit inside the tray with the tray's own padding to spare, neither row
+// may contain a blank column, and no two slots may overlap.
 //
 // The tray is draggable by any part of itself that is not a button, so
 // the checks also pin the placement rules down: a legal drag lands where
@@ -51,8 +46,8 @@ namespace
 			auto const max = paletteSlotMax(TrayTopLeft, slot);
 			require(min.x >= TrayTopLeft.x + PalettePadding,
 				"palette slot intrudes on the tray's left padding");
-			require(min.y >= TrayTopLeft.y + PalettePadding,
-				"palette slot intrudes on the tray's top padding");
+			require(min.y >= TrayTopLeft.y + PaletteTopMargin,
+				"palette slot intrudes on the tray's top margin");
 			require(max.x <= bottomRight.x - PalettePadding,
 				"palette slot intrudes on the tray's right padding");
 			require(max.y <= bottomRight.y - PalettePadding,
@@ -60,7 +55,7 @@ namespace
 		}
 	}
 
-	// The regression itself: the bottom row's tail must land inside the tray.
+	// The final two bottom-row tools must land inside the compact tray.
 	void roomLadderAndPlatformLiftFitInsideTheTray()
 	{
 		auto const bottomRight = trayBottomRight();
@@ -75,34 +70,18 @@ namespace
 			"tray width no longer matches the slot grid's widest row");
 	}
 
-	// The bottom row keeps the top row's column grid: Agent under Room,
-	// Marker under Corridor, Door under Ladder.
-	void bottomRowKeepsTopRowColumnAlignment()
-	{
-		require(paletteSlotColumn(PaletteSlot::Agent) == paletteSlotColumn(PaletteSlot::Room),
-			"Agent no longer sits under Room");
-		require(paletteSlotColumn(PaletteSlot::Marker) == paletteSlotColumn(PaletteSlot::Corridor),
-			"Marker no longer sits under Corridor");
-		require(paletteSlotColumn(PaletteSlot::Door) == paletteSlotColumn(PaletteSlot::Ladder),
-			"Door no longer sits under Ladder");
-		require(paletteSlotRow(PaletteSlot::Agent) == 1
-				&& paletteSlotRow(PaletteSlot::Marker) == 1
-				&& paletteSlotRow(PaletteSlot::Door) == 1,
-			"Agent, Marker, and Door belong to the bottom row");
-	}
-
-	// From Door rightward the bottom row is contiguous, and the top row
-	// fills columns 0..8 without gaps.
+	// Both rows are compact: the bottom row starts with Agent, Marker, Door
+	// and contains no blank columns.
 	void rowsAreContiguous()
 	{
-		int previousColumn = paletteSlotColumn(PaletteSlot::Door);
-		for (int index = static_cast<int>(PaletteSlot::BulkheadDoor);
+		for (int index = static_cast<int>(PaletteSlot::Agent);
 			index < static_cast<int>(PaletteSlot::Count); ++index)
 		{
 			auto const column = paletteSlotColumn(slotAt(index));
-			require(column == previousColumn + 1,
-				"bottom row is no longer contiguous from Door rightward");
-			previousColumn = column;
+			require(column == index - static_cast<int>(PaletteSlot::Agent),
+				"bottom row contains a blank column");
+			require(paletteSlotRow(slotAt(index)) == 1,
+				"bottom-row tool drifted off the bottom row");
 		}
 		for (int index = 0; index <= static_cast<int>(PaletteSlot::Staircase); ++index)
 		{
@@ -130,16 +109,41 @@ namespace
 		}
 	}
 
+	void sectorLabelsFitAndAreCentred()
+	{
+		char const* labels[]{ "Room", "Facade", "Corridor", "Background", "Ladder",
+			"Stairwell", "Lift", "Shuttle", "Staircase" };
+		for (int index = 0; index < 9; ++index)
+		{
+			auto const slot = slotAt(index);
+			auto const minimum = paletteSlotMin(TrayTopLeft, slot);
+			auto const maximum = paletteSlotMax(TrayTopLeft, slot);
+			auto const glyphBounds = paletteLabelVisibleBounds(labels[index]);
+			auto const origin = paletteLabelPosition(minimum, maximum, labels[index]);
+			auto const visibleLeft = origin.x + glyphBounds.x;
+			auto const visibleRight = origin.x + glyphBounds.y;
+			require(visibleLeft >= minimum.x + 4.0f && visibleRight <= maximum.x - 4.0f,
+				"sector palette label does not fit inside its slot");
+			require((visibleLeft + visibleRight) * 0.5f
+					== (minimum.x + maximum.x) * 0.5f,
+				"sector palette label is not horizontally centred");
+			require(origin.y + 8.0f == (minimum.y + maximum.y) * 0.5f,
+				"sector palette label is not vertically centred");
+		}
+	}
+
 	// The grid is compile-time geometry; pin the tray size so a future
 	// slot addition that overflows fails loudly.
-	static_assert(paletteColumnCount() == 11, "palette grid column count changed");
+	static_assert(PaletteSlotWidth >= 96.0f,
+		"palette slots are too narrow for their sector labels");
+	static_assert(paletteColumnCount() == 9, "palette grid column count changed");
 	static_assert(paletteRowCount() == 2, "palette grid row count changed");
 	static_assert(paletteTraySize().x == PalettePadding * 2.0f
-			+ PaletteSlotWidth * 11.0f + PaletteGap * 10.0f,
+			+ PaletteSlotWidth * 9.0f + PaletteGap * 8.0f,
 		"tray width no longer covers every slot column");
-	static_assert(paletteTraySize().y == PalettePadding * 2.0f
+	static_assert(paletteTraySize().y == PaletteTopMargin + PalettePadding
 			+ PaletteSlotSize * 2.0f + PaletteGap,
-		"tray height no longer covers both slot rows");
+		"tray height no longer covers both slot rows and its top grip");
 	static_assert(paletteSlotMax(ImVec2(0.0f, 0.0f), PaletteSlot::PlatformLift).x
 			+ PalettePadding == paletteTraySize().x,
 		"PlatformLift escapes the tray");
@@ -221,9 +225,13 @@ namespace
 				ImVec2(TrayTopLeft.x + 1.0f, TrayTopLeft.y + 1.0f)),
 			"the tray's top-left padding is not a grip");
 		require(!paletteButtonAt(TrayTopLeft,
+				ImVec2(TrayTopLeft.x + size.x * 0.5f,
+					TrayTopLeft.y + PaletteTopMargin * 0.5f)),
+			"the tray's top margin is not an exposed drag grip");
+		require(!paletteButtonAt(TrayTopLeft,
 				ImVec2(TrayTopLeft.x + size.x - 1.0f, TrayTopLeft.y + size.y - 1.0f)),
 			"the tray's bottom-right padding is not a grip");
-		auto const rowGapY = TrayTopLeft.y + PalettePadding + PaletteSlotSize
+		auto const rowGapY = TrayTopLeft.y + PaletteTopMargin + PaletteSlotSize
 			+ PaletteGap * 0.5f;
 		require(!paletteButtonAt(TrayTopLeft,
 				ImVec2(TrayTopLeft.x + PalettePadding + PaletteSlotWidth * 0.5f, rowGapY)),
@@ -249,9 +257,9 @@ void runPaletteTraySmokeChecks()
 {
 	everySlotFitsInsideTheTray();
 	roomLadderAndPlatformLiftFitInsideTheTray();
-	bottomRowKeepsTopRowColumnAlignment();
 	rowsAreContiguous();
 	noTwoSlotsOverlap();
+	sectorLabelsFitAndAreCentred();
 	dragInsideTheCanvasKeepsTheRequestedPosition();
 	dragPastAnEdgeStopsAtThatEdge();
 	trayAlwaysOverlapsTheCanvas();

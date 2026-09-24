@@ -4,14 +4,9 @@
 
 // Geometry of the editor's object-palette tray (ticket #54).
 //
-// The tray is a two-row grid of slots. The top row holds the space and
-// transit tools; the bottom row holds the Agent, the Marker, and the
-// objects that attach to already-placed Sectors. The bottom row keeps the
-// top row's column grid: Agent sits under Room, Marker under Corridor,
-// and Door under Ladder, with the remaining tools continuing to the
-// right. Because the bottom row's tail (RoomLadder, PlatformLift)
-// extends past the top row's last column, the tray width is derived
-// from the grid's column count rather than from the top row alone.
+// The tray is a compact two-row grid. The top row holds the nine space and
+// transit tools; the bottom row holds the nine Agents, Markers, and objects
+// that attach to already-placed Sectors. Neither row contains blank slots.
 
 enum class PaletteSlot
 {
@@ -39,9 +34,10 @@ enum class PaletteSlot
 };
 
 inline constexpr float PaletteSlotSize{ 36.0f };	// slot height
-inline constexpr float PaletteSlotWidth{ 64.0f };
+inline constexpr float PaletteSlotWidth{ 96.0f };
 inline constexpr float PaletteGap{ 6.0f };
 inline constexpr float PalettePadding{ 6.0f };
+inline constexpr float PaletteTopMargin{ 14.0f }; // exposed grip above the buttons
 
 inline constexpr int paletteSlotRow(PaletteSlot slot)
 {
@@ -62,14 +58,14 @@ inline constexpr int paletteSlotColumn(PaletteSlot slot)
 	case PaletteSlot::Shuttle: return 7;
 	case PaletteSlot::Staircase: return 8;
 	case PaletteSlot::Agent: return 0;
-	case PaletteSlot::Marker: return 2;
-	case PaletteSlot::Door: return 4;
-	case PaletteSlot::BulkheadDoor: return 5;
-	case PaletteSlot::Window: return 6;
-	case PaletteSlot::Walkway: return 7;
-	case PaletteSlot::ForceBridge: return 8;
-	case PaletteSlot::RoomLadder: return 9;
-	case PaletteSlot::PlatformLift: return 10;
+	case PaletteSlot::Marker: return 1;
+	case PaletteSlot::Door: return 2;
+	case PaletteSlot::BulkheadDoor: return 3;
+	case PaletteSlot::Window: return 4;
+	case PaletteSlot::Walkway: return 5;
+	case PaletteSlot::ForceBridge: return 6;
+	case PaletteSlot::RoomLadder: return 7;
+	case PaletteSlot::PlatformLift: return 8;
 	case PaletteSlot::Count: break;
 	}
 	return 0;
@@ -102,7 +98,7 @@ inline constexpr ImVec2 paletteTraySize()
 	return ImVec2(PalettePadding * 2.0f
 			+ PaletteSlotWidth * static_cast<float>(paletteColumnCount())
 			+ PaletteGap * static_cast<float>(paletteColumnCount() - 1),
-		PalettePadding * 2.0f
+		PaletteTopMargin + PalettePadding
 			+ PaletteSlotSize * static_cast<float>(paletteRowCount())
 			+ PaletteGap * static_cast<float>(paletteRowCount() - 1));
 }
@@ -111,7 +107,7 @@ inline constexpr ImVec2 paletteSlotMin(ImVec2 trayTopLeft, PaletteSlot slot)
 {
 	return ImVec2(trayTopLeft.x + PalettePadding
 			+ static_cast<float>(paletteSlotColumn(slot)) * (PaletteSlotWidth + PaletteGap),
-		trayTopLeft.y + PalettePadding
+		trayTopLeft.y + PaletteTopMargin
 			+ static_cast<float>(paletteSlotRow(slot)) * (PaletteSlotSize + PaletteGap));
 }
 
@@ -119,6 +115,43 @@ inline constexpr ImVec2 paletteSlotMax(ImVec2 trayTopLeft, PaletteSlot slot)
 {
 	return ImVec2(paletteSlotMin(trayTopLeft, slot).x + PaletteSlotWidth,
 		paletteSlotMin(trayTopLeft, slot).y + PaletteSlotSize);
+}
+
+// MPP's canvas text renderer uses a fixed 16-pixel font. Its renderText()
+// origin includes an eight-pixel lead-in and half of each glyph's negative
+// kerning, so ImGui::CalcTextSize cannot centre these labels correctly.
+inline constexpr float paletteLabelKern(char character)
+{
+	return character == 'f' ? -9.0f
+		: character == 'i' || character == 'j' || character == 'r' ? -10.0f
+		: -8.0f;
+}
+
+inline constexpr ImVec2 paletteLabelVisibleBounds(char const* label)
+{
+	float cursor = 8.0f;
+	float left = 0.0f;
+	float right = 0.0f;
+	for (int index = 0; label[index]; ++index)
+	{
+		auto const halfKern = paletteLabelKern(label[index]) * 0.5f;
+		cursor += halfKern;
+		if (index == 0) left = cursor;
+		right = cursor + 16.0f;
+		cursor += 16.0f + halfKern;
+	}
+	return { left, right };
+}
+
+inline constexpr ImVec2 paletteLabelPosition(ImVec2 slotMin, ImVec2 slotMax,
+	char const* label)
+{
+	auto const bounds = paletteLabelVisibleBounds(label);
+	auto const visibleWidth = bounds.y - bounds.x;
+	return {
+		slotMin.x + ((slotMax.x - slotMin.x) - visibleWidth) * 0.5f - bounds.x,
+		slotMin.y + ((slotMax.y - slotMin.y) - 16.0f) * 0.5f
+	};
 }
 
 // Where a dragged tray ends up, kept inside the view canvas (ticket #41).

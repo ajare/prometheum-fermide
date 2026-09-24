@@ -26,6 +26,7 @@
 #include "imgui/imgui_internal.h"
 #include "imgui/IconsFontAwesome5.h"
 #include "PaletteLayout.h"
+#include "ObjectTileset.h"
 #include "DocumentEdit.h"
 #include "DoorPanel.h"
 #include "AgentGroupsPanel.h"
@@ -688,6 +689,15 @@ namespace
 	void drawPegman(WorldDrawList* drawList, ImVec2 feet, float maximumWidth,
 		float maximumHeight, ImU32 colour)
 	{
+		// MPP text uses its own font and cannot preserve an ImGui Font Awesome
+		// face or per-command size. Prefer the same atlas sprite as the World.
+		constexpr float aspect = 26.0f / 72.0f;
+		auto height = min(maximumHeight, maximumWidth / aspect);
+		auto width = height * aspect;
+		if (drawObjectSprite("agent", drawList,
+			{ feet.x - width * 0.5f, feet.y - height },
+			{ feet.x + width * 0.5f, feet.y }, colour)) return;
+
 		ImVec2 size;
 		float fontSize = fittedPegmanFontSize(maximumWidth, maximumHeight, size);
 		ImVec2 topLeft{ feet.x - size.x * 0.5f, feet.y - size.y };
@@ -697,6 +707,12 @@ namespace
 
 	void drawMarkerIcon(WorldDrawList* drawList, ImVec2 point, float maximumSize, ImU32 colour)
 	{
+		constexpr float aspect = 16.0f / 22.0f;
+		auto width = maximumSize * aspect;
+		if (drawObjectSprite("marker", drawList,
+			{ point.x - width * 0.5f, point.y - maximumSize },
+			{ point.x + width * 0.5f, point.y }, colour)) return;
+
 		ImFont* font = gAgentIconFont ? gAgentIconFont : ImGui::GetFont();
 		auto sourceSize = font->FontSize;
 		auto sourceBounds = font->CalcTextSizeA(sourceSize, FLT_MAX, 0.0f, ICON_FA_MAP_MARKER_ALT);
@@ -723,7 +739,13 @@ namespace
 
 	void drawDoorIcon(WorldDrawList* drawList, ImVec2 boundsMin, ImVec2 boundsMax, ImU32 colour)
 	{
-		drawObjectIcon(drawList, boundsMin, boundsMax, colour, ICON_FA_DOOR_OPED);
+		auto available = boundsMax - boundsMin - ImVec2(10.0f, 8.0f);
+		constexpr float aspect = 52.0f / 80.0f;
+		auto height = min(available.y, available.x / aspect);
+		auto size = ImVec2(height * aspect, height);
+		auto minimum = boundsMin + (boundsMax - boundsMin - size) * 0.5f;
+		if (!drawObjectSprite("door", drawList, minimum, minimum + size, colour))
+			drawObjectIcon(drawList, boundsMin, boundsMax, colour, ICON_FA_DOOR_OPED);
 	}
 
 	void drawBulkheadDoorIcon(WorldDrawList* drawList, ImVec2 boundsMin, ImVec2 boundsMax, ImU32 colour)
@@ -737,12 +759,22 @@ namespace
 
 	void drawWindowIcon(WorldDrawList* drawList, ImVec2 boundsMin, ImVec2 boundsMax, ImU32 colour)
 	{
-		drawObjectIcon(drawList, boundsMin, boundsMax, colour, ICON_FA_WINDOW_MAXIMIZE);
+		auto available = boundsMax - boundsMin - ImVec2(10.0f, 8.0f);
+		constexpr float aspect = 52.0f / 48.0f;
+		auto width = min(available.x, available.y * aspect);
+		auto size = ImVec2(width, width / aspect);
+		auto minimum = boundsMin + (boundsMax - boundsMin - size) * 0.5f;
+		if (!drawObjectSprite("window-clear", drawList, minimum, minimum + size, colour))
+			drawObjectIcon(drawList, boundsMin, boundsMax, colour, ICON_FA_WINDOW_MAXIMIZE);
 	}
 
 	void drawWalkwayIcon(WorldDrawList* drawList, ImVec2 boundsMin, ImVec2 boundsMax, ImU32 colour)
 	{
-		drawObjectIcon(drawList, boundsMin, boundsMax, colour, ICON_FA_GRIP_LINES);
+		auto const left = boundsMin.x + 14.0f;
+		auto const right = boundsMax.x - 14.0f;
+		auto const centre = (boundsMin.y + boundsMax.y) * 0.5f;
+		for (float offset : { -6.0f, 0.0f, 6.0f })
+			drawList->AddLine({ left, centre + offset }, { right, centre + offset }, colour, 2.0f);
 	}
 
 	void drawForceBridgeIcon(WorldDrawList* drawList, ImVec2 boundsMin, ImVec2 boundsMax, ImU32 colour)
@@ -1560,8 +1592,7 @@ namespace
 			if (gPaint.tool == tool) drawList->AddRectFilled(min, max, selectedColour, 3.0f);
 			drawList->AddRect(min, max,
 				disabled ? disabledColour : (hovered ? yellow : borderColour), 3.0f);
-			auto textSize = ImGui::CalcTextSize(label);
-			auto textPosition = min + (max - min - textSize) * 0.5f;
+			auto const textPosition = paletteLabelPosition(min, max, label);
 			drawList->AddText(textPosition, disabled ? disabledColour : IM_COL32_WHITE, label);
 		};
 
