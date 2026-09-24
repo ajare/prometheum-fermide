@@ -221,3 +221,17 @@ _Avoid_: Traversal controller, device controller
 **Traversal permit**:
 A short-lived authorization to perform one specific sector transition after all door, capacity, and resource-position conditions are satisfied.
 _Avoid_: Path, reservation
+
+## Editor rendering and resources
+
+**World canvas**:
+The visual editing and simulation surface for a World. Its primitives are recorded in a backend-independent command stream, rendered by MPP to an offscreen texture, and presented inside the Dear ImGui interface.
+_Avoid_: ImGui window, when referring specifically to rendered World content
+
+**Application resource manifest**:
+`resources/Resources.yaml`, the authoritative catalogue for bundled application assets and their dependencies. User-selected documents may be registered dynamically without modifying this file.
+_Avoid_: World document, tile-set metadata
+
+**Image set**:
+A Willpower resource that names rectangular regions of one atlas image. Whether a region is tintable or repeated is a World-renderer semantic rather than a separate resource type.
+_Avoid_: Tile set

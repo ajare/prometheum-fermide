@@ -8,14 +8,14 @@
 namespace {
 SectorTileset active;
 ImTextureID textureId{};
-void image(ImDrawList* list, SectorTileRegion const& r, ImVec2 a, ImVec2 b,
+void image(WorldDrawList* list, SectorTileRegion const& r, ImVec2 a, ImVec2 b,
     float fractionX, float fractionY, ImU32 tint)
 {
     // Half-texel inset avoids sampling adjacent draft artwork with linear filtering.
     ImVec2 uv0{(r.x + 0.5f) / active.width, (r.y + 0.5f) / active.height};
     ImVec2 uv1{(r.x + 0.5f + (r.width - 1) * fractionX) / active.width,
         (r.y + 0.5f + (r.height - 1) * fractionY) / active.height};
-    list->AddImage(textureId, a, b, uv0, uv1, tint);
+    list->AddImage(WorldDrawList::Texture::SectorAtlas, a, b, uv0, uv1, tint);
 }
 }
 
@@ -60,7 +60,7 @@ void setSectorTileset(SectorTileset tileset, ImTextureID texture)
 }
 void clearSectorTileset() { textureId = {}; active = {}; }
 
-bool drawSectorTileSurface(std::string const& kind, ImDrawList* list,
+bool drawSectorTileSurface(std::string const& kind, WorldDrawList* list,
     ImVec2 minimum, ImVec2 maximum, ImU32 tint)
 {
     if (!textureId) return false;
@@ -80,7 +80,7 @@ bool drawSectorTileSurface(std::string const& kind, ImDrawList* list,
     return true;
 }
 
-bool drawSectorTileBoundary(char const* kind, ImDrawList* list, ImVec2 a, ImVec2 b)
+bool drawSectorTileBoundary(char const* kind, WorldDrawList* list, ImVec2 a, ImVec2 b)
 {
     if (!textureId) return false;
     image(list, active.boundaries.at(kind), a, b, 1, 1, IM_COL32_WHITE);

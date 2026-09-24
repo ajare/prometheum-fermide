@@ -1,0 +1,86 @@
+Resources:
+  Resource:
+    - type: "Image"
+      name: "SectorAtlasImage"
+      location: "textures/sector-atlas-draft.png"
+      Option:
+        - name: "filtering"
+          value: "none"
+        - name: "uv-style"
+          value: "atlas"
+    - type: "ImageSet"
+      name: "SectorAtlas"
+      DependentResources:
+        DependentResource:
+          id: "Image"
+          ref: "SectorAtlasImage"
+      Definitions:
+        Definition:
+          Images:
+            Image:
+              - { name: "corridor", x: "151", y: "99", width: "45", height: "32" }
+              - { name: "room", x: "28", y: "179", width: "83", height: "69" }
+              - { name: "ladder", x: "370", y: "546", width: "35", height: "116" }
+              - { name: "lift", x: "158", y: "547", width: "32", height: "117" }
+              - { name: "shuttle", x: "373", y: "735", width: "31", height: "46" }
+              - { name: "stairwell", x: "366", y: "411", width: "36", height: "47" }
+              - { name: "staircase", x: "296", y: "412", width: "39", height: "69" }
+              - { name: "boundary-ceiling", x: "26", y: "154", width: "80", height: "9" }
+              - { name: "boundary-floor", x: "26", y: "255", width: "80", height: "9" }
+              - { name: "boundary-left", x: "8", y: "179", width: "9", height: "65" }
+              - { name: "boundary-right", x: "127", y: "179", width: "9", height: "65" }
+    - type: "Image"
+      name: "ObjectAtlasImage"
+      location: "textures/objects.png"
+      Option:
+        - name: "filtering"
+          value: "none"
+        - name: "uv-style"
+          value: "atlas"
+    - type: "ImageSet"
+      name: "ObjectAtlas"
+      DependentResources:
+        DependentResource:
+          id: "Image"
+          ref: "ObjectAtlasImage"
+      Definitions:
+        Definition:
+          Images:
+            Image:
+              - { name: "door", x: "6", y: "80", width: "52", height: "80" }
+              - { name: "button-enabled", x: "93", y: "112", width: "6", height: "16" }
+              - { name: "button-disabled", x: "157", y: "112", width: "6", height: "16" }
+              - { name: "window-clear", x: "198", y: "80", width: "52", height: "48" }
+              - { name: "window-frosted", x: "262", y: "80", width: "52", height: "48" }
+              - { name: "window-tinted", x: "6", y: "240", width: "52", height: "48" }
+              - { name: "agent", x: "83", y: "248", width: "26", height: "72" }
+              - { name: "marker", x: "152", y: "282", width: "16", height: "22" }
+              - { name: "platform-lift", x: "192", y: "310", width: "64", height: "10" }
+    - type: "AgentTagRegistry"
+      name: "TestAgentTags"
+      location: "test-worlds/test.tags.yaml"
+    - type: "LuaScript"
+      name: "MarkerPatrol"
+      location: "test-worlds/door-test-1.behaviours/marker-patrol.lua"
+    - type: "AgentBehaviourRegistry"
+      name: "DoorTestBehaviours"
+      location: "test-worlds/door-test-1.behaviours/behaviours.yaml"
+      DependentResources:
+        DependentResource:
+          id: "MarkerPatrol"
+          ref: "MarkerPatrol"
+    - type: "World"
+      name: "DoorTest"
+      location: "test-worlds/door-test-1.world.yaml"
+      DependentResources:
+        DependentResource:
+          - id: "AgentTags"
+            ref: "TestAgentTags"
+          - id: "AgentBehaviours"
+            ref: "DoorTestBehaviours"
+    - type: "World"
+      name: "Citadel"
+      location: "Citadel.world.yaml"
+    - type: "World"
+      name: "Office"
+      location: "Office.world.yaml"

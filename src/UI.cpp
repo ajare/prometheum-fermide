@@ -78,6 +78,7 @@
 #include "RecentFiles.h"
 #include "UI.h"
 #include "Render.h"
+#include "WorldRenderSystem.h"
 #include "UISettings.h"
 #include "AgentDropTargets.h"
 #include "Helpers.h"
@@ -684,7 +685,7 @@ namespace
 		return fontSize;
 	}
 
-	void drawPegman(ImDrawList* drawList, ImVec2 feet, float maximumWidth,
+	void drawPegman(WorldDrawList* drawList, ImVec2 feet, float maximumWidth,
 		float maximumHeight, ImU32 colour)
 	{
 		ImVec2 size;
@@ -694,7 +695,7 @@ namespace
 			topLeft, colour, ICON_FA_STREET_VIEW);
 	}
 
-	void drawMarkerIcon(ImDrawList* drawList, ImVec2 point, float maximumSize, ImU32 colour)
+	void drawMarkerIcon(WorldDrawList* drawList, ImVec2 point, float maximumSize, ImU32 colour)
 	{
 		ImFont* font = gAgentIconFont ? gAgentIconFont : ImGui::GetFont();
 		auto sourceSize = font->FontSize;
@@ -706,7 +707,7 @@ namespace
 			colour, ICON_FA_MAP_MARKER_ALT);
 	}
 
-	void drawObjectIcon(ImDrawList* drawList, ImVec2 boundsMin, ImVec2 boundsMax,
+	void drawObjectIcon(WorldDrawList* drawList, ImVec2 boundsMin, ImVec2 boundsMax,
 		ImU32 colour, char const* icon)
 	{
 		ImFont* font = gAgentIconFont ? gAgentIconFont : ImGui::GetFont();
@@ -720,12 +721,12 @@ namespace
 			boundsMin + (boundsMax - boundsMin - size) * 0.5f, colour, icon);
 	}
 
-	void drawDoorIcon(ImDrawList* drawList, ImVec2 boundsMin, ImVec2 boundsMax, ImU32 colour)
+	void drawDoorIcon(WorldDrawList* drawList, ImVec2 boundsMin, ImVec2 boundsMax, ImU32 colour)
 	{
 		drawObjectIcon(drawList, boundsMin, boundsMax, colour, ICON_FA_DOOR_OPED);
 	}
 
-	void drawBulkheadDoorIcon(ImDrawList* drawList, ImVec2 boundsMin, ImVec2 boundsMax, ImU32 colour)
+	void drawBulkheadDoorIcon(WorldDrawList* drawList, ImVec2 boundsMin, ImVec2 boundsMax, ImU32 colour)
 	{
 		auto centre = (boundsMin + boundsMax) * 0.5f;
 		drawList->AddLine({ centre.x, boundsMin.y + 6.0f },
@@ -734,17 +735,17 @@ namespace
 			{ centre.x + 11.0f, boundsMin.y + 8.0f }, colour, 2.0f);
 	}
 
-	void drawWindowIcon(ImDrawList* drawList, ImVec2 boundsMin, ImVec2 boundsMax, ImU32 colour)
+	void drawWindowIcon(WorldDrawList* drawList, ImVec2 boundsMin, ImVec2 boundsMax, ImU32 colour)
 	{
 		drawObjectIcon(drawList, boundsMin, boundsMax, colour, ICON_FA_WINDOW_MAXIMIZE);
 	}
 
-	void drawWalkwayIcon(ImDrawList* drawList, ImVec2 boundsMin, ImVec2 boundsMax, ImU32 colour)
+	void drawWalkwayIcon(WorldDrawList* drawList, ImVec2 boundsMin, ImVec2 boundsMax, ImU32 colour)
 	{
 		drawObjectIcon(drawList, boundsMin, boundsMax, colour, ICON_FA_GRIP_LINES);
 	}
 
-	void drawForceBridgeIcon(ImDrawList* drawList, ImVec2 boundsMin, ImVec2 boundsMax, ImU32 colour)
+	void drawForceBridgeIcon(WorldDrawList* drawList, ImVec2 boundsMin, ImVec2 boundsMax, ImU32 colour)
 	{
 		auto y = (boundsMin.y + boundsMax.y) * 0.5f;
 		auto left = boundsMin.x + 10.0f, right = boundsMax.x - 10.0f;
@@ -753,7 +754,7 @@ namespace
 			{ right - 7.0f, y + 4.0f }, colour);
 	}
 
-	void drawPlatformLiftIcon(ImDrawList* drawList, ImVec2 boundsMin, ImVec2 boundsMax, ImU32 colour)
+	void drawPlatformLiftIcon(WorldDrawList* drawList, ImVec2 boundsMin, ImVec2 boundsMax, ImU32 colour)
 	{
 		auto centre = (boundsMin + boundsMax) * 0.5f;
 		auto left = centre.x - 11.0f, right = centre.x + 11.0f;
@@ -767,7 +768,7 @@ namespace
 			{ centre.x + 4.0f, bottom - 6.0f }, colour);
 	}
 
-	void drawLadderIcon(ImDrawList* drawList, ImVec2 boundsMin, ImVec2 boundsMax, ImU32 colour)
+	void drawLadderIcon(WorldDrawList* drawList, ImVec2 boundsMin, ImVec2 boundsMax, ImU32 colour)
 	{
 		auto inset = ImVec2(18.0f, 6.0f);
 		auto min = boundsMin + inset;
@@ -1442,7 +1443,7 @@ namespace
 	}
 
 	void renderObjectPalette(shared_ptr<core::World> const& world, ImVec2 canvasPos,
-		ImVec2 canvasSize, ImDrawList* drawList)
+		ImVec2 canvasSize, WorldDrawList* drawList)
 	{
 		constexpr ImU32 yellow = IM_COL32(251, 188, 4, 255);
 		constexpr ImU32 red = IM_COL32(244, 67, 54, 255);
@@ -8015,7 +8016,7 @@ namespace
 		}
 	}
 
-	void drawSectorEditOverlay(ImDrawList* drawList)
+	void drawSectorEditOverlay(WorldDrawList* drawList)
 	{
 		if (gWorldHovered && gUISettings.selectionMode == UISettings::SelectionMode::Sector
 			&& gSelectedSector && shouldDrawCanvasSectorEditOverlay(
@@ -8340,7 +8341,8 @@ void renderWorldWindow(shared_ptr<core::World> world, shared_ptr<const core::Gra
 
 	if (gSelectingAgentPathDestination) gUISettings.renderGraph = true;
 
-	ImDrawList* drawList = ImGui::GetWindowDrawList();
+	WorldDrawList commandList({ canvasPos, canvasPos + canvasSize });
+	auto* drawList = &commandList;
 	drawList->PushClipRect(canvasPos, canvasPos + canvasSize, true);
 
 	// Keep world geometry and editor overlays inside the dimensions declared by
@@ -8348,8 +8350,8 @@ void renderWorldWindow(shared_ptr<core::World> world, shared_ptr<const core::Gra
 	auto worldTopLeft = worldToScreen({ 0.0f, (float)world->getLevelsHigh() });
 	auto worldBottomRight = worldToScreen({ (float)world->getCellsWide(), 0.0f });
 	drawList->PushClipRect(worldTopLeft, worldBottomRight, true);
-	renderWorld(world);
-	renderGraph(graph, world);
+	renderWorld(world, drawList);
+	renderGraph(graph, world, drawList);
 	drawSectorEditOverlay(drawList);
 	if (gAgentMove.dragging)
 	{
@@ -8398,6 +8400,13 @@ void renderWorldWindow(shared_ptr<core::World> world, shared_ptr<const core::Gra
 	// The palette is editor chrome, so it remains available across the canvas.
 	renderObjectPalette(world, canvasPos, canvasSize, drawList);
 	drawList->PopClipRect();
+
+	// MPP owns every primitive in the canvas. ImGui only composites the
+	// completed render target into the already-reserved canvas item.
+	auto const texture = renderWorldCommands(commandList, canvasPos, canvasSize);
+	ImGui::GetWindowDrawList()->AddImage(
+		reinterpret_cast<ImTextureID>(static_cast<intptr_t>(texture)),
+		canvasPos, canvasPos + canvasSize, { 0.0f, 1.0f }, { 1.0f, 0.0f });
 
 	ImGui::End();
 }

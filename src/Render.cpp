@@ -32,6 +32,7 @@
 #include "Render.h"
 #include "SectorTileset.h"
 #include "ObjectTileset.h"
+#include "WorldDrawList.h"
 #include "UISettings.h"
 #include "Exceptions.h"
 
@@ -84,13 +85,13 @@ ImColor SelectedColour = ImColor(255, 255, 0);
 #define RENDER_SECTOR_OBJECTS_BEHIND 1
 #define RENDER_SECTOR_OBJECTS_INFRONT 2
 
-void renderSector(shared_ptr<const core::Sector> sector, uint32_t layer, LayerRenderStyle style, bool renderEdges, ImColor colour, ImDrawList* drawList);
-void renderSectorAgents(shared_ptr<const core::Sector> sector, ImDrawList* drawList);
+void renderSector(shared_ptr<const core::Sector> sector, uint32_t layer, LayerRenderStyle style, bool renderEdges, ImColor colour, WorldDrawList* drawList);
+void renderSectorAgents(shared_ptr<const core::Sector> sector, WorldDrawList* drawList);
 
 void renderTransitThroughApertures(shared_ptr<const core::Sector> const& transit, uint32_t behindLayer,
-	std::vector<TransitAperture> const& apertures, ImDrawList* drawList);
+	std::vector<TransitAperture> const& apertures, WorldDrawList* drawList);
 
-void renderStaircase(shared_ptr<const core::Staircase> staircase, ImDrawList* drawList);
+void renderStaircase(shared_ptr<const core::Staircase> staircase, WorldDrawList* drawList);
 
 void transformPosition(core::Vector2& p)
 {
@@ -115,7 +116,7 @@ void transformPosition(float& x, float& y)
 
 
 void renderSelectedQueues(shared_ptr<const core::World> const& world, int layer,
-	ImDrawList* drawList)
+	WorldDrawList* drawList)
 {
 	shared_ptr<const core::Object> selectedObject;
 	if (gSelectedSectorObject)
@@ -269,7 +270,7 @@ void renderSelectedQueues(shared_ptr<const core::World> const& world, int layer,
 }
 
 void renderGrid(shared_ptr<const core::World> const& world, ImColor const& colour,
-	float width, ImDrawList* drawList)
+	float width, WorldDrawList* drawList)
 {
 	core::Vector2 topLeft{ 0.0f, (float)world->getLevelsHigh() };
 	core::Vector2 bottomRight{ (float)world->getCellsWide(), 0.0f };
@@ -293,9 +294,10 @@ void renderGrid(shared_ptr<const core::World> const& world, ImColor const& colou
 }
 
 
-void renderGraph(shared_ptr<const core::Graph> graph, shared_ptr<const core::World> world)
+void renderGraph(shared_ptr<const core::Graph> graph, shared_ptr<const core::World> world,
+	WorldDrawList* drawList)
 {
-	if (!gUISettings.renderGraph)
+	if (!gUISettings.renderGraph || !drawList)
 	{
 		return;
 	}
@@ -303,8 +305,6 @@ void renderGraph(shared_ptr<const core::Graph> graph, shared_ptr<const core::Wor
 	shared_ptr<core::Path> path = gSelectedAgent ? gSelectedAgent->getPath() : nullptr;
 
 	auto layer = (uint32_t)gUISettings.visibleLayer;
-
-	auto drawList = ImGui::GetWindowDrawList();
 
 	auto const& vertices = graph->getVertices();
 	auto const& edges = graph->getEdges();
@@ -467,7 +467,7 @@ void renderGraph(shared_ptr<const core::Graph> graph, shared_ptr<const core::Wor
 }
 
 
-void renderDoorOpenUp(shared_ptr<const core::Door> door, uint32_t layer, LayerRenderStyle style, bool /* selected */, ImDrawList* drawList)
+void renderDoorOpenUp(shared_ptr<const core::Door> door, uint32_t layer, LayerRenderStyle style, bool /* selected */, WorldDrawList* drawList)
 {
 	core::Vector2 bounds0, bounds1, bounds2;
 
@@ -513,7 +513,7 @@ void renderDoorOpenUp(shared_ptr<const core::Door> door, uint32_t layer, LayerRe
 }
 
 
-void renderDoorOpenLeft(shared_ptr<const core::Door> door, uint32_t layer, LayerRenderStyle style, bool /* selected */, ImDrawList* drawList)
+void renderDoorOpenLeft(shared_ptr<const core::Door> door, uint32_t layer, LayerRenderStyle style, bool /* selected */, WorldDrawList* drawList)
 {
 	core::Vector2 bounds0, bounds1, bounds2;
 
@@ -571,7 +571,7 @@ void renderDoorOpenLeft(shared_ptr<const core::Door> door, uint32_t layer, Layer
 }
 
 
-void renderDoorOpenRight(shared_ptr<const core::Door> door, uint32_t layer, LayerRenderStyle style, bool /* selected */, ImDrawList* drawList)
+void renderDoorOpenRight(shared_ptr<const core::Door> door, uint32_t layer, LayerRenderStyle style, bool /* selected */, WorldDrawList* drawList)
 {
 	core::Vector2 bounds0, bounds1, bounds2;
 
@@ -629,7 +629,7 @@ void renderDoorOpenRight(shared_ptr<const core::Door> door, uint32_t layer, Laye
 }
 
 
-void renderDoorOpenApart(shared_ptr<const core::Door> door, uint32_t layer, LayerRenderStyle style, bool /* selected */, ImDrawList* drawList)
+void renderDoorOpenApart(shared_ptr<const core::Door> door, uint32_t layer, LayerRenderStyle style, bool /* selected */, WorldDrawList* drawList)
 {
 	core::Vector2 bounds0, bounds2;
 
@@ -743,7 +743,7 @@ void renderDoorOpenApart(shared_ptr<const core::Door> door, uint32_t layer, Laye
 }
 
 
-void renderDoor(shared_ptr<const core::Door> door, uint32_t layer, LayerRenderStyle style, bool selected, ImDrawList* drawList)
+void renderDoor(shared_ptr<const core::Door> door, uint32_t layer, LayerRenderStyle style, bool selected, WorldDrawList* drawList)
 {
 	if (style == LayerRenderStyle::Hidden)
 	{
@@ -785,7 +785,7 @@ void renderDoor(shared_ptr<const core::Door> door, uint32_t layer, LayerRenderSt
 }
 
 
-void renderBulkheadDoor(shared_ptr<const core::BulkheadDoor> door, uint32_t /* layer */, LayerRenderStyle style, bool selected, ImDrawList* drawList)
+void renderBulkheadDoor(shared_ptr<const core::BulkheadDoor> door, uint32_t /* layer */, LayerRenderStyle style, bool selected, WorldDrawList* drawList)
 {
 	if (style == LayerRenderStyle::Hidden)
 	{
@@ -823,7 +823,7 @@ void renderBulkheadDoor(shared_ptr<const core::BulkheadDoor> door, uint32_t /* l
 }
 
 
-void renderWindowClear(shared_ptr<const core::Window> window, uint32_t layer, LayerRenderStyle style, bool /* selected */, ImDrawList* drawList)
+void renderWindowClear(shared_ptr<const core::Window> window, uint32_t layer, LayerRenderStyle style, bool /* selected */, WorldDrawList* drawList)
 {
 	core::Vector2 bounds0, bounds1;
 
@@ -916,19 +916,19 @@ void renderWindowClear(shared_ptr<const core::Window> window, uint32_t layer, La
 }
 
 
-void renderWindowFrosted(shared_ptr<const core::Window> window, uint32_t layer, LayerRenderStyle style, bool selected, ImDrawList* drawList)
+void renderWindowFrosted(shared_ptr<const core::Window> window, uint32_t layer, LayerRenderStyle style, bool selected, WorldDrawList* drawList)
 {
 	renderWindowClear(window, layer, style, selected, drawList);
 }
 
 
-void renderWindowTinted(shared_ptr<const core::Window> window, uint32_t layer, LayerRenderStyle style, bool selected, ImDrawList* drawList)
+void renderWindowTinted(shared_ptr<const core::Window> window, uint32_t layer, LayerRenderStyle style, bool selected, WorldDrawList* drawList)
 {
 	renderWindowClear(window, layer, style, selected, drawList);
 }
 
 
-void renderWindow(shared_ptr<const core::Window> window, uint32_t layer, LayerRenderStyle style, bool selected, ImDrawList* drawList)
+void renderWindow(shared_ptr<const core::Window> window, uint32_t layer, LayerRenderStyle style, bool selected, WorldDrawList* drawList)
 {
 	if (style == LayerRenderStyle::Hidden)
 	{
@@ -977,7 +977,7 @@ void renderWindow(shared_ptr<const core::Window> window, uint32_t layer, LayerRe
 }
 
 
-void renderPhysicalControl(shared_ptr<const core::Button> button, uint32_t /* layer */, LayerRenderStyle style, bool /* selected */, ImDrawList* drawList)
+void renderPhysicalControl(shared_ptr<const core::Button> button, uint32_t /* layer */, LayerRenderStyle style, bool /* selected */, WorldDrawList* drawList)
 {
 	core::Vector2 bounds0, bounds1;
 	button->getFullShape(bounds0, bounds1);
@@ -1003,7 +1003,7 @@ void renderPhysicalControl(shared_ptr<const core::Button> button, uint32_t /* la
 
 
 void renderWalkway(shared_ptr<const core::Walkway> walkway, uint32_t /* layer */, LayerRenderStyle style,
-	bool selected, ImDrawList* drawList)
+	bool selected, WorldDrawList* drawList)
 {
 	if (style != LayerRenderStyle::Solid) return;
 	core::Vector2 bounds0, bounds1;
@@ -1020,7 +1020,7 @@ void renderWalkway(shared_ptr<const core::Walkway> walkway, uint32_t /* layer */
 
 
 void renderMarker(shared_ptr<const core::Marker> marker, uint32_t /* layer */, LayerRenderStyle style,
-	bool selected, ImDrawList* drawList)
+	bool selected, WorldDrawList* drawList)
 {
 	if (style != LayerRenderStyle::Solid) return;
 	auto point = marker->getPosition();
@@ -1046,7 +1046,7 @@ void renderMarker(shared_ptr<const core::Marker> marker, uint32_t /* layer */, L
 
 
 void renderForceBridge(shared_ptr<const core::ForceBridge> forceBridge, uint32_t /* layer */,
-	LayerRenderStyle style, bool selected, ImDrawList* drawList)
+	LayerRenderStyle style, bool selected, WorldDrawList* drawList)
 {
 	if (style != LayerRenderStyle::Solid) return;
 	core::Vector2 bounds0, bounds1;
@@ -1066,7 +1066,7 @@ void renderForceBridge(shared_ptr<const core::ForceBridge> forceBridge, uint32_t
 }
 
 
-void renderLadder(shared_ptr<const core::Ladder> ladder, uint32_t /* layer */, LayerRenderStyle /* style */, bool /* selected */, ImDrawList* drawList)
+void renderLadder(shared_ptr<const core::Ladder> ladder, uint32_t /* layer */, LayerRenderStyle /* style */, bool /* selected */, WorldDrawList* drawList)
 {
 	core::Vector2 bounds0, bounds1;
 
@@ -1080,7 +1080,7 @@ void renderLadder(shared_ptr<const core::Ladder> ladder, uint32_t /* layer */, L
 }
 
 
-void renderLift(shared_ptr<const core::Lift> lift, uint32_t /* layer */, LayerRenderStyle /* style */, bool /* selected */, ImDrawList* drawList)
+void renderLift(shared_ptr<const core::Lift> lift, uint32_t /* layer */, LayerRenderStyle /* style */, bool /* selected */, WorldDrawList* drawList)
 {
 	core::Vector2 bounds0, bounds1;
 
@@ -1095,7 +1095,7 @@ void renderLift(shared_ptr<const core::Lift> lift, uint32_t /* layer */, LayerRe
 
 
 void renderPlatformLift(shared_ptr<const core::LiftSectorObject> const& platformLift,
-	uint32_t layer, LayerRenderStyle style, bool selected, ImDrawList* drawList)
+	uint32_t layer, LayerRenderStyle style, bool selected, WorldDrawList* drawList)
 {
 	// The moving platform is only a thin slab, so also show the full authored
 	// shaft occupied by its stops. Keep this outline subdued so Walkways and the
@@ -1117,7 +1117,7 @@ void renderPlatformLift(shared_ptr<const core::LiftSectorObject> const& platform
 }
 
 
-void renderShuttle(shared_ptr<const core::Shuttle> shuttle, uint32_t /* layer */, LayerRenderStyle /* style */, bool /* selected */, ImDrawList* drawList)
+void renderShuttle(shared_ptr<const core::Shuttle> shuttle, uint32_t /* layer */, LayerRenderStyle /* style */, bool /* selected */, WorldDrawList* drawList)
 {
 	core::Vector2 bounds0, bounds1;
 
@@ -1159,7 +1159,7 @@ void renderShuttle(shared_ptr<const core::Shuttle> shuttle, uint32_t /* layer */
 }
 
 
-void renderStairwell(shared_ptr<const core::Stairwell> stairwell, uint32_t /* layer */, LayerRenderStyle /* style */, bool /* selected */, ImDrawList* drawList)
+void renderStairwell(shared_ptr<const core::Stairwell> stairwell, uint32_t /* layer */, LayerRenderStyle /* style */, bool /* selected */, WorldDrawList* drawList)
 {
 	core::Vector2 worldMin, worldMax;
 	stairwell->getCurrentShape(worldMin, worldMax);
@@ -1202,7 +1202,7 @@ void renderStairwell(shared_ptr<const core::Stairwell> stairwell, uint32_t /* la
 }
 
 
-void renderStaircase(shared_ptr<const core::Staircase> staircase, ImDrawList* drawList)
+void renderStaircase(shared_ptr<const core::Staircase> staircase, WorldDrawList* drawList)
 {
 	auto const path = staircase->getPath();
 	core::Vector2 origin, ignored;
@@ -1264,7 +1264,7 @@ void renderStaircase(shared_ptr<const core::Staircase> staircase, ImDrawList* dr
 		ImDrawFlags_None, 6.0f);
 }
 
-void renderSelected(shared_ptr<const core::Object> object, int /* layer */, bool /* visibleLayer */, ImDrawList* drawList)
+void renderSelected(shared_ptr<const core::Object> object, int /* layer */, bool /* visibleLayer */, WorldDrawList* drawList)
 {
 	core::Vector2 bounds0, bounds1;
 
@@ -1283,7 +1283,7 @@ void renderSelected(shared_ptr<const core::Object> object, int /* layer */, bool
 }
 
 
-void renderSectorObjects(shared_ptr<const core::Sector> sector, uint32_t layer, LayerRenderStyle style, int flags, ImDrawList* drawList)
+void renderSectorObjects(shared_ptr<const core::Sector> sector, uint32_t layer, LayerRenderStyle style, int flags, WorldDrawList* drawList)
 {
 	// Sort so that Ladders and Lifts are rendered first, as these need to be behind everything else.
 	auto sortedObjects = sector->getSortedObjects([](auto obj1, auto obj2)
@@ -1423,7 +1423,7 @@ void renderSectorObjects(shared_ptr<const core::Sector> sector, uint32_t layer, 
 // in front of an Agent.
 //
 void renderThresholdsControlsAndAgentsAboveTransit(vector<shared_ptr<const core::Sector>> const& sectors,
-	uint32_t layer, ImDrawList* drawList)
+	uint32_t layer, WorldDrawList* drawList)
 {
 	for (auto const& sector : sectors)
 	{
@@ -1477,7 +1477,7 @@ ImU32 agentRenderColour(core::Agent const& agent, bool selected)
 	return ImU32(ImColor(colour.r, colour.g, colour.b));
 }
 
-void renderAgent(core::Agent const* agent, ImDrawList* drawList)
+void renderAgent(core::Agent const* agent, WorldDrawList* drawList)
 {
 	auto bounds = agent->getBounds();
 
@@ -1556,7 +1556,7 @@ void renderAgent(core::Agent const* agent, ImDrawList* drawList)
 }
 
 
-void renderSectorAgents(shared_ptr<const core::Sector> sector, ImDrawList* drawList)
+void renderSectorAgents(shared_ptr<const core::Sector> sector, WorldDrawList* drawList)
 {
 	auto const& agents = sector->getAgents();
 
@@ -1567,7 +1567,7 @@ void renderSectorAgents(shared_ptr<const core::Sector> sector, ImDrawList* drawL
 }
 
 
-void renderSector(shared_ptr<const core::Sector> sector, uint32_t layer, LayerRenderStyle style, bool renderEdges, ImColor colour, ImDrawList* drawList)
+void renderSector(shared_ptr<const core::Sector> sector, uint32_t layer, LayerRenderStyle style, bool renderEdges, ImColor colour, WorldDrawList* drawList)
 {
 	if (style == LayerRenderStyle::Hidden)
 	{
@@ -1793,7 +1793,7 @@ void renderSector(shared_ptr<const core::Sector> sector, uint32_t layer, LayerRe
 
 
 void renderLocationContentAboveTransit(shared_ptr<const core::Sector> const& location,
-	uint32_t layer, LayerRenderStyle style, ImDrawList* drawList)
+	uint32_t layer, LayerRenderStyle style, WorldDrawList* drawList)
 {
 	if (isDrawnSolid(style))
 	{
@@ -1810,7 +1810,7 @@ void renderLocationContentAboveTransit(shared_ptr<const core::Sector> const& loc
 // the Layer in front of it.
 //
 void renderTransitInAperture(shared_ptr<const core::Sector> const& transit, uint32_t behindLayer,
-	TransitAperture const& aperture, ImDrawList* drawList)
+	TransitAperture const& aperture, WorldDrawList* drawList)
 {
 	// An aperture always looks through to the Layer behind the selection, so it
 	// always carries the back-Layer colour.
@@ -1843,7 +1843,7 @@ void renderTransitInAperture(shared_ptr<const core::Sector> const& transit, uint
 // apertures the selected Layer gives it. A Transit with no aperture is not drawn.
 //
 void renderTransitThroughApertures(shared_ptr<const core::Sector> const& transit,
-	uint32_t behindLayer, std::vector<TransitAperture> const& apertures, ImDrawList* drawList)
+	uint32_t behindLayer, std::vector<TransitAperture> const& apertures, WorldDrawList* drawList)
 {
 	static_assert(shouldClipTransitToApertures(LayerRenderStyle::Aperture),
 		"this is the clipped pass, so it must only draw a style which clips to apertures");
@@ -1894,7 +1894,7 @@ std::vector<std::shared_ptr<const core::Sector>> viewportSectors(
 // Draws every Sector one Layer contributes, in the given style.
 //
 void renderSectors(shared_ptr<const core::World> world, uint32_t layer, LayerRenderStyle style,
-	ImDrawList* drawList)
+	WorldDrawList* drawList)
 {
 	if (style == LayerRenderStyle::Hidden)
 	{
@@ -1923,7 +1923,7 @@ void renderSectors(shared_ptr<const core::World> world, uint32_t layer, LayerRen
 // Layer behind's outlines, it is not what makes that Layer visible.
 //
 void renderBehindLayerTransits(shared_ptr<const core::World> world, uint32_t behindLayer,
-	std::vector<std::shared_ptr<const core::Sector>> const& viewSectors, ImDrawList* drawList)
+	std::vector<std::shared_ptr<const core::Sector>> const& viewSectors, WorldDrawList* drawList)
 {
 	auto const viewLayer = core::layerInFront(behindLayer);
 
@@ -1937,13 +1937,12 @@ void renderBehindLayerTransits(shared_ptr<const core::World> world, uint32_t beh
 }
 
 
-void renderWorld(shared_ptr<const core::World> world)
+void renderWorld(shared_ptr<const core::World> world, WorldDrawList* drawList)
 {
 	// The cell-grid lookup a multi-Background aperture composites from (#37)
 	// needs the World; the sector-rendering chain does not carry one.
 	setRenderWorld(world);
-
-	auto drawList = ImGui::GetWindowDrawList();
+	if (!drawList) return;
 
 	auto const layerCount = world->getLayerCount();
 	auto const viewLayer = static_cast<uint32_t>(clamp(gUISettings.visibleLayer, 0,

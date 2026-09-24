@@ -256,6 +256,7 @@ add_executable(prometheum-fermide-headless
     # globals are stubbed in RenderGuiStubs.cpp. The Door panel is compiled in
     # too (#99) so its disabled-scope balance is checked against the real panel.
     src/Render.cpp
+    src/WorldDrawList.cpp
     src/DocumentEdit.cpp
     src/DoorPanel.cpp
     src/AgentGroupsPanel.cpp
@@ -362,6 +363,9 @@ if(PF_BUILD_GUI)
         src/Helpers.cpp
         src/SectorTileset.cpp
         src/ObjectTileset.cpp
+        src/WorldDrawList.cpp
+        src/ApplicationResources.cpp
+        src/WorldRenderSystem.cpp
         src/Main.cpp
         src/Render.cpp
         src/UI.cpp
@@ -392,6 +396,7 @@ if(PF_BUILD_GUI)
     target_link_libraries(imgui PRIVATE
         prometheum-fermide-core libglew_static nfd::nfd
         spdlog::spdlog SDL2::SDL2-static OpenGL::GL
+        Willpower.Application ext::mpp-helper
     )
     if(WIN32)
         target_link_libraries(imgui PRIVATE SDL2::SDL2main)
@@ -401,15 +406,11 @@ if(PF_BUILD_GUI)
         RUNTIME_OUTPUT_DIRECTORY "${PF_OUTPUT_DIR}"
     )
 
-    # Copy on every build so YAML/art edits deploy without a C++ relink.
+    # Copy on every build so manifest and art edits deploy without a C++ relink.
     add_custom_target(pf-sector-assets ALL
-        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:imgui>/textures"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_CURRENT_SOURCE_DIR}/resources/textures/sectors.tileset.yaml"
-            "${CMAKE_CURRENT_SOURCE_DIR}/resources/textures/sector-atlas-draft.png"
-            "${CMAKE_CURRENT_SOURCE_DIR}/resources/textures/objects.tileset.yaml"
-            "${CMAKE_CURRENT_SOURCE_DIR}/resources/textures/objects.png"
-            "$<TARGET_FILE_DIR:imgui>/textures"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_SOURCE_DIR}/resources"
+            "$<TARGET_FILE_DIR:imgui>"
         VERBATIM
     )
     add_dependencies(imgui pf-sector-assets)
@@ -428,6 +429,7 @@ if(BUILD_TESTING)
         src/headless/SectorTilesetChecks.cpp
         src/SectorTileset.cpp
         src/ObjectTileset.cpp
+        src/WorldDrawList.cpp
         src/imgui/imgui.cpp
         src/imgui/imgui_draw.cpp
         src/imgui/imgui_tables.cpp

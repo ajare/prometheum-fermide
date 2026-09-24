@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "imgui/imgui.h"
+#include "WorldDrawList.h"
 
 #include "core/Background.h"
 #include "core/World.h"
@@ -853,14 +854,15 @@ inline bool shouldRenderSectorAgents(core::SectorType /* sectorType */, LayerRen
 	return isDrawnSolid(style);
 }
 
-void renderGraph(std::shared_ptr<const core::Graph> graph, std::shared_ptr<const core::World> world);
+void renderGraph(std::shared_ptr<const core::Graph> graph,
+	std::shared_ptr<const core::World> world, WorldDrawList* drawList);
 
 // Ordinary Agents use their effective inherited Colour (or the editor
 // fallback); selection always wins with its fixed gold highlight.
 ImU32 agentRenderColour(core::Agent const& agent, bool selected);
-void renderAgent(core::Agent const* agent, ImDrawList* drawList);
+void renderAgent(core::Agent const* agent, WorldDrawList* drawList);
 
-void renderWorld(std::shared_ptr<const core::World> world);
+void renderWorld(std::shared_ptr<const core::World> world, WorldDrawList* drawList);
 
 //
 // Publishes the World rendered by the viewport.
@@ -885,10 +887,10 @@ std::vector<std::shared_ptr<const core::Sector>> viewportSectors(
 //
 // Draws every Sector one Layer contributes for a single viewport pass, culled
 // to the current viewport. Declared here so the headless viewport-culling
-// check (#58) can exercise the real pass against a live ImDrawList.
+// check (#58) can exercise the real pass through the test adapter.
 //
 void renderSectors(std::shared_ptr<const core::World> world, uint32_t layer,
-	LayerRenderStyle style, ImDrawList* drawList);
+	LayerRenderStyle style, WorldDrawList* drawList);
 
 //
 // Draws one Sector for a single viewport pass: its surface fill, its
@@ -897,4 +899,26 @@ void renderSectors(std::shared_ptr<const core::World> world, uint32_t layer,
 // the real renderSector() draw-call order rather than a model of it.
 //
 void renderSector(std::shared_ptr<const core::Sector> sector, uint32_t layer,
-	LayerRenderStyle style, bool renderEdges, ImColor colour, ImDrawList* drawList);
+	LayerRenderStyle style, bool renderEdges, ImColor colour, WorldDrawList* drawList);
+
+// Compatibility seams for CPU-only checks. Production code constructs a
+// recording WorldDrawList and never submits World primitives to ImGui.
+inline void renderAgent(core::Agent const* agent, ImDrawList* drawList)
+{
+	WorldDrawList adapter(drawList);
+	renderAgent(agent, &adapter);
+}
+
+inline void renderSectors(std::shared_ptr<const core::World> world, uint32_t layer,
+	LayerRenderStyle style, ImDrawList* drawList)
+{
+	WorldDrawList adapter(drawList);
+	renderSectors(std::move(world), layer, style, &adapter);
+}
+
+inline void renderSector(std::shared_ptr<const core::Sector> sector, uint32_t layer,
+	LayerRenderStyle style, bool renderEdges, ImColor colour, ImDrawList* drawList)
+{
+	WorldDrawList adapter(drawList);
+	renderSector(std::move(sector), layer, style, renderEdges, colour, &adapter);
+}

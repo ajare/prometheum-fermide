@@ -50,7 +50,7 @@ void setObjectTileset(ObjectTileset tileset, ImTextureID texture)
 }
 void clearObjectTileset() { textureId = {}; active = {}; }
 bool hasObjectTileset() { return textureId != ImTextureID{}; }
-bool drawObjectSprite(char const* name, ImDrawList* list, ImVec2 a, ImVec2 b,
+bool drawObjectSprite(char const* name, WorldDrawList* list, ImVec2 a, ImVec2 b,
     ImU32 tint, ImVec2 sourceMin, ImVec2 sourceMax)
 {
     if (!textureId) return false;
@@ -63,7 +63,7 @@ bool drawObjectSprite(char const* name, ImDrawList* list, ImVec2 a, ImVec2 b,
         return ImVec2{(r.x + 0.5f + fraction.x * (r.width - 1)) / active.width,
             (r.y + 0.5f + fraction.y * (r.height - 1)) / active.height};
     };
-    list->AddImage(textureId, minimum, maximum, uv(sourceMin), uv(sourceMax),
-        sprite.tintable ? tint : IM_COL32_WHITE);
+    list->AddImage(WorldDrawList::Texture::ObjectAtlas, minimum, maximum,
+        uv(sourceMin), uv(sourceMax), sprite.tintable ? tint : IM_COL32_WHITE);
     return true;
 }
