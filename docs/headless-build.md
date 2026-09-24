@@ -27,9 +27,15 @@ Runtime structural changes use `pauseSimulation()`, the existing construction/co
 
 - Windows x64
 - Visual Studio with the MSVC `v145` toolset and Windows 10 SDK
-- CMake 3.24 or newer (for the CMake workflow)
+- CMake 3.25 or newer (for the CMake workflow)
+- Git, with repository submodules initialized recursively
 
-Run commands from the repository root in a Developer Command Prompt.
+Run commands from the repository root in a Developer Command Prompt. Before
+configuring an existing clone, populate Willpower and its nested dependencies:
+
+```bat
+git submodule update --init --recursive
+```
 
 ## CMake build
 

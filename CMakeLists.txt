@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.24)
+cmake_minimum_required(VERSION 3.25)
 
 project(prometheum-fermide LANGUAGES C CXX)
 
@@ -215,6 +215,11 @@ if(PF_BUILD_GUI)
         $<$<COMPILE_LANG_AND_ID:C,GNU>:-Wno-discarded-qualifiers>
     )
 endif()
+
+# Build Willpower and its dependency graph as part of the default build. No
+# prometheum-fermide target links it yet; this only keeps the imported library
+# ready for future integration.
+add_subdirectory(ext/willpower)
 
 file(GLOB PF_CORE_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/core/*.cpp")
 file(GLOB PF_CORE_HEADERS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/include/core/*.h")
