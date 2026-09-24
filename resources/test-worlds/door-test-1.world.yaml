@@ -8,7 +8,7 @@ layerNames:
   - Layer 0
   - Layer 1
 agentTagRegistry:
-  filename: door-test-1.tags.yaml
+  filename: test.tags.yaml
   expectedUuid: 5e9a3a89-0519-4813-ae6d-3ca7362028de
 agentBehaviourRegistry:
   package: door-test-1.behaviours

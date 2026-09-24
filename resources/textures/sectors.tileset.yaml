@@ -1,0 +1,24 @@
+# Draft artwork uses irregular rectangles, not an assumed uniform atlas grid.
+# Coordinates are top-left-origin pixels: [x, y, width, height].
+# Surfaces repeat once per 1x1 world unit (64x160 screen pixels).
+# Boundary strips compose centre/end/corner/open-wall variants at runtime:
+# only outer floors/ceilings and actual closed wall spans receive strips.
+# Multi-level Room interiors therefore have no artificial intermediate floors.
+# Background and Facade are authored flat colours, not textured architecture.
+# Transit mechanisms (stairs, ladders, vehicles) remain separate object geometry.
+version: 1
+image: sector-atlas-draft.png
+size: [1254, 1254]
+surfaces:
+  corridor: [151, 99, 45, 32]
+  room: [28, 179, 83, 69]
+  ladder: [370, 546, 35, 116]
+  lift: [158, 547, 32, 117]
+  shuttle: [373, 735, 31, 46]
+  stairwell: [366, 411, 36, 47]
+  staircase: [296, 412, 39, 69]
+boundaries:
+  ceiling: [26, 154, 80, 9]
+  floor: [26, 255, 80, 9]
+  left: [8, 179, 9, 65]
+  right: [127, 179, 9, 65]

@@ -270,6 +270,8 @@ add_executable(prometheum-fermide-headless
     src/imgui/imgui_draw.cpp
     src/imgui/imgui_tables.cpp
     src/imgui/imgui_widgets.cpp
+    src/SectorTileset.cpp
+    src/ObjectTileset.cpp
     src/headless/BackgroundPaintSmokeChecks.cpp
     src/headless/BackgroundPlacementSmokeChecks.cpp
     src/headless/BackgroundCascadeDeleteSmokeChecks.cpp
@@ -358,6 +360,8 @@ if(PF_BUILD_GUI)
     file(GLOB PF_IMGUI_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/imgui/*.cpp")
     add_executable(imgui
         src/Helpers.cpp
+        src/SectorTileset.cpp
+        src/ObjectTileset.cpp
         src/Main.cpp
         src/Render.cpp
         src/UI.cpp
@@ -397,6 +401,19 @@ if(PF_BUILD_GUI)
         RUNTIME_OUTPUT_DIRECTORY "${PF_OUTPUT_DIR}"
     )
 
+    # Copy on every build so YAML/art edits deploy without a C++ relink.
+    add_custom_target(pf-sector-assets ALL
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:imgui>/textures"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/resources/textures/sectors.tileset.yaml"
+            "${CMAKE_CURRENT_SOURCE_DIR}/resources/textures/sector-atlas-draft.png"
+            "${CMAKE_CURRENT_SOURCE_DIR}/resources/textures/objects.tileset.yaml"
+            "${CMAKE_CURRENT_SOURCE_DIR}/resources/textures/objects.png"
+            "$<TARGET_FILE_DIR:imgui>/textures"
+        VERBATIM
+    )
+    add_dependencies(imgui pf-sector-assets)
+
     add_custom_command(TARGET imgui POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${CMAKE_CURRENT_SOURCE_DIR}/resources/prometheum-fermide.ini"
@@ -407,6 +424,21 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(pf-sector-tileset-checks
+        src/headless/SectorTilesetChecks.cpp
+        src/SectorTileset.cpp
+        src/ObjectTileset.cpp
+        src/imgui/imgui.cpp
+        src/imgui/imgui_draw.cpp
+        src/imgui/imgui_tables.cpp
+        src/imgui/imgui_widgets.cpp
+    )
+    target_compile_features(pf-sector-tileset-checks PRIVATE cxx_std_20)
+    target_include_directories(pf-sector-tileset-checks PRIVATE "${PF_INCLUDE_DIR}" "${PF_INCLUDE_DIR}/imgui")
+    target_link_libraries(pf-sector-tileset-checks PRIVATE ${PF_YAML_TARGET})
+    add_test(NAME sector-tileset COMMAND pf-sector-tileset-checks
+        "${CMAKE_CURRENT_SOURCE_DIR}/resources/textures/sectors.tileset.yaml")
+
     add_test(NAME headless-smoke COMMAND prometheum-fermide-headless)
 
     if(PF_BUILD_GUI)

@@ -17,6 +17,12 @@
 
 #include <filesystem>
 #include <fstream>
+#include "SectorTileset.h"
+#include "ObjectTileset.h"
+#include "Helpers.h"
+
+static GLuint gSectorAtlasTexture = 0;
+static GLuint gObjectAtlasTexture = 0;
 
 #ifdef _MSC_VER
 #pragma warning(push)
@@ -268,6 +274,32 @@ void setupImGui(SDL_Window* window, SDL_GLContext context)
 	}
 	gImGuiOpenGLBackendInitialised = true;
 
+	char* basePath = SDL_GetBasePath();
+	if (!basePath)
+		throw ExitApplicationException(1, "Could not locate sector tileset assets");
+	auto const tilesetPath = std::filesystem::path(basePath) / "textures/sectors.tileset.yaml";
+	SDL_free(basePath);
+	try
+	{
+		auto tileset = SectorTileset::load(tilesetPath);
+		int width{}, height{};
+		if (!LoadTextureFromFile(tileset.image.string().c_str(), &gSectorAtlasTexture, &width, &height))
+			throw std::runtime_error("Could not load sector atlas PNG");
+		if (width != tileset.width || height != tileset.height)
+			throw std::runtime_error("Sector atlas dimensions disagree with YAML");
+		setSectorTileset(std::move(tileset), (ImTextureID)(intptr_t)gSectorAtlasTexture);
+		auto objects = ObjectTileset::load(tilesetPath.parent_path() / "objects.tileset.yaml");
+		if (!LoadTextureFromFile(objects.image.string().c_str(), &gObjectAtlasTexture, &width, &height))
+			throw std::runtime_error("Could not load object atlas PNG");
+		if (width != objects.width || height != objects.height)
+			throw std::runtime_error("Object atlas dimensions disagree with YAML");
+		setObjectTileset(std::move(objects), (ImTextureID)(intptr_t)gObjectAtlasTexture);
+	}
+	catch (std::exception const& error)
+	{
+		throw ExitApplicationException(1, "Tileset: " + std::string(error.what()));
+	}
+
 	// Load Fonts
 	// - If no fonts are loaded, dear imgui will use the default font. You can also load multiple fonts and use ImGui::PushFont()/PopFont() to select them.
 	// - AddFontFromFileTTF() will return the ImFont* so you can store it if you need to select the font among multiple.
@@ -438,6 +470,19 @@ void shutdown()
 	if (gLogger)
 	{
 		gLogger->info("Shutting down");
+	}
+
+	clearObjectTileset();
+	if (gObjectAtlasTexture)
+	{
+		glDeleteTextures(1, &gObjectAtlasTexture);
+		gObjectAtlasTexture = 0;
+	}
+	clearSectorTileset();
+	if (gSectorAtlasTexture)
+	{
+		glDeleteTextures(1, &gSectorAtlasTexture);
+		gSectorAtlasTexture = 0;
 	}
 
 	// ImGui backends, newest initialised first; skip anything that never came up.

@@ -30,6 +30,8 @@
 
 #include "Main.h"
 #include "Render.h"
+#include "SectorTileset.h"
+#include "ObjectTileset.h"
 #include "UISettings.h"
 #include "Exceptions.h"
 
@@ -483,7 +485,9 @@ void renderDoorOpenUp(shared_ptr<const core::Door> door, uint32_t layer, LayerRe
 	if (style == LayerRenderStyle::Solid)
 	{
 		auto doorColour = ImColor(64, 192, 255);
-		drawList->AddRectFilled({ bounds1.x, bounds1.y }, { bounds2.x, bounds2.y }, doorColour);
+		if (!drawObjectSprite("door", drawList, {bounds1.x, bounds1.y}, {bounds2.x, bounds2.y},
+			IM_COL32_WHITE, {0, door->getOpenPercentage()}, {1, 1}))
+			drawList->AddRectFilled({ bounds1.x, bounds1.y }, { bounds2.x, bounds2.y }, doorColour);
 
 		drawList->AddDrawCmd();
 
@@ -533,7 +537,9 @@ void renderDoorOpenLeft(shared_ptr<const core::Door> door, uint32_t layer, Layer
 	if (style == LayerRenderStyle::Solid)
 	{
 		auto doorColour = ImColor(64, 192, 255);
-		if (leafVisible)
+		if (leafVisible && !drawObjectSprite("door", drawList,
+			{bounds0.x, bounds0.y}, {bounds1.x, bounds2.y}, IM_COL32_WHITE,
+			{door->getOpenPercentage(), 0}, {1, 1}))
 			drawList->AddRectFilled({ bounds0.x, bounds0.y }, { bounds1.x, bounds2.y }, doorColour);
 
 		drawList->AddDrawCmd();
@@ -589,7 +595,9 @@ void renderDoorOpenRight(shared_ptr<const core::Door> door, uint32_t layer, Laye
 	if (style == LayerRenderStyle::Solid)
 	{
 		auto doorColour = ImColor(64, 192, 255);
-		if (leafVisible)
+		if (leafVisible && !drawObjectSprite("door", drawList,
+			{bounds1.x, bounds0.y}, {bounds2.x, bounds2.y}, IM_COL32_WHITE,
+			{0, 0}, {1 - door->getOpenPercentage(), 1}))
 			drawList->AddRectFilled({ bounds1.x, bounds0.y }, { bounds2.x, bounds2.y }, doorColour);
 
 		drawList->AddDrawCmd();
@@ -673,8 +681,10 @@ void renderDoorOpenApart(shared_ptr<const core::Door> door, uint32_t layer, Laye
 
 		if (leftLeafVisible)
 		{
-			drawList->AddRectFilled({ screenX(leftLeafX0), apertureTop },
-				{ screenX(leftLeafX1), apertureBottom }, doorColour);
+			if (!drawObjectSprite("door", drawList, {screenX(leftLeafX0), apertureTop},
+				{screenX(leftLeafX1), apertureBottom}, IM_COL32_WHITE, {0, 0}, {0.5f, 1}))
+				drawList->AddRectFilled({ screenX(leftLeafX0), apertureTop },
+					{ screenX(leftLeafX1), apertureBottom }, doorColour);
 			// The inner edge is the centre seam while closed and the facing edge of
 			// the two leaves while the Door is part open.
 			drawList->AddLine({ screenX(leftLeafX1), apertureTop },
@@ -683,8 +693,10 @@ void renderDoorOpenApart(shared_ptr<const core::Door> door, uint32_t layer, Laye
 
 		if (rightLeafVisible)
 		{
-			drawList->AddRectFilled({ screenX(rightLeafX0), apertureTop },
-				{ screenX(rightLeafX1), apertureBottom }, doorColour);
+			if (!drawObjectSprite("door", drawList, {screenX(rightLeafX0), apertureTop},
+				{screenX(rightLeafX1), apertureBottom}, IM_COL32_WHITE, {0.5f, 0}, {1, 1}))
+				drawList->AddRectFilled({ screenX(rightLeafX0), apertureTop },
+					{ screenX(rightLeafX1), apertureBottom }, doorColour);
 			drawList->AddLine({ screenX(rightLeafX0), apertureTop },
 				{ screenX(rightLeafX0), apertureBottom }, seamColour);
 		}
@@ -904,15 +916,15 @@ void renderWindowClear(shared_ptr<const core::Window> window, uint32_t layer, La
 }
 
 
-void renderWindowFrosted(shared_ptr<const core::Window> /* window */, uint32_t /* layer */, LayerRenderStyle /* style */, bool /* selected */, ImDrawList* /* drawList */)
+void renderWindowFrosted(shared_ptr<const core::Window> window, uint32_t layer, LayerRenderStyle style, bool selected, ImDrawList* drawList)
 {
-	throw NotImplementedException("Frosted Window rendering");
+	renderWindowClear(window, layer, style, selected, drawList);
 }
 
 
-void renderWindowTinted(shared_ptr<const core::Window> /* window */, uint32_t /* layer */, LayerRenderStyle /* style */, bool /* selected */, ImDrawList* /* drawList */)
+void renderWindowTinted(shared_ptr<const core::Window> window, uint32_t layer, LayerRenderStyle style, bool selected, ImDrawList* drawList)
 {
-	throw NotImplementedException("Tinted Window rendering");
+	renderWindowClear(window, layer, style, selected, drawList);
 }
 
 
@@ -938,6 +950,17 @@ void renderWindow(shared_ptr<const core::Window> window, uint32_t layer, LayerRe
 	case core::Window::Style::Tinted:
 		renderWindowTinted(window, layer, style, selected, drawList);
 		break;
+	}
+
+	if (style == LayerRenderStyle::Solid && hasObjectTileset())
+	{
+		core::Vector2 from, to;
+		window->getFullShape(from, to);
+		transformPosition(from);
+		transformPosition(to);
+		auto const sprite = windowStyle == core::Window::Style::Clear ? "window-clear"
+			: windowStyle == core::Window::Style::Frosted ? "window-frosted" : "window-tinted";
+		drawObjectSprite(sprite, drawList, {from.x, from.y}, {to.x, to.y});
 	}
 
 	if (selected)
@@ -968,7 +991,9 @@ void renderPhysicalControl(shared_ptr<const core::Button> button, uint32_t /* la
 	// exactly like the Door it stands beside.
 	if (style == LayerRenderStyle::Solid)
 	{
-		drawList->AddRectFilled({ bounds0.x, bounds0.y }, { bounds1.x, bounds1.y }, colour);
+		if (!drawObjectSprite(button->isEnabled() ? "button-enabled" : "button-disabled",
+			drawList, {bounds0.x, bounds0.y}, {bounds1.x, bounds1.y}))
+			drawList->AddRectFilled({ bounds0.x, bounds0.y }, { bounds1.x, bounds1.y }, colour);
 	}
 	else
 	{
@@ -1014,7 +1039,9 @@ void renderMarker(shared_ptr<const core::Marker> marker, uint32_t /* layer */, L
 		drawList->AddRect({ topLeft.x - 3.0f, topLeft.y - 3.0f },
 			{ topLeft.x + size.x + 3.0f, topLeft.y + size.y + 3.0f },
 			SelectedColour, 2.0f, 0, 2.0f);
-	drawList->AddText(font, fontSize, topLeft, ImColor(251, 188, 4), ICON_FA_MAP_MARKER_ALT);
+	if (!drawObjectSprite("marker", drawList, topLeft,
+		{topLeft.x + size.x, topLeft.y + size.y}, ImColor(251, 188, 4)))
+		drawList->AddText(font, fontSize, topLeft, ImColor(251, 188, 4), ICON_FA_MAP_MARKER_ALT);
 }
 
 
@@ -1081,7 +1108,12 @@ void renderPlatformLift(shared_ptr<const core::LiftSectorObject> const& platform
 	ImVec2 bottomRight{ max(bounds0.x, bounds1.x), max(bounds0.y, bounds1.y) };
 	drawList->AddRect(topLeft, bottomRight, ImColor(128, 128, 192, 72));
 
-	renderLift(platformLift->getLift(), layer, style, selected, drawList);
+	core::Vector2 car0, car1;
+	platformLift->getLift()->getCurrentShape(car0, car1);
+	transformPosition(car0);
+	transformPosition(car1);
+	if (!drawObjectSprite("platform-lift", drawList, {car0.x, car0.y}, {car1.x, car1.y}))
+		renderLift(platformLift->getLift(), layer, style, selected, drawList);
 }
 
 
@@ -1476,7 +1508,9 @@ void renderAgent(core::Agent const* agent, ImDrawList* drawList)
 		(pos0.x + pos1.x - iconSize.x) * 0.5f,
 		pos0.y - iconSize.y
 	};
-	drawList->AddText(font, fontSize, iconPosition, colour, ICON_FA_MALE);
+	if (!drawObjectSprite("agent", drawList, iconPosition,
+		{iconPosition.x + iconSize.x, iconPosition.y + iconSize.y}, colour))
+		drawList->AddText(font, fontSize, iconPosition, colour, ICON_FA_MALE);
 
 	if (gUISettings.renderAgentDebug)
 	{
@@ -1586,7 +1620,20 @@ void renderSector(shared_ptr<const core::Sector> sector, uint32_t layer, LayerRe
 	}
 	else
 	{
-		drawList->AddRectFilled({ bounds0.x, bounds0.y }, { bounds1.x, bounds1.y }, colour);
+		std::string kind;
+		switch (sectorType)
+		{
+		case core::SectorType::Location: kind = static_pointer_cast<const core::Location>(sector)->isCorridor() ? "corridor" : "room"; break;
+		case core::SectorType::Ladder: kind = "ladder"; break;
+		case core::SectorType::Lift: kind = "lift"; break;
+		case core::SectorType::Shuttle: kind = "shuttle"; break;
+		case core::SectorType::Stairwell: kind = "stairwell"; break;
+		case core::SectorType::Staircase: kind = "staircase"; break;
+		default: break;
+		}
+		if (!drawSectorTileSurface(kind, drawList, {bounds0.x, bounds1.y},
+			{bounds1.x, bounds0.y}, colour))
+			drawList->AddRectFilled({ bounds0.x, bounds0.y }, { bounds1.x, bounds1.y }, colour);
 	}
 
 	// Thresholds are normally drawn before the sector-specific geometry so their
@@ -1672,10 +1719,14 @@ void renderSector(shared_ptr<const core::Sector> sector, uint32_t layer, LayerRe
 	// to draw, and the flat colour carries its extent (ADR 0003).
 	if (renderEdges && !ownColour)
 	{
-		drawList->AddLine({ bounds0.x, bounds1.y }, { bounds1.x, bounds1.y }, ImColor(0, 0, 0), 2.0f);
+		if (style == LayerRenderStyle::Wireframe || !drawSectorTileBoundary("ceiling", drawList,
+			{bounds0.x, bounds1.y}, {bounds1.x, bounds1.y + 2.0f}))
+			drawList->AddLine({ bounds0.x, bounds1.y }, { bounds1.x, bounds1.y }, ImColor(0, 0, 0), 2.0f);
 
 		// Render floor
-		drawList->AddLine({ bounds0.x, bounds0.y }, { bounds1.x, bounds0.y }, ImColor(0, 0, 0), 2.0f);
+		if (style == LayerRenderStyle::Wireframe || !drawSectorTileBoundary("floor", drawList,
+			{bounds0.x, bounds0.y - 2.0f}, {bounds1.x, bounds0.y}))
+			drawList->AddLine({ bounds0.x, bounds0.y }, { bounds1.x, bounds0.y }, ImColor(0, 0, 0), 2.0f);
 
 		// Render walls
 		//
@@ -1714,7 +1765,11 @@ void renderSector(shared_ptr<const core::Sector> sector, uint32_t layer, LayerRe
 					transformPosition(from);
 					transformPosition(to);
 
-					drawList->AddLine({ from.x, from.y }, { to.x, to.y }, ImColor(0, 0, 0), 2.0f);
+					float const left = side == CORE_SIDE_LEFT ? from.x : from.x - 2.0f;
+					if (style == LayerRenderStyle::Wireframe || !drawSectorTileBoundary(
+						side == CORE_SIDE_LEFT ? "left" : "right", drawList,
+						{left, std::min(from.y, to.y)}, {left + 2.0f, std::max(from.y, to.y)}))
+						drawList->AddLine({ from.x, from.y }, { to.x, to.y }, ImColor(0, 0, 0), 2.0f);
 				}
 			}
 

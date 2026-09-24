@@ -1,0 +1,43 @@
+# Pixel coordinates use top-left origin. Each cell is one world unit.
+# Content rectangles exclude alpha padding; renderer maps content to physical bounds.
+version: 1
+image: objects.png
+size: [320, 320]
+tile_size: [64, 160]
+sprites:
+  door:
+    cell: [0, 0]
+    content: [6, 80, 52, 80]
+    tintable: false
+  button-enabled:
+    cell: [1, 0]
+    content: [29, 112, 6, 16]
+    tintable: false
+  button-disabled:
+    cell: [2, 0]
+    content: [29, 112, 6, 16]
+    tintable: false
+  window-clear:
+    cell: [3, 0]
+    content: [6, 80, 52, 48]
+    tintable: false
+  window-frosted:
+    cell: [4, 0]
+    content: [6, 80, 52, 48]
+    tintable: false
+  window-tinted:
+    cell: [0, 1]
+    content: [6, 80, 52, 48]
+    tintable: false
+  agent:
+    cell: [1, 1]
+    content: [19, 88, 26, 72]
+    tintable: true
+  marker:
+    cell: [2, 1]
+    content: [24, 122, 16, 22]
+    tintable: true
+  platform-lift:
+    cell: [3, 1]
+    content: [0, 150, 64, 10]
+    tintable: false
