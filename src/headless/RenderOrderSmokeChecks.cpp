@@ -47,6 +47,7 @@
 #include <string_view>
 #include <vector>
 
+#include "ObjectTileset.h"
 #include "Render.h"
 #include "SectorTileset.h"
 #include "core/Background.h"
@@ -1036,6 +1037,38 @@ namespace
 		require(foundSurface, "the Staircase Sector emitted no textured shaft surface");
 	}
 
+	void aLiftCarUsesItsObjectImage()
+	{
+		core::World world("Textured Lift car", 8, 6);
+		world.addCorridor(0, 0, 7);
+		world.addCorridor(2, 0, 7);
+		core::World::CreateLiftOptions options;
+		options.cellsWide = 1;
+		options.stopOffsets = { 0, 2 };
+		options.capacity = 1;
+		auto const created = world.addLift(1, 0, 2, options);
+		world.finishBuild();
+
+		ObjectTileset objects;
+		objects.width = 100;
+		objects.height = 100;
+		objects.sprites.emplace("lift-car", ObjectSprite{ { 0, 0, 50, 100 }, false });
+		setObjectTileset(std::move(objects), reinterpret_cast<ImTextureID>(1));
+
+		WorldDrawList commands({ { -100000.0f, -100000.0f }, { 100000.0f, 100000.0f } });
+		renderSector(created.lift.sector, 1, LayerRenderStyle::Solid, false,
+			ImColor(IM_COL32_WHITE), &commands);
+
+		bool foundCarImage = false;
+		for (auto const& command : commands.commands())
+		{
+			auto const* triangle = std::get_if<WorldDrawList::Triangle>(&command);
+			foundCarImage |= triangle && triangle->texture == WorldDrawList::Texture::ObjectAtlas;
+		}
+		clearObjectTileset();
+		require(foundCarImage, "the Lift car rendered as geometry instead of its object image");
+	}
+
 	//
 	// The overlay is an outline. It never fills a Sector, never draws a Transit's
 	// own geometry, and never shows the Agents standing inside it.
@@ -1746,6 +1779,7 @@ void runRenderOrderSmokeChecks()
 	aShuttleOpensThroughItsOwnCarriageDoors();
 	aStaircaseIsPaintedAcrossTheLocationsInView();
 	aStaircaseUsesThePlainShaftSurface();
+	aLiftCarUsesItsObjectImage();
 	theOverlayNeverLeaksSolidGeometryOrAgents();
 	theSelectedLayerPaintsItselfWhole();
 	theOverlayOutlinesTheWholeLayerBehind();

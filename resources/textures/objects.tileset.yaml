@@ -57,3 +57,7 @@ sprites:
     cell: [3, 2]
     content: [0, 0, 64, 160]
     tintable: false
+  lift-car:
+    cell: [4, 2]
+    content: [0, 0, 64, 160]
+    tintable: false

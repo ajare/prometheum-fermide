@@ -60,6 +60,7 @@ Resources:
               - { name: "shuttle-car-middle", x: "64", y: "320", width: "64", height: "160" }
               - { name: "shuttle-car-right", x: "128", y: "320", width: "64", height: "160" }
               - { name: "shuttle-car-connector", x: "192", y: "320", width: "64", height: "160" }
+              - { name: "lift-car", x: "256", y: "320", width: "64", height: "160" }
     - type: "AgentTagRegistry"
       name: "TestAgentTags"
       location: "test-worlds/test.tags.yaml"

@@ -1090,7 +1090,9 @@ void renderLift(shared_ptr<const core::Lift> lift, uint32_t /* layer */, LayerRe
 	transformPosition(bounds1);
 
 	auto colour = LiftColour;
-	drawList->AddRectFilled({ bounds0.x, bounds0.y }, { bounds1.x, bounds1.y }, colour);
+	if (!drawObjectSprite("lift-car", drawList,
+		{ bounds0.x, bounds0.y }, { bounds1.x, bounds1.y }))
+		drawList->AddRectFilled({ bounds0.x, bounds0.y }, { bounds1.x, bounds1.y }, colour);
 }
 
 

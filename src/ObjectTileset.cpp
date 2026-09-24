@@ -40,7 +40,7 @@ ObjectTileset ObjectTileset::load(std::filesystem::path const& path)
     }
     for (auto name : {"door", "button-enabled", "button-disabled", "window-clear", "window-frosted",
         "window-tinted", "agent", "marker", "platform-lift", "shuttle-car-left",
-        "shuttle-car-middle", "shuttle-car-right", "shuttle-car-connector"})
+        "shuttle-car-middle", "shuttle-car-right", "shuttle-car-connector", "lift-car"})
         if (!result.sprites.count(name)) throw std::runtime_error("Missing object sprite: " + std::string(name));
     if (!result.sprites.at("agent").tintable) throw std::runtime_error("Agent sprite must support tinting");
     return result;
