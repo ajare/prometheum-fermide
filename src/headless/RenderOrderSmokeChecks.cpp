@@ -48,6 +48,7 @@
 #include <vector>
 
 #include "Render.h"
+#include "SectorTileset.h"
 #include "core/Background.h"
 #include "core/World.h"
 #include "core/Defines.h"
@@ -992,6 +993,49 @@ namespace
 		}
 	}
 
+	// A Staircase's procedural steps are drawn over a plain shaft surface. Using
+	// the decorative staircase atlas region as the Sector surface paints a second,
+	// fixed stair image underneath them on the Staircase's own Layer.
+	void aStaircaseUsesThePlainShaftSurface()
+	{
+		core::World world("Staircase shaft surface", 12, 3);
+		while (world.getLayerCount() < 2) world.addLayer();
+		world.addCorridor(0, 0, 6);
+		world.addCorridor(1, 0, 7);
+		auto const room = world.addRoom("Upper room", 0, 1, 7, 3, 1);
+		world.removeLocationWall(room, 0, CORE_SIDE_LEFT);
+		world.addStaircase(1, 0, 5,
+			core::World::CreateStaircaseOptions{ 3, CORE_SIDE_RIGHT, 0.0f });
+		world.finishBuild();
+
+		auto const staircase = sectorByName(world, "Staircase");
+		require(staircase != nullptr, "the Staircase Sector could not be found");
+
+		SectorTileset tileset;
+		tileset.width = 100;
+		tileset.height = 100;
+		tileset.surfaces.emplace("stairwell", SectorTileRegion{ 0, 0, 10, 10 });
+		tileset.surfaces.emplace("staircase", SectorTileRegion{ 50, 50, 10, 10 });
+		setSectorTileset(std::move(tileset), reinterpret_cast<ImTextureID>(1));
+
+		WorldDrawList commands({ { -100000.0f, -100000.0f }, { 100000.0f, 100000.0f } });
+		renderSector(staircase, 1, LayerRenderStyle::Solid, false,
+			ImColor(IM_COL32_WHITE), &commands);
+
+		bool foundSurface = false;
+		for (auto const& command : commands.commands())
+		{
+			auto const* triangle = std::get_if<WorldDrawList::Triangle>(&command);
+			if (!triangle || triangle->texture != WorldDrawList::Texture::SectorAtlas) continue;
+			foundSurface = true;
+			for (auto const& uv : triangle->texcoords)
+				require(uv.x < 0.2f && uv.y < 0.2f,
+					"the Staircase Sector used decorative stair artwork instead of the plain shaft surface");
+		}
+		clearSectorTileset();
+		require(foundSurface, "the Staircase Sector emitted no textured shaft surface");
+	}
+
 	//
 	// The overlay is an outline. It never fills a Sector, never draws a Transit's
 	// own geometry, and never shows the Agents standing inside it.
@@ -1701,6 +1745,7 @@ void runRenderOrderSmokeChecks()
 	aLiftLandingDoorwayIsItsOwnThreshold();
 	aShuttleOpensThroughItsOwnCarriageDoors();
 	aStaircaseIsPaintedAcrossTheLocationsInView();
+	aStaircaseUsesThePlainShaftSurface();
 	theOverlayNeverLeaksSolidGeometryOrAgents();
 	theSelectedLayerPaintsItselfWhole();
 	theOverlayOutlinesTheWholeLayerBehind();

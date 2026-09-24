@@ -1628,7 +1628,10 @@ void renderSector(shared_ptr<const core::Sector> sector, uint32_t layer, LayerRe
 		case core::SectorType::Lift: kind = "lift"; break;
 		case core::SectorType::Shuttle: kind = "shuttle"; break;
 		case core::SectorType::Stairwell: kind = "stairwell"; break;
-		case core::SectorType::Staircase: kind = "staircase"; break;
+		// Staircase steps are rendered separately from their Sector surface. Use
+		// the same plain shaft tile as a Stairwell rather than painting a second,
+		// fixed staircase image underneath the procedural geometry.
+		case core::SectorType::Staircase: kind = "stairwell"; break;
 		default: break;
 		}
 		if (!drawSectorTileSurface(kind, drawList, {bounds0.x, bounds1.y},
