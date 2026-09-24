@@ -56,6 +56,10 @@ Resources:
               - { name: "agent", x: "83", y: "248", width: "26", height: "72" }
               - { name: "marker", x: "152", y: "282", width: "16", height: "22" }
               - { name: "platform-lift", x: "192", y: "310", width: "64", height: "10" }
+              - { name: "shuttle-car-left", x: "0", y: "320", width: "64", height: "160" }
+              - { name: "shuttle-car-middle", x: "64", y: "320", width: "64", height: "160" }
+              - { name: "shuttle-car-right", x: "128", y: "320", width: "64", height: "160" }
+              - { name: "shuttle-car-connector", x: "192", y: "320", width: "64", height: "160" }
     - type: "AgentTagRegistry"
       name: "TestAgentTags"
       location: "test-worlds/test.tags.yaml"

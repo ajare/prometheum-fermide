@@ -1,6 +1,8 @@
 #include "SectorTileset.h"
 #include "ObjectTileset.h"
 #include "imgui/imgui_internal.h"
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
@@ -40,6 +42,34 @@ int main(int argc, char** argv)
         auto objects = ObjectTileset::load(std::filesystem::path(argv[1]).parent_path() / "objects.tileset.yaml");
         if (!std::filesystem::is_regular_file(objects.image))
             throw std::runtime_error("Object atlas missing");
+
+        int imageWidth{}, imageHeight{}, channels{};
+        auto* pixels = stbi_load(objects.image.string().c_str(), &imageWidth, &imageHeight, &channels, 4);
+        if (!pixels || imageWidth != objects.width || imageHeight != objects.height) {
+            stbi_image_free(pixels);
+            throw std::runtime_error("Object atlas pixels could not be decoded");
+        }
+        auto const& left = objects.sprites.at("shuttle-car-left").region;
+        auto const& right = objects.sprites.at("shuttle-car-right").region;
+        int const boxX = left.x, boxY = left.y;
+        int const boxWidth = right.x + right.width - boxX;
+        int const boxHeight = left.height;
+        int minX = boxWidth, minY = boxHeight, maxX = -1, maxY = -1;
+        for (int y = 0; y < boxHeight; ++y)
+            for (int x = 0; x < boxWidth; ++x) {
+                auto const alpha = pixels[((boxY + y) * imageWidth + boxX + x) * 4 + 3];
+                if (alpha <= 16) continue;
+                minX = std::min(minX, x); maxX = std::max(maxX, x);
+                minY = std::min(minY, y); maxY = std::max(maxY, y);
+            }
+        stbi_image_free(pixels);
+        // Allow only the anti-aliased edge fringe; transparent layout padding
+        // must not shrink the carriage inside its physical three-cell shape.
+        constexpr int edgeFringe = 4;
+        if (minX > edgeFringe || minY > edgeFringe
+            || maxX < boxWidth - 1 - edgeFringe || maxY < boxHeight - 1 - edgeFringe)
+            throw std::runtime_error("Shuttle carriage artwork does not fill its authored bounding box");
+
         setObjectTileset(objects, (ImTextureID)(intptr_t)456);
         ImU32 const overrideColour = IM_COL32(21, 173, 91, 255);
         for (auto const& [name, sprite] : objects.sprites) {

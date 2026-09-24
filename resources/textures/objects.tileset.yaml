@@ -2,7 +2,7 @@
 # Content rectangles exclude alpha padding; renderer maps content to physical bounds.
 version: 1
 image: objects.png
-size: [320, 320]
+size: [320, 480]
 tile_size: [64, 160]
 sprites:
   door:
@@ -40,4 +40,20 @@ sprites:
   platform-lift:
     cell: [3, 1]
     content: [0, 150, 64, 10]
+    tintable: false
+  shuttle-car-left:
+    cell: [0, 2]
+    content: [0, 0, 64, 160]
+    tintable: false
+  shuttle-car-middle:
+    cell: [1, 2]
+    content: [0, 0, 64, 160]
+    tintable: false
+  shuttle-car-right:
+    cell: [2, 2]
+    content: [0, 0, 64, 160]
+    tintable: false
+  shuttle-car-connector:
+    cell: [3, 2]
+    content: [0, 0, 64, 160]
     tintable: false

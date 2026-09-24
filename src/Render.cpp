@@ -1123,37 +1123,35 @@ void renderShuttle(shared_ptr<const core::Shuttle> shuttle, uint32_t /* layer */
 
 	shuttle->getCurrentShape(bounds0, bounds1);
 
-	auto numCars = shuttle->getNumCars();
-	auto carWidth = shuttle->getCarWidth();
+	auto const numCars = shuttle->getNumCars();
+	auto const carWidth = shuttle->getCarWidth();
+	auto const colour = ShuttleColour;
 
-	for (uint32_t i = 0; i < numCars; ++i)
+	auto drawPart = [&](char const* sprite, core::Vector2 part0, core::Vector2 part1)
 	{
-		auto car0 = bounds0;
-		car0.x += i * (carWidth + 1);
+		transformPosition(part0);
+		transformPosition(part1);
+		if (!drawObjectSprite(sprite, drawList, { part0.x, part0.y }, { part1.x, part1.y }))
+			drawList->AddRectFilled({ part0.x, part0.y }, { part1.x, part1.y }, colour);
+	};
 
-		auto car1 = car0;
-		car1.x += carWidth;
-		car1.y = bounds1.y;
-
-		transformPosition(car0);
-		transformPosition(car1);
-
-		auto colour = ShuttleColour;
-		drawList->AddRectFilled({ car0.x, car0.y }, { car1.x, car1.y }, colour);
-
-		if (i < (numCars - 1))
+	for (uint32_t car = 0; car < numCars; ++car)
+	{
+		auto const carX = bounds0.x + car * (carWidth + 1);
+		for (uint32_t cell = 0; cell < carWidth; ++cell)
 		{
-			auto cab0 = bounds0;
-			cab0.x += i * (carWidth + 1) + carWidth;
+			auto const* sprite = cell == 0 ? "shuttle-car-left"
+				: cell + 1 == carWidth ? "shuttle-car-right"
+				: "shuttle-car-middle";
+			drawPart(sprite, { carX + cell, bounds0.y },
+				{ carX + cell + 1.0f, bounds1.y });
+		}
 
-			auto cab1 = cab0;
-			cab1.x += 1;
-			cab1.y = bounds1.y * 0.5f;
-
-			transformPosition(cab0);
-			transformPosition(cab1);
-
-			drawList->AddRectFilled({ cab0.x, cab0.y }, { cab1.x, cab1.y }, colour);
+		if (car + 1 < numCars)
+		{
+			auto const connectorX = carX + carWidth;
+			drawPart("shuttle-car-connector", { connectorX, bounds0.y },
+				{ connectorX + 1.0f, bounds1.y });
 		}
 	}
 }
@@ -1626,7 +1624,9 @@ void renderSector(shared_ptr<const core::Sector> sector, uint32_t layer, LayerRe
 		case core::SectorType::Location: kind = static_pointer_cast<const core::Location>(sector)->isCorridor() ? "corridor" : "room"; break;
 		case core::SectorType::Ladder: kind = "ladder"; break;
 		case core::SectorType::Lift: kind = "lift"; break;
-		case core::SectorType::Shuttle: kind = "shuttle"; break;
+		// The rail corridor is static architecture; carriage images are rendered
+		// separately at the Shuttle's current position.
+		case core::SectorType::Shuttle: kind = "lift"; break;
 		case core::SectorType::Stairwell: kind = "stairwell"; break;
 		// Staircase steps are rendered separately from their Sector surface. Use
 		// the same plain shaft tile as a Stairwell rather than painting a second,
