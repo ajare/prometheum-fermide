@@ -6,6 +6,7 @@
 
 #include "core/Agent.h"
 #include "core/AgentBehaviourRuntime.h"
+#include "core/BulkheadDoor.h"
 #include "core/World.h"
 #include "core/Coordination.h"
 #include "core/Defines.h"
@@ -391,6 +392,36 @@ namespace core
 			if (!resource.mDoor) continue;
 			bool presence = false;
 			bool obstruction = false;
+			resource.mAutomaticPresenceObserved = false;
+			if (resource.mDoorActivationMode == DoorActivationMode::Automatic)
+			{
+				auto bulkhead = dynamic_pointer_cast<BulkheadDoor>(resource.mDoor);
+				if (bulkhead)
+				{
+					auto const doorCenterX = bulkhead->getPosition().x
+						+ bulkhead->getSize().x * 0.5f;
+					auto const doorHalfWidth = bulkhead->getSize().x * 0.5f;
+					for (int side = 0; side < CORE_NUM_SIDES
+						&& !resource.mAutomaticPresenceObserved; ++side)
+					{
+						auto sector = bulkhead->getSideSector(side);
+						if (!sector) continue;
+						for (auto agent : sector->getAgents())
+						{
+							auto const position = agent->getGlobalPosition();
+							if (abs(position.y - bulkhead->getPosition().y) > 0.001f) continue;
+							auto const distance = max(0.0f, abs(position.x - doorCenterX)
+								- doorHalfWidth - agent->getWidth() * 0.5f);
+							if (distance <= bulkhead->getAutomaticSensorDistance() + 0.001f)
+							{
+								resource.mAutomaticPresenceObserved = true;
+								break;
+							}
+						}
+					}
+					presence = resource.mAutomaticPresenceObserved;
+				}
+			}
 			for (auto const& [sensor, observation] : resource.mSensorObservations)
 			{
 				(void)sensor;

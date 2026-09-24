@@ -370,6 +370,7 @@ namespace core
 		bool mEnabled{ true };
 		std::map<DoorOpenLeaseId, DoorOpenLease> mOpenLeases;
 		std::map<DoorSensorId, DoorSensorObservation> mSensorObservations;
+		bool mAutomaticPresenceObserved{ false };
 		std::vector<InteractionPointId> mControls;
 		InteractionRequestId mActivePreparation;
 		TraversalRequestId mPreparationOperator;

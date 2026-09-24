@@ -2082,7 +2082,9 @@ agents: []
 		core::World::CreateBulkheadDoorOptions options;
 		require(world.getSectorBulkheadDoorOptions(left, created.door.index, options)
 			&& options.controls[0] && options.controls[1]
-			&& options.activationMode == core::DoorActivationMode::RemoteControlled,
+			&& options.activationMode == core::DoorActivationMode::RemoteControlled
+			&& std::abs(options.automaticSensorDistance
+				- CORE_BULKHEAD_DOOR_AUTOMATIC_SENSOR_DISTANCE) < 0.0001f,
 			"Bulkhead Door authored options could not be read");
 		world.finishBuild();
 		world.pauseSimulation();
@@ -2090,6 +2092,7 @@ agents: []
 		options.activationMode = core::DoorActivationMode::Manual;
 		options.holdOpenSeconds = 3.0f;
 		options.crossingLanes = 1;
+		options.automaticSensorDistance = 0.75f;
 		object = world.applySectorBulkheadDoorOptions(left, created.door.index, options);
 		require(object && object->getCellX() + 1 == 2,
 			"Bulkhead Door settings edit lost the selected object");
@@ -2110,7 +2113,8 @@ agents: []
 			&& options.activationMode == core::DoorActivationMode::Manual
 			&& !options.controls[0] && !options.controls[1]
 			&& std::abs(options.holdOpenSeconds - 3.0f) < 0.0001f
-			&& options.crossingLanes == 1,
+			&& options.crossingLanes == 1
+			&& std::abs(options.automaticSensorDistance - 0.75f) < 0.0001f,
 			"Bulkhead Door move did not preserve authored settings");
 
 		core::SerializationWorkData workData;
@@ -2129,7 +2133,8 @@ agents: []
 				{ objectIndex = i; break; }
 		}
 		require(loadedLeft && objectIndex != ~0u
-			&& loaded.getSectorBulkheadDoorOptions(loadedLeft->getIndex(), objectIndex, options),
+			&& loaded.getSectorBulkheadDoorOptions(loadedLeft->getIndex(), objectIndex, options)
+			&& std::abs(options.automaticSensorDistance - 0.75f) < 0.0001f,
 			"Bulkhead Door authored settings did not round-trip");
 		loaded.pauseSimulation();
 		require(loaded.removeSectorBulkheadDoor(loadedLeft->getIndex(), objectIndex),

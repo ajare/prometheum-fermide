@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cassert>
 
 #include "core/Defines.h"
@@ -63,6 +64,16 @@ namespace core
 		ASSERT_SIDE_OK(side);
 
 		return mSectors[side];
+	}
+
+	float BulkheadDoor::getAutomaticSensorDistance() const
+	{
+		return mAutomaticSensorDistance;
+	}
+
+	void BulkheadDoor::setAutomaticSensorDistance(float distance)
+	{
+		mAutomaticSensorDistance = max(0.0f, distance);
 	}
 
 	/***

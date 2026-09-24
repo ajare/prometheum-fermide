@@ -83,6 +83,7 @@ namespace core
 			DoorActivationMode activationMode{ DoorActivationMode::RemoteControlled };
 			float holdOpenSeconds{ CORE_BULKHEAD_DOOR_STAY_OPEN_TIME };
 			uint32_t crossingLanes{ 1 };
+			float automaticSensorDistance{ CORE_BULKHEAD_DOOR_AUTOMATIC_SENSOR_DISTANCE };
 		};
 
 		struct CreateBulkheadDoorResult

@@ -319,7 +319,8 @@ namespace core
 			serializer.writeUint32("x", record.c); serializer.writeString("side", sideName(record.i));
 			serializer.writeBool("foreControl", record.p); serializer.writeBool("backControl", record.q);
 			serializer.writeString("activationMode", activationName(record.j));
-			serializer.writeFloat("holdOpenSeconds", record.x); serializer.writeUint32("crossingLanes", record.d); break;
+			serializer.writeFloat("holdOpenSeconds", record.x); serializer.writeUint32("crossingLanes", record.d);
+			serializer.writeFloat("automaticSensorDistance", record.y); break;
 		case ConstructionType::LightSwitch:
 			serializer.writeUint32("sectorIndex", record.a); serializer.writeUint32("xOffset", record.b); break;
 		case ConstructionType::ForceBridge:
@@ -692,7 +693,9 @@ namespace core
 			record.c = serializer.readUint32("x"); record.i = readSide("side");
 			record.p = serializer.readBool("foreControl"); record.q = serializer.readBool("backControl");
 			record.j = readActivation("activationMode"); record.x = serializer.readFloat("holdOpenSeconds");
-			record.d = serializer.readUint32("crossingLanes"); break;
+			record.d = serializer.readUint32("crossingLanes");
+			record.y = serializer.readFloat("automaticSensorDistance", true,
+				CORE_BULKHEAD_DOOR_AUTOMATIC_SENSOR_DISTANCE); break;
 		case ConstructionType::LightSwitch:
 			record.a = serializer.readUint32("sectorIndex"); record.b = serializer.readUint32("xOffset"); break;
 		case ConstructionType::ForceBridge:
@@ -1446,7 +1449,8 @@ namespace core
 			break;
 		case ConstructionType::BulkheadDoor:
 			addSectorBulkheadDoor(record.a, record.b, record.c, record.i,
-				{ { record.p, record.q }, static_cast<DoorActivationMode>(record.j), record.x, record.d });
+				{ { record.p, record.q }, static_cast<DoorActivationMode>(record.j), record.x,
+					record.d, record.y });
 			break;
 		case ConstructionType::LightSwitch:
 			addSectorLightSwitch(record.a, record.b);
@@ -4291,7 +4295,7 @@ namespace core
 			});
 		if (found == mConstructionRecords.rend()) return false;
 		options = { { found->p, found->q }, static_cast<DoorActivationMode>(found->j),
-			found->x, found->d };
+			found->x, found->d, found->y };
 		return true;
 	}
 
@@ -4308,6 +4312,10 @@ namespace core
 		if (!object) throw WorldException(this, "The selected object is not a Bulkhead Door");
 		if (options.holdOpenSeconds < 0.0f)
 			throw WorldException(this, "Bulkhead Door hold-open time cannot be negative");
+		if (!isfinite(options.automaticSensorDistance)
+			|| options.automaticSensorDistance < 0.0f)
+			throw WorldException(this,
+				"Bulkhead Door automatic sensor distance must be finite and non-negative");
 		if (options.crossingLanes != 1)
 			throw WorldException(this, "Bulkhead Doors support exactly one crossing lane");
 		if (options.activationMode != DoorActivationMode::RemoteControlled
@@ -4327,6 +4335,7 @@ namespace core
 		found->p = options.controls[0]; found->q = options.controls[1];
 		found->j = static_cast<int32_t>(options.activationMode);
 		found->x = options.holdOpenSeconds; found->d = options.crossingLanes;
+		found->y = options.automaticSensorDistance;
 		auto layer = object->getSector()->getLayerIndex();
 		auto y = object->getCellY();
 		rebuildFromConstructionRecords(std::move(records));

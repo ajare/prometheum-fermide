@@ -94,6 +94,14 @@ _Avoid_: Vertex, when discussing physical movement rules
 A threshold that connects two adjacent layers. It is authored on the front layer of the pair and opens into the layer immediately behind it. A regular Door has a one-level footprint. An ordinary Door authored in a Room may be regular height or 0.9-unit tall; Corridor, Facade, Lift, and Shuttle Doors always use regular height. Lift and Shuttle landing doors belong to their transport.
 _Avoid_: Portal
 
+**Bulkhead Door**:
+A threshold in a shared wall between two adjacent Locations on the same Layer. While closed or opening it controls passage; once fully open it is an unconstrained bidirectional passage. In automatic mode it detects every Agent within its automatic sensor distance on either side, whether or not that Agent intends to cross.
+_Avoid_: Door, when the same-Layer distinction matters
+
+**Automatic sensor distance**:
+At an automatic Bulkhead Door, the authored maximum physical gap between the Door and an Agent's nearest edge at which the Agent's presence requests opening. It is independent of the Agent's Path.
+_Avoid_: Queue distance, crossing width
+
 **Crossing width**:
 At a Door, the symmetric distance either side of the threshold vertex's x position within which an agent on the threshold row may begin crossing. Derived from the physical doorway width (cell width minus the door's x insets) minus the agent's width; a 1-cell door yields +/-0.2. The width relaxes where a crossing starts, never who crosses: queue order, lane allocation, and safety interlocks are unchanged, and the band never stops an agent.
 _Avoid_: Door width, doorway width, when referring to the arrival band

@@ -52,14 +52,14 @@ A granted permit is short-lived and belongs to one request and one agent. Crossi
 
 ## Controlled thresholds
 
-Door, bulkhead, and window-threshold resources own their crossing queues. Door resources also coordinate preparation with the physical door and its activation mode:
+Door and window-threshold resources own their crossing queues. Bulkhead Door resources queue Agents while closed or opening, but a fully open Bulkhead Door becomes an unconstrained bidirectional passage and releases every waiter concurrently. Door resources also coordinate preparation with the physical door and its activation mode:
 
-- **Automatic** resources request opening from presence.
+- **Automatic** resources request opening from presence. An automatic Bulkhead Door derives presence from every Agent within its per-instance automatic sensor distance on either side, independently of route intent.
 - **Manual** resources use an interaction point reachable by the crossing agent.
 - **Remote controlled** resources require a configured physical interaction point.
 - **Unavailable** resources reject admission.
 
-A crossing permit is not granted until the threshold is physically safe. Crossing leases and sensor observations prevent closure while an agent occupies the threshold. Wide doors expose deterministic lanes; queues from both sides retain stable, fair ordering.
+A crossing permit is not granted until the threshold is physically safe. Crossing leases and sensor observations prevent closure while an agent occupies the threshold. Wide ordinary doors expose deterministic lanes; queues from both sides retain stable, fair ordering. Fully open Bulkhead Doors grant concurrent permits without crossing-lane ownership while retaining one safety lease per crossing.
 
 ## Extensible resources
 

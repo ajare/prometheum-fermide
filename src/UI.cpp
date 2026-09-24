@@ -3412,6 +3412,8 @@ namespace
 				<< YAML::Key << "activationMode" << YAML::Value << activationModeName(options.activationMode)
 				<< YAML::Key << "holdOpenSeconds" << YAML::Value << options.holdOpenSeconds
 				<< YAML::Key << "crossingLanes" << YAML::Value << options.crossingLanes
+				<< YAML::Key << "automaticSensorDistance" << YAML::Value
+				<< options.automaticSensorDistance
 				<< YAML::EndMap;
 		}
 		else if (gSelectedSectorObject->getObjectType() == core::SectorObjectType::Window)
@@ -3580,8 +3582,14 @@ namespace
 			else throw runtime_error("Bulkhead Door activationMode is invalid");
 			definition.bulkheadDoor.holdOpenSeconds = requiredYaml<float>(object, "holdOpenSeconds");
 			definition.bulkheadDoor.crossingLanes = requiredYaml<uint32_t>(object, "crossingLanes");
+			definition.bulkheadDoor.automaticSensorDistance = object["automaticSensorDistance"]
+				? object["automaticSensorDistance"].as<float>()
+				: CORE_BULKHEAD_DOOR_AUTOMATIC_SENSOR_DISTANCE;
 			if (definition.bulkheadDoor.holdOpenSeconds < 0.0f)
 				throw runtime_error("Bulkhead Door holdOpenSeconds cannot be negative");
+			if (!isfinite(definition.bulkheadDoor.automaticSensorDistance)
+				|| definition.bulkheadDoor.automaticSensorDistance < 0.0f)
+				throw runtime_error("Bulkhead Door automaticSensorDistance must be finite and non-negative");
 			if (definition.bulkheadDoor.crossingLanes != 1)
 				throw runtime_error("Bulkhead Door crossingLanes must be one");
 			if (definition.bulkheadDoor.activationMode != core::DoorActivationMode::RemoteControlled
@@ -5261,6 +5269,7 @@ void renderBulkheadDoorPanel(shared_ptr<core::World> const& world,
 	static bool leftControl = true, rightControl = true;
 	static float holdOpenSeconds = CORE_BULKHEAD_DOOR_STAY_OPEN_TIME;
 	static int crossingLanes = 1;
+	static float automaticSensorDistance = CORE_BULKHEAD_DOOR_AUTOMATIC_SENSOR_DISTANCE;
 	core::World::CreateBulkheadDoorOptions current;
 	if ((editedWorld != world.get() || editedObject != object.get())
 		&& objectIndex != ~0u
@@ -5271,6 +5280,7 @@ void renderBulkheadDoorPanel(shared_ptr<core::World> const& world,
 		leftControl = current.controls[0]; rightControl = current.controls[1];
 		holdOpenSeconds = current.holdOpenSeconds;
 		crossingLanes = (int)current.crossingLanes;
+		automaticSensorDistance = current.automaticSensorDistance;
 	}
 
 	auto commitActivationAndControls = [&]()
@@ -5324,8 +5334,13 @@ void renderBulkheadDoorPanel(shared_ptr<core::World> const& world,
 		return;
 	}
 	ImGui::InputFloat("Hold open seconds", &holdOpenSeconds, 0.25f, 1.0f, "%.2f");
+	ImGui::InputFloat("Automatic sensor distance", &automaticSensorDistance,
+		0.05f, 0.25f, "%.2f");
+	if (ImGui::IsItemHovered())
+		ImGui::SetTooltip("Maximum physical gap between the Bulkhead Door and an Agent");
 	ImGui::InputInt("Crossing lanes", &crossingLanes);
-	bool valid = holdOpenSeconds >= 0.0f && crossingLanes == 1
+	bool valid = holdOpenSeconds >= 0.0f && isfinite(automaticSensorDistance)
+		&& automaticSensorDistance >= 0.0f && crossingLanes == 1
 		&& (remote || (!leftControl && !rightControl));
 	ImGui::BeginDisabled(!world->isSimulationPaused() || !valid || objectIndex == ~0u);
 	if (ImGui::Button("Apply Bulkhead Door settings"))
@@ -5336,7 +5351,7 @@ void renderBulkheadDoorPanel(shared_ptr<core::World> const& world,
 			core::World::CreateBulkheadDoorOptions options{
 				{ leftControl, rightControl },
 				static_cast<core::DoorActivationMode>(activationMode),
-				holdOpenSeconds, (uint32_t)crossingLanes };
+				holdOpenSeconds, (uint32_t)crossingLanes, automaticSensorDistance };
 			gSelectedSectorObject = world->applySectorBulkheadDoorOptions(
 				owner->getIndex(), objectIndex, options);
 			gHoveredSectorObject.reset(); editedObject = nullptr;

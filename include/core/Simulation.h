@@ -194,6 +194,7 @@ namespace core
 		uint32_t ascendingWaitingCount{ 0 };
 		uint32_t descendingWaitingCount{ 0 };
 		DoorActivationMode doorActivationMode{ DoorActivationMode::Unavailable };
+		float automaticSensorDistance{ 0.0f };
 		DoorSnapshotState doorState{ DoorSnapshotState::NotADoor };
 		float doorOpenPercentage{ 0.0f };
 		uint32_t openLeaseCount{ 0 };

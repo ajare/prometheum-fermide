@@ -5,6 +5,7 @@
 #include "core/SimulationCoordinator.h"
 
 #include "core/Agent.h"
+#include "core/BulkheadDoor.h"
 #include "core/World.h"
 #include "core/Coordination.h"
 #include "core/ExtensibleObject.h"
@@ -319,6 +320,8 @@ namespace core
 				});
 		}
 		result.doorActivationMode = resource.mDoorActivationMode;
+		if (auto bulkhead = dynamic_pointer_cast<BulkheadDoor>(resource.mDoor))
+			result.automaticSensorDistance = bulkhead->getAutomaticSensorDistance();
 		result.holdOpenTicks = resource.mHoldOpenTicks;
 		result.openLeaseCount = (uint32_t)resource.mOpenLeases.size();
 		for (auto const& [leaseId, lease] : resource.mOpenLeases)
@@ -331,6 +334,7 @@ namespace core
 			case DoorOpenLeaseKind::ExternalHoldOpen: ++result.externalOpenLeaseCount; break;
 			}
 		}
+		result.presenceObserved = resource.mAutomaticPresenceObserved;
 		for (auto const& [sensor, observation] : resource.mSensorObservations)
 		{
 			(void)sensor;

@@ -5149,6 +5149,9 @@ namespace core
 		}
 		if (options.holdOpenSeconds < 0.0f)
 			return reject("Bulkhead Door hold-open time cannot be negative");
+		if (!isfinite(options.automaticSensorDistance)
+			|| options.automaticSensorDistance < 0.0f)
+			return reject("Bulkhead Door automatic sensor distance must be finite and non-negative");
 		if (options.crossingLanes != 1)
 			return reject("Bulkhead Doors support exactly one crossing lane");
 		if (options.activationMode != DoorActivationMode::RemoteControlled
@@ -5258,6 +5261,7 @@ namespace core
 		auto traversalResource = createDoorTraversalResource(format("Bulkhead door at {},{}", x, y),
 			door, options.activationMode, options.holdOpenSeconds);
 		door->configureTraversal(options.activationMode, traversalResource, options.holdOpenSeconds);
+		door->setAutomaticSensorDistance(options.automaticSensorDistance);
 		configureDoorCrossingLanes(traversalResource, options.crossingLanes);
 
 		// Same-layer geometry gets explicit approaches on opposite sides of the
@@ -5296,6 +5300,7 @@ namespace core
 		record.p = options.controls[0]; record.q = options.controls[1];
 		record.j = static_cast<int32_t>(options.activationMode);
 		record.x = options.holdOpenSeconds; record.d = options.crossingLanes;
+		record.y = options.automaticSensorDistance;
 		recordConstruction(std::move(record));
 		return { doorObject, { createdControls[0], createdControls[1] }, traversalResource };
 	}

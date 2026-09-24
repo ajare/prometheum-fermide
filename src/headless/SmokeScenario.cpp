@@ -1296,10 +1296,52 @@ namespace
 		return world.getSimulationSnapshot().traversalResources.front().doorState == core::DoorSnapshotState::Closed;
 	}
 
+	bool automaticBulkheadSensesNearbyNonTraveller()
+	{
+		auto observe = [](float sensorDistance, float agentX, bool fromRight = false)
+		{
+			core::World world("Automatic Bulkhead sensor", 8, 2);
+			auto left = world.addRoom("Left", 0, 0, 0, 3, 1);
+			auto right = world.addRoom("Right", 0, 0, 3, 3, 1);
+			core::World::CreateBulkheadDoorOptions options;
+			options.activationMode = core::DoorActivationMode::Automatic;
+			options.controls[0] = options.controls[1] = false;
+			options.automaticSensorDistance = sensorDistance;
+			world.addSectorBulkheadDoor(0, 0, 3, CORE_SIDE_LEFT, options);
+			world.finishBuild();
+
+			// This Agent has no Path through the Bulkhead. Its physical presence is
+			// the only possible source of automatic opening demand.
+			world.createAgent("Nearby bystander", fromRight ? right : left, 0, agentX);
+			world.advanceTick();
+			return world.getSimulationSnapshot().traversalResources.front();
+		};
+
+		// The closed leaf spans x=2.9..3.1 and an Agent is 0.4 wide. An Agent
+		// centred at x=2.4 has a 0.3 physical gap to the leaf: inside the 0.5
+		// default, but outside a 0.25 per-instance override. Moving to x=2.5
+		// reduces that gap to 0.2 and enters the overridden range.
+		auto defaultRange = observe(CORE_BULKHEAD_DOOR_AUTOMATIC_SENSOR_DISTANCE, 2.4f);
+		auto defaultRangeFromRight = observe(
+			CORE_BULKHEAD_DOOR_AUTOMATIC_SENSOR_DISTANCE, 0.6f, true);
+		auto outsideOverride = observe(0.25f, 2.4f);
+		auto insideOverride = observe(0.25f, 2.5f);
+		return defaultRange.doorState == core::DoorSnapshotState::Opening
+			&& defaultRange.presenceObserved
+			&& abs(defaultRange.automaticSensorDistance - 0.5f) < 0.0001f
+			&& defaultRangeFromRight.doorState == core::DoorSnapshotState::Opening
+			&& defaultRangeFromRight.presenceObserved
+			&& outsideOverride.doorState == core::DoorSnapshotState::Closed
+			&& !outsideOverride.presenceObserved
+			&& insideOverride.doorState == core::DoorSnapshotState::Opening
+			&& insideOverride.presenceObserved;
+	}
+
 	bool bulkheadAndWindowThresholdsUseTraversalResources()
 	{
-		// A bulkhead is horizontal and same-layer, but still queues and waits for
-		// its fully-open resource permit.
+		// A closed bulkhead still coordinates opening, but once fully open it is an
+		// unconstrained bidirectional passage: all waiting Agents can cross without
+		// queue or crossing-lane serialization.
 		core::World bulkheadWorld("Bulkhead threshold", 8, 2);
 		auto left = bulkheadWorld.addRoom("Left", 0, 0, 0, 3, 1);
 		auto right = bulkheadWorld.addRoom("Right", 0, 0, 3, 3, 1);
@@ -1324,7 +1366,7 @@ namespace
 		agent->setPath(twoNodePath(source, destination, *bulkheadEdge), true);
 		opposing->setPath(twoNodePath(destination, source, *bulkheadEdge), true);
 		bool waitedForOpen = false;
-		bool serializedContention = true;
+		bool observedOpenBidirectionalPassage = false;
 		for (uint32_t i = 0; i < MaximumSimulationTicks
 			&& (agent->getState() != core::Agent::State::Idle
 				|| opposing->getState() != core::Agent::State::Idle); ++i)
@@ -1334,9 +1376,22 @@ namespace
 			if (!snapshot.traversalResources.empty()
 				&& snapshot.traversalResources.front().doorState == core::DoorSnapshotState::Opening
 				&& snapshot.traversalPermits.empty()) waitedForOpen = true;
-			if (snapshot.traversalPermits.size() > 1) serializedContention = false;
+			if (!snapshot.traversalResources.empty()
+				&& snapshot.traversalResources.front().doorState == core::DoorSnapshotState::Open
+				&& snapshot.traversalPermits.size() == 2
+				&& agent->getState() == core::Agent::State::TraversingEdge
+				&& opposing->getState() == core::Agent::State::TraversingEdge
+				&& std::all_of(snapshot.traversalResources.front().queueLanes.begin(),
+					snapshot.traversalResources.front().queueLanes.end(), [](auto const& lane)
+					{ return lane.queue.empty(); })
+				&& std::all_of(snapshot.traversalResources.front().crossingLanes.begin(),
+					snapshot.traversalResources.front().crossingLanes.end(), [](auto const& lane)
+					{ return !lane.owner; }))
+			{
+				observedOpenBidirectionalPassage = true;
+			}
 		}
-		if (!waitedForOpen || !serializedContention
+		if (!waitedForOpen || !observedOpenBidirectionalPassage
 			|| agent->getSector() != bulkheadWorld.getSector(right).get()
 			|| opposing->getSector() != bulkheadWorld.getSector(left).get()
 			|| !bulkheadWorld.getSimulationSnapshot().traversalRequests.empty()) return false;
@@ -5668,6 +5723,11 @@ int main(int argc, char** argv)
 		if (!singleAgentDoorJourney(core::DoorActivationMode::Automatic))
 		{
 			std::cerr << "FAIL: automatic door journey or hold-open safety failed\n";
+			return 1;
+		}
+		if (!automaticBulkheadSensesNearbyNonTraveller())
+		{
+			std::cerr << "FAIL: automatic Bulkhead Door did not sense a nearby non-travelling Agent\n";
 			return 1;
 		}
 		if (!bulkheadAndWindowThresholdsUseTraversalResources())

@@ -25,6 +25,7 @@ namespace core
 	private:
 
 		OpenStyle mOpenStyle;
+		float mAutomaticSensorDistance{ CORE_BULKHEAD_DOOR_AUTOMATIC_SENSOR_DISTANCE };
 
 		std::shared_ptr<const Sector> mSectors[2];
 
@@ -37,6 +38,9 @@ namespace core
 		[[nodiscard]] OpenStyle getOpenStyle() const;
 
 		[[nodiscard]] std::shared_ptr<const Sector> getSideSector(int side) const;
+
+		[[nodiscard]] float getAutomaticSensorDistance() const;
+		void setAutomaticSensorDistance(float distance);
 		
 		// Overridden from Object
 		[[nodiscard]] std::string getDescription() const override;

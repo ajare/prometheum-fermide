@@ -489,16 +489,28 @@ namespace core
 			return;
 		}
 
-		// A fully extended Force Bridge is floor, not a capacity-constrained
-		// threshold. Queueing is useful while it is being prepared, but once the
-		// span is complete every waiter may enter concurrently from either side.
-		if (resource.mForceBridge)
+		vector<TraversalRequestId> waiting;
+		bool openBulkhead = false;
+		for (auto const& lane : resource.mQueueLanes)
 		{
-			vector<TraversalRequestId> waiting;
-			for (auto const& lane : resource.mQueueLanes)
-				for (auto requestId : lane.queue)
-					if (find(waiting.begin(), waiting.end(), requestId) == waiting.end())
-						waiting.push_back(requestId);
+			for (auto requestId : lane.queue)
+			{
+				if (find(waiting.begin(), waiting.end(), requestId) == waiting.end())
+					waiting.push_back(requestId);
+				if (auto request = mWorld.mTraversalRequests.find(requestId);
+					request && request->mEdgeType == EdgeType::BulkheadDoor)
+				{
+					openBulkhead = true;
+				}
+			}
+		}
+
+		// A fully extended Force Bridge is floor, and a fully open Bulkhead Door
+		// is an ordinary opening. Queueing coordinates preparation while either is
+		// unavailable, but afterwards every waiter may cross concurrently from
+		// either side without claiming a crossing lane.
+		if (resource.mForceBridge || openBulkhead)
+		{
 			sort(waiting.begin(), waiting.end(), [&](auto left, auto right)
 			{
 				auto lhs = mWorld.mTraversalRequests.find(left);

@@ -96,7 +96,7 @@ Agents will approach resources, queue at reserved positions, operate required co
 72. As an agent using a narrow stairwell, I want configurable directional capacity, so that constrained stairs can use ladder-like coordination.
 73. As an agent crossing a force bridge, I want it held extended while occupied or reserved, so that it cannot retract during use.
 74. As an agent approaching a window, I want only a fully open window treated as normally traversable, so that closed or broken windows remain barriers.
-75. As an agent using a bulkhead door, I want the same queue, activation, and safety guarantees as other controlled doors, so that same-layer geometry cannot bypass it.
+75. As an agent using a bulkhead door, I want its queue and activation rules enforced until it is fully open, then unconstrained bidirectional passage with crossing safety leases, so that preparation cannot be bypassed and an open bulkhead does not serialize traffic.
 76. As a level designer, I want vehicle capacity configured explicitly and validated against interior positions, so that declared capacity has a physical representation.
 77. As a level designer, I want queue lanes configured by origin, direction, and extent, so that generated waiting positions are predictable.
 78. As a level designer, I want invalid controls, queue lanes, doors, and interior positions rejected during construction, so that malformed worlds fail early.
@@ -228,7 +228,7 @@ Agents will approach resources, queue at reserved positions, operate required co
 - A landing door cannot open unless the correct vehicle is aligned and stationary.
 - A vehicle cannot move while any relevant door is open, opening, closing, obstructed, or protected by a crossing lease.
 - A configuration with no physical door on one side may mark that side always open without weakening other interlocks.
-- Bulkhead doors use the same resource protocol and are not exempt based on geometric direction.
+- Bulkhead doors use the same preparation and safety protocol and are not exempt based on geometric direction. An automatic Bulkhead Door requests opening when any Agent in either adjacent Location is within its authored sensor distance, regardless of route intent. While closed or opening Bulkhead Doors queue normally; once fully open they release every waiter and grant concurrent bidirectional crossings without crossing-lane ownership.
 - Fully open windows may act as thresholds. Closed, opening, closing, tinted, frosted, or broken windows are not normal traversal openings; hazardous broken-window traversal is deferred.
 
 ### Capacity and constrained resources
@@ -389,7 +389,7 @@ Agents will approach resources, queue at reserved positions, operate required co
 42. A configured narrow stairwell enforces directional capacity.
 43. An occupied or reserved force bridge cannot retract.
 44. A fully open window permits configured traversal while closed or broken windows do not.
-45. Same-layer bulkhead traversal cannot bypass its resource policy.
+45. Same-layer bulkhead traversal queues until the door is fully open, then admits concurrent bidirectional crossings without queue or crossing-lane serialization.
 46. Disabling an active crossing resource allows safe completion but rejects new admission.
 47. Disabling a moving vehicle lets it reach a safe stop, then releases pending requests for replanning.
 48. Invalid queue geometry, capacity geometry, control reachability, and transport-door mappings fail construction with useful diagnostics.

@@ -186,6 +186,13 @@ namespace core
 				tryGrantDoorQueue(*resource);
 				return;
 			}
+			// Automatic Bulkhead Doors are activated exclusively by their spatial
+			// presence sensor. Route intent neither creates nor bypasses that demand.
+			if (request->mEdgeType == EdgeType::BulkheadDoor
+				&& resource->mDoorActivationMode == DoorActivationMode::Automatic)
+			{
+				return;
+			}
 			if (!request->mPreparationRequested)
 			{
 				request->mPreparationRequested = true;
